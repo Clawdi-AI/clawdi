@@ -13,15 +13,8 @@ export function buildSubscriptionPaymentReturnUrl(
 	deploymentId: string,
 ): string {
 	const url = new URL(cleanWalletStripeReturnUrl(currentHref));
-	for (const key of [
-		"checkout",
-		"checkout_session_id",
-		"mockCheckout",
-		"session_id",
-		"upgrade_deployment_id",
-	]) {
-		url.searchParams.delete(key);
-	}
+	url.search = "";
+	url.searchParams.set("settings", "billing-plan");
 	url.searchParams.set("deployment_id", deploymentId);
 	return url.toString();
 }

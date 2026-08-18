@@ -3,7 +3,7 @@ import type { Page, Route } from "@playwright/test";
 export const CLOUD_API = "http://127.0.0.1:8000";
 export const DEPLOY_API = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:8001";
 
-export const CLOUD_AGENT_ID = "agent_e2e_codex";
+export const CLOUD_AGENT_ID = "33333333-3333-4333-8333-333333333333";
 export const CLOUD_CHANNEL_ID = "chan_e2e_telegram";
 
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };

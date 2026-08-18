@@ -48,6 +48,7 @@ import {
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
 	resolveOpenClawConfigMutationSdkExport,
+	resolveOpenClawDeviceBootstrapSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
@@ -70,6 +71,7 @@ import {
 	writeOAuthCredentialLedger,
 } from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { isValidSemver } from "../lib/semver";
 import {
 	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
@@ -1734,8 +1736,8 @@ interface HostedAiProviderProjectionResult {
 
 const CODEX_MANAGED_PROVIDER_ID = "clawdi";
 const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
-const CODEX_NPM_PACKAGE_VERSION = "0.146.0";
-const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
+const CODEX_BOOTSTRAP_PACKAGE_VERSION = "0.146.0";
+const CODEX_BOOTSTRAP_PACKAGE_SPEC = `@openai/codex@${CODEX_BOOTSTRAP_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {
 	baseUrl: string;
@@ -2011,6 +2013,54 @@ function openClawProviderAuthSdkPath(
 	]);
 	if (!resolved) throw new Error("installed OpenClaw provider-auth SDK export is unavailable");
 	return resolved;
+}
+
+function openClawDeviceBootstrapSdkPath(
+	observation: RuntimeInstallObservation,
+	home: string,
+): string | null {
+	return resolveOpenClawDeviceBootstrapSdkExport(home, [
+		observation.commandPath,
+		observation.appRoot,
+		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
+		join(home, ".openclaw", "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+	]);
+}
+
+const OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE = `
+import { pathToFileURL } from "node:url";
+const sdk = await import(pathToFileURL(process.argv[1]).href);
+const normalized = typeof sdk.normalizeDeviceBootstrapProfile === "function"
+  ? sdk.normalizeDeviceBootstrapProfile({ purpose: "control-ui-owner" })
+  : null;
+process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : "unsupported");
+`;
+
+function openClawSupportsOwnerBrowserBootstrap(
+	observation: RuntimeInstallObservation,
+	home: string,
+): boolean {
+	const sdkPath = openClawDeviceBootstrapSdkPath(observation, home);
+	if (!sdkPath) return false;
+	ensureRuntimeUserHome(home);
+	const result = spawnRuntimeUserCommand(
+		"node",
+		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
+		home,
+		home,
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`installed OpenClaw device-bootstrap capability probe failed: ${
+				tail(String(result.stderr ?? "")) ?? "unknown"
+			}`,
+		);
+	}
+	const outcome = String(result.stdout ?? "").trim();
+	if (outcome === "supported") return true;
+	if (outcome === "unsupported") return false;
+	throw new Error("installed OpenClaw device-bootstrap capability probe returned invalid output");
 }
 
 const OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE = `
@@ -2495,6 +2545,7 @@ function applyHostedAiProviderProjection(
 	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
+	openClawOwnerBrowserBootstrapSupported: boolean,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -2509,6 +2560,7 @@ function applyHostedAiProviderProjection(
 				secretValues,
 				home,
 				workspaceRoot,
+				openClawOwnerBrowserBootstrapSupported,
 			);
 		}
 		return { path: null, revision: null, providerIds: [...previousProviderIds] };
@@ -2530,6 +2582,7 @@ function applyHostedAiProviderProjection(
 			secretValues,
 			home,
 			workspaceRoot,
+			openClawOwnerBrowserBootstrapSupported,
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
@@ -2707,31 +2760,29 @@ function hostedCodexManagedConfigToml(provider: HostedCodexManagedProvider): str
 
 function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | null {
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
-	// Keep the exact managed package separate from the tenant's global npm tree:
-	// ~/.local/bin/codex is the transparent-egress wrapper, while this XDG data
-	// location holds the executable that the wrapper delegates to.
-	const npmPrefix = paths.codexInstallRoot;
+	const npmPrefix = paths.userNpmPrefix;
 	const realBin = join(npmPrefix, "bin", "codex");
-	const commandPath = paths.codexCommand;
+	removeLegacyHostedCodexCommandShim(realBin, paths.userHome);
 	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
-	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION || !executableExists(realBin)) {
-		installHostedCodexCli(CODEX_NPM_PACKAGE_SPEC, npmPrefix, paths);
+	const bootstrapRequired = installedVersion === null || !executableExists(realBin);
+	if (bootstrapRequired) {
+		installHostedCodexBootstrap(CODEX_BOOTSTRAP_PACKAGE_SPEC, npmPrefix, paths);
 		installedVersion = hostedCodexInstalledVersion(npmPrefix);
+		if (installedVersion !== CODEX_BOOTSTRAP_PACKAGE_VERSION) {
+			throw new Error(
+				`Codex bootstrap installed version ${installedVersion ?? "unknown"}; expected ${CODEX_BOOTSTRAP_PACKAGE_VERSION}`,
+			);
+		}
+		if (!executableExists(realBin)) {
+			throw new Error(`Codex bootstrap did not create ${realBin}`);
+		}
 	}
-	if (installedVersion !== CODEX_NPM_PACKAGE_VERSION) {
-		throw new Error(
-			`Codex npm install produced version ${installedVersion ?? "unknown"}; expected ${CODEX_NPM_PACKAGE_VERSION}`,
-		);
-	}
-	if (!executableExists(realBin)) {
-		throw new Error(`Codex npm install did not create ${realBin}`);
-	}
-	withRuntimeUserFileAccess(() => writeHostedCodexCommandShim(commandPath, realBin));
+	if (installedVersion === null) throw new Error("Codex package metadata is unavailable");
 	return {
-		commandPath,
+		commandPath: realBin,
 		npmPrefix,
-		packageSpec: CODEX_NPM_PACKAGE_SPEC,
-		packageVersion: installedVersion,
+		bootstrapPackageSpec: CODEX_BOOTSTRAP_PACKAGE_SPEC,
+		installedVersion,
 		realBin,
 	};
 }
@@ -2748,15 +2799,21 @@ function hostedCodexInstalledVersion(npmPrefix: string): string | null {
 	try {
 		const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
 		if (!parsed || typeof parsed !== "object" || !("version" in parsed)) return null;
-		return typeof parsed.version === "string" ? parsed.version : null;
+		return typeof parsed.version === "string" && isValidSemver(parsed.version)
+			? parsed.version
+			: null;
 	} catch {
 		return null;
 	}
 }
 
-function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: RuntimePaths): void {
+function installHostedCodexBootstrap(
+	packageSpec: string,
+	npmPrefix: string,
+	paths: RuntimePaths,
+): void {
 	if (!commandExists("npm")) {
-		throw new Error("Codex runtime add-on install requires npm on PATH");
+		throw new Error("Codex bootstrap requires npm on PATH");
 	}
 	withRuntimeUserFileAccess(() => mkdirSync(npmPrefix, { recursive: true }));
 	const result = spawnRuntimeUserCommand(
@@ -2787,31 +2844,29 @@ function installHostedCodexCli(packageSpec: string, npmPrefix: string, paths: Ru
 	);
 	if (result.status !== 0) {
 		throw new Error(
-			`Codex runtime add-on install failed: ${tail(result.stderr?.toString()) ?? tail(result.stdout?.toString()) ?? "npm failed"}`,
+			`Codex bootstrap failed: ${tail(result.stderr?.toString()) ?? tail(result.stdout?.toString()) ?? "npm failed"}`,
 		);
 	}
 }
 
-function writeHostedCodexCommandShim(commandPath: string, realBin: string): void {
-	const binDir = dirname(commandPath);
-	mkdirSync(binDir, { recursive: true });
-	writePrivateFileAtomic(
-		commandPath,
-		[
-			"#!/usr/bin/env sh",
-			`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}=${shellQuote(MANAGED_EGRESS_PLACEHOLDER_VALUE)}`,
-			`exec ${shellQuote(realBin)} "$@"`,
-			"",
-		].join("\n"),
-		{
-			mode: 0o755,
-			dirMode: 0o755,
-		},
-	);
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, "'\\''")}'`;
+function removeLegacyHostedCodexCommandShim(commandPath: string, home: string): void {
+	let content: string;
+	try {
+		content = readFileSync(commandPath, "utf8");
+	} catch {
+		// A missing or unreadable command is handled by the normal bootstrap check.
+		return;
+	}
+	const legacyRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
+	const expected = [
+		"#!/usr/bin/env sh",
+		`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}='${MANAGED_EGRESS_PLACEHOLDER_VALUE}'`,
+		`exec '${legacyRealBin}' "$@"`,
+		"",
+	].join("\n");
+	if (content === expected) {
+		withRuntimeUserFileAccess(() => rmSync(commandPath));
+	}
 }
 
 function applyHostedHermesAiProviderProjection(
@@ -3138,6 +3193,7 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	ownerBrowserBootstrapSupported: boolean,
 ): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = manifest.openclawGatewayAuth
@@ -3183,6 +3239,9 @@ function openClawGatewayHostedPatch(
 											? {
 													basePath: openClawControlUiBasePath(manifest),
 													dangerouslyAllowHostHeaderOriginFallback: false,
+													dangerouslyDisableDeviceAuth: ownerBrowserBootstrapSupported
+														? null
+														: true,
 												}
 											: {}),
 									},
@@ -3230,8 +3289,9 @@ function applyOpenClawGatewayHostedProjection(
 	secretValues: Record<string, string> | undefined,
 	home: string,
 	workspaceRoot: string,
+	ownerBrowserBootstrapSupported: boolean,
 ): void {
-	const patch = openClawGatewayHostedPatch(manifest, secretValues);
+	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
 	if (!patch || openClawGatewayHostedPatchIsApplied(home, patch)) return;
 	runRuntimeUserCommand(
 		command,
@@ -4808,6 +4868,7 @@ function runtimeProgramRevisionForManifest(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null,
 	hermesWhatsAppAuthDir: string | null,
+	openClawOwnerBrowserBootstrapSupported: boolean,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const runtimeSecretRefs = desiredRuntime
@@ -4839,7 +4900,14 @@ function runtimeProgramRevisionForManifest(
 	return runtimeProgramRevision({
 		renderedProjection: {
 			channels: channelProjection,
-			gateway: runtime === "openclaw" ? openClawGatewayHostedPatch(manifest, secretValues) : null,
+			gateway:
+				runtime === "openclaw"
+					? openClawGatewayHostedPatch(
+							manifest,
+							secretValues,
+							openClawOwnerBrowserBootstrapSupported,
+						)
+					: null,
 			locale:
 				manifest.locale && hostedTarget
 					? managedLocaleBlock(manifest.locale)
@@ -5125,6 +5193,7 @@ function validateRuntimeProjectionPlan(input: {
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	hermesWhatsAppAuthDir: string | null;
+	openClawOwnerBrowserBootstrapSupported: boolean;
 }): void {
 	const {
 		manifest,
@@ -5134,6 +5203,7 @@ function validateRuntimeProjectionPlan(input: {
 		observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		openClawOwnerBrowserBootstrapSupported,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
@@ -5204,7 +5274,9 @@ function validateRuntimeProjectionPlan(input: {
 			} else if (!configuredProjectionUnavailable) {
 				buildOpenClawHostedProviderPatch(null, previousProjectedProviderIds.openclaw ?? []);
 			}
-			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues));
+			JSON.stringify(
+				openClawGatewayHostedPatch(manifest, secretValues, openClawOwnerBrowserBootstrapSupported),
+			);
 		}
 		if (name === "hermes") {
 			if (projectionInput) {
@@ -5437,13 +5509,6 @@ export function runtimeUserMutationTargets(
 		...channelPluginTargets,
 	]);
 	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
-	if (
-		hostedCodexManagedProvider(manifest) ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
-	) {
-		targets.add(paths.codexInstallRoot);
-		targets.add(paths.codexCommand);
-	}
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		if (manifest.runtimes[name]?.enabled !== true) continue;
 		const commandPath = runtimeCommandPath(name, home);
@@ -5790,6 +5855,7 @@ export function convergeRuntimeManifest(
 	const projectedProviderIds: Record<string, string[]> = {};
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
+	let openClawOwnerBrowserBootstrapSupported = false;
 
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const hermesSkillNativeReconciler =
@@ -5852,6 +5918,12 @@ export function convergeRuntimeManifest(
 			);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
+			if (name === "openclaw" && observation.enabled && observation.commandPath) {
+				openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
+					observation,
+					projectionHome,
+				);
+			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 	} catch (error) {
@@ -5931,6 +6003,7 @@ export function convergeRuntimeManifest(
 			observations,
 			previousProjectedProviderIds,
 			hermesWhatsAppAuthDir,
+			openClawOwnerBrowserBootstrapSupported,
 		});
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
@@ -6024,15 +6097,19 @@ export function convergeRuntimeManifest(
 		const openClawObservation = observations.get("openclaw");
 		if (openClawObservation) {
 			try {
-				observations.set(
-					"openclaw",
-					ensureHostedOpenClawProviderAuthCapability({
-						manifest,
-						secretValues,
-						observation: openClawObservation,
-						home: projectionHome,
-					}),
-				);
+				const capableObservation = ensureHostedOpenClawProviderAuthCapability({
+					manifest,
+					secretValues,
+					observation: openClawObservation,
+					home: projectionHome,
+				});
+				observations.set("openclaw", capableObservation);
+				if (capableObservation !== openClawObservation) {
+					openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
+						capableObservation,
+						projectionHome,
+					);
+				}
 			} catch (error) {
 				installErrors.push(
 					`runtime openclaw OAuth capability check failed: ${
@@ -6083,9 +6160,7 @@ export function convergeRuntimeManifest(
 				codexCli = ensureHostedCodexCli(paths);
 			} catch (error) {
 				installErrors.push(
-					`runtime codex add-on install failed: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
+					`runtime codex setup failed: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
 		}
@@ -6345,6 +6420,7 @@ export function convergeRuntimeManifest(
 			observations,
 			previousProjectedProviderIds,
 			hermesWhatsAppAuthDir,
+			openClawOwnerBrowserBootstrapSupported,
 		});
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
@@ -6534,6 +6610,7 @@ export function convergeRuntimeManifest(
 					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
+					openClawOwnerBrowserBootstrapSupported,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
@@ -6617,6 +6694,7 @@ export function convergeRuntimeManifest(
 					secrets,
 					providerRevision,
 					hermesWhatsAppAuthDir,
+					openClawOwnerBrowserBootstrapSupported,
 				),
 			commonEnvironment: commonSystemdEnvironment,
 		});

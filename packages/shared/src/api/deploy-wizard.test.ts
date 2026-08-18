@@ -97,6 +97,7 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 				endpoints: [],
 			},
 		},
+		agent_id: "11111111-1111-4111-8111-111111111111",
 		clawdi_cloud_environments: {},
 		ai_provider_auth_kinds: { hermes: "managed" },
 		accepted_operation: null,
@@ -368,7 +369,7 @@ describe("hosted deploy request projection", () => {
 		};
 	}
 
-	test("preserves the browser projection order for terminal, operation, and deployment evidence", () => {
+	test("prioritizes terminal outcomes, then accepted deployment identity", () => {
 		expect(
 			projectHostedDeployRequest(
 				requestStatus({
@@ -385,7 +386,7 @@ describe("hosted deploy request projection", () => {
 		expect(
 			projectHostedDeployRequest(
 				requestStatus({
-					request_status: "processing",
+					request_status: "ready",
 					lineage_tail: {
 						deployment_id: "hdep_test",
 						operation_name: "operations/deploy-test",

@@ -484,7 +484,6 @@ describe("deployment transition timeout rendering", () => {
 		expect(manualHandler).not.toContain("isFetchingRef");
 		expect(manualHandler).not.toContain("mutate");
 		expect(manualHandler).not.toContain("restart");
-		expect(source).toContain("isChecking={manualChecking}");
 		expect(source).toContain("isCheckingDeployment={manualChecking}");
 		expect(source).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
 		const detailSource = readFileSync(
@@ -674,7 +673,7 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain("Runtime UI access");
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
-		expect(detailSource).toContain("Open in new window");
+		expect(detailSource).toContain("loadRuntimeUiWindowTarget");
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
 		expect(detailSource).toContain('label="Password"');
 		expect(detailSource).not.toContain('<RuntimeUiCredentialRow label="Token"');
@@ -748,10 +747,11 @@ function successfulOperation(
 }
 
 describe("deployment mutation settlement", () => {
-	test("keeps reusable subscriptions scoped to delete snapshot invalidation", () => {
+	test("keeps subscription assignment inventories scoped to delete snapshot invalidation", () => {
 		const queryClient = new QueryClient();
 		queryClient.setQueryData(billingKeys.deployments, []);
 		queryClient.setQueryData(["get", "/v1/agents"], []);
+		queryClient.setQueryData(billingKeys.subscriptions, []);
 		queryClient.setQueryData(billingKeys.reusableSubscriptions, []);
 
 		if (!invalidateSnapshots || !invalidateDeleteSnapshots) {
@@ -761,9 +761,11 @@ describe("deployment mutation settlement", () => {
 
 		expect(queryClient.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+		expect(queryClient.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(false);
 		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(false);
 
 		invalidateDeleteSnapshots(queryClient);
+		expect(queryClient.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
 	});
 

@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "yaml";
+
+interface WorkflowStep {
+	uses?: string;
+	with?: Record<string, unknown>;
+}
+
+interface WorkflowDocument {
+	permissions?: Record<string, string>;
+	jobs?: Record<string, { steps?: WorkflowStep[] }>;
+}
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const repoPath = (path: string): string => resolve(repoRoot, path);
@@ -9,6 +20,7 @@ const readPackageScripts = (path: string): Record<string, string> =>
 	JSON.parse(readRepoFile(path)).scripts;
 
 const clientWorkflow = readRepoFile(".github/workflows/client-ci.yml");
+const clientWorkflowDocument = parse(clientWorkflow) as WorkflowDocument;
 const cleanRunnerWorkflow = readRepoFile(".github/workflows/clean-test-runner-ci.yml");
 const setupBunAction = readRepoFile(".github/actions/setup-bun-ci/action.yml");
 const runner = readRepoFile("scripts/test.sh");
@@ -38,8 +50,15 @@ describe("client workflow contract", () => {
 	test("uses truthful change routing and verifies every client package in one job", () => {
 		const changesJob = section(clientWorkflow, "  changes:\n", "  # Lint");
 		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
+		const webE2eFilter = section(
+			changesJob,
+			"            web_e2e:\n",
+			"            deploy_contract:\n",
+		);
+		const webE2eJob = section(clientWorkflow, "  web-e2e:\n", "  whatsapp-native-e2e:\n");
 
 		expect(changesJob).toContain(`client: \${{ steps.filter.outputs.client }}`);
+		expect(changesJob).toContain(`web_e2e: \${{ steps.filter.outputs.web_e2e }}`);
 		expect(changesJob).toContain(`deploy_contract: \${{ steps.filter.outputs.deploy_contract }}`);
 		for (const path of [
 			"apps/web/**",
@@ -55,9 +74,29 @@ describe("client workflow contract", () => {
 			);
 		}
 		expect(verifyJob).toContain("needs.changes.outputs.client == 'true'");
+		expect(webE2eJob).toContain("needs.changes.outputs.web_e2e == 'true'");
+		for (const path of ["apps/web/**", "packages/shared/**", "package.json", "bun.lock"]) {
+			expect(webE2eFilter).toContain(`- "${path}"`);
+		}
+		for (const path of ["packages/cli/**", "packages/whatsapp-baileys-sidecar/**"]) {
+			expect(webE2eFilter).not.toContain(`- "${path}"`);
+		}
 		expect(verifyJob).not.toContain("matrix:");
 		expect(clientWorkflow).not.toContain("actions/upload-artifact");
 		expect(clientWorkflow).not.toContain("actions/download-artifact");
+		expect(clientWorkflow).toContain(
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
+		);
+		const changeSteps = clientWorkflowDocument.jobs?.changes?.steps ?? [];
+		expect(clientWorkflowDocument.permissions).toEqual({ contents: "read" });
+		expect(changeSteps.find((step) => step.uses === "actions/checkout@v7")?.with).toEqual({
+			"fetch-depth": 1,
+		});
+		expect(changeSteps.find((step) => step.uses === "dorny/paths-filter@v4")?.with).toMatchObject({
+			token: "",
+			base: `\${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}`,
+			ref: `\${{ github.event_name == 'push' && github.sha || '' }}`,
+		});
 
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
 		expect(typecheckTask).toContain('"outputs": []');
@@ -175,6 +214,9 @@ describe("clean runner suite contract", () => {
 	});
 
 	test("runs focused CI routinely and exposes full all as a manual gate", () => {
+		expect(cleanRunnerWorkflow).toContain(
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
+		);
 		expect(cleanRunnerWorkflow).toContain('description: "Clean runner suite to execute"');
 		expect(cleanRunnerWorkflow).toContain("default: ci");
 		expect(cleanRunnerWorkflow).toContain("          - ci\n          - all");

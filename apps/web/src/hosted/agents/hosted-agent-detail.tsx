@@ -105,7 +105,6 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { isCloudEnvId } from "@/hosted/agent-route";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -125,6 +124,7 @@ import {
 import {
 	forgetOpenClawBootstrapAttempt,
 	hasOpenClawBootstrapAttempt,
+	loadRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
 	rememberOpenClawBootstrapAttempt,
 	resolveRuntimeUiCredentials,
@@ -295,6 +295,7 @@ import {
 	agentSectionLink,
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
+	isAgentRouteId,
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -455,7 +456,7 @@ export function HostedAgentDetail({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
-	const cloudEnvironmentId = isCloudEnvId(environmentId);
+	const cloudAgentId = isAgentRouteId(environmentId);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 	const agentQuery = $api.useQuery(
 		"get",
@@ -464,7 +465,7 @@ export function HostedAgentDetail({
 			params: { path: { agent_id: environmentId } },
 		},
 		{
-			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			enabled: cloudAgentId && deploymentProjectionQueryable,
 			refetchInterval: (query) =>
 				missingProjectionRefetchInterval(
 					query.state.error,
@@ -475,7 +476,7 @@ export function HostedAgentDetail({
 		},
 	);
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+		enabled: cloudAgentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
@@ -502,9 +503,9 @@ export function HostedAgentDetail({
 	);
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
-	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
+	const terminalHref = agentSectionHref(environmentId, "terminal");
 	const scopedSessionLink = (sessionId: string) => ({
-		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
+		...agentSessionDetailLink(environmentId, sessionId),
 	});
 
 	const sessions = useQuery({
@@ -515,7 +516,7 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const resourceScope = agentResourceScope(environmentId, routeSearch);
+	const resourceScope = agentResourceScope(environmentId);
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
@@ -553,7 +554,7 @@ export function HostedAgentDetail({
 								<MemoriesPageActions />
 							) : interfaceAvailable ? (
 								<Button
-									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									render={<Link {...agentSectionLink(environmentId, "console")} />}
 									nativeButton={false}
 									variant="outline"
 								>
@@ -599,9 +600,8 @@ export function HostedAgentDetail({
 					) : activeTab === "overview" ? (
 						<OverviewTab
 							agentId={environmentId}
-							routeSearch={routeSearch}
 							deployment={deployment}
-							agent={isCloudEnvId(environmentId) ? agent : null}
+							agent={isAgentRouteId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
@@ -633,7 +633,7 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
+						<HostedAgentSessionsTab environmentId={environmentId} />
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -641,7 +641,6 @@ export function HostedAgentDetail({
 						projection.status === "resolved" ? (
 							<AgentProjectsTab
 								agentId={environmentId}
-								routeSearch={routeSearch}
 								headerAdornment={<AgentSourceBadge source="hosted" compact />}
 								headerIcon={
 									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
@@ -669,14 +668,13 @@ export function HostedAgentDetail({
 								environmentId={environmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
-								routeSearch={routeSearch}
 							/>
 						) : (
 							<ChannelsSyncState
 								isChecking={isCheckingDeployment || isCheckingProjection}
 								onCheckAgain={() => {
 									onCheckDeploymentAgain();
-									if (cloudEnvironmentId) void checkProjectionAgain();
+									if (cloudAgentId) void checkProjectionAgain();
 								}}
 							/>
 						)
@@ -781,13 +779,7 @@ function StoppedAgentState({
 	);
 }
 
-function HostedAgentSessionsTab({
-	environmentId,
-	routeSearch,
-}: {
-	environmentId: string;
-	routeSearch: AgentRouteSearch;
-}) {
+function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
@@ -837,7 +829,7 @@ function HostedAgentSessionsTab({
 				isLoading={sessions.isLoading && !sessions.data}
 				emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
 				showAgent={false}
-				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id, routeSearch)}
+				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id)}
 			/>
 			{sessions.data ? (
 				<DataTablePagination
@@ -1152,7 +1144,6 @@ export function InitialDeploymentPage({
 
 function OverviewTab({
 	agentId,
-	routeSearch,
 	deployment,
 	agent,
 	projectionStatus,
@@ -1166,7 +1157,6 @@ function OverviewTab({
 	deploymentTransitionEscalated,
 }: {
 	agentId: string;
-	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
@@ -1251,7 +1241,7 @@ function OverviewTab({
 							Recent sessions
 						</h2>
 						<Button
-							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							render={<Link {...agentSectionLink(agentId, "sessions")} />}
 							nativeButton={false}
 							variant="ghost"
 							size="sm"
@@ -1278,7 +1268,6 @@ function OverviewTab({
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
-						routeSearch={routeSearch}
 						title="Compute"
 						icon={Cpu}
 						tint="bg-identity-4-bg text-identity-4-fg"
@@ -1317,7 +1306,6 @@ function OverviewTab({
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
-				routeSearch={routeSearch}
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {
@@ -1333,14 +1321,14 @@ function OverviewTab({
 					skills: {
 						...skillsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
 							: null,
 					},
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
 							: null,
 					},
 					connectors: connectorsModule,
@@ -1426,7 +1414,6 @@ function ConsoleTab({
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isCredentialLoading, setIsCredentialLoading] = useState(false);
-	const [isOpenClawBootstrapPending, setIsOpenClawBootstrapPending] = useState(false);
 	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
 		runtime === "openclaw" ? "loading" : "ready",
 	);
@@ -1435,49 +1422,41 @@ function ConsoleTab({
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
 	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
 
-	const loadCredentials = useCallback(
-		async ({ allowDirectOpenOnFailure = false } = {}): Promise<RuntimeUiCredentials | null> => {
-			const requestVersion = requestVersionRef.current + 1;
-			requestVersionRef.current = requestVersion;
-			setIsCredentialLoading(true);
-			setCredentialError(null);
-			setCredentialLoadState("loading");
-			try {
-				const resolved = await requestCredentials();
-				if (requestVersionRef.current !== requestVersion) return null;
-				setCredentials(resolved);
-				setCredentialLoadState("ready");
-				return resolved;
-			} catch (error) {
-				if (requestVersionRef.current === requestVersion) {
-					setCredentialError(
-						error instanceof Error ? error : new Error("Runtime UI credential request failed"),
-					);
-					setCredentialLoadState(
-						runtime === "openclaw" && allowDirectOpenOnFailure ? "ready" : "error",
-					);
-					if (!allowDirectOpenOnFailure) setIsOpenClawBootstrapPending(false);
-				}
-				return null;
-			} finally {
-				if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
+		const requestVersion = requestVersionRef.current + 1;
+		requestVersionRef.current = requestVersion;
+		setIsCredentialLoading(true);
+		setCredentialError(null);
+		setCredentialLoadState("loading");
+		try {
+			const resolved = await requestCredentials();
+			if (requestVersionRef.current !== requestVersion) return null;
+			setCredentials(resolved);
+			setCredentialLoadState("ready");
+			return resolved;
+		} catch (error) {
+			if (requestVersionRef.current === requestVersion) {
+				setCredentialError(
+					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+				);
+				setCredentialLoadState("error");
 			}
-		},
-		[requestCredentials, runtime],
-	);
+			return null;
+		} finally {
+			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
+		}
+	}, [requestCredentials]);
 
 	const clearCredentials = useCallback(() => {
 		requestVersionRef.current += 1;
 		setCredentials(null);
 		setCredentialError(null);
 		setIsCredentialLoading(false);
-		setIsOpenClawBootstrapPending(false);
 		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
 	}, [runtime]);
 
 	const reconnectOpenClaw = useCallback(() => {
 		forgetOpenClawBootstrapAttempt(window.localStorage, deployment.resource.id);
-		setIsOpenClawBootstrapPending(true);
 		return loadCredentials();
 	}, [deployment.resource.id, loadCredentials]);
 
@@ -1490,8 +1469,7 @@ function ConsoleTab({
 			setCredentialLoadState("ready");
 			return;
 		}
-		setIsOpenClawBootstrapPending(true);
-		void loadCredentials({ allowDirectOpenOnFailure: true });
+		void loadCredentials();
 	}, [
 		clearCredentials,
 		credentialIdentity,
@@ -1523,11 +1501,11 @@ function ConsoleTab({
 				}
 				description={
 					deploymentTransitionEscalated
-						? "The latest status still shows this change in progress after fifteen minutes. We’ll keep checking automatically once a minute while you’re here, or you can cancel the change and try again."
+						? "This change is still in progress. You can cancel it and try again."
 						: deploymentTransitionTimedOut
-							? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
+							? "This change is still in progress. Check again now or keep waiting."
 							: isStarting
-								? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+								? `${browserUiLabel} will open here when ready.`
 								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={
@@ -1617,8 +1595,8 @@ function ConsoleTab({
 					credentials={credentials}
 					credentialError={credentialError}
 					isCredentialLoading={isCredentialLoading}
-					isOpenClawBootstrapPending={isOpenClawBootstrapPending}
 					onLoadCredentials={loadCredentials}
+					onRequestCredentials={requestCredentials}
 					onClearCredentials={clearCredentials}
 					onReconnectOpenClaw={reconnectOpenClaw}
 				/>
@@ -1671,7 +1649,6 @@ function ConsoleTab({
 										deployment.resource.id,
 										url,
 									);
-									setIsOpenClawBootstrapPending(false);
 								}
 							: undefined
 					}
@@ -1808,8 +1785,8 @@ function RuntimeUiAccessDialog({
 	credentials,
 	credentialError,
 	isCredentialLoading,
-	isOpenClawBootstrapPending,
 	onLoadCredentials,
+	onRequestCredentials,
 	onClearCredentials,
 	onReconnectOpenClaw,
 }: {
@@ -1819,14 +1796,16 @@ function RuntimeUiAccessDialog({
 	credentials: RuntimeUiCredentials | null;
 	credentialError: Error | null;
 	isCredentialLoading: boolean;
-	isOpenClawBootstrapPending: boolean;
 	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
+	onRequestCredentials: () => Promise<RuntimeUiCredentials>;
 	onClearCredentials: () => void;
 	onReconnectOpenClaw: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const reset = useResetRuntimeUiAccess();
 	const [open, setOpen] = useState(false);
+	const [isWindowOpening, setIsWindowOpening] = useState(false);
+	const windowOpeningRef = useRef(false);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const [accessHintOpen, setAccessHintOpen] = useState(false);
@@ -1834,7 +1813,6 @@ function RuntimeUiAccessDialog({
 	const renderedCredentials = credentialExit.renderedValue;
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
 	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
-	const isOpenClawOpening = runtime === "openclaw" && isOpenClawBootstrapPending;
 
 	const dismissAccessHint = useCallback(() => {
 		setAccessHintOpen(false);
@@ -1882,18 +1860,38 @@ function RuntimeUiAccessDialog({
 		],
 	);
 
-	const openRuntime = useCallback(() => {
-		const popup = openSecureRuntimeWindow(window.open.bind(window), endpointUrl);
+	const openRuntime = useCallback(async () => {
+		if (windowOpeningRef.current) return;
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
 				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description:
-					"Your browser blocked the new window. Allow pop-ups for Clawdi, then try again.",
+				description: "Allow pop-ups, then try again.",
 			});
 			return;
 		}
-		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [deployment.resource.id, endpointUrl, label]);
+
+		windowOpeningRef.current = true;
+		setIsWindowOpening(true);
+		try {
+			const target = await loadRuntimeUiWindowTarget(runtime, endpointUrl, onRequestCredentials);
+			popup.location.replace(target);
+			trackRuntimeWindow(deployment.resource.id, popup);
+		} catch {
+			try {
+				popup.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "Access failed. Try again.",
+			});
+		} finally {
+			windowOpeningRef.current = false;
+			setIsWindowOpening(false);
+		}
+	}, [deployment.resource.id, endpointUrl, label, onRequestCredentials, runtime]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
@@ -1957,10 +1955,10 @@ function RuntimeUiAccessDialog({
 						type="button"
 						variant="outline"
 						size="sm"
-						disabled={isCredentialLoading || isOpenClawOpening}
+						disabled={isCredentialLoading}
 						onClick={() => void onReconnectOpenClaw()}
 					>
-						{isCredentialLoading || isOpenClawOpening ? (
+						{isCredentialLoading ? (
 							<Spinner className="size-3.5" />
 						) : (
 							<RefreshCw className="size-3.5" />
@@ -1972,19 +1970,16 @@ function RuntimeUiAccessDialog({
 					type="button"
 					variant="outline"
 					size="sm"
-					disabled={isOpenClawOpening}
-					onClick={openRuntime}
+					disabled={isWindowOpening}
+					onClick={() => void openRuntime()}
 					aria-label={`Open ${label} in new window`}
 				>
-					{isOpenClawOpening ? (
+					{isWindowOpening ? (
 						<Spinner className="size-3.5" />
 					) : (
 						<ExternalLink className="size-3.5" />
 					)}
-					<span className="hidden sm:inline">
-						{isOpenClawOpening ? "Opening…" : "Open in new window"}
-					</span>
-					<span className="sm:hidden">{isOpenClawOpening ? "Opening…" : "Open"}</span>
+					{isWindowOpening ? "Opening…" : "Open"}
 				</Button>
 			</div>
 			{runtime === "hermes" ? (
@@ -2055,9 +2050,18 @@ function RuntimeUiAccessDialog({
 								Reset access
 							</Button>
 						</ConfirmAction>
-						<Button type="button" disabled={reset.isPending} onClick={openRuntime}>
-							<ExternalLink className="size-3.5" />
-							Open in new window
+						<Button
+							type="button"
+							disabled={isWindowOpening || reset.isPending}
+							onClick={() => void openRuntime()}
+							aria-label={`Open ${label} in new window`}
+						>
+							{isWindowOpening ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<ExternalLink className="size-3.5" />
+							)}
+							{isWindowOpening ? "Opening…" : "Open"}
 						</Button>
 					</div>
 				</DialogContent>
@@ -2614,19 +2618,17 @@ function ChannelsTab({
 	environmentId,
 	agentType,
 	agentName,
-	routeSearch,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
 	agentName: string;
-	routeSearch: AgentRouteSearch;
 }) {
 	const api = useApi();
 	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
+	const linked = useAgentChannelLinks(environmentId, isAgentRouteId(environmentId), true);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const deleteChannel = useDeleteChannel();
@@ -2961,7 +2963,6 @@ function ChannelsTab({
 				agentId={environmentId}
 				agentType={agentType}
 				linkedProviders={linked.data ? linkedProviders : undefined}
-				agentRouteQuery={routeSearch}
 				onAgentConnected={(bot) => {
 					setRecentLinks((current) =>
 						new Map(current).set(bot.id, {
@@ -3640,7 +3641,7 @@ function ComputeSettingsSections({
 			if (target.kind !== "deployment") return false;
 			const checkoutDeploymentId = target.deploymentId;
 			if (checkoutDeploymentId === deployment.resource.id) return false;
-			const hydrateAndNavigate = async () => {
+			const hydrateAndNavigate = async (): Promise<boolean> => {
 				try {
 					await navigateToAcceptedDeployment({
 						deploymentId: checkoutDeploymentId,
@@ -3650,6 +3651,7 @@ function ComputeSettingsSections({
 						replace: true,
 					});
 					toast.dismiss(`checkout-deployment-${checkoutDeploymentId}`);
+					return true;
 				} catch {
 					toast.error("Deployment accepted; details couldn’t load", {
 						id: `checkout-deployment-${checkoutDeploymentId}`,
@@ -3660,10 +3662,10 @@ function ComputeSettingsSections({
 							onClick: () => void hydrateAndNavigate(),
 						},
 					});
+					return false;
 				}
 			};
-			await hydrateAndNavigate();
-			return true;
+			return hydrateAndNavigate();
 		},
 		[billingClient.getDeployment, deployment.resource.id, queryClient, router],
 	);

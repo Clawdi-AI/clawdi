@@ -39,8 +39,7 @@ export interface RuntimePaths {
 	cliManagedBin: string;
 	cliNpmPrefix: string;
 	cliNpmCache: string;
-	codexInstallRoot: string;
-	codexCommand: string;
+	userNpmPrefix: string;
 	cliBootstrapStatus: string;
 	cliUpgradeState: string;
 	providerHealthStatus: string;
@@ -161,7 +160,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const clawdiHome = defaultClawdiHome(mode, serviceStateRoot);
 	const userLocalRoot = join(userHome, ".local");
 	const userLocalBin = join(userLocalRoot, "bin");
-	const userDataRoot = join(userLocalRoot, "share");
 	const configurationRoot = derivedPlatformRoot(
 		serviceStateRoot,
 		DEFAULT_CONFIGURATION_ROOT,
@@ -174,7 +172,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const maintainedRoot = join(serviceStateRoot, "maintained");
 	const managedCliRoot = join(maintainedRoot, "clawdi");
 	const npmRoot = join(managedCliRoot, "npm");
-	const codexInstallRoot = join(userDataRoot, "clawdi", "codex");
 	const instanceRoot = join(serviceStateRoot, "instances");
 
 	return {
@@ -200,8 +197,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		cliManagedBin: join(managedCliRoot, "bin", "clawdi"),
 		cliNpmPrefix: npmRoot,
 		cliNpmCache: join(cacheRoot, "npm"),
-		codexInstallRoot,
-		codexCommand: join(userLocalBin, "codex"),
+		userNpmPrefix: userLocalRoot,
 		cliBootstrapStatus: join(statusRoot, "cli-bootstrap.json"),
 		cliUpgradeState: join(statusRoot, "cli-upgrade-state.json"),
 		providerHealthStatus: join(statusRoot, "provider-health.json"),

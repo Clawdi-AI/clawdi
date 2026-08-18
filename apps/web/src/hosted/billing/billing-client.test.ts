@@ -570,16 +570,7 @@ describe("declarative deployment mutations", () => {
 						},
 					});
 				}
-				return jsonResponse({
-					deploy_request_id: intentKey,
-					request_status: "processing",
-					lineage_tail: {
-						deployment_id: "hdep_test",
-						lineage_version: 1,
-						lineage_state: "processing",
-						operation: operation({ done: false, id: "create-happy", verb: "create" }),
-					},
-				});
+				throw new Error("Accepted checkout deploys must stop request polling");
 			}
 			if (path.startsWith("/v2/operations/")) {
 				throw new Error("Accepted checkout deploys must not poll their operation");
@@ -606,7 +597,7 @@ describe("declarative deployment mutations", () => {
 		expect(checkout.checkout_url).toBe("https://checkout.example.com/session");
 		expect(await client.waitForDeploymentRequest(intentKey)).toMatchObject({
 			deploymentId: "hdep_test",
-			operation: { done: false, name: "operations/create-happy" },
+			operation: null,
 		});
 
 		const checkoutRequest = requests[0];
@@ -616,7 +607,6 @@ describe("declarative deployment mutations", () => {
 		});
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/v2/subscription/checkout",
-			`/v2/deployments/by-request/${intentKey}`,
 			`/v2/deployments/by-request/${intentKey}`,
 			`/v2/deployments/by-request/${intentKey}`,
 			`/v2/deployments/by-request/${intentKey}`,

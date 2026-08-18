@@ -94,8 +94,6 @@ import {
 } from "@/lib/agent-ownership";
 import {
 	type AgentSectionId,
-	agentDeploymentRouteQuery,
-	agentDeploymentSelector,
 	agentProjectResourceHref,
 	agentRouteIdsEqual,
 	agentSectionHref,
@@ -383,7 +381,6 @@ function AgentSectionList({
 			searchStr: location.searchStr,
 		}),
 	});
-	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const activeAgentRoute = parseAgentPathname(pathname);
@@ -420,7 +417,7 @@ function AgentSectionList({
 				return {
 					id: `primary-project-${section}`,
 					label: item.label,
-					href: agentProjectResourceHref(agentId, primaryProject.id, section, routeQuery),
+					href: agentProjectResourceHref(agentId, primaryProject.id, section),
 					icon: item.icon,
 					tint: item.tint,
 					tooltip: `${item.label} in Workspace`,
@@ -437,7 +434,7 @@ function AgentSectionList({
 						return {
 							id: item.id,
 							label: item.label,
-							href: agentSectionHref(agentId, item.id, routeQuery),
+							href: agentSectionHref(agentId, item.id),
 							icon: item.icon,
 							tint: item.tint,
 							tooltip: item.tooltip,
@@ -548,13 +545,11 @@ function AgentFocusLoadingSections({
 	activeSection: AgentSectionId;
 	onNavigate?: () => void;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const overviewMetadata = AGENT_SECTION_NAVIGATION_ITEMS.overview;
 	const overviewItem: SidebarNavItem = {
 		id: overviewMetadata.id,
 		label: overviewMetadata.label,
-		href: agentSectionHref(agentId, "overview", routeQuery),
+		href: agentSectionHref(agentId, "overview"),
 		icon: overviewMetadata.icon,
 		tint: overviewMetadata.tint,
 		tooltip: overviewMetadata.tooltip,
@@ -698,7 +693,7 @@ function FocusNavigationPane({
 					activeAgentName={activeAgentName}
 				/>
 			</SidebarHeader>
-			<SidebarContent className="pb-[calc(var(--header-height)+0.75rem)]">
+			<SidebarContent className="pb-[calc(var(--header-height)+env(safe-area-inset-bottom)+0.75rem)]">
 				<SidebarMainNavigation
 					pathname={pathname}
 					showCloudFeatures={showCloudFeatures}
@@ -955,14 +950,12 @@ function FocusRailContent({
 	agents,
 	loading,
 	activeAgentId,
-	activeDeploymentSelector,
 	onNavigate,
 	showTooltips = true,
 }: {
 	agents: AgentTile[];
 	loading: boolean;
 	activeAgentId: string | null;
-	activeDeploymentSelector: string | null;
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
@@ -1088,7 +1081,7 @@ function FocusRailContent({
 
 			<SidebarSeparator className="mx-auto w-8" />
 
-			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-1.5 pt-2.5 pb-[calc(var(--header-height)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+			<SidebarContent className="items-center gap-2 overflow-x-hidden overflow-y-auto px-1.5 pt-2.5 pb-[calc(var(--header-height)+env(safe-area-inset-bottom)+0.75rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<SidebarMenu className="w-full items-center">
 					<RailTileButton
 						render={<Link to="/" onClick={onNavigate} />}
@@ -1131,10 +1124,7 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={Boolean(
-										activeAgentId &&
-											agentTileMatchesRouteId(agent, activeAgentId, activeDeploymentSelector),
-									)}
+									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onNavigate}
 									showTooltip={showTooltips}
 								/>
@@ -1336,27 +1326,20 @@ function RailSidebar({
 	agents,
 	loading,
 	activeAgentId,
-	activeDeploymentSelector,
 }: {
 	agents: AgentTile[];
 	loading: boolean;
 	activeAgentId: string | null;
-	activeDeploymentSelector: string | null;
 }) {
 	return (
 		<Sidebar
 			collapsible="none"
 			style={{ "--sidebar-width": "var(--clawdi-rail-width)" } as React.CSSProperties}
-			className="sticky top-0 hidden h-svh shrink-0 border-r bg-sidebar/95 md:flex"
+			className="sticky top-0 z-20 hidden h-svh shrink-0 border-r bg-sidebar/95 md:flex"
 			aria-label="Focus rail"
 			data-testid="app-sidebar-agent-rail"
 		>
-			<FocusRailContent
-				agents={agents}
-				loading={loading}
-				activeAgentId={activeAgentId}
-				activeDeploymentSelector={activeDeploymentSelector}
-			/>
+			<FocusRailContent agents={agents} loading={loading} activeAgentId={activeAgentId} />
 		</Sidebar>
 	);
 }
@@ -1613,10 +1596,10 @@ function SidebarGlobalControlsBar({
 			data-sidebar="global-controls"
 			data-testid="app-sidebar-global-controls"
 			className={cn(
-				"z-30 h-(--header-height) items-center border-border border-t bg-sidebar px-3 text-sidebar-foreground",
+				"z-30 items-center border-border border-t bg-sidebar px-3 text-sidebar-foreground",
 				mobile
-					? "absolute inset-x-0 bottom-0 flex"
-					: "fixed bottom-0 left-0 hidden w-[calc(var(--clawdi-rail-width)+var(--sidebar-width))] md:flex",
+					? "absolute inset-x-0 bottom-0 flex h-[calc(var(--header-height)+env(safe-area-inset-bottom))] pb-[env(safe-area-inset-bottom)]"
+					: "fixed bottom-0 left-0 hidden h-(--header-height) w-[calc(var(--clawdi-rail-width)+var(--sidebar-width))] md:flex",
 			)}
 		>
 			<GlobalControls
@@ -1659,7 +1642,6 @@ export function AppSidebar({
 	const showCloudFeatures = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
-	const activeDeploymentSelector = agentRoute ? agentDeploymentSelector(routeSearch) : null;
 	const { data: environments } = $api.useQuery(
 		"get",
 		"/v1/agents",
@@ -1681,9 +1663,7 @@ export function AppSidebar({
 	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
 	const agentRailColdLoading = !agentsLoaded && agents.length === 0;
 	const activeAgentTile = activeAgentId
-		? (agents.find((tile) =>
-				agentTileMatchesRouteId(tile, activeAgentId, activeDeploymentSelector),
-			) ?? null)
+		? (agents.find((tile) => agentTileMatchesRouteId(tile, activeAgentId)) ?? null)
 		: null;
 	const activeAgent = activeAgentId
 		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
@@ -1778,25 +1758,15 @@ export function AppSidebar({
 				</Suspense>
 			) : null}
 			{!isMobile ? (
-				<RailSidebar
-					agents={agents}
-					loading={agentRailColdLoading}
-					activeAgentId={activeAgentId}
-					activeDeploymentSelector={activeDeploymentSelector}
-				/>
+				<RailSidebar agents={agents} loading={agentRailColdLoading} activeAgentId={activeAgentId} />
 			) : null}
 			<Sidebar
 				collapsible="offcanvas"
 				variant={variant}
 				data-testid="app-sidebar"
-				style={
-					{
-						...style,
-						"--sidebar-left-offset": "var(--clawdi-rail-width)",
-					} as React.CSSProperties
-				}
+				style={style}
 				className={cn(
-					"data-[side=left]:left-[var(--clawdi-rail-width)] data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--clawdi-rail-width)-var(--sidebar-width))]",
+					"data-[side=left]:left-[var(--clawdi-rail-width)] data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]",
 					className,
 				)}
 				{...props}
@@ -1834,7 +1804,6 @@ export function AppSidebar({
 								agents={agents}
 								loading={agentRailColdLoading}
 								activeAgentId={activeAgentId}
-								activeDeploymentSelector={activeDeploymentSelector}
 								onNavigate={closeMobileSidebar}
 								showTooltips={false}
 							/>

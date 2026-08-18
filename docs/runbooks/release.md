@@ -229,8 +229,8 @@ discoverable from account state and should be reconciled separately with
    bootstrap handoff matches the manifest, installs that exact package, and
    re-execs before applying the manifest when the CLI changes.
 
-   Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
-   Clawdi CLI release. Verify its audited exact package and executable before
+   Hosted Codex has an audited bootstrap package selected by the immutable
+   Clawdi CLI release. Verify that exact package and executable before
    activating Hosted:
 
    ```bash
@@ -238,9 +238,9 @@ discoverable from account state and should be reconciled separately with
    npx --yes @openai/codex@0.146.0 --version | grep -F '0.146.0'
    ```
 
-   A Hosted Codex version change therefore requires a new exact Clawdi CLI
-   release and the same registry/pairing smoke gate; it is not an image,
-   manifest, environment override, or npm dist-tag setting.
+   Changing the bootstrap version requires a new exact Clawdi CLI release and
+   the same registry/pairing smoke gate. The bootstrap applies only when Codex
+   is missing or damaged; users own subsequent upgrades and healthy versions.
 
    The backend terminal Codex environment-name cutover may deploy after
    `clawdi@0.13.69` is published. Existing deployments do not need to converge

@@ -158,6 +158,7 @@ exit 0
 		) as Record<string, unknown>;
 		const manifest = fixture.manifest as Record<string, unknown>;
 		const runtimes = manifest.runtimes as Record<string, Record<string, unknown>>;
+		const egressEngine = manifest.egressEngine as { sha256: string; version: string };
 		const openclawRuntime = runtimes.openclaw;
 		openclawRuntime.providerMode = "unmanaged";
 		openclawRuntime.provider_ids = [];
@@ -193,6 +194,15 @@ exit 0
 		};
 
 		const paths = getRuntimePaths();
+		const egressEngineBinary = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
+		);
+		fsOriginals.mkdirSync(dirname(egressEngineBinary), { recursive: true });
+		fsOriginals.writeFileSync(egressEngineBinary, "#!/bin/sh\nexit 0\n");
+		fsOriginals.chmodSync(egressEngineBinary, 0o755);
 		ensureRuntimeStateDirs(paths);
 		recording = true;
 		const result = convergeRuntimeManifest(load, paths, {

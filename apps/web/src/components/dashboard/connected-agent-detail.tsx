@@ -47,7 +47,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import {
-	type AgentRouteSearch,
 	type AgentSectionId,
 	agentProjectResourceLink,
 	agentSectionLabel,
@@ -69,12 +68,10 @@ type AgentTab = "overview" | "sessions" | "memories" | "connectors" | "projects"
 export function ConnectedAgentDetail({
 	environmentId,
 	section = "overview",
-	routeSearch,
 	showSourceBadge = true,
 }: {
 	environmentId: string;
 	section?: AgentSectionId;
-	routeSearch: AgentRouteSearch;
 	showSourceBadge?: boolean;
 }) {
 	const id = environmentId;
@@ -152,9 +149,9 @@ export function ConnectedAgentDetail({
 		) : null;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 	const scopedSessionLink = (sessionId: string) => ({
-		...agentSessionDetailLink(id, sessionId, routeSearch),
+		...agentSessionDetailLink(id, sessionId),
 	});
-	const resourceScope = agentResourceScope(id, routeSearch);
+	const resourceScope = agentResourceScope(id);
 	const workspaceProjectId = agent
 		? resolveAgentWorkspaceProjectId(projectBindings ?? [], agent.default_project_id)
 		: null;
@@ -234,7 +231,7 @@ export function ConnectedAgentDetail({
 											Recent sessions
 										</h2>
 										<Button
-											render={<Link {...agentSectionLink(id, "sessions", routeSearch)} />}
+											render={<Link {...agentSectionLink(id, "sessions")} />}
 											nativeButton={false}
 											variant="ghost"
 											size="sm"
@@ -264,7 +261,6 @@ export function ConnectedAgentDetail({
 									<AgentOverviewStatusCard
 										agentId={id}
 										section="settings"
-										routeSearch={routeSearch}
 										title="Live Sync"
 										icon={Laptop}
 										tint="bg-identity-7-bg text-identity-7-fg"
@@ -288,7 +284,6 @@ export function ConnectedAgentDetail({
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
-								routeSearch={routeSearch}
 								content={{
 									projects: overviewProjectsModule({
 										bindings: {
@@ -300,14 +295,14 @@ export function ConnectedAgentDetail({
 									skills: {
 										...skillsModule,
 										link: workspaceProjectId
-											? agentProjectResourceLink(id, workspaceProjectId, "skills", routeSearch)
+											? agentProjectResourceLink(id, workspaceProjectId, "skills")
 											: null,
 									},
 									memories: memoriesModule,
 									vaults: {
 										...vaultsModule,
 										link: workspaceProjectId
-											? agentProjectResourceLink(id, workspaceProjectId, "vaults", routeSearch)
+											? agentProjectResourceLink(id, workspaceProjectId, "vaults")
 											: null,
 									},
 									connectors: connectorsModule,
@@ -343,7 +338,6 @@ export function ConnectedAgentDetail({
 					{activeTab === "projects" ? (
 						<AgentProjectsTab
 							agentId={id}
-							routeSearch={routeSearch}
 							headerAdornment={headerStatus}
 							headerIcon={
 								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null

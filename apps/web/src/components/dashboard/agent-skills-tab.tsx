@@ -14,7 +14,7 @@ import {
 } from "@/components/dashboard/agent-skills-query";
 import { displayProjectName } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
-import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
+import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -93,13 +93,11 @@ export function useAgentProjectSkills(
 export function AgentSkillsTab({
 	agentId,
 	agentProjectId,
-	routeSearch,
 	isResolvingAgentProject = false,
 	projectionFence = agentId,
 }: {
 	agentId: string;
 	agentProjectId: string | null | undefined;
-	routeSearch: AgentRouteSearch;
 	isResolvingAgentProject?: boolean;
 	projectionFence?: string;
 }) {
@@ -169,9 +167,7 @@ export function AgentSkillsTab({
 					const name = project ? displayProjectName(project) : skill.project_name?.trim();
 					return name ? { name, emoji: identityFor(name).emoji } : null;
 				}}
-				skillLink={(skill) =>
-					agentSkillDetailLink(agentId, skill.skill_key, skill.project_id, routeSearch)
-				}
+				skillLink={(skill) => agentSkillDetailLink(agentId, skill.skill_key, skill.project_id)}
 			/>
 		</div>
 	);

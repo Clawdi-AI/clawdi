@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route } from "@playwright/test";
 import type { WalletState } from "../src/hosted/billing/contracts";
@@ -28,6 +29,7 @@ function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingE
 
 export type DeploymentMutationFixture = {
 	id: string;
+	agent_id?: string;
 	user_id: string;
 	name: string;
 	app_id: string;
@@ -63,6 +65,16 @@ export type DeploymentMutationFixture = {
 		subscription_id: number;
 	} | null;
 };
+
+export function fixtureAgentId(
+	deployment: Pick<DeploymentMutationFixture, "id" | "agent_id" | "config_info">,
+) {
+	if (deployment.agent_id) return deployment.agent_id;
+	const hex = createHash("sha1")
+		.update(`clawdi-hosted-e2e:${deployment.id}:${deployment.config_info.runtime}`)
+		.digest("hex");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -168,6 +180,7 @@ export function mutationDeploymentReadFixture(
 		: null;
 
 	return {
+		agent_id: fixtureAgentId(deployment),
 		resource: {
 			id: deployment.id,
 			name: deployment.name,
@@ -1193,12 +1206,12 @@ export async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, lab
 
 export async function gotoHostedAgentSettings(
 	page: Page,
-	deploymentId: string,
+	agentId: string,
 	tier: "Basic" | "Performance",
 	search = "",
 ) {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(`/agents/${deploymentId}/settings${search}`);
+		await page.goto(`/agents/${agentId}/settings${search}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's

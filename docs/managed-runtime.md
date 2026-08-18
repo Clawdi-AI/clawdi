@@ -641,12 +641,14 @@ materialized under `terminalTooling.codex` from the same repeatable-read batch a
 runtime providers. When both consumers use the same provider, Cloud resolves
 and decrypts that provider auth payload once. The CLI uses the terminal-tool
 reference to own exactly one Hosted Codex default configuration at
-`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and a managed command
-shim. The shim exports the process-scoped egress placeholder and executes the
-real Codex with the original arguments; it never adds `--profile`. Managed,
-BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the same
-terminal Codex default. Unmanaged OpenClaw or Hermes units receive no provider
-environment.
+`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). When Codex is absent
+or damaged, the CLI bootstraps the audited package into the tenant's standard
+`~/.local` npm prefix. It does not wrap, pin, or roll back a healthy user-owned
+Codex install. The Hosted instance environment supplies the public egress
+placeholder, standard CA trust variables, and npm prefix to terminal commands.
+Managed, BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the
+same terminal Codex default. Unmanaged OpenClaw or Hermes units receive no
+provider environment.
 
 For a Clawdi-managed provider, the CLI gives OpenClaw, Hermes, and terminal
 Codex the same reserved local placeholder name: `CLAWDI_AI_API_KEY`. Each
@@ -660,8 +662,8 @@ custom provider selection, endpoint, canonical env key, and Responses transport.
 On the normal Clawdi-provisioned path, the plain `env_key`, fresh managed home,
 and absence of command or Codex-backend auth leave remote refresh disabled, so
 Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
-locked `0.146.0` catalog). A manually written or stale ChatGPT backend auth file
-can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
+bootstrap `0.146.0` catalog). A manually written or stale ChatGPT backend auth
+file can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
 setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
 encode a model choice. Manifest v1 `primary_model` remains required only
 because strict parsing precedes a `clawdiCli.packageSpec` self-upgrade; the new
@@ -1023,11 +1025,17 @@ Root system services use the absolute managed CLI path for watch, daemon, and
 sidecar commands. OpenClaw and Hermes user services execute their official
 binaries and do not add any platform install directory to `PATH`. Tenant tools
 use their normal home locations and inherited npm/XDG location overrides are
-cleared before official installers run. Hosted Codex is the narrow exception:
-its exact managed package is isolated under
-`~/.local/share/clawdi/codex` so the stable `~/.local/bin/codex` transparent-
-egress wrapper can delegate to it without replacing the tenant's general npm
-global tree.
+cleared before official installers run. Unlike the root-owned, exactly managed
+Clawdi CLI above, Hosted Codex is user-version-owned: Clawdi bootstraps Codex
+into the standard tenant-owned `~/.local` npm prefix only when its package
+metadata or executable is missing or damaged. A healthy installed Codex version
+is owned by the user and is never rolled back by Clawdi. During migration,
+Clawdi removes only its byte-for-byte legacy `~/.local/bin/codex` shim before
+npm installs the package-owned executable; an unrecognized file at that path is
+never overwritten. The hosted execution environment provides the public egress
+placeholder, standard per-tool CA trust variables, and user npm prefix without
+exposing the real provider credential; the shared npm prefix remains outside
+Clawdi snapshot, ownership, and rollback targets.
 
 The hosted image's bootstrap package may expose
 `/usr/local/bin/clawdi -> ../lib/node_modules/clawdi/bin/clawdi.mjs` while root
@@ -1111,9 +1119,13 @@ and the official [`config patch --stdin` contract](https://github.com/openclaw/o
 
 The local config patch also sets official shared-token auth, disables insecure
 and Host-header fallback modes, derives `gateway.controlUi.basePath` from the
-clean public URL, and includes that URL's origin in `allowedOrigins`. Device
-authentication remains on its official default; Clawdi does not project the
-retired `dangerouslyDisableDeviceAuth` setting.
+clean public URL, and includes that URL's origin in `allowedOrigins`. Clawdi
+probes the installed official `device-bootstrap` export before applying the
+patch. Legacy OpenClaw receives `dangerouslyDisableDeviceAuth: true` so its
+shared-token launch does not require device pairing. A version that supports
+the owner browser-bootstrap profile receives a JSON merge-patch `null` for that
+legacy field and keeps device authentication enabled for the official
+single-use bootstrap flow. A failed capability probe aborts convergence.
 The managed backend value, transient installer environment, and
 `openclaw.json` token must remain identical. The gateway unit does not receive
 an `OPENCLAW_GATEWAY_TOKEN` environment entry because runtime auth resolves the
@@ -1131,21 +1143,23 @@ in the currently receipted runtime instance. When supported, it returns the
 single-use, ten-minute `browserUrl` after binding it to the deployment's clean
 HTTPS endpoint. The browser consumes the official `bootstrapToken` and
 `bootstrapProfile=owner` fragment, creates its signed device identity, and
-receives the durable owner credential without a manual pairing step. If the
-installed binary cannot issue that handoff, Hosted preserves the existing exact
-`#token=` launch for older deployments; OpenClaw then enforces that deployment's
-own device-auth policy. This fallback neither disables device auth nor approves
-pending devices, and Clawdi implements no parallel device-auth protocol.
+receives the durable owner credential without a manual pairing step. OpenClaw
+removes the handoff fragment before authentication, so the visible address
+remains the clean endpoint. If the installed binary explicitly lacks
+`dashboard --json`, or returns the validated legacy JSON shape, Hosted preserves
+the exact `#token=` launch while the CLI's legacy patch disables device
+authentication. Other command, JSON, and handoff errors fail closed with no
+bare-URL fallback. Clawdi implements no parallel device-auth or device-approval
+protocol.
 
 OpenClaw persists the issued device credential in its own browser origin and
-reuses it when that browser later opens the clean dashboard URL. Clawdi records
-only that a bootstrap was attempted for the deployment and published endpoint,
-so returning to Agent Interface and opening a new window do not request another
-single-use handoff. An endpoint change requires a new bootstrap.
-The embedding page cannot inspect OpenClaw's cross-origin storage or connection
-state, and an iframe load is not treated as authentication proof. `Reconnect`
-explicitly requests a fresh native handoff when the OpenClaw UI reports that its
-stored session is no longer usable.
+may reuse it when the embedded UI revisits the clean dashboard URL. Clawdi
+records only that a bootstrap was attempted for the deployment and published
+endpoint. Every explicit new-window launch requests a fresh official handoff
+because iframe and top-level storage may be partitioned; `Reconnect` also
+requests a fresh handoff. The embedding page cannot inspect OpenClaw's
+cross-origin storage or connection state, and an iframe load is not treated as
+authentication proof.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the

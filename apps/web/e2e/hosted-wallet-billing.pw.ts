@@ -7,6 +7,7 @@ import type { WalletBinding, WalletState } from "../src/hosted/billing/contracts
 import {
 	basicPlan,
 	collectBrowserErrors,
+	fixtureAgentId,
 	gotoHostedAgentSettings,
 	gotoHostedSettingsDialog,
 	performancePlan,
@@ -28,7 +29,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 		topUpRequests,
 		onTopUpSuccess: () => deployments.splice(0, 1, walletActiveDeployment),
 	});
-	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(walletPastDueDeployment), "Basic");
 
 	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Wallet payment past due" });
 	await expect(pastDueAlert).toBeVisible();

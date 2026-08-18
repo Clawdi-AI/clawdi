@@ -97,8 +97,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
-	agentDeploymentRouteQuery,
-	agentDeploymentSelector,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
@@ -235,18 +233,8 @@ export default function ProjectDetailPage({
 	const projectResourceTargets =
 		scope.kind === "agent"
 			? {
-					skills: agentProjectResourceHref(
-						scope.agentId,
-						projectId,
-						"skills",
-						agentDeploymentRouteQuery(scope.agentQuery),
-					),
-					vaults: agentProjectResourceHref(
-						scope.agentId,
-						projectId,
-						"vaults",
-						agentDeploymentRouteQuery(scope.agentQuery),
-					),
+					skills: agentProjectResourceHref(scope.agentId, projectId, "skills"),
+					vaults: agentProjectResourceHref(scope.agentId, projectId, "vaults"),
 				}
 			: {
 					skills: projectResourceHref("skills", projectId),
@@ -272,13 +260,11 @@ export default function ProjectDetailPage({
 	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
 	const isWorkspaceContext = isWorkspace || project?.kind === "environment";
 	const canManageProjectSkills = canManageSkills && !isWorkspace;
-	const deploymentSelector =
-		scope.kind === "agent" ? agentDeploymentSelector(scope.agentQuery) : null;
 	const pageReturnTarget: ResourceNavigationTarget =
 		focus && scope.kind === "agent"
 			? isWorkspace
 				? {
-						href: agentSectionHref(scope.agentId, "overview", scope.agentQuery),
+						href: agentSectionHref(scope.agentId, "overview"),
 						label: "Agent Overview",
 					}
 				: {
@@ -895,8 +881,6 @@ export default function ProjectDetailPage({
 							<HostedWorkspaceSkillsPanel
 								agentId={scope.agentId}
 								projectId={project.id}
-								routeSearch={scope.agentQuery}
-								deploymentSelector={deploymentSelector}
 								pageHeader={focusedWorkspaceSkillsPageHeaderProps}
 							/>
 						</Suspense>
@@ -904,7 +888,6 @@ export default function ProjectDetailPage({
 						<ConnectedWorkspaceSkillsPanel
 							agentId={scope.agentId}
 							projectId={project.id}
-							routeSearch={scope.agentQuery}
 							agentType={workspaceAgent.data.agent_type}
 							projections={workspaceSkillProjections}
 							isLoading={skills.isLoading}
@@ -941,13 +924,7 @@ export default function ProjectDetailPage({
 						uninstallPending={removeProjectSkill.isPending}
 						skillLink={
 							scope.kind === "agent"
-								? (skill) =>
-										agentSkillDetailLink(
-											scope.agentId,
-											skill.skill_key,
-											project.id,
-											scope.agentQuery,
-										)
+								? (skill) => agentSkillDetailLink(scope.agentId, skill.skill_key, project.id)
 								: undefined
 						}
 					/>

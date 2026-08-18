@@ -55,11 +55,10 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: client-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   BUN_VERSION: "1.3.14"
@@ -72,13 +71,21 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
       client: ${{ steps.filter.outputs.client }}
+      web_e2e: ${{ steps.filter.outputs.web_e2e }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
       whatsapp_native_e2e: ${{ steps.filter.outputs.whatsapp_native_e2e }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
       - id: filter
         uses: dorny/paths-filter@v4
         with:
+          # Use the exact event endpoints so path routing stays on the bounded
+          # git fallback instead of the pull-request files API.
+          token: ""
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
             client:
               - "apps/web/**"
@@ -89,6 +96,16 @@ jobs:
               - "package.json"
               - "bun.lock"
               - "patches/libsignal@6.0.0.patch"
+              - "turbo.json"
+              - "tsconfig.base.json"
+              - "biome.json"
+              - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/client-ci.yml"
+            web_e2e:
+              - "apps/web/**"
+              - "packages/shared/**"
+              - "package.json"
+              - "bun.lock"
               - "turbo.json"
               - "tsconfig.base.json"
               - "biome.json"
@@ -196,7 +213,7 @@ jobs:
     needs: changes
     if: >-
       github.event_name != 'schedule' &&
-      needs.changes.outputs.client == 'true'
+      needs.changes.outputs.web_e2e == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 25
     env:
@@ -248,30 +265,20 @@ jobs:
           path: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
           key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}
       - uses: docker/setup-buildx-action@v4
-      - name: Build stock OpenClaw WhatsApp E2E image
-        uses: docker/build-push-action@v7
+      - name: Build stock OpenClaw and Hermes WhatsApp E2E images
+        uses: docker/bake-action@v7
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
         with:
-          context: .
-          file: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/Dockerfile
-          target: openclaw
-          tags: clawdi-managed-whatsapp-native-e2e:openclaw-local
+          source: .
+          files: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/docker-bake.hcl
+          targets: openclaw,hermes
           load: true
-          build-contexts: |
-            e2e_artifacts=${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
-          cache-from: type=gha,scope=managed-whatsapp-native-e2e-openclaw
-          cache-to: type=gha,mode=max,scope=managed-whatsapp-native-e2e-openclaw
-      - name: Build stock Hermes WhatsApp E2E image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/Dockerfile
-          target: hermes
-          tags: clawdi-managed-whatsapp-native-e2e:hermes-local
-          load: true
-          build-contexts: |
-            e2e_artifacts=${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
-          cache-from: type=gha,scope=managed-whatsapp-native-e2e-hermes
-          cache-to: type=gha,mode=max,scope=managed-whatsapp-native-e2e-hermes
+          set: |
+            openclaw.cache-from=type=gha,scope=managed-whatsapp-native-e2e-openclaw
+            openclaw.cache-to=type=gha,mode=max,scope=managed-whatsapp-native-e2e-openclaw
+            hermes.cache-from=type=gha,scope=managed-whatsapp-native-e2e-hermes
+            hermes.cache-to=type=gha,mode=max,scope=managed-whatsapp-native-e2e-hermes
       - name: Test stock OpenClaw and Hermes WhatsApp plugins
         run: scripts/test-managed-whatsapp-native-e2e.sh --run-only
       - name: Remove loaded E2E images

@@ -4,6 +4,7 @@ import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import {
 	type DeploymentMutationFixture,
+	fixtureAgentId,
 	isDeploymentMutationFixture,
 	isRecord,
 	mutationDeploymentReadFixture,
@@ -758,6 +759,7 @@ const missingProjectionFailureReason =
 const failedMissingProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_failed_projection",
+	agent_id: missingProjectionEnvironmentId,
 	name: "Failed projection agent",
 	status: "failed",
 	failure_reason: missingProjectionFailureReason,
@@ -770,6 +772,7 @@ const failedMissingProjectionDeployment = {
 const runningMissingProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_running_projection",
+	agent_id: missingProjectionEnvironmentId,
 	name: "Running projection agent",
 	hermes_control_ui_url: "https://runtime.example/hermes",
 	config_info: {
@@ -784,6 +787,7 @@ const retainedProjectionFailureReason =
 const _failedRetainedProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_failed_retained_projection",
+	agent_id: retainedProjectionEnvironmentId,
 	name: "Failed retained projection agent",
 	status: "failed",
 	failure_reason: retainedProjectionFailureReason,
@@ -838,6 +842,7 @@ const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
 const railHostedDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_rail_cloud",
+	agent_id: railHostedEnvironmentId,
 	name: "e2e-2",
 	config_info: {
 		...includedBasicDeployment.config_info,
@@ -1400,7 +1405,7 @@ async function stubCompletedStripeCheckout(page: Page) {
 					getSession: () => session,
 					confirm: async () => ({
 						type: "success",
-						session: { status: { type: "complete" } },
+						session: { status: { type: "complete", paymentStatus: "paid" } },
 					}),
 				};
 				return {
@@ -2886,12 +2891,12 @@ async function expectPointerCursor(locator: ReturnType<Page["locator"]>, label: 
 
 async function gotoHostedAgentSettings(
 	page: Page,
-	deploymentId: string,
+	agentId: string,
 	tier: "Basic" | "Performance",
 	search = "",
 ) {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(`/agents/${deploymentId}/settings${search}`);
+		await page.goto(`/agents/${agentId}/settings${search}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's
@@ -3017,9 +3022,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			},
 		],
 	});
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
@@ -3091,8 +3094,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const viewAllHref = await viewAllSessions.getAttribute("href");
 	const viewAllUrl = new URL(viewAllHref ?? "", page.url());
 	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedEnvironmentId}/sessions`);
-	expect(viewAllUrl.searchParams.get("source")).toBe("on-clawdi");
-	expect(viewAllUrl.searchParams.get("d")).toBe(railHostedDeployment.id);
+	expect(viewAllUrl.search).toBe("");
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(3);
 	await expect(recentSessions).not.toContainText("Review risks");
@@ -3206,13 +3208,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		overview.locator('[data-overview-module="skills"]').getByRole("link", { name: "Skills" }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills`,
 	);
 	await expect(
 		overview.locator('[data-overview-module="vaults"]').getByRole("link", { name: "Vaults" }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults`,
 	);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
@@ -3234,25 +3236,15 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const skillsLink = projectGroup.getByRole("link", { name: "Skills", exact: true });
 	const vaultsLink = projectGroup.getByRole("link", { name: "Vaults", exact: true });
 	const expectedProjectHub = `/agents/${railHostedEnvironmentId}/project-access/project-hosted`;
-	await expect(skillsLink).toHaveAttribute(
-		"href",
-		`${expectedProjectHub}/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
-	await expect(vaultsLink).toHaveAttribute(
-		"href",
-		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await expect(skillsLink).toHaveAttribute("href", `${expectedProjectHub}/skills`);
+	await expect(vaultsLink).toHaveAttribute("href", `${expectedProjectHub}/vaults`);
 	await vaultsLink.focus();
 	await expect(vaultsLink).toBeFocused();
 	await vaultsLink.click();
-	await expect(page).toHaveURL(
-		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await expect(page).toHaveURL(`${expectedProjectHub}/vaults`);
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	await expect(overview.locator("[data-overview-module]")).toHaveCount(7);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
@@ -3359,9 +3351,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		fullPage: true,
 	});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}/sessions?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
+	await page.goto(`/agents/${railHostedEnvironmentId}/sessions`);
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
@@ -3393,9 +3383,7 @@ for (const projectionFailure of [
 						}
 					: undefined,
 		});
-		await page.goto(
-			`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
-		);
+		await page.goto(`/agents/${missingProjectionEnvironmentId}`);
 		const main = page.locator("main");
 		await expect(main.getByRole("heading", { level: 1 })).toBeVisible();
 		await expect(main.getByText("Unavailable right now", { exact: true }).first()).toBeVisible();
@@ -3427,7 +3415,7 @@ test("agent provider creation stays in context and updates only after Save chang
 		],
 		updateDeploymentRequests,
 	});
-	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider`;
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		await page.goto(agentPath);
 		try {
@@ -3490,9 +3478,7 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 	});
 
 	try {
-		await page.goto(
-			`/agents/${railHostedEnvironmentId}/console?source=on-clawdi&d=${railHostedDeployment.id}`,
-		);
+		await page.goto(`/agents/${railHostedEnvironmentId}/console`);
 		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
 		await expect(loadingShell).toBeVisible();
 		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
@@ -3570,174 +3556,100 @@ test("agent rail keeps New agent after agents and retains cache after list failu
 	}
 });
 
-test("header Wallet slot stays stable from unresolved access through a long balance", async ({
+test("header Wallet adapts long balances across narrow touch layouts", async ({
 	page,
 	browser,
 	baseURL,
 }) => {
 	if (!baseURL) throw new Error("Playwright baseURL is required for the Wallet header test.");
-	let releaseProductAccess: (() => void) | undefined;
-	let releaseDeploymentList: (() => void) | undefined;
-	let releaseWalletChunk: (() => void) | undefined;
-	let releaseWalletResponse: (() => void) | undefined;
-	const productAccessGate = new Promise<void>((resolve) => {
-		releaseProductAccess = resolve;
-	});
-	const deploymentListGate = new Promise<void>((resolve) => {
-		releaseDeploymentList = resolve;
-	});
-	const walletChunkGate = new Promise<void>((resolve) => {
-		releaseWalletChunk = resolve;
-	});
-	const walletResponseGate = new Promise<void>((resolve) => {
-		releaseWalletResponse = resolve;
-	});
-	const productAccessRequests: string[] = [];
-	const deploymentListRequests: string[] = [];
-	const walletRequests: string[] = [];
 	const longBalance = "$12,345,678,901,234,567,890.12";
-	let walletChunkRequests = 0;
-	await page.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
-		walletChunkRequests += 1;
-		await walletChunkGate;
-		await route.continue();
-	});
 	await stubHostedApi(page, {
-		productAccessRequests,
-		productAccessResponseGate: productAccessGate,
-		deploymentListRequests,
-		deploymentListResponses: [[railHostedDeployment]],
-		deploymentListResponseGates: [deploymentListGate],
-		walletRequests,
 		walletResponses: [
 			{
 				body: { ...walletState, balance_usd: "12345678901234567890.12" },
 				status: 200,
 			},
 		],
-		walletResponseGates: [walletResponseGate],
 	});
 
+	await page.goto("/agents");
+	const walletSlot = page.getByTestId("global-wallet-balance-slot");
+	const walletControl = page.getByTestId("global-wallet-balance");
+	await expect(walletControl).toContainText(longBalance);
+	await expect(walletControl).toHaveAttribute(
+		"aria-label",
+		`Wallet balance ${longBalance}. Open Wallet settings`,
+	);
+	const balanceText = walletControl.locator("span").filter({ hasText: longBalance });
+	expect(await balanceText.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+		true,
+	);
+
+	await page.setViewportSize({ width: 320, height: 568 });
+	const header = page.locator("header");
+	const sidebarTrigger = page.getByRole("button", { name: "Toggle Sidebar" });
+	const separator = header.locator('[data-slot="separator"]');
+	const breadcrumb = header.locator('[data-slot="breadcrumb-list"]');
+	const notificationCenter = page.getByRole("button", { name: "Notification Center" });
+	await expectNoHorizontalOverflow(header, "Wallet header at 320px");
+	await expect(separator).toHaveCSS("width", "1px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		walletControl,
+		walletSlot,
+		"Wallet header control at 320px",
+	);
+	await _expectControlsDoNotOverlap(
+		[sidebarTrigger, separator, breadcrumb, walletControl, notificationCenter],
+		"Wallet header at 320px",
+	);
+	expect(await balanceText.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+		true,
+	);
+
+	const touchContext = await browser.newContext({
+		baseURL,
+		hasTouch: true,
+		viewport: { width: 320, height: 568 },
+	});
+	const touchPage = await touchContext.newPage();
 	try {
-		await page.goto("/agents");
-		const walletSlot = page.getByTestId("global-wallet-balance-slot");
-		const walletControl = page.getByTestId("global-wallet-balance");
-		await expect(walletSlot).toBeVisible();
-		await expect.poll(() => productAccessRequests.length).toBeGreaterThan(0);
-		await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(0);
-		await expect(walletSlot).toBeEmpty();
-		await expect(walletControl).toHaveCount(0);
-		expect(walletChunkRequests).toBe(0);
-		const unresolvedSlotBox = await walletSlot.boundingBox();
-		if (!unresolvedSlotBox) throw new Error("Unresolved Wallet slot should reserve geometry.");
-
-		releaseProductAccess?.();
-		releaseDeploymentList?.();
-		await expect(walletControl).toBeVisible();
-		await expect(walletControl).toBeDisabled();
-		await expect(walletControl.locator('[data-slot="skeleton"]')).toBeVisible();
-		const fallbackSlotBox = await walletSlot.boundingBox();
-		if (!fallbackSlotBox) throw new Error("Wallet chunk fallback should preserve slot geometry.");
-		expect(Math.abs(fallbackSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(fallbackSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
-		expect(Math.abs(fallbackSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
-		expect(Math.abs(fallbackSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
-
-		releaseWalletChunk?.();
-		await expect.poll(() => walletRequests.length).toBe(1);
-		await expect(walletControl).toBeEnabled();
-
-		releaseWalletResponse?.();
-		await expect(walletControl).toContainText(longBalance);
-		await expect(walletControl).toHaveAttribute(
-			"aria-label",
-			`Wallet balance ${longBalance}. Open Wallet settings`,
-		);
-		await expect(walletControl).toHaveAttribute(
-			"title",
-			`Wallet balance ${longBalance}. Open Wallet settings`,
-		);
-		const finalSlotBox = await walletSlot.boundingBox();
-		if (!finalSlotBox) throw new Error("Loaded Wallet slot should preserve header geometry.");
-		expect(Math.abs(finalSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(finalSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
-		expect(Math.abs(finalSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
-		expect(Math.abs(finalSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
-		const balanceText = walletControl.locator("span").filter({ hasText: longBalance });
-		await expect(balanceText).toBeVisible();
-		expect(
-			await balanceText.evaluate(
-				(element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth,
-			),
-		).toBe(true);
-		expect(walletChunkRequests).toBe(1);
+		await stubHostedApi(touchPage);
+		await touchPage.goto("/agents");
+		expect(await touchPage.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+		const walletControl = touchPage.getByTestId("global-wallet-balance");
+		const balanceText = walletControl.locator("span").filter({ hasText: "$25.00" });
+		await expect(walletControl).toContainText("$25.00");
+		for (const viewport of [
+			{ width: 320, height: 568 },
+			{ width: 390, height: 844 },
+		]) {
+			await touchPage.setViewportSize(viewport);
+			expect(
+				await balanceText.evaluate((element) => element.scrollWidth <= element.clientWidth),
+			).toBe(true);
+			const header = touchPage.locator("header");
+			const walletSlot = touchPage.getByTestId("global-wallet-balance-slot");
+			await expectNoHorizontalOverflow(header, `Wallet header at ${viewport.width}px`);
+			await expectContainedInOwnerAndViewport(
+				touchPage,
+				walletControl,
+				walletSlot,
+				`Wallet header control at ${viewport.width}px touch`,
+			);
+			await _expectControlsDoNotOverlap(
+				[
+					touchPage.getByRole("button", { name: "Toggle Sidebar" }),
+					header.locator('[data-slot="separator"]'),
+					header.locator('[data-slot="breadcrumb-list"]'),
+					walletControl,
+					touchPage.getByRole("button", { name: "Notification Center" }),
+				],
+				`Wallet header at ${viewport.width}px touch`,
+			);
+		}
 	} finally {
-		releaseProductAccess?.();
-		releaseDeploymentList?.();
-		releaseWalletChunk?.();
-		releaseWalletResponse?.();
-	}
-
-	const inapplicableContext = await browser.newContext({ baseURL });
-	const inapplicablePage = await inapplicableContext.newPage();
-	const inapplicableProductAccessRequests: string[] = [];
-	const inapplicableDeploymentListRequests: string[] = [];
-	let releaseInapplicableProductAccess: (() => void) | undefined;
-	let releaseInapplicableDeploymentList: (() => void) | undefined;
-	const inapplicableProductAccessGate = new Promise<void>((resolve) => {
-		releaseInapplicableProductAccess = resolve;
-	});
-	const inapplicableDeploymentListGate = new Promise<void>((resolve) => {
-		releaseInapplicableDeploymentList = resolve;
-	});
-	let inapplicableChunkRequests = 0;
-	try {
-		await inapplicablePage.route("**/src/hosted/global-wallet-balance.tsx*", async (route) => {
-			inapplicableChunkRequests += 1;
-			await route.continue();
-		});
-		await stubHostedApi(inapplicablePage, {
-			canCreateCloudAgents: false,
-			productAccessResponseGate: inapplicableProductAccessGate,
-			productAccessRequests: inapplicableProductAccessRequests,
-			deploymentListRequests: inapplicableDeploymentListRequests,
-			deploymentListResponses: [[]],
-			deploymentListResponseGates: [inapplicableDeploymentListGate],
-		});
-		await inapplicablePage.goto("/agents");
-		const walletSlot = inapplicablePage.getByTestId("global-wallet-balance-slot");
-		await expect(walletSlot).toBeVisible();
-		await expect.poll(() => inapplicableProductAccessRequests.length).toBeGreaterThan(0);
-		await expect.poll(() => inapplicableDeploymentListRequests.length).toBeGreaterThan(0);
-		await expect(walletSlot).toBeEmpty();
-		const unresolvedSlotBox = await walletSlot.boundingBox();
-		if (!unresolvedSlotBox) throw new Error("Inapplicable Wallet slot should reserve geometry.");
-
-		releaseInapplicableProductAccess?.();
-		releaseInapplicableDeploymentList?.();
-		await expect(
-			inapplicablePage
-				.getByTestId("app-sidebar-agent-rail")
-				.getByTestId("app-sidebar-agent-loading-slot"),
-		).toHaveCount(0);
-		await expect(
-			inapplicablePage
-				.getByTestId("app-sidebar-agent-rail")
-				.getByRole("button", { name: "New agent" }),
-		).toBeEnabled();
-		await expect(inapplicablePage.getByTestId("global-wallet-balance")).toHaveCount(0);
-		await expect(walletSlot).toBeEmpty();
-		const resolvedSlotBox = await walletSlot.boundingBox();
-		if (!resolvedSlotBox) throw new Error("Resolved Wallet slot should preserve geometry.");
-		expect(Math.abs(resolvedSlotBox.x - unresolvedSlotBox.x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(resolvedSlotBox.y - unresolvedSlotBox.y)).toBeLessThanOrEqual(1);
-		expect(Math.abs(resolvedSlotBox.width - unresolvedSlotBox.width)).toBeLessThanOrEqual(1);
-		expect(Math.abs(resolvedSlotBox.height - unresolvedSlotBox.height)).toBeLessThanOrEqual(1);
-		expect(inapplicableChunkRequests).toBe(0);
-	} finally {
-		releaseInapplicableProductAccess?.();
-		releaseInapplicableDeploymentList?.();
-		await inapplicableContext.close();
+		await touchContext.close();
 	}
 });
 
@@ -3806,9 +3718,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await consoleLink.click();
 	await expect(page).toHaveURL("/");
 	await cloudButton.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}`);
 	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 	await consoleLink.click();
@@ -3853,7 +3763,7 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 	});
-	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const query = "";
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto(`/agents/${railHostedEnvironmentId}/memories${query}`);
 
@@ -3883,6 +3793,69 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 		path: testInfo.outputPath("responsive-breadcrumb-320x568.png"),
 		fullPage: false,
 	});
+});
+
+test("Console keeps its desktop columns and places Recent sessions last on narrow screens", async ({
+	page,
+}, testInfo) => {
+	await stubHostedApi(page);
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/");
+
+	const main = page.locator("main");
+	const activity = main.getByText("Activity", { exact: true });
+	const library = main.getByText("Library", { exact: true });
+	const recentSessions = main.getByRole("heading", { name: "Recent sessions", exact: true });
+	await expect(recentSessions).toBeVisible();
+
+	const [desktopActivity, desktopLibrary, desktopRecent] = await Promise.all([
+		activity.boundingBox(),
+		library.boundingBox(),
+		recentSessions.boundingBox(),
+	]);
+	if (!desktopActivity || !desktopLibrary || !desktopRecent) {
+		throw new Error("Console sections should render in the desktop grid.");
+	}
+	expect(desktopRecent.y).toBeGreaterThan(desktopActivity.y);
+	expect(desktopLibrary.x).toBeGreaterThan(desktopActivity.x);
+
+	await page.setViewportSize({ width: 320, height: 568 });
+	const sectionOrder = await main
+		.locator('[data-slot="card-title"], h2')
+		.evaluateAll((elements) =>
+			elements
+				.map((element) => element.textContent?.trim())
+				.filter((text) =>
+					["Activity", "Library", "Last 7 days", "Recent sessions"].includes(text ?? ""),
+				),
+		);
+	expect(sectionOrder).toEqual(["Activity", "Library", "Last 7 days", "Recent sessions"]);
+
+	const connectAgent = main.getByRole("button", { name: "Connect an agent on your machine" });
+	await expect(connectAgent).toBeVisible();
+	await expectContainedInOwnerAndViewport(
+		page,
+		connectAgent,
+		connectAgent.locator(".."),
+		"320px onboarding action",
+	);
+	await expectNoHorizontalOverflow(page.locator("html"), "320px Console document");
+	await page.screenshot({
+		path: testInfo.outputPath("console-320x568.png"),
+		fullPage: true,
+	});
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expectNoHorizontalOverflow(page.locator("html"), "390px Console document");
+	await page.screenshot({
+		path: testInfo.outputPath("console-390x844.png"),
+		fullPage: true,
+	});
+
+	const connectors = main.getByRole("link", { name: /^Connectors/ });
+	await connectors.focus();
+	await page.keyboard.press("Tab");
+	await expect(main.getByRole("button", { name: "View all" })).toBeFocused();
 });
 
 test("Wallet auto-reload authorizes and replaces its dedicated card responsively", async ({
@@ -4016,6 +3989,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	page,
 }) => {
 	const checkoutRequests: string[] = [];
+	const deploymentDetailRequests: string[] = [];
 	const deploymentRequestReads: string[] = [];
 	const operationPollRequests: string[] = [];
 	page.on("request", (request) => {
@@ -4043,6 +4017,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 				},
 			},
 		],
+		deploymentDetailRequests,
 		deploymentRequestReads,
 		deployments: [includedBasicDeployment, startingDeployment],
 		plans: [basicPlan],
@@ -4050,20 +4025,21 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	});
 	await page.goto("/deploy");
 
-	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({ ui_mode: "custom" });
 	const checkoutDialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
 	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
-	await expect(page).toHaveURL(/\/agents\/hdep_created/);
+	await expect.poll(() => deploymentRequestReads).toHaveLength(1);
+	await expect.poll(() => deploymentDetailRequests).toEqual([startingDeployment.id]);
+	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
 	).toBeVisible();
 	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
-	expect(deploymentRequestReads).toHaveLength(1);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });
@@ -4081,7 +4057,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		deleteRequests,
 		deploymentListRequests,
 	});
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(includedBasicDeployment), "Basic");
 	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
 	await page.evaluate(() => {
 		document.documentElement.dataset.deleteNotFoundFlash = "false";
@@ -4135,7 +4111,7 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 		plans: [basicPlan],
 		updateDeploymentRequests,
 	});
-	await gotoHostedAgentSettings(page, "hdep_rail_cloud", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(railHostedDeployment), "Basic");
 
 	const displayName = page.getByRole("textbox", { name: "Agent name" });
 	await displayName.fill("Unsaved Cloud name");
@@ -4181,9 +4157,9 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 		deleteRequests,
 	});
 
-	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	await page.goto(`/agents/${missingProjectionEnvironmentId}`);
 	const main = page.locator("main");
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
+	await expect.poll(() => new URL(page.url()).search).toBe("");
 	// The overview renders from deployment authority even while the agent
 	// projection 404s; internal failure details never reach the page.
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
@@ -4293,7 +4269,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 		],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(paidBasicDeployment), "Basic");
 
 	await page
 		.locator('[data-slot="compute-subscription-card"]')
@@ -4373,7 +4349,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(paidBasicDeployment), "Basic");
 
 	await page
 		.locator('[data-slot="compute-subscription-card"]')
@@ -4447,7 +4423,7 @@ test("accepted plan change recovers from the deployment projection after refresh
 		planChangeOperationResponses: [{ body: terminalDeployment.accepted_operation, status: 200 }],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
 	await page.reload();
 
 	await page.getByRole("button", { name: "Check subscription change status" }).click();
@@ -4548,9 +4524,7 @@ for (const firstTimeViewport of [
 			],
 		});
 
-		await page.goto(
-			`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
-		);
+		await page.goto(`/agents/${missingProjectionEnvironmentId}/channel-links`);
 		const clawdiSection = page.locator('[data-agent-channel-section="clawdi"]');
 		const customSection = page.locator('[data-agent-channel-section="custom"]');
 		const unavailableHeading = page.getByRole("heading", { name: "Page Unavailable" });
@@ -4597,7 +4571,7 @@ for (const firstTimeViewport of [
 		);
 		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
 			"href",
-			`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+			`/agents/${missingProjectionEnvironmentId}/console`,
 		);
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);

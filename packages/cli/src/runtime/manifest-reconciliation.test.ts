@@ -2011,7 +2011,29 @@ chmod 0755 '${commandPath}'
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
+		const openclawPackageRoot = join(
+			paths.userHome,
+			".local",
+			"tools",
+			"node",
+			"lib",
+			"node_modules",
+			"openclaw",
+		);
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(openclawPackageRoot, { recursive: true });
+		writeFileSync(
+			join(openclawPackageRoot, "device-bootstrap.mjs"),
+			"export const normalizeDeviceBootstrapProfile = (profile) => profile;\n",
+		);
+		writeFileSync(
+			join(openclawPackageRoot, "package.json"),
+			JSON.stringify({
+				name: "openclaw",
+				type: "module",
+				exports: { "./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs" },
+			}),
+		);
 		writeFileSync(
 			openclawBin,
 			[
@@ -2069,6 +2091,7 @@ chmod 0755 '${commandPath}'
 					basePath: "/control",
 					allowedOrigins: ["https://agent.example.test"],
 					dangerouslyAllowHostHeaderOriginFallback: false,
+					dangerouslyDisableDeviceAuth: null,
 				},
 			},
 		});

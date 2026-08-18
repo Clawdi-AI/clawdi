@@ -57,57 +57,46 @@ describe("resource navigation scopes", () => {
 		});
 	});
 
-	it("builds nested Agent details and preserves hosted deployment identity", () => {
-		const scope = agentResourceScope(
-			"agent 1",
-			{
-				source: "on-clawdi",
-				d: "deployment 1",
-				tab: "legacy",
-				project: "unrelated",
-			},
-			"project 1",
-		);
+	it("builds clean nested Agent navigation with explicit flat Vault state", () => {
+		const scope = agentResourceScope("agent 1", "project 1");
 
 		expect(resourceCollectionTarget(scope, "projects")).toEqual({
-			href: "/agents/agent%201/project-access?source=on-clawdi&d=deployment%201",
+			href: "/agents/agent%201/project-access",
 			label: "Projects",
 		});
 		expect(projectDetailHrefForScope(scope, "project 1")).toBe(
-			"/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201",
+			"/agents/agent%201/project-access/project%201",
 		);
 		expect(vaultDetailHrefForScope(scope, "prod keys", "vault/1")).toBe(
-			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&project=project%201&vault=vault%2F1",
+			"/agents/agent%201/vaults/prod%20keys?project=project%201&vault=vault%2F1",
 		);
 		expect(resourceCollectionTarget(scope, "vaults")).toEqual({
-			href: "/agents/agent%201/project-access/project%201/vaults?source=on-clawdi&d=deployment%201",
+			href: "/agents/agent%201/project-access/project%201/vaults",
 			label: "Vaults",
 		});
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
-			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",
+			href: "/agents/agent%201/memories",
 			label: "Memories",
 		});
 		expect(resourceCollectionTarget(scope, "connectors")).toEqual({
-			href: "/agents/agent%201/connectors?source=on-clawdi&d=deployment%201",
+			href: "/agents/agent%201/connectors",
 			label: "Connectors",
 		});
 		expect(memoryDetailHrefForScope(scope, "memory 1")).toBe(
-			"/agents/agent%201/memories/memory%201?source=on-clawdi&d=deployment%201",
+			"/agents/agent%201/memories/memory%201",
 		);
 		expect(connectorDetailHrefForScope(scope, "google drive")).toBe(
-			"/agents/agent%201/connectors/google%20drive?source=on-clawdi&d=deployment%201",
+			"/agents/agent%201/connectors/google%20drive",
 		);
 		expect(projectDetailLink(scope, "project 1")).toMatchObject({
 			to: "/agents/$id/project-access/$projectId",
 			params: { id: "agent 1", projectId: "project 1" },
-			search: { source: "on-clawdi", d: "deployment 1" },
 		});
+		expect(projectDetailLink(scope, "project 1")).not.toHaveProperty("search");
 		expect(vaultDetailLink(scope, "prod keys", "vault/1")).toMatchObject({
 			to: "/agents/$id/vaults/$slug",
 			params: { id: "agent 1", slug: "prod keys" },
 			search: {
-				source: "on-clawdi",
-				d: "deployment 1",
 				project: "project 1",
 				vault: "vault/1",
 			},
@@ -115,13 +104,13 @@ describe("resource navigation scopes", () => {
 		expect(memoryDetailLink(scope, "memory 1")).toMatchObject({
 			to: "/agents/$id/memories/$memoryId",
 			params: { id: "agent 1", memoryId: "memory 1" },
-			search: { source: "on-clawdi", d: "deployment 1" },
 		});
+		expect(memoryDetailLink(scope, "memory 1")).not.toHaveProperty("search");
 		expect(connectorDetailLink(scope, "google drive")).toMatchObject({
 			to: "/agents/$id/connectors/$name",
 			params: { id: "agent 1", name: "google drive" },
-			search: { source: "on-clawdi", d: "deployment 1" },
 		});
+		expect(connectorDetailLink(scope, "google drive")).not.toHaveProperty("search");
 	});
 
 	it("makes leaving the Agent shell an explicit library-management target", () => {
@@ -137,7 +126,7 @@ describe("resource navigation scopes", () => {
 		});
 	});
 
-	it("accepts old from-query Agent links only as a compatibility bridge", () => {
+	it("ignores obsolete Hosted identity fields on legacy resource-return links", () => {
 		expect(
 			legacyAgentResourceScope(
 				{
@@ -151,7 +140,6 @@ describe("resource navigation scopes", () => {
 		).toEqual({
 			kind: "agent",
 			agentId: "agent 1",
-			agentQuery: { source: "on-clawdi", d: "deployment 1" },
 		});
 		expect(
 			legacyAgentResourceScope({ from: "agent-vaults", agent: "agent 1" }, "projects"),

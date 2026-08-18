@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUp, Settings, UserRoundX } from "lucide-react";
+import { ArrowUp, CircleCheck, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentLabel } from "@/components/dashboard/agent-label";
 import { entityCardChassisClass } from "@/components/entity-card";
@@ -18,6 +18,7 @@ export type ComputeSubscriptionIdentity =
 			avatarUrl?: string | null;
 			href?: string;
 	  }
+	| { kind: "available"; label: string }
 	| { kind: "unavailable"; label: string };
 
 export type ComputeSubscriptionCardView = {
@@ -91,6 +92,18 @@ export function computeSubscriptionCardView({
 }
 
 function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdentity }) {
+	if (identity.kind === "available") {
+		return (
+			<div className="flex min-w-0 items-center gap-3 text-success-muted-foreground">
+				<span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-success-muted">
+					<CircleCheck className="size-3.5" aria-hidden />
+				</span>
+				<span className="truncate text-sm font-medium" title={identity.label}>
+					{identity.label}
+				</span>
+			</div>
+		);
+	}
 	if (identity.kind === "unavailable") {
 		return (
 			<div className="flex min-w-0 items-center gap-3 text-muted-foreground">
@@ -176,15 +189,18 @@ export function ComputeSubscriptionCard({
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
 			className={entityCardChassisClass({
 				variant: "compact",
-				className: cn("flex h-full min-w-0 flex-col gap-3", className),
+				className: cn("@container/subscription flex h-full min-w-0 flex-col gap-3", className),
 			})}
 		>
 			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-				<header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-					<Heading className="min-w-0 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+				<header
+					data-slot="compute-subscription-header"
+					className="flex min-h-6 min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5 sm:min-h-12 @md/subscription:min-h-6"
+				>
+					<Heading className="min-w-28 flex-1 basis-28 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
 						{view.plan}
 					</Heading>
-					<div className="flex min-w-0 flex-wrap justify-end gap-1.5">
+					<div className="ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1.5">
 						<StatusBadge status={view.status.tone} withDot>
 							{view.status.label}
 						</StatusBadge>
@@ -192,14 +208,17 @@ export function ComputeSubscriptionCard({
 					</div>
 				</header>
 
-				<dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5">
+				<dl
+					data-slot="compute-subscription-meta"
+					className="flex min-h-5 min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5 sm:min-h-12 @md/subscription:min-h-5"
+				>
 					{view.commercialFacts.map((fact) => (
-						<div key={fact.label} className="min-w-0 text-xs text-muted-foreground">
+						<div key={fact.label} className="min-w-0 text-xs leading-5 text-muted-foreground">
 							<dt className="sr-only">{fact.label}</dt>
 							<dd
 								className={cn(
 									"[overflow-wrap:anywhere]",
-									fact.emphasis && "text-sm font-semibold text-foreground",
+									fact.emphasis && "font-semibold text-foreground",
 								)}
 							>
 								{fact.value}
@@ -208,37 +227,40 @@ export function ComputeSubscriptionCard({
 					))}
 				</dl>
 
-				{identity ? (
-					<div
-						data-slot="compute-subscription-identity"
-						className="flex min-w-0 items-center gap-3"
-					>
-						<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
-						<div className="min-w-0 flex-1">
-							<SubscriptionIdentity identity={identity} />
-						</div>
-					</div>
-				) : null}
-			</div>
-
-			{notice || actions ? (
-				<div className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1 sm:items-end">
-					{notice ? (
-						<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
-							{notice}
-						</div>
-					) : null}
-					{actions ? (
-						<div
-							id={actionsId}
-							data-slot="compute-subscription-actions"
-							className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end"
-						>
-							{actions}
-						</div>
+				<div
+					data-slot="compute-subscription-identity"
+					className="flex min-h-5 min-w-0 items-center gap-3"
+				>
+					{identity ? (
+						<>
+							{identity.kind === "agent" ? (
+								<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+							) : null}
+							<div className="min-w-0 flex-1">
+								<SubscriptionIdentity identity={identity} />
+							</div>
+						</>
 					) : null}
 				</div>
-			) : null}
+			</div>
+
+			<div
+				data-slot="compute-subscription-footer"
+				className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1 sm:items-end"
+			>
+				{notice ? (
+					<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
+						{notice}
+					</div>
+				) : null}
+				<div
+					id={actionsId}
+					data-slot="compute-subscription-actions"
+					className="flex min-h-8 min-w-0 w-full flex-wrap items-center gap-2 sm:justify-end max-sm:[&_[data-slot=button]]:h-auto max-sm:[&_[data-slot=button]]:min-h-8 max-sm:[&_[data-slot=button]]:max-w-full max-sm:[&_[data-slot=button]]:whitespace-normal"
+				>
+					{actions}
+				</div>
+			</div>
 		</article>
 	);
 }

@@ -42,8 +42,8 @@ export function SubscriptionSourcePicker({
 
 	const paidDisabled = disabled || error != null || isLoading;
 	return (
-		<div data-hosted="true" className="flex min-w-0 flex-col gap-3">
-			<div className="grid min-w-0 gap-2 lg:grid-cols-2">
+		<div data-hosted="true" className="@container/subscription-source flex min-w-0 flex-col gap-3">
+			<div className="grid min-w-0 items-start gap-2 @3xl/subscription-source:grid-cols-2">
 				{showIncluded ? (
 					<EntityChoiceCard
 						selected={value?.mode === "included"}
@@ -146,14 +146,15 @@ function ExistingSubscriptionChoice({
 					{subscription.plan_slug === "compute_performance" ? <Zap /> : <Cpu />}
 				</IconChip>
 			}
-			title={`${computeTierLabel(subscription.plan_slug)} subscription`}
+			title={computeTierLabel(subscription.plan_slug)}
 			description="$0 due now"
 			badge={statusBadge}
+			detailsPlacement="responsive"
 			details={
-				<dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-1 text-xs">
+				<dl className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-1 text-[11px] @md/choice:gap-x-3 @md/choice:text-xs">
 					<div className="min-w-0">
 						<dt className="text-muted-foreground">Term</dt>
-						<dd className="truncate text-foreground">
+						<dd className="whitespace-nowrap text-foreground">
 							{billingTermLabel(subscription.billing_term_months)}
 						</dd>
 					</div>
@@ -165,17 +166,17 @@ function ExistingSubscriptionChoice({
 							) : (
 								<CreditCard className="size-3 shrink-0" />
 							)}
-							<span className="truncate">{paymentLabel}</span>
+							<span className="whitespace-nowrap">{paymentLabel}</span>
 						</dd>
 					</div>
 					<div className="min-w-0">
 						<dt className="text-muted-foreground">{canceling ? "Ends" : "Renews"}</dt>
-						<dd className="truncate text-foreground">{dateLabel}</dd>
+						<dd className="whitespace-nowrap text-foreground">{dateLabel}</dd>
 					</div>
 					{priceLabel ? (
 						<div className="min-w-0">
 							<dt className="text-muted-foreground">Plan price</dt>
-							<dd className="truncate text-foreground tabular-nums">{priceLabel}</dd>
+							<dd className="whitespace-nowrap text-foreground tabular-nums">{priceLabel}</dd>
 						</div>
 					) : null}
 				</dl>
