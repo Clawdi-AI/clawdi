@@ -189,77 +189,70 @@ export function ComputeSubscriptionCard({
 			data-subscription-status={view.status.label.toLowerCase().replaceAll(" ", "-")}
 			className={entityCardChassisClass({
 				variant: "compact",
-				className: cn("@container/subscription flex h-full min-w-0 flex-col gap-3", className),
+				className: cn("grid min-w-0 gap-2", className),
 			})}
 		>
-			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-				<header
-					data-slot="compute-subscription-header"
-					className="flex min-h-6 min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5 sm:min-h-12 @md/subscription:min-h-6"
-				>
-					<Heading className="min-w-28 flex-1 basis-28 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
-						{view.plan}
-					</Heading>
-					<div className="ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1.5">
-						<StatusBadge status={view.status.tone} withDot>
-							{view.status.label}
-						</StatusBadge>
-						{badges}
-					</div>
-				</header>
-
-				<dl
-					data-slot="compute-subscription-meta"
-					className="flex min-h-5 min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5 sm:min-h-12 @md/subscription:min-h-5"
-				>
-					{view.commercialFacts.map((fact) => (
-						<div key={fact.label} className="min-w-0 text-xs leading-5 text-muted-foreground">
-							<dt className="sr-only">{fact.label}</dt>
-							<dd
-								className={cn(
-									"[overflow-wrap:anywhere]",
-									fact.emphasis && "font-semibold text-foreground",
-								)}
-							>
-								{fact.value}
-							</dd>
-						</div>
-					))}
-				</dl>
-
-				<div
-					data-slot="compute-subscription-identity"
-					className="flex min-h-5 min-w-0 items-center gap-3"
-				>
-					{identity ? (
-						<>
-							{identity.kind === "agent" ? (
-								<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
-							) : null}
-							<div className="min-w-0 flex-1">
-								<SubscriptionIdentity identity={identity} />
-							</div>
-						</>
-					) : null}
+			<header
+				data-slot="compute-subscription-header"
+				className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5"
+			>
+				<Heading className="min-w-28 flex-1 basis-28 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
+					{view.plan}
+				</Heading>
+				<div className="ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1.5">
+					<StatusBadge status={view.status.tone} withDot>
+						{view.status.label}
+					</StatusBadge>
+					{badges}
 				</div>
-			</div>
+			</header>
+
+			<dl
+				data-slot="compute-subscription-meta"
+				className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1.5 empty:hidden"
+			>
+				{view.commercialFacts.map((fact) => (
+					<div key={fact.label} className="min-w-0 text-xs leading-5 text-muted-foreground">
+						<dt className="sr-only">{fact.label}</dt>
+						<dd
+							className={cn(
+								"[overflow-wrap:anywhere]",
+								fact.emphasis && "font-semibold text-foreground",
+							)}
+						>
+							{fact.value}
+						</dd>
+					</div>
+				))}
+			</dl>
 
 			<div
-				data-slot="compute-subscription-footer"
-				className="mt-auto flex min-w-0 flex-col items-start gap-1.5 pt-1 sm:items-end"
+				data-slot="compute-subscription-identity"
+				className="flex min-w-0 items-center gap-3 empty:hidden"
 			>
-				{notice ? (
-					<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
-						{notice}
-					</div>
+				{identity ? (
+					<>
+						{identity.kind === "agent" ? (
+							<span className="shrink-0 text-xs text-muted-foreground">Used by</span>
+						) : null}
+						<div className="min-w-0 flex-1">
+							<SubscriptionIdentity identity={identity} />
+						</div>
+					</>
 				) : null}
-				<div
-					id={actionsId}
-					data-slot="compute-subscription-actions"
-					className="flex min-h-8 min-w-0 w-full flex-wrap items-center gap-2 sm:justify-end max-sm:[&_[data-slot=button]]:h-auto max-sm:[&_[data-slot=button]]:min-h-8 max-sm:[&_[data-slot=button]]:max-w-full max-sm:[&_[data-slot=button]]:whitespace-normal"
-				>
-					{actions}
+			</div>
+
+			{notice ? (
+				<div data-slot="compute-subscription-notice" className="min-w-0 sm:text-right">
+					{notice}
 				</div>
+			) : null}
+			<div
+				id={actionsId}
+				data-slot="compute-subscription-actions"
+				className="flex min-w-0 w-full flex-wrap items-center gap-2 empty:hidden sm:justify-end max-sm:[&_[data-slot=button]]:h-auto max-sm:[&_[data-slot=button]]:min-h-8 max-sm:[&_[data-slot=button]]:max-w-full max-sm:[&_[data-slot=button]]:whitespace-normal"
+			>
+				{actions}
 			</div>
 		</article>
 	);

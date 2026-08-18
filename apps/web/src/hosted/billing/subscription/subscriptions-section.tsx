@@ -225,11 +225,12 @@ function SubscriptionRow({
 				: { kind: "unavailable", label: "Deleted agent" };
 
 	return (
-		<li className="min-w-0">
+		<li className="grid min-w-0 lg:row-span-5 lg:grid-rows-subgrid">
 			<ComputeSubscriptionCard
 				headingLevel={4}
 				view={view}
 				identity={identity}
+				className="lg:row-span-full lg:grid-rows-subgrid lg:[&>[data-slot=compute-subscription-actions]]:row-start-5"
 				notice={
 					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
@@ -318,7 +319,7 @@ export function reusableInventoryState(
 	return data === undefined ? "loading" : "ready";
 }
 
-const SUBSCRIPTION_CARD_GRID_CLASS = "grid gap-3 lg:grid-cols-2";
+const SUBSCRIPTION_CARD_GRID_CLASS = "grid gap-2 lg:grid-cols-2";
 
 function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
