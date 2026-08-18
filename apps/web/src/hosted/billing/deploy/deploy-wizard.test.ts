@@ -223,8 +223,7 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("waitForRuntime");
 		expect(wizardSource).not.toContain("Agent deployment started");
 		expect(wizardSource).not.toContain("agent is getting ready now");
-		expect(wizardSource).toContain('toast.success("Wallet payment confirmed"');
-		expect(wizardSource).toContain("toast.dismiss(WALLET_PAYMENT_TOAST_ID)");
+		expect(wizardSource).not.toContain("Wallet payment confirmed");
 	});
 
 	test("keeps infrastructure vocabulary out of customer copy", () => {
@@ -378,13 +377,11 @@ describe("deploy acceptance", () => {
 		expect(walletBranch).not.toContain("recheckCanCreateCloudAgents");
 	});
 
-	test("shows a scoped honest busy state and reports failures only through actionable toasts", () => {
-		expect(wizardSource).toContain("setSubmitBusyLabel(");
+	test("keeps submit progress inside the action and reports failures through actionable toasts", () => {
 		expect(wizardSource).toContain('"Deploying…"');
-		expect(wizardSource).toContain('"Opening…"');
 		expect(wizardSource).not.toContain("Loading agent details");
-		expect(wizardSource).toContain('"Payment is processing."');
-		expect(wizardSource).toContain('"Waiting for your agent."');
+		expect(wizardSource).not.toContain('"Payment is processing."');
+		expect(wizardSource).not.toContain('"Waiting for your agent."');
 		expect(wizardSource).not.toContain("Keep this page open");
 		expect(wizardSource).not.toContain("Payment and agent creation are still being confirmed.");
 		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
