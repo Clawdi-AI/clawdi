@@ -63,13 +63,16 @@ permissions:
 
 concurrency:
   group: backend-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
   changes:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
-      any: ${{ steps.filter.outputs.any }}
+      backend: ${{ steps.filter.outputs.backend }}
       test: ${{ steps.filter.outputs.test }}
       sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
@@ -78,32 +81,19 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           filters: |
-            any:
+            backend:
               - "backend/**/*.py"
               - "backend/pyproject.toml"
               - "backend/uv.lock"
               - "backend/alembic.ini"
               - "backend/Dockerfile"
-              - "deploy/self-host/**"
-              - "apps/web/Dockerfile"
-              - ".dockerignore"
               - "packages/shared/src/api/api.generated.ts"
               - "package.json"
               - "bun.lock"
-              - "patches/libsignal@6.0.0.patch"
               - "scripts/openapi-typescript.sh"
               - "tools/openapi-typescript/**"
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/backend-ci.yml"
-              - ".github/workflows/clawdi-image-release.yml"
-              - "packages/whatsapp-baileys-sidecar/**"
-              - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
-              - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-              - "scripts/test-kamal-whatsapp-sidecar-render.sh"
-              - "scripts/deploy-whatsapp-sidecar.sh"
-              - "scripts/whatsapp-sidecar-deployment-revision.ts"
-              - "scripts/clawdi-image-release-plan.ts"
-              - "scripts/test-deploy-whatsapp-sidecar.sh"
               - "scripts/check_postgres_image_parity.py"
               - "config/deploy.yml"
               - "config/postgres-image.txt"
@@ -139,7 +129,7 @@ jobs:
               - ".github/workflows/clawdi-image-release.yml"
   lint-and-typecheck:
     needs: changes
-    if: needs.changes.outputs.any == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     defaults:
@@ -284,9 +274,14 @@ jobs:
           RUN gem install kamal -v '2.12.0' --no-document
           RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-whatsapp-sidecar.sh
           DOCKERFILE
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
       - name: Build production sidecar image
-        run: >-
-          docker build
-          --file packages/whatsapp-baileys-sidecar/Dockerfile
-          --tag clawdi-whatsapp-baileys-sidecar:ci
-          .
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/whatsapp-baileys-sidecar/Dockerfile
+          tags: clawdi-whatsapp-baileys-sidecar:ci
+          load: true
+          cache-from: type=gha,scope=clawdi-whatsapp-sidecar-ci
+          cache-to: type=gha,mode=max,scope=clawdi-whatsapp-sidecar-ci
