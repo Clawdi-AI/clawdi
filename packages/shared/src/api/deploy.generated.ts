@@ -1363,6 +1363,8 @@ export interface components {
             invoice_id: null;
             /** Deployment Id */
             deployment_id: null;
+            /** Agent Id */
+            agent_id?: null;
             /** Deployment Name */
             deployment_name: null;
             /** Metadata Generation */
@@ -2069,6 +2071,8 @@ export interface components {
         V2HostedDeployRequestLineageTail: {
             /** Deployment Id */
             deployment_id?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
             deployment_status?: components["schemas"]["HostedDeploymentStatus"] | null;
             /** Operation Name */
             operation_name?: string | null;
@@ -2401,6 +2405,8 @@ export interface components {
             invoice_id: string | null;
             /** Deployment Id */
             deployment_id: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
             /** Deployment Name */
             deployment_name: string | null;
             /** Metadata Generation */

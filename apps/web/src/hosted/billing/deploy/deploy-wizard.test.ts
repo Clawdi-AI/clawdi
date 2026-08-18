@@ -8,10 +8,6 @@ const deployPageSource = readFileSync(
 	new URL("../../../pages/dashboard/deploy/page.tsx", import.meta.url),
 	"utf8",
 );
-const acceptedNavigationSource = readFileSync(
-	new URL("./accepted-deployment-navigation.ts", import.meta.url),
-	"utf8",
-);
 const planChangeDialogSource = readFileSync(
 	new URL("../subscription/plan-change-dialog.tsx", import.meta.url),
 	"utf8",
@@ -222,10 +218,7 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 
-	test("hydrates authoritative Agent identity before accepted-create navigation", () => {
-		expect(acceptedNavigationSource).toContain("getDeployment(deploymentId)");
-		expect(acceptedNavigationSource).toContain("agentSectionHref(authoritative.agent_id)");
-		expect(acceptedNavigationSource).not.toContain("source=on-clawdi");
+	test("keeps post-acceptance waiting out of the customer flow", () => {
 		expect(wizardSource).not.toContain("setup=accepted");
 		expect(wizardSource).not.toContain("waitForRuntime");
 		expect(wizardSource).not.toContain("Agent deployment started");

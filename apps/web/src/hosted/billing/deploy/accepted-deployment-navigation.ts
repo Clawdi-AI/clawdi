@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { agentSectionHref, isAgentRouteId } from "@/lib/agent-routes";
+import { agentRouteIdsEqual, agentSectionHref, isAgentRouteId } from "@/lib/agent-routes";
 
 export type AcceptedDeploymentNavigate = (options: {
 	href: string;
@@ -10,7 +10,7 @@ export type AcceptedDeploymentNavigate = (options: {
 
 type AcceptedDeploymentRequestResolver = (
 	deployRequestId: string,
-) => Promise<{ deploymentId: string }>;
+) => Promise<{ agentId?: string | null; deploymentId: string }>;
 
 function upsertAuthoritativeDeployment(
 	deployments: readonly HostedDeployment[] | undefined,
@@ -27,26 +27,26 @@ function upsertAuthoritativeDeployment(
 	);
 }
 
-/** Hydrate committed deployment authority before opening its canonical route. */
-export async function navigateToAcceptedDeployment({
+async function hydrateAcceptedDeployment({
+	agentId,
 	deploymentId,
 	getDeployment,
-	navigate,
 	queryClient,
-	replace = false,
 }: {
+	agentId?: string;
 	deploymentId: string;
 	getDeployment: (deploymentId: string) => Promise<HostedDeployment>;
-	navigate: AcceptedDeploymentNavigate;
 	queryClient: QueryClient;
-	replace?: boolean;
-}): Promise<void> {
+}): Promise<HostedDeployment> {
 	const authoritative = await getDeployment(deploymentId);
 	if (authoritative.resource.id !== deploymentId) {
 		throw new Error("The deployment service returned a different deployment.");
 	}
 	if (!isAgentRouteId(authoritative.agent_id)) {
 		throw new Error("The deployment service returned an invalid Agent identity.");
+	}
+	if (agentId && !agentRouteIdsEqual(authoritative.agent_id, agentId)) {
+		throw new Error("The deployment service returned a different Agent identity.");
 	}
 
 	// A list read that started before acceptance can be older than the committed
@@ -56,6 +56,49 @@ export async function navigateToAcceptedDeployment({
 		upsertAuthoritativeDeployment(deployments, authoritative),
 	);
 	void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
+	return authoritative;
+}
+
+/** Open accepted authority immediately when the API already returned its canonical Agent ID. */
+export async function navigateToAcceptedDeployment({
+	agentId,
+	deploymentId,
+	getDeployment,
+	navigate,
+	queryClient,
+	replace = false,
+}: {
+	agentId?: string | null;
+	deploymentId: string;
+	getDeployment: (deploymentId: string) => Promise<HostedDeployment>;
+	navigate: AcceptedDeploymentNavigate;
+	queryClient: QueryClient;
+	replace?: boolean;
+}): Promise<void> {
+	const acceptedAgentId = agentId?.trim() || null;
+	if (acceptedAgentId && !isAgentRouteId(acceptedAgentId)) {
+		throw new Error("The deployment service returned an invalid Agent identity.");
+	}
+
+	if (acceptedAgentId) {
+		const hydration = hydrateAcceptedDeployment({
+			agentId: acceptedAgentId,
+			deploymentId,
+			getDeployment,
+			queryClient,
+		}).catch(() => {
+			void queryClient.invalidateQueries({ queryKey: billingKeys.deployments, exact: true });
+		});
+		await navigate({ href: agentSectionHref(acceptedAgentId), replace });
+		void hydration;
+		return;
+	}
+
+	const authoritative = await hydrateAcceptedDeployment({
+		deploymentId,
+		getDeployment,
+		queryClient,
+	});
 
 	await navigate({
 		href: agentSectionHref(authoritative.agent_id),
@@ -74,7 +117,7 @@ export async function navigateToAcceptedDeploymentRequest({
 	onAccepted?: () => void;
 	resolveDeploymentRequest: AcceptedDeploymentRequestResolver;
 }): Promise<void> {
-	const { deploymentId } = await resolveDeploymentRequest(deployRequestId);
+	const { agentId, deploymentId } = await resolveDeploymentRequest(deployRequestId);
 	onAccepted?.();
-	await navigateToAcceptedDeployment({ ...navigation, deploymentId });
+	await navigateToAcceptedDeployment({ ...navigation, agentId, deploymentId });
 }

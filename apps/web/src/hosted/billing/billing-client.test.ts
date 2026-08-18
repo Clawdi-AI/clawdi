@@ -564,6 +564,7 @@ describe("declarative deployment mutations", () => {
 						request_status: "ready",
 						lineage_tail: {
 							deployment_id: "hdep_test",
+							agent_id: "44444444-4444-4444-8444-444444444444",
 							lineage_version: 1,
 							lineage_state: "unaccepted",
 							operation: null,
@@ -596,6 +597,7 @@ describe("declarative deployment mutations", () => {
 		expect(checkout.flow_type).toBe("checkout_session");
 		expect(checkout.checkout_url).toBe("https://checkout.example.com/session");
 		expect(await client.waitForDeploymentRequest(intentKey)).toMatchObject({
+			agentId: "44444444-4444-4444-8444-444444444444",
 			deploymentId: "hdep_test",
 			operation: null,
 		});

@@ -378,6 +378,7 @@ export function DeployWizard() {
 				} else {
 					await navigateToAcceptedDeployment({
 						...navigation,
+						agentId: target.agentId,
 						deploymentId: target.deploymentId,
 					});
 				}
