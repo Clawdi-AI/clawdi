@@ -9,6 +9,7 @@ import type {
 
 type HostedDeploymentFixtureOptions = {
 	id?: string;
+	agentId?: string;
 	name?: string;
 	status?: HostedDeploymentStatus["summary_state"] | null;
 	createdAt?: string;
@@ -48,6 +49,7 @@ export function hostedDeploymentFixture(
 	const upgradeAvailable = options.upgradeAvailable ?? false;
 
 	return {
+		agent_id: options.agentId ?? "11111111-1111-4111-8111-111111111111",
 		resource: {
 			id: options.id ?? "dep_test",
 			name: options.name ?? "Test deployment",

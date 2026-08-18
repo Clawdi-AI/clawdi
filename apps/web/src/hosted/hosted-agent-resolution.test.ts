@@ -138,19 +138,20 @@ describe("hosted inventory resolution matrix", () => {
 
 describe("hosted detail projection resolution", () => {
 	test("suppresses stale detail as soon as delete is accepted without releasing ownership", () => {
-		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const agentId = "55555555-5555-4555-8555-555555555555";
 		const deploymentId = "hdep_user_deleted";
 		const deleting = hostedDeploymentFixture({
 			id: deploymentId,
+			agentId,
 			status: "running",
-			cloudEnvironments: { openclaw: environmentId },
+			cloudEnvironments: { openclaw: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
 			acceptedOperation: acceptedDelete(deploymentId),
 		});
 
 		expect(isHostedDeploymentVisible(deleting)).toBe(false);
 		expect(hostedDeploymentMembers([deleting])).toEqual([deleting]);
-		expect(claimedEnvIdsFromDeployments([deleting])).toEqual(new Set([environmentId]));
-		expect(resolveAgentDeployment([deleting], environmentId, deploymentId).match).toBeNull();
+		expect(claimedEnvIdsFromDeployments([deleting])).toEqual(new Set([agentId]));
+		expect(resolveAgentDeployment([deleting], agentId)).toBeNull();
 	});
 
 	test("keeps a dismissed agent hidden across a failed snapshot while delete remains pending", () => {
@@ -162,7 +163,7 @@ describe("hosted detail projection resolution", () => {
 		});
 
 		expect(isHostedDeploymentVisible(failed)).toBe(false);
-		expect(resolveAgentDeployment([failed], deploymentId).match).toBeNull();
+		expect(resolveAgentDeployment([failed], failed.agent_id)).toBeNull();
 	});
 
 	test("restores a running agent when its accepted delete is cancelled", () => {
@@ -179,7 +180,7 @@ describe("hosted detail projection resolution", () => {
 		});
 
 		expect(isHostedDeploymentVisible(restored)).toBe(true);
-		expect(resolveAgentDeployment([restored], deploymentId).match?.deployment).toBe(restored);
+		expect(resolveAgentDeployment([restored], restored.agent_id)?.deployment).toBe(restored);
 	});
 
 	test("keeps an agent hidden while occupancy authoritatively reports delete accepted", () => {
@@ -196,36 +197,35 @@ describe("hosted detail projection resolution", () => {
 		});
 
 		expect(isHostedDeploymentVisible(deleting)).toBe(false);
-		expect(resolveAgentDeployment([deleting], deploymentId).match).toBeNull();
+		expect(resolveAgentDeployment([deleting], deleting.agent_id)).toBeNull();
 	});
 
-	test("keeps a selected stopped deployment addressable after its projection is removed", () => {
+	test("resolves stopped deployment authority without a Cloud projection", () => {
+		const agentId = "55555555-5555-4555-8555-555555555555";
 		const stopped = hostedDeploymentFixture({
 			id: "hdep_stopped",
+			agentId,
 			status: "stopped",
 			cloudEnvironments: {},
 		});
-		const resolution = resolveAgentDeployment(
-			[stopped],
-			"55555555-5555-4555-8555-555555555555",
-			"hdep_stopped",
-		);
+		const resolution = resolveAgentDeployment([stopped], agentId);
 
-		expect(resolution.match?.deployment.resource.id).toBe("hdep_stopped");
-		expect(resolution.match?.runtime).toBeNull();
-		expect(resolution.ambiguousMatches).toEqual([]);
+		expect(resolution?.deployment.resource.id).toBe("hdep_stopped");
+		expect(resolution?.runtime).toBe("openclaw");
 	});
 
-	test("does not let a mismatched selector override an environment match", () => {
-		const environmentId = "55555555-5555-4555-8555-555555555555";
+	test("never treats deployment or observed projection ids as Agent identity", () => {
+		const agentId = "55555555-5555-4555-8555-555555555555";
+		const projectionId = "66666666-6666-4666-8666-666666666666";
 		const matched = hostedDeploymentFixture({
 			id: "hdep_matched",
-			cloudEnvironments: { openclaw: environmentId },
+			agentId,
+			cloudEnvironments: { openclaw: projectionId },
 		});
-		const selected = hostedDeploymentFixture({ id: "hdep_selected", cloudEnvironments: {} });
-		const resolution = resolveAgentDeployment([matched, selected], environmentId, "hdep_selected");
 
-		expect(resolution.match?.deployment.resource.id).toBe("hdep_matched");
+		expect(resolveAgentDeployment([matched], agentId)?.deployment).toBe(matched);
+		expect(resolveAgentDeployment([matched], projectionId)).toBeNull();
+		expect(resolveAgentDeployment([matched], matched.resource.id)).toBeNull();
 	});
 
 	test("keeps missing, service-error, loading, unavailable, and resolved states distinct", () => {

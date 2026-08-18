@@ -33,11 +33,5 @@ export function AgentDetailClient({
 			</Suspense>
 		);
 	}
-	return (
-		<ConnectedAgentDetail
-			environmentId={environmentId}
-			section={section}
-			routeSearch={routeSearch}
-		/>
-	);
+	return <ConnectedAgentDetail environmentId={environmentId} section={section} />;
 }

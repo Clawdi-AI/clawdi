@@ -97,6 +97,7 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 				endpoints: [],
 			},
 		},
+		agent_id: "11111111-1111-4111-8111-111111111111",
 		clawdi_cloud_environments: {},
 		ai_provider_auth_kinds: { hermes: "managed" },
 		accepted_operation: null,

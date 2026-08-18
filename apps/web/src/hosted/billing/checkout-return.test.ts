@@ -5,6 +5,7 @@ import {
 	checkoutReturnMarker,
 	checkoutReturnNavigationTarget,
 	checkoutReturnWasCanceled,
+	checkoutSearchAfterConsume,
 } from "@/hosted/billing/checkout-return";
 
 describe("checkout return navigation", () => {
@@ -34,7 +35,7 @@ describe("checkout return navigation", () => {
 		expect(await ownership).toBe(true);
 	});
 
-	test("preserves legacy deployment return targets", () => {
+	test("accepts deployment callback targets without treating them as Agent identity", () => {
 		expect(checkoutReturnNavigationTarget("?deployment_id=hdep_current")).toEqual({
 			kind: "deployment",
 			deploymentId: "hdep_current",
@@ -43,6 +44,25 @@ describe("checkout return navigation", () => {
 			kind: "deployment",
 			deploymentId: "hdep_upgrade",
 		});
+	});
+
+	test("leaves cleanup to the handler when the owner does not replace-navigate", async () => {
+		expect(await checkoutReturnHasNavigationOwner("?deployment_id=hdep_current", () => false)).toBe(
+			false,
+		);
+	});
+
+	test("keeps only the billing destination after consuming callback state", () => {
+		expect(
+			checkoutSearchAfterConsume({
+				settings: "billing-plan",
+				deployment_id: "hdep_current",
+				session_id: "cs_return",
+				checkout: "success",
+				future: "discarded",
+			}),
+		).toEqual({ settings: "billing-plan" });
+		expect(checkoutSearchAfterConsume({ deployment_id: "hdep_current" })).toEqual({});
 	});
 
 	test("keeps cancellation non-navigating even when lineage is present", async () => {

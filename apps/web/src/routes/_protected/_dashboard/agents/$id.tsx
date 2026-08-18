@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, notFound, Outlet, redirect } from "@tanstack/react-router";
 import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
@@ -9,6 +9,7 @@ import {
 	agentSessionDetailLink,
 	agentSkillDetailLink,
 	agentVaultDetailLink,
+	isAgentRouteId,
 	legacyAgentRoute,
 	parseAgentPathname,
 	validateAgentRouteSearch,
@@ -17,6 +18,7 @@ import {
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 	validateSearch: validateAgentRouteSearch,
 	beforeLoad: ({ params, search, location }) => {
+		if (!isAgentRouteId(params.id)) throw notFound();
 		const currentRoute = parseAgentPathname(location.pathname);
 		const fallbackSection =
 			currentRoute && agentRouteIdsEqual(currentRoute.agentId, params.id)
@@ -26,7 +28,8 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 		if (legacy) {
 			if (currentRoute?.sessionId) {
 				throw redirect({
-					...agentSessionDetailLink(params.id, currentRoute.sessionId, legacy.search),
+					...agentSessionDetailLink(params.id, currentRoute.sessionId),
+					search: legacy.search,
 					replace: true,
 				});
 			}
@@ -34,7 +37,8 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 				const projectId =
 					typeof legacy.search?.project === "string" ? legacy.search.project : undefined;
 				throw redirect({
-					...agentSkillDetailLink(params.id, currentRoute.skillKey, projectId, legacy.search),
+					...agentSkillDetailLink(params.id, currentRoute.skillKey, projectId),
+					search: legacy.search,
 					replace: true,
 				});
 			}
@@ -44,37 +48,40 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 						params.id,
 						currentRoute.projectId,
 						currentRoute.projectResource,
-						legacy.search,
 					),
+					search: legacy.search,
 					replace: true,
 				});
 			}
 			if (currentRoute?.projectId) {
 				throw redirect({
-					...agentProjectDetailLink(params.id, currentRoute.projectId, legacy.search),
+					...agentProjectDetailLink(params.id, currentRoute.projectId),
+					search: legacy.search,
 					replace: true,
 				});
 			}
 			if (currentRoute?.vaultSlug) {
 				throw redirect({
-					...agentVaultDetailLink(
-						params.id,
-						currentRoute.vaultSlug,
-						typeof legacy.search?.vault === "string" ? legacy.search.vault : undefined,
-						legacy.search,
-					),
+					...agentVaultDetailLink(params.id, currentRoute.vaultSlug, {
+						projectId:
+							typeof legacy.search?.project === "string" ? legacy.search.project : undefined,
+						vaultId: typeof legacy.search?.vault === "string" ? legacy.search.vault : undefined,
+					}),
+					search: legacy.search,
 					replace: true,
 				});
 			}
 			if (currentRoute?.memoryId) {
 				throw redirect({
-					...agentMemoryDetailLink(params.id, currentRoute.memoryId, legacy.search),
+					...agentMemoryDetailLink(params.id, currentRoute.memoryId),
+					search: legacy.search,
 					replace: true,
 				});
 			}
 			if (currentRoute?.connectorName) {
 				throw redirect({
-					...agentConnectorDetailLink(params.id, currentRoute.connectorName, legacy.search),
+					...agentConnectorDetailLink(params.id, currentRoute.connectorName),
+					search: legacy.search,
 					replace: true,
 				});
 			}

@@ -49,7 +49,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
@@ -116,13 +115,8 @@ export function SkillDetailContent({
 	).trim();
 	const skillListHref = agentId
 		? selectedProjectId
-			? agentProjectResourceHref(
-					agentId,
-					selectedProjectId,
-					"skills",
-					agentDeploymentRouteQuery(routeSearch),
-				)
-			: agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(routeSearch))
+			? agentProjectResourceHref(agentId, selectedProjectId, "skills")
+			: agentSectionHref(agentId, "projects")
 		: projectResourceHref("skills");
 	const skillListLabel = agentId && !selectedProjectId ? "Projects" : "Skills";
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
@@ -250,9 +244,7 @@ export function SkillDetailContent({
 				? displayProjectName(skillProject)
 				: skill?.project_name?.trim() || null;
 	useSetBreadcrumbSegmentTitle(
-		agentId && selectedProjectId
-			? agentProjectDetailHref(agentId, selectedProjectId, agentDeploymentRouteQuery(routeSearch))
-			: null,
+		agentId && selectedProjectId ? agentProjectDetailHref(agentId, selectedProjectId) : null,
 		breadcrumbProjectTitle,
 		selectedBinding?.binding_type === "primary" ? "workspace" : undefined,
 	);

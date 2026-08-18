@@ -1,28 +1,16 @@
-import { defaultParseSearch, defaultStringifySearch, linkOptions } from "@tanstack/react-router";
+import { defaultStringifySearch, linkOptions } from "@tanstack/react-router";
 import type { AgentSectionId } from "@/lib/navigation-model";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 
 export type { AgentSectionId } from "@/lib/navigation-model";
 export { CONNECTED_AGENT_SECTION_IDS, HOSTED_AGENT_SECTION_IDS } from "@/lib/navigation-model";
 
-export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
 export type AgentRouteSearch = Record<string, unknown> & {
-	source?: string;
-	d?: string;
 	tab?: string;
 	project?: string;
 	vault?: string;
 	subscription_action?: "start_new";
 };
-export type AgentRouteQuery =
-	| string
-	| URLSearchParams
-	| RouteSearchParamsRecord
-	| AgentRouteSearch
-	| null
-	| undefined;
-
-export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
 
 const AGENT_SECTION_SEGMENTS = {
 	overview: "",
@@ -162,37 +150,6 @@ export function agentRouteOwnsSection(
 	);
 }
 
-function agentRouteSearchParams(query?: AgentRouteQuery): URLSearchParams {
-	if (!query) return new URLSearchParams();
-	if (typeof query === "string" || query instanceof URLSearchParams) {
-		return new URLSearchParams(query.toString());
-	}
-	const params = new URLSearchParams();
-	for (const [key, value] of Object.entries(query)) {
-		if (value === undefined) continue;
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				if (typeof item === "string") params.append(key, item);
-			}
-			continue;
-		}
-		if (typeof value === "string") params.set(key, value);
-	}
-	return params;
-}
-
-function agentRouteSearch(query?: AgentRouteQuery): AgentRouteSearch | undefined {
-	if (query && typeof query === "object" && !(query instanceof URLSearchParams)) {
-		const search = { ...query };
-		delete search.tab;
-		return Object.keys(search).length > 0 ? search : undefined;
-	}
-	const params = agentRouteSearchParams(query);
-	params.delete("tab");
-	const search: AgentRouteSearch = defaultParseSearch(params.toString());
-	return Object.keys(search).length > 0 ? search : undefined;
-}
-
 function optionalSearchString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
@@ -203,15 +160,18 @@ function subscriptionAction(value: unknown): AgentRouteSearch["subscription_acti
 
 /** Validate the shared agent-route search boundary while retaining additive query state. */
 export function validateAgentRouteSearch(search: Record<string, unknown>): AgentRouteSearch {
-	return {
-		...search,
-		source: optionalSearchString(search.source),
-		d: optionalSearchString(search.d),
-		tab: optionalSearchString(search.tab),
-		project: optionalSearchString(search.project),
-		vault: optionalSearchString(search.vault),
-		subscription_action: subscriptionAction(search.subscription_action),
-	};
+	const validated: AgentRouteSearch = { ...search };
+	for (const key of ["tab", "project", "vault"] as const) {
+		const value = optionalSearchString(search[key]);
+		if (value === undefined) delete validated[key];
+		else validated[key] = value;
+	}
+	const action = subscriptionAction(search.subscription_action);
+	if (action === undefined) delete validated.subscription_action;
+	else validated.subscription_action = action;
+	delete validated.source;
+	delete validated.d;
+	return validated;
 }
 
 const LEGACY_AGENT_TAB_SECTIONS: Readonly<Record<string, AgentSectionId>> = {
@@ -249,47 +209,19 @@ export function legacyAgentRoute(
 	};
 }
 
-export function agentDeploymentSelector(query?: AgentRouteQuery): string | null {
-	const selector = agentRouteSearchParams(query).get(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY)?.trim();
-	return selector || null;
-}
-
-export function agentRouteSource(query?: AgentRouteQuery): string | null {
-	return agentRouteSearchParams(query).get("source")?.trim() || null;
-}
-
-export function agentDeploymentRouteQuery(
-	query?: AgentRouteQuery,
-): RouteSearchParamsRecord | undefined {
-	const params = agentRouteSearchParams(query);
-	const selector = agentDeploymentSelector(params);
-	if (!selector) return undefined;
-	return {
-		source: params.get("source") || undefined,
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: selector,
-	};
-}
-
-export function agentRouteQueryString(query?: AgentRouteQuery): string {
-	if (query && typeof query === "object" && !(query instanceof URLSearchParams)) {
-		return defaultStringifySearch(agentRouteSearch(query) ?? {})
-			.slice(1)
-			.replace(/\+/g, "%20");
-	}
-	const params = agentRouteSearchParams(query);
-	params.delete("tab");
-	return params.toString().replace(/\+/g, "%20");
+function routeSearchQueryString(search?: AgentRouteSearch): string {
+	return search ? defaultStringifySearch(search).slice(1).replace(/\+/g, "%20") : "";
 }
 
 export function agentSectionHref(
 	agentId: string,
 	section: AgentSectionId = "overview",
-	query?: AgentRouteQuery,
+	search?: AgentRouteSearch,
 ): string {
 	const encodedAgentId = encodeURIComponent(agentId);
 	const segment = agentSectionSegment(section);
 	const path = segment ? `/agents/${encodedAgentId}/${segment}` : `/agents/${encodedAgentId}`;
-	const queryString = agentRouteQueryString(query);
+	const queryString = routeSearchQueryString(search);
 	return queryString ? `${path}?${queryString}` : path;
 }
 
@@ -297,9 +229,8 @@ export function agentSectionHref(
 export function agentSectionLink(
 	agentId: string,
 	section: AgentSectionId = "overview",
-	query?: AgentRouteQuery,
+	search?: AgentRouteSearch,
 ) {
-	const search = agentRouteSearch(query);
 	if (section === "overview") {
 		return linkOptions({ to: "/agents/$id", params: { id: agentId }, search });
 	}
@@ -313,41 +244,20 @@ export function agentSectionLink(
 	});
 }
 
-export function bindAgentDeploymentSearch(
-	search: AgentRouteSearch,
-	deploymentId: string,
-): AgentRouteSearch {
-	return {
-		...search,
-		source: "on-clawdi",
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deploymentId,
-	};
-}
-
-function agentDetailHref(path: string, query?: AgentRouteQuery): string {
-	const queryString = agentRouteQueryString(query);
+function agentDetailHref(path: string, search?: AgentRouteSearch): string {
+	const queryString = routeSearchQueryString(search);
 	return queryString ? `${path}?${queryString}` : path;
 }
 
-export function agentSessionDetailHref(
-	agentId: string,
-	sessionId: string,
-	query?: AgentRouteQuery,
-): string {
-	const path = `${agentSectionHref(agentId, "sessions")}/${encodeURIComponent(sessionId)}`;
-	return agentDetailHref(path, query);
+export function agentSessionDetailHref(agentId: string, sessionId: string): string {
+	return `${agentSectionHref(agentId, "sessions")}/${encodeURIComponent(sessionId)}`;
 }
 
 /** Typed TanStack Router options for an agent-scoped session detail link. */
-export function agentSessionDetailLink(
-	agentId: string,
-	sessionId: string,
-	query?: AgentRouteQuery,
-) {
+export function agentSessionDetailLink(agentId: string, sessionId: string) {
 	return linkOptions({
 		to: "/agents/$id/sessions/$sessionId",
 		params: { id: agentId, sessionId },
-		search: agentRouteSearch(query),
 	});
 }
 
@@ -355,60 +265,38 @@ export function agentSkillDetailHref(
 	agentId: string,
 	skillKey: string,
 	projectId?: string | null,
-	query?: AgentRouteQuery,
 ): string {
 	const encodedSkillPath = skillKey.split("/").map(encodeURIComponent).join("/");
 	const path = `${agentSectionHref(agentId, "skills")}/${encodedSkillPath}`;
-	const search = agentRouteSearch(query) ?? {};
-	if (projectId) search.project = projectId;
-	return agentDetailHref(path, search);
+	return agentDetailHref(path, projectId ? { project: projectId } : undefined);
 }
 
 /** Typed TanStack Router options for an agent-scoped skill detail link. */
-export function agentSkillDetailLink(
-	agentId: string,
-	skillKey: string,
-	projectId?: string | null,
-	query?: AgentRouteQuery,
-) {
-	const search = agentRouteSearch(query) ?? {};
-	if (projectId) search.project = projectId;
+export function agentSkillDetailLink(agentId: string, skillKey: string, projectId?: string | null) {
 	return linkOptions({
 		to: "/agents/$id/skills/$",
 		params: { id: agentId, _splat: skillKey },
-		search: Object.keys(search).length > 0 ? search : undefined,
+		search: projectId ? { project: projectId } : undefined,
 	});
 }
 
-export function agentProjectDetailHref(
-	agentId: string,
-	projectId: string,
-	query?: AgentRouteQuery,
-): string {
-	const path = `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}`;
-	return agentDetailHref(path, query);
+export function agentProjectDetailHref(agentId: string, projectId: string): string {
+	return `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}`;
 }
 
 export function agentProjectResourceHref(
 	agentId: string,
 	projectId: string,
 	resource: AgentProjectResourceSection,
-	query?: AgentRouteQuery,
 ): string {
-	const path = `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}/${resource}`;
-	return agentDetailHref(path, query);
+	return `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}/${resource}`;
 }
 
 /** Typed TanStack Router options for an agent-scoped Project detail link. */
-export function agentProjectDetailLink(
-	agentId: string,
-	projectId: string,
-	query?: AgentRouteQuery,
-) {
+export function agentProjectDetailLink(agentId: string, projectId: string) {
 	return linkOptions({
 		to: "/agents/$id/project-access/$projectId",
 		params: { id: agentId, projectId },
-		search: agentRouteSearch(query),
 	});
 }
 
@@ -417,82 +305,74 @@ export function agentProjectResourceLink(
 	agentId: string,
 	projectId: string,
 	resource: AgentProjectResourceSection,
-	query?: AgentRouteQuery,
 ) {
 	const options = {
 		params: { id: agentId, projectId },
-		search: agentRouteSearch(query),
 	};
 	return resource === "skills"
 		? linkOptions({ ...options, to: "/agents/$id/project-access/$projectId/skills" })
 		: linkOptions({ ...options, to: "/agents/$id/project-access/$projectId/vaults" });
 }
 
+export type AgentVaultDetailOptions = {
+	projectId?: string | null;
+	vaultId?: string | null;
+};
+
+function agentVaultDetailSearch({
+	projectId,
+	vaultId,
+}: AgentVaultDetailOptions): AgentRouteSearch | undefined {
+	if (!projectId && !vaultId) return undefined;
+	return {
+		...(projectId ? { project: projectId } : {}),
+		...(vaultId ? { vault: vaultId } : {}),
+	};
+}
+
 export function agentVaultDetailHref(
 	agentId: string,
 	vaultSlug: string,
-	vaultId?: string | null,
-	query?: AgentRouteQuery,
+	options: AgentVaultDetailOptions = {},
 ): string {
 	const path = `${agentSectionHref(agentId, "vaults")}/${encodeURIComponent(vaultSlug)}`;
-	const search = agentRouteSearch(query) ?? {};
-	if (vaultId) search.vault = vaultId;
-	return agentDetailHref(path, search);
+	return agentDetailHref(path, agentVaultDetailSearch(options));
 }
 
 /** Typed TanStack Router options for an agent-scoped Vault detail link. */
 export function agentVaultDetailLink(
 	agentId: string,
 	vaultSlug: string,
-	vaultId?: string | null,
-	query?: AgentRouteQuery,
+	options: AgentVaultDetailOptions = {},
 ) {
-	const search = agentRouteSearch(query) ?? {};
-	if (vaultId) search.vault = vaultId;
 	return linkOptions({
 		to: "/agents/$id/vaults/$slug",
 		params: { id: agentId, slug: vaultSlug },
-		search: Object.keys(search).length > 0 ? search : undefined,
+		search: agentVaultDetailSearch(options),
 	});
 }
 
-export function agentMemoryDetailHref(
-	agentId: string,
-	memoryId: string,
-	query?: AgentRouteQuery,
-): string {
-	const path = `${agentSectionHref(agentId, "memories")}/${encodeURIComponent(memoryId)}`;
-	return agentDetailHref(path, query);
+export function agentMemoryDetailHref(agentId: string, memoryId: string): string {
+	return `${agentSectionHref(agentId, "memories")}/${encodeURIComponent(memoryId)}`;
 }
 
 /** Typed TanStack Router options for a Memory viewed in the Agent shell. */
-export function agentMemoryDetailLink(agentId: string, memoryId: string, query?: AgentRouteQuery) {
+export function agentMemoryDetailLink(agentId: string, memoryId: string) {
 	return linkOptions({
 		to: "/agents/$id/memories/$memoryId",
 		params: { id: agentId, memoryId },
-		search: agentRouteSearch(query),
 	});
 }
 
-export function agentConnectorDetailHref(
-	agentId: string,
-	connectorName: string,
-	query?: AgentRouteQuery,
-): string {
-	const path = `${agentSectionHref(agentId, "connectors")}/${encodeURIComponent(connectorName)}`;
-	return agentDetailHref(path, query);
+export function agentConnectorDetailHref(agentId: string, connectorName: string): string {
+	return `${agentSectionHref(agentId, "connectors")}/${encodeURIComponent(connectorName)}`;
 }
 
 /** Typed TanStack Router options for a Connector viewed in the Agent shell. */
-export function agentConnectorDetailLink(
-	agentId: string,
-	connectorName: string,
-	query?: AgentRouteQuery,
-) {
+export function agentConnectorDetailLink(agentId: string, connectorName: string) {
 	return linkOptions({
 		to: "/agents/$id/connectors/$name",
 		params: { id: agentId, name: connectorName },
-		search: agentRouteSearch(query),
 	});
 }
 
@@ -502,4 +382,10 @@ function safeDecodeURIComponent(value: string): string {
 	} catch {
 		return value;
 	}
+}
+
+const AGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isAgentRouteId(value: string): boolean {
+	return AGENT_ID_RE.test(value);
 }

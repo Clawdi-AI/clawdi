@@ -9,7 +9,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
+	agentProjectResourceHref,
 	agentSectionHref,
 	agentVaultDetailHref,
 } from "@/lib/agent-routes";
@@ -30,7 +30,9 @@ function AgentVaultDetailRoute() {
 	const search = Route.useSearch();
 	const projectId =
 		typeof search.project === "string" && search.project.trim() ? search.project.trim() : null;
-	const returnHref = agentSectionHref(id, "projects", agentDeploymentRouteQuery(search));
+	const returnHref = projectId
+		? agentProjectResourceHref(id, projectId, "vaults")
+		: agentSectionHref(id, "projects");
 
 	if (!projectId) {
 		return (
@@ -47,7 +49,7 @@ function AgentVaultDetailRoute() {
 			returnLabel="Projects"
 			projectAccess={{ projectId }}
 		>
-			<VaultDetailPage slug={slug} scope={agentResourceScope(id, search, projectId ?? undefined)} />
+			<VaultDetailPage slug={slug} scope={agentResourceScope(id, projectId)} />
 		</AgentResourceRouteGate>
 	);
 }
@@ -71,11 +73,11 @@ function LegacyAgentVaultProjectCanonicalizer({
 	const blockingError = shouldBlockQueryError(bindings.error, bindings.data)
 		? bindings.error
 		: null;
-	const projectsHref = agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(search));
+	const projectsHref = agentSectionHref(agentId, "projects");
 	const targetHref = projectId
-		? agentVaultDetailHref(agentId, slug, search.vault, {
-				...agentDeploymentRouteQuery(search),
-				project: projectId,
+		? agentVaultDetailHref(agentId, slug, {
+				projectId,
+				vaultId: typeof search.vault === "string" ? search.vault : undefined,
 			})
 		: projectsHref;
 	const isLatestTarget = useCommittedRouteIsLatestTarget();

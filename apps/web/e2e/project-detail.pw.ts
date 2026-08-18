@@ -161,7 +161,7 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		return fulfill(route, {});
 	});
 
-	await page.goto(`/projects/${projectId}?source=on-clawdi&d=deployment-1&joined=share`);
+	await page.goto(`/projects/${projectId}?keep=state&joined=share`);
 	await expect(page.getByRole("heading", { name: "Client Review" })).toBeVisible({
 		timeout: 15_000,
 	});
@@ -183,8 +183,9 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		return (
 			url.pathname === `/projects/${projectId}` &&
 			url.searchParams.get("tab") === "skills" &&
-			url.searchParams.get("source") === "on-clawdi" &&
-			url.searchParams.get("d") === "deployment-1" &&
+			url.searchParams.get("keep") === "state" &&
+			!url.searchParams.has("source") &&
+			!url.searchParams.has("d") &&
 			!url.searchParams.has("joined")
 		);
 	});
@@ -204,8 +205,9 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		return (
 			url.pathname === `/projects/${projectId}` &&
 			url.searchParams.get("tab") === "skills" &&
-			url.searchParams.get("source") === "on-clawdi" &&
-			url.searchParams.get("d") === "deployment-1"
+			url.searchParams.get("keep") === "state" &&
+			!url.searchParams.has("source") &&
+			!url.searchParams.has("d")
 		);
 	});
 
@@ -236,8 +238,9 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 		return (
 			url.pathname === `/projects/${projectId}` &&
 			url.searchParams.get("tab") === "vaults" &&
-			url.searchParams.get("source") === "on-clawdi" &&
-			url.searchParams.get("d") === "deployment-1"
+			url.searchParams.get("keep") === "state" &&
+			!url.searchParams.has("source") &&
+			!url.searchParams.has("d")
 		);
 	});
 

@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi.testclient import TestClient
 
 from scripts import mock_deploy_api
@@ -5,9 +7,16 @@ from scripts import mock_deploy_api
 
 def test_mock_deployment_read_response_is_projected_from_flat_mutation_record() -> None:
     mutation = mock_deploy_api._deployment()
+    expected_agent_id = str(
+        uuid.uuid5(
+            uuid.UUID("e016a4c8-7943-4ae9-9c53-5f1a5db9f3e1"),
+            f"{mutation['id']}:openclaw",
+        )
+    )
 
     read = mock_deploy_api._deployment_read_response(mutation)
 
+    assert read["agent_id"] == expected_agent_id
     assert "resource" in read
     assert "id" not in read
     assert read["resource"]["id"] == mutation["id"]
@@ -22,6 +31,11 @@ def test_mock_deployment_read_response_is_projected_from_flat_mutation_record() 
     }
     assert read["current_plan_slug"] == "compute_performance"
     assert read["commercial_display"]["latest_funding_fact"] is None
+
+    mutation["config_info"]["clawdi_cloud_environments"] = {}
+    read_without_projection = mock_deploy_api._deployment_read_response(mutation)
+    assert read_without_projection["clawdi_cloud_environments"] == {}
+    assert read_without_projection["agent_id"] == expected_agent_id
 
     assert mutation["id"] == mock_deploy_api.DEV_V2_DEPLOYMENT_ID
     assert "resource" not in mutation

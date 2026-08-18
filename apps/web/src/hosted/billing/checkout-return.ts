@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocation } from "@tanstack/react-router";
+import { useLocation, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useCheckoutReturnRefresh } from "@/hosted/billing/hooks";
@@ -64,6 +64,12 @@ export async function checkoutReturnHasNavigationOwner(
 	return target !== null && (await onNavigate(target));
 }
 
+export function checkoutSearchAfterConsume(
+	search: Record<string, unknown>,
+): Record<string, unknown> {
+	return search.settings === "billing-plan" ? { settings: "billing-plan" } : {};
+}
+
 export function useCheckoutReturnHandler({
 	onCancelCopy,
 	onNavigate,
@@ -73,6 +79,7 @@ export function useCheckoutReturnHandler({
 	onNavigate: CheckoutReturnNavigationOwner;
 }): void {
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
+	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const handledMarkerRef = useRef<string | null>(null);
 
@@ -83,17 +90,26 @@ export function useCheckoutReturnHandler({
 		const canceled = checkoutReturnWasCanceled(searchStr);
 		void checkoutReturnHasNavigationOwner(searchStr, onNavigate)
 			.then(async (owned) => {
+				let refreshFailed = false;
 				try {
 					await refreshCheckoutReturn(owned ? { includeDeployments: false } : undefined);
 				} catch {
+					refreshFailed = true;
 					toast.error("Couldn’t refresh checkout status", {
 						description: owned
 							? "Refresh the page to check your subscription and wallet."
 							: "Refresh the page to check your agents, subscription, and wallet.",
 					});
-					return;
 				}
 				if (owned) return;
+				await router.navigate({
+					to: ".",
+					search: checkoutSearchAfterConsume,
+					hash: true,
+					replace: true,
+					resetScroll: false,
+				});
+				if (refreshFailed) return;
 				toast.message(canceled ? "Checkout canceled" : "Checkout status refreshed", {
 					description: canceled
 						? onCancelCopy
@@ -105,5 +121,5 @@ export function useCheckoutReturnHandler({
 					description: "Refresh the page to try again.",
 				});
 			});
-	}, [onCancelCopy, onNavigate, refreshCheckoutReturn, searchStr]);
+	}, [onCancelCopy, onNavigate, refreshCheckoutReturn, router, searchStr]);
 }

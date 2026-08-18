@@ -36,7 +36,7 @@ export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
 	return deployment.resource.spec.runtime;
 }
 
-export function runtimeEnvironmentId(
+export function observedCloudProjectionId(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | undefined {

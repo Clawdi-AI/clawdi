@@ -66,10 +66,7 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Primary click target. Points at the in-app env detail page
-	 * (`/agents/{env_id}`). Hosted tiles derive this identity from deployment
-	 * config even while the cloud-api projection is absent. A hosted deployment
-	 * with no minted env id remains non-navigable. */
+	/** Primary click target. Points at the canonical Agent UUID route. */
 	href: string | null;
 	external?: boolean;
 	/** Optional remediation target for legacy status dialogs. */
@@ -79,22 +76,13 @@ export interface AgentTile {
 	cardStatus?: AgentCardStatusProjection;
 	/** Whether this hosted deployment has an authoritative Files endpoint. */
 	filesAvailable?: boolean;
-	/** Self-managed envs carry the full EnvironmentResponse so the
-	 * tile can render a sync indicator. Hosted tiles join their
-	 * cloud-api env via `clawdi_cloud_environments` and end up with
-	 * the same shape; hosted deployments without a registered env leave
-	 * this null. */
+	/** Self-managed Agents carry their full response so the tile can render a
+	 * sync indicator. Hosted tiles attach an observed Cloud projection when it
+	 * exists; deployment authority remains available when it does not. */
 	env?: Env | null;
 }
 
-export function agentTileMatchesRouteId(
-	tile: AgentTile,
-	routeId: string,
-	deploymentSelector?: string | null,
-): boolean {
-	if (deploymentSelector) {
-		return tile.source === "on-clawdi" && agentRouteIdsEqual(tile.id, deploymentSelector);
-	}
+export function agentTileMatchesRouteId(tile: AgentTile, routeId: string): boolean {
 	if (agentRouteIdsEqual(tile.id, routeId) || agentRouteIdsEqual(tile.env?.id, routeId))
 		return true;
 	return tile.href ? agentRouteIdsEqual(parseAgentPathname(tile.href)?.agentId, routeId) : false;

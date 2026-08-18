@@ -5,17 +5,10 @@ import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bi
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { VaultCardSkeleton, VaultsSurface } from "@/components/vault/vaults-surface";
-import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 
-export function AgentVaultsTab({
-	agentId,
-	routeSearch,
-}: {
-	agentId: string;
-	routeSearch: AgentRouteSearch;
-}) {
+export function AgentVaultsTab({ agentId }: { agentId: string }) {
 	const bindings = useAgentProjectBindings(agentId);
 
 	if (bindings.isLoading) {
@@ -45,7 +38,7 @@ export function AgentVaultsTab({
 		<VaultsSurface
 			embedded
 			agentProjectIds={projectIds}
-			navigationScope={agentResourceScope(agentId, routeSearch)}
+			navigationScope={agentResourceScope(agentId)}
 		/>
 	);
 }

@@ -37,7 +37,6 @@ import {
 	isTransitionalStatus,
 	type SettlingTracker,
 } from "@/hosted/deployment-status";
-import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
@@ -412,8 +411,7 @@ export function billingRecoveryRefetchIntervalFor(
 	if (!target) return false;
 	const deployment = (deployments ?? []).find((candidate) => {
 		const matchesTarget =
-			candidate.resource.id.toLowerCase() === target ||
-			runtimeEnvironmentId(candidate)?.toLowerCase() === target;
+			candidate.resource.id.toLowerCase() === target || candidate.agent_id.toLowerCase() === target;
 		return matchesTarget;
 	});
 	const subscription = deployment?.commercial_display?.compute_subscription;

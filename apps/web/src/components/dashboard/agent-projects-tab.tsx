@@ -41,7 +41,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -58,13 +57,11 @@ type ProjectCreate = components["schemas"]["ProjectCreate"];
 
 export function AgentProjectsTab({
 	agentId,
-	routeSearch,
 	enabled = true,
 	headerIcon,
 	headerAdornment,
 }: {
 	agentId: string;
-	routeSearch: AgentRouteSearch;
 	enabled?: boolean;
 	headerIcon?: ReactNode;
 	headerAdornment?: ReactNode;
@@ -81,7 +78,7 @@ export function AgentProjectsTab({
 	);
 	const bindings = useAgentProjectBindings(agentId, { enabled });
 
-	const navigationScope = agentResourceScope(agentId, routeSearch);
+	const navigationScope = agentResourceScope(agentId);
 	return (
 		<AgentProjectsPanel
 			agentId={agentId}
