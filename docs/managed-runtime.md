@@ -1154,8 +1154,9 @@ protocol.
 
 OpenClaw persists the issued device credential in its own browser origin and
 may reuse it when the embedded UI revisits the clean dashboard URL. Clawdi
-records a versioned, non-secret native-ready marker only after the native
-handoff iframe loads, allowing later Console mounts to use the clean endpoint.
+records a versioned, non-secret native-handoff-loaded marker only after the
+native handoff document triggers the iframe load event, allowing later Console
+mounts to use the clean endpoint.
 New-window access stays disabled until the current iframe loads; it then opens
 the clean endpoint for native access or the exact reusable legacy `#token=` URL.
 It never requests another handoff. `Reconnect` clears the marker and requests a

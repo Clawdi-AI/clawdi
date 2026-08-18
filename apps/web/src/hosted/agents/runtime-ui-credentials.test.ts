@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
-	forgetOpenClawNativeReady,
-	hasOpenClawNativeReady,
+	forgetOpenClawNativeHandoffLoaded,
+	hasOpenClawNativeHandoffLoaded,
+	markOpenClawNativeHandoffLoaded,
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	rememberOpenClawNativeReady,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
+	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
@@ -178,7 +179,7 @@ describe("runtime UI credential targeting", () => {
 		expect(openClawRuntimeUiWindowTarget(null, native.url, true, true)).toBe(native.url);
 	});
 
-	test("persists only completed native bootstrap for the deployment endpoint", () => {
+	test("marks native handoff loads with a best-effort non-secret marker", () => {
 		const values = new Map<string, string>();
 		const storage = {
 			getItem: (key: string) => values.get(key) ?? null,
@@ -200,17 +201,29 @@ describe("runtime UI credential targeting", () => {
 		};
 		values.set("clawdi.openclaw-bootstrap-attempted.hdep_one", endpointUrl);
 
-		expect(hasOpenClawNativeReady(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
 		expect(values.has("clawdi.openclaw-bootstrap-attempted.hdep_one")).toBeFalse();
-		expect(rememberOpenClawNativeReady(storage, "hdep_one", endpointUrl, legacy)).toBeFalse();
-		expect(hasOpenClawNativeReady(storage, "hdep_one", endpointUrl)).toBeFalse();
-		expect(rememberOpenClawNativeReady(storage, "hdep_one", endpointUrl, native)).toBeTrue();
-		expect(hasOpenClawNativeReady(storage, "hdep_one", endpointUrl)).toBeTrue();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, legacy)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, native)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeTrue();
+		expect(markOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, native)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl)).toBeFalse();
 		expect(
-			hasOpenClawNativeReady(storage, "hdep_one", "https://moved.runtime.example/"),
+			hasOpenClawNativeHandoffLoaded(storage, "hdep_one", "https://moved.runtime.example/"),
 		).toBeFalse();
-		expect(hasOpenClawNativeReady(storage, "hdep_two", endpointUrl)).toBeFalse();
-		forgetOpenClawNativeReady(storage, "hdep_one");
-		expect(hasOpenClawNativeReady(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_two", endpointUrl)).toBeFalse();
+		forgetOpenClawNativeHandoffLoaded(storage, "hdep_one");
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+	});
+
+	test("treats an unavailable localStorage getter as missing storage", () => {
+		const browserWindow = {
+			get localStorage(): Storage {
+				throw new Error("Storage is unavailable");
+			},
+		};
+
+		expect(runtimeUiLocalStorage(browserWindow)).toBeNull();
 	});
 });

@@ -122,13 +122,14 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
-	forgetOpenClawNativeReady,
-	hasOpenClawNativeReady,
+	forgetOpenClawNativeHandoffLoaded,
+	hasOpenClawNativeHandoffLoaded,
+	markOpenClawNativeHandoffLoaded,
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	rememberOpenClawNativeReady,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
+	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import {
@@ -1417,8 +1418,8 @@ function ConsoleTab({
 	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
 		runtime === "openclaw" ? "loading" : "ready",
 	);
-	const [openClawNativeReady, setOpenClawNativeReady] = useState(false);
-	const [openClawFrameReady, setOpenClawFrameReady] = useState(false);
+	const [openClawNativeHandoffLoaded, setOpenClawNativeHandoffLoaded] = useState(false);
+	const [openClawFrameLoaded, setOpenClawFrameLoaded] = useState(false);
 	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
 	const requestVersionRef = useRef(0);
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
@@ -1432,8 +1433,8 @@ function ConsoleTab({
 		setCredentialLoadState("loading");
 		if (runtime === "openclaw") {
 			setCredentials(null);
-			setOpenClawNativeReady(false);
-			setOpenClawFrameReady(false);
+			setOpenClawNativeHandoffLoaded(false);
+			setOpenClawFrameLoaded(false);
 		}
 		try {
 			const resolved = await requestCredentials();
@@ -1460,12 +1461,12 @@ function ConsoleTab({
 		setCredentialError(null);
 		setIsCredentialLoading(false);
 		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
-		setOpenClawNativeReady(false);
-		setOpenClawFrameReady(false);
+		setOpenClawNativeHandoffLoaded(false);
+		setOpenClawFrameLoaded(false);
 	}, [runtime]);
 
 	const reconnectOpenClaw = useCallback(() => {
-		forgetOpenClawNativeReady(window.localStorage, deployment.resource.id);
+		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id);
 		return loadCredentials();
 	}, [deployment.resource.id, loadCredentials]);
 
@@ -1474,8 +1475,8 @@ function ConsoleTab({
 		loadedCredentialIdentityRef.current = credentialIdentity;
 		clearCredentials();
 		if (runtime !== "openclaw" || !isRunning || !url) return;
-		if (hasOpenClawNativeReady(window.localStorage, deployment.resource.id, url)) {
-			setOpenClawNativeReady(true);
+		if (hasOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id, url)) {
+			setOpenClawNativeHandoffLoaded(true);
 			setCredentialLoadState("ready");
 			return;
 		}
@@ -1590,12 +1591,13 @@ function ConsoleTab({
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
 	const openClawFrameCanLoad =
-		credentialLoadState === "ready" && (openClawCredentials !== null || openClawNativeReady);
+		credentialLoadState === "ready" &&
+		(openClawCredentials !== null || openClawNativeHandoffLoaded);
 	const iframeUrl =
 		runtime === "openclaw"
 			? openClawCredentials
 				? runtimeUiLaunchTarget(openClawCredentials)
-				: openClawNativeReady
+				: openClawNativeHandoffLoaded
 					? url
 					: "about:blank"
 			: url;
@@ -1604,8 +1606,8 @@ function ConsoleTab({
 			? openClawRuntimeUiWindowTarget(
 					openClawCredentials,
 					url,
-					openClawNativeReady,
-					openClawFrameReady,
+					openClawNativeHandoffLoaded,
+					openClawFrameLoaded,
 				)
 			: url;
 
@@ -1671,16 +1673,16 @@ function ConsoleTab({
 						runtime === "openclaw"
 							? () => {
 									if (
-										rememberOpenClawNativeReady(
-											window.localStorage,
+										markOpenClawNativeHandoffLoaded(
+											runtimeUiLocalStorage(),
 											deployment.resource.id,
 											url,
 											openClawCredentials,
 										)
 									) {
-										setOpenClawNativeReady(true);
+										setOpenClawNativeHandoffLoaded(true);
 									}
-									setOpenClawFrameReady(true);
+									setOpenClawFrameLoaded(true);
 								}
 							: undefined
 					}

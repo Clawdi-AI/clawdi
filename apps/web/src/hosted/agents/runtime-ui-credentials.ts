@@ -14,17 +14,28 @@ type OpenRuntimeWindow = (
 type RuntimeUiBootstrapStorage = Pick<Storage, "getItem" | "removeItem" | "setItem">;
 
 const LEGACY_OPENCLAW_BOOTSTRAP_STORAGE_PREFIX = "clawdi.openclaw-bootstrap-attempted";
-const OPENCLAW_NATIVE_READY_STORAGE_PREFIX = "clawdi.openclaw-native-ready.v1";
+const OPENCLAW_NATIVE_HANDOFF_LOADED_STORAGE_PREFIX = "clawdi.openclaw-native-handoff-loaded.v1";
 
 function legacyOpenClawBootstrapStorageKey(deploymentId: string): string {
 	return `${LEGACY_OPENCLAW_BOOTSTRAP_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-function openClawNativeReadyStorageKey(deploymentId: string): string {
-	return `${OPENCLAW_NATIVE_READY_STORAGE_PREFIX}.${deploymentId}`;
+function openClawNativeHandoffLoadedStorageKey(deploymentId: string): string {
+	return `${OPENCLAW_NATIVE_HANDOFF_LOADED_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-function removeStorageItem(storage: RuntimeUiBootstrapStorage, key: string): void {
+export function runtimeUiLocalStorage(
+	browserWindow: { readonly localStorage: Storage } = window,
+): Storage | null {
+	try {
+		return browserWindow.localStorage;
+	} catch {
+		return null;
+	}
+}
+
+function removeStorageItem(storage: RuntimeUiBootstrapStorage | null, key: string): void {
+	if (!storage) return;
 	try {
 		storage.removeItem(key);
 	} catch {
@@ -32,41 +43,43 @@ function removeStorageItem(storage: RuntimeUiBootstrapStorage, key: string): voi
 	}
 }
 
-export function hasOpenClawNativeReady(
-	storage: RuntimeUiBootstrapStorage,
+export function hasOpenClawNativeHandoffLoaded(
+	storage: RuntimeUiBootstrapStorage | null,
 	deploymentId: string,
 	endpointUrl: string,
 ): boolean {
 	removeStorageItem(storage, legacyOpenClawBootstrapStorageKey(deploymentId));
+	if (!storage) return false;
 	try {
-		return storage.getItem(openClawNativeReadyStorageKey(deploymentId)) === endpointUrl;
+		return storage.getItem(openClawNativeHandoffLoadedStorageKey(deploymentId)) === endpointUrl;
 	} catch {
 		return false;
 	}
 }
 
-export function rememberOpenClawNativeReady(
-	storage: RuntimeUiBootstrapStorage,
+export function markOpenClawNativeHandoffLoaded(
+	storage: RuntimeUiBootstrapStorage | null,
 	deploymentId: string,
 	endpointUrl: string,
 	credentials: RuntimeUiCredentials | null,
 ): boolean {
 	if (openClawHandoffMode(credentials) !== "native") return false;
 	removeStorageItem(storage, legacyOpenClawBootstrapStorageKey(deploymentId));
+	if (!storage) return true;
 	try {
-		storage.setItem(openClawNativeReadyStorageKey(deploymentId), endpointUrl);
+		storage.setItem(openClawNativeHandoffLoadedStorageKey(deploymentId), endpointUrl);
 	} catch {
 		// Browser storage is only an optimization; OpenClaw remains authoritative.
 	}
 	return true;
 }
 
-export function forgetOpenClawNativeReady(
-	storage: RuntimeUiBootstrapStorage,
+export function forgetOpenClawNativeHandoffLoaded(
+	storage: RuntimeUiBootstrapStorage | null,
 	deploymentId: string,
 ): void {
 	removeStorageItem(storage, legacyOpenClawBootstrapStorageKey(deploymentId));
-	removeStorageItem(storage, openClawNativeReadyStorageKey(deploymentId));
+	removeStorageItem(storage, openClawNativeHandoffLoadedStorageKey(deploymentId));
 }
 
 export function openSecureRuntimeWindow(
@@ -150,10 +163,10 @@ export function openClawHandoffMode(
 export function openClawRuntimeUiWindowTarget(
 	credentials: RuntimeUiCredentials | null,
 	endpointUrl: string,
-	nativeReady: boolean,
-	frameReady: boolean,
+	nativeHandoffLoaded: boolean,
+	frameLoaded: boolean,
 ): string | null {
-	if (!frameReady) return null;
+	if (!frameLoaded) return null;
 	const handoffMode = openClawHandoffMode(credentials);
 	if (handoffMode === "legacy" && credentials?.runtime === "openclaw") {
 		return credentials.handoff_url;
@@ -161,5 +174,5 @@ export function openClawRuntimeUiWindowTarget(
 	if (handoffMode === "native" && credentials?.runtime === "openclaw") {
 		return credentials.url;
 	}
-	return nativeReady ? endpointUrl : null;
+	return nativeHandoffLoaded ? endpointUrl : null;
 }
