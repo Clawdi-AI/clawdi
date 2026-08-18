@@ -1405,7 +1405,7 @@ async function stubCompletedStripeCheckout(page: Page) {
 					getSession: () => session,
 					confirm: async () => ({
 						type: "success",
-						session: { status: { type: "complete" } },
+						session: { status: { type: "complete", paymentStatus: "paid" } },
 					}),
 				};
 				return {
@@ -3989,6 +3989,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	page,
 }) => {
 	const checkoutRequests: string[] = [];
+	const deploymentDetailRequests: string[] = [];
 	const deploymentRequestReads: string[] = [];
 	const operationPollRequests: string[] = [];
 	page.on("request", (request) => {
@@ -4016,6 +4017,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 				},
 			},
 		],
+		deploymentDetailRequests,
 		deploymentRequestReads,
 		deployments: [includedBasicDeployment, startingDeployment],
 		plans: [basicPlan],
@@ -4030,13 +4032,14 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
+	await expect.poll(() => deploymentRequestReads).toHaveLength(1);
+	await expect.poll(() => deploymentDetailRequests).toEqual([startingDeployment.id]);
 	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
 	).toBeVisible();
 	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
-	expect(deploymentRequestReads).toHaveLength(1);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });
