@@ -17,6 +17,7 @@ import {
 	hermesCodexAuthInvocation,
 	oauthCredentialFingerprint,
 	resolveOpenClawConfigMutationSdkExport,
+	resolveOpenClawDeviceBootstrapSdkExport,
 	resolveOpenClawProviderAuthSdkExport,
 } from "./codex-oauth-native-store";
 
@@ -62,6 +63,7 @@ describe("native OAuth store contracts", () => {
 		const packageRoot = join(versionedNodeRoot, "lib", "node_modules", "openclaw");
 		const providerAuthPath = join(packageRoot, "provider-auth.mjs");
 		const configMutationPath = join(packageRoot, "config-mutation.mjs");
+		const deviceBootstrapPath = join(packageRoot, "device-bootstrap.mjs");
 		const commandPath = join(home, ".local", "bin", "openclaw");
 		mkdirSync(dirname(commandPath), { recursive: true });
 		mkdirSync(packageRoot, { recursive: true });
@@ -75,6 +77,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 		);
 		writeFileSync(providerAuthPath, "export const publicProviderAuth = true;\n");
 		writeFileSync(configMutationPath, "export const publicConfigMutation = true;\n");
+		writeFileSync(deviceBootstrapPath, "export const publicDeviceBootstrap = true;\n");
 		writeFileSync(
 			join(packageRoot, "package.json"),
 			JSON.stringify({
@@ -83,6 +86,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 				exports: {
 					"./plugin-sdk/provider-auth": "./provider-auth.mjs",
 					"./plugin-sdk/config-mutation": "./config-mutation.mjs",
+					"./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs",
 				},
 			}),
 		);
@@ -91,6 +95,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 		expect(lstatSync(commandPath).isSymbolicLink()).toBe(false);
 		expect(resolveOpenClawProviderAuthSdkExport(home, [commandPath])).toBe(providerAuthPath);
 		expect(resolveOpenClawConfigMutationSdkExport(home, [commandPath])).toBe(configMutationPath);
+		expect(resolveOpenClawDeviceBootstrapSdkExport(home, [commandPath])).toBe(deviceBootstrapPath);
 	});
 
 	test("preserves a future Hermes store version and unrelated pool entries", () => {

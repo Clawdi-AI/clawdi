@@ -143,6 +143,13 @@ export function resolveOpenClawConfigMutationSdkExport(
 	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/config-mutation");
 }
 
+export function resolveOpenClawDeviceBootstrapSdkExport(
+	home: string,
+	startPaths: ReadonlyArray<string | null | undefined>,
+): string | null {
+	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/device-bootstrap");
+}
+
 export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error("Native OAuth credential observation is invalid");

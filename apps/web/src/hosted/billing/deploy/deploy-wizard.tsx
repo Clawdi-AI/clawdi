@@ -206,9 +206,8 @@ const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
 const DEFAULT_DEPLOYMENT_REQUEST_PROGRESS: DeploymentRequestProgress = {
-	busyLabel: "Finishing checkout…",
-	takingLongCopy:
-		"Checkout is complete and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+	busyLabel: "Opening…",
+	takingLongCopy: "Waiting for your agent.",
 };
 
 function checkoutDeploymentRequestProgress(
@@ -216,16 +215,14 @@ function checkoutDeploymentRequestProgress(
 ): DeploymentRequestProgress {
 	if (paymentStatus === "unpaid") {
 		return {
-			busyLabel: "Waiting for payment…",
-			takingLongCopy:
-				"Stripe is still processing your payment. Agent creation will start after payment is confirmed.",
+			busyLabel: "Opening…",
+			takingLongCopy: "Payment is processing.",
 		};
 	}
 	if (paymentStatus === "no_payment_required") return DEFAULT_DEPLOYMENT_REQUEST_PROGRESS;
 	return {
-		busyLabel: "Creating agent…",
-		takingLongCopy:
-			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		busyLabel: "Opening…",
+		takingLongCopy: "Payment confirmed.",
 	};
 }
 
@@ -344,9 +341,7 @@ export function DeployWizard() {
 			requestProgress: DeploymentRequestProgress = DEFAULT_DEPLOYMENT_REQUEST_PROGRESS,
 		): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
-			setSubmitBusyLabel(
-				target.kind === "deploy_request" ? requestProgress.busyLabel : "Loading agent details…",
-			);
+			setSubmitBusyLabel(target.kind === "deploy_request" ? requestProgress.busyLabel : "Opening…");
 			setSubmitTakingLongCopy(
 				target.kind === "deploy_request" ? requestProgress.takingLongCopy : null,
 			);
@@ -366,7 +361,7 @@ export function DeployWizard() {
 						deployRequestId: target.deployRequestId,
 						onAccepted: () => {
 							clearCheckoutAttempt(target.deployRequestId);
-							setSubmitBusyLabel("Loading agent details…");
+							setSubmitBusyLabel("Opening…");
 							setSubmitTakingLongCopy(null);
 							setSubmitTakingLong(false);
 						},
@@ -462,9 +457,9 @@ export function DeployWizard() {
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
-	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
+	const [submitBusyLabel, setSubmitBusyLabel] = useState("Deploying…");
 	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState<string | null>(
-		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		"Waiting for your agent.",
 	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
 	const [selectedSubscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(
@@ -868,23 +863,15 @@ export function DeployWizard() {
 	async function onDeploy() {
 		if (!canSubmit || !subscriptionSource) return;
 		setSubmitTakingLong(false);
-		setSubmitBusyLabel(
-			subscriptionSource.mode === "existing"
-				? "Assigning subscription & creating agent…"
-				: paidSelection
-					? paymentMethod === "wallet"
-						? "Confirming payment & creating agent…"
-						: "Opening secure checkout…"
-					: "Creating agent…",
-		);
+		setSubmitBusyLabel(paidSelection && paymentMethod === "card" ? "Opening…" : "Deploying…");
 		setSubmitTakingLongCopy(
 			subscriptionSource.mode === "existing"
-				? "The existing subscription is being assigned and agent creation is starting. Keep this page open."
+				? "Waiting for your agent."
 				: paidSelection
 					? paymentMethod === "wallet"
-						? "Payment and agent creation are still being confirmed. Keep this page open; we’ll take you to your agent as soon as both are confirmed."
-						: "Secure checkout is still opening. No payment has been submitted yet; keep this page open to continue."
-					: "Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+						? "Payment is processing."
+						: "Opening checkout."
+					: "Waiting for your agent.",
 		);
 		setSubmitting(true);
 		try {
@@ -925,7 +912,7 @@ export function DeployWizard() {
 				}
 				forgetIdempotencyAttempt("subscription-checkout", fingerprint);
 				checkoutAttemptRef.current = null;
-				await acceptDeployment({ kind: "deployment", deploymentId: outcome.deploymentId });
+				await acceptDeployment(outcome.target);
 				return;
 			}
 			if (subscriptionSource.mode === "new" && paidSelection) {
@@ -986,10 +973,7 @@ export function DeployWizard() {
 							? formatUsdExact(walletDebit.debitAmountUsd)
 							: formatCents(paidSelection.offer.price_cents),
 					);
-					await acceptDeployment({
-						kind: "deployment",
-						deploymentId: outcome.deploymentId,
-					});
+					await acceptDeployment(outcome.target);
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({
@@ -1022,7 +1006,7 @@ export function DeployWizard() {
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
-					await acceptDeployment({ kind: "deployment", deploymentId: outcome.deploymentId });
+					await acceptDeployment(outcome.target);
 					return;
 				}
 				const result = outcome.checkout;
@@ -1083,13 +1067,13 @@ export function DeployWizard() {
 
 	const deployLabel =
 		subscriptionSource?.mode === "existing"
-			? "Use subscription & deploy"
+			? "Deploy"
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
 						? "Top up Wallet"
 						: "Pay & deploy"
-					: "Continue to checkout"
+					: "Continue"
 				: "Deploy";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
@@ -1687,7 +1671,7 @@ export function DeployWizard() {
 									{submitting
 										? submitBusyLabel
 										: acceptedDeploymentHydrationFailed
-											? "Retry opening agent"
+											? "Retry"
 											: deployLabel}
 								</Button>
 								{submitTakingLong && submitTakingLongCopy ? (

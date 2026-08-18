@@ -3,10 +3,7 @@ import {
 	buildHostedDeploySubscriptionQuoteRequest,
 	type HostedDeployCheckoutUiMode,
 } from "@clawdi/shared/api";
-import {
-	acceptDeclarativeOperation,
-	type CheckoutOperationResult,
-} from "@/hosted/billing/billing-client";
+import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
 	ComputePlanSlug,
@@ -95,8 +92,9 @@ export type SubscriptionCreateOutcomeView =
 	  }
 	| {
 			flowType: "subscription_activation";
-			deploymentId: string;
-			deployRequestId: string | null;
+			target:
+				| { kind: "deployment"; deploymentId: string }
+				| { kind: "deploy_request"; deployRequestId: string };
 			currentPeriodEnd: string | null;
 			entitledUntil: string | null;
 	  };
@@ -173,13 +171,21 @@ export function subscriptionCreateOutcome(
 	if (result.flow_type !== "subscription_activation") {
 		return { flowType: "checkout", checkout: result };
 	}
+	const deploymentId = result.deployment_id?.trim();
+	const deployRequestId = result.deploy_request_id?.trim();
+	let target:
+		| { kind: "deployment"; deploymentId: string }
+		| { kind: "deploy_request"; deployRequestId: string };
+	if (deploymentId) {
+		target = { kind: "deployment", deploymentId };
+	} else if (deployRequestId) {
+		target = { kind: "deploy_request", deployRequestId };
+	} else {
+		throw new Error("Activation did not return an agent request.");
+	}
 	return {
 		flowType: "subscription_activation",
-		deploymentId: acceptDeclarativeOperation(
-			{ deploymentId: result.deployment_id, operation: null },
-			"Wallet activation did not return an agent.",
-		).deploymentId,
-		deployRequestId: result.deploy_request_id ?? null,
+		target,
 		currentPeriodEnd: result.current_period_end ?? null,
 		entitledUntil: result.entitled_until ?? null,
 	};
