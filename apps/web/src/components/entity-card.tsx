@@ -644,9 +644,17 @@ export function EntityChoiceCard({
 				) : null}
 			</div>
 			{selected ? (
-				<Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-			) : detailsPlacement === "trailing" || detailsPlacement === "responsive" ? (
+				<Check
+					className={cn(
+						"mt-0.5 size-4 shrink-0 text-primary",
+						detailsPlacement === "responsive" && "hidden @md/choice:block",
+					)}
+					aria-hidden
+				/>
+			) : detailsPlacement === "trailing" ? (
 				<span className="size-4 shrink-0" aria-hidden />
+			) : detailsPlacement === "responsive" ? (
+				<span className="hidden size-4 shrink-0 @md/choice:block" aria-hidden />
 			) : null}
 		</>
 	);

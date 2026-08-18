@@ -34,7 +34,7 @@ describe("SubscriptionSourcePicker", () => {
 		expect(markup).toContain("@container/choice");
 		expect(markup).toContain("@md/choice:flex-row");
 		expect(markup).toContain('aria-pressed="true"');
-		expect(markup).toContain("Basic subscription");
+		expect(markup).toContain('title="Basic">Basic</span>');
 		expect(markup).toContain("Plan price");
 	});
 });
