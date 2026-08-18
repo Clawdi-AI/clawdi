@@ -54,17 +54,16 @@ describe("Agent Plugin model", () => {
 			[desired("sui"), desired("legacy")],
 		);
 
-		expect(inventory.installed.map((item) => item.name)).toEqual(["legacy", "sui"]);
-		expect(inventory.available.map((item) => item.name)).toEqual(["cetus"]);
-		expect(inventory.installed[0]?.catalog).toBeNull();
-		expect(pluginHasUpdate(inventory.installed[1])).toBe(true);
+		expect(inventory.map((item) => item.name)).toEqual(["cetus", "legacy", "sui"]);
+		expect(inventory[1]?.catalog).toBeNull();
+		expect(pluginHasUpdate(inventory[2])).toBe(true);
 	});
 
 	test("maps the three observed convergence states without mutation-only states", () => {
 		expect(agentPluginStatusPresentation(desired("sui")).label).toBe("Installed");
 		expect(
 			agentPluginStatusPresentation(desired("sui", { convergence: "not_observed" })).label,
-		).toBe("Pending");
+		).toBe("Installing");
 		expect(
 			agentPluginStatusPresentation(
 				desired("sui", {
@@ -73,8 +72,8 @@ describe("Agent Plugin model", () => {
 				}),
 			),
 		).toMatchObject({
-			label: "Failed",
-			description: "The installed package does not match the requested plugin.",
+			label: "Install failed",
+			description: "The installed plugin does not match the requested version.",
 		});
 	});
 
@@ -84,8 +83,8 @@ describe("Agent Plugin model", () => {
 			agentPluginInstallability(catalogEntry("cetus", { runtimes: ["openclaw"] }), "hermes"),
 		).toEqual({
 			installable: false,
-			label: "Incompatible",
-			reason: "This plugin does not support Hermes.",
+			label: "Unavailable",
+			reason: "This plugin is not available for this agent.",
 		});
 		expect(
 			agentPluginInstallability(

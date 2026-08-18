@@ -78,7 +78,7 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await page.route(
 		`http://127.0.0.1:8000/v1/agents/${AGENT_ID}/agent-plugins/**`,
 		async (route) => {
-			installed = true;
+			installed = route.request().method() !== "DELETE";
 			await route.fulfill({
 				status: 202,
 				contentType: "application/json",
@@ -93,5 +93,15 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "Install", exact: true }).click();
-	await expect(page.getByText("Pending", { exact: true })).toBeVisible();
+	await expect(page.getByText("Installing", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "View Sui Agent details" }).click();
+	await expect(page.getByRole("heading", { name: "Sui Agent", exact: true })).toBeVisible();
+	await expect(page.getByText("OpenClaw", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Hermes", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Back to Plugins", exact: true }).click();
+	await page.getByRole("button", { name: "Remove", exact: true }).click();
+	await page.getByRole("button", { name: "Remove plugin", exact: true }).click();
+	await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
+	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 });

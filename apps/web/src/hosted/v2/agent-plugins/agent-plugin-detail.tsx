@@ -17,15 +17,12 @@ import { IconChip } from "@/components/icon-chip";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { runtimeDisplayName } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
-import { relativeTime } from "@/lib/utils";
 import type { AgentPluginPendingAction } from "./agent-plugin-card";
 import {
 	type AgentPluginCatalogEntry,
@@ -96,15 +93,7 @@ export function AgentPluginDetail({
 					) : undefined
 				}
 				status={
-					item.catalog?.publisher || item.desired?.observed_at ? (
-						<DetailMeta>
-							{item.catalog?.publisher ? <span>{item.catalog.publisher}</span> : null}
-							{item.catalog?.publisher && item.desired?.observed_at ? <span>·</span> : null}
-							{item.desired?.observed_at ? (
-								<span>Observed {relativeTime(item.desired.observed_at)}</span>
-							) : null}
-						</DetailMeta>
-					) : undefined
+					item.catalog?.publisher ? <DetailMeta>{item.catalog.publisher}</DetailMeta> : undefined
 				}
 				actions={
 					<PluginDetailActions
@@ -233,20 +222,10 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 				{entry.components.skills.map((skill) => (
 					<ComponentRow key={`skill:${skill}`} icon={BookOpen} label="Skill" name={skill} />
 				))}
-				{servers.map(([name, transport]) => (
-					<ComponentRow
-						key={`mcp:${name}`}
-						icon={Server}
-						label="MCP server"
-						name={name}
-						meta={transportLabel(transport)}
-					/>
+				{servers.map(([name]) => (
+					<ComponentRow key={`mcp:${name}`} icon={Server} label="MCP server" name={name} />
 				))}
 			</div>
-			<dl className="grid gap-x-6 gap-y-4 border-t pt-4 text-sm sm:grid-cols-2">
-				<DetailValue label="Package" value={entry.name} mono />
-				<DetailValue label="Runtimes" value={entry.runtimes.map(runtimeDisplayName).join(", ")} />
-			</dl>
 		</DetailPanel>
 	);
 }
@@ -264,12 +243,10 @@ function ComponentRow({
 	icon: Icon,
 	label,
 	name,
-	meta,
 }: {
 	icon: typeof BookOpen;
 	label: string;
 	name: string;
-	meta?: string;
 }) {
 	return (
 		<div className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0">
@@ -278,29 +255,6 @@ function ComponentRow({
 				<div className="text-xs text-muted-foreground">{label}</div>
 				<code className="mt-0.5 block break-all text-sm">{name}</code>
 			</div>
-			{meta ? <Badge variant="outline">{meta}</Badge> : null}
 		</div>
 	);
-}
-
-function DetailValue({
-	label,
-	value,
-	mono = false,
-}: {
-	label: string;
-	value: string;
-	mono?: boolean;
-}) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-xs text-muted-foreground">{label}</dt>
-			<dd className={mono ? "mt-1 break-all font-mono text-xs" : "mt-1 break-words"}>{value}</dd>
-		</div>
-	);
-}
-
-function transportLabel(transport: "stdio" | "streamable-http" | "sse"): string {
-	if (transport === "streamable-http") return "Streamable HTTP";
-	return transport === "sse" ? "SSE" : "stdio";
 }

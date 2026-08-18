@@ -10,7 +10,6 @@ import { HERO_GRID_CLASS, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
-import { SectionLabel } from "@/components/section-label";
 import { SearchInput } from "@/components/ui/search-input";
 import type { HostedRuntime } from "@/hosted/runtimes";
 import { useOpenApi } from "@/lib/api";
@@ -79,7 +78,7 @@ export function AgentPluginsSurface({
 				body: { version: item.catalog.version },
 			});
 			await refreshDesired();
-			toast.success(updating ? "Update requested" : "Install requested");
+			toast.success(updating ? "Plugin update started" : "Plugin installation started");
 		} catch (error) {
 			toast.error(updating ? "Couldn't update plugin" : "Couldn't install plugin", {
 				description: normalizeApiError(error),
@@ -100,7 +99,7 @@ export function AgentPluginsSurface({
 			});
 			await refreshDesired();
 			setSelectedName(null);
-			toast.success("Removal requested");
+			toast.success("Plugin removal started");
 		} catch (error) {
 			toast.error("Couldn't remove plugin", { description: normalizeApiError(error) });
 			throw error;
@@ -121,9 +120,7 @@ export function AgentPluginsSurface({
 			buildAgentPluginInventory(catalogQuery.data?.plugins ?? [], desiredQuery.data?.plugins ?? []),
 		[catalogQuery.data?.plugins, desiredQuery.data?.plugins],
 	);
-	const selectedItem = selectedName
-		? [...inventory.installed, ...inventory.available].find((item) => item.name === selectedName)
-		: null;
+	const selectedItem = selectedName ? inventory.find((item) => item.name === selectedName) : null;
 	const initialLoading =
 		(desiredQuery.data === undefined && !desiredError) ||
 		(catalogQuery.data === undefined && !catalogError);
@@ -145,7 +142,7 @@ export function AgentPluginsSurface({
 				<>
 					<PageHeader
 						title="Plugins"
-						description="Install Skills and MCP servers from the Store for this agent."
+						description="Add tools and knowledge to this agent."
 						icon={
 							<IconChip tint="bg-identity-7-bg text-identity-7-fg">
 								<Blocks />
@@ -192,7 +189,7 @@ function AgentPluginCatalog({
 	onRemove,
 	onRetryCatalog,
 }: {
-	inventory: { installed: AgentPluginInventoryItem[]; available: AgentPluginInventoryItem[] };
+	inventory: AgentPluginInventoryItem[];
 	runtime: HostedRuntime;
 	catalogError: unknown | null;
 	pending: PendingPluginMutation;
@@ -203,12 +200,10 @@ function AgentPluginCatalog({
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRetryCatalog: () => void;
 }) {
-	const installed = inventory.installed.filter((item) => agentPluginMatches(item, query));
-	const available = inventory.available.filter((item) => agentPluginMatches(item, query));
-	const total = inventory.installed.length + inventory.available.length;
-	const noMatches = Boolean(query.trim()) && installed.length === 0 && available.length === 0;
+	const items = inventory.filter((item) => agentPluginMatches(item, query));
+	const noMatches = Boolean(query.trim()) && items.length === 0;
 
-	if (total === 0) {
+	if (inventory.length === 0) {
 		return catalogError ? (
 			<ApiErrorPanel
 				error={catalogError}
@@ -232,31 +227,16 @@ function AgentPluginCatalog({
 					/>
 				}
 			/>
-			{installed.length > 0 ? (
-				<PluginSection label="Installed" items={installed}>
-					{installed.map((item) => (
-						<AgentPluginCard
-							key={item.name}
-							item={item}
-							runtime={runtime}
-							pendingAction={pending?.name === item.name ? pending.action : null}
-							mutationsBlocked={pending !== null}
-							onOpen={onOpen}
-							onInstall={onInstall}
-							onRemove={onRemove}
-						/>
-					))}
-				</PluginSection>
-			) : null}
 			{catalogError ? (
 				<ApiErrorPanel
 					error={catalogError}
 					onRetry={onRetryCatalog}
 					title="Couldn't load available plugins"
 				/>
-			) : available.length > 0 ? (
-				<PluginSection label="Available" items={available}>
-					{available.map((item) => (
+			) : null}
+			{items.length > 0 ? (
+				<div className={HERO_GRID_CLASS}>
+					{items.map((item) => (
 						<AgentPluginCard
 							key={item.name}
 							item={item}
@@ -268,7 +248,7 @@ function AgentPluginCatalog({
 							onRemove={onRemove}
 						/>
 					))}
-				</PluginSection>
+				</div>
 			) : null}
 			{noMatches ? (
 				<EmptyState
@@ -278,23 +258,6 @@ function AgentPluginCatalog({
 				/>
 			) : null}
 		</div>
-	);
-}
-
-function PluginSection({
-	label,
-	items,
-	children,
-}: {
-	label: string;
-	items: readonly AgentPluginInventoryItem[];
-	children: React.ReactNode;
-}) {
-	return (
-		<section className="space-y-3">
-			<SectionLabel count={items.length}>{label}</SectionLabel>
-			<div className={HERO_GRID_CLASS}>{children}</div>
-		</section>
 	);
 }
 
