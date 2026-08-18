@@ -31,6 +31,7 @@ const cancelingEnvironmentId = "22222222-2222-4222-8222-222222222222";
 const paidEnvironmentId = "33333333-3333-4333-8333-333333333333";
 const pastDueEnvironmentId = "44444444-4444-4444-8444-444444444444";
 const includedEnvironmentId = "55555555-5555-4555-8555-555555555555";
+const endedEnvironmentId = "66666666-6666-4666-8666-666666666666";
 const accountActiveDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_active",
@@ -68,6 +69,12 @@ const accountIncludedDeployment = {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: includedEnvironmentId },
 	},
+};
+const accountEndedDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_ended_second",
+	agent_id: endedEnvironmentId,
+	name: "Ended subscription agent",
 };
 const ineligibleIncludedDeployment = {
 	...includedBasicDeployment,
@@ -139,14 +146,39 @@ function subscription(
 	};
 }
 
+function reusableSubscription(
+	subscriptionId: string,
+	overrides: Partial<ReusableSubscription> = {},
+): ReusableSubscription {
+	return {
+		subscription_id: subscriptionId,
+		plan_slug: "compute_basic",
+		billing_term_months: 1,
+		funding_source: "stripe",
+		status: "active",
+		price_cents: 900,
+		currency: "usd",
+		current_period_end: "2099-09-12T12:00:00Z",
+		entitled_until: "2099-09-12T12:00:00Z",
+		cancel_at_period_end: false,
+		...overrides,
+	};
+}
+
 async function expectCardsFit(container: Locator) {
 	const metrics = await container
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) =>
 			cards.map((card) => {
 				const box = card.getBoundingClientRect();
+				const headingBox = card.querySelector("h3, h4")?.getBoundingClientRect();
+				const meta = card.querySelector<HTMLElement>('[data-slot="compute-subscription-meta"]');
 				const action = card.querySelector<HTMLElement>(
 					'[data-slot="compute-subscription-actions"]',
+				);
+				const metaBox = meta?.getBoundingClientRect();
+				const metaItemBoxes = Array.from(meta?.children ?? []).map((item) =>
+					item.getBoundingClientRect().toJSON(),
 				);
 				const actionBox = action?.getBoundingClientRect();
 				const actionItemBoxes = Array.from(
@@ -158,6 +190,9 @@ async function expectCardsFit(container: Locator) {
 					clientWidth: card.clientWidth,
 					scrollWidth: card.scrollWidth,
 					box: box.toJSON(),
+					headingBox: headingBox?.toJSON() ?? null,
+					metaBox: metaBox?.toJSON() ?? null,
+					metaItemBoxes,
 					actionBox: actionBox?.toJSON() ?? null,
 					actionItemBoxes,
 				};
@@ -167,6 +202,23 @@ async function expectCardsFit(container: Locator) {
 	expect(metrics).not.toHaveLength(0);
 	for (const metric of metrics) {
 		expect(metric.scrollWidth).toBeLessThanOrEqual(metric.clientWidth + 1);
+		if (metric.headingBox) expect(metric.headingBox.height).toBeLessThanOrEqual(49);
+		if (metric.metaBox) {
+			for (const itemBox of metric.metaItemBoxes) {
+				expect(itemBox.x).toBeGreaterThanOrEqual(metric.metaBox.x - 1);
+				expect(itemBox.right).toBeLessThanOrEqual(metric.metaBox.right + 1);
+			}
+			for (let index = 1; index < metric.metaItemBoxes.length; index += 1) {
+				const previous = metric.metaItemBoxes[index - 1];
+				const current = metric.metaItemBoxes[index];
+				if (!previous || !current) continue;
+				const overlapWidth =
+					Math.min(previous.right, current.right) - Math.max(previous.left, current.left);
+				const overlapHeight =
+					Math.min(previous.bottom, current.bottom) - Math.max(previous.top, current.top);
+				expect(overlapWidth <= 0 || overlapHeight <= 0).toBe(true);
+			}
+		}
 		if (metric.actionBox) {
 			expect(metric.actionBox.x).toBeGreaterThanOrEqual(metric.box.x - 1);
 			expect(metric.actionBox.x + metric.actionBox.width).toBeLessThanOrEqual(
@@ -199,6 +251,40 @@ async function expectNoHorizontalOverflow(page: Page) {
 		scrollWidth: document.documentElement.scrollWidth,
 	}));
 	expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+}
+
+async function gotoSubscriptionAction(page: Page, action: "start_new") {
+	const url = new URL(page.url());
+	url.searchParams.set("subscription_action", action);
+	await page.goto(url.toString());
+}
+
+async function expectSubscriptionCardRowAligned(left: Locator, right: Locator) {
+	const [leftLayout, rightLayout] = await Promise.all(
+		[left, right].map((card) =>
+			card.evaluate((element) => {
+				const slotBox = (slot: string) => {
+					const target = element.querySelector<HTMLElement>(`[data-slot="${slot}"]`);
+					if (!target) throw new Error(`Missing ${slot}`);
+					return target.getBoundingClientRect().toJSON();
+				};
+				return {
+					card: element.getBoundingClientRect().toJSON(),
+					header: slotBox("compute-subscription-header"),
+					meta: slotBox("compute-subscription-meta"),
+					identity: slotBox("compute-subscription-identity"),
+					actions: slotBox("compute-subscription-actions"),
+				};
+			}),
+		),
+	);
+
+	expect(Math.abs(leftLayout.card.y - rightLayout.card.y)).toBeLessThanOrEqual(1);
+	expect(Math.abs(leftLayout.card.height - rightLayout.card.height)).toBeLessThanOrEqual(1);
+	for (const slot of ["header", "meta", "identity"] as const) {
+		expect(Math.abs(leftLayout[slot].y - rightLayout[slot].y)).toBeLessThanOrEqual(1);
+	}
+	expect(Math.abs(leftLayout.actions.bottom - rightLayout.actions.bottom)).toBeLessThanOrEqual(1);
 }
 
 async function expectAgentSettingsSectionsAligned(
@@ -311,11 +397,25 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 			accountIncludedDeployment,
 			accountPastDueDeployment,
 			accountCancelingDeployment,
+			accountEndedDeployment,
 		],
 		cloudAgents: accountCloudAgents,
 		plans: [basicPlan, performancePlan],
 		fixPaymentRequests,
 		scheduledPlanCancellationRequests,
+		reusableSubscriptionPages: {
+			initial: {
+				items: [
+					reusableSubscription("reusable_active", {
+						plan_slug: "compute_performance",
+						funding_source: "wallet",
+						price_cents: 1_000,
+					}),
+				],
+				has_more: false,
+				next_cursor: null,
+			},
+		},
 		subscriptionPages: {
 			initial: {
 				items: [],
@@ -344,6 +444,15 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						price_cents: 0,
 						billing_term_months: 1,
 						agent_name: "Included agent",
+					}),
+					subscription("reusable_active", "active", {
+						funding_source: "wallet",
+						price_cents: 1_000,
+						billing_term_months: 1,
+						deployment_id: "hdep_deleted_stale_projection",
+						agent_name: "Stale deleted agent",
+						is_orphan: true,
+						recovery_action: "start_new",
 					}),
 					subscription("past_due", "past_due", {
 						plan_slug: "compute_basic",
@@ -399,20 +508,21 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(activeIdentity).toBeVisible();
 	await expect(activeIdentity.locator("span[title]")).toHaveAttribute("title", longAgentName);
 	await expect(dialog.getByText("Canceling agent", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("Active", { exact: true })).toHaveCount(2);
+	await expect(dialog.getByText("Active", { exact: true })).toHaveCount(3);
 	await expect(dialog.getByText("Canceling", { exact: true })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
 	await expect(dialog.getByRole("button", { name: "Manage", exact: true })).toHaveCount(2);
 	await expect(dialog.getByRole("button", { name: "Upgrade", exact: true })).toHaveCount(1);
 	await expect(dialog.getByRole("button", { name: "Cancel scheduled change" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Show history (2)" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(5);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(6);
 	const currentCards = dialog.locator('[data-slot="compute-subscription-card"]');
 	const activeCard = currentCards.nth(0);
 	const includedCard = currentCards.nth(1);
-	const pastDueCard = currentCards.nth(2);
-	const orphanPastDueCard = currentCards.nth(3);
-	const cancelingCard = currentCards.nth(4);
+	const availableCard = currentCards.nth(2);
+	const pastDueCard = currentCards.nth(3);
+	const orphanPastDueCard = currentCards.nth(4);
+	const cancelingCard = currentCards.nth(5);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 	await expect(activeCard.locator("h4")).toHaveText("Performance compute");
 	await expect(activeCard.getByText("Used by", { exact: true })).toBeVisible();
@@ -433,6 +543,11 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(includedUpgrade.locator("svg.lucide-arrow-up")).toHaveCount(1);
 	await expect(includedCard.getByRole("button")).toHaveCount(1);
 	await expect(includedCard.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+	await expect(availableCard.getByText("Available for a new agent", { exact: true })).toBeVisible();
+	await expect(availableCard.getByText("Stale deleted agent", { exact: true })).toHaveCount(0);
+	await expect(availableCard.getByText("Used by", { exact: true })).toHaveCount(0);
+	await expect(availableCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
+	await expect(availableCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 	await expect(pastDueCard.getByText("Past due", { exact: true })).toBeVisible();
 	await expect(pastDueCard.getByText("Retries Aug 10, 2099", { exact: true })).toBeVisible();
 	const pastDueManage = pastDueCard.getByRole("button", { name: "Manage", exact: true });
@@ -466,29 +581,13 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	expect(currentStatuses).toEqual([
 		"active",
 		"active",
+		"active",
 		"past-due",
 		"payment-action-required",
 		"canceling",
 	]);
-	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
-		cards.map((card) => card.getBoundingClientRect().toJSON()),
-	);
-	expect(
-		Math.abs((desktopCardBoxes[0]?.y ?? 0) - (desktopCardBoxes[1]?.y ?? 1)),
-	).toBeLessThanOrEqual(1);
-	expect(
-		Math.abs((desktopCardBoxes[0]?.height ?? 0) - (desktopCardBoxes[1]?.height ?? 1)),
-	).toBeLessThanOrEqual(1);
-	expect(Math.abs((desktopCardBoxes[0]?.x ?? 0) - (desktopCardBoxes[1]?.x ?? 0))).toBeGreaterThan(
-		100,
-	);
-	const activeActionsBottomInset = await activeCard.evaluate((card) => {
-		const actions = card.querySelector<HTMLElement>('[data-slot="compute-subscription-actions"]');
-		if (!actions) return null;
-		return card.getBoundingClientRect().bottom - actions.getBoundingClientRect().bottom;
-	});
-	expect(activeActionsBottomInset).toBeGreaterThanOrEqual(12);
-	expect(activeActionsBottomInset).toBeLessThanOrEqual(20);
+	await expectSubscriptionCardRowAligned(activeCard, includedCard);
+	await expectSubscriptionCardRowAligned(activeCard, availableCard);
 	await expectCardsFit(dialog);
 	await activeCard.evaluate((element) => element.scrollIntoView({ block: "start" }));
 	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-desktop.png") });
@@ -505,13 +604,14 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog).toBeVisible();
 
 	await dialog.getByRole("button", { name: "Show history (2)" }).click();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
-	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(7);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(8);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"] h4')).toHaveCount(8);
 	await expect(dialog.getByText("Ended", { exact: true })).toHaveCount(2);
 	const visibleStatuses = await dialog
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-subscription-status")));
 	expect(visibleStatuses).toEqual([
+		"active",
 		"active",
 		"active",
 		"past-due",
@@ -520,19 +620,25 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		"ended",
 		"ended",
 	]);
-	const orphanCard = dialog
-		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Ended" })
-		.filter({ hasText: "Deleted agent" });
+	const endedCards = dialog.locator('[data-subscription-status="ended"]');
+	const orphanCard = endedCards.filter({ hasText: "Ended" }).filter({ hasText: "Deleted agent" });
+	const linkedEndedCard = endedCards.filter({ hasText: "Ended subscription agent" });
 	await expect(orphanCard).toBeVisible();
-	await expect(orphanCard.getByText("Orphaned", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Orphaned", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("Former deleted agent", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("Unknown", { exact: true })).toHaveCount(0);
 	await expect(orphanCard.getByText("No linked agent", { exact: true })).toHaveCount(0);
-	await expect(dialog.getByText("ended_second", { exact: true })).toBeVisible();
+	await expect(
+		linkedEndedCard.getByText("Ended subscription agent", { exact: true }),
+	).toBeVisible();
+	await expect(
+		linkedEndedCard.locator('[data-slot="compute-subscription-identity"] a'),
+	).toHaveAttribute(
+		"href",
+		new RegExp(`/agents/${endedEnvironmentId}/settings\\?.*settings=billing-plan`),
+	);
 	await expect(orphanCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(orphanCard.locator('[data-slot="compute-subscription-notice"]')).toHaveCount(0);
-	const endedCards = dialog.locator('[data-subscription-status="ended"]');
 	await expect(endedCards.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText("Schedule", { exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText(/(Aug 12, 2025|Sep 11, 2099)/)).toHaveCount(0);
@@ -568,7 +674,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(fullManagementDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Hide history" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(8);
 	expect(page.url()).toBe(accountSettingsUrl);
 
 	await pastDueManage.click();
@@ -590,12 +696,22 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(topUpDialog).toBeHidden();
 	await expect(dialog).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Hide history" })).toBeVisible();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(7);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(8);
 	expect(page.url()).toBe(accountSettingsUrl);
 
 	await dialog.getByRole("button", { name: "Hide history" }).click();
-	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(5);
+	await expect(dialog.locator('[data-slot="compute-subscription-card"]')).toHaveCount(6);
 	await expect(dialog.getByText("ended_first", { exact: true })).toHaveCount(0);
+
+	await page.setViewportSize({ width: 800, height: 1000 });
+	await expectCardsFit(dialog);
+	const tabletCardBoxes = await dialog
+		.locator('[data-slot="compute-subscription-card"]')
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(Math.abs((tabletCardBoxes[0]?.y ?? 0) - (tabletCardBoxes[1]?.y ?? 1))).toBeLessThanOrEqual(
+		1,
+	);
+	expect(tabletCardBoxes[2]?.y ?? 0).toBeGreaterThanOrEqual(tabletCardBoxes[0]?.bottom ?? 0);
 
 	await page.setViewportSize({ width: 320, height: 1000 });
 	await expect(dialog).toBeVisible();
@@ -734,7 +850,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	});
 
 	await gotoHostedAgentSettings(page, paidEnvironmentId, "Basic");
-	await page.goto(`${page.url()}&subscription_action=start_new`);
+	await gotoSubscriptionAction(page, "start_new");
 	await expect(page.getByRole("dialog", { name: "Choose a paid subscription" })).toHaveCount(0);
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
 	const activeCard = page
@@ -748,7 +864,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(activeCard.locator("h3")).toHaveText("Basic compute");
 	await expect(activeCard.getByText("Paid research agent", { exact: true })).toHaveCount(0);
 	await expect(activeCard.locator("img")).toHaveCount(0);
-	await expect(activeCard.locator('[data-slot="compute-subscription-identity"]')).toHaveCount(0);
+	await expect(activeCard.locator('[data-slot="compute-subscription-identity"]')).toBeEmpty();
 	const agentManage = activeCard.getByRole("button", { name: "Manage", exact: true });
 	await expect(agentManage).toBeVisible();
 	await expect(agentManage.locator("svg.lucide-settings")).toHaveCount(1);
@@ -880,7 +996,7 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
-	await page.goto(`${page.url()}&subscription_action=start_new`);
+	await gotoSubscriptionAction(page, "start_new");
 	const routedCreateDialog = page.getByRole("dialog", { name: "Choose a paid subscription" });
 	await expect(routedCreateDialog).toBeVisible();
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
@@ -906,7 +1022,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		"success",
 	);
 	await expect(includedCard.getByText("Free", { exact: true })).toBeVisible();
-	await expect(includedCard.locator('[data-slot="compute-subscription-identity"]')).toHaveCount(0);
+	await expect(includedCard.locator('[data-slot="compute-subscription-identity"]')).toBeEmpty();
 	const agentUpgrade = includedCard.getByRole("button", { name: "Upgrade", exact: true });
 	await expect(agentUpgrade).toBeEnabled();
 	await expect(agentUpgrade.locator("svg.lucide-arrow-up")).toHaveCount(1);
@@ -961,22 +1077,6 @@ test("terminal fallback selects reusable subscriptions and keeps the long dialog
 	const checkoutRequests: string[] = [];
 	const reusableSubscriptionRequests: string[] = [];
 	const errors = collectBrowserErrors(page);
-	const reusable = (
-		subscriptionId: string,
-		overrides: Partial<ReusableSubscription>,
-	): ReusableSubscription => ({
-		subscription_id: subscriptionId,
-		plan_slug: "compute_basic",
-		billing_term_months: 1,
-		funding_source: "stripe",
-		status: "active",
-		price_cents: 900,
-		currency: "usd",
-		current_period_end: "2099-09-12T12:00:00Z",
-		entitled_until: "2099-09-12T12:00:00Z",
-		cancel_at_period_end: false,
-		...overrides,
-	});
 	await stubHostedApi(page, {
 		checkoutIdempotencyKeys,
 		checkoutRequests,
@@ -1017,13 +1117,13 @@ test("terminal fallback selects reusable subscriptions and keeps the long dialog
 		reusableSubscriptionRequests,
 		reusableSubscriptionPages: {
 			initial: {
-				items: [reusable("csub_card_active", {})],
+				items: [reusableSubscription("csub_card_active")],
 				has_more: true,
 				next_cursor: "second-page",
 			},
 			"second-page": {
 				items: [
-					reusable("csub_wallet_canceling", {
+					reusableSubscription("csub_wallet_canceling", {
 						plan_slug: "compute_performance",
 						billing_term_months: 12,
 						funding_source: "wallet",

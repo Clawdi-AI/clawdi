@@ -5,9 +5,8 @@ import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
-import { entityCardChassisClass } from "@/components/entity-card";
+import { ENTITY_CARD_GRID_CLASS, entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBillingClient } from "@/hosted/billing/billing-client";
@@ -144,8 +143,14 @@ function SubscriptionRow({
 		label: lifecycle.badgeLabel,
 		tone: lifecycle.badgeTone,
 	});
-	const agentHref = subscriptionAgentHref(subscription, deployment);
-	const startNewHref = subscriptionStartNewHref(subscription, deployment);
+	const assignment = computeSubscriptionAssignment(subscription, reusableSubscriptionIds);
+	const deploymentBound = assignment === "assigned";
+	const agentHref = deploymentBound ? subscriptionAgentHref(subscription, deployment) : null;
+	const startNewHref = deploymentBound ? subscriptionStartNewHref(subscription, deployment) : null;
+	const recoveryTarget =
+		assignment === "available" && recovery.recoveryTarget?.kind === "start_new"
+			? null
+			: recovery.recoveryTarget;
 	const pendingPlanSlug = pendingComputePlanSlug(subscription);
 	const actions = resolveComputeSubscriptionActions({
 		entitlement: {
@@ -157,11 +162,11 @@ function SubscriptionRow({
 			paymentState: subscription.payment_state,
 			cancelAtPeriodEnd: subscription.cancel_at_period_end,
 			pendingPlanSlug,
-			isOrphan: subscription.is_orphan,
+			isOrphan: !deploymentBound,
 		},
 		management,
-		recoveryTarget: recovery.recoveryTarget,
-		hasPendingOperation: management.target?.projectedOperationName != null,
+		recoveryTarget,
+		hasPendingOperation: deploymentBound && management.target?.projectedOperationName != null,
 	});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
@@ -171,7 +176,7 @@ function SubscriptionRow({
 			)
 		: null;
 	const recoveryNotice = (() => {
-		switch (recovery.recoveryTarget?.kind) {
+		switch (recoveryTarget?.kind) {
 			case "top_up":
 				return "Top up Wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
 			case "invoice":
@@ -206,7 +211,6 @@ function SubscriptionRow({
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
-	const assignment = computeSubscriptionAssignment(subscription, reusableSubscriptionIds);
 	const identity: ComputeSubscriptionIdentity =
 		assignment === "available"
 			? { kind: "available", label: "Available for a new agent" }
@@ -226,11 +230,6 @@ function SubscriptionRow({
 				headingLevel={4}
 				view={view}
 				identity={identity}
-				badges={
-					assignment === "unavailable" && subscription.is_orphan ? (
-						<Badge variant="outline">Orphaned</Badge>
-					) : null
-				}
 				notice={
 					recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
@@ -321,7 +320,7 @@ export function reusableInventoryState(
 
 function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
-		<div className="grid gap-3 lg:grid-cols-2" role="status">
+		<div className={ENTITY_CARD_GRID_CLASS.compact} role="status">
 			<span className="sr-only">{label}</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
@@ -457,7 +456,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 							</div>
 						) : null}
 						{visibleRows.length ? (
-							<ul className="grid gap-3 lg:grid-cols-2">
+							<ul className={ENTITY_CARD_GRID_CLASS.compact}>
 								{visibleRows.map((subscription) => {
 									const deployment = subscription.deployment_id
 										? deploymentsById.get(subscription.deployment_id.toLowerCase())
