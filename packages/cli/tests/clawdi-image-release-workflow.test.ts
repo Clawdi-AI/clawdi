@@ -28,6 +28,7 @@ interface WorkflowJob {
 interface WorkflowDocument {
 	concurrency?: Record<string, unknown>;
 	jobs: Record<string, WorkflowJob>;
+	permissions?: Record<string, string>;
 	on?: {
 		push?: { branches?: string[]; paths?: string[] };
 		workflow_run?: { branches?: string[]; types?: string[]; workflows?: string[] };
@@ -89,6 +90,20 @@ const releaseClassifierSource = readFileSync(
 );
 
 describe("backend image release workflow contract", () => {
+	test("routes changes through the bounded git fallback", () => {
+		const steps = backendCi.jobs.changes?.steps ?? [];
+
+		expect(backendCi.permissions).toEqual({ contents: "read" });
+		expect(steps.find((step) => step.uses === "actions/checkout@v7")?.with).toEqual({
+			"fetch-depth": 1,
+		});
+		expect(steps.find((step) => step.id === "filter")?.with).toMatchObject({
+			token: "",
+			base: `\${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}`,
+			ref: `\${{ github.event_name == 'push' && github.sha || '' }}`,
+		});
+	});
+
 	test("keeps Python governance out of sidecar-only changes", () => {
 		const filterStep = backendCi.jobs.changes?.steps?.find((step) => step.id === "filter");
 		const filters = String(filterStep?.with?.filters);
