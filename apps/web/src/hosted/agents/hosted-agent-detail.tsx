@@ -1521,11 +1521,11 @@ function ConsoleTab({
 				}
 				description={
 					deploymentTransitionEscalated
-						? "The latest status still shows this change in progress after fifteen minutes. We’ll keep checking automatically once a minute while you’re here, or you can cancel the change and try again."
+						? "This change is still in progress. You can cancel it and try again."
 						: deploymentTransitionTimedOut
-							? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
+							? "This change is still in progress. Check again now or keep waiting."
 							: isStarting
-								? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+								? `${browserUiLabel} will open here when ready.`
 								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={
