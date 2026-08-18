@@ -59,7 +59,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: backend-ci-${{ github.workflow }}-${{ github.ref }}
@@ -77,9 +76,16 @@ jobs:
       sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
       - id: filter
         uses: dorny/paths-filter@v4
         with:
+          # Use the exact event endpoints so path routing stays on the bounded
+          # git fallback instead of the pull-request files API.
+          token: ""
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
             backend:
               - "backend/**/*.py"
