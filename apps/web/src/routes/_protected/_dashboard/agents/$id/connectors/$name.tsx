@@ -12,14 +12,13 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/connecto
 
 function AgentConnectorDetailRoute() {
 	const { id, name } = Route.useParams();
-	const search = Route.useSearch();
 	return (
 		<AgentResourceRouteGate
 			agentId={id}
-			returnHref={agentSectionHref(id, "connectors", search)}
+			returnHref={agentSectionHref(id, "connectors")}
 			returnLabel="Agent Connectors"
 		>
-			<ConnectorDetailPage name={name} scope={agentResourceScope(id, search)} />
+			<ConnectorDetailPage name={name} scope={agentResourceScope(id)} />
 		</AgentResourceRouteGate>
 	);
 }

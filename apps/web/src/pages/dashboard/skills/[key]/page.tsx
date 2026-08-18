@@ -51,7 +51,6 @@ import {
 	type AgentRouteSearch,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
-	agentRouteSearch,
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -116,13 +115,8 @@ export function SkillDetailContent({
 	).trim();
 	const skillListHref = agentId
 		? selectedProjectId
-			? agentProjectResourceHref(
-					agentId,
-					selectedProjectId,
-					"skills",
-					agentRouteSearch(routeSearch),
-				)
-			: agentSectionHref(agentId, "projects", agentRouteSearch(routeSearch))
+			? agentProjectResourceHref(agentId, selectedProjectId, "skills")
+			: agentSectionHref(agentId, "projects")
 		: projectResourceHref("skills");
 	const skillListLabel = agentId && !selectedProjectId ? "Projects" : "Skills";
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
@@ -250,9 +244,7 @@ export function SkillDetailContent({
 				? displayProjectName(skillProject)
 				: skill?.project_name?.trim() || null;
 	useSetBreadcrumbSegmentTitle(
-		agentId && selectedProjectId
-			? agentProjectDetailHref(agentId, selectedProjectId, agentRouteSearch(routeSearch))
-			: null,
+		agentId && selectedProjectId ? agentProjectDetailHref(agentId, selectedProjectId) : null,
 		breadcrumbProjectTitle,
 		selectedBinding?.binding_type === "primary" ? "workspace" : undefined,
 	);

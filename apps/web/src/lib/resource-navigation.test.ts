@@ -57,51 +57,42 @@ describe("resource navigation scopes", () => {
 		});
 	});
 
-	it("builds nested Agent details without obsolete Hosted identity state", () => {
-		const scope = agentResourceScope(
-			"agent 1",
-			{
-				source: "on-clawdi",
-				d: "deployment 1",
-				tab: "legacy",
-				project: "unrelated",
-			},
-			"project 1",
-		);
+	it("builds clean nested Agent navigation with explicit flat Vault state", () => {
+		const scope = agentResourceScope("agent 1", "project 1");
 
 		expect(resourceCollectionTarget(scope, "projects")).toEqual({
-			href: "/agents/agent%201/project-access?project=unrelated",
+			href: "/agents/agent%201/project-access",
 			label: "Projects",
 		});
 		expect(projectDetailHrefForScope(scope, "project 1")).toBe(
-			"/agents/agent%201/project-access/project%201?project=unrelated",
+			"/agents/agent%201/project-access/project%201",
 		);
 		expect(vaultDetailHrefForScope(scope, "prod keys", "vault/1")).toBe(
 			"/agents/agent%201/vaults/prod%20keys?project=project%201&vault=vault%2F1",
 		);
 		expect(resourceCollectionTarget(scope, "vaults")).toEqual({
-			href: "/agents/agent%201/project-access/project%201/vaults?project=unrelated",
+			href: "/agents/agent%201/project-access/project%201/vaults",
 			label: "Vaults",
 		});
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
-			href: "/agents/agent%201/memories?project=unrelated",
+			href: "/agents/agent%201/memories",
 			label: "Memories",
 		});
 		expect(resourceCollectionTarget(scope, "connectors")).toEqual({
-			href: "/agents/agent%201/connectors?project=unrelated",
+			href: "/agents/agent%201/connectors",
 			label: "Connectors",
 		});
 		expect(memoryDetailHrefForScope(scope, "memory 1")).toBe(
-			"/agents/agent%201/memories/memory%201?project=unrelated",
+			"/agents/agent%201/memories/memory%201",
 		);
 		expect(connectorDetailHrefForScope(scope, "google drive")).toBe(
-			"/agents/agent%201/connectors/google%20drive?project=unrelated",
+			"/agents/agent%201/connectors/google%20drive",
 		);
 		expect(projectDetailLink(scope, "project 1")).toMatchObject({
 			to: "/agents/$id/project-access/$projectId",
 			params: { id: "agent 1", projectId: "project 1" },
-			search: { project: "unrelated" },
 		});
+		expect(projectDetailLink(scope, "project 1")).not.toHaveProperty("search");
 		expect(vaultDetailLink(scope, "prod keys", "vault/1")).toMatchObject({
 			to: "/agents/$id/vaults/$slug",
 			params: { id: "agent 1", slug: "prod keys" },
@@ -113,13 +104,13 @@ describe("resource navigation scopes", () => {
 		expect(memoryDetailLink(scope, "memory 1")).toMatchObject({
 			to: "/agents/$id/memories/$memoryId",
 			params: { id: "agent 1", memoryId: "memory 1" },
-			search: { project: "unrelated" },
 		});
+		expect(memoryDetailLink(scope, "memory 1")).not.toHaveProperty("search");
 		expect(connectorDetailLink(scope, "google drive")).toMatchObject({
 			to: "/agents/$id/connectors/$name",
 			params: { id: "agent 1", name: "google drive" },
-			search: { project: "unrelated" },
 		});
+		expect(connectorDetailLink(scope, "google drive")).not.toHaveProperty("search");
 	});
 
 	it("makes leaving the Agent shell an explicit library-management target", () => {

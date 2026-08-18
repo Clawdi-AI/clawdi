@@ -8,8 +8,7 @@ import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-ro
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-	type AgentRouteSearch,
-	agentRouteSearch,
+	agentProjectResourceHref,
 	agentSectionHref,
 	agentSkillDetailHref,
 } from "@/lib/agent-routes";
@@ -31,12 +30,14 @@ function AgentSkillDetailRoute() {
 	const skillKey = (_splat ?? "").split("/").map(decodeResourceRouteParam).join("/");
 	const projectId =
 		typeof search.project === "string" && search.project.trim() ? search.project.trim() : null;
-	const returnHref = agentSectionHref(id, "projects", agentRouteSearch(search));
+	const returnHref = projectId
+		? agentProjectResourceHref(id, projectId, "skills")
+		: agentSectionHref(id, "projects");
 
 	if (!projectId) {
 		return (
 			<AgentResourceRouteGate agentId={id} returnHref={returnHref} returnLabel="Projects">
-				<LegacyAgentSkillProjectCanonicalizer agentId={id} skillKey={skillKey} search={search} />
+				<LegacyAgentSkillProjectCanonicalizer agentId={id} skillKey={skillKey} />
 			</AgentResourceRouteGate>
 		);
 	}
@@ -56,11 +57,9 @@ function AgentSkillDetailRoute() {
 function LegacyAgentSkillProjectCanonicalizer({
 	agentId,
 	skillKey,
-	search,
 }: {
 	agentId: string;
 	skillKey: string;
-	search: AgentRouteSearch;
 }) {
 	const router = useRouter();
 	const bindings = useAgentProjectBindings(agentId);
@@ -72,10 +71,8 @@ function LegacyAgentSkillProjectCanonicalizer({
 	const blockingError = shouldBlockQueryError(bindings.error, bindings.data)
 		? bindings.error
 		: null;
-	const projectsHref = agentSectionHref(agentId, "projects", agentRouteSearch(search));
-	const targetHref = projectId
-		? agentSkillDetailHref(agentId, skillKey, projectId, agentRouteSearch(search))
-		: projectsHref;
+	const projectsHref = agentSectionHref(agentId, "projects");
+	const targetHref = projectId ? agentSkillDetailHref(agentId, skillKey, projectId) : projectsHref;
 	const isLatestTarget = useCommittedRouteIsLatestTarget();
 
 	useEffect(() => {

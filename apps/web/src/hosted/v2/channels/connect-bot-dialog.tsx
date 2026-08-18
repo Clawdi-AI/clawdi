@@ -37,7 +37,7 @@ import {
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
-import { type AgentRouteQuery, agentSectionLink } from "@/lib/agent-routes";
+import { agentSectionLink } from "@/lib/agent-routes";
 
 type CreatedCustomBot = Pick<
 	ChannelCreated,
@@ -52,7 +52,6 @@ export function ConnectBotDialog({
 	agentId,
 	agentType,
 	linkedProviders,
-	agentRouteQuery,
 	onAgentConnected,
 }: {
 	open: boolean;
@@ -60,7 +59,6 @@ export function ConnectBotDialog({
 	agentId?: string;
 	agentType?: string;
 	linkedProviders?: ReadonlySet<string>;
-	agentRouteQuery?: AgentRouteQuery;
 	onAgentConnected?: (bot: {
 		id: string;
 		name: string;
@@ -222,7 +220,7 @@ export function ConnectBotDialog({
 				<>
 					Configure it in this Agent&apos;s{" "}
 					<Link
-						{...agentSectionLink(agentId, "console", agentRouteQuery)}
+						{...agentSectionLink(agentId, "console")}
 						className="font-medium text-foreground underline underline-offset-4"
 						onClick={() => handleOpenChange(false)}
 					>

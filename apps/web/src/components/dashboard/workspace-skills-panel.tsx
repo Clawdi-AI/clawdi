@@ -24,7 +24,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import type { components } from "@/lib/api-schemas";
 
@@ -33,7 +32,6 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 export function ConnectedWorkspaceSkillsPanel({
 	agentId,
 	projectId,
-	routeSearch,
 	agentType,
 	projections,
 	isLoading,
@@ -43,7 +41,6 @@ export function ConnectedWorkspaceSkillsPanel({
 }: {
 	agentId: string;
 	projectId: string;
-	routeSearch?: AgentRouteQuery;
 	agentType: string;
 	projections: SkillSummary[];
 	isLoading: boolean;
@@ -122,7 +119,7 @@ export function ConnectedWorkspaceSkillsPanel({
 							readOnlyLabel="Synced from Agent · Read-only"
 							actions={<ConnectedSkillRemoveAction skill={skill} agentType={agentType} />}
 							skillLink={(cloudSkill) =>
-								agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId, routeSearch)
+								agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId)
 							}
 						/>
 					))}

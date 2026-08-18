@@ -1,6 +1,6 @@
 "use client";
 
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { History, Info, LifeBuoy, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -36,18 +36,15 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 		: [];
 	const primaryAction = actions[0] ?? null;
 	const hostedAccess = useProductAccess();
-	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
 	const transactionsLink = (
-		<Link to="." search={{ ...routeSearch, settings: "billing-wallet" }} hash="transactions" />
+		<Link to="." search={{ settings: "billing-wallet" }} hash="transactions" />
 	);
 	const startNewHref = agentSectionHref(deployment.agent_id, "settings", {
-		...routeSearch,
+		settings: "billing-plan",
 		subscription_action: "start_new",
 	});
 	const checkChangeHref = agentSectionHref(deployment.agent_id, "settings", {
-		...routeSearch,
 		settings: "billing-plan",
-		subscription_action: undefined,
 	});
 
 	if (!state) return null;

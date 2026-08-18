@@ -85,8 +85,7 @@ export function AgentHome({
 				void router.navigate({
 					to: "/agents/$id",
 					params: { id: environmentId },
-					search: (current) => current,
-					hash: true,
+					search: {},
 					replace: true,
 				});
 			}
@@ -97,8 +96,7 @@ export function AgentHome({
 			void router.navigate({
 				to: "/agents/$id",
 				params: { id: environmentId },
-				search: (current) => current,
-				hash: true,
+				search: {},
 				replace: true,
 			});
 		}
@@ -178,11 +176,5 @@ export function AgentHome({
 		);
 	}
 
-	return (
-		<ConnectedAgentDetail
-			environmentId={environmentId}
-			section={section}
-			routeSearch={routeSearch}
-		/>
-	);
+	return <ConnectedAgentDetail environmentId={environmentId} section={section} />;
 }

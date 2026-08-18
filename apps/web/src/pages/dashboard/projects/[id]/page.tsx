@@ -99,7 +99,6 @@ import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface"
 import {
 	agentProjectDetailHref,
 	agentProjectResourceHref,
-	agentRouteSearch,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLink,
@@ -234,18 +233,8 @@ export default function ProjectDetailPage({
 	const projectResourceTargets =
 		scope.kind === "agent"
 			? {
-					skills: agentProjectResourceHref(
-						scope.agentId,
-						projectId,
-						"skills",
-						agentRouteSearch(scope.agentQuery),
-					),
-					vaults: agentProjectResourceHref(
-						scope.agentId,
-						projectId,
-						"vaults",
-						agentRouteSearch(scope.agentQuery),
-					),
+					skills: agentProjectResourceHref(scope.agentId, projectId, "skills"),
+					vaults: agentProjectResourceHref(scope.agentId, projectId, "vaults"),
 				}
 			: {
 					skills: projectResourceHref("skills", projectId),
@@ -275,7 +264,7 @@ export default function ProjectDetailPage({
 		focus && scope.kind === "agent"
 			? isWorkspace
 				? {
-						href: agentSectionHref(scope.agentId, "overview", scope.agentQuery),
+						href: agentSectionHref(scope.agentId, "overview"),
 						label: "Agent Overview",
 					}
 				: {
@@ -892,7 +881,6 @@ export default function ProjectDetailPage({
 							<HostedWorkspaceSkillsPanel
 								agentId={scope.agentId}
 								projectId={project.id}
-								routeSearch={scope.agentQuery}
 								pageHeader={focusedWorkspaceSkillsPageHeaderProps}
 							/>
 						</Suspense>
@@ -900,7 +888,6 @@ export default function ProjectDetailPage({
 						<ConnectedWorkspaceSkillsPanel
 							agentId={scope.agentId}
 							projectId={project.id}
-							routeSearch={scope.agentQuery}
 							agentType={workspaceAgent.data.agent_type}
 							projections={workspaceSkillProjections}
 							isLoading={skills.isLoading}
@@ -937,13 +924,7 @@ export default function ProjectDetailPage({
 						uninstallPending={removeProjectSkill.isPending}
 						skillLink={
 							scope.kind === "agent"
-								? (skill) =>
-										agentSkillDetailLink(
-											scope.agentId,
-											skill.skill_key,
-											project.id,
-											scope.agentQuery,
-										)
+								? (skill) => agentSkillDetailLink(scope.agentId, skill.skill_key, project.id)
 								: undefined
 						}
 					/>

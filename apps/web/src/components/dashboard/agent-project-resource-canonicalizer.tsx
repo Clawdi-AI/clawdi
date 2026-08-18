@@ -13,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
 	agentProjectResourceHref,
-	agentRouteSearch,
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -31,7 +30,7 @@ export function AgentProjectResourceCanonicalizer({
 	resource: ProjectResourceSection;
 	routeSearch: AgentRouteSearch;
 }) {
-	const projectsHref = agentSectionHref(agentId, "projects", agentRouteSearch(routeSearch));
+	const projectsHref = agentSectionHref(agentId, "projects");
 	return (
 		<AgentResourceRouteGate agentId={agentId} returnHref={projectsHref} returnLabel="Projects">
 			<CanonicalizeProjectResource
@@ -70,7 +69,7 @@ function CanonicalizeProjectResource({
 		? bindings.error
 		: null;
 	const targetHref = resolvedProjectId
-		? agentProjectResourceHref(agentId, resolvedProjectId, resource, agentRouteSearch(routeSearch))
+		? agentProjectResourceHref(agentId, resolvedProjectId, resource)
 		: projectsHref;
 	const canCanonicalize = bindings.data !== undefined;
 	const isLatestTarget = useCommittedRouteIsLatestTarget();

@@ -32,7 +32,6 @@ import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
-import type { AgentRouteQuery } from "@/lib/agent-routes";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -44,7 +43,6 @@ type WorkspaceSkillMutation =
 type HostedWorkspaceSkillsPanelProps = {
 	agentId: string;
 	projectId: string;
-	routeSearch?: AgentRouteQuery;
 	pageHeader?: Omit<PageHeaderProps, "actions">;
 };
 
@@ -59,7 +57,6 @@ export function HostedWorkspaceSkillsPanel(props: HostedWorkspaceSkillsPanelProp
 function HostedWorkspaceSkillsPanelContent({
 	agentId,
 	projectId,
-	routeSearch,
 	pageHeader,
 }: HostedWorkspaceSkillsPanelProps) {
 	const api = useApi();
@@ -207,7 +204,6 @@ function HostedWorkspaceSkillsPanelContent({
 			<ConnectedWorkspaceSkillsPanel
 				agentId={agentId}
 				projectId={projectId}
-				routeSearch={routeSearch}
 				agentType={connectedAgent.data.agent_type}
 				projections={(connectedSkills.data?.items ?? []).filter(
 					(skill) => skill.authority === "agent_sync",
@@ -317,7 +313,7 @@ function HostedWorkspaceSkillsPanelContent({
 									) : null
 								}
 								skillLink={(cloudSkill) =>
-									agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId, routeSearch)
+									agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId)
 								}
 							/>
 						);

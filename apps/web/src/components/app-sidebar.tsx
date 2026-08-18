@@ -96,7 +96,6 @@ import {
 	type AgentSectionId,
 	agentProjectResourceHref,
 	agentRouteIdsEqual,
-	agentRouteSearch,
 	agentSectionHref,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
@@ -382,7 +381,6 @@ function AgentSectionList({
 			searchStr: location.searchStr,
 		}),
 	});
-	const routeQuery = agentRouteSearch(searchStr);
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const activeAgentRoute = parseAgentPathname(pathname);
@@ -419,7 +417,7 @@ function AgentSectionList({
 				return {
 					id: `primary-project-${section}`,
 					label: item.label,
-					href: agentProjectResourceHref(agentId, primaryProject.id, section, routeQuery),
+					href: agentProjectResourceHref(agentId, primaryProject.id, section),
 					icon: item.icon,
 					tint: item.tint,
 					tooltip: `${item.label} in Workspace`,
@@ -436,7 +434,7 @@ function AgentSectionList({
 						return {
 							id: item.id,
 							label: item.label,
-							href: agentSectionHref(agentId, item.id, routeQuery),
+							href: agentSectionHref(agentId, item.id),
 							icon: item.icon,
 							tint: item.tint,
 							tooltip: item.tooltip,
@@ -547,13 +545,11 @@ function AgentFocusLoadingSections({
 	activeSection: AgentSectionId;
 	onNavigate?: () => void;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const routeQuery = agentRouteSearch(searchStr);
 	const overviewMetadata = AGENT_SECTION_NAVIGATION_ITEMS.overview;
 	const overviewItem: SidebarNavItem = {
 		id: overviewMetadata.id,
 		label: overviewMetadata.label,
-		href: agentSectionHref(agentId, "overview", routeQuery),
+		href: agentSectionHref(agentId, "overview"),
 		icon: overviewMetadata.icon,
 		tint: overviewMetadata.tint,
 		tooltip: overviewMetadata.tooltip,

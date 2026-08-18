@@ -21,7 +21,7 @@ function safeDecodeURIComponent(value: string): string {
 }
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section")({
-	beforeLoad: ({ params, search }) => {
+	beforeLoad: ({ params }) => {
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		if (!section || section === "overview") throw notFound();
 		const isCompatibilityProjectResource = AGENT_PROJECT_RESOURCE_SECTION_IDS.some(
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section
 			!isCompatibilityProjectResource &&
 			!CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section)
 		) {
-			throw redirect({ ...agentSectionLink(params.id, "overview", search), replace: true });
+			throw redirect({ ...agentSectionLink(params.id, "overview"), replace: true });
 		}
 		return { section };
 	},

@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { agentRouteSearch, agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
@@ -47,7 +47,6 @@ import {
 	SESSION_MESSAGES_STALE_MS,
 	sessionDetailQueryKey,
 } from "@/lib/session-queries";
-import { useCommittedLocation } from "@/lib/use-committed-location";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
@@ -67,13 +66,7 @@ export function SessionDetailContent({
 	const queryClient = useQueryClient();
 	const router = useRouter();
 	const { user } = useCurrentUser();
-	// Committed-match search, not the pending target: this page stays mounted
-	// while an outgoing navigation loads, and its links must keep pointing at
-	// the context the user is still looking at.
-	const { search: routeSearch } = useCommittedLocation();
-	const sessionsHref = agentId
-		? agentSectionHref(agentId, "sessions", agentRouteSearch(routeSearch))
-		: "/sessions";
+	const sessionsHref = agentId ? agentSectionHref(agentId, "sessions") : "/sessions";
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
 			toast.success("Cloud Session permanently deleted", {

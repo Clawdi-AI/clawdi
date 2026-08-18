@@ -12,14 +12,13 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/memories
 
 function AgentMemoryDetailRoute() {
 	const { id, memoryId } = Route.useParams();
-	const search = Route.useSearch();
 	return (
 		<AgentResourceRouteGate
 			agentId={id}
-			returnHref={agentSectionHref(id, "memories", search)}
+			returnHref={agentSectionHref(id, "memories")}
 			returnLabel="Agent Memories"
 		>
-			<MemoryDetailPage memoryId={memoryId} scope={agentResourceScope(id, search)} />
+			<MemoryDetailPage memoryId={memoryId} scope={agentResourceScope(id)} />
 		</AgentResourceRouteGate>
 	);
 }

@@ -5,7 +5,6 @@ import type { BreadcrumbSegmentTitles } from "@/components/breadcrumb-title";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "workspace-1";
 const projectId = "project-1";
-const obsoleteIdentitySearch = { source: "on-clawdi", d: "deployment-1" };
 
 function labels(
 	pathname: string,
@@ -77,14 +76,14 @@ describe("AppBreadcrumb semantic trail", () => {
 		};
 		expect(
 			labels(`/agents/${agentId}/skills/github%2Fissues`, {
-				search: { ...obsoleteIdentitySearch, project: workspaceId },
+				search: { project: workspaceId },
 				title: "GitHub Issues",
 				segmentTitles,
 			}),
 		).toEqual(["e2e-2", "Skills", "GitHub Issues"]);
 		expect(
 			labels(`/agents/${agentId}/vaults/production`, {
-				search: { ...obsoleteIdentitySearch, project: workspaceId },
+				search: { project: workspaceId },
 				title: "Production Keys",
 				segmentTitles,
 			}),
@@ -107,10 +106,10 @@ describe("AppBreadcrumb semantic trail", () => {
 		]);
 	});
 
-	test("removes obsolete Hosted identity state from every Agent parent link", () => {
+	test("keeps every Agent parent link clean while reading explicit detail context", () => {
 		const trail = buildAppBreadcrumbTrail({
 			pathname: `/agents/${agentId}/skills/github%2Fissues`,
-			search: { ...obsoleteIdentitySearch, project: workspaceId },
+			search: { project: workspaceId, panel: "details" },
 			overrideTitle: "GitHub Issues",
 			segmentTitles: {
 				[`/agents/${agentId}`]: { title: "e2e-2" },
@@ -121,8 +120,8 @@ describe("AppBreadcrumb semantic trail", () => {
 			},
 		});
 		expect(trail.filter((item) => item.href).map((item) => item.href)).toEqual([
-			`/agents/${agentId}?project=${workspaceId}`,
-			`/agents/${agentId}/project-access/${workspaceId}/skills?project=${workspaceId}`,
+			`/agents/${agentId}`,
+			`/agents/${agentId}/project-access/${workspaceId}/skills`,
 		]);
 	});
 
