@@ -94,8 +94,6 @@ import {
 } from "@/lib/agent-ownership";
 import {
 	type AgentSectionId,
-	agentDeploymentRouteQuery,
-	agentDeploymentSelector,
 	agentProjectResourceHref,
 	agentRouteIdsEqual,
 	agentSectionHref,
@@ -383,7 +381,6 @@ function AgentSectionList({
 			searchStr: location.searchStr,
 		}),
 	});
-	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const activeAgentRoute = parseAgentPathname(pathname);
@@ -420,7 +417,7 @@ function AgentSectionList({
 				return {
 					id: `primary-project-${section}`,
 					label: item.label,
-					href: agentProjectResourceHref(agentId, primaryProject.id, section, routeQuery),
+					href: agentProjectResourceHref(agentId, primaryProject.id, section),
 					icon: item.icon,
 					tint: item.tint,
 					tooltip: `${item.label} in Workspace`,
@@ -437,7 +434,7 @@ function AgentSectionList({
 						return {
 							id: item.id,
 							label: item.label,
-							href: agentSectionHref(agentId, item.id, routeQuery),
+							href: agentSectionHref(agentId, item.id),
 							icon: item.icon,
 							tint: item.tint,
 							tooltip: item.tooltip,
@@ -548,13 +545,11 @@ function AgentFocusLoadingSections({
 	activeSection: AgentSectionId;
 	onNavigate?: () => void;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const overviewMetadata = AGENT_SECTION_NAVIGATION_ITEMS.overview;
 	const overviewItem: SidebarNavItem = {
 		id: overviewMetadata.id,
 		label: overviewMetadata.label,
-		href: agentSectionHref(agentId, "overview", routeQuery),
+		href: agentSectionHref(agentId, "overview"),
 		icon: overviewMetadata.icon,
 		tint: overviewMetadata.tint,
 		tooltip: overviewMetadata.tooltip,
@@ -955,14 +950,12 @@ function FocusRailContent({
 	agents,
 	loading,
 	activeAgentId,
-	activeDeploymentSelector,
 	onNavigate,
 	showTooltips = true,
 }: {
 	agents: AgentTile[];
 	loading: boolean;
 	activeAgentId: string | null;
-	activeDeploymentSelector: string | null;
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
@@ -1131,10 +1124,7 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={Boolean(
-										activeAgentId &&
-											agentTileMatchesRouteId(agent, activeAgentId, activeDeploymentSelector),
-									)}
+									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onNavigate}
 									showTooltip={showTooltips}
 								/>
@@ -1336,12 +1326,10 @@ function RailSidebar({
 	agents,
 	loading,
 	activeAgentId,
-	activeDeploymentSelector,
 }: {
 	agents: AgentTile[];
 	loading: boolean;
 	activeAgentId: string | null;
-	activeDeploymentSelector: string | null;
 }) {
 	return (
 		<Sidebar
@@ -1351,12 +1339,7 @@ function RailSidebar({
 			aria-label="Focus rail"
 			data-testid="app-sidebar-agent-rail"
 		>
-			<FocusRailContent
-				agents={agents}
-				loading={loading}
-				activeAgentId={activeAgentId}
-				activeDeploymentSelector={activeDeploymentSelector}
-			/>
+			<FocusRailContent agents={agents} loading={loading} activeAgentId={activeAgentId} />
 		</Sidebar>
 	);
 }
@@ -1659,7 +1642,6 @@ export function AppSidebar({
 	const showCloudFeatures = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
-	const activeDeploymentSelector = agentRoute ? agentDeploymentSelector(routeSearch) : null;
 	const { data: environments } = $api.useQuery(
 		"get",
 		"/v1/agents",
@@ -1681,9 +1663,7 @@ export function AppSidebar({
 	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
 	const agentRailColdLoading = !agentsLoaded && agents.length === 0;
 	const activeAgentTile = activeAgentId
-		? (agents.find((tile) =>
-				agentTileMatchesRouteId(tile, activeAgentId, activeDeploymentSelector),
-			) ?? null)
+		? (agents.find((tile) => agentTileMatchesRouteId(tile, activeAgentId)) ?? null)
 		: null;
 	const activeAgent = activeAgentId
 		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
@@ -1778,12 +1758,7 @@ export function AppSidebar({
 				</Suspense>
 			) : null}
 			{!isMobile ? (
-				<RailSidebar
-					agents={agents}
-					loading={agentRailColdLoading}
-					activeAgentId={activeAgentId}
-					activeDeploymentSelector={activeDeploymentSelector}
-				/>
+				<RailSidebar agents={agents} loading={agentRailColdLoading} activeAgentId={activeAgentId} />
 			) : null}
 			<Sidebar
 				collapsible="offcanvas"
@@ -1829,7 +1804,6 @@ export function AppSidebar({
 								agents={agents}
 								loading={agentRailColdLoading}
 								activeAgentId={activeAgentId}
-								activeDeploymentSelector={activeDeploymentSelector}
 								onNavigate={closeMobileSidebar}
 								showTooltips={false}
 							/>

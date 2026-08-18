@@ -92,7 +92,7 @@ describe("agentTileCardProjection", () => {
 			sync_enabled: true,
 		});
 		const tile: AgentTile = {
-			id: "hdep_live",
+			id: projected.id,
 			source: "on-clawdi",
 			name: "Research agent",
 			agentType: "openclaw",
@@ -115,11 +115,11 @@ describe("agentTileCardProjection", () => {
 
 	it("does not manufacture hosted sync status without an environment projection", () => {
 		const tile: AgentTile = {
-			id: "hdep_pending_projection",
+			id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 			source: "on-clawdi",
 			name: "Research agent",
 			agentType: "openclaw",
-			href: "/agents/env_pending",
+			href: "/agents/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 			env: null,
 		};
 
@@ -211,7 +211,7 @@ describe("focused sidebar resource scope", () => {
 		expect(
 			getScopedAgentResourceSidebarTarget(
 				"/agents/agent-one/skills/vendor/review",
-				"?source=on-clawdi&d=hdep_one&project=workspace-one",
+				"?project=workspace-one",
 				"workspace-one",
 				["context-one"],
 			),
@@ -219,7 +219,7 @@ describe("focused sidebar resource scope", () => {
 		expect(
 			getScopedAgentResourceSidebarTarget(
 				"/agents/agent-one/vaults/production",
-				"?project=WORKSPACE-ONE&source=on-clawdi&d=hdep_one",
+				"?project=WORKSPACE-ONE",
 				"workspace-one",
 				["context-one"],
 			),
@@ -234,7 +234,7 @@ describe("focused sidebar resource scope", () => {
 		expect(
 			getScopedAgentResourceSidebarTarget(
 				"/agents/agent-one/skills/vendor/review",
-				"?project=context-one&source=on-clawdi&d=hdep_one",
+				"?project=context-one",
 				"workspace-one",
 				["context-one"],
 			),
@@ -251,43 +251,20 @@ describe("focused sidebar resource scope", () => {
 });
 
 describe("agentTileMatchesRouteId", () => {
-	it("matches hosted tiles by deployment id or projected environment id", () => {
+	it("matches hosted tiles only by canonical Agent identity", () => {
 		const projected = env({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
 		const tile: AgentTile = {
-			id: "hdep_paid",
+			id: projected.id,
 			source: "on-clawdi",
 			name: "Hosted agent",
 			agentType: "openclaw",
-			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_paid`,
+			href: `/agents/${projected.id}`,
 			env: projected,
 		};
 
-		expect(agentTileMatchesRouteId(tile, "hdep_paid")).toBe(true);
 		expect(agentTileMatchesRouteId(tile, projected.id)).toBe(true);
 		expect(agentTileMatchesRouteId(tile, projected.id.toUpperCase())).toBe(true);
-		expect(agentTileMatchesRouteId(tile, "hdep_other")).toBe(false);
-	});
-
-	it("uses the deployment selector when multiple hosted tiles claim the route id", () => {
-		const projected = env({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
-		const selected: AgentTile = {
-			id: "hdep_selected",
-			source: "on-clawdi",
-			name: "Selected deployment",
-			agentType: "openclaw",
-			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_selected`,
-			env: null,
-		};
-		const replacement: AgentTile = {
-			...selected,
-			id: "hdep_replacement",
-			name: "Replacement deployment",
-			env: projected,
-		};
-
-		expect(agentTileMatchesRouteId(selected, projected.id, "hdep_selected")).toBe(true);
-		expect(agentTileMatchesRouteId(replacement, projected.id, "hdep_selected")).toBe(false);
-		expect(agentTileMatchesRouteId(replacement, projected.id, "hdep_missing")).toBe(false);
+		expect(agentTileMatchesRouteId(tile, "hdep_paid")).toBe(false);
 	});
 });
 
@@ -299,19 +276,19 @@ describe("fleetSummaryFromTiles", () => {
 			}),
 		]);
 		const hostedRunningWithoutEnv: AgentTile = {
-			id: "dep_123:codex",
+			id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 			source: "on-clawdi",
 			name: "Codex",
 			agentType: "codex",
-			href: "/agents/dep_123",
+			href: "/agents/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 			env: null,
 		};
 		const hostedStoppedWithFreshEnv: AgentTile = {
-			id: "dep_456:codex",
+			id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
 			source: "on-clawdi",
 			name: "Stopped Codex",
 			agentType: "codex",
-			href: "/agents/dep_456",
+			href: "/agents/cccccccc-cccc-4ccc-8ccc-cccccccccccc",
 			env: env({ last_seen_at: new Date().toISOString() }),
 		};
 

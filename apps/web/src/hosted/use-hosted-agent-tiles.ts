@@ -24,9 +24,9 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentVisible,
 } from "@/hosted/hosted-agent-resolution";
-import { deploymentFilesUrl, deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { deploymentFilesUrl, deploymentRuntime } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
-import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
 type DeploymentStatusInput = HostedDeploymentStatus | null;
@@ -104,12 +104,10 @@ export function hostedRuntimeStatusView(
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
  *
- * `cloudEnvs` is the cloud-api environments list the parent already
- * fetches for the self-managed grid; passing it through lets each
- * hosted tile attach its matching `EnvironmentResponse` (joined via the
- * stored environment id projected by the deploy API). With the join, the same
- * agent identity can carry its avatar and sort order without making the
- * Cloud API projection authoritative for deployment state.
+ * `cloudEnvs` is the cloud-api Agent list the parent already fetches for the
+ * self-managed grid. Hosted tiles join it by the deployment's authoritative
+ * `agent_id` for avatar and sort metadata without making that projection
+ * authoritative for deployment state.
  */
 export function useHostedAgentTiles({
 	cloudEnvs,
@@ -169,25 +167,17 @@ export function useHostedAgentTiles({
 }
 
 /**
- * One deployment renders as one hosted agent tile. The selected runtime's stored
- * environment id owns the detail route. Lifecycle and recovery controls stay on
- * the detail/settings surfaces; the tile projects only identity and status.
+ * One deployment renders as one Hosted Agent tile. The authoritative Agent UUID
+ * owns the detail route; deployment identity stays attached to compute actions.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentVisible(d)) return [];
 	const runtime = deploymentRuntime(d);
-	// The deploy API projects the stable agent identity. The Cloud API env join
-	// only decorates the tile and may legitimately lag or be missing.
-	const envId = runtimeEnvironmentId(d, runtime);
-	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+	const matchedEnv = envById.get(d.agent_id.toLowerCase());
 	const name = agentDisplayName(
 		matchedEnv ?? { default_name: d.resource.name, agent_type: runtime },
 	);
-	const routeQuery = {
-		source: "on-clawdi",
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
-	};
-	const detailHref = agentSectionHref(envId ?? d.resource.id, "overview", routeQuery);
+	const detailHref = agentSectionHref(d.agent_id);
 	const failure = deploymentFailurePresentation(d);
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv, failure);
 	const cardStatus: AgentCardStatusProjection = {
@@ -203,7 +193,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	};
 	return [
 		{
-			id: d.resource.id,
+			id: d.agent_id,
 			source: "on-clawdi" as const,
 			name,
 			avatarUrl: matchedEnv?.avatar_url ?? null,

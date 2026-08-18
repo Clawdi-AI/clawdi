@@ -60,7 +60,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
-import { agentDeploymentRouteQuery, agentProjectDetailHref } from "@/lib/agent-routes";
+import { agentProjectDetailHref } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -190,11 +190,7 @@ export default function VaultDetailPage({
 				: null;
 	useSetBreadcrumbSegmentTitle(
 		scope.kind === "agent" && requestedProjectId
-			? agentProjectDetailHref(
-					scope.agentId,
-					requestedProjectId,
-					agentDeploymentRouteQuery(scope.agentQuery),
-				)
+			? agentProjectDetailHref(scope.agentId, requestedProjectId)
 			: null,
 		breadcrumbProjectTitle,
 		requestedBinding?.binding_type === "primary" ? "workspace" : undefined,

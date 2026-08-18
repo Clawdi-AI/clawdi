@@ -6,7 +6,7 @@ import {
 	isRunningStatus,
 	isTransitionalStatus,
 } from "@/hosted/deployment-status";
-import { runtimeEnvironmentId } from "@/hosted/runtimes";
+import { observedCloudProjectionId } from "@/hosted/runtimes";
 import { isApiNotFoundError } from "@/lib/api-errors";
 
 export type HostedInventoryStatus = "resolved" | "loading" | "error" | "unavailable";
@@ -42,7 +42,7 @@ export class HostedInventoryUnavailableError extends Error {
 export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
 	return (
 		deploymentStatusFromResource(deployment.resource.status).kind !== "deleted" ||
-		runtimeEnvironmentId(deployment) !== undefined
+		observedCloudProjectionId(deployment) !== undefined
 	);
 }
 
@@ -71,8 +71,7 @@ export function claimedEnvIdsFromDeployments(
 	const environmentIds = new Set<string>();
 	for (const deployment of deployments) {
 		if (!isHostedDeploymentMember(deployment)) continue;
-		const environmentId = runtimeEnvironmentId(deployment);
-		if (environmentId) environmentIds.add(environmentId.toLowerCase());
+		environmentIds.add(deployment.agent_id.toLowerCase());
 	}
 	return environmentIds;
 }
@@ -82,51 +81,15 @@ export type AgentDeploymentMatch = {
 	runtime: string | null;
 };
 
-export type AgentDeploymentResolution = {
-	match: AgentDeploymentMatch | null;
-	ambiguousMatches: AgentDeploymentMatch[];
-};
-
-/** Resolve detail membership from deployment identity, never from projection presence. */
+/** Resolve Hosted membership from the authoritative Agent identity only. */
 export function resolveAgentDeployment(
 	deployments: readonly HostedDeployment[],
-	environmentId: string,
-	deploymentSelector?: string | null,
-): AgentDeploymentResolution {
+	agentId: string,
+): AgentDeploymentMatch | null {
 	const members = deployments.filter(isHostedDeploymentVisible);
-	const target = environmentId.toLowerCase();
-	const direct = members.find((deployment) => deployment.resource.id.toLowerCase() === target);
-	if (direct) {
-		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
-	}
-	const selectedDeployment = deploymentSelector
-		? members.find(
-				(deployment) => deployment.resource.id.toLowerCase() === deploymentSelector.toLowerCase(),
-			)
-		: undefined;
-
-	const matches: AgentDeploymentMatch[] = [];
-	for (const deployment of members) {
-		const runtime = deployment.resource.spec.runtime;
-		if (runtimeEnvironmentId(deployment, runtime)?.toLowerCase() === target) {
-			matches.push({ deployment, runtime });
-		}
-	}
-
-	if (deploymentSelector) {
-		const selector = deploymentSelector.toLowerCase();
-		const selected = matches.find((item) => item.deployment.resource.id.toLowerCase() === selector);
-		if (selected) return { match: selected, ambiguousMatches: [] };
-	}
-
-	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
-	// Stop removes the runtime projection (and therefore its environment-id
-	// mapping) but leaves the deployment itself. Tile/detail links carry this
-	// selector specifically so the retained deployment remains addressable.
-	if (matches.length === 0 && selectedDeployment) {
-		return { match: { deployment: selectedDeployment, runtime: null }, ambiguousMatches: [] };
-	}
-	return { match: null, ambiguousMatches: matches };
+	const target = agentId.toLowerCase();
+	const deployment = members.find((candidate) => candidate.agent_id.toLowerCase() === target);
+	return deployment ? { deployment, runtime: deployment.resource.spec.runtime } : null;
 }
 
 /**

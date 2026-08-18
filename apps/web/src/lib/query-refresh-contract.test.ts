@@ -25,16 +25,13 @@ describe("query refresh presentation contract", () => {
 		const projectsPage = source("pages/dashboard/projects/page.tsx");
 		const vaults = source("components/vault/vaults-surface.tsx");
 		const projectDetail = source("pages/dashboard/projects/[id]/page.tsx");
+		const inventoryGate = hostedAgentHome.slice(
+			hostedAgentHome.indexOf("if (!membershipResolved && !deployment)"),
+			hostedAgentHome.indexOf("// Hold a skeleton until the deployment lookup settles"),
+		);
 		const resolvedAgentBranch = hostedAgentHome.slice(
 			hostedAgentHome.lastIndexOf("if (deployment)"),
-			hostedAgentHome.indexOf("if (requestedHostedAgent)"),
-		);
-		const unresolvedAgentBranch = hostedAgentHome.slice(
-			hostedAgentHome.indexOf("if (requestedHostedAgent)"),
-			hostedAgentHome.indexOf(
-				"<ConnectedAgentDetail",
-				hostedAgentHome.indexOf("if (requestedHostedAgent)"),
-			),
+			hostedAgentHome.lastIndexOf("return <ConnectedAgentDetail"),
 		);
 
 		expect(transactions).toContain("shouldBlockQueryError(transactions.error, transactions.data)");
@@ -48,13 +45,11 @@ describe("query refresh presentation contract", () => {
 		expect(hostedInventory).toContain(
 			'return { status: "resolved", deployments, hasSnapshot: true, error: null };',
 		);
-		expect(hostedAgentHome).not.toContain("requestedHostedAgent && !deployment && isFetching");
-		expect(hostedAgentHome).toContain("disabled={manualChecking}");
-		expect(hostedAgentHome).toContain("!focusManager.isFocused() || isFetchingRef.current");
+		expect(inventoryGate).toContain("<ApiErrorPanel");
+		expect(inventoryGate).toContain("<ConnectedAgentDetailSkeleton hosted section={section} />");
 		expect(resolvedAgentBranch).toContain("<HostedAgentDetail");
-		expect(unresolvedAgentBranch).toContain("Check again");
-		expect(unresolvedAgentBranch).not.toContain("HostedDeploymentDeleteAction");
-		expect(unresolvedAgentBranch).not.toContain("Delete");
+		expect(resolvedAgentBranch).toContain("isCheckingDeployment={manualChecking}");
+		expect(resolvedAgentBranch).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
 		expect(agentDetailClient).not.toContain("useHostedProductAccess");
 		expect(agentDetailClient).toContain("<AgentHome");
 		expect(hostedProductGate).toContain(

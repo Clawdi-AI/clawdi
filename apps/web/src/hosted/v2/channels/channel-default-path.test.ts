@@ -67,7 +67,7 @@ describe("global Channels inventory", () => {
 		expect(agentDetail).toContain("open={customBotDialogOpen}");
 		expect(agentDetail).toContain("agentId={environmentId}");
 		expect(agentDetail).toContain("linkedProviders={linked.data ? linkedProviders : undefined}");
-		expect(agentDetail).toContain("agentRouteQuery={routeSearch}");
+		expect(agentDetail).not.toContain("agentRouteQuery=");
 		expect(agentDetail).toContain("Add channel");
 		expect(agentDetail).toContain('title="Clawdi bots"');
 		expect(agentDetail).toContain('title="Custom bots"');
@@ -85,7 +85,7 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain("whatsappSelected");
 		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
 		expect(connectDialog).toContain("Need a provider that Clawdi Channels");
-		expect(connectDialog).toContain('agentSectionLink(agentId, "console", agentRouteQuery)');
+		expect(connectDialog).toContain('agentSectionLink(agentId, "console")');
 		expect(connectDialog).toContain("Open the relevant Agent's Agent Interface");
 		expect(connectDialog).toContain("data-agent-link-warning");
 		expect(connectDialog).toContain('className="border-warning/30 bg-warning-muted py-2.5"');

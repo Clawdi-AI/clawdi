@@ -27,6 +27,7 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
 DEV_V2_MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
 STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
+HOSTED_AGENT_UUID_NAMESPACE = uuid.UUID("e016a4c8-7943-4ae9-9c53-5f1a5db9f3e1")
 OPERATIONS: dict[str, dict[str, Any]] = {}
 DEPLOY_REQUESTS: dict[str, dict[str, Any]] = {}
 
@@ -41,6 +42,10 @@ def _iso(dt: datetime) -> str:
 
 def _stable_uuid(clerk_id: str, label: str) -> str:
     return str(uuid.uuid5(STABLE_UUID_NAMESPACE, f"{clerk_id}:{label}"))
+
+
+def _stable_agent_id(deployment_id: str, runtime: str) -> str:
+    return str(uuid.uuid5(HOSTED_AGENT_UUID_NAMESPACE, f"{deployment_id}:{runtime}"))
 
 
 def _clerk_id() -> str:
@@ -322,6 +327,7 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
         for index, url in enumerate(record.get("endpoints") or [], start=1)
     ]
     return {
+        "agent_id": _stable_agent_id(record["id"], runtime),
         "resource": {
             "id": record["id"],
             "name": record["name"],

@@ -12,11 +12,10 @@ export const Route = createFileRoute(
 
 function AgentProjectVaultsRoute() {
 	const { id, projectId } = Route.useParams();
-	const search = Route.useSearch();
 	return (
 		<ProjectDetailPage
 			projectId={projectId}
-			scope={agentResourceScope(id, search, projectId)}
+			scope={agentResourceScope(id, projectId)}
 			focus="vaults"
 		/>
 	);

@@ -105,7 +105,6 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { isCloudEnvId } from "@/hosted/agent-route";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -295,6 +294,7 @@ import {
 	agentSectionLink,
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
+	isAgentRouteId,
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -455,7 +455,7 @@ export function HostedAgentDetail({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
-	const cloudEnvironmentId = isCloudEnvId(environmentId);
+	const cloudAgentId = isAgentRouteId(environmentId);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 	const agentQuery = $api.useQuery(
 		"get",
@@ -464,7 +464,7 @@ export function HostedAgentDetail({
 			params: { path: { agent_id: environmentId } },
 		},
 		{
-			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			enabled: cloudAgentId && deploymentProjectionQueryable,
 			refetchInterval: (query) =>
 				missingProjectionRefetchInterval(
 					query.state.error,
@@ -475,7 +475,7 @@ export function HostedAgentDetail({
 		},
 	);
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+		enabled: cloudAgentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
@@ -502,9 +502,9 @@ export function HostedAgentDetail({
 	);
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
-	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
+	const terminalHref = agentSectionHref(environmentId, "terminal");
 	const scopedSessionLink = (sessionId: string) => ({
-		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
+		...agentSessionDetailLink(environmentId, sessionId),
 	});
 
 	const sessions = useQuery({
@@ -515,7 +515,7 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const resourceScope = agentResourceScope(environmentId, routeSearch);
+	const resourceScope = agentResourceScope(environmentId);
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
@@ -553,7 +553,7 @@ export function HostedAgentDetail({
 								<MemoriesPageActions />
 							) : interfaceAvailable ? (
 								<Button
-									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									render={<Link {...agentSectionLink(environmentId, "console")} />}
 									nativeButton={false}
 									variant="outline"
 								>
@@ -599,9 +599,8 @@ export function HostedAgentDetail({
 					) : activeTab === "overview" ? (
 						<OverviewTab
 							agentId={environmentId}
-							routeSearch={routeSearch}
 							deployment={deployment}
-							agent={isCloudEnvId(environmentId) ? agent : null}
+							agent={isAgentRouteId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
@@ -633,7 +632,7 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
+						<HostedAgentSessionsTab environmentId={environmentId} />
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -641,7 +640,6 @@ export function HostedAgentDetail({
 						projection.status === "resolved" ? (
 							<AgentProjectsTab
 								agentId={environmentId}
-								routeSearch={routeSearch}
 								headerAdornment={<AgentSourceBadge source="hosted" compact />}
 								headerIcon={
 									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
@@ -669,14 +667,13 @@ export function HostedAgentDetail({
 								environmentId={environmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
-								routeSearch={routeSearch}
 							/>
 						) : (
 							<ChannelsSyncState
 								isChecking={isCheckingDeployment || isCheckingProjection}
 								onCheckAgain={() => {
 									onCheckDeploymentAgain();
-									if (cloudEnvironmentId) void checkProjectionAgain();
+									if (cloudAgentId) void checkProjectionAgain();
 								}}
 							/>
 						)
@@ -781,13 +778,7 @@ function StoppedAgentState({
 	);
 }
 
-function HostedAgentSessionsTab({
-	environmentId,
-	routeSearch,
-}: {
-	environmentId: string;
-	routeSearch: AgentRouteSearch;
-}) {
+function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
@@ -837,7 +828,7 @@ function HostedAgentSessionsTab({
 				isLoading={sessions.isLoading && !sessions.data}
 				emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
 				showAgent={false}
-				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id, routeSearch)}
+				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id)}
 			/>
 			{sessions.data ? (
 				<DataTablePagination
@@ -1152,7 +1143,6 @@ export function InitialDeploymentPage({
 
 function OverviewTab({
 	agentId,
-	routeSearch,
 	deployment,
 	agent,
 	projectionStatus,
@@ -1166,7 +1156,6 @@ function OverviewTab({
 	deploymentTransitionEscalated,
 }: {
 	agentId: string;
-	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
@@ -1251,7 +1240,7 @@ function OverviewTab({
 							Recent sessions
 						</h2>
 						<Button
-							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							render={<Link {...agentSectionLink(agentId, "sessions")} />}
 							nativeButton={false}
 							variant="ghost"
 							size="sm"
@@ -1278,7 +1267,6 @@ function OverviewTab({
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
-						routeSearch={routeSearch}
 						title="Compute"
 						icon={Cpu}
 						tint="bg-identity-4-bg text-identity-4-fg"
@@ -1317,7 +1305,6 @@ function OverviewTab({
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
-				routeSearch={routeSearch}
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {
@@ -1333,14 +1320,14 @@ function OverviewTab({
 					skills: {
 						...skillsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
 							: null,
 					},
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,
 						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults", routeSearch)
+							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
 							: null,
 					},
 					connectors: connectorsModule,
@@ -2610,19 +2597,17 @@ function ChannelsTab({
 	environmentId,
 	agentType,
 	agentName,
-	routeSearch,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
 	agentName: string;
-	routeSearch: AgentRouteSearch;
 }) {
 	const api = useApi();
 	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
+	const linked = useAgentChannelLinks(environmentId, isAgentRouteId(environmentId), true);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const deleteChannel = useDeleteChannel();
@@ -2957,7 +2942,6 @@ function ChannelsTab({
 				agentId={environmentId}
 				agentType={agentType}
 				linkedProviders={linked.data ? linkedProviders : undefined}
-				agentRouteQuery={routeSearch}
 				onAgentConnected={(bot) => {
 					setRecentLinks((current) =>
 						new Map(current).set(bot.id, {
@@ -3636,7 +3620,7 @@ function ComputeSettingsSections({
 			if (target.kind !== "deployment") return false;
 			const checkoutDeploymentId = target.deploymentId;
 			if (checkoutDeploymentId === deployment.resource.id) return false;
-			const hydrateAndNavigate = async () => {
+			const hydrateAndNavigate = async (): Promise<boolean> => {
 				try {
 					await navigateToAcceptedDeployment({
 						deploymentId: checkoutDeploymentId,
@@ -3646,6 +3630,7 @@ function ComputeSettingsSections({
 						replace: true,
 					});
 					toast.dismiss(`checkout-deployment-${checkoutDeploymentId}`);
+					return true;
 				} catch {
 					toast.error("Deployment accepted; details couldn’t load", {
 						id: `checkout-deployment-${checkoutDeploymentId}`,
@@ -3656,10 +3641,10 @@ function ComputeSettingsSections({
 							onClick: () => void hydrateAndNavigate(),
 						},
 					});
+					return false;
 				}
 			};
-			await hydrateAndNavigate();
-			return true;
+			return hydrateAndNavigate();
 		},
 		[billingClient.getDeployment, deployment.resource.id, queryClient, router],
 	);

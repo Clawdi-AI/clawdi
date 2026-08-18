@@ -12,8 +12,5 @@ export const Route = createFileRoute(
 
 function AgentProjectOverviewRoute() {
 	const { id, projectId } = Route.useParams();
-	const search = Route.useSearch();
-	return (
-		<ProjectDetailPage projectId={projectId} scope={agentResourceScope(id, search, projectId)} />
-	);
+	return <ProjectDetailPage projectId={projectId} scope={agentResourceScope(id, projectId)} />;
 }

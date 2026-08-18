@@ -2106,7 +2106,16 @@ export interface components {
         /** V2HostedDeploymentReadResponse */
         V2HostedDeploymentReadResponse: {
             resource: components["schemas"]["HostedDeploymentResource"];
-            /** Clawdi Cloud Environments */
+            /**
+             * Agent Id
+             * Format: uuid
+             * @description Authoritative stable Cloud Agent identity for this deployment and runtime. It is available independently of Cloud projection state.
+             */
+            agent_id: string;
+            /**
+             * Clawdi Cloud Environments
+             * @description Observed per-runtime Cloud projection ids from active deployment keys. This is projection state, not the authoritative Agent identity.
+             */
             clawdi_cloud_environments?: {
                 [key: string]: string;
             };

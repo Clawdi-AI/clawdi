@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref, isAgentRouteId } from "@/lib/agent-routes";
 
 export type AcceptedDeploymentNavigate = (options: {
 	href: string;
@@ -45,6 +45,9 @@ export async function navigateToAcceptedDeployment({
 	if (authoritative.resource.id !== deploymentId) {
 		throw new Error("The deployment service returned a different deployment.");
 	}
+	if (!isAgentRouteId(authoritative.agent_id)) {
+		throw new Error("The deployment service returned an invalid Agent identity.");
+	}
 
 	// A list read that started before acceptance can be older than the committed
 	// by-id row. Cancel it before the upsert so it cannot erase this handoff.
@@ -55,7 +58,7 @@ export async function navigateToAcceptedDeployment({
 	void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 
 	await navigate({
-		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+		href: agentSectionHref(authoritative.agent_id),
 		replace,
 	});
 }

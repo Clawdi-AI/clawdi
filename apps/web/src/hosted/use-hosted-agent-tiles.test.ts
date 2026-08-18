@@ -67,13 +67,9 @@ function expectHostedTileStatus(
 	expect((tile as { action?: unknown } | undefined)?.action).toBeUndefined();
 }
 
-function resolveAgentDeployment(
-	deployments: readonly HostedDeployment[],
-	environmentId: string,
-	deploymentSelector?: string,
-) {
+function resolveAgentDeployment(deployments: readonly HostedDeployment[], agentId: string) {
 	if (!getAgentDeploymentResolution) throw new Error("resolveAgentDeployment was not loaded");
-	return getAgentDeploymentResolution(deployments, environmentId, deploymentSelector);
+	return getAgentDeploymentResolution(deployments, agentId);
 }
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -159,6 +155,7 @@ function failedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 function deployment(
 	overrides: {
 		id?: string;
+		agentId?: string;
 		name?: string;
 		status?: HostedDeploymentStatus["summary_state"] | null;
 		createdAt?: string;
@@ -176,6 +173,7 @@ function deployment(
 	const environmentId = overrides.environmentId ?? `env_${id}_${runtime}`;
 	return hostedDeploymentFixture({
 		id,
+		agentId: overrides.agentId,
 		name: overrides.name ?? "hosted-test",
 		status: overrides.status,
 		createdAt: overrides.createdAt ?? "2026-06-22T00:00:00Z",
@@ -191,10 +189,10 @@ function deployment(
 
 describe("deploymentToTiles", () => {
 	test("renders the runtime selected by the deployment spec", () => {
-		const environmentId = "env-openclaw";
-		const hostedDeployment = deployment({ runtime: "openclaw", environmentId });
+		const agentId = "11111111-1111-4111-8111-111111111111";
+		const hostedDeployment = deployment({ runtime: "openclaw", agentId, environmentId: agentId });
 		const openclawEnv = env({
-			id: environmentId,
+			id: agentId,
 			name: "hosted-openclaw",
 			display_name: "Research Agent",
 			default_name: "hosted-openclaw",
@@ -205,9 +203,9 @@ describe("deploymentToTiles", () => {
 		const tiles = hostedDeploymentToTiles(hostedDeployment, [openclawEnv]);
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
-		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
+		expect(tiles.map((tile) => tile.id)).toEqual([agentId]);
 		expect(tiles.map((tile) => tile.name)).toEqual(["Research Agent"]);
-		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
+		expect(tiles[0]?.href).toBe(`/agents/${agentId}`);
 		expect(tiles[0]?.env).toBe(openclawEnv);
 		expect(tiles[0]?.filesAvailable).toBe(false);
 		expectHostedTileStatus(tiles[0], "Running");
@@ -278,17 +276,22 @@ describe("deploymentToTiles", () => {
 		expect(tile?.cardStatus?.labels).toEqual(["Temporarily unavailable"]);
 	});
 
-	test("links by deployment env identity when the cloud-api projection is missing", () => {
+	test("links by authoritative Agent identity when the Cloud projection is missing", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
-		const environmentId = "env-failed-openclaw";
-		const hostedDeployment = deployment({ status: "failed", failureReason, environmentId });
+		const agentId = "22222222-2222-4222-8222-222222222222";
+		const hostedDeployment = deployment({
+			status: "failed",
+			failureReason,
+			agentId,
+			environmentId: null,
+		});
 		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
-			id: "dep_123",
+			id: agentId,
 			source: "on-clawdi",
 			name: "hosted-test",
-			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+			href: `/agents/${agentId}`,
 			env: null,
 		});
 		expect(tile?.env).toBeNull();
@@ -306,9 +309,8 @@ describe("deploymentToTiles", () => {
 	});
 
 	test("keeps a failed plan change on a summary-only tile", () => {
-		const environmentId = "env-failed-plan-change";
 		const reason = "Top up your Wallet and retry the plan change.";
-		const planFailure = deployment({ status: "failed", environmentId });
+		const planFailure = deployment({ status: "failed" });
 		if (!planFailure.resource.status) throw new Error("Expected deployment status");
 		planFailure.resource.status.failure = {
 			...deploymentFailure(reason),
@@ -318,22 +320,20 @@ describe("deploymentToTiles", () => {
 		const [tile] = hostedDeploymentToTiles(planFailure);
 
 		expectHostedTileStatus(tile, "Failed");
-		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
+		expect(tile?.href).toBe(`/agents/${planFailure.agent_id}`);
 	});
 
 	test("keeps the exact name, stopped status, and navigation on a summary-only tile", () => {
-		const environmentId = "env-stopped-openclaw";
-		const [tile] = hostedDeploymentToTiles(
-			deployment({
-				name: "deployment-create-generated-id",
-				status: "stopped",
-				environmentId,
-			}),
-		);
+		const stopped = deployment({
+			name: "deployment-create-generated-id",
+			status: "stopped",
+			environmentId: null,
+		});
+		const [tile] = hostedDeploymentToTiles(stopped);
 
 		expect(tile).toMatchObject({
 			name: "deployment-create-generated-id",
-			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+			href: `/agents/${stopped.agent_id}`,
 		});
 		expectHostedTileStatus(tile, "Stopped");
 	});
@@ -369,13 +369,14 @@ describe("deploymentToTiles", () => {
 			["failed", "Failed"],
 			[null, "Status unavailable"],
 		] as const) {
-			const environmentId = `env-${status ?? "unknown"}-with-fresh-sync`;
 			const joinedEnv = env({
-				id: environmentId,
 				last_seen_at: new Date().toISOString(),
 				last_sync_at: new Date().toISOString(),
 			});
-			const [tile] = hostedDeploymentToTiles(deployment({ status, environmentId }), [joinedEnv]);
+			const [tile] = hostedDeploymentToTiles(
+				deployment({ status, agentId: joinedEnv.id, environmentId: joinedEnv.id }),
+				[joinedEnv],
+			);
 
 			expectHostedTileStatus(tile, label);
 			expect(tile?.cardStatus?.labels).not.toContain("Live");
@@ -384,33 +385,33 @@ describe("deploymentToTiles", () => {
 	});
 
 	test("removes deleted deployments from tiles and detail membership", () => {
-		const environmentId = "env-deleted-openclaw";
-		const deleted = deployment({ status: "deleted", environmentId });
+		const deleted = deployment({ status: "deleted" });
 
 		expect(hostedDeploymentToTiles(deleted)).toEqual([]);
-		expect(resolveAgentDeployment([deleted], environmentId).match).toBeNull();
+		expect(resolveAgentDeployment([deleted], deleted.agent_id)).toBeNull();
 	});
 
 	test("removes an accepted delete from tiles before teardown completes", () => {
-		const environmentId = "env-deleting-openclaw";
-		const deleting = deployment({ status: "deleting", failedVerb: "delete", environmentId });
+		const deleting = deployment({ status: "deleting", failedVerb: "delete" });
 
 		expect(hostedDeploymentToTiles(deleting)).toEqual([]);
-		expect(resolveAgentDeployment([deleting], environmentId).match).toBeNull();
+		expect(resolveAgentDeployment([deleting], deleting.agent_id)).toBeNull();
 	});
 
-	test("links a visible deployment by deployment identity before its env identity exists", () => {
+	test("keeps a provisioning deployment navigable before projection exists", () => {
+		const agentId = "33333333-3333-4333-8333-333333333333";
 		const hostedDeployment = deployment({
 			status: "failed",
 			failureReason: "creation_interrupted",
+			agentId,
 			environmentId: null,
 		});
 		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
-			id: "dep_123",
+			id: agentId,
 			name: "hosted-test",
-			href: "/agents/dep_123?source=on-clawdi&d=dep_123",
+			href: `/agents/${agentId}`,
 			env: null,
 		});
 		expectHostedTileStatus(tile, "Temporarily unavailable");
@@ -418,52 +419,27 @@ describe("deploymentToTiles", () => {
 });
 
 describe("resolveAgentDeployment", () => {
-	const sharedEnvironmentId = "env-shared-openclaw";
+	const sharedProjectionId = "77777777-7777-4777-8777-777777777777";
 	const newer = deployment({
 		id: "dep_newer",
+		agentId: "44444444-4444-4444-8444-444444444444",
 		name: "Newer twin",
 		createdAt: "2026-07-15T00:00:00Z",
-		environmentId: sharedEnvironmentId,
+		environmentId: sharedProjectionId,
 	});
 	const older = deployment({
 		id: "dep_older",
+		agentId: "55555555-5555-4555-8555-555555555555",
 		name: "Older twin",
 		createdAt: "2026-07-14T00:00:00Z",
-		environmentId: sharedEnvironmentId,
+		environmentId: sharedProjectionId,
 	});
 
-	test("resolves a deployment from its stored environment identity", () => {
-		const resolution = resolveAgentDeployment([newer], sharedEnvironmentId);
-
-		expect(resolution.match?.deployment.resource.id).toBe("dep_newer");
-		expect(resolution.match?.runtime).toBe("openclaw");
-		expect(resolution.ambiguousMatches).toEqual([]);
-	});
-
-	test("detects every deployment sharing an environment instead of picking newest", () => {
-		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId);
-
-		expect(resolution.match).toBeNull();
-		expect(resolution.ambiguousMatches.map((match) => match.deployment.resource.id)).toEqual([
-			"dep_newer",
-			"dep_older",
-		]);
-	});
-
-	test("prefers an explicit deployment selector within the environment matches", () => {
-		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId, "dep_older");
-
-		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
-		expect(resolution.match?.runtime).toBe("openclaw");
-		expect(resolution.ambiguousMatches).toEqual([]);
-	});
-
-	test("continues to resolve direct deployment-id routes", () => {
-		const resolution = resolveAgentDeployment([newer, older], "dep_older", "dep_older");
-
-		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
-		expect(resolution.match?.runtime).toBeNull();
-		expect(resolution.ambiguousMatches).toEqual([]);
+	test("resolves only authoritative Agent ids despite a shared observed projection", () => {
+		expect(resolveAgentDeployment([newer, older], newer.agent_id)?.deployment).toBe(newer);
+		expect(resolveAgentDeployment([newer, older], older.agent_id)?.deployment).toBe(older);
+		expect(resolveAgentDeployment([newer, older], sharedProjectionId)).toBeNull();
+		expect(resolveAgentDeployment([newer, older], older.resource.id)).toBeNull();
 	});
 });
 

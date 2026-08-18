@@ -434,10 +434,7 @@ export function DeployWizard() {
 		],
 	);
 	const navigateCheckoutReturn = useCallback(
-		async (target: CheckoutReturnNavigationTarget) => {
-			await acceptDeployment(target, true);
-			return true;
-		},
+		(target: CheckoutReturnNavigationTarget) => acceptDeployment(target, true),
 		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({

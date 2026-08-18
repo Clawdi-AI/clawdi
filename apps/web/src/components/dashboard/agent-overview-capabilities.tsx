@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
-import { type AgentRouteSearch, agentSectionLink } from "@/lib/agent-routes";
+import { agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
@@ -24,7 +24,6 @@ type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 export function AgentOverviewStatusCard({
 	agentId,
 	section,
-	routeSearch,
 	title,
 	icon: Icon,
 	tint,
@@ -33,7 +32,6 @@ export function AgentOverviewStatusCard({
 }: {
 	agentId: string;
 	section: "settings";
-	routeSearch: AgentRouteSearch;
 	title: string;
 	icon: LucideIcon;
 	tint: string;
@@ -49,7 +47,7 @@ export function AgentOverviewStatusCard({
 		>
 			<CardHeader className="p-0">
 				<Link
-					{...agentSectionLink(agentId, section, routeSearch)}
+					{...agentSectionLink(agentId, section)}
 					aria-label={title}
 					className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 				>
@@ -111,12 +109,10 @@ export function OverviewMetadata({
 export function AgentOverviewCapabilities({
 	agentId,
 	variant,
-	routeSearch,
 	content,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
-	routeSearch: AgentRouteSearch;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
 }) {
 	const groups = agentOverviewGroups(variant);
@@ -153,7 +149,7 @@ export function AgentOverviewCapabilities({
 									tint={item.tint}
 									link={
 										moduleContent.link === undefined
-											? agentSectionLink(agentId, module.section, routeSearch)
+											? agentSectionLink(agentId, module.section)
 											: moduleContent.link
 									}
 								/>
