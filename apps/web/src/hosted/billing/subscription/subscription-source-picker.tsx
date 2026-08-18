@@ -42,8 +42,11 @@ export function SubscriptionSourcePicker({
 
 	const paidDisabled = disabled || error != null || isLoading;
 	return (
-		<div data-hosted="true" className="flex min-w-0 flex-col gap-3">
-			<div className="grid min-w-0 gap-2 lg:grid-cols-2">
+		<div
+			data-hosted="true"
+			className="@container/subscription-source flex min-w-0 flex-col gap-3"
+		>
+			<div className="grid min-w-0 items-start gap-2 @3xl/subscription-source:grid-cols-2">
 				{showIncluded ? (
 					<EntityChoiceCard
 						selected={value?.mode === "included"}
@@ -149,6 +152,7 @@ function ExistingSubscriptionChoice({
 			title={`${computeTierLabel(subscription.plan_slug)} subscription`}
 			description="$0 due now"
 			badge={statusBadge}
+			detailsPlacement="responsive"
 			details={
 				<dl className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-1 text-xs">
 					<div className="min-w-0">

@@ -302,10 +302,18 @@ export function sortLoadedSubscriptions(
 		.map(({ subscription }) => subscription);
 }
 
-function SubscriptionListSkeleton() {
+export function reusableInventoryState(
+	error: unknown,
+	data: readonly unknown[] | undefined,
+): "loading" | "error" | "ready" {
+	if (shouldBlockQueryError(error, data)) return "error";
+	return data === undefined ? "loading" : "ready";
+}
+
+function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
 	return (
 		<div className="grid gap-3 lg:grid-cols-2" role="status">
-			<span className="sr-only">Loading subscriptions</span>
+			<span className="sr-only">{label}</span>
 			{Array.from({ length: 3 }, (_, index) => `subscription-skeleton-${index}`).map((key) => (
 				<div key={key} className={entityCardChassisClass({ variant: "compact" })}>
 					<div className="flex items-start justify-between gap-3">
@@ -340,6 +348,10 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 		useState<ComputeSubscriptionListItem | null>(null);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const rows = subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [];
+	const availabilityState = reusableInventoryState(
+		reusableSubscriptions.error,
+		reusableSubscriptions.data,
+	);
 	const orderedRows = sortLoadedSubscriptions(rows);
 	const agentTilesByDeploymentId = new Map(
 		agentTiles
@@ -407,6 +419,15 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 						error={subscriptions.error}
 						onRetry={() => void subscriptions.refetch()}
 						title="Couldn't load subscriptions"
+					/>
+				) : availabilityState === "loading" ? (
+					<SubscriptionListSkeleton label="Loading subscription availability" />
+				) : availabilityState === "error" ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={reusableSubscriptions.error}
+						onRetry={() => void reusableSubscriptions.refetch()}
+						title="Couldn't load subscription availability"
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
