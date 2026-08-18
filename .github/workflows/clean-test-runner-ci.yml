@@ -88,7 +88,7 @@ permissions:
 
 concurrency:
   group: clean-test-runner-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"

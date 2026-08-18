@@ -89,6 +89,31 @@ const releaseClassifierSource = readFileSync(
 );
 
 describe("backend image release workflow contract", () => {
+	test("keeps Python governance out of sidecar-only changes", () => {
+		const filterStep = backendCi.jobs.changes?.steps?.find((step) => step.id === "filter");
+		const filters = String(filterStep?.with?.filters);
+		const backendFilter = filters.slice(filters.indexOf("backend:\n"), filters.indexOf("test:\n"));
+
+		expect(backendCi.jobs["lint-and-typecheck"]?.if).toBe(
+			"needs.changes.outputs.backend == 'true'",
+		);
+		for (const path of [
+			"backend/**/*.py",
+			"packages/shared/src/api/api.generated.ts",
+			"scripts/openapi-typescript.sh",
+			"config/deploy.yml",
+			"tools/openapi-typescript/**",
+		]) {
+			expect(backendFilter).toContain(`- "${path}"`);
+		}
+		for (const path of [
+			"packages/whatsapp-baileys-sidecar/**",
+			"scripts/deploy-whatsapp-sidecar.sh",
+		]) {
+			expect(backendFilter).not.toContain(`- "${path}"`);
+		}
+	});
+
 	test("coalesces main Backend CI only inside its image-input path gate", () => {
 		expect(backendCi.on?.push?.branches).toEqual(["main"]);
 		expect(backendCi.on?.push?.paths).toEqual(
@@ -107,7 +132,9 @@ describe("backend image release workflow contract", () => {
 		);
 		expect(backendCi.on?.push?.paths).not.toContain("**");
 		expect(backendCi.on?.push?.paths).not.toContain("apps/web/src/**");
-		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(true);
+		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(
+			`\${{ github.event_name == 'pull_request' }}`,
+		);
 	});
 
 	test("compares the exact Backend CI head against cumulative successful deployment authority", () => {

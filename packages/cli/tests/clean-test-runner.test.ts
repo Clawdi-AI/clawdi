@@ -38,8 +38,15 @@ describe("client workflow contract", () => {
 	test("uses truthful change routing and verifies every client package in one job", () => {
 		const changesJob = section(clientWorkflow, "  changes:\n", "  # Lint");
 		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
+		const webE2eFilter = section(
+			changesJob,
+			"            web_e2e:\n",
+			"            deploy_contract:\n",
+		);
+		const webE2eJob = section(clientWorkflow, "  web-e2e:\n", "  whatsapp-native-e2e:\n");
 
 		expect(changesJob).toContain(`client: \${{ steps.filter.outputs.client }}`);
+		expect(changesJob).toContain(`web_e2e: \${{ steps.filter.outputs.web_e2e }}`);
 		expect(changesJob).toContain(`deploy_contract: \${{ steps.filter.outputs.deploy_contract }}`);
 		for (const path of [
 			"apps/web/**",
@@ -55,9 +62,19 @@ describe("client workflow contract", () => {
 			);
 		}
 		expect(verifyJob).toContain("needs.changes.outputs.client == 'true'");
+		expect(webE2eJob).toContain("needs.changes.outputs.web_e2e == 'true'");
+		for (const path of ["apps/web/**", "packages/shared/**", "package.json", "bun.lock"]) {
+			expect(webE2eFilter).toContain(`- "${path}"`);
+		}
+		for (const path of ["packages/cli/**", "packages/whatsapp-baileys-sidecar/**"]) {
+			expect(webE2eFilter).not.toContain(`- "${path}"`);
+		}
 		expect(verifyJob).not.toContain("matrix:");
 		expect(clientWorkflow).not.toContain("actions/upload-artifact");
 		expect(clientWorkflow).not.toContain("actions/download-artifact");
+		expect(clientWorkflow).toContain(
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
+		);
 
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
 		expect(typecheckTask).toContain('"outputs": []');
@@ -175,6 +192,9 @@ describe("clean runner suite contract", () => {
 	});
 
 	test("runs focused CI routinely and exposes full all as a manual gate", () => {
+		expect(cleanRunnerWorkflow).toContain(
+			`cancel-in-progress: \${{ github.event_name == 'pull_request' }}`,
+		);
 		expect(cleanRunnerWorkflow).toContain('description: "Clean runner suite to execute"');
 		expect(cleanRunnerWorkflow).toContain("default: ci");
 		expect(cleanRunnerWorkflow).toContain("          - ci\n          - all");
