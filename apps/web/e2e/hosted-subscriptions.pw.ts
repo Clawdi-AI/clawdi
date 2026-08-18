@@ -180,12 +180,25 @@ async function expectCardsFit(container: Locator) {
 				const metaItemBoxes = Array.from(meta?.children ?? []).map((item) =>
 					item.getBoundingClientRect().toJSON(),
 				);
-				const actionBox = action?.getBoundingClientRect();
+				const actionRect = action?.getBoundingClientRect();
+				const actionBox = actionRect && actionRect.height > 0 ? actionRect : null;
 				const actionItemBoxes = Array.from(
 					card.querySelectorAll<HTMLElement>(
 						'[data-slot="compute-subscription-actions"] button, [data-slot="compute-subscription-actions"] a',
 					),
 				).map((item) => item.getBoundingClientRect().toJSON());
+				const sectionBoxes = [
+					"compute-subscription-header",
+					"compute-subscription-meta",
+					"compute-subscription-identity",
+					"compute-subscription-notice",
+					"compute-subscription-actions",
+				]
+					.map((slot) =>
+						card.querySelector<HTMLElement>(`[data-slot="${slot}"]`)?.getBoundingClientRect(),
+					)
+					.filter((section): section is DOMRect => Boolean(section && section.height > 0))
+					.map((section) => section.toJSON());
 				return {
 					clientWidth: card.clientWidth,
 					scrollWidth: card.scrollWidth,
@@ -195,6 +208,7 @@ async function expectCardsFit(container: Locator) {
 					metaItemBoxes,
 					actionBox: actionBox?.toJSON() ?? null,
 					actionItemBoxes,
+					sectionBoxes,
 				};
 			}),
 		);
@@ -203,6 +217,13 @@ async function expectCardsFit(container: Locator) {
 	for (const metric of metrics) {
 		expect(metric.scrollWidth).toBeLessThanOrEqual(metric.clientWidth + 1);
 		if (metric.headingBox) expect(metric.headingBox.height).toBeLessThanOrEqual(49);
+		for (let index = 1; index < metric.sectionBoxes.length; index += 1) {
+			const previous = metric.sectionBoxes[index - 1];
+			const current = metric.sectionBoxes[index];
+			if (!previous || !current) continue;
+			expect(current.y).toBeGreaterThanOrEqual(previous.bottom - 1);
+			expect(current.y - previous.bottom).toBeLessThanOrEqual(48);
+		}
 		if (metric.metaBox) {
 			for (const itemBox of metric.metaItemBoxes) {
 				expect(itemBox.x).toBeGreaterThanOrEqual(metric.metaBox.x - 1);
@@ -590,6 +611,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
 		cards.map((card) => card.getBoundingClientRect().toJSON()),
 	);
+	expect(desktopCardBoxes[0]?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(200);
 	expect(desktopCardBoxes[2]?.y ?? 0).toBeGreaterThanOrEqual(
 		Math.max(desktopCardBoxes[0]?.bottom ?? 0, desktopCardBoxes[1]?.bottom ?? 0) - 1,
 	);
@@ -714,6 +736,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		.locator('[data-slot="compute-subscription-card"]')
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
 	expect(tabletCardBoxes[1]?.y ?? 0).toBeGreaterThanOrEqual((tabletCardBoxes[0]?.bottom ?? 0) - 1);
+	await currentCards.nth(0).scrollIntoViewIfNeeded();
+	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-tablet-800.png") });
 
 	await page.setViewportSize({ width: 320, height: 1000 });
 	await expect(dialog).toBeVisible();
