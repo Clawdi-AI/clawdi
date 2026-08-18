@@ -389,6 +389,7 @@ export function HeroCard({
 	footer,
 	actions,
 	link,
+	onClick,
 	ariaLabel,
 	className,
 	titleClassName,
@@ -403,6 +404,8 @@ export function HeroCard({
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
 	link?: EntityCardLinkOptions;
+	/** Whole-card button for state-driven detail views. Ignored when `link` is set. */
+	onClick?: () => void;
 	ariaLabel?: string;
 	className?: string;
 	titleClassName?: string;
@@ -413,7 +416,7 @@ export function HeroCard({
 	return (
 		<EntityCardChassis
 			variant="resource"
-			interactive={Boolean(link)}
+			interactive={Boolean(link || onClick)}
 			className={cn("flex min-h-36 flex-col gap-3", className)}
 		>
 			{icon || actions ? (
@@ -454,6 +457,14 @@ export function HeroCard({
 			) : null}
 			{link ? (
 				<EntityCardLink variant="resource" {...link} ariaLabel={ariaLabel ?? "Open"} />
+			) : onClick ? (
+				<button
+					type="button"
+					onClick={onClick}
+					className={cn(HERO_STRETCHED_LINK_CLASS, "cursor-pointer")}
+				>
+					<span className="sr-only">{ariaLabel ?? "Open"}</span>
+				</button>
 			) : null}
 		</EntityCardChassis>
 	);

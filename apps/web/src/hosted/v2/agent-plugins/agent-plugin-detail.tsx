@@ -63,7 +63,7 @@ export function AgentPluginDetail({
 	const showCompatibilityWarning = Boolean(installability?.reason && (!item.desired || hasUpdate));
 
 	return (
-		<div data-hosted="true" data-v2="true" className="contents">
+		<div data-hosted="true" data-v2="true" className="space-y-6">
 			<Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
 				<ArrowLeft />
 				Back to Plugins

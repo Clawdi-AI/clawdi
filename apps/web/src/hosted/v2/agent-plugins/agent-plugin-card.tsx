@@ -1,6 +1,6 @@
 "use client";
 
-import { Blocks, ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Blocks, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,8 @@ export function AgentPluginCard({
 		<div data-hosted="true" data-v2="true" className="contents">
 			<HeroCard
 				className="min-h-36"
+				onClick={() => onOpen(item.name)}
+				ariaLabel={`View ${title} details`}
 				icon={
 					<IconChip size="sm" tint={identityFor(item.name).colorClasses} className="rounded-lg">
 						<Blocks />
@@ -73,16 +75,7 @@ export function AgentPluginCard({
 					<span className="min-w-0 text-xs text-muted-foreground">
 						{agentPluginComponentSummary(item.catalog)}
 					</span>
-					<div className="flex shrink-0 items-center gap-1.5">
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => onOpen(item.name)}
-							aria-label={`View ${title} details`}
-						>
-							Details
-							<ChevronRight />
-						</Button>
+					<div className="relative z-10 flex shrink-0 items-center gap-1.5">
 						{item.desired ? (
 							<ConfirmAction
 								title={`Remove ${title}?`}
