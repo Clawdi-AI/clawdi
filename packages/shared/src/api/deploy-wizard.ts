@@ -436,18 +436,15 @@ export function projectHostedDeployRequest(
 		return { kind: "terminal", requestStatus: status.request_status };
 	}
 	const deploymentId = status.lineage_tail?.deployment_id?.trim() || null;
-	const operation = status.lineage_tail?.operation ?? null;
-	if (operation) return { kind: "operation", deploymentId, operation };
-	if (
-		deploymentId &&
-		(status.request_status === "processing" || status.request_status === "succeeded")
-	) {
+	if (deploymentId) {
 		return {
 			kind: "deployment",
 			completed: status.request_status === "succeeded",
 			deploymentId,
 		};
 	}
+	const operation = status.lineage_tail?.operation ?? null;
+	if (operation) return { kind: "operation", deploymentId, operation };
 	const operationName = status.lineage_tail?.operation_name?.trim() || "";
 	if (operationName) return { kind: "operation_name", deploymentId, operationName };
 	if (status.request_status === "succeeded") return { kind: "invalid_success" };

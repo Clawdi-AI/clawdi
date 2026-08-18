@@ -368,7 +368,7 @@ describe("hosted deploy request projection", () => {
 		};
 	}
 
-	test("preserves the browser projection order for terminal, operation, and deployment evidence", () => {
+	test("prioritizes terminal outcomes, then accepted deployment identity", () => {
 		expect(
 			projectHostedDeployRequest(
 				requestStatus({
@@ -385,7 +385,7 @@ describe("hosted deploy request projection", () => {
 		expect(
 			projectHostedDeployRequest(
 				requestStatus({
-					request_status: "processing",
+					request_status: "ready",
 					lineage_tail: {
 						deployment_id: "hdep_test",
 						operation_name: "operations/deploy-test",
