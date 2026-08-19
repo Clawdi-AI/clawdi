@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,10 @@ from app.models.session import AgentEnvironment
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import VaultProjectAttachment
-from app.services.agent_bindings import attach_project_to_owned_agents
+from app.services.agent_bindings import (
+    attach_project_to_owned_agents,
+    update_project_owned_agent_links,
+)
 from app.services.agent_lifecycle import active_project_filter
 from app.services.project_runtime_skills import (
     lock_project_change,
@@ -133,6 +136,23 @@ class ProjectAgentLinkBody(BaseModel):
 class ProjectAgentLinkResponse(BaseModel):
     project_id: str
     bound_agent_ids: list[str]
+
+
+class ProjectAgentDeltaBody(BaseModel):
+    add_agent_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    remove_agent_ids: list[UUID] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_disjoint_ids(self) -> ProjectAgentDeltaBody:
+        if set(self.add_agent_ids) & set(self.remove_agent_ids):
+            raise ValueError("Agent ids to add and remove must be disjoint")
+        return self
+
+
+class ProjectAgentDeltaResponse(BaseModel):
+    project_id: str
+    added_agent_ids: list[str]
+    removed_agent_ids: list[str]
 
 
 def _project_response(
@@ -461,6 +481,28 @@ async def link_project_agents(
     return ProjectAgentLinkResponse(
         project_id=str(project_id),
         bound_agent_ids=bound_agent_ids,
+    )
+
+
+@router.patch("/{project_id}/agents", response_model=ProjectAgentDeltaResponse)
+async def update_project_agents(
+    project_id: UUID,
+    body: ProjectAgentDeltaBody,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> ProjectAgentDeltaResponse:
+    result = await update_project_owned_agent_links(
+        db,
+        user_id=auth.user_id,
+        project_id=project_id,
+        add_agent_ids=body.add_agent_ids,
+        remove_agent_ids=body.remove_agent_ids,
+    )
+    await db.commit()
+    return ProjectAgentDeltaResponse(
+        project_id=str(project_id),
+        added_agent_ids=[str(agent_id) for agent_id in result.added_ids],
+        removed_agent_ids=[str(agent_id) for agent_id in result.removed_ids],
     )
 
 
