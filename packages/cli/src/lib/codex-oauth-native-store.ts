@@ -372,3 +372,158 @@ if (action === "inspect") {
   process.stdout.write(JSON.stringify({ updated: changed, casMatched, ...(beforeCredentialFingerprint ? { beforeCredentialFingerprint } : {}), ...(afterCredentialFingerprint ? { afterCredentialFingerprint } : {}) }));
 }
 `;
+
+export const OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER = `
+import { existsSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [providerAuthSdkPath, configMutationSdkPath, home] = process.argv.slice(1);
+const providerAuth = await import(pathToFileURL(providerAuthSdkPath).href);
+const configMutation = await import(pathToFileURL(configMutationSdkPath).href);
+if (
+  typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
+  typeof providerAuth.listProfilesForProvider !== "function" ||
+  typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
+  typeof providerAuth.resolveOpenClawAgentDir !== "function" ||
+  typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
+  typeof configMutation.mutateConfigFile !== "function"
+) {
+  throw new Error("required public OpenClaw auth cleanup exports are missing");
+}
+
+const provider = "clawdi";
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const normalizeProvider = (value) => typeof value === "string" ? value.trim().toLowerCase() : "";
+const normalizePath = (value) => {
+  const trimmed = value.trim();
+  if (trimmed === "~") return home;
+  if (trimmed.startsWith("~/")) return join(home, trimmed.slice(2));
+  return resolve(trimmed);
+};
+const stateDir = normalizePath(process.env.OPENCLAW_STATE_DIR?.trim() || join(home, ".openclaw"));
+const defaultAgentDir = join(stateDir, "agents", "main", "agent");
+const agentDirs = new Set([normalizePath(providerAuth.resolveOpenClawAgentDir())]);
+const agentsRoot = join(stateDir, "agents");
+if (existsSync(agentsRoot)) {
+  for (const entry of readdirSync(agentsRoot, { withFileTypes: true })) {
+    if (entry.isDirectory()) agentDirs.add(join(agentsRoot, entry.name, "agent"));
+  }
+}
+
+const configRead = await configMutation.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
+const snapshot = configRead?.snapshot;
+if (
+  !snapshot ||
+  snapshot.valid !== true ||
+  !isRecord(snapshot.config) ||
+  !isRecord(snapshot.sourceConfig)
+) {
+  throw new Error("OpenClaw config snapshot is unavailable for auth store discovery");
+}
+const agents = snapshot.config.agents;
+const configuredAgents = Array.isArray(agents?.list)
+  ? agents.list
+  : agents?.entries && typeof agents.entries === "object"
+    ? Object.values(agents.entries)
+    : [];
+for (const agent of configuredAgents) {
+  if (agent && typeof agent === "object" && typeof agent.agentDir === "string" && agent.agentDir.trim()) {
+    agentDirs.add(normalizePath(agent.agentDir));
+  }
+}
+
+const cleanupConfigAuth = (config, apply) => {
+  if (!isRecord(config)) throw new Error("OpenClaw config root is invalid");
+  const auth = config.auth;
+  if (auth === undefined) return false;
+  if (!isRecord(auth)) throw new Error("OpenClaw auth config is invalid");
+  const profiles = auth.profiles;
+  if (profiles !== undefined && !isRecord(profiles)) {
+    throw new Error("OpenClaw auth profiles config is invalid");
+  }
+  const removedProfileIds = new Set();
+  for (const [profileId, profile] of Object.entries(profiles || {})) {
+    if (!isRecord(profile) || typeof profile.provider !== "string") {
+      throw new Error("OpenClaw auth profile config is invalid");
+    }
+    if (normalizeProvider(profile.provider) === provider) {
+      removedProfileIds.add(profileId);
+      if (apply) delete profiles[profileId];
+    }
+  }
+
+  let changed = removedProfileIds.size > 0;
+  const order = auth.order;
+  if (order !== undefined && !isRecord(order)) {
+    throw new Error("OpenClaw auth order config is invalid");
+  }
+  for (const [orderProvider, profileIds] of Object.entries(order || {})) {
+    if (!Array.isArray(profileIds) || profileIds.some((profileId) => typeof profileId !== "string")) {
+      throw new Error("OpenClaw auth order entry is invalid");
+    }
+    if (normalizeProvider(orderProvider) === provider) {
+      changed = true;
+      if (apply) delete order[orderProvider];
+      continue;
+    }
+    const next = profileIds.filter((profileId) => !removedProfileIds.has(profileId));
+    if (next.length !== profileIds.length) {
+      changed = true;
+      if (apply) {
+        if (next.length === 0) delete order[orderProvider];
+        else order[orderProvider] = next;
+      }
+    }
+  }
+  if (profiles && Object.keys(profiles).length === 0) {
+    changed = true;
+    if (apply) delete auth.profiles;
+  }
+  if (order && Object.keys(order).length === 0) {
+    changed = true;
+    if (apply) delete auth.order;
+  }
+  if (Object.keys(auth).length === 0) {
+    changed = true;
+    if (apply) delete config.auth;
+  }
+  return changed;
+};
+
+if (cleanupConfigAuth(snapshot.sourceConfig, false)) {
+  await configMutation.mutateConfigFile({
+    base: "source",
+    afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
+    writeOptions: { allowConfigSizeDrop: true },
+    mutate: (draft) => cleanupConfigAuth(draft, true),
+  });
+}
+
+agentDirs.delete(defaultAgentDir);
+const targets = [undefined, ...agentDirs];
+let cleanedStores = 0;
+for (const agentDir of targets) {
+  const store = providerAuth.ensureAuthProfileStoreForLocalUpdate(agentDir);
+  if (!isRecord(store) || !isRecord(store.profiles)) {
+    throw new Error("OpenClaw provider-auth store is invalid");
+  }
+  const profileIds = providerAuth.listProfilesForProvider(store, provider);
+  if (!Array.isArray(profileIds) || profileIds.some((profileId) => typeof profileId !== "string")) {
+    throw new Error("OpenClaw provider-auth profile list is invalid");
+  }
+  const hasProviderState =
+    profileIds.length > 0 ||
+    [store.order, store.lastGood].some(
+      (entries) => isRecord(entries) && Object.keys(entries).some((key) => normalizeProvider(key) === provider),
+    );
+  if (!hasProviderState) continue;
+  const result = await providerAuth.removeProviderAuthProfilesWithLock({
+    provider,
+    ...(agentDir ? { agentDir } : {}),
+  });
+  if (result === null) throw new Error("OpenClaw provider-auth cleanup failed");
+  cleanedStores += 1;
+}
+process.stdout.write(JSON.stringify({ scannedStores: targets.length, cleanedStores }));
+`;

@@ -136,8 +136,20 @@ Verified upstream behavior:
 - `models.mode = "replace"` skips implicit provider discovery;
 - the config-patch interface accepts JSON from standard input;
 - provider API keys may use native environment SecretRefs; and
+- configured `auth.profiles` and `auth.order` participate directly in profile
+  selection; and
 - `openclaw/plugin-sdk/provider-auth` exposes the database-first locked update
-  boundary used for OAuth profiles.
+  boundary used for auth profiles.
+
+OpenClaw doctor scans generated model catalogs independently of provider
+execution precedence. A historical Clawdi projection serialized the literal
+SecretRef marker `CLAWDI_AI_API_KEY` into `models.json`; without matching plugin
+setup metadata, doctor did not recognize it as non-secret and persisted it as
+the first `clawdi:default` API-key profile. The supported prevention is for the
+Clawdi plugin manifest to declare
+`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]`, which
+feeds the marker into OpenClaw's known provider env-var list before doctor
+collection.
 
 Core Hosted convergence:
 
@@ -145,10 +157,19 @@ Core Hosted convergence:
   files directly;
 - projects API-key providers with explicit `auth: "api-key"` ownership and
   environment-backed `apiKey` references;
+- treats the managed `clawdi` provider as reserved and its environment
+  SecretRef as the only API-key authority;
+- only when the accepted manifest proves that managed projection, atomically
+  removes normalized `clawdi` config auth profiles/order and uses the public
+  provider-auth helper to remove normalized `clawdi` stored profiles plus
+  order, `lastGood`, and usage state;
+- covers the default/main auth store, the active agent store, state-tree agent
+  stores, and explicitly configured agent directories;
 - uses the native OpenAI subscription route for Codex OAuth;
 - owns only a namespaced `openai:clawdi-<provider-hash>` profile;
-- preserves unrelated profiles and order entries; and
-- fails closed before configuration or credential mutation when the public
+- preserves all non-`clawdi` config, profiles, order entries, and native Codex
+  OAuth state, and does nothing in unmanaged mode; and
+- fails closed before cleanup when either public config-mutation or
   provider-auth boundary is unavailable.
 
 ## Shared Safety Boundaries

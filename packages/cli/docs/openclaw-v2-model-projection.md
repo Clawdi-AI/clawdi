@@ -45,13 +45,40 @@ and an ID-only discovery result does not erase matching manifest metadata.
 ## Authentication Boundary
 
 API-key providers use the manifest's canonical secret reference and project
-only an environment-backed OpenClaw `apiKey` reference. Secret values remain in
-the private runtime bundle and are not written into the provider patch.
+only an environment-backed OpenClaw `apiKey` reference with explicit
+`auth: "api-key"`. Secret values remain in the private runtime bundle and are
+not written into the provider patch.
+
+The normalized `clawdi` provider is reserved for this managed projection. Its
+`CLAWDI_AI_API_KEY` environment SecretRef is the sole API-key authority. Older
+generated catalogs accidentally serialized that marker literally, and an
+OpenClaw doctor fix could persist it as a local `clawdi:default` profile before
+the plugin declared its env metadata. Prevention belongs in the plugin
+manifest:
+
+```json
+{
+  "setup": {
+    "providers": [{ "id": "clawdi", "envVars": ["CLAWDI_AI_API_KEY"] }]
+  }
+}
+```
+
+Explicit provider auth controls execution precedence but does not replace that
+doctor marker declaration. During a proven managed `clawdi` env projection,
+convergence uses the public config-mutation SDK to remove normalized `clawdi`
+entries from `auth.profiles` and `auth.order`, including order references to
+the removed IDs. It then uses the public provider-auth SDK to remove all
+normalized `clawdi` profiles and related order, `lastGood`, and usage state
+from the default/main store, active agent store, discovered state-tree agents,
+and configured custom agent directories. Empty auth containers are normalized.
+Non-`clawdi` config and profiles are preserved, and unmanaged mode does not run
+the cleanup.
 
 Codex OAuth uses OpenClaw's native subscription route. Credential convergence
 uses the public `openclaw/plugin-sdk/provider-auth` export and a namespaced
-Clawdi-owned profile. It preserves other profiles and order entries, and it
-fails closed when the required native store contract is unavailable.
+Clawdi-owned profile. It preserves native refreshes and logout semantics, and
+it fails closed when the required public SDK contracts are unavailable.
 
 ## Verification
 

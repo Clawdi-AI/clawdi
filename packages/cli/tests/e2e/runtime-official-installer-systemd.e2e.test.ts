@@ -8,6 +8,7 @@ import {
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -22,6 +23,7 @@ import {
 	readSystemdUnitSnapshot,
 	SystemdRuntimeTransaction,
 } from "../../src/commands/runtime";
+import { resolveOpenClawProviderAuthSdkExport } from "../../src/lib/codex-oauth-native-store";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -39,6 +41,76 @@ const FILE_BROWSER_AMD64_SHA256 =
 	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
 const FILE_BROWSER_ARM64_SHA256 =
 	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
+
+const OPENCLAW_PROVIDER_AUTH_E2E_HELPER = `
+import { pathToFileURL } from "node:url";
+const [sdkPath, action, rawTargets] = process.argv.slice(1);
+const sdk = await import(pathToFileURL(sdkPath).href);
+const targets = JSON.parse(rawTargets);
+if (!Array.isArray(targets)) throw new Error("invalid provider-auth targets");
+const observations = [];
+for (const [index, target] of targets.entries()) {
+  const agentDir = typeof target === "string" ? target : undefined;
+  if (action === "seed") {
+    const markerId = "clawdi:cleanup-e2e-marker-" + index;
+    const realId = "clawdi:cleanup-e2e-real-" + index;
+    const userId = "openai:cleanup-e2e-user-" + index;
+    sdk.upsertAuthProfile({
+      profileId: markerId,
+      credential: { type: "api_key", provider: "clawdi", key: "CLAWDI_AI_API_KEY" },
+      ...(agentDir ? { agentDir } : {}),
+    });
+    const result = await sdk.updateAuthProfileStoreWithLock({
+      ...(agentDir ? { agentDir } : {}),
+      updater: (store) => {
+        store.profiles[markerId] = { type: "api_key", provider: "clawdi", key: "CLAWDI_AI_API_KEY" };
+        store.profiles[realId] = { type: "api_key", provider: "clawdi", key: "sk-real-reserved-provider" };
+        store.profiles[userId] = { type: "api_key", provider: "openai", key: "sk-preserve" };
+        store.order = { ...(store.order || {}), clawdi: [realId, markerId], openai: [userId] };
+        store.lastGood = { ...(store.lastGood || {}), clawdi: realId, openai: userId };
+        store.usageStats = {
+          ...(store.usageStats || {}),
+          [markerId]: { lastUsed: 1 },
+          [realId]: { lastUsed: 2 },
+          [userId]: { lastUsed: 3 },
+        };
+        return true;
+      },
+    });
+    if (result === null) {
+      throw new Error(
+        "provider-auth seed failed for target " + index + ": " + (agentDir ?? "default"),
+      );
+    }
+  } else if (action === "inspect") {
+    const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
+    observations.push({
+      profiles: store.profiles,
+      order: store.order,
+      lastGood: store.lastGood,
+      usageStats: store.usageStats,
+    });
+  } else {
+    throw new Error("invalid provider-auth action");
+  }
+}
+process.stdout.write(JSON.stringify(observations));
+`;
+
+function directoryFileDigests(root: string, relative = ""): Record<string, string> {
+	const digests: Record<string, string> = {};
+	for (const entry of readdirSync(join(root, relative), { withFileTypes: true })) {
+		const entryRelative = join(relative, entry.name);
+		if (entry.isDirectory()) {
+			Object.assign(digests, directoryFileDigests(root, entryRelative));
+		} else if (entry.isFile()) {
+			digests[entryRelative] = createHash("sha256")
+				.update(readFileSync(join(root, entryRelative)))
+				.digest("hex");
+		}
+	}
+	return digests;
+}
 
 test("propagates the real official OpenClaw installer failure and rolls back as UID 10001", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
@@ -258,6 +330,23 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(clawdiHome);
 	chownSync(clawdiHome, runtimeUid, runtimeGid);
 	chmodSync(clawdiHome, 0o700);
+	const openClawStateDir = join(clawdiHome, "openclaw-state");
+	mkdirSync(openClawStateDir);
+	chownSync(openClawStateDir, runtimeUid, runtimeGid);
+	chmodSync(openClawStateDir, 0o700);
+	const openClawAgentsRoot = join(openClawStateDir, "agents");
+	mkdirSync(openClawAgentsRoot);
+	chownSync(openClawAgentsRoot, runtimeUid, runtimeGid);
+	chmodSync(openClawAgentsRoot, 0o700);
+	const activeAgentDir = join(clawdiHome, "active-openclaw-agent");
+	const secondaryAgentRoot = join(
+		openClawAgentsRoot,
+		`clawdi-auth-cleanup-${process.pid}-${Date.now()}`,
+	);
+	const secondaryAgentDir = join(secondaryAgentRoot, "agent");
+	mkdirSync(secondaryAgentDir, { recursive: true });
+	chownSync(secondaryAgentRoot, runtimeUid, runtimeGid);
+	chownSync(secondaryAgentDir, runtimeUid, runtimeGid);
 	const configRoot = join(root, "openclaw");
 	mkdirSync(configRoot, { mode: 0o700 });
 	chownSync(configRoot, runtimeUid, runtimeGid);
@@ -290,6 +379,17 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		agents: { defaults: { workspace: join(runtimeHome, "user-workspace") } },
 		gateway: { mode: "local", port: 19_022 },
 		logging: { level: "debug" },
+		auth: {
+			profiles: {
+				"clawdi:default": { provider: "clawdi", mode: "api_key" },
+				"clawdi:real-local": { provider: "ClAwDi", mode: "api_key" },
+				"openai:user": { provider: "openai", mode: "api_key" },
+			},
+			order: {
+				clawdi: ["clawdi:real-local", "clawdi:default"],
+				openai: ["openai:user", "clawdi:default"],
+			},
+		},
 		models: {
 			mode: "merge",
 			providers: {
@@ -308,7 +408,11 @@ test("projects a large OpenClaw provider model-list reduction through the public
 
 	const previousConfigPath = process.env.OPENCLAW_CONFIG_PATH;
 	const previousProviderKey = process.env.CLAWDI_AI_API_KEY;
+	const previousAgentDir = process.env.OPENCLAW_AGENT_DIR;
+	const previousStateDir = process.env.OPENCLAW_STATE_DIR;
 	process.env.OPENCLAW_CONFIG_PATH = configPath;
+	process.env.OPENCLAW_AGENT_DIR = activeAgentDir;
+	process.env.OPENCLAW_STATE_DIR = openClawStateDir;
 	process.env.CLAWDI_AI_API_KEY = "clawdi-egress-placeholder";
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_RUNTIME_USER = "clawdi";
@@ -324,7 +428,36 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
 
-	const manifest: RuntimeManifest = {
+	try {
+		const providerAuthSdkPath = resolveOpenClawProviderAuthSdkExport(runtimeHome, [commandPath]);
+		expect(providerAuthSdkPath).not.toBeNull();
+		if (!providerAuthSdkPath) throw new Error("official OpenClaw provider-auth SDK is unavailable");
+		const authTargets = [null, activeAgentDir, secondaryAgentDir];
+		const runProviderAuthHelper = (action: "seed" | "inspect") =>
+			spawnSync(
+				"runuser",
+				[
+					"-u",
+					"clawdi",
+					"--",
+					"env",
+					`HOME=${runtimeHome}`,
+					`OPENCLAW_AGENT_DIR=${activeAgentDir}`,
+					`OPENCLAW_STATE_DIR=${openClawStateDir}`,
+					join(runtimeHome, ".local", "tools", "node", "bin", "node"),
+					"--input-type=module",
+					"--eval",
+					OPENCLAW_PROVIDER_AUTH_E2E_HELPER,
+					providerAuthSdkPath,
+					action,
+					JSON.stringify(authTargets),
+				],
+				{ encoding: "utf8" },
+			);
+		const seededAuth = runProviderAuthHelper("seed");
+		expect(seededAuth.status, seededAuth.stderr).toBe(0);
+
+		const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		deploymentId: "hdep_real_openclaw_size_drop",
 		environmentId: "env_real_openclaw_size_drop",
@@ -370,7 +503,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		},
 		recovery: {},
 	};
-	const load: RuntimeManifestLoad = {
+		const load: RuntimeManifestLoad = {
 		manifest,
 		source: "remote-datasource",
 		sourcePath: "real-openclaw-size-drop-fixture",
@@ -393,7 +526,6 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		},
 	};
 
-	try {
 		const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 		if (!projectionInput) throw new Error("expected OpenClaw provider projection");
 		const intendedPatch = buildOpenClawHostedProviderPatch(projectionInput, ["clawdi"]);
@@ -429,6 +561,32 @@ test("projects a large OpenClaw provider model-list reduction through the public
 
 		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 		expect(convergence.installErrors).toEqual([]);
+		const inspectedAuth = runProviderAuthHelper("inspect");
+		expect(inspectedAuth.status, inspectedAuth.stderr).toBe(0);
+		const authStores = JSON.parse(inspectedAuth.stdout) as Array<{
+			profiles: Record<string, { provider?: string }>;
+			order?: Record<string, string[]>;
+			lastGood?: Record<string, string>;
+			usageStats?: Record<string, unknown>;
+		}>;
+		expect(authStores).toHaveLength(3);
+		for (const store of authStores) {
+			expect(
+				Object.values(store.profiles).some(
+					(credential) => credential.provider?.toLowerCase() === "clawdi",
+				),
+			).toBe(false);
+			expect(store.order?.clawdi).toBeUndefined();
+			expect(store.lastGood?.clawdi).toBeUndefined();
+			expect(
+				Object.keys(store.usageStats ?? {}).some((profileId) =>
+					profileId.startsWith("clawdi:cleanup-e2e-"),
+				),
+			).toBe(false);
+		}
+		for (let index = 0; index < authStores.length; index += 1) {
+			expect(inspectedAuth.stdout).toContain(`openai:cleanup-e2e-user-${index}`);
+		}
 		const intendedConfig = JSON.parse(intendedPatch.content);
 		const appliedConfig = JSON.parse(readFileSync(configPath, "utf8"));
 		expect(appliedConfig.models.mode).toBe("replace");
@@ -440,6 +598,10 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(appliedConfig.agents.defaults.workspace).toBe(existingConfig.agents.defaults.workspace);
 		expect(appliedConfig.gateway).toEqual(existingConfig.gateway);
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
+		expect(appliedConfig.auth).toEqual({
+			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
+			order: { openai: ["openai:user"] },
+		});
 		expect(JSON.stringify(appliedConfig)).not.toContain("legacy-managed-");
 		expect(Buffer.byteLength(readFileSync(configPath, "utf8"))).toBeLessThan(
 			Math.floor(beforeBytes * 0.5),
@@ -448,11 +610,36 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(configStat.uid).toBe(runtimeUid);
 		expect(configStat.gid).toBe(runtimeGid);
 		expect(configStat.mode & 0o777).toBe(0o600);
+
+		const firstAppliedConfig = readFileSync(configPath, "utf8");
+		const authStoreDirectories = [
+			join(openClawAgentsRoot, "main", "agent"),
+			activeAgentDir,
+			secondaryAgentDir,
+		];
+		const firstAuthStoreFiles = authStoreDirectories.map((directory) =>
+			directoryFileDigests(directory),
+		);
+		const repeated = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
+		expect(repeated.installErrors).toEqual([]);
+		const idempotentAuth = runProviderAuthHelper("inspect");
+		expect(idempotentAuth.status, idempotentAuth.stderr).toBe(0);
+		expect(JSON.parse(idempotentAuth.stdout)).toEqual(authStores);
+		expect(authStoreDirectories.map((directory) => directoryFileDigests(directory))).toEqual(
+			firstAuthStoreFiles,
+		);
+		expect(readFileSync(configPath, "utf8")).toBe(firstAppliedConfig);
 	} finally {
 		if (previousConfigPath === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
 		else process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
 		if (previousProviderKey === undefined) delete process.env.CLAWDI_AI_API_KEY;
 		else process.env.CLAWDI_AI_API_KEY = previousProviderKey;
+		if (previousAgentDir === undefined) delete process.env.OPENCLAW_AGENT_DIR;
+		else process.env.OPENCLAW_AGENT_DIR = previousAgentDir;
+		if (previousStateDir === undefined) delete process.env.OPENCLAW_STATE_DIR;
+		else process.env.OPENCLAW_STATE_DIR = previousStateDir;
+		rmSync(secondaryAgentRoot, { recursive: true, force: true });
+		rmSync(root, { recursive: true, force: true });
 	}
 }, 60_000);
 

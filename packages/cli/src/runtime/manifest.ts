@@ -44,6 +44,7 @@ import {
 	nativeOAuthObservation,
 	nativeOAuthProfileId,
 	type OAuthCredentialOwnership,
+	OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
@@ -1779,6 +1780,30 @@ function agentTargetProjectionInput(
 	};
 }
 
+function hasManagedClawdiOpenClawApiKeyProjection(manifest: RuntimeManifest): boolean {
+	const runtime = manifest.runtimes.openclaw;
+	const sourceProviderId = runtime?.provider_ids?.[0];
+	const sourceProvider = sourceProviderId
+		? recordValue(manifest.projection?.providers?.[sourceProviderId])
+		: null;
+	const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, "openclaw"));
+	const provider = projectionInput?.catalog.providers.find(
+		(entry) => entry.id === CLAWDI_MANAGED_PROVIDER_ID,
+	);
+	return (
+		runtime?.enabled === true &&
+		runtime.providerMode === "configured" &&
+		typeof sourceProviderId === "string" &&
+		isClawdiManagedV2ProviderId(sourceProviderId) &&
+		sourceProvider?.managed_by === "clawdi" &&
+		stringValue(sourceProvider.apiKeySecretRef) !== null &&
+		provider?.managed_by === "clawdi" &&
+		provider.runtime_env_name === MANAGED_AI_PROVIDER_RUNTIME_ENV &&
+		provider.auth.type === "api_key" &&
+		provider.auth.source === "managed"
+	);
+}
+
 function runtimeOAuthLedgerPath(
 	paths: RuntimePaths,
 	runtime: "hermes" | "openclaw",
@@ -2071,6 +2096,22 @@ if (typeof sdk.ensureAuthProfileStoreForLocalUpdate !== "function" || typeof sdk
 }
 `;
 
+const OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE = `
+import { pathToFileURL } from "node:url";
+const providerAuth = await import(pathToFileURL(process.argv[1]).href);
+const configMutation = await import(pathToFileURL(process.argv[2]).href);
+if (
+  typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
+  typeof providerAuth.listProfilesForProvider !== "function" ||
+  typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
+  typeof providerAuth.resolveOpenClawAgentDir !== "function" ||
+  typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
+  typeof configMutation.mutateConfigFile !== "function"
+) {
+  throw new Error("required public OpenClaw auth cleanup exports are missing");
+}
+`;
+
 function requireOpenClawProviderAuthCapability(
 	observation: RuntimeInstallObservation | undefined,
 	home: string,
@@ -2092,6 +2133,37 @@ function requireOpenClawProviderAuthCapability(
 	}
 }
 
+function requireOpenClawManagedProviderAuthCleanupCapability(
+	observation: RuntimeInstallObservation,
+	home: string,
+): void {
+	const providerAuthSdkPath = openClawProviderAuthSdkPath(observation, home);
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	if (!configMutationSdkPath) {
+		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
+	}
+	ensureRuntimeUserHome(home);
+	const result = spawnRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE,
+			providerAuthSdkPath,
+			configMutationSdkPath,
+		],
+		home,
+		home,
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`installed OpenClaw public managed-provider auth cleanup SDK is incompatible: ${
+				tail(String(result.stderr ?? "")) ?? "capability probe failed"
+			}`,
+		);
+	}
+}
+
 function ensureHostedOpenClawProviderAuthCapability(input: {
 	manifest: RuntimeManifest;
 	secretValues: Record<string, string> | undefined;
@@ -2099,15 +2171,28 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 	home: string;
 }): RuntimeInstallObservation {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, "openclaw", input.secretValues);
-	if (desired.length === 0) return input.observation;
+	const cleanupManagedProvider = hasManagedClawdiOpenClawApiKeyProjection(input.manifest);
+	if (desired.length === 0 && !cleanupManagedProvider) return input.observation;
+	const requirement =
+		desired.length > 0 && cleanupManagedProvider
+			? "OpenClaw credential convergence"
+			: cleanupManagedProvider
+				? "OpenClaw managed API-key cleanup"
+				: "OpenClaw OAuth";
+	const requireCapabilities = (observation: RuntimeInstallObservation): void => {
+		if (desired.length > 0) requireOpenClawProviderAuthCapability(observation, input.home);
+		if (cleanupManagedProvider) {
+			requireOpenClawManagedProviderAuthCleanupCapability(observation, input.home);
+		}
+	};
 	try {
-		requireOpenClawProviderAuthCapability(input.observation, input.home);
+		requireCapabilities(input.observation);
 		return input.observation;
 	} catch (initialError) {
 		const install = input.manifest.runtimes.openclaw?.install;
 		if (!install) {
 			throw new Error(
-				`OpenClaw OAuth requires the public provider-auth SDK, and no official installer repair is authorized: ${
+				`${requirement} requires the public OpenClaw SDK, and no official installer repair is authorized: ${
 					initialError instanceof Error ? initialError.message : String(initialError)
 				}`,
 			);
@@ -2117,7 +2202,7 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 			throw new Error(`OpenClaw provider-auth capability repair failed: ${repaired.error}`);
 		}
 		try {
-			requireOpenClawProviderAuthCapability(repaired, input.home);
+			requireCapabilities(repaired);
 		} catch (repairError) {
 			throw new Error(
 				`OpenClaw provider-auth capability remains unavailable after official installer repair: ${
@@ -2225,6 +2310,37 @@ function runOpenClawProviderAuth(
 			expectedFingerprint,
 		),
 	);
+}
+
+function removeOpenClawManagedProviderAuthProfiles(
+	observation: RuntimeInstallObservation,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	if (!configMutationSdkPath) {
+		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
+	}
+	const result = spawnRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
+			openClawProviderAuthSdkPath(observation, home),
+			configMutationSdkPath,
+			home,
+		],
+		home,
+		workspaceRoot,
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`OpenClaw managed provider-auth cleanup failed: ${
+				tail(String(result.stderr ?? "")) ?? "unknown"
+			}`,
+		);
+	}
 }
 
 function runtimeOAuthLedgerOwnership(
@@ -2588,6 +2704,9 @@ function applyHostedAiProviderProjection(
 		if (providerPatch.apply) {
 			applyOpenClawHostedProviderPatch(observation, providerPatch, home, workspaceRoot);
 		}
+		if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
+			removeOpenClawManagedProviderAuthProfiles(observation, home, workspaceRoot);
+		}
 		return {
 			path: observation.commandPath,
 			revision: null,
@@ -2949,9 +3068,13 @@ export interface OpenClawHostedProviderPatch {
 const OPENCLAW_CONFIG_MUTATION_HELPER = `
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 const sdk = await import(pathToFileURL(process.argv[1]).href);
-if (typeof sdk.mutateConfigFile !== "function") {
+if (
+  typeof sdk.readConfigFileSnapshotForWrite !== "function" ||
+  typeof sdk.mutateConfigFile !== "function"
+) {
   throw new Error("required public config-mutation export is missing");
 }
 const patch = JSON.parse(readFileSync(0, "utf8"));
@@ -2980,6 +3103,16 @@ const applyMergePatch = (target, source, path = []) => {
     }
   }
 };
+const configRead = await sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
+const snapshot = configRead?.snapshot;
+if (!snapshot || snapshot.valid !== true || !isRecord(snapshot.sourceConfig)) {
+  throw new Error("OpenClaw config snapshot is unavailable for provider projection");
+}
+const projected = structuredClone(snapshot.sourceConfig);
+applyMergePatch(projected, patch);
+if (isDeepStrictEqual(projected, snapshot.sourceConfig)) process.exit(0);
+explicitSetPaths.length = 0;
+unsetPaths.length = 0;
 await sdk.mutateConfigFile({
   base: "source",
   afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
@@ -6112,7 +6245,7 @@ export function convergeRuntimeManifest(
 				}
 			} catch (error) {
 				installErrors.push(
-					`runtime openclaw OAuth capability check failed: ${
+					`runtime openclaw credential capability check failed: ${
 						error instanceof Error ? error.message : String(error)
 					}`,
 				);

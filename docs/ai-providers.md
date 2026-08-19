@@ -231,14 +231,35 @@ This contract is verified against `openclaw@2026.7.1-2`, official source commit
 The discovery skip is implemented in
 [`models-config.plan.ts`](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/agents/models-config.plan.ts#L115-L120).
 API-key providers use env-backed `apiKey` references and explicitly set
-`auth: "api-key"`. This makes the provider entry the credential owner, so its
-SecretRef resolves before generic persisted-profile fallback. The precedence
-contract is verified in OpenClaw's
+`auth: "api-key"`. This makes the provider entry win execution-time credential
+selection, but it does not govern doctor migration. The precedence contract is
+verified in OpenClaw's
 [`model-auth-provider-config.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider-config.ts#L216-L226)
 and
 [`model-auth-provider.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider.ts#L310-L337).
-Codex OAuth uses the native subscription route and the public provider-auth SDK
-with a namespaced Clawdi-owned profile.
+
+`clawdi` is the reserved provider for the Clawdi-managed projection, and its
+environment SecretRef is the sole API-key authority. An older projection wrote
+the literal `CLAWDI_AI_API_KEY` marker into generated `models.json`. Because the
+plugin did not yet declare that env name, OpenClaw doctor treated the marker as
+credential material and allocated `clawdi:default`. Doctor's collection and
+allocation are independent of execution precedence in
+[`doctor-model-catalog-credentials.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/commands/doctor-model-catalog-credentials.ts#L54-L76).
+The prevention contract is the plugin manifest declaration
+`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]`:
+OpenClaw adds those names to its known non-secret marker set through
+[`provider-env-vars.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/secrets/provider-env-vars.ts#L198-L220),
+so future doctor fixes do not persist the marker.
+
+When the accepted manifest proves that exact managed projection, convergence
+uses OpenClaw's public config-mutation and provider-auth SDKs to remove every
+normalized `clawdi` auth registration and stored profile. It covers the
+default/main store, the active `OPENCLAW_AGENT_DIR`, discovered state-tree
+agents, and explicitly configured agent directories; related order,
+`lastGood`, and usage references are removed by the owning APIs. Other
+providers, native Codex OAuth profiles, and unmanaged mode are preserved.
+Codex OAuth continues to use the native subscription route and a namespaced
+Clawdi-owned profile.
 
 OAuth reconcile is durable and target-native:
 
