@@ -26,13 +26,11 @@ import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
 import type { AgentPluginPendingAction } from "./agent-plugin-card";
 import {
+	type AgentPluginActionState,
 	type AgentPluginCatalogEntry,
 	type AgentPluginInventoryItem,
-	agentPluginInstallability,
-	agentPluginStatusPresentation,
+	agentPluginActionState,
 	pluginDisplayName,
-	pluginHasUpdate,
-	pluginVersion,
 } from "./agent-plugin-model";
 
 export function AgentPluginDetail({
@@ -42,6 +40,7 @@ export function AgentPluginDetail({
 	desiredStateError,
 	desiredStateRetrying,
 	pendingAction,
+	mutationsBlocked,
 	onBack,
 	onInstall,
 	onRemove,
@@ -55,6 +54,7 @@ export function AgentPluginDetail({
 	desiredStateError: boolean;
 	desiredStateRetrying: boolean;
 	pendingAction: AgentPluginPendingAction;
+	mutationsBlocked: boolean;
 	onBack: () => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
@@ -63,19 +63,9 @@ export function AgentPluginDetail({
 	onRetryDesired: () => void;
 }) {
 	const title = pluginDisplayName(item);
-	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
-	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
-	const hasUpdate = pluginHasUpdate(item);
-	const installFailed = item.desired?.convergence === "failed";
-	const canRetry = Boolean(installFailed && item.catalog && installability?.installable);
-	const canInstall = Boolean(
-		item.catalog && installability?.installable && !installFailed && (!item.desired || hasUpdate),
-	);
+	const actionState = agentPluginActionState(item, runtime);
+	const { status, installability, hasUpdate, version } = actionState;
 	const showCompatibilityWarning = Boolean(installability?.reason && (!item.desired || hasUpdate));
-	const version =
-		hasUpdate && item.desired && item.catalog
-			? `v${item.desired.version} → v${item.catalog.version}`
-			: `v${pluginVersion(item)}`;
 
 	return (
 		<div data-hosted="true" data-v2="true" className="space-y-6">
@@ -136,10 +126,9 @@ export function AgentPluginDetail({
 				actions={
 					<PluginDetailActions
 						item={item}
-						canInstall={canInstall}
-						canRetry={canRetry}
-						installability={installability}
+						state={actionState}
 						pendingAction={pendingAction}
+						mutationsBlocked={mutationsBlocked}
 						onInstall={onInstall}
 						onRemove={onRemove}
 						onRetry={onRetry}
@@ -148,7 +137,7 @@ export function AgentPluginDetail({
 			/>
 			{status && item.desired?.convergence !== "installed" ? (
 				<Alert variant={status.tone === "destructive" ? "destructive" : "default"}>
-					<RefreshCw />
+					{status.tone === "destructive" ? <AlertCircle /> : <RefreshCw />}
 					<AlertTitle>{status.label}</AlertTitle>
 					<AlertDescription>{status.description}</AlertDescription>
 				</Alert>
@@ -181,31 +170,29 @@ export function AgentPluginDetail({
 
 function PluginDetailActions({
 	item,
-	canInstall,
-	canRetry,
-	installability,
+	state,
 	pendingAction,
+	mutationsBlocked,
 	onInstall,
 	onRemove,
 	onRetry,
 }: {
 	item: AgentPluginInventoryItem;
-	canInstall: boolean;
-	canRetry: boolean;
-	installability: ReturnType<typeof agentPluginInstallability> | null;
+	state: AgentPluginActionState;
 	pendingAction: AgentPluginPendingAction;
+	mutationsBlocked: boolean;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
-	const updating = pluginHasUpdate(item);
+	const { canInstall, canRetry, installability, hasUpdate: updating } = state;
 	return (
 		<>
 			{canInstall ? (
 				<Button
 					size="sm"
 					variant={updating ? "outline" : "default"}
-					disabled={pendingAction !== null}
+					disabled={mutationsBlocked}
 					onClick={() => void onInstall(item).catch(() => undefined)}
 				>
 					{pendingAction === "install" ? <Spinner /> : updating ? <RefreshCw /> : <Plus />}
@@ -225,7 +212,7 @@ function PluginDetailActions({
 			{canRetry ? (
 				<Button
 					size="sm"
-					disabled={pendingAction !== null}
+					disabled={mutationsBlocked}
 					onClick={() => void onRetry(item).catch(() => undefined)}
 				>
 					{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
@@ -243,7 +230,7 @@ function PluginDetailActions({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={pendingAction !== null}
+						disabled={mutationsBlocked}
 						className="text-destructive hover:text-destructive"
 					>
 						{pendingAction === "remove" ? <Spinner /> : <Trash2 />}

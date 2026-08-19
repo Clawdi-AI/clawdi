@@ -353,9 +353,11 @@ async def put_agent_plugin_desired_state(
     if changed:
         queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.flush()
+    await db.refresh(row)
     observations, observed_at, received_at = await _latest_agent_plugin_observations(
         db, agent_id=agent_id
     )
+    response = _desired_response(row, observations, observed_at, received_at)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -371,12 +373,11 @@ async def put_agent_plugin_desired_state(
             "version": entry.version,
             "catalog_revision": catalog_revision,
             "changed": changed,
-            "convergence": "not_observed",
+            "convergence": response.convergence,
         },
     )
     await db.commit()
-    await db.refresh(row)
-    return _desired_response(row, observations, observed_at, received_at)
+    return response
 
 
 @router.delete(
