@@ -3860,8 +3860,8 @@ export interface operations {
     checkout_v2_subscription_v2_subscription_checkout_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
