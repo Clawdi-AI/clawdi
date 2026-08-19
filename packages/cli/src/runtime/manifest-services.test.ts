@@ -805,6 +805,9 @@ describe("runtime manifest services", () => {
 			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "secret://runtime/hermes/dashboard-password",
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
 		});
+		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
+		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
+		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
 		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).not.toContain("opaque-password-value");
@@ -887,7 +890,7 @@ describe("runtime manifest services", () => {
 		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
 		expect(rotatedWatchEnv).toBe(watchEnv);
 		expect(rotatedDashboardUnit).not.toBe(dashboardUnit);
-		expect(rotatedGatewayUnit).toBe(gatewayUnit);
+		expect(rotatedGatewayUnit).not.toBe(gatewayUnit);
 		// The root watcher reloads the apply-context file on each tick, so neither
 		// its environment nor its unit needs secret bytes.
 		expect(rotatedWatchUnit).toBe(watchUnit);

@@ -1547,21 +1547,34 @@ function resolvedRuntimeServiceSettings(
 	settings: RuntimeRunSettings,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings {
-	return mergeRuntimeServiceEnvWithProviderPlaceholders(
+	const merged = mergeRuntimeServiceEnvWithProviderPlaceholders(
 		runtime,
 		service,
-		hermesDashboardServiceSettings(manifest, runtime, service, settings),
+		settings,
 		providerEnv,
 	);
+	return runtime === "hermes" && service === "dashboard"
+		? (withHermesDashboardAuthEnvironment(manifest, merged) ?? merged)
+		: merged;
+}
+
+function resolvedRuntimeSettings(
+	manifest: RuntimeManifest,
+	runtime: string,
+	settings: RuntimeRunSettings | undefined,
+	providerEnv: Record<string, string>,
+): RuntimeRunSettings | undefined {
+	const merged = mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv);
+	return runtime === "hermes" ? withHermesDashboardAuthEnvironment(manifest, merged) : merged;
 }
 
 function mergeRuntimeSecretEnv(
 	runtimeName: string,
-	runtime: RuntimeManifest["runtimes"][string],
+	settings: RuntimeRunSettings | undefined,
 	providerSecretEnv: Record<string, string>,
 ): Record<string, string> {
 	const merged = { ...providerSecretEnv };
-	const runtimeSecretEnv = runtime.run?.secretEnv ?? {};
+	const runtimeSecretEnv = settings?.secretEnv ?? {};
 	for (const [envName, ref] of Object.entries(runtimeSecretEnv)) {
 		const existing = merged[envName];
 		if (existing !== undefined && existing !== ref) {
@@ -1571,7 +1584,7 @@ function mergeRuntimeSecretEnv(
 		}
 		merged[envName] = ref;
 	}
-	for (const envName of Object.keys(runtime.run?.env ?? {})) {
+	for (const envName of Object.keys(settings?.env ?? {})) {
 		if (merged[envName] !== undefined) {
 			throw new Error(`runtime ${runtimeName} defines ${envName} in both env and secretEnv`);
 		}
@@ -5071,14 +5084,21 @@ function runtimeProgramRevisionForManifest(
 	openClawOwnerBrowserBootstrapSupported: boolean,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
+	const providerEnvironment = desiredRuntime
+		? hostedProviderEnvironment(manifest, runtime)
+		: { placeholderEnv: {}, secretEnv: {} };
+	const runtimeSettings = desiredRuntime
+		? resolvedRuntimeSettings(
+				manifest,
+				runtime,
+				desiredRuntime.run,
+				providerEnvironment.placeholderEnv,
+			)
+		: undefined;
 	const runtimeSecretRefs = desiredRuntime
 		? [
 				...Object.values(
-					mergeRuntimeSecretEnv(
-						runtime,
-						desiredRuntime,
-						hostedProviderEnvironment(manifest, runtime).secretEnv,
-					),
+					mergeRuntimeSecretEnv(runtime, runtimeSettings, providerEnvironment.secretEnv),
 				),
 				...hostedWhatsAppAuthCredentials(manifest)
 					.filter(
@@ -5148,9 +5168,14 @@ function validateRuntimeManifestPlan(
 			: { placeholderEnv: {}, secretEnv: {} };
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
-		mergeRuntimeEnvWithProviderPlaceholders(name, runtime.run, providerPlaceholderEnv);
+		const runtimeSettings = resolvedRuntimeSettings(
+			manifest,
+			runtimeName,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
 		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
 			: {};
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
@@ -5229,20 +5254,18 @@ function planRuntimeSystemdUserPrograms(input: {
 	return programs;
 }
 
-function hermesDashboardServiceSettings(
+function withHermesDashboardAuthEnvironment(
 	manifest: RuntimeManifest,
-	runtime: RuntimeName,
-	service: RuntimeServiceName,
-	settings: RuntimeRunSettings,
-): RuntimeRunSettings {
-	if (runtime !== "hermes" || service !== "dashboard") return settings;
+	settings: RuntimeRunSettings | undefined,
+): RuntimeRunSettings | undefined {
 	const auth = manifest.hermesDashboardAuth;
 	if (!auth) return settings;
 	if (!auth.activation.enabled) {
 		throw new Error("Hermes password authentication is disabled");
 	}
 	return {
-		...settings,
+		...(settings ?? {}),
+		prependPath: settings?.prependPath ?? [],
 		env: {
 			...(settings?.env ?? {}),
 			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: auth.username,
@@ -5281,13 +5304,14 @@ function resolveRuntimeRunConfigs(input: {
 		: { placeholderEnv: {}, secretEnv: {} };
 	const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 		providerEnvironment;
-	const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
-		input.name,
+	const runtimeRunSettings = resolvedRuntimeSettings(
+		input.manifest,
+		runtimeName,
 		input.runtime.run,
 		providerPlaceholderEnv,
 	);
 	const secretEnv = input.runtime.enabled
-		? mergeRuntimeSecretEnv(input.name, input.runtime, providerSecretEnv)
+		? mergeRuntimeSecretEnv(input.name, runtimeRunSettings, providerSecretEnv)
 		: {};
 	const secretFilePath = null;
 	const runtime = buildRuntimeRunConfig({
@@ -5439,9 +5463,14 @@ function validateRuntimeProjectionPlan(input: {
 			: { placeholderEnv: {}, secretEnv: {} };
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
-		mergeRuntimeEnvWithProviderPlaceholders(name, runtime.run, providerPlaceholderEnv);
+		const runtimeSettings = resolvedRuntimeSettings(
+			manifest,
+			runtimeName,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
 		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
 			: {};
 		scopedSecretValues(secretValues, Object.values(secretEnv));
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
