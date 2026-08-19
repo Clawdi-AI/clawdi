@@ -988,14 +988,11 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
 	}
 	await expect(projectCards.nth(0)).toContainText("Team Knowledge");
-	await expect(projectCards.nth(0)).toContainText("Project order 1");
 	await expect(projectCards.nth(0)).toContainText("Viewer");
 	await expect(projectCards.nth(1)).toContainText(longContextProjectName);
-	await expect(projectCards.nth(1)).toContainText("Project order 2");
 	await projectCards.nth(0).hover();
-	await expect(
-		projectCards.nth(0).getByRole("button", { name: "Move Team Knowledge up" }),
-	).toBeDisabled();
+	await expect(projectStack.getByText(/Project order/)).toHaveCount(0);
+	await expect(projectStack.getByRole("button", { name: /Move .* (up|down)/ })).toHaveCount(0);
 	await expect(
 		projectCards.nth(0).getByRole("button", { name: "Unlink Team Knowledge" }),
 	).toBeVisible();

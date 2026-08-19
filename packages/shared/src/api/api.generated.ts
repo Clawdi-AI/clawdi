@@ -1555,6 +1555,23 @@ export interface paths {
         patch: operations["update_project_v1_projects__project_id__patch"];
         trace?: never;
     };
+    "/v1/projects/{project_id}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link Project Agents */
+        post: operations["link_project_agents_v1_projects__project_id__agents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runtime/manifest": {
         parameters: {
             query?: never;
@@ -6430,6 +6447,18 @@ export interface components {
             /** Plugins */
             plugins: components["schemas"]["PluginCatalogEntryResponse"][];
         };
+        /** ProjectAgentLinkBody */
+        ProjectAgentLinkBody: {
+            /** Agent Ids */
+            agent_ids: string[];
+        };
+        /** ProjectAgentLinkResponse */
+        ProjectAgentLinkResponse: {
+            /** Project Id */
+            project_id: string;
+            /** Bound Agent Ids */
+            bound_agent_ids: string[];
+        };
         /** ProjectArchiveResponse */
         ProjectArchiveResponse: {
             /**
@@ -11284,6 +11313,41 @@ export interface operations {
             };
         };
     };
+    link_project_agents_v1_projects__project_id__agents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectAgentLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAgentLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_runtime_manifest_v1_runtime_manifest_get: {
         parameters: {
             query?: {
@@ -13082,7 +13146,7 @@ export interface operations {
                 field?: string | null;
                 /** @description Project to resolve from (default: caller write project). */
                 project_id?: string | null;
-                /** @description Resolve through an Agent Project and attached Project order. */
+                /** @description Resolve through an Agent Project and linked Project Vault resolution priority. */
                 agent_id?: string | null;
                 /** @description Allow first-match wins when attached Projects contain the same key. */
                 allow_conflicts?: boolean;

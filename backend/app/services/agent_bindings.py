@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.services.agent_lifecycle import active_agent_filter, active_project_filter
@@ -180,7 +180,7 @@ async def ensure_context_binding(
     if priority < 1:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Project order must be >= 1",
+            "Vault resolution priority must be >= 1",
         )
 
     binding = AgentProjectBinding(
@@ -222,7 +222,12 @@ async def attach_project_to_owned_agents(
 
     if not agent_ids:
         return []
-    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    project = await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
     await lock_project_agent_binding_changes(
         db,
         project_id=project_id,
@@ -230,7 +235,12 @@ async def attach_project_to_owned_agents(
     )
     # Re-check access after acquiring the Project graph lock so archive,
     # unshare, and explicit Link cannot cross at the write boundary.
-    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    project = await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
     for agent_id in sorted(agent_ids, key=str):
         await assert_project_link_compatible(
             db,

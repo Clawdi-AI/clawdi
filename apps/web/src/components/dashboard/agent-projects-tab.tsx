@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Link2, Plus, Trash2 } from "lucide-react";
+import { Link2, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -232,35 +232,6 @@ function AgentProjectsPanel({
 			toast.error("Couldn't unlink project", { description: normalizeApiError(error) }),
 	});
 
-	const reorder = useMutation({
-		mutationFn: async (items: Array<{ binding_id: string; priority: number }>) => {
-			await unwrap(
-				await api.PATCH("/v1/agents/{agent_id}/project-bindings/context/reorder", {
-					params: { path: { agent_id: agentId } },
-					body: { items },
-				}),
-			);
-		},
-		onSuccess: () => {
-			onChanged();
-			toast.success("Project order updated");
-		},
-		onError: (error) =>
-			toast.error("Couldn't update Project order", {
-				description: normalizeApiError(error),
-			}),
-	});
-
-	const moveContext = (bindingId: string, direction: -1 | 1) => {
-		const index = contexts.findIndex((binding) => binding.id === bindingId);
-		const targetIndex = index + direction;
-		if (index < 0 || targetIndex < 0 || targetIndex >= contexts.length) return;
-		const next = contexts.slice();
-		const [item] = next.splice(index, 1);
-		if (!item) return;
-		next.splice(targetIndex, 0, item);
-		reorder.mutate(next.map((binding, idx) => ({ binding_id: binding.id, priority: idx + 1 })));
-	};
 	const actionsDisabled = !primary || isLoading || Boolean(bindingsError || projectsError);
 	const header = (
 		<PageHeader
@@ -348,10 +319,10 @@ function AgentProjectsPanel({
 			) : (
 				<ol
 					className={HERO_GRID_CLASS}
-					aria-label="Linked Projects in use order"
+					aria-label="Linked Projects"
 					data-testid="agent-project-grid"
 				>
-					{contexts.map((binding, position) => {
+					{contexts.map((binding) => {
 						const project = projectsById.get(binding.project_id);
 						const projectName = project ? displayProjectName(project) : "Unavailable Project";
 						const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
@@ -364,30 +335,9 @@ function AgentProjectsPanel({
 							>
 								<AgentProjectCard
 									project={project}
-									position={position}
 									navigationScope={navigationScope}
 									actions={
-										<div className="flex items-center gap-0.5">
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={position === 0 || reorder.isPending}
-												onClick={() => moveContext(binding.id, -1)}
-												title="Move up"
-												aria-label={`Move ${projectName} up`}
-											>
-												<ArrowUp className="size-3.5" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={position === contexts.length - 1 || reorder.isPending}
-												onClick={() => moveContext(binding.id, 1)}
-												title="Move down"
-												aria-label={`Move ${projectName} down`}
-											>
-												<ArrowDown className="size-3.5" />
-											</Button>
+										<div>
 											<ConfirmAction
 												title="Unlink this Project?"
 												description={
@@ -544,25 +494,17 @@ function AgentProjectsPanel({
 
 function AgentProjectCard({
 	project,
-	position,
 	navigationScope,
 	actions,
 }: {
 	project: ProjectRow | undefined;
-	position: number;
 	navigationScope: ResourceNavigationScope;
 	actions?: ReactNode;
 }) {
-	const footer = [`Project order ${position + 1}`];
 	if (!project) {
-		return <UnavailableProjectResourceCard footer={footer} actions={actions} />;
+		return <UnavailableProjectResourceCard actions={actions} />;
 	}
 	return (
-		<ProjectResourceCard
-			project={project}
-			footer={footer}
-			actions={actions}
-			navigationScope={navigationScope}
-		/>
+		<ProjectResourceCard project={project} actions={actions} navigationScope={navigationScope} />
 	);
 }

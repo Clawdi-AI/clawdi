@@ -184,7 +184,7 @@ async def add_context_project_binding(
         if priority_conflict is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Project order is already in use",
+                "Vault resolution priority is already in use",
             )
     binding = await ensure_context_binding(
         db,
@@ -218,7 +218,7 @@ async def reorder_context_project_bindings(
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Project order")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Vault resolution priority")
 
     current_context_rows = (
         (
@@ -246,7 +246,7 @@ async def reorder_context_project_bindings(
         if item.priority < 1:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Project order must be >= 1",
+                "Vault resolution priority must be >= 1",
             )
         requested.append((binding, item.priority))
 
@@ -256,10 +256,11 @@ async def reorder_context_project_bindings(
         if binding.id not in requested_ids and binding.priority in requested_priorities:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Project order is already in use",
+                "Vault resolution priority is already in use",
             )
 
-    if requested:
+    changed = any(binding.priority != priority for binding, priority in requested)
+    if changed:
         max_priority = max([binding.priority for binding in current_context_rows] + [0])
         temp_base = max_priority + len(requested) + 1000
         for offset, (binding, _priority) in enumerate(requested, start=1):
@@ -268,6 +269,7 @@ async def reorder_context_project_bindings(
 
         for binding, priority in requested:
             binding.priority = priority
+        await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
 
     await db.commit()
     return BindingReorderResponse(status="reordered")

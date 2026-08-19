@@ -633,15 +633,23 @@ async def test_context_reorder_can_swap_priorities(client, db_session, seed_user
         bindings.append(row)
     await db_session.commit()
 
-    response = await client.patch(
-        f"/v1/agents/{env.id}/project-bindings/context/reorder",
-        json={
-            "items": [
-                {"binding_id": str(bindings[0].id), "priority": 2},
-                {"binding_id": str(bindings[1].id), "priority": 1},
-            ]
-        },
-    )
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        response = await client.patch(
+            f"/v1/agents/{env.id}/project-bindings/context/reorder",
+            json={
+                "items": [
+                    {"binding_id": str(bindings[0].id), "priority": 2},
+                    {"binding_id": str(bindings[1].id), "priority": 1},
+                ]
+            },
+        )
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
     assert response.status_code == 200, response.text
 
     rows = (

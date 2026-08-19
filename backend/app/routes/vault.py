@@ -1149,7 +1149,9 @@ async def resolve_vault(
     ),
     agent_id: UUID | None = Query(
         default=None,
-        description="Resolve through an Agent Project and attached Project order.",
+        description=(
+            "Resolve through an Agent Project and linked Project Vault resolution priority."
+        ),
     ),
     allow_conflicts: bool = Query(
         default=False,

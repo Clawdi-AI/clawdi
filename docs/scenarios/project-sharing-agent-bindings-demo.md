@@ -263,7 +263,7 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --debug --json
 Expected default behavior:
 
 - The command fails with `vault_conflicts_blocked`.
-- The response shows Project order, winning candidate metadata, and conflicts.
+- The response shows Vault resolution priority, winning candidate metadata, and conflicts.
 - The blocked response does not include plaintext.
 
 Explicit allow branch:
@@ -274,8 +274,8 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --allow-conflicts --debug
 
 Expected:
 
-- First match wins according to the Agent's Project order.
-- Provenance shows the source project, order, vault slug, section, and item name.
+- First match wins according to the Agent's Vault resolution priority.
+- Provenance shows the source project, Vault resolution priority, vault slug, section, and item name.
 
 Security branch:
 
