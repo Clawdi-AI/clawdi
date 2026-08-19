@@ -623,7 +623,7 @@ async def assert_agent_workspace_skill_write_compatible(
     agent_id: UUID,
     skill_keys: set[str],
 ) -> None:
-    """Fail before Agent Workspace intent would duplicate a linked Project Skill."""
+    """Reject local names that collide with linked Project Skills."""
     await lock_agent_runtime_graph(db, agent_id)
     if not skill_keys:
         return
@@ -659,22 +659,6 @@ async def assert_agent_workspace_skill_write_compatible(
                 ),
                 "skill_key": skill_key,
             },
-        )
-    if project_local_skill_keys:
-        (
-            agent,
-            state,
-            observation,
-            has_environment_bound_key,
-        ) = await _agent_runtime_delivery_evidence(
-            db,
-            agent_id=agent_id,
-        )
-        _assert_agent_supports_project_skills(
-            agent,
-            state,
-            observation,
-            has_environment_bound_key=has_environment_bound_key,
         )
 
 
