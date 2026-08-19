@@ -60,24 +60,36 @@ describe("Agent Plugin model", () => {
 		expect(pluginHasUpdate(inventory[2])).toBe(true);
 	});
 
-	test("keeps each plugin in its first observed group", () => {
-		const initialInventory = buildAgentPluginInventory(
-			[catalogEntry("cetus"), catalogEntry("sui")],
-			[desired("sui")],
+	test("pins a card to Available only while its install is in flight", () => {
+		const initial = assignAgentPluginGroups(
+			new Map(),
+			buildAgentPluginInventory([catalogEntry("cetus"), catalogEntry("sui")], [desired("sui")]),
 		);
-		const initial = assignAgentPluginGroups(new Map(), initialInventory);
-		const changedInventory = buildAgentPluginInventory(
-			[catalogEntry("cetus"), catalogEntry("move"), catalogEntry("sui")],
-			[desired("cetus"), desired("move")],
-		);
-		const changed = assignAgentPluginGroups(initial, changedInventory);
-
 		expect(Object.fromEntries(initial)).toEqual({ cetus: "available", sui: "installed" });
-		expect(Object.fromEntries(changed)).toEqual({
-			cetus: "available",
-			move: "installed",
-			sui: "installed",
-		});
+
+		const installing = assignAgentPluginGroups(
+			initial,
+			buildAgentPluginInventory(
+				[catalogEntry("cetus"), catalogEntry("sui")],
+				[desired("sui"), desired("cetus", { convergence: "not_observed" })],
+			),
+		);
+		expect(installing.get("cetus")).toBe("available");
+
+		const settled = assignAgentPluginGroups(
+			installing,
+			buildAgentPluginInventory(
+				[catalogEntry("cetus"), catalogEntry("sui")],
+				[desired("sui"), desired("cetus")],
+			),
+		);
+		expect(settled.get("cetus")).toBe("installed");
+
+		const removed = assignAgentPluginGroups(
+			settled,
+			buildAgentPluginInventory([catalogEntry("cetus"), catalogEntry("sui")], [desired("sui")]),
+		);
+		expect(removed.get("cetus")).toBe("available");
 	});
 
 	test("maps the three observed convergence states without mutation-only states", () => {
