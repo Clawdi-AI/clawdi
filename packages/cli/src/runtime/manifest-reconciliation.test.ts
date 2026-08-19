@@ -4778,13 +4778,7 @@ echo spawned > '${installerLog}'
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
 		);
 		const snapshotPaths = runtimeRootLiveMutationTargets(manifest, paths);
-		const openClawAgentDirectory = join(
-			paths.userHome,
-			".openclaw",
-			"agents",
-			"main",
-			"agent",
-		);
+		const openClawAgentDirectory = join(paths.userHome, ".openclaw", "agents", "main", "agent");
 
 		expect(snapshotPaths).toEqual(
 			[
