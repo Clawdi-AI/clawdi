@@ -3,6 +3,7 @@ import type { AgentPluginCatalogEntry, AgentPluginDesiredState } from "./agent-p
 import {
 	agentPluginInstallability,
 	agentPluginStatusPresentation,
+	assignAgentPluginGroups,
 	buildAgentPluginInventory,
 	pluginHasUpdate,
 } from "./agent-plugin-model";
@@ -57,6 +58,26 @@ describe("Agent Plugin model", () => {
 		expect(inventory.map((item) => item.name)).toEqual(["cetus", "legacy", "sui"]);
 		expect(inventory[1]?.catalog).toBeNull();
 		expect(pluginHasUpdate(inventory[2])).toBe(true);
+	});
+
+	test("keeps each plugin in its first observed group", () => {
+		const initialInventory = buildAgentPluginInventory(
+			[catalogEntry("cetus"), catalogEntry("sui")],
+			[desired("sui")],
+		);
+		const initial = assignAgentPluginGroups(new Map(), initialInventory);
+		const changedInventory = buildAgentPluginInventory(
+			[catalogEntry("cetus"), catalogEntry("move"), catalogEntry("sui")],
+			[desired("cetus"), desired("move")],
+		);
+		const changed = assignAgentPluginGroups(initial, changedInventory);
+
+		expect(Object.fromEntries(initial)).toEqual({ cetus: "available", sui: "installed" });
+		expect(Object.fromEntries(changed)).toEqual({
+			cetus: "available",
+			move: "installed",
+			sui: "installed",
+		});
 	});
 
 	test("maps the three observed convergence states without mutation-only states", () => {
