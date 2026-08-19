@@ -4394,6 +4394,7 @@ echo spawned > '${installerLog}'
 			options,
 		);
 		expect(lostResponse.installErrors.join("\n")).toContain("lost native install response");
+		expect(lostResponse.failureHealthImpact).toBe("resource_projection");
 		expect(installs).toEqual([false]);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
 		expect(existsSync(skillDir)).toBe(false);
@@ -4649,6 +4650,7 @@ echo spawned > '${installerLog}'
 			},
 		});
 		expect(result.installErrors.join("\n")).toContain("injected systemd activation failure");
+		expect(result.failureHealthImpact).toBe("runtime");
 		for (const path of rootManagedPaths) {
 			const expected = previous.get(path);
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
