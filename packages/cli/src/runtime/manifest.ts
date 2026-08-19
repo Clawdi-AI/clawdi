@@ -975,6 +975,24 @@ function makeRuntimeUserPrivateDir(path: string, home: string): void {
 	}
 }
 
+function ensureHostedOpenClawStateDirectories(manifest: RuntimeManifest, home: string): void {
+	if (
+		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2" ||
+		manifest.runtimes.openclaw?.enabled !== true
+	)
+		return;
+	const stateRoot = join(home, ".openclaw");
+	for (const path of [stateRoot, join(stateRoot, "tmp")]) {
+		if (existsSync(path)) {
+			const node = lstatSync(path);
+			if (!node.isDirectory() || node.isSymbolicLink()) {
+				throw new Error(`hosted OpenClaw state path must be a real directory: ${path}`);
+			}
+		}
+		makeRuntimeUserPrivateDir(path, home);
+	}
+}
+
 function ensureRuntimeUserCliStateRoot(path: string, identity: { uid: number; gid: number }): void {
 	mkdirSync(path, { recursive: true });
 	let node = lstatSync(path);
@@ -6318,6 +6336,9 @@ export function convergeRuntimeManifest(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
+	// Runtime-user state ownership is a platform invariant, not a manifest
+	// mutation: repair it before snapshots so rollback cannot restore drift.
+	ensureHostedOpenClawStateDirectories(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
