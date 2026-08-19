@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,6 @@ from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.project import PROJECT_KIND_WORKSPACE
 from app.schemas.sharing import (
     AgentProjectBindingResponse,
     BindingCreate,
@@ -21,7 +21,8 @@ from app.schemas.sharing import (
     BindingReorderResponse,
 )
 from app.services.agent_bindings import (
-    assert_project_visible_to_user,
+    assert_project_linkable_to_agent,
+    attach_projects_to_owned_agent,
     ensure_agent_primary_binding,
     ensure_context_binding,
     get_owned_agent_or_404,
@@ -34,6 +35,15 @@ from app.services.project_runtime_skills import (
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 router = APIRouter(prefix="/agents", tags=["agent-project-bindings"])
+
+
+class AgentProjectLinkBody(BaseModel):
+    project_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class AgentProjectLinkResponse(BaseModel):
+    agent_id: str
+    bound_project_ids: list[str]
 
 
 def _to_response(binding: AgentProjectBinding) -> AgentProjectBindingResponse:
@@ -120,6 +130,26 @@ async def list_project_bindings(
     return [_to_response(row) for row in rows]
 
 
+@router.post("/{agent_id}/projects", response_model=AgentProjectLinkResponse)
+async def link_agent_projects(
+    agent_id: UUID,
+    body: AgentProjectLinkBody,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> AgentProjectLinkResponse:
+    bound_project_ids = await attach_projects_to_owned_agent(
+        db,
+        user_id=auth.user_id,
+        agent_id=agent_id,
+        raw_project_ids=body.project_ids,
+    )
+    await db.commit()
+    return AgentProjectLinkResponse(
+        agent_id=str(agent_id),
+        bound_project_ids=bound_project_ids,
+    )
+
+
 @router.post(
     "/{agent_id}/project-bindings/context",
     response_model=AgentProjectBindingResponse,
@@ -141,30 +171,21 @@ async def add_context_project_binding(
     except ValueError as err:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid project_id") from err
 
-    project = await assert_project_visible_to_user(db, user_id=auth.user_id, project_id=project_id)
-    if project_id == agent.default_project_id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "This Project is already the Agent Workspace",
-        )
-    if project.kind != PROJECT_KIND_WORKSPACE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Only Projects you create or that are shared with you can be linked",
-        )
+    await assert_project_linkable_to_agent(
+        db,
+        user_id=auth.user_id,
+        agent=agent,
+        project_id=project_id,
+    )
     await lock_project_binding_change(db, project_id=project_id, agent_id=agent_id)
     # Archive/unshare can race the initial picker read. Access and Project kind
     # must still be valid at the serialized Link boundary.
-    project = await assert_project_visible_to_user(
+    await assert_project_linkable_to_agent(
         db,
         user_id=auth.user_id,
+        agent=agent,
         project_id=project_id,
     )
-    if project.kind != PROJECT_KIND_WORKSPACE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Only Projects you create or that are shared with you can be linked",
-        )
     await assert_project_link_compatible(
         db,
         agent_id=agent_id,

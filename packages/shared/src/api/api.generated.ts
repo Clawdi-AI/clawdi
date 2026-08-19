@@ -2948,6 +2948,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link Agent Projects */
+        post: operations["link_agent_projects_v1_agents__agent_id__projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent_id}/project-bindings/context": {
         parameters: {
             query?: never;
@@ -3296,6 +3313,18 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AgentProjectLinkBody */
+        AgentProjectLinkBody: {
+            /** Project Ids */
+            project_ids: string[];
+        };
+        /** AgentProjectLinkResponse */
+        AgentProjectLinkResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Bound Project Ids */
+            bound_project_ids: string[];
         };
         /** AgentProjectSkillDesiredItem */
         AgentProjectSkillDesiredItem: {
@@ -14002,6 +14031,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentProjectBindingResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_agent_projects_v1_agents__agent_id__projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentProjectLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectLinkResponse"];
                 };
             };
             /** @description Validation Error */

@@ -298,6 +298,74 @@ async def test_agent_binding_attach_repairs_stale_primary_before_returning_conte
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
 
 
+async def test_agent_batch_link_adds_projects_without_replacing_existing_links(
+    client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"batch-link-{uuid.uuid4().hex[:8]}",
+        machine_name="forge",
+    )
+    projects = [
+        Project(
+            user_id=seed_user.id,
+            name=name,
+            slug=f"{slug}-{uuid.uuid4().hex[:8]}",
+            kind=PROJECT_KIND_WORKSPACE,
+        )
+        for name, slug in (
+            ("Existing Context", "existing-context"),
+            ("Build Context", "build-context"),
+            ("Deploy Context", "deploy-context"),
+        )
+    ]
+    db_session.add_all(projects)
+    await db_session.commit()
+
+    existing = await client.post(
+        f"/v1/agents/{env.id}/project-bindings/context",
+        json={"project_id": str(projects[0].id)},
+    )
+    assert existing.status_code == 200, existing.text
+
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        linked = await client.post(
+            f"/v1/agents/{env.id}/projects",
+            json={"project_ids": [str(projects[1].id), str(projects[2].id)]},
+        )
+        assert linked.status_code == 200, linked.text
+        assert linked.json() == {
+            "agent_id": str(env.id),
+            "bound_project_ids": [str(projects[1].id), str(projects[2].id)],
+        }
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+    bindings = (
+        (
+            await db_session.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.agent_id == env.id,
+                    AgentProjectBinding.binding_type == "context",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {binding.project_id for binding in bindings} == {project.id for project in projects}
+    assert sorted(binding.priority for binding in bindings) == [1, 2, 3]
+
+
 async def test_agent_context_attach_rejects_managed_projects(
     client,
     db_session,
