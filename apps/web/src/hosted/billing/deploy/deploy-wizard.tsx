@@ -302,10 +302,7 @@ export function DeployWizard() {
 	const [deploymentCommitted, setDeploymentCommitted] = useState(false);
 	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
-		async (
-			target: CheckoutReturnNavigationTarget,
-			replace = false,
-		): Promise<boolean> => {
+		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
 			if (target.kind === "deployment") setDeploymentCommitted(true);
 			setSubmitting(true);
