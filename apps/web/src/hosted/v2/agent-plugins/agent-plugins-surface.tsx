@@ -166,9 +166,6 @@ export function AgentPluginsSurface({
 		mutationLock.current = true;
 		setPending({ name: item.name, action: "retry" });
 		try {
-			await removeMutation.mutateAsync({
-				params: { path: { agent_id: agentId, plugin_name: item.name } },
-			});
 			await installMutation.mutateAsync({
 				params: { path: { agent_id: agentId, plugin_name: item.name } },
 				body: { version: item.catalog.version },

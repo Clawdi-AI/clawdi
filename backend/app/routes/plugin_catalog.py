@@ -340,6 +340,16 @@ async def put_agent_plugin_desired_state(
         row.agent_plugins_schema = entry.agent_plugins_schema
         row.source = entry.source
         row.content_digest = entry.content_digest
+    if not changed:
+        assert row is not None
+        observations, observed_at, received_at = await _latest_agent_plugin_observations(
+            db, agent_id=agent_id
+        )
+        if _desired_response(row, observations, observed_at, received_at).convergence == "failed":
+            # Reaffirming an identical desire whose last convergence failed is a
+            # retry: bump the staleness anchor so the next observation counts.
+            row.updated_at = datetime.now(UTC)
+            changed = True
     if changed:
         queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.flush()
