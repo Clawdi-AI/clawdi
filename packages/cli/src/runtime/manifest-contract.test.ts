@@ -19,4 +19,15 @@ describe("official runtime installer arguments", () => {
 			"/srv/tenant/.local",
 		]);
 	});
+
+	test("passes an exact OpenClaw version through the official installer", () => {
+		expect(officialInstallArgs("openclaw", "/srv/tenant", "2026.8.1-beta.2")).toEqual([
+			"--json",
+			"--no-onboard",
+			"--prefix",
+			"/srv/tenant/.local",
+			"--version",
+			"2026.8.1-beta.2",
+		]);
+	});
 });

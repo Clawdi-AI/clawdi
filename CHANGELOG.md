@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.100
+
+Package: `clawdi@0.13.100`
+
+### Fixed
+
+- Hosted v2 OpenClaw convergence now installs the audited exact
+  `openclaw@2026.8.1-beta.2` package, repairs existing version drift, verifies
+  the installed version exactly, and delegates downgrade protection to the
+  official installer's config-writer compatibility guard.
+
 ## Clawdi CLI v0.13.99
 
 Package: `clawdi@0.13.99`

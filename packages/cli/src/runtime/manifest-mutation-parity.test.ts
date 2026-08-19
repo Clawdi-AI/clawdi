@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RuntimeManagedMutationPlan } from "./live-state-snapshot";
 import * as actualSnapshot from "./live-state-snapshot";
+import { HOSTED_V2_OPENCLAW_VERSION } from "./manifest-contract";
 
 const fsOriginals = {
 	chmodSync: realFs.chmodSync,
@@ -131,7 +132,7 @@ test("keeps real Hosted converge mutations inside its exact root and runtime-use
 if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
 elif [ "\${1:-}" = "--version" ]; then
-  printf '%s\\n' '2026.7.1'
+  printf '%s\\n' '${HOSTED_V2_OPENCLAW_VERSION}'
 fi
 exit 0
 `,

@@ -15,6 +15,8 @@ import {
 import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-values";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
+export const HOSTED_V2_OPENCLAW_PACKAGE_SPEC = "openclaw@2026.8.1-beta.2";
+export const HOSTED_V2_OPENCLAW_VERSION = HOSTED_V2_OPENCLAW_PACKAGE_SPEC.slice("openclaw@".length);
 
 // Temporary v1 read compatibility. Runtime providers and generated config stay canonical-only.
 export const LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV = "OPENAI_API_KEY";
@@ -70,9 +72,16 @@ const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
 
-export function officialInstallArgs(runtime: string, home: string): string[] {
+export function officialInstallArgs(runtime: string, home: string, version?: string): string[] {
 	const args = [...(OFFICIAL_INSTALL_ARGS[runtime] ?? [])];
-	return runtime === "openclaw" ? [...args, "--prefix", join(home, ".local")] : args;
+	return runtime === "openclaw"
+		? [
+				...args,
+				"--prefix",
+				join(home, ".local"),
+				...(version === undefined ? [] : ["--version", version]),
+			]
+		: args;
 }
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
@@ -163,6 +172,7 @@ const installSchema = z.object({
 	url: z.string().url(),
 	home: z.string().min(1),
 	args: z.array(z.string()).default([]),
+	version: z.string().refine(isHostedExactSemver, "must be an exact semver").optional(),
 });
 
 const runtimeSchema = z.object({

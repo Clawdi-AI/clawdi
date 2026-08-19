@@ -577,7 +577,7 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; CLI owns the official installer URL and non-version arguments, and Hosted cannot select a version, channel, commit, digest, or custom installer |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; Hosted cannot select a version, channel, commit, digest, or custom installer. The selected Clawdi release owns the official installer contract and the audited exact Hosted-v2 OpenClaw package. |
 | `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires exactly one provider; unmanaged mode requires an exact empty list. Selection is replacement-only, with no fallback or secondary pool. |
@@ -595,10 +595,14 @@ Normalization maps hosted fields into the internal shape:
 | `egressProfiles` | Explicit generic local sidecar profiles; Agent Plugin packages, Store metadata, and public installation APIs cannot declare them |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
 
-When an OpenClaw or Hermes installation is missing or requires repair, the CLI
-invokes the official installer without a version selector, so the installer
-chooses its current upstream release. A healthy installed runtime is not
-reinstalled merely to poll for a newer release.
+The outer Hosted selector remains unchanged for reader-first CLI upgrades. A
+new Clawdi release normalizes Hosted-v2 OpenClaw to its internal exact install
+version, currently `openclaw@2026.8.1-beta.2`; Hermes and generic manifests keep
+their existing installer behavior. OpenClaw convergence probes the installed
+CLI, reruns the official installer on drift, passes `meta.lastTouchedVersion`
+through upstream `--compatible-with`, and accepts the result only when the
+installed version exactly matches. It does not compare versions independently
+or rewrite OpenClaw config fields.
 
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model
@@ -1193,20 +1197,25 @@ specifically `cli-config.yaml.example`,
 
 ### Official OpenClaw evidence
 
-Installer research was refreshed on 2026-08-02. The official `main` commit at
-that time was
+Gateway/source research was refreshed on 2026-08-02. The official `main`
+commit at that time was
 [`1e9a620a28d6d8f8a0ba165f2004718a79030460`](https://github.com/openclaw/openclaw/commit/1e9a620a28d6d8f8a0ba165f2004718a79030460).
 The stable release tag
 [`v2026.7.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1),
 resolves to release commit
 [`2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`](https://github.com/openclaw/openclaw/commit/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4).
-The immutable integration target is `openclaw@2026.7.1-2` with npm integrity
-`sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==`.
-Its npm manifest omits `gitHead`, while its own `openclaw --version` reports
-`OpenClaw 2026.7.1-2 (0790d9f)`, identifying official source commit
-[`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
+Exact package metadata and official installer argument support were revalidated
+on 2026-08-19.
+The Hosted-v2 install target is `openclaw@2026.8.1-beta.2` with npm integrity
+`sha512-k4cwlyFOuXN5wN6NOH/gqxupGuvMkOr5OV2Eh7MJmmGFh86wvWSTrGBkL4XkNTg/kszWzGbotI8wKlZ468EjsQ==`.
+The exact spec resolves through the official installer `--version
+2026.8.1-beta.2` contract. Its npm manifest does not publish `gitHead`, so the
+package spec and registry integrity, rather than an inferred source commit, are
+the auditable artifact identity.
 
-At that published commit, the official installer contract is:
+The separately retained `2026.7.1-2` service-integration audit remains anchored
+to source commit `0790d9f`; it verifies the gateway transaction used by Clawdi,
+not the current Hosted package identity:
 
 | Stage | Official line evidence | Diagnostic consequence |
 | --- | --- | --- |
@@ -1216,7 +1225,7 @@ At that published commit, the official installer contract is:
 | Systemd activation | [`systemd.ts` lines 1101-1147](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/daemon/systemd.ts#L1101-L1147) | `daemon-reload`, enable, and restart are separate failure points after staging. |
 
 Consequently, the absence of gateway process journal entries does not identify
-which installer stage failed. The isolated regression test runs the published
+which installer stage failed. The isolated regression test runs that audited
 package's real `gateway install --force --json` path under a live systemd user
 manager and UID/GID 10001, forces an immutable pre-activation `EISDIR` failure,
 and proves exit/stdout propagation plus exact transaction rollback without
