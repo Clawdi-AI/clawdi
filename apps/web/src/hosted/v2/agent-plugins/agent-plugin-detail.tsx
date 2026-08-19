@@ -79,7 +79,7 @@ export function AgentPluginDetail({
 
 	return (
 		<div data-hosted="true" data-v2="true" className="space-y-6">
-			<Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
+			<Button variant="ghost" size="sm" className="w-fit sm:hidden" onClick={onBack}>
 				<ArrowLeft />
 				Back to Plugins
 			</Button>

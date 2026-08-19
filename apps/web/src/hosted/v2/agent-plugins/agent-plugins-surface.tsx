@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { AlertCircle, Blocks, RefreshCw } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -63,6 +63,13 @@ export function AgentPluginsSurface({
 	}>({ agentId, assignments: new Map() });
 	if (groupState.current.agentId !== agentId) {
 		groupState.current = { agentId, assignments: new Map() };
+	}
+	const convergenceLog = useRef<{ agentId: string; seen: Map<string, string> }>({
+		agentId,
+		seen: new Map(),
+	});
+	if (convergenceLog.current.agentId !== agentId) {
+		convergenceLog.current = { agentId, seen: new Map() };
 	}
 	const catalogQuery = api.useQuery("get", "/v1/plugin-catalog", {});
 	const desiredQuery = api.useQuery(
@@ -214,6 +221,32 @@ export function AgentPluginsSurface({
 		[catalogQuery.data?.plugins],
 	);
 	const selectedCategory = category === "all" || categories.includes(category) ? category : "all";
+
+	useEffect(() => {
+		const plugins = desiredQuery.data?.plugins;
+		if (!plugins) return;
+		const seen = convergenceLog.current.seen;
+		const live = new Set<string>();
+		for (const plugin of plugins) {
+			live.add(plugin.installation_id);
+			const previous = seen.get(plugin.installation_id);
+			seen.set(plugin.installation_id, plugin.convergence);
+			if (previous !== "not_observed" || plugin.convergence === "not_observed") continue;
+			const title =
+				catalogQuery.data?.plugins.find((entry) => entry.name === plugin.plugin_name)
+					?.display_name ?? plugin.plugin_name;
+			if (plugin.convergence === "installed") {
+				toast.success(`${title} is ready to use`);
+			} else {
+				toast.error(`${title} installation failed`, {
+					description: "Open the plugin to retry or remove it.",
+				});
+			}
+		}
+		for (const id of seen.keys()) {
+			if (!live.has(id)) seen.delete(id);
+		}
+	}, [desiredQuery.data, catalogQuery.data]);
 
 	return (
 		<div data-hosted="true" data-v2="true" className="space-y-6">
