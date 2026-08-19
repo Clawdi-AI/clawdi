@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.96
+
+Package: `clawdi@0.13.96`
+
+### Fixed
+
+- Hosted runtime dashboards remain available when only managed Skill or Agent
+  Plugin projection fails, while core runtime failures continue to report an
+  error and fail closed.
+- Hermes Skill removal and failed-install recovery now follow the native CLI's
+  confirmation and ownership contracts.
+- OpenClaw Agent Plugin repair now uses its supported overwrite mode and
+  verifies the installed package from structured provenance records.
+
 ## Clawdi CLI v0.13.78
 
 Package: `clawdi@0.13.78`
