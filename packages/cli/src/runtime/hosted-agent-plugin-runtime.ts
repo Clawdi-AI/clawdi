@@ -408,7 +408,7 @@ function initializeLocalGitTransport(
 	runtime: HostedAgentPluginRuntime,
 	home: string,
 	sourceDir: string,
-): void {
+): string {
 	const gitEnvironment = {
 		...isolatedNativeEnvironment(runtime, home),
 		...isolatedGitEnvironment,
@@ -431,6 +431,18 @@ function initializeLocalGitTransport(
 		});
 		if (result.status !== 0) throw new Error("Hermes local Agent Plugin transport failed");
 	}
+	const head = runner.run({
+		command: "git",
+		args: ["-C", sourceDir, "rev-parse", "HEAD"],
+		home,
+		cwd: sourceDir,
+		environmentOverrides: gitEnvironment,
+	});
+	const revision = head.status === 0 ? head.stdout.trim() : "";
+	if (!/^[0-9a-f]{40}$/.test(revision)) {
+		throw new Error("Hermes local Agent Plugin transport returned no revision");
+	}
+	return revision;
 }
 
 function createHermesDriver(input: {
@@ -485,19 +497,23 @@ function createHermesDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
+				const revision = initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
+				// Store plugins are digest-verified by the control plane, so bind the
+				// native install to the verified commit and skip the community-plugin
+				// content scan when the runtime supports it.
 				const args = [
 					"plugins",
 					"install",
 					pathToFileURL(sourceDir).href,
 					"--force",
 					"--no-enable",
+					"--ref",
+					revision,
+					"--no-scan",
 				];
-				// Store plugins are digest-verified by the control plane, so the native
-				// community-plugin security scan is skipped when the runtime supports it.
-				let result = run([...args, "--no-scan"]);
+				let result = run(args);
 				if (result.status !== 0 && result.stderr.includes("unrecognized arguments")) {
-					result = run(args);
+					result = run(args.filter((arg) => arg !== "--no-scan"));
 				}
 				if (result.status !== 0) {
 					throw nativeCommandFailure("Hermes native Agent Plugin install failed", result);

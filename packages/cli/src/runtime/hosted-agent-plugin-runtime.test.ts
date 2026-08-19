@@ -145,7 +145,12 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 
 	run(input: CommandInput) {
 		this.calls.push(input);
-		if (input.command === "git") return { status: 0, stdout: "", stderr: "" };
+		if (input.command === "git") {
+			if (input.args.includes("rev-parse")) {
+				return { status: 0, stdout: `${"9".repeat(40)}\n`, stderr: "" };
+			}
+			return { status: 0, stdout: "", stderr: "" };
+		}
 		const runtime = this.runtime(input);
 		const expectedStateRoot = join(input.home, runtime === "openclaw" ? ".openclaw" : ".hermes");
 		const actualStateRoot =
@@ -607,6 +612,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		);
 		expect(install?.args[2]?.startsWith("file://")).toBe(true);
 		expect(install?.args).toContain("--no-scan");
+		expect(install?.args.slice(install.args.indexOf("--ref") + 1)[0]).toBe("9".repeat(40));
 		expect(install?.args.join(" ")).not.toContain("github.com");
 		expect(install?.environmentOverrides).toEqual({
 			OPENCLAW_HOME: undefined,
