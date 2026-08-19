@@ -100,7 +100,8 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await expect(page.getByText("OpenClaw", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Hermes", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Back to Plugins", exact: true }).click();
+	await page.getByTestId("app-sidebar").getByRole("link", { name: "Plugins", exact: true }).click();
+	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
 	await page.getByRole("button", { name: "Remove", exact: true }).click();
 	await page.getByRole("button", { name: "Remove plugin", exact: true }).click();
 	await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
