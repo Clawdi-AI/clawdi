@@ -310,11 +310,17 @@ function ComponentGroup({
 				<Icon className="size-3.5" />
 				{label}
 			</div>
-			<div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
 				{names.map((name) => (
-					<code key={name} className="min-w-0 break-all text-sm">
-						{name}
-					</code>
+					<div
+						key={name}
+						className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2"
+					>
+						<Icon className="size-4 shrink-0 text-muted-foreground" />
+						<code title={name} className="min-w-0 truncate text-sm">
+							{name}
+						</code>
+					</div>
 				))}
 			</div>
 		</div>
