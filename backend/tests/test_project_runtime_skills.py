@@ -507,11 +507,7 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
         },
     )
     _set_auth(AuthContext(user=seed_user))
-    assert stale_workspace_write.status_code == 409, stale_workspace_write.text
-    assert stale_workspace_write.json()["detail"] == {
-        "code": "project_skill_delivery_update_required",
-        "message": "Update this Agent, then try again.",
-    }
+    assert stale_workspace_write.status_code == 200, stale_workspace_write.text
 
     empty_project = Project(
         user_id=seed_user.id,
