@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { getHermesHome } from "../adapters/paths";
 import {
-	getHermesConfigValue,
+	getHermesRawConfigValue,
 	type HermesConfigCommandContext,
 	reconcileHermesConfigValue,
 } from "../runtime/hermes-config";
@@ -23,7 +23,7 @@ function localHermesConfigContext(): HermesConfigCommandContext {
 
 export function reconcileLocalHermesMcp(enabled: boolean): boolean {
 	const context = localHermesConfigContext();
-	const current = getHermesConfigValue(context, "mcp_servers");
+	const current = getHermesRawConfigValue(context, "mcp_servers");
 	if (
 		current.exists &&
 		(typeof current.value !== "object" || current.value === null || Array.isArray(current.value))

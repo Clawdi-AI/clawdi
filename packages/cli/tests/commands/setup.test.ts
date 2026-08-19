@@ -43,6 +43,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_MODE",
 	"CLAWDI_SERVE_MODE",
 	"CLAWDI_SERVE_DEBUG",
+	"HERMES_TEST_MCP_TOKEN",
 ] as const;
 
 let envSnapshot: Partial<Record<(typeof ENV_KEYS)[number], string>> = {};
@@ -345,6 +346,34 @@ describe("setup Hermes MCP registration", () => {
 		expect(parseYaml(after)).toMatchObject({
 			mcp_servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
 		});
+	});
+
+	it("preserves env references in unrelated Hermes MCP servers", async () => {
+		process.env.HERMES_TEST_MCP_TOKEN = "resolved-secret-must-not-be-written";
+		const configPath = prepareHermesConfig(
+			[
+				"mcp_servers:",
+				"  user.server:",
+				"    url: https://mcp.example.test",
+				"    headers:",
+				'      Authorization: "Bearer ${HERMES_TEST_MCP_TOKEN}"',
+				"",
+			].join("\n"),
+		);
+		installEnvironmentMock("env-hermes-test");
+
+		await setup({ agent: "hermes", yes: true, daemon: false });
+
+		const after = readFileSync(configPath, "utf-8");
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: {
+				"user.server": {
+					headers: { Authorization: "Bearer ${HERMES_TEST_MCP_TOKEN}" },
+				},
+				clawdi: { command: "clawdi", args: ["mcp"] },
+			},
+		});
+		expect(after).not.toContain("resolved-secret-must-not-be-written");
 	});
 });
 

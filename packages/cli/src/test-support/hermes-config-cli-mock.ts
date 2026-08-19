@@ -2,6 +2,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+const DEFAULT_CONFIG: Record<string, unknown> = {
+	model: "",
+	providers: {},
+	display: {
+		platforms: {
+			telegram: { streaming: true },
+			discord: { streaming: false },
+			slack: { streaming: false },
+		},
+	},
+};
+
 const configPath = join(
 	process.env.HERMES_HOME?.trim() || join(process.env.HOME ?? "", ".hermes"),
 	"config.yaml",
@@ -19,6 +31,40 @@ function readConfig(): Record<string, unknown> {
 function writeConfig(config: Record<string, unknown>): void {
 	mkdirSync(dirname(configPath), { recursive: true });
 	writeFileSync(configPath, stringifyYaml(config));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepMerge(defaults: unknown, user: unknown): unknown {
+	if (!isRecord(defaults) || !isRecord(user)) return structuredClone(user);
+	const merged: Record<string, unknown> = structuredClone(defaults);
+	for (const [key, value] of Object.entries(user)) {
+		merged[key] = Object.hasOwn(merged, key) ? deepMerge(merged[key], value) : structuredClone(value);
+	}
+	return merged;
+}
+
+function expandEnvironment(value: unknown): unknown {
+	if (typeof value === "string") {
+		return value.replace(/\$\{([^}]+)\}/g, (reference, rawName: string) => {
+			const name = rawName.startsWith("env:") ? rawName.slice(4).trim() : rawName.trim();
+			if (!name || (rawName.includes(":") && !rawName.startsWith("env:"))) return reference;
+			return process.env[name] ?? reference;
+		});
+	}
+	if (Array.isArray(value)) return value.map(expandEnvironment);
+	if (isRecord(value)) {
+		return Object.fromEntries(
+			Object.entries(value).map(([key, entry]) => [key, expandEnvironment(entry)]),
+		);
+	}
+	return value;
+}
+
+function resolvedConfig(config: Record<string, unknown>): Record<string, unknown> {
+	return expandEnvironment(deepMerge(DEFAULT_CONFIG, config)) as Record<string, unknown>;
 }
 
 function getNested(config: Record<string, unknown>, key: string): unknown | undefined {
@@ -80,12 +126,14 @@ function parseValue(raw: string): unknown {
 const [, action, ...args] = process.argv.slice(2);
 
 try {
+	if (action === "path") {
+		console.log(configPath);
+		process.exit(0);
+	}
 	const config = readConfig();
 	if (action === "get") {
 		const key = args[0] ?? "";
-		let value = getNested(config, key);
-		if (value === undefined && key === "providers") value = {};
-		if (value === undefined && key === "model") value = "";
+		const value = getNested(resolvedConfig(config), key);
 		if (value === undefined) {
 			console.error(`Config key not set: ${key}`);
 			process.exit(1);

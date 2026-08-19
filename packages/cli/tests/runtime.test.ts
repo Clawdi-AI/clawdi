@@ -10305,7 +10305,7 @@ exit 0
 			expect(installerCalls.slice(installIndex + 1)).not.toContain("config patch --stdin");
 		} else {
 			expect(installIndex).toBeGreaterThanOrEqual(0);
-			expect(installerCalls.some((call) => call.startsWith("config get "))).toBe(true);
+			expect(installerCalls).toContain("config path");
 			expect(installerCalls.some((call) => call.startsWith("npm "))).toBe(false);
 			expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(true);
 		}

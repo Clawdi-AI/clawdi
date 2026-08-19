@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { stripTerminalEscapes } from "../lib/sanitize";
-import { RuntimeUserCommandTimeoutError, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	RuntimeUserCommandTimeoutError,
+	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
 
 const HERMES_CONFIG_COMMAND_TIMEOUT_MS = 30_000;
 
@@ -41,7 +48,7 @@ function runHermesConfigCommand(
 	});
 }
 
-export function getHermesConfigValue(
+export function getHermesResolvedConfigValue(
 	context: HermesConfigCommandContext,
 	key: string,
 ): HermesConfigValue {
@@ -57,6 +64,56 @@ export function getHermesConfigValue(
 	} catch {
 		throw new Error(`Hermes config get ${key} returned invalid JSON`);
 	}
+}
+
+function hermesConfigPath(context: HermesConfigCommandContext): string {
+	const result = runHermesConfigCommand(context, ["path"]);
+	if (result.status !== 0 || result.error) {
+		throw commandFailure("Hermes config path", result);
+	}
+	const path = commandText(result.stdout);
+	if (!isAbsolute(path)) throw new Error("Hermes config path returned a non-absolute path");
+	return path;
+}
+
+function isConfigRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rawHermesConfig(context: HermesConfigCommandContext): Record<string, unknown> {
+	const path = hermesConfigPath(context);
+	let content: string;
+	try {
+		content = withRuntimeUserFileAccess(() => readFileSync(path, "utf8"));
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return {};
+		throw new Error(
+			`Hermes config could not be read: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(content) as unknown;
+	} catch (error) {
+		throw new Error(
+			`Hermes config is invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (parsed === null) return {};
+	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
+	return parsed;
+}
+
+export function getHermesRawConfigValue(
+	context: HermesConfigCommandContext,
+	key: string,
+): HermesConfigValue {
+	let current: unknown = rawHermesConfig(context);
+	for (const part of key.split(".")) {
+		if (!isConfigRecord(current) || !Object.hasOwn(current, part)) return { exists: false };
+		current = current[part];
+	}
+	return { exists: true, value: current };
 }
 
 function configSetValue(value: unknown): string {
@@ -101,7 +158,7 @@ export function reconcileHermesConfigValue(
 	key: string,
 	desired: unknown | undefined,
 ): boolean {
-	const current = getHermesConfigValue(context, key);
+	const current = getHermesRawConfigValue(context, key);
 	if (desired === undefined) {
 		if (!current.exists) return false;
 		unsetHermesConfigValue(context, key);

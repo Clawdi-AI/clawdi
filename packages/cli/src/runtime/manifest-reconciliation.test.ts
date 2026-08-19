@@ -631,7 +631,7 @@ case "$*" in
 	"config patch --stdin"*)
 		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
 		;;
-	"config get "*|"config set "*|"config unset "*)
+	"config path"|"config get "*|"config set "*|"config unset "*)
 		exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
@@ -2723,6 +2723,7 @@ chmod 0755 '${commandPath}'
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
 		const paths = tempRuntimePaths();
+		process.env.HERMES_TEST_PROVIDER_TOKEN = "resolved-provider-secret-must-not-be-written";
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
 		const legacyPlugin = join(
@@ -2751,6 +2752,9 @@ chmod 0755 '${commandPath}'
 				"  responses:",
 				"    api: https://stale.example.test/v1",
 				"    api_key: stale-inline-secret",
+				'  "user.custom":',
+				"    api: https://user-provider.example.test/v1",
+				'    api_key: "${HERMES_TEST_PROVIDER_TOKEN}"',
 				"",
 			].join("\n"),
 		);
@@ -2847,12 +2851,17 @@ chmod 0755 '${commandPath}'
 			models: { "gpt-test": {} },
 			transport: "codex_responses",
 		});
+		expect(initialHermes.providers?.["user.custom"]).toMatchObject({
+			api: "https://user-provider.example.test/v1",
+			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+		});
 		expect(JSON.parse(initialRunConfig)).toMatchObject({
 			secretEnv: {
 				RESPONSES_API_KEY: "secret://providers/responses/api-key",
 			},
 		});
 		expect(initialConfig).not.toContain(responsesKey);
+		expect(initialConfig).not.toContain("resolved-provider-secret-must-not-be-written");
 		expect(initialRunConfig).not.toContain(responsesKey);
 		expect(initialConfig).not.toContain("stale-inline-secret");
 		expect(initialConfig).not.toContain("https://stale.example.test/v1");
@@ -2876,6 +2885,9 @@ chmod 0755 '${commandPath}'
 		const switchedProviders = (parseYaml(switchedConfig) as { providers?: Record<string, unknown> })
 			.providers;
 		expect(switchedProviders).not.toHaveProperty("responses");
+		expect(switchedProviders?.["user.custom"]).toMatchObject({
+			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+		});
 		expect(parseYaml(switchedConfig)).toMatchObject({
 			model: { default: "claude-test", provider: "custom:anthropic" },
 			providers: {
@@ -2899,6 +2911,9 @@ chmod 0755 '${commandPath}'
 			parseYaml(readFileSync(hermesConfig, "utf8")) as { providers?: Record<string, unknown> }
 		).providers;
 		expect(deletedProviders).not.toHaveProperty("anthropic");
+		expect(deletedProviders?.["user.custom"]).toMatchObject({
+			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+		});
 	}, 30_000);
 
 	test("preserves managed hosted provider model capabilities after primary resolution", () => {

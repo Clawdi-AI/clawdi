@@ -82,7 +82,8 @@ import {
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
 import {
-	getHermesConfigValue,
+	getHermesRawConfigValue,
+	getHermesResolvedConfigValue,
 	type HermesConfigCommandContext,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
@@ -1483,7 +1484,7 @@ function applyHermesDashboardConfig(
 		username: auth.username,
 		session_ttl_seconds: auth.sessionTtlSeconds,
 	});
-	const currentDisabled = getHermesConfigValue(context, "plugins.disabled");
+	const currentDisabled = getHermesRawConfigValue(context, "plugins.disabled");
 	if (
 		currentDisabled.exists &&
 		(!Array.isArray(currentDisabled.value) ||
@@ -3217,7 +3218,7 @@ function applyHermesProviderConfig(
 		reconcileHermesConfigValue(context, `model.${key}`, value === null ? undefined : value);
 	}
 	if (!Object.hasOwn(patchModel, "provider") && deletedProviderIds.length > 0) {
-		const currentProvider = getHermesConfigValue(context, "model.provider");
+		const currentProvider = getHermesResolvedConfigValue(context, "model.provider");
 		if (currentProvider.exists && typeof currentProvider.value !== "string") {
 			throw new Error("Hermes config field model.provider must be a string");
 		}
@@ -3232,7 +3233,7 @@ function applyHermesProviderConfig(
 		}
 	}
 
-	const currentValue = getHermesConfigValue(context, "providers");
+	const currentValue = getHermesRawConfigValue(context, "providers");
 	if (currentValue.exists && !isPlainRecord(currentValue.value)) {
 		throw new Error("Hermes config field providers must be an object");
 	}
@@ -4373,7 +4374,6 @@ type HostedMcpMutation =
 	| { kind: "set"; serverName: string; server: HostedMcpNativeServer };
 
 interface HostedMcpNativeState {
-	path: string;
 	servers: Record<string, unknown>;
 }
 
@@ -4414,13 +4414,7 @@ function buildHostedMcpReconciliationPlan(
 		}
 		const native = needsNativeState
 			? readHostedMcpNativeState(name, home, commandPath, cwd)
-			: {
-					path:
-						name === "openclaw"
-							? join(home, ".openclaw", "openclaw.json")
-							: join(home, ".hermes", "config.yaml"),
-					servers: {},
-				};
+			: { servers: {} };
 		for (const serverName of Object.keys(desiredServers).sort()) {
 			if (previousServerNames.has(serverName)) continue;
 			if (Object.hasOwn(native.servers, serverName)) {
@@ -4462,20 +4456,17 @@ function readHostedMcpNativeState(
 	commandPath: string | null,
 	cwd: string,
 ): HostedMcpNativeState {
-	const path =
-		name === "openclaw"
-			? join(home, ".openclaw", "openclaw.json")
-			: join(home, ".hermes", "config.yaml");
 	if (name === "hermes") {
 		if (!commandPath) throw new Error("Hermes config command is unavailable");
-		const current = getHermesConfigValue({ command: commandPath, home, cwd }, "mcp_servers");
-		if (!current.exists) return { path, servers: {} };
+		const current = getHermesRawConfigValue({ command: commandPath, home, cwd }, "mcp_servers");
+		if (!current.exists) return { servers: {} };
 		if (!isPlainRecord(current.value)) {
 			throw new Error("Hermes config field mcp_servers must be an object");
 		}
-		return { path, servers: current.value };
+		return { servers: current.value };
 	}
-	if (!existsSync(path)) return { path, servers: {} };
+	const path = join(home, ".openclaw", "openclaw.json");
+	if (!existsSync(path)) return { servers: {} };
 	const content = readFileSync(path, "utf-8");
 	let parsed: unknown;
 	try {
@@ -4496,11 +4487,11 @@ function readHostedMcpNativeState(
 		throw new Error("openclaw config field mcp must be an object");
 	}
 	const servers = isPlainRecord(mcp) ? mcp.servers : undefined;
-	if (servers === undefined) return { path, servers: {} };
+	if (servers === undefined) return { servers: {} };
 	if (!isPlainRecord(servers)) {
 		throw new Error("openclaw config field mcp.servers must be an object");
 	}
-	return { path, servers };
+	return { servers };
 }
 
 function canonicalJsonEqual(left: unknown, right: unknown): boolean {
