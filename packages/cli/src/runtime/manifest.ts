@@ -281,6 +281,7 @@ export interface RuntimeConvergenceResult {
 	mode: "normal" | "degraded-offline";
 	enabledRuntimes: string[];
 	installErrors: string[];
+	failureHealthImpact: "runtime" | "resource_projection" | null;
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames: string[];
 	outputs: {
@@ -310,6 +311,13 @@ export interface RuntimeConvergenceResult {
 		instanceSemaphores: string[];
 		bootFinished: string;
 	};
+}
+
+class RuntimeResourceProjectionError extends Error {
+	constructor(error: unknown) {
+		super(error instanceof Error ? error.message : String(error), { cause: error });
+		this.name = "RuntimeResourceProjectionError";
+	}
 }
 
 export function planHostedAgentPluginConvergence(input: {
@@ -1540,21 +1548,34 @@ function resolvedRuntimeServiceSettings(
 	settings: RuntimeRunSettings,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings {
-	return mergeRuntimeServiceEnvWithProviderPlaceholders(
+	const merged = mergeRuntimeServiceEnvWithProviderPlaceholders(
 		runtime,
 		service,
-		hermesDashboardServiceSettings(manifest, runtime, service, settings),
+		settings,
 		providerEnv,
 	);
+	return runtime === "hermes" && service === "dashboard"
+		? (withHermesDashboardAuthEnvironment(manifest, merged) ?? merged)
+		: merged;
+}
+
+function resolvedRuntimeSettings(
+	manifest: RuntimeManifest,
+	runtime: string,
+	settings: RuntimeRunSettings | undefined,
+	providerEnv: Record<string, string>,
+): RuntimeRunSettings | undefined {
+	const merged = mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv);
+	return runtime === "hermes" ? withHermesDashboardAuthEnvironment(manifest, merged) : merged;
 }
 
 function mergeRuntimeSecretEnv(
 	runtimeName: string,
-	runtime: RuntimeManifest["runtimes"][string],
+	settings: RuntimeRunSettings | undefined,
 	providerSecretEnv: Record<string, string>,
 ): Record<string, string> {
 	const merged = { ...providerSecretEnv };
-	const runtimeSecretEnv = runtime.run?.secretEnv ?? {};
+	const runtimeSecretEnv = settings?.secretEnv ?? {};
 	for (const [envName, ref] of Object.entries(runtimeSecretEnv)) {
 		const existing = merged[envName];
 		if (existing !== undefined && existing !== ref) {
@@ -1564,7 +1585,7 @@ function mergeRuntimeSecretEnv(
 		}
 		merged[envName] = ref;
 	}
-	for (const envName of Object.keys(runtime.run?.env ?? {})) {
+	for (const envName of Object.keys(settings?.env ?? {})) {
 		if (merged[envName] !== undefined) {
 			throw new Error(`runtime ${runtimeName} defines ${envName} in both env and secretEnv`);
 		}
@@ -3782,6 +3803,7 @@ function installOpenClawChannelPlugins(input: {
 		const currentRevision = () =>
 			channelPluginCurrentRevision({
 				channel,
+				specs,
 				commandPath: input.commandPath,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
@@ -3816,31 +3838,20 @@ function runPluginInstallWithFallback(
 	let lastError: unknown = null;
 	for (const spec of specs) {
 		try {
-			runRuntimeUserCommand(commandPath, ["plugins", "install", spec], "", home, workspaceRoot);
+			runRuntimeUserCommand(
+				commandPath,
+				["plugins", "install", spec, "--force"],
+				"",
+				home,
+				workspaceRoot,
+			);
 			return;
 		} catch (error) {
-			if (isOpenClawPluginAlreadyInstalledError(error)) return;
 			lastError = error;
 		}
 	}
 	if (lastError instanceof Error) throw lastError;
 	throw new Error(`OpenClaw plugin install failed for ${specs.join(" or ")}`);
-}
-
-function isOpenClawPluginAlreadyInstalledError(error: unknown): boolean {
-	const text = commandErrorText(error).toLowerCase();
-	return text.includes("plugin already exists:");
-}
-
-function commandErrorText(error: unknown): string {
-	if (typeof error !== "object" || error === null) return String(error);
-	const parts: string[] = [];
-	const output = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
-	for (const value of [output.message, output.stdout, output.stderr]) {
-		if (typeof value === "string") parts.push(value);
-		else if (Buffer.isBuffer(value)) parts.push(value.toString("utf8"));
-	}
-	return parts.join("\n");
 }
 
 function channelPluginEntries(
@@ -4728,13 +4739,14 @@ function channelPluginDesiredRevision(input: {
 	return runtimeContentSha256({
 		runtime: "openclaw",
 		pluginIdentity: input.channel,
-		installerCommand: ["plugins", "install"],
+		installerCommand: ["plugins", "install", "--force"],
 		specs: input.specs,
 	});
 }
 
 function channelPluginCurrentRevision(input: {
 	channel: string;
+	specs: readonly string[];
 	commandPath: string;
 	home: string;
 	workspaceRoot: string;
@@ -4763,6 +4775,7 @@ function channelPluginCurrentRevision(input: {
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
 		if (
 			plugin.id !== input.channel ||
+			!input.specs.some((spec) => openClawPluginInstallMatchesSpec(install, spec)) ||
 			plugin.status !== "loaded" ||
 			!plugin.enabled ||
 			!version ||
@@ -4803,6 +4816,17 @@ function channelPluginCurrentRevision(input: {
 	} catch {
 		return null;
 	}
+}
+
+function openClawPluginInstallMatchesSpec(
+	install: z.infer<typeof openClawPluginInspectSchema>["install"],
+	spec: string,
+): boolean {
+	const recordedSpecs = [install.spec, install.resolvedSpec];
+	if (install.source === "clawhub" && install.clawhubPackage) {
+		recordedSpecs.push(`clawhub:${install.clawhubPackage}`);
+	}
+	return recordedSpecs.includes(spec);
 }
 
 function verifiedReceiptCurrentRevision(
@@ -5193,14 +5217,21 @@ function runtimeProgramRevisionForManifest(
 	openClawOwnerBrowserBootstrapSupported: boolean,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
+	const providerEnvironment = desiredRuntime
+		? hostedProviderEnvironment(manifest, runtime)
+		: { placeholderEnv: {}, secretEnv: {} };
+	const runtimeSettings = desiredRuntime
+		? resolvedRuntimeSettings(
+				manifest,
+				runtime,
+				desiredRuntime.run,
+				providerEnvironment.placeholderEnv,
+			)
+		: undefined;
 	const runtimeSecretRefs = desiredRuntime
 		? [
 				...Object.values(
-					mergeRuntimeSecretEnv(
-						runtime,
-						desiredRuntime,
-						hostedProviderEnvironment(manifest, runtime).secretEnv,
-					),
+					mergeRuntimeSecretEnv(runtime, runtimeSettings, providerEnvironment.secretEnv),
 				),
 				...hostedWhatsAppAuthCredentials(manifest)
 					.filter(
@@ -5270,9 +5301,14 @@ function validateRuntimeManifestPlan(
 			: { placeholderEnv: {}, secretEnv: {} };
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
-		mergeRuntimeEnvWithProviderPlaceholders(name, runtime.run, providerPlaceholderEnv);
+		const runtimeSettings = resolvedRuntimeSettings(
+			manifest,
+			runtimeName,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
 		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
 			: {};
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
@@ -5351,20 +5387,18 @@ function planRuntimeSystemdUserPrograms(input: {
 	return programs;
 }
 
-function hermesDashboardServiceSettings(
+function withHermesDashboardAuthEnvironment(
 	manifest: RuntimeManifest,
-	runtime: RuntimeName,
-	service: RuntimeServiceName,
-	settings: RuntimeRunSettings,
-): RuntimeRunSettings {
-	if (runtime !== "hermes" || service !== "dashboard") return settings;
+	settings: RuntimeRunSettings | undefined,
+): RuntimeRunSettings | undefined {
 	const auth = manifest.hermesDashboardAuth;
 	if (!auth) return settings;
 	if (!auth.activation.enabled) {
 		throw new Error("Hermes password authentication is disabled");
 	}
 	return {
-		...settings,
+		...(settings ?? {}),
+		prependPath: settings?.prependPath ?? [],
 		env: {
 			...(settings?.env ?? {}),
 			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: auth.username,
@@ -5403,13 +5437,14 @@ function resolveRuntimeRunConfigs(input: {
 		: { placeholderEnv: {}, secretEnv: {} };
 	const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 		providerEnvironment;
-	const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
-		input.name,
+	const runtimeRunSettings = resolvedRuntimeSettings(
+		input.manifest,
+		runtimeName,
 		input.runtime.run,
 		providerPlaceholderEnv,
 	);
 	const secretEnv = input.runtime.enabled
-		? mergeRuntimeSecretEnv(input.name, input.runtime, providerSecretEnv)
+		? mergeRuntimeSecretEnv(input.name, runtimeRunSettings, providerSecretEnv)
 		: {};
 	const secretFilePath = null;
 	const runtime = buildRuntimeRunConfig({
@@ -5463,6 +5498,7 @@ function runtimeConvergenceWithoutApply(input: {
 	workspaceRoot: string;
 	enabledRuntimes: string[];
 	installErrors: string[];
+	failureHealthImpact?: "runtime" | "resource_projection";
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
@@ -5475,6 +5511,7 @@ function runtimeConvergenceWithoutApply(input: {
 		mode: input.load.offline ? "degraded-offline" : "normal",
 		enabledRuntimes: input.enabledRuntimes,
 		installErrors: input.installErrors,
+		failureHealthImpact: input.failureHealthImpact ?? "runtime",
 		projectedProviderIds: input.projectedProviderIds,
 		agentPluginFailedNames: input.agentPluginFailedNames ?? [],
 		outputs: {
@@ -5559,9 +5596,14 @@ function validateRuntimeProjectionPlan(input: {
 			: { placeholderEnv: {}, secretEnv: {} };
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
-		mergeRuntimeEnvWithProviderPlaceholders(name, runtime.run, providerPlaceholderEnv);
+		const runtimeSettings = resolvedRuntimeSettings(
+			manifest,
+			runtimeName,
+			runtime.run,
+			providerPlaceholderEnv,
+		);
 		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
+			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
 			: {};
 		scopedSecretValues(secretValues, Object.values(secretEnv));
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
@@ -6440,7 +6482,7 @@ export function convergeRuntimeManifest(
 				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
 					agentPluginFailedNames.add(name);
 				}
-				throw error;
+				throw new RuntimeResourceProjectionError(error);
 			}
 			agentPluginTransaction = planned.transaction;
 			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
@@ -6748,6 +6790,7 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) {
 			throw new Error(installErrors.join("; "));
 		}
+		const skillProjectionErrors: string[] = [];
 		for (const name of HOSTED_RUNTIME_TARGETS) {
 			try {
 				applyHostedBundledSkills(
@@ -6759,7 +6802,7 @@ export function convergeRuntimeManifest(
 					openClawSkillDriver,
 				);
 			} catch (error) {
-				installErrors.push(
+				skillProjectionErrors.push(
 					`runtime ${name} skill projection failed: ${
 						error instanceof Error ? error.message : String(error)
 					}`,
@@ -6775,7 +6818,7 @@ export function convergeRuntimeManifest(
 				hermesSkillNativeReconciler,
 			);
 		} catch (error) {
-			installErrors.push(
+			skillProjectionErrors.push(
 				`runtime hermes sourced Skill projection failed: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
@@ -6792,7 +6835,7 @@ export function convergeRuntimeManifest(
 					openClawSkillDriver,
 				);
 			} catch (error) {
-				installErrors.push(
+				skillProjectionErrors.push(
 					`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
@@ -6804,8 +6847,13 @@ export function convergeRuntimeManifest(
 				`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
+		installErrors.push(...skillProjectionErrors);
 		if (installErrors.length > 0) {
-			throw new Error(installErrors.join("; "));
+			const error = new Error(installErrors.join("; "));
+			if (installErrors.length === skillProjectionErrors.length) {
+				throw new RuntimeResourceProjectionError(error);
+			}
+			throw error;
 		}
 
 		for (const runtime of ["hermes", "openclaw"] as const) {
@@ -7055,7 +7103,11 @@ export function convergeRuntimeManifest(
 			}
 			agentPluginMutationAttempted = true;
 		}
-		appliedAgentPluginTransaction?.apply();
+		try {
+			appliedAgentPluginTransaction?.apply();
+		} catch (error) {
+			throw new RuntimeResourceProjectionError(error);
+		}
 		if (
 			officialServicePlan.pending.length > 0 &&
 			systemdUnits.egressSidecarActive &&
@@ -7124,6 +7176,7 @@ export function convergeRuntimeManifest(
 			mode: load.offline ? "degraded-offline" : "normal",
 			enabledRuntimes,
 			installErrors,
+			failureHealthImpact: null,
 			projectedProviderIds,
 			agentPluginFailedNames: [],
 			outputs: {
@@ -7176,7 +7229,7 @@ export function convergeRuntimeManifest(
 					for (const name of opts.preparedHostedAgentPlugins?.desired.keys() ?? []) {
 						agentPluginFailedNames.add(name);
 					}
-					throw error;
+					throw new RuntimeResourceProjectionError(error);
 				}
 			}
 			opts.commitAuthority?.(convergence, {
@@ -7224,12 +7277,14 @@ export function convergeRuntimeManifest(
 		}
 		return convergence;
 	} catch (error) {
+		const resourceProjectionFailure = error instanceof RuntimeResourceProjectionError;
 		if (agentPluginMutationAttempted) {
 			for (const name of agentPluginTransaction?.mutationNames ?? []) {
 				agentPluginFailedNames.add(name);
 			}
 		}
 		const applyError = error instanceof Error ? error.message : String(error);
+		const installErrorCountBeforeRollback = installErrors.length;
 		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
 		const rollbackRequiresQuiesce =
 			systemdMutated || agentPluginQuiesceAttempted || agentPluginMutationAttempted;
@@ -7345,6 +7400,7 @@ export function convergeRuntimeManifest(
 				"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 			);
 		}
+		const rollbackPreservedRuntimeHealth = installErrors.length === installErrorCountBeforeRollback;
 		installErrors.unshift(`runtime apply failed: ${applyError}`);
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -7352,6 +7408,10 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
+			failureHealthImpact:
+				resourceProjectionFailure && rollbackPreservedRuntimeHealth
+					? "resource_projection"
+					: "runtime",
 			projectedProviderIds: Object.fromEntries(
 				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
 					runtime,

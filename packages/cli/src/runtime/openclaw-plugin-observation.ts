@@ -36,6 +36,7 @@ export const openClawPluginInspectSchema = z
 				gitUrl: z.string().min(1).optional(),
 				gitRef: z.string().min(1).optional(),
 				gitCommit: z.string().min(1).optional(),
+				clawhubPackage: z.string().min(1).optional(),
 			})
 			.passthrough(),
 	})

@@ -1370,7 +1370,7 @@ function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<stri
 		},
 		install: {
 			source: "clawhub",
-			spec: "clawhub:@openclaw/whatsapp",
+			clawhubPackage: "@openclaw/whatsapp",
 			installPath: dirname(pluginSource),
 			version: "2026.7.1",
 			integrity: "sha256-test",
@@ -13490,8 +13490,8 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
   exit 0
@@ -13640,7 +13640,9 @@ exit 64
 					resetTriggers: ["/new"],
 				});
 			}
-			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+				"plugins install @openclaw/discord --force\n",
+			);
 			const openclawRunConfig = JSON.parse(
 				readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
 			);
@@ -14429,7 +14431,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1\\n'
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
   mkdir -p '${dirname(openclawPluginSource)}'
   printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
   exit 0
@@ -14530,7 +14532,7 @@ exit 0
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
+if [ "$*" = "plugins install @openclaw/discord --force" ]; then
   echo "plugin install failed" >&2
   exit 73
 fi
@@ -14796,8 +14798,8 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   exit 0
 fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
@@ -14898,8 +14900,8 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
   exit 0
@@ -14990,10 +14992,12 @@ exit 64
 		expect(patches[1].channels.telegram).toEqual(telegramChannel);
 		expect(patches[2].session).toEqual({ dmScope: null });
 		expect(patches[2].channels.telegram).toBeNull();
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+			"plugins install @openclaw/discord --force\n",
+		);
 	});
 
-	it("treats already-installed OpenClaw channel plugins as converged", () => {
+	it("reconciles an already-installed OpenClaw channel plugin with forced provenance", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -15017,11 +15021,10 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   cat > '${openclawPatch}'
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
-  printf 'plugin already exists: %s\\n' "$HOME/.openclaw/npm/projects/openclaw-discord/node_modules/\${3:-}" >&2
-  printf 'Use openclaw plugins update to upgrade the tracked plugin.\\n' >&2
-  exit 1
+if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
+  printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
+  exit 0
 fi
 if [ "$*" = "plugins inspect discord --json" ]; then
   printf '%s\\n' '${JSON.stringify(openClawDiscordPluginInspectFixture(openclawPluginSource))}'
@@ -15078,7 +15081,9 @@ exit 64
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+			"plugins install @openclaw/discord --force\n",
+		);
 		const patchText = readFileSync(openclawPatch, "utf-8");
 		expect(patchText).toContain('"discord"');
 		expect(patchText).toContain('"plugins"');
