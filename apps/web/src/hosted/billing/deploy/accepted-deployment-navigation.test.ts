@@ -18,6 +18,46 @@ function deferred<T>() {
 }
 
 describe("accepted deployment navigation", () => {
+	test("opens the canonical route before deployment hydration settles", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const authoritative = hostedDeploymentFixture({
+			id: "hdep_fast_handoff",
+			agentId: "11111111-1111-4111-8111-111111111111",
+			status: "creating",
+		});
+		const hydration = deferred<HostedDeployment>();
+		const events: string[] = [];
+
+		await navigateToAcceptedDeployment({
+			agentId: authoritative.agent_id,
+			deploymentId: authoritative.resource.id,
+			getDeployment: async () => {
+				events.push("hydrate");
+				return hydration.promise;
+			},
+			navigate: async ({ href }) => {
+				events.push(`navigate:${href}`);
+			},
+			queryClient,
+		});
+
+		expect(events).toEqual(["hydrate", "navigate:/agents/11111111-1111-4111-8111-111111111111"]);
+		expect(queryClient.getQueryData(billingKeys.deployments)).toBeUndefined();
+
+		hydration.resolve(authoritative);
+		for (
+			let turn = 0;
+			turn < 10 && !queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+			turn += 1
+		) {
+			await Promise.resolve();
+		}
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
+			authoritative,
+		]);
+		queryClient.clear();
+	});
+
 	test("cancels a stale list before authoritative cache handoff and navigation", async () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const staleList = deferred<HostedDeployment[]>();

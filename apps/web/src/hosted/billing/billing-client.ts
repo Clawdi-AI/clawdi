@@ -577,10 +577,13 @@ export function createBillingClient(
 				throw terminalDeployRequestError(status);
 			}
 			if (projection.kind === "operation") {
-				return acceptDeclarativeOperation({
-					operation: projection.operation,
-					deploymentId: projection.deploymentId,
-				});
+				return {
+					...acceptDeclarativeOperation({
+						operation: projection.operation,
+						deploymentId: projection.deploymentId,
+					}),
+					agentId: projection.agentId,
+				};
 			}
 			if (projection.kind === "operation_name") {
 				const remainingMs = deadline - Date.now();
@@ -602,16 +605,22 @@ export function createBillingClient(
 				} finally {
 					globalThis.clearTimeout(operationTimeoutId);
 				}
-				return acceptDeclarativeOperation({
-					operation,
-					deploymentId: projection.deploymentId,
-				});
+				return {
+					...acceptDeclarativeOperation({
+						operation,
+						deploymentId: projection.deploymentId,
+					}),
+					agentId: projection.agentId,
+				};
 			}
 			if (projection.kind === "deployment") {
-				return acceptDeclarativeOperation({
-					deploymentId: projection.deploymentId,
-					operation: null,
-				});
+				return {
+					...acceptDeclarativeOperation({
+						deploymentId: projection.deploymentId,
+						operation: null,
+					}),
+					agentId: projection.agentId,
+				};
 			}
 			if (projection.kind === "invalid_success") {
 				return acceptDeclarativeOperation({ deploymentId: null, operation: null });
@@ -829,8 +838,8 @@ export function createBillingClient(
 		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/subscription/checkout", {
+					params: { header: { "Idempotency-Key": idempotencyKey } },
 					body,
-					headers: { "Idempotency-Key": idempotencyKey },
 				}),
 			),
 		quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>

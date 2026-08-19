@@ -93,7 +93,7 @@ export type SubscriptionCreateOutcomeView =
 	| {
 			flowType: "subscription_activation";
 			target:
-				| { kind: "deployment"; deploymentId: string }
+				| { kind: "deployment"; agentId: string | null; deploymentId: string }
 				| { kind: "deploy_request"; deployRequestId: string };
 			currentPeriodEnd: string | null;
 			entitledUntil: string | null;
@@ -174,10 +174,10 @@ export function subscriptionCreateOutcome(
 	const deploymentId = result.deployment_id?.trim();
 	const deployRequestId = result.deploy_request_id?.trim();
 	let target:
-		| { kind: "deployment"; deploymentId: string }
+		| { kind: "deployment"; agentId: string | null; deploymentId: string }
 		| { kind: "deploy_request"; deployRequestId: string };
 	if (deploymentId) {
-		target = { kind: "deployment", deploymentId };
+		target = { kind: "deployment", agentId: result.agent_id?.trim() || null, deploymentId };
 	} else if (deployRequestId) {
 		target = { kind: "deploy_request", deployRequestId };
 	} else {

@@ -177,6 +177,7 @@ describe("subscription creation adapter", () => {
 			checkout_url: "",
 			subscription_id: "csub_contract",
 			invoice_id: null,
+			agent_id: "33333333-3333-4333-8333-333333333333",
 			deploy_request_id: "subscription-create-test",
 			deployment_id: "hdep_created",
 			deployment_name: null,
@@ -189,7 +190,11 @@ describe("subscription creation adapter", () => {
 		};
 		expect(subscriptionCreateOutcome(activation)).toEqual({
 			flowType: "subscription_activation",
-			target: { kind: "deployment", deploymentId: "hdep_created" },
+			target: {
+				kind: "deployment",
+				agentId: "33333333-3333-4333-8333-333333333333",
+				deploymentId: "hdep_created",
+			},
 			currentPeriodEnd: "2027-07-15T00:00:00Z",
 			entitledUntil: "2027-07-16T00:00:00Z",
 		});

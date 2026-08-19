@@ -197,8 +197,8 @@ export class HostedDeployClient {
 	async checkout(body: HostedDeployCheckoutRequest, idempotencyKey: string) {
 		return unwrapHosted(
 			await this.client.POST("/v2/subscription/checkout", {
+				params: { header: { "Idempotency-Key": idempotencyKey } },
 				body,
-				headers: { "Idempotency-Key": idempotencyKey },
 			}),
 		);
 	}

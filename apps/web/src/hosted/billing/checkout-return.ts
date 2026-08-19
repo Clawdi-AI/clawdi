@@ -16,7 +16,7 @@ const MARKER_PARAMS = [
 
 export type CheckoutReturnNavigationTarget =
 	| { kind: "deploy_request"; deployRequestId: string }
-	| { kind: "deployment"; deploymentId: string };
+	| { kind: "deployment"; agentId?: string | null; deploymentId: string };
 
 export function checkoutReturnWasCanceled(searchStr: string): boolean {
 	return new URLSearchParams(searchStr).get("checkout") === "cancel";

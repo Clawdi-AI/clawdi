@@ -408,16 +408,19 @@ export type HostedDeployRequestProjection =
 	  }
 	| {
 			kind: "operation";
+			agentId: string | null;
 			deploymentId: string | null;
 			operation: HostedDeployOperation;
 	  }
 	| {
 			kind: "operation_name";
+			agentId: string | null;
 			deploymentId: string | null;
 			operationName: string;
 	  }
 	| {
 			kind: "deployment";
+			agentId: string | null;
 			completed: boolean;
 			deploymentId: string;
 	  }
@@ -436,17 +439,19 @@ export function projectHostedDeployRequest(
 		return { kind: "terminal", requestStatus: status.request_status };
 	}
 	const deploymentId = status.lineage_tail?.deployment_id?.trim() || null;
+	const agentId = status.lineage_tail?.agent_id?.trim() || null;
 	if (deploymentId) {
 		return {
 			kind: "deployment",
+			agentId,
 			completed: status.request_status === "succeeded",
 			deploymentId,
 		};
 	}
 	const operation = status.lineage_tail?.operation ?? null;
-	if (operation) return { kind: "operation", deploymentId, operation };
+	if (operation) return { kind: "operation", agentId, deploymentId, operation };
 	const operationName = status.lineage_tail?.operation_name?.trim() || "";
-	if (operationName) return { kind: "operation_name", deploymentId, operationName };
+	if (operationName) return { kind: "operation_name", agentId, deploymentId, operationName };
 	if (status.request_status === "succeeded") return { kind: "invalid_success" };
 	return { kind: "wait" };
 }

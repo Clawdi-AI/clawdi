@@ -389,13 +389,19 @@ describe("hosted deploy request projection", () => {
 					request_status: "ready",
 					lineage_tail: {
 						deployment_id: "hdep_test",
+						agent_id: "55555555-5555-4555-8555-555555555555",
 						operation_name: "operations/deploy-test",
 						lineage_version: 1,
 						lineage_state: "processing",
 					},
 				}),
 			),
-		).toEqual({ kind: "deployment", completed: false, deploymentId: "hdep_test" });
+		).toEqual({
+			kind: "deployment",
+			agentId: "55555555-5555-4555-8555-555555555555",
+			completed: false,
+			deploymentId: "hdep_test",
+		});
 		expect(
 			projectHostedDeployRequest(
 				requestStatus({
@@ -409,6 +415,7 @@ describe("hosted deploy request projection", () => {
 			),
 		).toEqual({
 			kind: "operation_name",
+			agentId: null,
 			deploymentId: null,
 			operationName: "operations/deploy-test",
 		});
@@ -426,7 +433,12 @@ describe("hosted deploy request projection", () => {
 					},
 				}),
 			),
-		).toEqual({ kind: "deployment", completed: false, deploymentId: "hdep_test" });
+		).toEqual({
+			kind: "deployment",
+			agentId: null,
+			completed: false,
+			deploymentId: "hdep_test",
+		});
 		expect(projectHostedDeployRequest(requestStatus({}))).toEqual({ kind: "wait" });
 		expect(projectHostedDeployRequest(requestStatus({ request_status: "succeeded" }))).toEqual({
 			kind: "invalid_success",
