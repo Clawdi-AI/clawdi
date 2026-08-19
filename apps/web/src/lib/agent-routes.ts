@@ -388,14 +388,6 @@ export function agentPluginDetailHref(agentId: string, pluginName: string): stri
 	return `${agentSectionHref(agentId, "plugins")}/${encodeURIComponent(pluginName)}`;
 }
 
-/** Typed TanStack Router options for a Plugin viewed in the Agent shell. */
-export function agentPluginDetailLink(agentId: string, pluginName: string) {
-	return linkOptions({
-		to: "/agents/$id/plugins/$pluginName",
-		params: { id: agentId, pluginName },
-	});
-}
-
 function safeDecodeURIComponent(value: string): string {
 	try {
 		return decodeURIComponent(value);

@@ -38,6 +38,8 @@ import {
 } from "./agent-plugin-model";
 
 const DESIRED_QUERY_KEY = ["get", "/v1/agents/{agent_id}/agent-plugins"] as const;
+const ACTIVE_INSTALL_POLL_MS = 5_000;
+const STALLED_INSTALL_POLL_MS = 60_000;
 
 type PendingPluginMutation = {
 	name: string;
@@ -87,8 +89,8 @@ export function AgentPluginsSurface({
 				return plugins.some(
 					(plugin) => plugin.convergence === "not_observed" && !agentPluginIsStalled(plugin, now),
 				)
-					? 5_000
-					: 60_000;
+					? ACTIVE_INSTALL_POLL_MS
+					: STALLED_INSTALL_POLL_MS;
 			},
 			refetchIntervalInBackground: false,
 		},
@@ -174,7 +176,6 @@ export function AgentPluginsSurface({
 			toast.success("Plugin retry started");
 		} catch (error) {
 			toast.error("Couldn't retry plugin", { description: normalizeApiError(error) });
-			void refreshDesired();
 			throw error;
 		} finally {
 			mutationLock.current = false;
@@ -260,6 +261,7 @@ export function AgentPluginsSurface({
 					pendingAction={pending?.name === selectedItem.name ? pending.action : null}
 					desiredStateError={desiredError !== null}
 					desiredStateRetrying={desiredQuery.isFetching}
+					mutationsBlocked={pending !== null}
 					onBack={closePlugin}
 					onInstall={install}
 					onRemove={remove}

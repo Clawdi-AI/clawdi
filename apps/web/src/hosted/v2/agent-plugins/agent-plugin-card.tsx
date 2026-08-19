@@ -11,12 +11,9 @@ import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
 import {
 	type AgentPluginInventoryItem,
+	agentPluginActionState,
 	agentPluginComponentSummary,
-	agentPluginInstallability,
-	agentPluginStatusPresentation,
 	pluginDisplayName,
-	pluginHasUpdate,
-	pluginVersion,
 } from "./agent-plugin-model";
 
 export type AgentPluginPendingAction = "install" | "remove" | "retry" | null;
@@ -41,18 +38,8 @@ export function AgentPluginCard({
 	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
 	const title = pluginDisplayName(item);
-	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
-	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
-	const hasUpdate = pluginHasUpdate(item);
-	const installFailed = item.desired?.convergence === "failed";
-	const canRetry = Boolean(installFailed && item.catalog && installability?.installable);
-	const canInstall = Boolean(
-		item.catalog && installability?.installable && !installFailed && (!item.desired || hasUpdate),
-	);
-	const version =
-		hasUpdate && item.desired && item.catalog
-			? `v${item.desired.version} → v${item.catalog.version}`
-			: `v${pluginVersion(item)}`;
+	const { status, installability, hasUpdate, canInstall, canRetry, version } =
+		agentPluginActionState(item, runtime);
 
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">

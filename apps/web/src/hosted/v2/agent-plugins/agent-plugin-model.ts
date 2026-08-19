@@ -23,7 +23,7 @@ const EXACT_SEMVER_PATTERN =
 	/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 /** SemVer precedence; null when either side is not exact SemVer. */
-export function compareAgentPluginVersions(left: string, right: string): number | null {
+function compareAgentPluginVersions(left: string, right: string): number | null {
 	const a = EXACT_SEMVER_PATTERN.exec(left);
 	const b = EXACT_SEMVER_PATTERN.exec(right);
 	if (!a || !b) return null;
@@ -113,7 +113,7 @@ export function pluginHasUpdate(item: AgentPluginInventoryItem): boolean {
 }
 
 /** After this long without an observation, the agent — not the install — is the holdup. */
-export const AGENT_PLUGIN_STALL_THRESHOLD_MS = 10 * 60 * 1000;
+const AGENT_PLUGIN_STALL_THRESHOLD_MS = 10 * 60 * 1000;
 
 export function agentPluginIsStalled(
 	desired: AgentPluginDesiredState,
@@ -199,8 +199,40 @@ export function agentPluginStatusPresentation(
 	}
 }
 
-export function agentPluginComponentSummary(entry: AgentPluginCatalogEntry | null): string {
-	if (!entry) return "Component details unavailable";
+export type AgentPluginActionState = {
+	status: ReturnType<typeof agentPluginStatusPresentation> | null;
+	installability: AgentPluginInstallability | null;
+	hasUpdate: boolean;
+	canInstall: boolean;
+	canRetry: boolean;
+	version: string;
+};
+
+/** Shared card/detail action derivation — keep the two surfaces from drifting. */
+export function agentPluginActionState(
+	item: AgentPluginInventoryItem,
+	runtime: HostedRuntime,
+): AgentPluginActionState {
+	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
+	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
+	const hasUpdate = pluginHasUpdate(item);
+	const installFailed = item.desired?.convergence === "failed";
+	return {
+		status,
+		installability,
+		hasUpdate,
+		canRetry: Boolean(installFailed && item.catalog && installability?.installable),
+		canInstall: Boolean(
+			item.catalog && installability?.installable && !installFailed && (!item.desired || hasUpdate),
+		),
+		version:
+			hasUpdate && item.desired && item.catalog
+				? `v${item.desired.version} → v${item.catalog.version}`
+				: `v${pluginVersion(item)}`,
+	};
+}
+
+export function agentPluginComponentSummary(entry: AgentPluginCatalogEntry): string {
 	const skills = entry.components.skills.length;
 	const servers = Object.keys(entry.components.mcpServers).length;
 	return [
