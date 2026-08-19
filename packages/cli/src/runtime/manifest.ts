@@ -178,9 +178,11 @@ import {
 import {
 	ensureManagedOpenClawProviderPlugin,
 	managedOpenClawConfigPath,
+	managedOpenClawProviderPluginInstallDir,
 	managedOpenClawProviderPluginMutationTargets,
 	managedOpenClawStateDir,
 	openClawProviderEnvVarsSdkPath,
+	stageManagedOpenClawProviderMarker,
 } from "./openclaw-managed-provider-plugin";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -5840,11 +5842,11 @@ function runtimeColdInstallMutationPlan(
 	};
 }
 
-function excludeColdInstallSnapshotCoverage(
+function excludeRuntimeSnapshotCoverage(
 	plan: RuntimeManagedMutationPlan,
-	coldInstallPlan: RuntimeManagedMutationPlan,
+	coveragePlan: RuntimeManagedMutationPlan,
 ): RuntimeManagedMutationPlan {
-	const contentRoots = coldInstallPlan.runtimeUserTargets.map((path) => resolve(path));
+	const contentRoots = coveragePlan.runtimeUserTargets.map((path) => resolve(path));
 	const coveredByContentRoot = (path: string): boolean => {
 		const candidate = resolve(path);
 		return contentRoots.some((root) => {
@@ -5852,7 +5854,7 @@ function excludeColdInstallSnapshotCoverage(
 			return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 		});
 	};
-	const coldMetadata = new Set(coldInstallPlan.metadataTargets.map((path) => resolve(path)));
+	const coveredMetadata = new Set(coveragePlan.metadataTargets.map((path) => resolve(path)));
 	return {
 		...plan,
 		runtimeUserTargets: plan.runtimeUserTargets.filter((path) => !coveredByContentRoot(path)),
@@ -5860,8 +5862,27 @@ function excludeColdInstallSnapshotCoverage(
 			(path) => !coveredByContentRoot(path),
 		),
 		metadataTargets: plan.metadataTargets.filter(
-			(path) => !coveredByContentRoot(path) && !coldMetadata.has(resolve(path)),
+			(path) => !coveredByContentRoot(path) && !coveredMetadata.has(resolve(path)),
 		),
+	};
+}
+
+function managedOpenClawMarkerBootstrapMutationPlan(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+): RuntimeManagedMutationPlan | null {
+	if (!hasManagedClawdiOpenClawApiKeyProjection(manifest)) return null;
+	const target = managedOpenClawProviderPluginInstallDir(
+		hostedRuntimeProjectionHome(manifest, paths),
+	);
+	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
+	return {
+		rootTargets: [],
+		trustedRootDirectories: [],
+		runtimeUserTargets: [target],
+		runtimeUserTrustedRoots,
+		runtimeUserSymlinkTargets: [],
+		metadataTargets: mutationAncestorMetadataTargets([target], runtimeUserTrustedRoots),
 	};
 }
 
@@ -6319,6 +6340,8 @@ export function convergeRuntimeManifest(
 	const coldInstallSnapshot = coldInstallPlan
 		? captureRuntimeLiveSnapshot(coldInstallPlan.snapshot)
 		: null;
+	const markerBootstrapPlan = managedOpenClawMarkerBootstrapMutationPlan(manifest, paths);
+	let markerBootstrapSnapshot: RuntimeLiveSnapshot | null = null;
 	try {
 		if (coldInstallPlan) {
 			hostedRuntimeContract.assertPlatformRoots();
@@ -6341,7 +6364,34 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
+		if (markerBootstrapPlan) {
+			markerBootstrapSnapshot = captureRuntimeLiveSnapshot(markerBootstrapPlan);
+			ensureRuntimeUserOwnershipBoundaries([
+				...markerBootstrapPlan.metadataTargets,
+				...markerBootstrapPlan.runtimeUserTargets,
+			]);
+			const observation = observations.get("openclaw");
+			if (!observation?.commandPath) {
+				throw new Error("OpenClaw managed provider marker requires an installed runtime");
+			}
+			stageManagedOpenClawProviderMarker({
+				home: projectionHome,
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+			});
+		}
 	} catch (error) {
+		if (markerBootstrapSnapshot) {
+			try {
+				restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
+			} catch (rollbackError) {
+				installErrors.push(
+					`OpenClaw managed provider marker rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+		}
 		if (coldInstallSnapshot) {
 			try {
 				restoreRuntimeLiveSnapshot(coldInstallSnapshot);
@@ -6354,7 +6404,7 @@ export function convergeRuntimeManifest(
 			}
 		}
 		const message = error instanceof Error ? error.message : String(error);
-		if (installErrors.length === 0) installErrors.push(message);
+		if (!installErrors.includes(message)) installErrors.unshift(message);
 		return runtimeConvergenceWithoutApply({
 			load,
 			paths,
@@ -6439,10 +6489,12 @@ export function convergeRuntimeManifest(
 			observations,
 		});
 	} catch (error) {
+		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
 		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
 		throw error;
 	}
 	if (mutationPlan.systemdDriftErrors.length > 0) {
+		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
 		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
 		installErrors.push(...mutationPlan.systemdDriftErrors);
 		return runtimeConvergenceWithoutApply({
@@ -6462,17 +6514,22 @@ export function convergeRuntimeManifest(
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	let liveSnapshot: ReturnType<typeof captureRuntimeLiveSnapshot>;
 	try {
-		liveSnapshot = captureRuntimeLiveSnapshot(
-			coldInstallPlan
-				? excludeColdInstallSnapshotCoverage(mutationPlan.snapshot, coldInstallPlan.snapshot)
-				: mutationPlan.snapshot,
-		);
-		if (coldInstallSnapshot) {
-			for (const [path, node] of coldInstallSnapshot.entries) {
-				liveSnapshot.entries.set(path, node);
+		let snapshotPlan = mutationPlan.snapshot;
+		if (coldInstallPlan) {
+			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, coldInstallPlan.snapshot);
+		}
+		if (markerBootstrapPlan) {
+			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, markerBootstrapPlan);
+		}
+		liveSnapshot = captureRuntimeLiveSnapshot(snapshotPlan);
+		for (const earlierSnapshot of [coldInstallSnapshot, markerBootstrapSnapshot]) {
+			if (!earlierSnapshot) continue;
+			for (const [path, node] of earlierSnapshot.entries) {
+				if (!liveSnapshot.entries.has(path)) liveSnapshot.entries.set(path, node);
 			}
 		}
 	} catch (error) {
+		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
 		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
 		throw error;
 	}

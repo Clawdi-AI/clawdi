@@ -180,6 +180,7 @@ state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 plugin_root="$state_dir/extensions/clawdi-managed-provider"
 if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   test -f "$plugin_root/openclaw.plugin.json" || exit 1
+  test -f "$plugin_root/.source-path" || exit 1
   enabled=false
   status=disabled
   if [ -f "$plugin_root/.enabled" ]; then enabled=true; status=loaded; fi
