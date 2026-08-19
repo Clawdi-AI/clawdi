@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.core.skill_key import (
     RESERVED_SKILL_KEY_SUFFIXES,
     has_reserved_skill_key_suffix,
+    is_legacy_hidden_skill_key,
     is_valid_skill_key,
 )
 
@@ -57,6 +58,9 @@ class SkillUploadPreflightMiddleware:
                     if has_reserved_skill_key_suffix(skill_key):
                         await _send_reserved_skill_key(send)
                         return
+                    path = str(scope.get("path", ""))
+                    if path.startswith("/api/projects/") and is_legacy_hidden_skill_key(skill_key):
+                        break
                     if not is_valid_skill_key(skill_key):
                         await _send_invalid_skill_key(send)
                         return
