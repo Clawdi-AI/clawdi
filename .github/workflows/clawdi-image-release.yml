@@ -88,20 +88,22 @@ jobs:
         if: github.event_name == 'workflow_run'
         uses: actions/github-script@v8
         with:
+          retries: 3
           script: |
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+            const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRuns({
               ...context.repo,
               workflow_id: "clawdi-image-release.yml",
-              status: "completed",
-              per_page: 100,
+              status: "success",
+              per_page: 20,
             });
             const deployed = [];
             for (const run of runs) {
-              if (run.id === context.runId || run.conclusion !== "success") continue;
-              const jobs = await github.paginate(
-                github.rest.actions.listJobsForWorkflowRun,
-                { ...context.repo, run_id: run.id, filter: "latest", per_page: 100 },
-              );
+              const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+                ...context.repo,
+                run_id: run.id,
+                filter: "latest",
+                per_page: 100,
+              });
               const deployJobs = jobs.filter(
                 (job) => job.name === "deploy-vps" || job.name.startsWith("deploy-vps "),
               );

@@ -185,8 +185,12 @@ describe("backend image release workflow contract", () => {
 			(step) => step.name === "Resolve last successful deployment authority",
 		);
 		expect(authority?.uses).toBe("actions/github-script@v8");
+		expect(authority?.with?.retries).toBe(3);
 		const authorityScript = String(authority?.with?.script ?? "");
 		expect(authorityScript).toContain("listWorkflowRuns");
+		expect(authorityScript).toContain('status: "success"');
+		expect(authorityScript).toContain("per_page: 20");
+		expect(authorityScript).not.toContain("github.paginate");
 		expect(authorityScript).toContain("listJobsForWorkflowRun");
 		expect(authorityScript).toContain('job.name.startsWith("deploy-vps ")');
 		expect(authorityScript).toContain('deploy.conclusion !== "success"');
