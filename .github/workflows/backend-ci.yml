@@ -5,6 +5,7 @@ on:
     paths:
       - "backend/**"
       - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/package.json"
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
       - "config/deploy.yml"
@@ -33,6 +34,7 @@ on:
     paths:
       - "backend/**"
       - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/package.json"
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
       - "config/deploy.yml"
@@ -118,6 +120,7 @@ jobs:
               - ".github/workflows/backend-ci.yml"
             sidecar:
               - "packages/whatsapp-baileys-sidecar/**"
+              - "packages/cli/package.json"
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"

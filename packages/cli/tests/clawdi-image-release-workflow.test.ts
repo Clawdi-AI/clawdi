@@ -108,6 +108,7 @@ describe("backend image release workflow contract", () => {
 		const filterStep = backendCi.jobs.changes?.steps?.find((step) => step.id === "filter");
 		const filters = String(filterStep?.with?.filters);
 		const backendFilter = filters.slice(filters.indexOf("backend:\n"), filters.indexOf("test:\n"));
+		const sidecarFilter = filters.slice(filters.indexOf("sidecar:\n"));
 
 		expect(backendCi.jobs["lint-and-typecheck"]?.if).toBe(
 			"needs.changes.outputs.backend == 'true'",
@@ -123,10 +124,12 @@ describe("backend image release workflow contract", () => {
 		}
 		for (const path of [
 			"packages/whatsapp-baileys-sidecar/**",
+			"packages/cli/package.json",
 			"scripts/deploy-whatsapp-sidecar.sh",
 		]) {
 			expect(backendFilter).not.toContain(`- "${path}"`);
 		}
+		expect(sidecarFilter).toContain('- "packages/cli/package.json"');
 	});
 
 	test("coalesces main Backend CI only inside its image-input path gate", () => {
@@ -135,6 +138,7 @@ describe("backend image release workflow contract", () => {
 			expect.arrayContaining([
 				"backend/**",
 				"packages/whatsapp-baileys-sidecar/**",
+				"packages/cli/package.json",
 				"config/deploy.yml",
 				".dockerignore",
 				"packages/shared/src/api/api.generated.ts",
@@ -145,6 +149,7 @@ describe("backend image release workflow contract", () => {
 				".github/workflows/clawdi-image-release.yml",
 			]),
 		);
+		expect(backendCi.on?.pull_request?.paths).toContain("packages/cli/package.json");
 		expect(backendCi.on?.push?.paths).not.toContain("**");
 		expect(backendCi.on?.push?.paths).not.toContain("apps/web/src/**");
 		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(
@@ -232,10 +237,10 @@ describe("backend image release workflow contract", () => {
 		expect(releaseRunbook).not.toContain("immutable OCI image tag");
 	});
 
-	test("keeps CLI and release orchestration outside every automatic image release input", () => {
+	test("classifies the CLI manifest as deployment-only without circular release inputs", () => {
 		const baseline = calculateClawdiImageRevisions(repoRoot);
 		const probeVersion = `${cliVersion}-image-release-probe`;
-		const head = calculateClawdiImageRevisions(
+		const cliHead = calculateClawdiImageRevisions(
 			repoRoot,
 			new Map([
 				[
@@ -246,6 +251,24 @@ describe("backend image release workflow contract", () => {
 						`"version": "${probeVersion}"`,
 					),
 				],
+			]),
+		);
+		const cliPlan = classifyClawdiImageRelease({
+			base: baseline,
+			baseSha: "a".repeat(40),
+			head: cliHead,
+			headSha: "b".repeat(40),
+		});
+
+		expect(cliHead.backend).toBe(baseline.backend);
+		expect(cliHead.deployment).not.toBe(baseline.deployment);
+		expect(cliHead.sidecar).toBe(baseline.sidecar);
+		expect(cliPlan.changed).toEqual({ backend: false, deployment: true, sidecar: false });
+		expect(cliPlan.releaseRequired).toBe(true);
+
+		const ignoredHead = calculateClawdiImageRevisions(
+			repoRoot,
+			new Map([
 				[
 					"bun.lock",
 					replaceOnce(lockfileSource, `"version": "${cliVersion}"`, `"version": "${probeVersion}"`),
@@ -261,16 +284,16 @@ describe("backend image release workflow contract", () => {
 				["scripts/clawdi-image-release-plan.ts", `${releaseClassifierSource}\n// probe\n`],
 			]),
 		);
-		const plan = classifyClawdiImageRelease({
+		const ignoredPlan = classifyClawdiImageRelease({
 			base: baseline,
 			baseSha: "a".repeat(40),
-			head,
+			head: ignoredHead,
 			headSha: "b".repeat(40),
 		});
 
-		expect(head).toEqual(baseline);
-		expect(plan.changed).toEqual({ backend: false, deployment: false, sidecar: false });
-		expect(plan.releaseRequired).toBe(false);
+		expect(ignoredHead).toEqual(baseline);
+		expect(ignoredPlan.changed).toEqual({ backend: false, deployment: false, sidecar: false });
+		expect(ignoredPlan.releaseRequired).toBe(false);
 
 		const releaseGate = "steps.release-plan.outputs.release_required == 'true'";
 		for (const name of [
