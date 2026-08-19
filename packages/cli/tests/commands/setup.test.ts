@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { setup } from "../../src/commands/setup";
 import {
 	managedSkillReservationState,
@@ -25,6 +26,10 @@ import {
 } from "./helpers";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-setup-test-"));
+const HERMES_CONFIG_CLI_MOCK = resolve(
+	import.meta.dir,
+	"../../src/test-support/hermes-config-cli-mock.ts",
+);
 const ENV_KEYS = [
 	"CI",
 	"HOME",
@@ -74,6 +79,10 @@ beforeEach(() => {
 	const stubDir = join(home, "bin");
 	mkdirSync(stubDir, { recursive: true });
 	writeExecutable(join(stubDir, "codex"), "#!/bin/sh\nexit 0\n");
+	writeExecutable(
+		join(stubDir, "hermes"),
+		`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(HERMES_CONFIG_CLI_MOCK)} "$@"\n`,
+	);
 	writeExecutable(
 		join(stubDir, "openclaw"),
 		'#!/bin/sh\nif [ "$*" = "agents list --json" ]; then printf \'[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\\n\' "$HOME"; exit 0; fi\nprintf "%s\\n" "$@" > "$HOME/openclaw-mcp-args"\nexit 0\n',
@@ -257,12 +266,12 @@ describe("setup Hermes MCP registration", () => {
 		await setup({ agent: "hermes", yes: true, daemon: false });
 
 		const after = readFileSync(configPath, "utf-8");
-		expect(after).not.toContain("  clawdi-mcp:");
-		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
-		expect(after).not.toContain("      Authorization: placeholder");
-		expect(after).toContain("  clawdi:");
-		expect(after).toContain('    command: "clawdi"');
-		expect(after).toContain('    args: ["mcp"]');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+		});
+		expect(after).not.toContain("clawdi-mcp:");
+		expect(after).not.toContain("https://backend.example.test/composio/mcp");
+		expect(after).not.toContain("Authorization: placeholder");
 	});
 
 	it("normalizes a mixed clawdi block back to stdio-only", async () => {
@@ -285,13 +294,14 @@ describe("setup Hermes MCP registration", () => {
 		await setup({ agent: "hermes", yes: true, daemon: false });
 
 		const after = readFileSync(configPath, "utf-8");
-		expect(after).toContain("  clawdi:");
-		expect(after).toContain('    command: "clawdi"');
-		expect(after).toContain('    args: ["mcp"]');
-		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
-		expect(after).not.toContain("    headers:");
-		expect(after).toContain("  other:");
-		expect(after).toContain('    command: "other"');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: {
+				clawdi: { command: "clawdi", args: ["mcp"] },
+				other: { command: "other" },
+			},
+		});
+		expect(after).not.toContain("https://backend.example.test/composio/mcp");
+		expect(after).not.toContain("Authorization: placeholder");
 	});
 
 	it("removes duplicate HTTP sibling when stdio clawdi is already present", async () => {
@@ -315,13 +325,14 @@ describe("setup Hermes MCP registration", () => {
 		await setup({ agent: "hermes", yes: true, daemon: false });
 
 		const after = readFileSync(configPath, "utf-8");
-		expect(after).not.toContain("  clawdi-mcp:");
-		expect(after).not.toContain("    url: https://backend.example.test/composio/mcp");
-		expect(after.match(/^ {2}clawdi:/gm)?.length).toBe(1);
-		expect(after).toContain('    command: "clawdi"');
-		expect(after).toContain('    args: ["mcp"]');
-		expect(after).toContain("  other:");
-		expect(after).toContain('    command: "other"');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: {
+				clawdi: { command: "clawdi", args: ["mcp"] },
+				other: { command: "other" },
+			},
+		});
+		expect(after).not.toContain("clawdi-mcp:");
+		expect(after).not.toContain("https://backend.example.test/composio/mcp");
 	});
 
 	it("keeps installing legacy stdio for local Hermes configs without HTTP MCP", async () => {
@@ -331,10 +342,9 @@ describe("setup Hermes MCP registration", () => {
 		await setup({ agent: "hermes", yes: true, daemon: false });
 
 		const after = readFileSync(configPath, "utf-8");
-		expect(after).toContain("mcp_servers:");
-		expect(after).toContain("  clawdi:");
-		expect(after).toContain('    command: "clawdi"');
-		expect(after).toContain('    args: ["mcp"]');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+		});
 	});
 });
 

@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { AgentType } from "../../src/adapters/agent-types";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { teardown } from "../../src/commands/teardown";
@@ -32,6 +33,10 @@ let origPath: string | undefined;
 let origPathSet = false;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 let origIsTTY: boolean | undefined;
+const HERMES_CONFIG_CLI_MOCK = resolve(
+	import.meta.dir,
+	"../../src/test-support/hermes-config-cli-mock.ts",
+);
 
 function setup(
 	agent: AgentType,
@@ -45,6 +50,7 @@ function setup(
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	process.env.HERMES_HOME = join(tmpHome, ".hermes");
+	if (agent === "hermes") installHermesStub();
 	seedAuthAndEnv(tmpHome, agent);
 
 	const envPath = join(tmpHome, ".clawdi", "environments", `${agent}.json`);
@@ -127,6 +133,23 @@ function installOpenClawStub(): string {
 	chmodSync(openclawPath, 0o755);
 	process.env.PATH = `${stubDir}:${origPath ?? ""}`;
 	return argsPath;
+}
+
+function installHermesStub(): void {
+	if (!origPathSet) {
+		origPath = process.env.PATH;
+		origPathSet = true;
+	}
+	const stubDir = join(tmpHome, "bin");
+	mkdirSync(stubDir, { recursive: true });
+	const hermesPath = join(stubDir, "hermes");
+	writeFileSync(
+		hermesPath,
+		`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(HERMES_CONFIG_CLI_MOCK)} "$@"\n`,
+		{ mode: 0o755 },
+	);
+	chmodSync(hermesPath, 0o755);
+	process.env.PATH = `${stubDir}:${origPath ?? ""}`;
 }
 
 describe("teardown — basic round-trip per agent", () => {
@@ -315,8 +338,9 @@ describe("teardown — Hermes config.yaml MCP removal", () => {
 
 		const after = readFileSync(configPath, "utf-8");
 		expect(after).not.toContain("clawdi:");
-		expect(after).toContain("other:"); // didn't nuke the unrelated entry
-		expect(after).toContain('command: "other"'); // and didn't eat its child line
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { other: { command: "other" } },
+		});
 	});
 
 	it("removes the clawdi block when sibling entries come AFTER it (regression: sibling at same indent must NOT be absorbed)", async () => {
@@ -340,11 +364,9 @@ describe("teardown — Hermes config.yaml MCP removal", () => {
 
 		const after = readFileSync(configPath, "utf-8");
 		expect(after).not.toContain("clawdi:");
-		// Critical: `other` at the same indent as `clawdi` must survive intact,
-		// including its more-indented child lines.
-		expect(after).toContain("  other:");
-		expect(after).toContain('    command: "other"');
-		expect(after).toContain('    args: ["serve"]');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { other: { command: "other", args: ["serve"] } },
+		});
 	});
 
 	it("logs gracefully when clawdi entry is absent", async () => {
@@ -355,8 +377,9 @@ describe("teardown — Hermes config.yaml MCP removal", () => {
 		await teardown({ agent: "hermes", yes: true });
 
 		const after = readFileSync(configPath, "utf-8");
-		// Untouched.
-		expect(after).toContain("  other:");
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { other: { command: "x" } },
+		});
 	});
 
 	it("removes stale clawdi-mcp HTTP entries too", async () => {
@@ -381,7 +404,8 @@ describe("teardown — Hermes config.yaml MCP removal", () => {
 		const after = readFileSync(configPath, "utf-8");
 		expect(after).not.toContain("clawdi-mcp:");
 		expect(after).not.toContain("https://backend.example.test/composio/mcp");
-		expect(after).toContain("  other:");
-		expect(after).toContain('    command: "other"');
+		expect(parseYaml(after)).toMatchObject({
+			mcp_servers: { other: { command: "other" } },
+		});
 	});
 });

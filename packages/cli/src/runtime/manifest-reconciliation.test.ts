@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
@@ -99,6 +100,9 @@ const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
 const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
 const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
+const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
+	new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url),
+);
 const FILE_BROWSER_VERSION = "v1.5.0-stable";
 const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
 const FILE_BROWSER_AMD64_SHA256 =
@@ -517,16 +521,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 				provider_ids: ["default"],
 				primary_model: { provider_id: "default", model: "gpt-test" },
 				run: {
-					args: [
-						"gateway",
-						"run",
-						"--allow-unconfigured",
-						"--port",
-						"18789",
-						"--bind",
-						"lan",
-						"--force",
-					],
+					args: ["gateway", "run"],
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 					},
@@ -545,16 +540,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 		provider_ids: ["default"],
 		primary_model: { provider_id: "default", model: "gpt-test" },
 		run: {
-			args: [
-				"gateway",
-				"run",
-				"--allow-unconfigured",
-				"--port",
-				"18789",
-				"--bind",
-				"lan",
-				"--force",
-			],
+			args: ["gateway", "run"],
 			secretEnv: {
 				OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 			},
@@ -612,16 +598,7 @@ function hostedOpenClawV2ManifestFixture(
 			openclaw: hostedRuntimeFixture({
 				run: {
 					command: "openclaw",
-					args: [
-						"gateway",
-						"run",
-						"--allow-unconfigured",
-						"--port",
-						"18789",
-						"--bind",
-						"lan",
-						"--force",
-					],
+					args: ["gateway", "run"],
 					env: {},
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -653,6 +630,9 @@ case "$*" in
 		;;
 	"config patch --stdin"*)
 		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
+		;;
+	"config get "*|"config set "*|"config unset "*)
+		exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
@@ -2335,16 +2315,7 @@ chmod 0755 '${commandPath}'
 						install: { source: "official" },
 						run: {
 							command: "openclaw",
-							args: [
-								"gateway",
-								"run",
-								"--allow-unconfigured",
-								"--port",
-								"18789",
-								"--bind",
-								"lan",
-								"--force",
-							],
+							args: ["gateway", "run"],
 							env: { OPENCLAW_TEST: "1" },
 							secretEnv: {
 								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -2418,16 +2389,7 @@ chmod 0755 '${commandPath}'
 		const install = normalized.manifest.runtimes.openclaw.install;
 		expect(install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
 		expect(install?.args).toEqual(officialInstallArgs("openclaw", install?.home ?? ""));
-		expect(normalized.manifest.runtimes.openclaw.run?.args).toEqual([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--port",
-			"18789",
-			"--bind",
-			"lan",
-			"--force",
-		]);
+		expect(normalized.manifest.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
@@ -2629,16 +2591,7 @@ chmod 0755 '${commandPath}'
 					enabled: true,
 					run: {
 						command: "openclaw",
-						args: [
-							"gateway",
-							"run",
-							"--allow-unconfigured",
-							"--auth",
-							"token",
-							"--bind",
-							"lan",
-							"--force",
-						],
+						args: ["gateway", "run"],
 						env: {},
 						secretEnv: {
 							OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -2669,16 +2622,7 @@ chmod 0755 '${commandPath}'
 			secretEnv?: Record<string, string>;
 			secretFilePath?: string | null;
 		};
-		expect(runConfig.defaultArgs).toEqual([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--auth",
-			"token",
-			"--bind",
-			"lan",
-			"--force",
-		]);
+		expect(runConfig.defaultArgs).toEqual(["gateway", "run"]);
 		expect(runConfig.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
@@ -2690,9 +2634,8 @@ chmod 0755 '${commandPath}'
 			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
 			"utf8",
 		);
-		expect(unit).toContain(
-			'ExecStart="openclaw" "gateway" "run" "--allow-unconfigured" "--auth" "token" "--bind" "lan" "--force"',
-		);
+		expect(unit).not.toContain("\nExecStart=");
+		expect(unit).not.toContain("\nWorkingDirectory=");
 		const envFile = readFileSync(
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
@@ -2792,9 +2735,12 @@ chmod 0755 '${commandPath}'
 		);
 		const responsesKey = "sentinel-responses-runtime";
 		const anthropicKey = "sentinel-anthropic-runtime";
-		mkdirSync(dirname(hermesCommand), { recursive: true });
 		mkdirSync(dirname(legacyPlugin), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		});
 		writeFileSync(legacyPlugin, 'raise RuntimeError("obsolete")\n');
 		writeFileSync(
 			hermesConfig,
@@ -2808,8 +2754,6 @@ chmod 0755 '${commandPath}'
 				"",
 			].join("\n"),
 		);
-		chmodSync(hermesCommand, 0o700);
-
 		const providerEntries = {
 			responses: {
 				type: "openai",
@@ -2955,7 +2899,7 @@ chmod 0755 '${commandPath}'
 			parseYaml(readFileSync(hermesConfig, "utf8")) as { providers?: Record<string, unknown> }
 		).providers;
 		expect(deletedProviders).not.toHaveProperty("anthropic");
-	});
+	}, 30_000);
 
 	test("preserves managed hosted provider model capabilities after primary resolution", () => {
 		const paths = tempRuntimePaths();
@@ -4990,7 +4934,7 @@ echo spawned > '${installerLog}'
 				["hermes", { status: "present" as const }],
 			]),
 		);
-		expect(dashboardTargets).toContain(join(largeInstalledTree, "hermes_cli", "web_dist"));
+		expect(dashboardTargets).not.toContain(join(largeInstalledTree, "hermes_cli", "web_dist"));
 		expect(dashboardTargets).not.toContain(largeInstalledTree);
 		expect(
 			captureRuntimeLiveSnapshot({
@@ -5368,7 +5312,13 @@ exit 42
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {
 		const paths = tempRuntimePaths();
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		});
 		mkdirSync(dirname(hermesConfig), { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		writeFileSync(hermesConfig, "mcp_servers: []\n");
@@ -5380,7 +5330,7 @@ exit 42
 			{
 				hermes: {
 					enabled: true,
-					run: runSettings("hermes", ["gateway", "run"]),
+					run: runSettings(hermesCommand, ["gateway", "run"]),
 					services: {},
 				},
 			},

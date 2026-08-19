@@ -6,7 +6,6 @@ import { join } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
-import { getHermesHome } from "../adapters/paths";
 import {
 	AGENT_TYPES,
 	type AgentType,
@@ -32,6 +31,7 @@ import {
 	listInstalledAgents,
 	uninstall as uninstallDaemonService,
 } from "../serve/installer";
+import { reconcileLocalHermesMcp } from "./hermes-mcp";
 
 interface SetupOpts {
 	agent?: string;
@@ -336,83 +336,16 @@ async function registerMcpServer(agentType: AgentType) {
 }
 
 async function registerHermesMcp() {
-	const configPath = join(getHermesHome(), "config.yaml");
-
-	if (!existsSync(configPath)) {
-		console.log(chalk.yellow("⚠ Hermes config.yaml not found, skipping MCP registration."));
-		return;
-	}
-
-	const { readFileSync: readFs, writeFileSync: writeFs } = await import("node:fs");
-	const content = readFs(configPath, "utf-8");
-
 	try {
-		// Hermes has `hermes mcp add`, but it is discovery-first: it probes the
-		// server and can prompt for overwrite/tool selection. For setup we need a
-		// non-interactive, idempotent upsert that also cleans stale mixed blocks.
-		const updated = upsertHermesStdioClawdiMcp(content);
-		if (updated === content) {
+		if (!reconcileLocalHermesMcp(true)) {
 			console.log(chalk.gray("✓ MCP server already registered in Hermes"));
 			return;
 		}
-
-		writeFs(configPath, updated);
 		console.log(chalk.green("✓ MCP server registered in Hermes"));
 	} catch (e) {
-		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes config: ${errMessage(e)}`));
-		console.log(chalk.gray(`  Edit ${configPath} and add under mcp_servers:`));
-		console.log(chalk.gray(HERMES_CLAUDI_MCP_CHILD));
+		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(e)}`));
+		console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
 	}
-}
-
-const HERMES_CLAUDI_MCP_CHILD = `  clawdi:\n    command: "clawdi"\n    args: ["mcp"]`;
-
-function upsertHermesStdioClawdiMcp(content: string): string {
-	const newSection = `mcp_servers:\n${HERMES_CLAUDI_MCP_CHILD}\n`;
-	const HEADER_RE = /^mcp_servers:[ \t]*(.*)$/m;
-	const headerMatch = content.match(HEADER_RE);
-
-	if (!headerMatch) {
-		return `${content.trimEnd()}\n\n${newSection}`;
-	}
-
-	const inlineValue = (headerMatch[1] ?? "").trim();
-	if (!["", "{}", "~", "null"].includes(inlineValue)) {
-		throw new Error("mcp_servers uses inline value; edit config.yaml manually.");
-	}
-
-	const blockContent = content.replace(HEADER_RE, "mcp_servers:");
-	const section = getYamlBlock(blockContent, "mcp_servers");
-	if (!section) return blockContent;
-
-	// `clawdi mcp` is the canonical Hermes integration. Remove stale cloud HTTP
-	// (`clawdi-mcp`) and any mixed/duplicate `clawdi` blocks, then insert one
-	// stdio block so repeated setup runs converge to a single transport.
-	let normalizedSection = removeAllYamlBlocks(section, "clawdi-mcp");
-	normalizedSection = removeAllYamlBlocks(normalizedSection, "clawdi");
-	normalizedSection = normalizedSection.replace(
-		/^mcp_servers:[ \t]*\n?/,
-		`mcp_servers:\n${HERMES_CLAUDI_MCP_CHILD}\n`,
-	);
-
-	return blockContent.replace(section, normalizedSection);
-}
-
-function removeAllYamlBlocks(content: string, key: string): string {
-	let updated = content;
-	while (true) {
-		const block = getYamlBlock(updated, key);
-		if (!block) return updated;
-		updated = updated.replace(block, "");
-	}
-}
-
-function getYamlBlock(content: string, key: string): string | null {
-	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const match = content.match(
-		new RegExp(`^([ \\t]*)${escaped}:[ \\t]*\\n((?:\\1[ \\t]+.*\\n?)*)`, "m"),
-	);
-	return match?.[0] ?? null;
 }
 
 function registerCodexMcp() {

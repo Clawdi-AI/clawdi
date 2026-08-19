@@ -553,16 +553,7 @@ test("persists and serves the managed token through the real official OpenClaw g
 				enabled: true,
 				run: {
 					command: commandPath,
-					args: [
-						"gateway",
-						"run",
-						"--allow-unconfigured",
-						"--port",
-						"18789",
-						"--bind",
-						"lan",
-						"--force",
-					],
+					args: ["gateway", "run"],
 					env: {},
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -608,6 +599,9 @@ test("persists and serves the managed token through the real official OpenClaw g
 		};
 		expect(config.gateway?.auth?.token).toBe(managedToken);
 		expect(readFileSync(unitPath, "utf8")).not.toContain(managedToken);
+		const dropIn = readFileSync(join(dropInRoot, "10-clawdi-hosted.conf"), "utf8");
+		expect(dropIn).not.toContain("\nExecStart=");
+		expect(dropIn).not.toContain("\nWorkingDirectory=");
 		if (existsSync(officialGatewayEnvironment)) {
 			expect(readFileSync(officialGatewayEnvironment, "utf8")).not.toContain(managedToken);
 			expect(readFileSync(officialGatewayEnvironment, "utf8")).not.toContain(staleToken);
@@ -860,16 +854,7 @@ http.createServer((request, response) => {
 				primary_model: { provider_id: "clawdi", model: "gpt-test" },
 				run: {
 					command: openClawCommand,
-					args: [
-						"gateway",
-						"run",
-						"--allow-unconfigured",
-						"--port",
-						"18789",
-						"--bind",
-						"lan",
-						"--force",
-					],
+					args: ["gateway", "run"],
 					env: {},
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",

@@ -613,20 +613,8 @@ function validateManifestSemantics(
 				errors.push("OpenClaw v2 native Control UI requires an explicit public allowed origin");
 			}
 			const run = manifest.runtimes.openclaw?.run;
-			if (
-				JSON.stringify(run?.args) !==
-				JSON.stringify([
-					"gateway",
-					"run",
-					"--allow-unconfigured",
-					"--port",
-					"18789",
-					"--bind",
-					"lan",
-					"--force",
-				])
-			) {
-				errors.push("OpenClaw v2 gateway must bind directly to the pod network on port 18789");
+			if (JSON.stringify(run?.args) !== JSON.stringify(["gateway", "run"])) {
+				errors.push("OpenClaw v2 gateway must use the official gateway run command");
 			}
 			if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
 				errors.push("OpenClaw v2 gateway token must use the declared environment secret reference");

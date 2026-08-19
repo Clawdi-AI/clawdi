@@ -909,22 +909,10 @@ function validateHostedRuntimeManifestV2(
 	}
 	const run = manifest.runtimes.openclaw?.run;
 	const gatewayArgs = run?.args;
-	if (
-		JSON.stringify(gatewayArgs) !==
-		JSON.stringify([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--port",
-			"18789",
-			"--bind",
-			"lan",
-			"--force",
-		])
-	) {
+	if (JSON.stringify(gatewayArgs) !== JSON.stringify(["gateway", "run"])) {
 		ctx.addIssue({
 			code: "custom",
-			message: "OpenClaw v2 gateway must bind directly to the pod network on port 18789",
+			message: "OpenClaw v2 gateway must use the official gateway run command",
 			path: ["runtimes", "openclaw", "run", "args"],
 		});
 	}
