@@ -1322,6 +1322,7 @@ if [ "$*" = "config validate --json" ] && grep -q 'legacyInvalidConfig' '${confi
   exit 1
 fi
 if [ "$*" = "doctor --fix --non-interactive" ]; then
+	if [ -d "$HOME/.openclaw/tmp" ]; then test "$(stat -c %a "$HOME/.openclaw/tmp")" = 700; fi
   grep -q 'CLAWDI_AI_API_KEY' "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json"
   printf '{}\n' > '${configPath}'
   exit 0
@@ -4033,11 +4034,14 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
+		const openClawTmp = join(home, ".openclaw", "tmp");
 		const { configPath, commandLog } = writeOpenClawConfigMutationFixture(home, {
 			legacyInvalidConfig: true,
 			meta: "legacy",
 			agents: [],
 		});
+		mkdirSync(openClawTmp, { recursive: true });
+		chmodSync(openClawTmp, 0o500);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -4064,6 +4068,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
 		expect(installIndex).toBeGreaterThan(doctorIndex);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
+		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
 	});
 
 	it("removes reserved OpenClaw provider auth from every store only for managed env projection", () => {
