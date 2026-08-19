@@ -15,8 +15,8 @@ export type HostedDeployComputePlanSlug = HostedDeployRequest["compute_plan_slug
 export type HostedDeployRuntime = HostedDeployRequest["runtime"];
 export type HostedDeployLanguage = NonNullable<HostedDeployRequest["language"]>;
 export type HostedDeployPlan = Schemas["V2PlanResponse"];
+export type HostedIncludedBasicAvailability = Schemas["V2ComputeIncludedBasicAvailabilityResponse"];
 export type HostedDeployBillingOffer = Schemas["V2BillingOfferResponse"];
-export type HostedDeployDeployment = Schemas["V2HostedDeploymentReadResponse"];
 export type HostedDeployManagedModel = Schemas["V2ManagedModelCatalogItem"];
 export type HostedDeploySubscriptionQuote = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type HostedDeploySubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
@@ -262,39 +262,6 @@ export type IncludedBasicDeploySelection =
 			mode: "unavailable";
 			reason: "plan_missing" | "offers_missing" | "inventory_unavailable";
 	  };
-
-function hasIncludedBasicSubscription(deployment: HostedDeployDeployment): boolean {
-	const subscription = deployment.commercial_display?.compute_subscription;
-	return (
-		deployment.current_plan_slug === "compute_basic" &&
-		subscription != null &&
-		subscription.funding_source == null &&
-		subscription.price_cents === 0
-	);
-}
-
-export function usesHostedDeployIncludedBasicSlot(
-	deployments: readonly HostedDeployDeployment[] | undefined,
-): boolean | null {
-	let occupancyUnavailable = false;
-	for (const deployment of deployments ?? []) {
-		if (!hasIncludedBasicSubscription(deployment)) continue;
-		const acceptedOperation = deployment.accepted_operation;
-		if (
-			(acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) ||
-			deployment.compute_slot_occupancy?.reason === "delete_accepted"
-		) {
-			continue;
-		}
-		const occupancy = deployment.compute_slot_occupancy;
-		if (occupancy === null) {
-			occupancyUnavailable = true;
-			continue;
-		}
-		if (occupancy.occupies_slot) return true;
-	}
-	return occupancyUnavailable ? null : false;
-}
 
 export function selectHostedDeployOfferForTerm(
 	plan: HostedDeployPlan,

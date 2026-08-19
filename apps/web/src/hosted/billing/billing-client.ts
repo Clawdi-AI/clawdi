@@ -828,6 +828,8 @@ export function createBillingClient(
 					params: { query: { limit, cursor } },
 				}),
 			),
+		getIncludedBasicAvailability: async () =>
+			unwrapDeploy(await api.GET("/v2/subscriptions/included-basic", {})),
 		getReusableSubscriptions: async (limit = 100, cursor?: string | null) =>
 			unwrapDeploy(
 				await api.GET("/v2/subscriptions/reusable", {

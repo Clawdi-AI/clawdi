@@ -9,13 +9,13 @@ import {
 } from "@clawdi/shared";
 import type {
 	HostedDeployCheckoutRequest,
-	HostedDeployDeployment,
 	HostedDeployOperation,
 	HostedDeployPlan,
 	HostedDeployRequest,
 	HostedDeployRequestStatus,
 	HostedDeploySubscriptionQuote,
 	HostedDeploySubscriptionQuoteRequest,
+	HostedIncludedBasicAvailability,
 	HostedSavedAiProvider,
 } from "@clawdi/shared/api";
 import {
@@ -114,14 +114,18 @@ function savedProvider(
 
 class FakeDeployGateway implements HostedDeployGateway {
 	plans: HostedDeployPlan[] = [plan("compute_basic", 900), plan("compute_performance", 2_900)];
-	deployments: HostedDeployDeployment[] = [];
+	includedBasicAvailability: HostedIncludedBasicAvailability = {
+		total_slots: 1,
+		used_slots: 0,
+		available_slots: 1,
+	};
 	savedProviders: HostedSavedAiProvider[] = [];
 	paidCheckoutSupported = true;
 	created: { body: HostedDeployRequest; idempotencyKey: string } | null = null;
 	quoted: HostedDeploySubscriptionQuoteRequest | null = null;
 	checkoutCalls: { body: HostedDeployCheckoutRequest; idempotencyKey: string }[] = [];
 	planReads = 0;
-	deploymentReads = 0;
+	availabilityReads = 0;
 	managedModelReads = 0;
 	savedProviderReads = 0;
 	calls: string[] = [];
@@ -178,10 +182,10 @@ class FakeDeployGateway implements HostedDeployGateway {
 		return this.plans;
 	}
 
-	async listDeployments() {
-		this.calls.push("deployments");
-		this.deploymentReads += 1;
-		return this.deployments;
+	async getIncludedBasicAvailability() {
+		this.calls.push("included-basic-availability");
+		this.availabilityReads += 1;
+		return this.includedBasicAvailability;
 	}
 
 	async getManagedModels() {
@@ -798,7 +802,7 @@ describe("deploy orchestration", () => {
 		expect(freeClient.quoted).toBeNull();
 		expect(freeClient.checkoutCalls).toHaveLength(0);
 		expect(freeClient.planReads).toBe(0);
-		expect(freeClient.deploymentReads).toBe(0);
+		expect(freeClient.availabilityReads).toBe(0);
 		expect(freeClient.managedModelReads).toBe(0);
 		expect(freeClient.savedProviderReads).toBe(0);
 		expect(freeClient.requestPolls).toBe(0);
@@ -853,7 +857,7 @@ describe("deploy orchestration", () => {
 			});
 			expect(client.calls[0]).toBe("request");
 			expect(client.planReads).toBe(1);
-			expect(client.deploymentReads).toBe(1);
+			expect(client.availabilityReads).toBe(1);
 			expect(client.created).toMatchObject({
 				idempotencyKey: "123e4567-e89b-42d3-a456-426614174099",
 				body: { compute_plan_slug: "compute_basic" },

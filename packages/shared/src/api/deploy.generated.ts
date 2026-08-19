@@ -501,6 +501,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscriptions/included-basic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Included Basic Availability */
+        get: operations["get_v2_included_basic_availability_v2_subscriptions_included_basic_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscriptions/reusable": {
         parameters: {
             query?: never;
@@ -1437,6 +1454,15 @@ export interface components {
             /** Deployment Id */
             deployment_id?: string | null;
         };
+        /** V2ComputeIncludedBasicAvailabilityResponse */
+        V2ComputeIncludedBasicAvailabilityResponse: {
+            /** Total Slots */
+            total_slots: number;
+            /** Used Slots */
+            used_slots: number;
+            /** Available Slots */
+            available_slots: number;
+        };
         /** V2ComputePlanChangeQuoteRequest */
         V2ComputePlanChangeQuoteRequest: {
             /** Subscription Id */
@@ -1625,6 +1651,11 @@ export interface components {
              * @example csub_K8fJ3pQm
              */
             subscription_id: string;
+            /**
+             * Subscription Kind
+             * @enum {string}
+             */
+            subscription_kind: "included_basic" | "paid";
             /** Plan Slug */
             plan_slug: string;
             /** Funding Source */
@@ -4215,6 +4246,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_included_basic_availability_v2_subscriptions_included_basic_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ComputeIncludedBasicAvailabilityResponse"];
                 };
             };
         };

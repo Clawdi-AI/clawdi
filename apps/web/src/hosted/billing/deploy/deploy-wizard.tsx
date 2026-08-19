@@ -79,7 +79,6 @@ import {
 	type DeployWizardDirtyState,
 	deployWizardDraftIsDirty,
 } from "@/hosted/billing/deploy/deploy-dirty-state";
-import { usesActiveIncludedBasicSlot } from "@/hosted/billing/deploy/deploy-model";
 import {
 	type ComputePricePresentation,
 	cardDeployAmountPresentation,
@@ -111,7 +110,7 @@ import {
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents } from "@/hosted/billing/format";
 import {
-	useHostedDeployments,
+	useIncludedBasicAvailability,
 	useManagedModelCatalog,
 	usePlans,
 	useResolveDeploymentRequest,
@@ -321,6 +320,9 @@ export function DeployWizard() {
 						onAccepted: () => {
 							setDeploymentCommitted(true);
 							clearCheckoutAttempt(target.deployRequestId);
+							void queryClient.invalidateQueries({
+								queryKey: billingKeys.includedBasicAvailability,
+							});
 						},
 						resolveDeploymentRequest,
 					});
@@ -391,7 +393,7 @@ export function DeployWizard() {
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
-	const deployments = useHostedDeployments();
+	const includedBasic = useIncludedBasicAvailability();
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
@@ -404,6 +406,14 @@ export function DeployWizard() {
 	const reusableSubscriptionInventory = blockingReusableSubscriptionsError
 		? undefined
 		: reusableSubscriptions.data;
+	const blockingIncludedBasicError = shouldBlockQueryError(includedBasic.error, includedBasic.data)
+		? includedBasic.error
+		: null;
+	const includedBasicAvailable = blockingIncludedBasicError
+		? undefined
+		: includedBasic.data
+			? includedBasic.data.available_slots > 0
+			: undefined;
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
@@ -424,21 +434,7 @@ export function DeployWizard() {
 	const [selectedSubscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(
 		null,
 	);
-	const [checkingDeployments, setCheckingDeployments] = useState(false);
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
-	const deploymentsResolved = deployments.data !== undefined;
-	const blockingDeploymentsError = shouldBlockQueryError(deployments.error, deployments.data)
-		? deployments.error
-		: null;
-	const checkDeploymentsAgain = async () => {
-		if (checkingDeployments) return;
-		setCheckingDeployments(true);
-		try {
-			await deployments.refetch();
-		} finally {
-			setCheckingDeployments(false);
-		}
-	};
 
 	// Keep the first client render on the same deterministic fallback as SSR,
 	// then adopt runtime IANA data and best-effort browser defaults after mount.
@@ -460,30 +456,14 @@ export function DeployWizard() {
 		() => (basicPlan ? selectExplicitOfferForTerm(basicPlan, term) : null),
 		[basicPlan, term],
 	);
-	const activeIncludedBasicSlot = useMemo(
-		() => (deploymentsResolved ? usesActiveIncludedBasicSlot(deployments.data ?? []) : null),
-		[deployments.data, deploymentsResolved],
-	);
-	const includedBasicAvailability =
-		!deploymentsResolved || activeIncludedBasicSlot === null
-			? "unknown"
-			: activeIncludedBasicSlot
-				? "unavailable"
-				: "available";
 	const subscriptionSource = resolveSubscriptionSource({
 		selected: selectedSubscriptionSource,
-		includedAvailable:
-			includedBasicAvailability === "unknown"
-				? undefined
-				: includedBasicAvailability === "available",
+		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const defaultSubscriptionSource = resolveSubscriptionSource({
 		selected: null,
-		includedAvailable:
-			includedBasicAvailability === "unknown"
-				? undefined
-				: includedBasicAvailability === "available",
+		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const perfOfferSelection = useMemo(
@@ -620,12 +600,12 @@ export function DeployWizard() {
 		if (personaError) return personaError;
 		if (!subscriptionSource) return "Choose a subscription source.";
 		if (subscriptionSource.mode === "included") {
-			if (!deploymentsResolved) {
-				return blockingDeploymentsError
+			if (includedBasicAvailable === undefined) {
+				return blockingIncludedBasicError
 					? "Retry the free compute availability check above."
 					: "Checking your free compute availability.";
 			}
-			if (includedBasicAvailability !== "available") return "Free compute is unavailable.";
+			if (!includedBasicAvailable) return "Free compute is unavailable.";
 		} else {
 			if (reusableSubscriptions.isFetching) return "Checking reusable subscriptions.";
 			if (blockingReusableSubscriptionsError || reusableSubscriptionInventory === undefined) {
@@ -1263,46 +1243,20 @@ export function DeployWizard() {
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
-							showIncluded={includedBasicAvailability === "available"}
+							showIncluded={includedBasicAvailable === true}
 							reusableSubscriptions={reusableSubscriptionInventory ?? []}
-							isLoading={reusableSubscriptions.isFetching}
+							isLoading={reusableSubscriptions.isFetching || includedBasic.isFetching}
 							error={blockingReusableSubscriptionsError}
 							onRetry={() => void reusableSubscriptions.refetch()}
 							disabled={submitting}
 						/>
-						{blockingDeploymentsError ? (
+						{blockingIncludedBasicError ? (
 							<ApiErrorPanel
 								normalizer={billingErrorNormalizer}
-								error={blockingDeploymentsError}
-								onRetry={() => void deployments.refetch()}
+								error={blockingIncludedBasicError}
+								onRetry={() => void includedBasic.refetch()}
 								title="Couldn't check free compute availability"
 							/>
-						) : null}
-						{deploymentsResolved && activeIncludedBasicSlot === null ? (
-							<Alert data-hosted="true">
-								<TriangleAlert />
-								<AlertTitle>Free compute availability is unknown</AlertTitle>
-								<AlertDescription className="flex flex-col gap-3 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
-									<span>
-										We can’t determine whether an existing agent is already using your free compute
-										entitlement.
-									</span>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										disabled={checkingDeployments}
-										onClick={() => void checkDeploymentsAgain()}
-									>
-										{checkingDeployments ? (
-											<Spinner className="size-3.5" />
-										) : (
-											<RefreshCw className="size-3.5" />
-										)}
-										Check again
-									</Button>
-								</AlertDescription>
-							</Alert>
 						) : null}
 						{subscriptionSource?.mode === "new" && plansLoadError ? (
 							<ApiErrorPanel
