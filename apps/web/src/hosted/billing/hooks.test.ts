@@ -165,6 +165,7 @@ describe("applySubscriptionActionSuccess", () => {
 		const qc = new QueryClient();
 		qc.setQueryData(billingKeys.deployments, { current: true });
 		qc.setQueryData(billingKeys.subscriptions, { current: true });
+		qc.setQueryData(billingKeys.includedBasicAvailability, { available_slots: 0 });
 		qc.setQueryData(billingKeys.reusableSubscriptions, { current: true });
 
 		await applySubscriptionActionSuccess(
@@ -175,6 +176,7 @@ describe("applySubscriptionActionSuccess", () => {
 
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.includedBasicAvailability)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
 	});
 
@@ -184,6 +186,7 @@ describe("applySubscriptionActionSuccess", () => {
 		for (const queryKey of [
 			billingKeys.deployments,
 			billingKeys.subscriptions,
+			billingKeys.includedBasicAvailability,
 			billingKeys.reusableSubscriptions,
 		]) {
 			const key = JSON.stringify(queryKey);
@@ -201,6 +204,7 @@ describe("applySubscriptionActionSuccess", () => {
 		for (const queryKey of [
 			billingKeys.deployments,
 			billingKeys.subscriptions,
+			billingKeys.includedBasicAvailability,
 			billingKeys.reusableSubscriptions,
 		]) {
 			expect(fetches.get(JSON.stringify(queryKey))).toBe(2);

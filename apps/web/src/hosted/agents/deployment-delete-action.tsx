@@ -44,6 +44,8 @@ export function HostedDeploymentDeleteAction({
 	const [pending, setPending] = useState(false);
 	const locked = useRef(false);
 	const subscription = deployment.commercial_display?.compute_subscription;
+	const includedBasic =
+		computeFundingMode(deployment.current_plan_slug, subscription) === "included_basic";
 	const offerChoice =
 		computeFundingMode(deployment.current_plan_slug, subscription) === "subscription" &&
 		isComputeSubscriptionRenewing(subscription);
@@ -63,7 +65,11 @@ export function HostedDeploymentDeleteAction({
 					id: deployment.resource.id,
 					resourceVersion: deployment.resource.metadata.resourceVersion,
 					request: {
-						subscription_choice: offerChoice ? choice : "keep_subscription",
+						subscription_choice: offerChoice
+							? choice
+							: includedBasic
+								? "cancel_subscription"
+								: "keep_subscription",
 					},
 				});
 			} catch {

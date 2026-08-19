@@ -40,6 +40,18 @@ def is_valid_skill_key(skill_key: str) -> bool:
     )
 
 
+def is_legacy_hidden_skill_key(skill_key: str) -> bool:
+    """Accept safe dot-prefixed metadata paths without the stored-key depth cap."""
+    parts = skill_key.split("/")
+    visible_key = "/".join(part.removeprefix(".") for part in parts)
+    return (
+        len(skill_key) <= MAX_SKILL_KEY_LEN
+        and visible_key != skill_key
+        and all(is_valid_skill_key(part.removeprefix(".")) for part in parts)
+        and not has_reserved_skill_key_suffix(visible_key)
+    )
+
+
 def validate_derived_skill_key(skill_key: str) -> str:
     """Validate a server-derived skill_key before storage.
 

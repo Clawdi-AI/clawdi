@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	AlertCircle,
 	ArrowLeft,
 	Blocks,
 	BookOpen,
@@ -12,11 +13,11 @@ import {
 	Trash2,
 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { DetailMeta, DetailPanel, DetailStats } from "@/components/detail/layout";
+import { DetailMeta, DetailStats } from "@/components/detail/layout";
 import { IconChip } from "@/components/icon-chip";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
@@ -25,46 +26,50 @@ import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
 import type { AgentPluginPendingAction } from "./agent-plugin-card";
 import {
+	type AgentPluginActionState,
 	type AgentPluginCatalogEntry,
 	type AgentPluginInventoryItem,
-	agentPluginInstallability,
-	agentPluginStatusPresentation,
+	agentPluginActionState,
 	pluginDisplayName,
-	pluginHasUpdate,
-	pluginVersion,
 } from "./agent-plugin-model";
 
 export function AgentPluginDetail({
 	item,
 	runtime,
 	catalogError,
+	desiredStateError,
+	desiredStateRetrying,
 	pendingAction,
+	mutationsBlocked,
 	onBack,
 	onInstall,
 	onRemove,
+	onRetry,
 	onRetryCatalog,
+	onRetryDesired,
 }: {
 	item: AgentPluginInventoryItem;
 	runtime: HostedRuntime;
 	catalogError: unknown | null;
+	desiredStateError: boolean;
+	desiredStateRetrying: boolean;
 	pendingAction: AgentPluginPendingAction;
+	mutationsBlocked: boolean;
 	onBack: () => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
+	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRetryCatalog: () => void;
+	onRetryDesired: () => void;
 }) {
 	const title = pluginDisplayName(item);
-	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
-	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
-	const hasUpdate = pluginHasUpdate(item);
-	const canInstall = Boolean(
-		item.catalog && installability?.installable && (!item.desired || hasUpdate),
-	);
+	const actionState = agentPluginActionState(item, runtime);
+	const { status, installability, hasUpdate, version } = actionState;
 	const showCompatibilityWarning = Boolean(installability?.reason && (!item.desired || hasUpdate));
 
 	return (
 		<div data-hosted="true" data-v2="true" className="space-y-6">
-			<Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
+			<Button variant="ghost" size="sm" className="w-fit sm:hidden" onClick={onBack}>
 				<ArrowLeft />
 				Back to Plugins
 			</Button>
@@ -74,6 +79,24 @@ export function AgentPluginDetail({
 					onRetry={onRetryCatalog}
 					title="Store details unavailable"
 				/>
+			) : null}
+			{desiredStateError ? (
+				<Alert>
+					<AlertCircle />
+					<AlertTitle>Couldn't load installed plugins</AlertTitle>
+					<AlertDescription>Showing Store details without installed status.</AlertDescription>
+					<AlertAction>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={desiredStateRetrying}
+							onClick={onRetryDesired}
+						>
+							{desiredStateRetrying ? <Spinner /> : <RefreshCw />}
+							Retry
+						</Button>
+					</AlertAction>
+				</Alert>
 			) : null}
 			<PageHeader
 				title={title}
@@ -86,10 +109,15 @@ export function AgentPluginDetail({
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				titleAdornment={
-					status && item.desired?.convergence === "installed" ? (
-						<StatusBadge status={status.tone} withDot>
-							{status.label}
-						</StatusBadge>
+					(status && item.desired?.convergence === "installed") || hasUpdate ? (
+						<>
+							{status && item.desired?.convergence === "installed" ? (
+								<StatusBadge status={status.tone} withDot>
+									{status.label}
+								</StatusBadge>
+							) : null}
+							{hasUpdate ? <StatusBadge status="info">Update available</StatusBadge> : null}
+						</>
 					) : undefined
 				}
 				status={
@@ -98,17 +126,18 @@ export function AgentPluginDetail({
 				actions={
 					<PluginDetailActions
 						item={item}
-						canInstall={canInstall}
-						installability={installability}
+						state={actionState}
 						pendingAction={pendingAction}
+						mutationsBlocked={mutationsBlocked}
 						onInstall={onInstall}
 						onRemove={onRemove}
+						onRetry={onRetry}
 					/>
 				}
 			/>
 			{status && item.desired?.convergence !== "installed" ? (
 				<Alert variant={status.tone === "destructive" ? "destructive" : "default"}>
-					<RefreshCw />
+					{status.tone === "destructive" ? <AlertCircle /> : <RefreshCw />}
 					<AlertTitle>{status.label}</AlertTitle>
 					<AlertDescription>{status.description}</AlertDescription>
 				</Alert>
@@ -120,7 +149,7 @@ export function AgentPluginDetail({
 				</Alert>
 			) : null}
 			<DetailStats>
-				<Stat icon={Tag} label={`v${pluginVersion(item)}`} />
+				<Stat icon={Tag} label={version} />
 				{item.catalog ? (
 					<>
 						<Stat
@@ -141,27 +170,29 @@ export function AgentPluginDetail({
 
 function PluginDetailActions({
 	item,
-	canInstall,
-	installability,
+	state,
 	pendingAction,
+	mutationsBlocked,
 	onInstall,
 	onRemove,
+	onRetry,
 }: {
 	item: AgentPluginInventoryItem;
-	canInstall: boolean;
-	installability: ReturnType<typeof agentPluginInstallability> | null;
+	state: AgentPluginActionState;
 	pendingAction: AgentPluginPendingAction;
+	mutationsBlocked: boolean;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
+	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
-	const updating = pluginHasUpdate(item);
+	const { canInstall, canRetry, installability, hasUpdate: updating } = state;
 	return (
 		<>
 			{canInstall ? (
 				<Button
 					size="sm"
 					variant={updating ? "outline" : "default"}
-					disabled={pendingAction !== null}
+					disabled={mutationsBlocked}
 					onClick={() => void onInstall(item).catch(() => undefined)}
 				>
 					{pendingAction === "install" ? <Spinner /> : updating ? <RefreshCw /> : <Plus />}
@@ -178,6 +209,16 @@ function PluginDetailActions({
 					{installability.label}
 				</Button>
 			) : null}
+			{canRetry ? (
+				<Button
+					size="sm"
+					disabled={mutationsBlocked}
+					onClick={() => void onRetry(item).catch(() => undefined)}
+				>
+					{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
+					{pendingAction === "retry" ? "Retrying…" : "Retry"}
+				</Button>
+			) : null}
 			{item.desired ? (
 				<ConfirmAction
 					title={`Remove ${pluginDisplayName(item)}?`}
@@ -189,7 +230,7 @@ function PluginDetailActions({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={pendingAction !== null}
+						disabled={mutationsBlocked}
 						className="text-destructive hover:text-destructive"
 					>
 						{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
@@ -204,29 +245,30 @@ function PluginDetailActions({
 function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }) {
 	if (!entry) {
 		return (
-			<DetailPanel className="space-y-3">
+			<section className="space-y-3">
 				<PanelHeading />
 				<p className="text-sm text-muted-foreground">
 					Details are no longer available for this plugin.
 				</p>
-			</DetailPanel>
+			</section>
 		);
 	}
-	const servers = Object.entries(entry.components.mcpServers).sort(([left], [right]) =>
+	const skills = entry.components.skills;
+	const servers = Object.keys(entry.components.mcpServers).sort((left, right) =>
 		left.localeCompare(right),
 	);
 	return (
-		<DetailPanel className="space-y-4">
+		<section className="space-y-4">
 			<PanelHeading />
-			<div className="divide-y">
-				{entry.components.skills.map((skill) => (
-					<ComponentRow key={`skill:${skill}`} icon={BookOpen} label="Skill" name={skill} />
-				))}
-				{servers.map(([name]) => (
-					<ComponentRow key={`mcp:${name}`} icon={Server} label="MCP server" name={name} />
-				))}
-			</div>
-		</DetailPanel>
+			{skills.length === 0 && servers.length === 0 ? (
+				<p className="text-sm text-muted-foreground">This plugin has no listed components.</p>
+			) : (
+				<>
+					<ComponentGroup icon={BookOpen} label="Skills" names={skills} />
+					<ComponentGroup icon={Server} label="MCP servers" names={servers} />
+				</>
+			)}
+		</section>
 	);
 }
 
@@ -239,21 +281,34 @@ function PanelHeading() {
 	);
 }
 
-function ComponentRow({
+function ComponentGroup({
 	icon: Icon,
 	label,
-	name,
+	names,
 }: {
 	icon: typeof BookOpen;
 	label: string;
-	name: string;
+	names: readonly string[];
 }) {
+	if (names.length === 0) return null;
 	return (
-		<div className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0">
-			<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-			<div className="min-w-0 flex-1">
-				<div className="text-xs text-muted-foreground">{label}</div>
-				<code className="mt-0.5 block break-all text-sm">{name}</code>
+		<div className="space-y-2">
+			<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+				<Icon className="size-3.5" />
+				{label}
+			</div>
+			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+				{names.map((name) => (
+					<div
+						key={name}
+						className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2"
+					>
+						<Icon className="size-4 shrink-0 text-muted-foreground" />
+						<code title={name} className="min-w-0 truncate text-sm">
+							{name}
+						</code>
+					</div>
+				))}
 			</div>
 		</div>
 	);

@@ -127,9 +127,13 @@ class HostedRuntimeObservedAgentPluginsV1(RuntimeObservationRequestModel):
     def validate_applied_identity(self, applied: HostedRuntimeObservedAppliedV2) -> None:
         for installation in self.installations:
             if installation.status == "failed":
+                # A failed apply never becomes the applied state, so a failure
+                # naming the exact applied identity is a replay; a same-generation
+                # attempt with a *different* revision is a newer (e.g. plugin-only)
+                # manifest that did not bump the runtime generation.
                 if installation.generation < applied.generation or (
                     installation.generation == applied.generation
-                    and installation.source_revision != applied.source_revision
+                    and installation.source_revision == applied.source_revision
                 ):
                     raise ValueError("failed Agent Plugin observation is stale")
                 continue

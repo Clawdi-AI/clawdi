@@ -11,15 +11,12 @@ import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
 import {
 	type AgentPluginInventoryItem,
+	agentPluginActionState,
 	agentPluginComponentSummary,
-	agentPluginInstallability,
-	agentPluginStatusPresentation,
 	pluginDisplayName,
-	pluginHasUpdate,
-	pluginVersion,
 } from "./agent-plugin-model";
 
-export type AgentPluginPendingAction = "install" | "remove" | null;
+export type AgentPluginPendingAction = "install" | "remove" | "retry" | null;
 
 export function AgentPluginCard({
 	item,
@@ -29,6 +26,7 @@ export function AgentPluginCard({
 	onOpen,
 	onInstall,
 	onRemove,
+	onRetry,
 }: {
 	item: AgentPluginInventoryItem;
 	runtime: HostedRuntime;
@@ -37,14 +35,11 @@ export function AgentPluginCard({
 	onOpen: (name: string) => void;
 	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
 	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
+	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
 	const title = pluginDisplayName(item);
-	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
-	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
-	const hasUpdate = pluginHasUpdate(item);
-	const canInstall = Boolean(
-		item.catalog && installability?.installable && (!item.desired || hasUpdate),
-	);
+	const { status, installability, hasUpdate, canInstall, canRetry, version } =
+		agentPluginActionState(item, runtime);
 
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
@@ -58,24 +53,27 @@ export function AgentPluginCard({
 					</IconChip>
 				}
 				title={title}
-				badges={
-					status ? (
-						<StatusBadge status={status.tone} withDot>
-							{status.label}
-						</StatusBadge>
-					) : undefined
-				}
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
-				footer={[item.catalog?.publisher, `v${pluginVersion(item)}`]}
-				footerClassName="mt-0"
-			>
-				<div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-					<span className="min-w-0 text-xs text-muted-foreground">
-						{agentPluginComponentSummary(item.catalog)}
-					</span>
-					<div className="relative z-10 flex shrink-0 items-center gap-1.5">
+				footer={[
+					status ? (
+						<StatusBadge key="status" status={status.tone} withDot>
+							{status.label}
+						</StatusBadge>
+					) : null,
+					hasUpdate ? (
+						<StatusBadge key="update" status="info">
+							Update available
+						</StatusBadge>
+					) : null,
+					item.catalog?.publisher,
+					version,
+					item.catalog ? agentPluginComponentSummary(item.catalog) : null,
+				]}
+				actionsVisibility="always"
+				actions={
+					<>
 						{item.desired ? (
 							<ConfirmAction
 								title={`Remove ${title}?`}
@@ -85,10 +83,10 @@ export function AgentPluginCard({
 								onConfirm={() => onRemove(item)}
 							>
 								<Button
-									variant="outline"
+									variant="ghost"
 									size="sm"
 									disabled={mutationsBlocked}
-									className="text-destructive hover:text-destructive"
+									className="text-muted-foreground hover:text-destructive"
 								>
 									{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
 									{pendingAction === "remove" ? "Removing…" : "Remove"}
@@ -121,9 +119,19 @@ export function AgentPluginCard({
 								{installability.label}
 							</Button>
 						) : null}
-					</div>
-				</div>
-			</HeroCard>
+						{canRetry ? (
+							<Button
+								size="sm"
+								disabled={mutationsBlocked}
+								onClick={() => void onRetry(item).catch(() => undefined)}
+							>
+								{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
+								{pendingAction === "retry" ? "Retrying…" : "Retry"}
+							</Button>
+						) : null}
+					</>
+				}
+			/>
 		</div>
 	);
 }

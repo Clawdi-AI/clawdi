@@ -77,6 +77,7 @@ function subscriptionManagement(
 ): ComputeSubscriptionManagementResult {
 	return computeSubscriptionManagement({
 		entitlement: {
+			subscriptionKind: subscription.subscription_kind,
 			deploymentId: subscription.deployment_id,
 			planSlug: subscription.plan_slug,
 			fundingSource: subscription.funding_source,
@@ -99,12 +100,41 @@ function subscriptionManagement(
 export function computeSubscriptionAssignment(
 	subscription: Pick<
 		ComputeSubscriptionListItem,
-		"deployment_id" | "is_orphan" | "subscription_id"
+		"deployment_id" | "is_orphan" | "subscription_id" | "subscription_kind"
 	>,
 	reusableSubscriptionIds: ReadonlySet<string>,
 ): "available" | "assigned" | "unavailable" {
+	if (subscription.subscription_kind === "included_basic") {
+		return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+	}
 	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";
 	return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+}
+
+export function computeSubscriptionIdentity(
+	subscription: Pick<ComputeSubscriptionListItem, "agent_name" | "subscription_kind">,
+	assignment: "available" | "assigned" | "unavailable",
+	agentTile: AgentTile | undefined,
+	href: string | null,
+	inventoryUncertain = false,
+): ComputeSubscriptionIdentity | undefined {
+	if (subscription.subscription_kind === "included_basic" && assignment !== "assigned") {
+		return undefined;
+	}
+	if (assignment === "available") {
+		return { kind: "available", label: "Available for a new agent" };
+	}
+	if (assignment === "unavailable") {
+		if (inventoryUncertain) return undefined;
+		return { kind: "unavailable", label: "Deleted agent" };
+	}
+	return {
+		kind: "agent",
+		name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+		agentType: agentTile?.agentType ?? null,
+		avatarUrl: agentTile?.avatarUrl,
+		href: href ?? undefined,
+	};
 }
 
 export function SubscriptionLoadMore({
@@ -130,6 +160,7 @@ function SubscriptionRow({
 	management,
 	onPlanChange,
 	reusableSubscriptionIds,
+	reusableInventoryUncertain,
 }: {
 	subscription: ComputeSubscriptionListItem;
 	deployment?: HostedDeployment;
@@ -137,6 +168,7 @@ function SubscriptionRow({
 	management: ComputeSubscriptionManagementResult;
 	onPlanChange: (subscription: ComputeSubscriptionListItem) => void;
 	reusableSubscriptionIds: ReadonlySet<string>;
+	reusableInventoryUncertain: boolean;
 }) {
 	const lifecycle = computeSubscriptionLifecycle(subscription);
 	const recovery = computeSubscriptionRecoveryPresentation(subscription, {
@@ -154,6 +186,7 @@ function SubscriptionRow({
 	const pendingPlanSlug = pendingComputePlanSlug(subscription);
 	const actions = resolveComputeSubscriptionActions({
 		entitlement: {
+			subscriptionKind: subscription.subscription_kind,
 			deploymentId: subscription.deployment_id,
 			planSlug: subscription.plan_slug,
 			fundingSource: subscription.funding_source,
@@ -190,7 +223,10 @@ function SubscriptionRow({
 	})();
 	const hasActions =
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
-	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
+	const fundingSource =
+		subscription.subscription_kind === "included_basic"
+			? "included_basic"
+			: computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
 		actions.find((candidate) => candidate.kind === "upgrade" || candidate.kind === "manage")
 			?.disabledReason ?? null;
@@ -211,18 +247,13 @@ function SubscriptionRow({
 		scheduleFallback: recovery.schedule?.fallback ?? undefined,
 		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
-	const identity: ComputeSubscriptionIdentity =
-		assignment === "available"
-			? { kind: "available", label: "Available for a new agent" }
-			: assignment === "assigned" && agentHref
-				? {
-						kind: "agent",
-						name: agentTile?.name ?? subscription.agent_name ?? "Agent",
-						agentType: agentTile?.agentType ?? null,
-						avatarUrl: agentTile?.avatarUrl,
-						href: agentHref,
-					}
-				: { kind: "unavailable", label: "Deleted agent" };
+	const identity = computeSubscriptionIdentity(
+		subscription,
+		assignment,
+		agentTile,
+		agentHref,
+		reusableInventoryUncertain,
+	);
 
 	return (
 		<li className="grid min-w-0 lg:row-span-5 lg:grid-rows-subgrid">
@@ -481,6 +512,9 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 											)}
 											onPlanChange={openPlanChange}
 											reusableSubscriptionIds={reusableSubscriptionIds}
+											reusableInventoryUncertain={
+												reusableSubscriptions.isFetching || reusableSubscriptions.error != null
+											}
 										/>
 									);
 								})}

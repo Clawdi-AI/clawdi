@@ -1,63 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	ComputePlanSlug,
-	HostedComputeSubscription,
-	HostedDeploymentStatus,
-	Plan,
-} from "@/hosted/billing/contracts";
-import {
-	resolveBasicDeploySelection,
-	usesActiveIncludedBasicSlot,
-} from "@/hosted/billing/deploy/deploy-model";
-import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-
-function subscription(): HostedComputeSubscription {
-	return {
-		status: "active",
-		funding_source: "stripe",
-		payment_state: "ok",
-		billing_term_months: 1,
-		price_cents: 900,
-		currency: "usd",
-		cancel_at_period_end: false,
-	};
-}
-
-function includedSubscription(): HostedComputeSubscription {
-	return {
-		subscription_id: 7,
-		status: "active",
-		funding_source: null,
-		payment_state: "ok",
-		billing_term_months: 1,
-		price_cents: 0,
-		currency: "usd",
-		cancel_at_period_end: false,
-	};
-}
-
-function deployment({
-	status,
-	computePlanSlug = "compute_basic",
-	computeSubscription = includedSubscription(),
-	occupiesSlot = true,
-}: {
-	status: HostedDeploymentStatus["summary_state"];
-	computePlanSlug?: ComputePlanSlug;
-	computeSubscription?: HostedComputeSubscription;
-	occupiesSlot?: boolean;
-}) {
-	return hostedDeploymentFixture({
-		id: `hdep_${status}_${computePlanSlug}`,
-		name: "Test agent",
-		status,
-		createdAt: "2026-06-24T00:00:00Z",
-		currentPlanSlug: computePlanSlug,
-		computeSubscription,
-		fundingFact: null,
-		occupiesSlot,
-	});
-}
+import type { Plan } from "@/hosted/billing/contracts";
+import { resolveBasicDeploySelection } from "@/hosted/billing/deploy/deploy-model";
 
 function plan(priceCents: number): Plan {
 	return {
@@ -78,40 +21,6 @@ function plan(priceCents: number): Plan {
 		],
 	};
 }
-
-describe("usesActiveIncludedBasicSlot", () => {
-	test("uses current_plan_slug and slot occupancy without a funding fact", () => {
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
-		expect(
-			usesActiveIncludedBasicSlot([deployment({ status: "running", occupiesSlot: false })]),
-		).toBe(false);
-	});
-
-	test("ignores paid-funded Basic and Performance deployments", () => {
-		expect(
-			usesActiveIncludedBasicSlot([
-				deployment({ status: "running", computeSubscription: subscription() }),
-			]),
-		).toBe(false);
-		expect(
-			usesActiveIncludedBasicSlot([
-				deployment({ status: "running", computePlanSlug: "compute_performance" }),
-			]),
-		).toBe(false);
-	});
-
-	test("does not assume a free Basic slot when occupancy is unavailable", () => {
-		expect(
-			usesActiveIncludedBasicSlot([
-				hostedDeploymentFixture({
-					status: "running",
-					computeSubscription: includedSubscription(),
-					computeSlotOccupancy: null,
-				}),
-			]),
-		).toBeNull();
-	});
-});
 
 describe("resolveBasicDeploySelection", () => {
 	const basic = plan(900);

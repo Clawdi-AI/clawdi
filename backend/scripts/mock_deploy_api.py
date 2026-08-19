@@ -951,6 +951,25 @@ async def plans() -> list[dict[str, Any]]:
     ]
 
 
+@app.get("/v2/subscriptions/included-basic")
+async def included_basic_availability() -> dict[str, int]:
+    used_slots = sum(
+        1
+        for deployment in DEPLOYMENTS.values()
+        if deployment["status"] != "deleted"
+        and deployment["config_info"].get("compute_plan_slug") == "compute_basic"
+        and isinstance((subscription := deployment.get("compute_subscription")), dict)
+        and subscription.get("funding_source") is None
+        and subscription.get("price_cents") == 0
+    )
+    total_slots = 1
+    return {
+        "total_slots": total_slots,
+        "used_slots": used_slots,
+        "available_slots": max(0, total_slots - used_slots),
+    }
+
+
 @app.post("/v2/subscription/checkout")
 async def checkout(request: Request) -> dict[str, Any]:
     body = await request.json()

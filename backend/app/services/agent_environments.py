@@ -47,7 +47,7 @@ def local_machine_registration_key(machine_id: str, agent_type: str) -> str:
 
 
 def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
-    """Clear Connected-only origin and lease evidence during hosted registration."""
+    """Clear Connected-only origin and observations during hosted registration."""
 
     agent.connected_agent_registered_at = None
     agent.project_skill_reconcile_version = None

@@ -14,6 +14,7 @@ from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
@@ -296,6 +297,197 @@ async def test_agent_binding_attach_repairs_stale_primary_before_returning_conte
     )
     primary_rows = [row for row in rows if row.binding_type == "primary"]
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
+
+
+async def test_agent_batch_link_adds_projects_without_replacing_existing_links(
+    client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"batch-link-{uuid.uuid4().hex[:8]}",
+        machine_name="forge",
+    )
+    projects = [
+        Project(
+            user_id=seed_user.id,
+            name=name,
+            slug=f"{slug}-{uuid.uuid4().hex[:8]}",
+            kind=PROJECT_KIND_WORKSPACE,
+        )
+        for name, slug in (
+            ("Existing Context", "existing-context"),
+            ("Build Context", "build-context"),
+            ("Deploy Context", "deploy-context"),
+        )
+    ]
+    db_session.add_all(projects)
+    await db_session.commit()
+
+    existing = await client.post(
+        f"/v1/agents/{env.id}/project-bindings/context",
+        json={"project_id": str(projects[0].id)},
+    )
+    assert existing.status_code == 200, existing.text
+
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        linked = await client.post(
+            f"/v1/agents/{env.id}/projects",
+            json={"project_ids": [str(projects[1].id), str(projects[2].id)]},
+        )
+        assert linked.status_code == 200, linked.text
+        assert linked.json() == {
+            "agent_id": str(env.id),
+            "bound_project_ids": [str(projects[1].id), str(projects[2].id)],
+        }
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+    bindings = (
+        (
+            await db_session.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.agent_id == env.id,
+                    AgentProjectBinding.binding_type == "context",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {binding.project_id for binding in bindings} == {project.id for project in projects}
+    assert sorted(binding.priority for binding in bindings) == [1, 2, 3]
+
+
+async def test_agent_project_delta_is_atomic_and_skips_noop_notifications(
+    client,
+    db_session,
+    seed_user,
+    channel_agent,
+):
+    projects = [
+        Project(
+            user_id=seed_user.id,
+            name=name,
+            slug=f"{slug}-{uuid.uuid4().hex[:8]}",
+            kind=PROJECT_KIND_WORKSPACE,
+        )
+        for name, slug in (
+            ("Old Context", "old-context"),
+            ("New Context", "new-context"),
+            ("Conflicting Context", "conflicting-context"),
+        )
+    ]
+    db_session.add_all(projects)
+    await db_session.flush()
+    db_session.add(
+        Skill(
+            user_id=seed_user.id,
+            project_id=projects[2].id,
+            skill_key="duplicate",
+            name="Duplicate",
+            description="Conflicts with the Agent Workspace",
+            content_hash="c" * 64,
+            authority=SKILL_AUTHORITY_CLOUD,
+        )
+    )
+    state = await db_session.get(HostedRuntimeState, channel_agent.id)
+    assert state is not None
+    state.skills = {"entries": {"duplicate": {"enabled": False, "version": 1}}}
+    await db_session.commit()
+    user_id = seed_user.id
+    agent_id = channel_agent.id
+    default_project_id = channel_agent.default_project_id
+    project_ids = [project.id for project in projects]
+
+    existing = await client.post(
+        f"/v1/agents/{agent_id}/project-bindings/context",
+        json={"project_id": str(project_ids[0])},
+    )
+    assert existing.status_code == 200, existing.text
+    projects[0].archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    queue = sync_events.subscribe(user_id, frozenset(), environment_id=agent_id)
+    try:
+        changed = await client.patch(
+            f"/v1/agents/{agent_id}/projects",
+            json={
+                "add_project_ids": [str(project_ids[1])],
+                "remove_project_ids": [str(project_ids[0])],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json() == {
+            "agent_id": str(agent_id),
+            "added_project_ids": [str(project_ids[1])],
+            "removed_project_ids": [str(project_ids[0])],
+        }
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(agent_id),
+        }
+        assert queue.empty()
+
+        noop = await client.patch(
+            f"/v1/agents/{agent_id}/projects",
+            json={
+                "add_project_ids": [str(project_ids[1])],
+                "remove_project_ids": [str(project_ids[0])],
+            },
+        )
+        assert noop.status_code == 200, noop.text
+        assert noop.json()["added_project_ids"] == []
+        assert noop.json()["removed_project_ids"] == []
+        assert queue.empty()
+
+        primary_removal = await client.patch(
+            f"/v1/agents/{agent_id}/projects",
+            json={
+                "add_project_ids": [],
+                "remove_project_ids": [str(default_project_id)],
+            },
+        )
+        assert primary_removal.status_code == 400, primary_removal.text
+        assert queue.empty()
+
+        conflict = await client.patch(
+            f"/v1/agents/{agent_id}/projects",
+            json={
+                "add_project_ids": [str(project_ids[2])],
+                "remove_project_ids": [str(project_ids[1])],
+            },
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["code"] == "project_skill_name_conflict"
+        await db_session.rollback()
+
+        bindings = (
+            (
+                await db_session.execute(
+                    select(AgentProjectBinding).where(AgentProjectBinding.agent_id == agent_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {
+            binding.project_id for binding in bindings if binding.binding_type == "context"
+        } == {project_ids[1]}
+        assert [
+            binding.project_id for binding in bindings if binding.binding_type == "primary"
+        ] == [default_project_id]
+        assert queue.empty()
+    finally:
+        sync_events.unsubscribe(user_id, queue)
 
 
 async def test_agent_context_attach_rejects_managed_projects(
@@ -633,15 +825,23 @@ async def test_context_reorder_can_swap_priorities(client, db_session, seed_user
         bindings.append(row)
     await db_session.commit()
 
-    response = await client.patch(
-        f"/v1/agents/{env.id}/project-bindings/context/reorder",
-        json={
-            "items": [
-                {"binding_id": str(bindings[0].id), "priority": 2},
-                {"binding_id": str(bindings[1].id), "priority": 1},
-            ]
-        },
-    )
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    try:
+        response = await client.patch(
+            f"/v1/agents/{env.id}/project-bindings/context/reorder",
+            json={
+                "items": [
+                    {"binding_id": str(bindings[0].id), "priority": 2},
+                    {"binding_id": str(bindings[1].id), "priority": 1},
+                ]
+            },
+        )
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(env.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
     assert response.status_code == 200, response.text
 
     rows = (

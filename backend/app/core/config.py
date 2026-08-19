@@ -269,9 +269,6 @@ class Settings(BaseSettings):
     runtime_observation_replay_horizon_days: Annotated[int, Field(gt=0, le=365)] = 7
     runtime_observation_hard_retention_days: Annotated[int, Field(gt=0, le=3_650)] = 30
     runtime_observation_cleanup_batch_size: Annotated[int, Field(gt=0, le=10_000)] = 500
-    # Exact Hosted CLI package specs permitted to consume linked Project
-    # Skills. Empty is deliberately fail-closed for staged rollout.
-    project_skill_hosted_cli_package_specs: list[str] = []
 
     # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in

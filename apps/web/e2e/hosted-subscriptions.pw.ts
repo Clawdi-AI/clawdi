@@ -126,6 +126,7 @@ function subscription(
 ): Subscription {
 	return {
 		subscription_id: subscriptionId,
+		subscription_kind: "paid",
 		plan_slug: "compute_performance",
 		funding_source: "stripe",
 		status,
@@ -460,6 +461,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 				items: [
 					subscription("active", "active", { agent_name: longAgentName }),
 					subscription("included", "active", {
+						subscription_kind: "included_basic",
 						plan_slug: "compute_basic",
 						funding_source: null,
 						price_cents: 0,
@@ -607,6 +609,17 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		"payment-action-required",
 		"canceling",
 	]);
+	const desktopGrid = await activeCard.evaluate((card) => {
+		const grid = card.closest("ul");
+		if (!grid) throw new Error("Subscription card grid is missing");
+		const style = getComputedStyle(grid);
+		return {
+			columns: style.gridTemplateColumns.split(" ").filter(Boolean).length,
+			columnGap: style.columnGap,
+			rowGap: style.rowGap,
+		};
+	});
+	expect(desktopGrid).toEqual({ columns: 2, columnGap: "8px", rowGap: "8px" });
 	await expectSubscriptionCardRowAligned(activeCard, includedCard);
 	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
 		cards.map((card) => card.getBoundingClientRect().toJSON()),

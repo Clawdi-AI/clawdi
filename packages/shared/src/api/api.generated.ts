@@ -1555,6 +1555,24 @@ export interface paths {
         patch: operations["update_project_v1_projects__project_id__patch"];
         trace?: never;
     };
+    "/v1/projects/{project_id}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link Project Agents */
+        post: operations["link_project_agents_v1_projects__project_id__agents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Project Agents */
+        patch: operations["update_project_agents_v1_projects__project_id__agents_patch"];
+        trace?: never;
+    };
     "/v1/runtime/manifest": {
         parameters: {
             query?: never;
@@ -2931,6 +2949,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link Agent Projects */
+        post: operations["link_agent_projects_v1_agents__agent_id__projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Agent Projects */
+        patch: operations["update_agent_projects_v1_agents__agent_id__projects_patch"];
+        trace?: never;
+    };
     "/v1/agents/{agent_id}/project-bindings/context": {
         parameters: {
             query?: never;
@@ -3279,6 +3315,34 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AgentProjectDeltaBody */
+        AgentProjectDeltaBody: {
+            /** Add Project Ids */
+            add_project_ids?: string[];
+            /** Remove Project Ids */
+            remove_project_ids?: string[];
+        };
+        /** AgentProjectDeltaResponse */
+        AgentProjectDeltaResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Added Project Ids */
+            added_project_ids: string[];
+            /** Removed Project Ids */
+            removed_project_ids: string[];
+        };
+        /** AgentProjectLinkBody */
+        AgentProjectLinkBody: {
+            /** Project Ids */
+            project_ids: string[];
+        };
+        /** AgentProjectLinkResponse */
+        AgentProjectLinkResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Bound Project Ids */
+            bound_project_ids: string[];
         };
         /** AgentProjectSkillDesiredItem */
         AgentProjectSkillDesiredItem: {
@@ -6429,6 +6493,34 @@ export interface components {
             synced_at: string;
             /** Plugins */
             plugins: components["schemas"]["PluginCatalogEntryResponse"][];
+        };
+        /** ProjectAgentDeltaBody */
+        ProjectAgentDeltaBody: {
+            /** Add Agent Ids */
+            add_agent_ids?: string[];
+            /** Remove Agent Ids */
+            remove_agent_ids?: string[];
+        };
+        /** ProjectAgentDeltaResponse */
+        ProjectAgentDeltaResponse: {
+            /** Project Id */
+            project_id: string;
+            /** Added Agent Ids */
+            added_agent_ids: string[];
+            /** Removed Agent Ids */
+            removed_agent_ids: string[];
+        };
+        /** ProjectAgentLinkBody */
+        ProjectAgentLinkBody: {
+            /** Agent Ids */
+            agent_ids: string[];
+        };
+        /** ProjectAgentLinkResponse */
+        ProjectAgentLinkResponse: {
+            /** Project Id */
+            project_id: string;
+            /** Bound Agent Ids */
+            bound_agent_ids: string[];
         };
         /** ProjectArchiveResponse */
         ProjectArchiveResponse: {
@@ -11284,6 +11376,76 @@ export interface operations {
             };
         };
     };
+    link_project_agents_v1_projects__project_id__agents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectAgentLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAgentLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_agents_v1_projects__project_id__agents_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectAgentDeltaBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAgentDeltaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_runtime_manifest_v1_runtime_manifest_get: {
         parameters: {
             query?: {
@@ -13082,7 +13244,7 @@ export interface operations {
                 field?: string | null;
                 /** @description Project to resolve from (default: caller write project). */
                 project_id?: string | null;
-                /** @description Resolve through an Agent Project and attached Project order. */
+                /** @description Resolve through an Agent Project and linked Project Vault resolution priority. */
                 agent_id?: string | null;
                 /** @description Allow first-match wins when attached Projects contain the same key. */
                 allow_conflicts?: boolean;
@@ -13938,6 +14100,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentProjectBindingResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_agent_projects_v1_agents__agent_id__projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentProjectLinkBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_projects_v1_agents__agent_id__projects_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentProjectDeltaBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProjectDeltaResponse"];
                 };
             };
             /** @description Validation Error */

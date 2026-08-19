@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Link2, Plus, Trash2 } from "lucide-react";
+import { Link2, Plus, Save } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -18,9 +18,10 @@ import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import {
+	compareProjectsForUse,
 	displayProjectName,
 	isCustomProject,
-	ProjectCompactPicker,
+	ProjectIdentity,
 } from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
@@ -28,7 +29,7 @@ import {
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -77,6 +78,20 @@ export function AgentProjectsTab({
 		},
 	);
 	const bindings = useAgentProjectBindings(agentId, { enabled });
+	const refresh = async () => {
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) }),
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+			}),
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
+			queryClient.invalidateQueries({ queryKey: ["skills"] }),
+			queryClient.invalidateQueries({ queryKey: ["vaults"] }),
+		]);
+	};
 
 	const navigationScope = agentResourceScope(agentId);
 	return (
@@ -96,10 +111,7 @@ export function AgentProjectsTab({
 			navigationScope={navigationScope}
 			headerIcon={headerIcon}
 			headerAdornment={headerAdornment}
-			onChanged={() => {
-				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
-				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
-			}}
+			onChanged={refresh}
 		/>
 	);
 }
@@ -129,18 +141,18 @@ function AgentProjectsPanel({
 	navigationScope: ResourceNavigationScope;
 	headerIcon?: ReactNode;
 	headerAdornment?: ReactNode;
-	onChanged: () => void;
+	onChanged: () => Promise<void>;
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const [contextProjectId, setContextProjectId] = useState("");
-	const [linkOpen, setLinkOpen] = useState(false);
+	const [managedProjectIds, setManagedProjectIds] = useState<Set<string>>(() => new Set());
+	const [manageOpen, setManageOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectDescription, setNewProjectDescription] = useState("");
 	// React Query pending state is post-render. These refs reject a second
 	// submit synchronously, before another mutation can queue in the same frame.
-	const linkExistingLockedRef = useRef(false);
+	const manageProjectsLockedRef = useRef(false);
 	const createProjectLockedRef = useRef(false);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
@@ -149,40 +161,61 @@ function AgentProjectsPanel({
 		() => new Map(projects.map((project) => [project.id, project])),
 		[projects],
 	);
-	const contextChoices = projects.filter(
-		(project) =>
-			isCustomProject(project) && !bindings.some((binding) => binding.project_id === project.id),
+	const manageableProjects = useMemo(
+		() => projects.filter(isCustomProject).sort(compareProjectsForUse),
+		[projects],
 	);
+	const linkedProjectIds = useMemo(
+		() => new Set(bindings.map((binding) => binding.project_id)),
+		[bindings],
+	);
+	const projectIdsToAdd = manageableProjects
+		.filter((project) => managedProjectIds.has(project.id) && !linkedProjectIds.has(project.id))
+		.map((project) => project.id);
+	const projectIdsToRemove = manageableProjects
+		.filter((project) => linkedProjectIds.has(project.id) && !managedProjectIds.has(project.id))
+		.map((project) => project.id);
+	const hasProjectChanges = projectIdsToAdd.length > 0 || projectIdsToRemove.length > 0;
 
-	const linkContext = useMutation({
-		mutationFn: async (projectId: string) => {
-			await unwrap(
-				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
+	const updateProjectLinks = useMutation({
+		mutationFn: async ({
+			addProjectIds,
+			removeProjectIds,
+		}: {
+			addProjectIds: string[];
+			removeProjectIds: string[];
+		}) => {
+			return unwrap(
+				await api.PATCH("/v1/agents/{agent_id}/projects", {
 					params: { path: { agent_id: agentId } },
-					body: { project_id: projectId },
+					body: {
+						add_project_ids: addProjectIds,
+						remove_project_ids: removeProjectIds,
+					},
 				}),
 			);
 		},
-		onSuccess: () => {
-			setContextProjectId("");
-			setLinkOpen(false);
-			onChanged();
-			toast.success("Project linked");
+		onSuccess: async () => {
+			await onChanged();
+			setManageOpen(false);
+			toast.success("Project access updated");
 		},
 		onError: (error) =>
-			toast.error("Couldn't link project", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update Project access", {
+				description: normalizeApiError(error),
+			}),
 		onSettled: () => {
-			linkExistingLockedRef.current = false;
+			manageProjectsLockedRef.current = false;
 		},
 	});
 
 	const createProject = useMutation({
 		mutationFn: async (body: ProjectCreate) => unwrap(await api.POST("/v1/projects", { body })),
-		onSuccess: (project) => {
+		onSuccess: async (project) => {
+			await onChanged();
 			setNewProjectName("");
 			setNewProjectDescription("");
 			setCreateOpen(false);
-			onChanged();
 			const returnTarget = resourceCollectionTarget(navigationScope, "projects");
 			const openHref = `${projectDetailHref(project.id)}?from=${encodeURIComponent(returnTarget.href)}`;
 			toast.success("Project created", {
@@ -200,10 +233,13 @@ function AgentProjectsPanel({
 		},
 	});
 
-	const submitExistingProjectLink = () => {
-		if (!contextProjectId || linkExistingLockedRef.current) return;
-		linkExistingLockedRef.current = true;
-		linkContext.mutate(contextProjectId);
+	const submitProjectChanges = () => {
+		if (!hasProjectChanges || manageProjectsLockedRef.current) return;
+		manageProjectsLockedRef.current = true;
+		updateProjectLinks.mutate({
+			addProjectIds: projectIdsToAdd,
+			removeProjectIds: projectIdsToRemove,
+		});
 	};
 
 	const submitCreateProject = () => {
@@ -216,51 +252,6 @@ function AgentProjectsPanel({
 		});
 	};
 
-	const removeBinding = useMutation({
-		mutationFn: async (bindingId: string) => {
-			await unwrap(
-				await api.DELETE("/v1/agents/{agent_id}/project-bindings/{binding_id}", {
-					params: { path: { agent_id: agentId, binding_id: bindingId } },
-				}),
-			);
-		},
-		onSuccess: () => {
-			onChanged();
-			toast.success("Project unlinked");
-		},
-		onError: (error) =>
-			toast.error("Couldn't unlink project", { description: normalizeApiError(error) }),
-	});
-
-	const reorder = useMutation({
-		mutationFn: async (items: Array<{ binding_id: string; priority: number }>) => {
-			await unwrap(
-				await api.PATCH("/v1/agents/{agent_id}/project-bindings/context/reorder", {
-					params: { path: { agent_id: agentId } },
-					body: { items },
-				}),
-			);
-		},
-		onSuccess: () => {
-			onChanged();
-			toast.success("Project order updated");
-		},
-		onError: (error) =>
-			toast.error("Couldn't update Project order", {
-				description: normalizeApiError(error),
-			}),
-	});
-
-	const moveContext = (bindingId: string, direction: -1 | 1) => {
-		const index = contexts.findIndex((binding) => binding.id === bindingId);
-		const targetIndex = index + direction;
-		if (index < 0 || targetIndex < 0 || targetIndex >= contexts.length) return;
-		const next = contexts.slice();
-		const [item] = next.splice(index, 1);
-		if (!item) return;
-		next.splice(targetIndex, 0, item);
-		reorder.mutate(next.map((binding, idx) => ({ binding_id: binding.id, priority: idx + 1 })));
-	};
 	const actionsDisabled = !primary || isLoading || Boolean(bindingsError || projectsError);
 	const header = (
 		<PageHeader
@@ -283,12 +274,12 @@ function AgentProjectsPanel({
 						size="sm"
 						disabled={actionsDisabled}
 						onClick={() => {
-							setContextProjectId("");
-							setLinkOpen(true);
+							setManagedProjectIds(new Set(contexts.map((binding) => binding.project_id)));
+							setManageOpen(true);
 						}}
 					>
 						<Link2 className="size-3.5" />
-						Link project
+						Manage projects
 					</Button>
 				</>
 			}
@@ -348,13 +339,11 @@ function AgentProjectsPanel({
 			) : (
 				<ol
 					className={HERO_GRID_CLASS}
-					aria-label="Linked Projects in use order"
+					aria-label="Linked Projects"
 					data-testid="agent-project-grid"
 				>
-					{contexts.map((binding, position) => {
+					{contexts.map((binding) => {
 						const project = projectsById.get(binding.project_id);
-						const projectName = project ? displayProjectName(project) : "Unavailable Project";
-						const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
 						return (
 							<li
 								key={binding.id}
@@ -362,64 +351,11 @@ function AgentProjectsPanel({
 								data-binding-type={binding.binding_type}
 								data-testid="agent-project-card"
 							>
-								<AgentProjectCard
-									project={project}
-									position={position}
-									navigationScope={navigationScope}
-									actions={
-										<div className="flex items-center gap-0.5">
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={position === 0 || reorder.isPending}
-												onClick={() => moveContext(binding.id, -1)}
-												title="Move up"
-												aria-label={`Move ${projectName} up`}
-											>
-												<ArrowUp className="size-3.5" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={position === contexts.length - 1 || reorder.isPending}
-												onClick={() => moveContext(binding.id, 1)}
-												title="Move down"
-												aria-label={`Move ${projectName} down`}
-											>
-												<ArrowDown className="size-3.5" />
-											</Button>
-											<ConfirmAction
-												title="Unlink this Project?"
-												description={
-													<>
-														<p>
-															This Agent will stop using {projectName}&apos;s Skills and attached
-															Vaults.
-														</p>
-														<p>The Project and its resources remain unchanged.</p>
-													</>
-												}
-												confirmLabel="Unlink project"
-												destructive
-												onConfirm={() => removeBinding.mutateAsync(binding.id)}
-											>
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													disabled={isRemoving}
-													title="Unlink project"
-													aria-label={`Unlink ${projectName}`}
-												>
-													{isRemoving ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Trash2 className="size-3.5 text-destructive" />
-													)}
-												</Button>
-											</ConfirmAction>
-										</div>
-									}
-								/>
+								{project ? (
+									<ProjectResourceCard project={project} navigationScope={navigationScope} />
+								) : (
+									<UnavailableProjectResourceCard />
+								)}
 							</li>
 						);
 					})}
@@ -427,49 +363,73 @@ function AgentProjectsPanel({
 			)}
 
 			<Dialog
-				open={linkOpen}
-				onOpenChange={setLinkOpen}
+				open={manageOpen}
+				onOpenChange={setManageOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setContextProjectId("");
+					if (!open) setManagedProjectIds(new Set());
 				}}
 			>
-				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
+				<DialogContent className="sm:max-w-lg" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link project</DialogTitle>
-						<DialogDescription>
-							Choose a Project. This Agent will use its Skills and attached Vaults together.
-						</DialogDescription>
+						<DialogTitle>Manage projects</DialogTitle>
+						<DialogDescription>Choose which Projects this Agent can use.</DialogDescription>
 					</DialogHeader>
 					<form
 						className="space-y-4"
 						onSubmit={(event) => {
 							event.preventDefault();
-							submitExistingProjectLink();
+							submitProjectChanges();
 						}}
 					>
-						{contextChoices.length > 0 ? (
-							<ProjectCompactPicker
-								projects={contextChoices}
-								value={contextProjectId}
-								onValueChange={setContextProjectId}
-								placeholder="Choose a Project…"
-								ariaLabel="Project to link"
-								disabled={linkContext.isPending}
-							/>
+						{manageableProjects.length > 0 ? (
+							<div className="max-h-80 divide-y overflow-y-auto rounded-md border">
+								{manageableProjects.map((project) => {
+									const name = displayProjectName(project);
+									const checkboxId = `agent-project-${project.id}`;
+									const isSelected = managedProjectIds.has(project.id);
+									return (
+										<label
+											key={project.id}
+											htmlFor={checkboxId}
+											className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/20"
+										>
+											<Checkbox
+												id={checkboxId}
+												checked={isSelected}
+												disabled={updateProjectLinks.isPending}
+												aria-label={`${name} access`}
+												onCheckedChange={(checked) => {
+													setManagedProjectIds((current) => {
+														const next = new Set(current);
+														if (checked === true) next.add(project.id);
+														else next.delete(project.id);
+														return next;
+													});
+												}}
+											/>
+											<ProjectIdentity
+												project={project}
+												showKind={false}
+												className="min-w-0 flex-1"
+											/>
+										</label>
+									);
+								})}
+							</div>
 						) : (
-							<p className="text-sm text-muted-foreground">No Projects are available to link.</p>
+							<p className="text-sm text-muted-foreground">No Projects are available.</p>
 						)}
 						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setLinkOpen(false)}>
+							<Button type="button" variant="ghost" onClick={() => setManageOpen(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!contextProjectId || linkContext.isPending}>
-								{linkContext.isPending ? (
+							<Button type="submit" disabled={!hasProjectChanges || updateProjectLinks.isPending}>
+								{updateProjectLinks.isPending ? (
 									<Spinner className="size-3.5" />
 								) : (
-									<Plus className="size-3.5" />
+									<Save className="size-3.5" />
 								)}
-								Link project
+								Save changes
 							</Button>
 						</DialogFooter>
 					</form>
@@ -539,30 +499,5 @@ function AgentProjectsPanel({
 				</DialogContent>
 			</Dialog>
 		</div>
-	);
-}
-
-function AgentProjectCard({
-	project,
-	position,
-	navigationScope,
-	actions,
-}: {
-	project: ProjectRow | undefined;
-	position: number;
-	navigationScope: ResourceNavigationScope;
-	actions?: ReactNode;
-}) {
-	const footer = [`Project order ${position + 1}`];
-	if (!project) {
-		return <UnavailableProjectResourceCard footer={footer} actions={actions} />;
-	}
-	return (
-		<ProjectResourceCard
-			project={project}
-			footer={footer}
-			actions={actions}
-			navigationScope={navigationScope}
-		/>
 	);
 }

@@ -215,12 +215,11 @@ invalidate the affected managed Agent desired state.
 Skill keys have no precedence across the Agent Workspace and linked Projects.
 The link or write transaction rejects a duplicate key before changing the
 binding, Skill row, or object-store content and tells the user to remove or
-rename one copy. A connected Agent must advertise the exact Project Skill
-reconcile capability in every heartbeat. Hosted requires an allowlisted exact
-CLI package specification plus a fresh, successful observation of that CLI
-applying the current generation. Missing, stale, or downgraded evidence fails
-closed with an update action before Link or a later Project Skill write. An
-empty Project can still be linked for Vault access.
+rename one copy. Link, unlink, and Project Skill writes change control-plane
+desired state regardless of CLI package version, runtime availability,
+observation freshness, or reconcile lease. Runtime convergence and health are
+reported separately and never gate those changes. An empty Project can still
+be linked for Vault access.
 
 Project owners may rename, edit the description, and archive their Projects.
 Archival removes all Agent links immediately while retaining historical
@@ -420,12 +419,11 @@ and returned by
 before and after installation. Any target or byte mismatch rolls back instead
 of creating a second writer.
 
-Rollout is deliberately capability-first: ship the compatible CLI, wait for
-fresh same-generation readiness observations, configure the exact Hosted CLI
-package-spec allowlist (which defaults empty), and only then permit
-Skill-bearing Project links. Connected daemons advertise the capability only
-after the reconcile implementation is present; older daemons remain
-unavailable. No runtime name or unobserved desired row is capability evidence.
+Hosted manifests render linked Project Skills for every `HostedRuntimeState`;
+Connected inventory returns them after Connected identity and authorization
+validation. Capability reports remain a deployed-client-compatible observation
+only. Runtime reconciliation handles convergence without changing desired-state
+eligibility.
 
 The detailed contract is [`managed-runtime.md`](managed-runtime.md). This
 architecture page should not duplicate that runtime specification.

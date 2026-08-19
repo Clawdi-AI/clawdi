@@ -4,7 +4,6 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	type HostedDeployCheckoutRequest,
-	type HostedDeployDeployment,
 	type HostedDeployManagedModel,
 	type HostedDeployOperation,
 	type HostedDeployPlan,
@@ -13,10 +12,10 @@ import {
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedDeployWallet,
+	type HostedIncludedBasicAvailability,
 	type HostedSavedAiProvider,
 	type HostedWalletBinding,
 	type paths,
-	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
 import {
@@ -153,8 +152,8 @@ export class HostedDeployClient {
 		return unwrapHosted(await this.client.GET("/v2/subscription/plans"));
 	}
 
-	async listDeployments(): Promise<HostedDeployDeployment[]> {
-		return unwrapDeploymentList(unwrapHosted(await this.client.GET("/v2/deployments")));
+	async getIncludedBasicAvailability(): Promise<HostedIncludedBasicAvailability> {
+		return unwrapHosted(await this.client.GET("/v2/subscriptions/included-basic", {}));
 	}
 
 	async getManagedModels(): Promise<HostedDeployManagedModel[]> {
@@ -197,8 +196,8 @@ export class HostedDeployClient {
 	async checkout(body: HostedDeployCheckoutRequest, idempotencyKey: string) {
 		return unwrapHosted(
 			await this.client.POST("/v2/subscription/checkout", {
+				params: { header: { "Idempotency-Key": idempotencyKey } },
 				body,
-				headers: { "Idempotency-Key": idempotencyKey },
 			}),
 		);
 	}

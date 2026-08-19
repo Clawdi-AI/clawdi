@@ -23,6 +23,7 @@ function useInvalidateBillingAfterCheckout() {
 	return () => {
 		queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
 		queryClient.invalidateQueries({ queryKey: billingKeys.subscriptions });
+		queryClient.invalidateQueries({ queryKey: billingKeys.includedBasicAvailability });
 		queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 		queryClient.invalidateQueries({ queryKey: billingKeys.transactions });
 		queryClient.invalidateQueries({ queryKey: billingKeys.reusableSubscriptions });

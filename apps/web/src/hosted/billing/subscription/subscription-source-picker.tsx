@@ -90,7 +90,7 @@ export function SubscriptionSourcePicker({
 			</div>
 			{isLoading ? (
 				<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Checking reusable subscriptions…
+					<Spinner className="size-3.5" /> Checking compute availability…
 				</p>
 			) : error != null ? (
 				<ApiErrorPanel

@@ -38,6 +38,8 @@ from app.core.skill_key import (
     SKILL_KEY_PATTERN,
     SkillKeyValidationError,
     has_reserved_skill_key_suffix,
+    is_legacy_hidden_skill_key,
+    is_valid_skill_key,
     validate_derived_skill_key,
 )
 from app.core.skill_sync_protocol import (
@@ -103,6 +105,13 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 # callers migrate, the legacy write paths return 410 (see step 3
 # of phase 2).
 project_router = APIRouter(prefix="/projects/{project_id}/skills", tags=["skills"])
+
+# Narrow compatibility adapter for legacy Agent uploads. This is mounted only
+# under /api and before project_router so canonical /v1 validation stays strict.
+legacy_project_upload_router = APIRouter(
+    prefix="/projects/{project_id}/skills",
+    include_in_schema=False,
+)
 
 # Agent-authoritative filesystem projection. Unlike project routes, these
 # endpoints derive current project authority from the authenticated Agent
@@ -1005,6 +1014,40 @@ async def _project_upload_authority(
     return SKILL_AUTHORITY_AGENT_SYNC, agent_id
 
 
+async def _upload_skill_project(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+    skill_key: str,
+    file: UploadFile,
+    create_only: bool,
+    content_hash: str | None,
+    skill_sync_protocol: str | None,
+) -> SkillUploadResponse:
+    authority, authority_agent_id = await _project_upload_authority(
+        db,
+        auth,
+        project_id,
+        allow_agent_alias=True,
+        skill_sync_protocol=skill_sync_protocol,
+    )
+    # Do not hold an idle transaction while reading a bounded multipart body.
+    await db.commit()
+    data = await _read_bounded_skill_upload(file)
+    return await _do_upload_skill(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        data=data,
+        content_hash=content_hash,
+        create_only=create_only,
+        authority=authority,
+        authority_agent_id=authority_agent_id,
+    )
+
+
 @agent_router.post("/sync/upload")
 async def upload_agent_synced_skill(
     agent_id: UUID,
@@ -1064,45 +1107,66 @@ async def upload_skill_project(
     `_do_upload_skill`, which serializes mutations with a per-Skill advisory
     lock. SSE is an invalidation hint only for Agent projections.
     """
-    authority, authority_agent_id = await _project_upload_authority(
-        db,
-        auth,
-        project_id,
-        allow_agent_alias=True,
-        skill_sync_protocol=skill_sync_protocol,
-    )
-    await db.commit()
-    # Stream the upload in bounded chunks, refusing once we cross
-    # the cap. `await file.read()` would otherwise pull the whole
-    # body into memory before any check fires — the global
-    # `BodySizeLimitMiddleware` only catches requests that declare
-    # Content-Length, so chunked-transfer clients (HTTP/1.1 +
-    # `Transfer-Encoding: chunked`, HTTP/2 streamed) bypass it.
-    chunks: list[bytes] = []
-    total = 0
-    chunk_size = 1024 * 1024  # 1 MB
-    while True:
-        chunk = await file.read(chunk_size)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > _MAX_SKILL_TAR_BYTES:
-            raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                f"Skill tarball exceeds {_MAX_SKILL_TAR_BYTES} bytes",
-            )
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    return await _do_upload_skill(
+    return await _upload_skill_project(
         db=db,
         auth=auth,
         project_id=project_id,
         skill_key=skill_key,
-        data=data,
-        content_hash=content_hash,
+        file=file,
         create_only=create_only,
-        authority=authority,
-        authority_agent_id=authority_agent_id,
+        content_hash=content_hash,
+        skill_sync_protocol=skill_sync_protocol,
+    )
+
+
+@legacy_project_upload_router.post("/upload", response_model=None)
+async def upload_skill_project_legacy(
+    project_id: UUID = Path(...),
+    skill_key: str = Form(..., max_length=MAX_SKILL_KEY_LEN),
+    file: UploadFile = File(...),
+    create_only: bool = Form(
+        False,
+        description="Reject the upload if this Project already has an active Skill with this key.",
+    ),
+    content_hash: str | None = Form(
+        None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    ),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillUploadResponse | dict[str, bool]:
+    """Preserve the released /api upload contract for legacy Agent scanners."""
+    if has_reserved_skill_key_suffix(skill_key):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"skill_key cannot end with reserved suffix "
+            f"({', '.join(sorted(RESERVED_SKILL_KEY_SUFFIXES))})",
+        )
+    if is_legacy_hidden_skill_key(skill_key):
+        authority, _ = await _project_upload_authority(
+            db,
+            auth,
+            project_id,
+            allow_agent_alias=True,
+            skill_sync_protocol=skill_sync_protocol,
+        )
+        if authority != SKILL_AUTHORITY_AGENT_SYNC:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+        return {"ignored": True}
+    if not is_valid_skill_key(skill_key):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+    return await _upload_skill_project(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        skill_key=skill_key,
+        file=file,
+        create_only=create_only,
+        content_hash=content_hash,
+        skill_sync_protocol=skill_sync_protocol,
     )
 
 
@@ -1387,6 +1451,7 @@ async def _do_upload_skill(
             db,
             project_id=project_id,
             skill_key=skill_key,
+            local_skill_key=name,
         )
         # Project archive can cross the initial authorization read while the
         # archive is being validated. Re-check after the Project graph lock.
@@ -2201,6 +2266,7 @@ async def _do_install_skill(
         db,
         project_id=project_id,
         skill_key=skill_key,
+        local_skill_key=fetched.name,
     )
     await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
     await db.commit()
@@ -2214,6 +2280,7 @@ async def _do_install_skill(
         db,
         project_id=project_id,
         skill_key=skill_key,
+        local_skill_key=fetched.name,
     )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})

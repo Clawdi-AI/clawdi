@@ -87,6 +87,33 @@ def test_mock_v2_create_projects_only_the_resource_name() -> None:
             mock_deploy_api.DEPLOYMENTS.pop(deployment_id, None)
 
 
+def test_mock_included_basic_availability_is_deployment_scoped() -> None:
+    deployment = mock_deploy_api._create_deployment_record(
+        {"runtime": "hermes", "compute_plan_slug": "compute_basic"}
+    )
+    deployment["compute_subscription"] = {
+        "funding_source": None,
+        "price_cents": 0,
+    }
+    deployment_id = deployment["id"]
+    try:
+        with TestClient(mock_deploy_api.app) as client:
+            assert client.get("/v2/subscriptions/included-basic").json() == {
+                "total_slots": 1,
+                "used_slots": 1,
+                "available_slots": 0,
+            }
+
+            deployment["status"] = "deleted"
+            assert client.get("/v2/subscriptions/included-basic").json() == {
+                "total_slots": 1,
+                "used_slots": 0,
+                "available_slots": 1,
+            }
+    finally:
+        mock_deploy_api.DEPLOYMENTS.pop(deployment_id, None)
+
+
 def test_mock_v2_rejects_retired_names_and_updates_runtime_configuration() -> None:
     deployment = mock_deploy_api._create_deployment_record(
         {"name": "Stable resource name", "runtime": "hermes"}

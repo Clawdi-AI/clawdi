@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -10,10 +12,41 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.services.agent_lifecycle import active_agent_filter, active_project_filter
+
+
+@dataclass(frozen=True)
+class BindingDeltaResult:
+    added_ids: tuple[UUID, ...]
+    removed_ids: tuple[UUID, ...]
+
+
+def _unique_ids(values: Iterable[UUID]) -> list[UUID]:
+    return list(dict.fromkeys(values))
+
+
+def _validate_disjoint_delta(
+    *,
+    add_ids: list[UUID],
+    remove_ids: list[UUID],
+    resource_name: str,
+) -> None:
+    if set(add_ids) & set(remove_ids):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{resource_name} ids to add and remove must be disjoint",
+        )
+
+
+def _assert_context_binding(binding: AgentProjectBinding) -> None:
+    if binding.binding_type != "context":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Workspace bindings cannot be changed here",
+        )
 
 
 async def get_owned_agent_or_404(
@@ -78,6 +111,31 @@ async def assert_project_writable_by_user(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Only the Project owner can make this change",
+        )
+    return project
+
+
+async def assert_project_linkable_to_agent(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent: AgentEnvironment,
+    project_id: UUID,
+) -> Project:
+    project = await assert_project_visible_to_user(
+        db,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    if project_id == agent.default_project_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This Project is already the Agent Workspace",
+        )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
         )
     return project
 
@@ -180,7 +238,7 @@ async def ensure_context_binding(
     if priority < 1:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Project order must be >= 1",
+            "Vault resolution priority must be >= 1",
         )
 
     binding = AgentProjectBinding(
@@ -222,7 +280,12 @@ async def attach_project_to_owned_agents(
 
     if not agent_ids:
         return []
-    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    project = await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
     await lock_project_agent_binding_changes(
         db,
         project_id=project_id,
@@ -230,7 +293,12 @@ async def attach_project_to_owned_agents(
     )
     # Re-check access after acquiring the Project graph lock so archive,
     # unshare, and explicit Link cannot cross at the write boundary.
-    await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    project = await assert_project_visible_to_user(db, user_id=user_id, project_id=project_id)
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
     for agent_id in sorted(agent_ids, key=str):
         await assert_project_link_compatible(
             db,
@@ -249,6 +317,314 @@ async def attach_project_to_owned_agents(
         await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
         bound_agent_ids.append(str(agent_id))
     return bound_agent_ids
+
+
+async def attach_projects_to_owned_agent(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent_id: UUID,
+    raw_project_ids: list[str] | None,
+) -> list[str]:
+    """Attach visible Projects to one owned Agent in a single transaction."""
+    from app.services.project_runtime_skills import (
+        assert_project_link_compatible,
+        lock_project_binding_set_change,
+    )
+    from app.services.sync_events import queue_environment_runtime_manifest_changed
+
+    agent = await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+    project_ids: list[UUID] = []
+    for raw_project_id in raw_project_ids or []:
+        try:
+            project_id = UUID(raw_project_id)
+        except ValueError as err:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid project id") from err
+        if project_id not in project_ids:
+            project_ids.append(project_id)
+
+    if not project_ids:
+        return []
+    for project_id in project_ids:
+        await assert_project_linkable_to_agent(
+            db,
+            user_id=user_id,
+            agent=agent,
+            project_id=project_id,
+        )
+
+    await lock_project_binding_set_change(
+        db,
+        project_ids=project_ids,
+        agent_id=agent_id,
+    )
+    # Re-check the full selection after locking so archive or unshare cannot
+    # leave a partially applied batch.
+    for project_id in project_ids:
+        await assert_project_linkable_to_agent(
+            db,
+            user_id=user_id,
+            agent=agent,
+            project_id=project_id,
+        )
+
+    await ensure_agent_primary_binding(
+        db,
+        agent=agent,
+        created_by_user_id=user_id,
+    )
+    existing_project_ids = set(
+        (
+            await db.execute(
+                select(AgentProjectBinding.project_id).where(
+                    AgentProjectBinding.agent_id == agent_id,
+                )
+            )
+        ).scalars()
+    )
+
+    changed = False
+    for project_id in project_ids:
+        if project_id in existing_project_ids:
+            continue
+        # Each inserted binding is flushed before the next compatibility
+        # check, so conflicts within the submitted batch also fail atomically.
+        await assert_project_link_compatible(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+        )
+        await ensure_context_binding(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+            created_by_user_id=user_id,
+        )
+        existing_project_ids.add(project_id)
+        changed = True
+
+    if changed:
+        await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
+    return [str(project_id) for project_id in project_ids]
+
+
+async def update_owned_agent_project_links(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    agent_id: UUID,
+    add_project_ids: Iterable[UUID],
+    remove_project_ids: Iterable[UUID],
+) -> BindingDeltaResult:
+    """Atomically add and remove one owned Agent's context Projects."""
+    from app.services.project_runtime_skills import (
+        assert_project_link_compatible,
+        lock_project_binding_set_change,
+    )
+    from app.services.sync_events import queue_environment_runtime_manifest_changed
+
+    agent = await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+    add_ids = _unique_ids(add_project_ids)
+    remove_ids = _unique_ids(remove_project_ids)
+    _validate_disjoint_delta(
+        add_ids=add_ids,
+        remove_ids=remove_ids,
+        resource_name="Project",
+    )
+    target_ids = _unique_ids([*add_ids, *remove_ids])
+
+    if agent.default_project_id in remove_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Workspace cannot be unlinked",
+        )
+    for project_id in add_ids:
+        await assert_project_linkable_to_agent(
+            db,
+            user_id=user_id,
+            agent=agent,
+            project_id=project_id,
+        )
+    if not target_ids:
+        return BindingDeltaResult(added_ids=(), removed_ids=())
+
+    await lock_project_binding_set_change(
+        db,
+        project_ids=target_ids,
+        agent_id=agent_id,
+    )
+    agent = await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+    if agent.default_project_id in remove_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Workspace cannot be unlinked",
+        )
+    for project_id in add_ids:
+        await assert_project_linkable_to_agent(
+            db,
+            user_id=user_id,
+            agent=agent,
+            project_id=project_id,
+        )
+
+    bindings = (
+        (
+            await db.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.agent_id == agent_id,
+                    AgentProjectBinding.project_id.in_(target_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    bindings_by_project_id = {binding.project_id: binding for binding in bindings}
+    for binding in bindings:
+        _assert_context_binding(binding)
+
+    removed_ids: list[UUID] = []
+    for project_id in remove_ids:
+        binding = bindings_by_project_id.get(project_id)
+        if binding is None:
+            continue
+        await db.delete(binding)
+        removed_ids.append(project_id)
+    if removed_ids:
+        await db.flush()
+
+    added_ids: list[UUID] = []
+    for project_id in add_ids:
+        if project_id in bindings_by_project_id:
+            continue
+        await assert_project_link_compatible(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+        )
+        await ensure_context_binding(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+            created_by_user_id=user_id,
+        )
+        added_ids.append(project_id)
+
+    if added_ids or removed_ids:
+        await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
+    return BindingDeltaResult(
+        added_ids=tuple(added_ids),
+        removed_ids=tuple(removed_ids),
+    )
+
+
+async def update_project_owned_agent_links(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    add_agent_ids: Iterable[UUID],
+    remove_agent_ids: Iterable[UUID],
+) -> BindingDeltaResult:
+    """Atomically add and remove owned Agents for one visible Project."""
+    from app.services.project_runtime_skills import (
+        assert_project_link_compatible,
+        lock_project_agent_binding_changes,
+    )
+    from app.services.sync_events import queue_environment_runtime_manifest_changed
+
+    add_ids = _unique_ids(add_agent_ids)
+    remove_ids = _unique_ids(remove_agent_ids)
+    _validate_disjoint_delta(
+        add_ids=add_ids,
+        remove_ids=remove_ids,
+        resource_name="Agent",
+    )
+    target_ids = _unique_ids([*add_ids, *remove_ids])
+
+    project = await assert_project_visible_to_user(
+        db,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
+    for agent_id in target_ids:
+        await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+    if not target_ids:
+        return BindingDeltaResult(added_ids=(), removed_ids=())
+
+    await lock_project_agent_binding_changes(
+        db,
+        project_id=project_id,
+        agent_ids=target_ids,
+    )
+    project = await assert_project_visible_to_user(
+        db,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Only Projects you create or that are shared with you can be linked",
+        )
+    for agent_id in target_ids:
+        await get_owned_agent_or_404(db, user_id=user_id, agent_id=agent_id)
+
+    bindings = (
+        (
+            await db.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.project_id == project_id,
+                    AgentProjectBinding.agent_id.in_(target_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    bindings_by_agent_id = {binding.agent_id: binding for binding in bindings}
+    for binding in bindings:
+        _assert_context_binding(binding)
+
+    removed_ids: list[UUID] = []
+    for agent_id in remove_ids:
+        binding = bindings_by_agent_id.get(agent_id)
+        if binding is None:
+            continue
+        await db.delete(binding)
+        removed_ids.append(agent_id)
+    if removed_ids:
+        await db.flush()
+
+    added_ids: list[UUID] = []
+    for agent_id in add_ids:
+        if agent_id in bindings_by_agent_id:
+            continue
+        await assert_project_link_compatible(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+        )
+        await ensure_context_binding(
+            db,
+            agent_id=agent_id,
+            project_id=project_id,
+            created_by_user_id=user_id,
+        )
+        added_ids.append(agent_id)
+
+    changed_agent_ids = {*added_ids, *removed_ids}
+    for agent_id in sorted(changed_agent_ids, key=str):
+        await queue_environment_runtime_manifest_changed(db, user_id, agent_id)
+    return BindingDeltaResult(
+        added_ids=tuple(added_ids),
+        removed_ids=tuple(removed_ids),
+    )
 
 
 async def ensure_agent_primary_binding(

@@ -1,8 +1,5 @@
-import {
-	resolveHostedDeployIncludedBasicSelection,
-	usesHostedDeployIncludedBasicSlot,
-} from "@clawdi/shared/api";
-import type { HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import { resolveHostedDeployIncludedBasicSelection } from "@clawdi/shared/api";
+import type { Plan } from "@/hosted/billing/contracts";
 import type { COMPUTE_BASIC_SLUG } from "@/hosted/billing/subscription/subscription-utils";
 
 export type BasicDeploySelection =
@@ -23,12 +20,6 @@ export type BasicDeploySelection =
 			reason: "plan_missing" | "offers_missing" | "inventory_unavailable";
 	  };
 
-export function usesActiveIncludedBasicSlot(
-	deployments: HostedDeployment[] | undefined,
-): boolean | null {
-	return usesHostedDeployIncludedBasicSlot(deployments);
-}
-
 export function resolveBasicDeploySelection({
 	basicPlan,
 	billingTermMonths,
@@ -36,7 +27,7 @@ export function resolveBasicDeploySelection({
 }: {
 	basicPlan: Plan | undefined;
 	billingTermMonths: number;
-	/** `null` means deployment inventory or included-slot occupancy is unavailable. */
+	/** `null` means included Basic capacity is unavailable. */
 	includedSlotAvailable: boolean | null;
 }): BasicDeploySelection {
 	return resolveHostedDeployIncludedBasicSelection({

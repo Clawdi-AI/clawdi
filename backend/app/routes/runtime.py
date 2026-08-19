@@ -33,9 +33,10 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
     MAX_AGENT_PROJECT_SKILLS,
-    agent_supports_project_skills,
     assert_agent_project_skill_total,
+    assert_project_skill_runtime_identity,
     project_skill_file_signature,
+    project_skill_runtime_identity,
 )
 from app.services.runtime_source import (
     RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
@@ -53,7 +54,7 @@ from app.services.runtime_source import (
     runtime_whatsapp_credential_repair_link_ids,
     vault_key_identity,
 )
-from app.services.tar_utils import tar_from_content
+from app.services.tar_utils import reroot_skill_archive, tar_from_content
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 _RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
@@ -190,6 +191,8 @@ async def report_project_skill_capability(
     require_auth_scopes(auth, "skills:write")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
     agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
+    # Compatibility observation only; desired-state reads and writes never
+    # consult these fields.
     agent.project_skill_reconcile_version = body.project_skill_reconcile_version
     agent.project_skill_reconcile_observed_at = datetime.now(UTC)
     await db.commit()
@@ -249,20 +252,7 @@ async def get_agent_project_skills(
     """Return one Agent's complete linked-Project Skill inventory."""
     require_auth_scopes(auth, "skills:read")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
-    agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
-    if not agent_supports_project_skills(
-        agent,
-        None,
-        None,
-        has_environment_bound_key=False,
-    ):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "project_skill_delivery_update_required",
-                "message": "Update this Agent, then try again.",
-            },
-        )
+    await _connected_agent(db, auth=auth, agent_id=agent_id)
     membership = ProjectMembership.__table__.alias("desired_project_skill_membership")
     rows = (
         (
@@ -299,20 +289,26 @@ async def get_agent_project_skills(
         .all()
     )
     assert_agent_project_skill_total(len(rows))
-    seen_keys: set[str] = set()
+    seen_local_keys: set[str] = set()
     for skill in rows:
-        if skill.skill_key in seen_keys:
+        identity = project_skill_runtime_identity(skill.skill_key, skill.name)
+        assert_project_skill_runtime_identity(identity)
+        if identity.local_skill_key in seen_local_keys:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f'Skill "{skill.skill_key}" comes from more than one linked Project. '
+                f'Skill "{identity.local_skill_key}" comes from more than one linked Project. '
                 "Unlink one Project.",
             )
-        seen_keys.add(skill.skill_key)
+        seen_local_keys.add(identity.local_skill_key)
 
     base_url = settings.public_api_url.rstrip("/")
     signing_key = vault_key_identity(settings.vault_encryption_key)
     skills: list[AgentProjectSkillDesiredItem] = []
     for skill in rows:
+        local_skill_key = project_skill_runtime_identity(
+            skill.skill_key,
+            skill.name,
+        ).local_skill_key
         signature = project_skill_file_signature(
             signing_key=signing_key,
             agent_id=agent_id,
@@ -323,12 +319,12 @@ async def get_agent_project_skills(
             AgentProjectSkillDesiredItem(
                 project_id=str(skill.project_id),
                 skill_id=str(skill.id),
-                skill_key=skill.skill_key,
+                skill_key=local_skill_key,
                 content_hash=skill.content_hash,
                 archive_url=(
                     f"{base_url}/v1/runtime/project-skill-archives/{agent_id}/"
                     f"{skill.project_id}/{skill.id}/{skill.content_hash}/{signature}/"
-                    f"{quote(skill.skill_key, safe='')}.tar.gz"
+                    f"{quote(local_skill_key, safe='')}.tar.gz"
                 ),
             )
         )
@@ -359,14 +355,20 @@ async def get_project_skill_archive(
         project_id=project_id,
         skill_id=skill_id,
         content_hash=content_hash,
-        skill_key=skill_key,
+        local_skill_key=skill_key,
     )
     if not skill.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill archive not found")
+    local_skill_key = project_skill_runtime_identity(
+        skill.skill_key,
+        skill.name,
+    ).local_skill_key
     try:
         stored = await file_store.get(skill.file_key)
         if skill.file_key.endswith(".md"):
-            stored, _file_count = tar_from_content(skill.skill_key, stored.decode("utf-8"))
+            stored, _file_count = tar_from_content(local_skill_key, stored.decode("utf-8"))
+        else:
+            stored = reroot_skill_archive(stored, skill.skill_key, local_skill_key)
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill archive not found") from None
     if len(stored) > _MAX_PROJECT_SKILL_ARCHIVE_BYTES:
@@ -447,7 +449,7 @@ async def _linked_project_skill(
     skill_id: UUID,
     content_hash: str,
     project_id: UUID | None = None,
-    skill_key: str | None = None,
+    local_skill_key: str | None = None,
 ) -> Skill:
     membership = ProjectMembership.__table__.alias("signed_project_skill_membership")
     filters = [
@@ -463,8 +465,6 @@ async def _linked_project_skill(
     ]
     if project_id is not None:
         filters.append(Project.id == project_id)
-    if skill_key is not None:
-        filters.append(Skill.skill_key == skill_key)
     skill = (
         await db.execute(
             select(Skill)
@@ -483,7 +483,14 @@ async def _linked_project_skill(
             .where(*filters)
         )
     ).scalar_one_or_none()
-    if skill is None:
+    if skill is None or (
+        local_skill_key is not None
+        and project_skill_runtime_identity(
+            skill.skill_key,
+            skill.name,
+        ).local_skill_key
+        != local_skill_key
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
     return skill
 

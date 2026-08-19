@@ -164,6 +164,8 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			if (input.home === this.liveHome && this.failLiveHermesScanPolicy) {
 				return { status: 44, stdout: "", stderr: "scan policy failure" };
 			}
+			mkdirSync(expectedStateRoot, { recursive: true });
+			writeFileSync(join(expectedStateRoot, "config.yaml"), "plugins:\n  scan_on_install: false\n");
 			return { status: 0, stdout: "", stderr: "" };
 		}
 		if (args[0] !== "plugins") return { status: 2, stdout: "", stderr: "" };
@@ -628,6 +630,9 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		expect(scanPolicyIndex).toBeLessThan(installIndex);
 		expect(install?.args[2]?.startsWith("file://")).toBe(true);
 		expect(install?.args.join(" ")).not.toContain("github.com");
+		expect(readFileSync(join(runner.liveHome, ".hermes", "config.yaml"), "utf-8")).toContain(
+			"scan_on_install: false",
+		);
 		expect(install?.environmentOverrides).toEqual({
 			OPENCLAW_HOME: undefined,
 			OPENCLAW_PROFILE: undefined,

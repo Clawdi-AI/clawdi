@@ -87,5 +87,9 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	await expect(page.getByRole("button", { name: /New paid subscription/ })).toHaveCount(0);
 	await expect(page.getByText("Payment method", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Card subscription/ })).toBeVisible();
+
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await expect(page.getByTestId("settings-dialog")).toBeVisible();
+	await expect(page.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toHaveCount(0);
 	expect(errors, `deploy flow: ${errors.join(" | ")}`).toEqual([]);
 });

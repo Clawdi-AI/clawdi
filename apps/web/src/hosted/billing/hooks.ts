@@ -112,9 +112,12 @@ export async function invalidateComputeSubscriptionInventory(
 	refetchType: "active" | "all" = "active",
 ): Promise<void> {
 	await Promise.all(
-		[billingKeys.deployments, billingKeys.subscriptions, billingKeys.reusableSubscriptions].map(
-			(queryKey) => qc.invalidateQueries({ queryKey, refetchType }),
-		),
+		[
+			billingKeys.deployments,
+			billingKeys.subscriptions,
+			billingKeys.includedBasicAvailability,
+			billingKeys.reusableSubscriptions,
+		].map((queryKey) => qc.invalidateQueries({ queryKey, refetchType })),
 	);
 }
 
@@ -204,6 +207,14 @@ export function useSubscriptions() {
 	});
 }
 
+export function useIncludedBasicAvailability() {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.includedBasicAvailability,
+		queryFn: () => client.getIncludedBasicAvailability(),
+	});
+}
+
 export function useSubscriptionCreateQuote(
 	selection: SubscriptionCreateSelection | null,
 	{ enabled = true }: { enabled?: boolean } = {},
@@ -241,6 +252,7 @@ export function invalidatePlanChangeQueries(qc: QueryClient): void {
 	qc.invalidateQueries({ queryKey: billingKeys.wallet });
 	qc.invalidateQueries({ queryKey: billingKeys.transactions });
 	qc.invalidateQueries({ queryKey: billingKeys.subscriptions });
+	qc.invalidateQueries({ queryKey: billingKeys.includedBasicAvailability });
 }
 
 export function invalidateSettledPlanChangeQueries(qc: QueryClient, error: Error | null): void {

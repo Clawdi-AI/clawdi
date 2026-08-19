@@ -20,6 +20,7 @@ import {
 } from "./subscription-utils";
 
 export type ComputeSubscriptionEntitlement = {
+	subscriptionKind?: "included_basic" | "paid";
 	deploymentId: string | null | undefined;
 	planSlug: string | null | undefined;
 	fundingSource: "stripe" | "wallet" | null | undefined;
@@ -96,8 +97,13 @@ export function computeSubscriptionManagement({
 		funding_source: entitlement.fundingSource,
 		price_cents: entitlement.priceCents,
 	});
-	const includedBasic = fundingSource === "included_basic";
-	const paid = fundingSource === "stripe" || fundingSource === "wallet";
+	const includedBasic =
+		entitlement.subscriptionKind === "included_basic" ||
+		(entitlement.subscriptionKind === undefined && fundingSource === "included_basic");
+	const paid =
+		entitlement.subscriptionKind === "paid" ||
+		(entitlement.subscriptionKind === undefined &&
+			(fundingSource === "stripe" || fundingSource === "wallet"));
 	if (!includedBasic && !paid) {
 		return { action: "hidden", target: null, unavailableReason: null };
 	}

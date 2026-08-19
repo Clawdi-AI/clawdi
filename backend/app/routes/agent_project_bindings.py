@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,6 @@ from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.project import PROJECT_KIND_WORKSPACE
 from app.schemas.sharing import (
     AgentProjectBindingResponse,
     BindingCreate,
@@ -21,10 +21,12 @@ from app.schemas.sharing import (
     BindingReorderResponse,
 )
 from app.services.agent_bindings import (
-    assert_project_visible_to_user,
+    assert_project_linkable_to_agent,
+    attach_projects_to_owned_agent,
     ensure_agent_primary_binding,
     ensure_context_binding,
     get_owned_agent_or_404,
+    update_owned_agent_project_links,
 )
 from app.services.project_runtime_skills import (
     assert_project_link_compatible,
@@ -34,6 +36,32 @@ from app.services.project_runtime_skills import (
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 router = APIRouter(prefix="/agents", tags=["agent-project-bindings"])
+
+
+class AgentProjectLinkBody(BaseModel):
+    project_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class AgentProjectLinkResponse(BaseModel):
+    agent_id: str
+    bound_project_ids: list[str]
+
+
+class AgentProjectDeltaBody(BaseModel):
+    add_project_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    remove_project_ids: list[UUID] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_disjoint_ids(self) -> AgentProjectDeltaBody:
+        if set(self.add_project_ids) & set(self.remove_project_ids):
+            raise ValueError("Project ids to add and remove must be disjoint")
+        return self
+
+
+class AgentProjectDeltaResponse(BaseModel):
+    agent_id: str
+    added_project_ids: list[str]
+    removed_project_ids: list[str]
 
 
 def _to_response(binding: AgentProjectBinding) -> AgentProjectBindingResponse:
@@ -120,6 +148,48 @@ async def list_project_bindings(
     return [_to_response(row) for row in rows]
 
 
+@router.post("/{agent_id}/projects", response_model=AgentProjectLinkResponse)
+async def link_agent_projects(
+    agent_id: UUID,
+    body: AgentProjectLinkBody,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> AgentProjectLinkResponse:
+    bound_project_ids = await attach_projects_to_owned_agent(
+        db,
+        user_id=auth.user_id,
+        agent_id=agent_id,
+        raw_project_ids=body.project_ids,
+    )
+    await db.commit()
+    return AgentProjectLinkResponse(
+        agent_id=str(agent_id),
+        bound_project_ids=bound_project_ids,
+    )
+
+
+@router.patch("/{agent_id}/projects", response_model=AgentProjectDeltaResponse)
+async def update_agent_projects(
+    agent_id: UUID,
+    body: AgentProjectDeltaBody,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> AgentProjectDeltaResponse:
+    result = await update_owned_agent_project_links(
+        db,
+        user_id=auth.user_id,
+        agent_id=agent_id,
+        add_project_ids=body.add_project_ids,
+        remove_project_ids=body.remove_project_ids,
+    )
+    await db.commit()
+    return AgentProjectDeltaResponse(
+        agent_id=str(agent_id),
+        added_project_ids=[str(project_id) for project_id in result.added_ids],
+        removed_project_ids=[str(project_id) for project_id in result.removed_ids],
+    )
+
+
 @router.post(
     "/{agent_id}/project-bindings/context",
     response_model=AgentProjectBindingResponse,
@@ -141,30 +211,21 @@ async def add_context_project_binding(
     except ValueError as err:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid project_id") from err
 
-    project = await assert_project_visible_to_user(db, user_id=auth.user_id, project_id=project_id)
-    if project_id == agent.default_project_id:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "This Project is already the Agent Workspace",
-        )
-    if project.kind != PROJECT_KIND_WORKSPACE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Only Projects you create or that are shared with you can be linked",
-        )
+    await assert_project_linkable_to_agent(
+        db,
+        user_id=auth.user_id,
+        agent=agent,
+        project_id=project_id,
+    )
     await lock_project_binding_change(db, project_id=project_id, agent_id=agent_id)
     # Archive/unshare can race the initial picker read. Access and Project kind
     # must still be valid at the serialized Link boundary.
-    project = await assert_project_visible_to_user(
+    await assert_project_linkable_to_agent(
         db,
         user_id=auth.user_id,
+        agent=agent,
         project_id=project_id,
     )
-    if project.kind != PROJECT_KIND_WORKSPACE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Only Projects you create or that are shared with you can be linked",
-        )
     await assert_project_link_compatible(
         db,
         agent_id=agent_id,
@@ -184,7 +245,7 @@ async def add_context_project_binding(
         if priority_conflict is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Project order is already in use",
+                "Vault resolution priority is already in use",
             )
     binding = await ensure_context_binding(
         db,
@@ -218,7 +279,7 @@ async def reorder_context_project_bindings(
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Project order")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Vault resolution priority")
 
     current_context_rows = (
         (
@@ -246,7 +307,7 @@ async def reorder_context_project_bindings(
         if item.priority < 1:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Project order must be >= 1",
+                "Vault resolution priority must be >= 1",
             )
         requested.append((binding, item.priority))
 
@@ -256,10 +317,11 @@ async def reorder_context_project_bindings(
         if binding.id not in requested_ids and binding.priority in requested_priorities:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Project order is already in use",
+                "Vault resolution priority is already in use",
             )
 
-    if requested:
+    changed = any(binding.priority != priority for binding, priority in requested)
+    if changed:
         max_priority = max([binding.priority for binding in current_context_rows] + [0])
         temp_base = max_priority + len(requested) + 1000
         for offset, (binding, _priority) in enumerate(requested, start=1):
@@ -268,6 +330,7 @@ async def reorder_context_project_bindings(
 
         for binding, priority in requested:
             binding.priority = priority
+        await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
 
     await db.commit()
     return BindingReorderResponse(status="reordered")

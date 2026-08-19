@@ -1554,7 +1554,7 @@ async def test_project_explicit_upload_targets_named_project(
 
     # Upload to workspace A explicitly via the project-scoped route.
     r = await client.post(
-        f"/v1/projects/{project_a.id}/skills/upload",
+        f"/api/projects/{project_a.id}/skills/upload",
         data={"skill_key": "projected"},
         files=files,
     )

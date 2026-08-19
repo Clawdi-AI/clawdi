@@ -252,8 +252,10 @@ export function readHostedAgentPluginsObservation(input: {
 	const currentFailures = failed.installations.filter(
 		(observation) =>
 			observation.generation > appliedGeneration ||
+			// Plugin-only manifest changes do not bump the runtime generation, so a
+			// failed attempt at the same generation carries a newer revision.
 			(observation.generation === appliedGeneration &&
-				observation.sourceRevision === input.applied.sourceRevision),
+				observation.sourceRevision !== input.applied.sourceRevision),
 	);
 	if (currentFailures.length === 0) return applied;
 	const failedNames = new Set(currentFailures.map((observation) => observation.name));

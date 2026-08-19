@@ -9,7 +9,6 @@
 # runtime shape lives here. The image entrypoint (app.runtime_entrypoint)
 # selects the process via CLAWDI_PROCESS_ROLE, runs migrations for the api
 # role, and drains on SIGTERM — no command overrides needed.
-
 service: clawdi
 image: clawdi-ai/clawdi-backend
 

@@ -45,6 +45,7 @@ export type ParsedAgentPathname = {
 	vaultSlug?: string;
 	memoryId?: string;
 	connectorName?: string;
+	pluginName?: string;
 };
 
 export type AgentProjectResourceSection = "skills" | "vaults";
@@ -80,11 +81,14 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (section === "sessions" && parts.length > 4) return null;
 	if (
 		section !== "overview" &&
-		!["sessions", "skills", "projects", "vaults", "memories", "connectors"].includes(section)
+		!["sessions", "skills", "projects", "vaults", "memories", "connectors", "plugins"].includes(
+			section,
+		)
 	) {
 		if (parts.length !== 3) return null;
 	}
-	if (["vaults", "memories", "connectors"].includes(section) && parts.length > 4) return null;
+	if (["vaults", "memories", "connectors", "plugins"].includes(section) && parts.length > 4)
+		return null;
 	if (section === "projects" && parts.length > 5) return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
@@ -104,6 +108,8 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 		section === "memories" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const connectorName =
 		section === "connectors" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const pluginName =
+		section === "plugins" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	return {
 		agentId,
 		section,
@@ -114,6 +120,7 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 		...(vaultSlug ? { vaultSlug } : {}),
 		...(memoryId ? { memoryId } : {}),
 		...(connectorName ? { connectorName } : {}),
+		...(pluginName ? { pluginName } : {}),
 	};
 }
 
@@ -146,7 +153,8 @@ export function agentRouteOwnsSection(
 		!route.projectResource &&
 		!route.vaultSlug &&
 		!route.memoryId &&
-		!route.connectorName
+		!route.connectorName &&
+		!route.pluginName
 	);
 }
 
@@ -374,6 +382,10 @@ export function agentConnectorDetailLink(agentId: string, connectorName: string)
 		to: "/agents/$id/connectors/$name",
 		params: { id: agentId, name: connectorName },
 	});
+}
+
+export function agentPluginDetailHref(agentId: string, pluginName: string): string {
+	return `${agentSectionHref(agentId, "plugins")}/${encodeURIComponent(pluginName)}`;
 }
 
 function safeDecodeURIComponent(value: string): string {
