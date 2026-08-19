@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import tarfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -36,8 +38,16 @@ from tests.hosted_runtime_fixtures import (
 )
 
 
-def _skill_archive(skill_key: str, marker: str = "Project runtime") -> bytes:
-    content = f"---\nname: {skill_key}\ndescription: Project runtime test\n---\n# {marker}\n"
+def _skill_archive(
+    skill_key: str,
+    marker: str = "Project runtime",
+    *,
+    local_skill_key: str | None = None,
+) -> bytes:
+    content = (
+        f"---\nname: {local_skill_key or skill_key}\n"
+        f"description: Project runtime test\n---\n# {marker}\n"
+    )
     archive, _ = tar_from_content(skill_key, content)
     return archive
 
@@ -47,6 +57,8 @@ async def _upload_project_skill(
     project_id: uuid.UUID,
     skill_key: str,
     marker: str = "Project runtime",
+    *,
+    local_skill_key: str | None = None,
 ) -> httpx.Response:
     return await client.post(
         f"/v1/projects/{project_id}/skills/upload",
@@ -54,7 +66,7 @@ async def _upload_project_skill(
         files={
             "file": (
                 f"{skill_key}.tar.gz",
-                _skill_archive(skill_key, marker),
+                _skill_archive(skill_key, marker, local_skill_key=local_skill_key),
                 "application/gzip",
             )
         },
@@ -150,7 +162,14 @@ async def test_linked_project_skill_is_composed_into_managed_runtime_manifest(
     workspace_project: Project,
     channel_agent,
 ):
-    uploaded = await _upload_project_skill(client, workspace_project.id, "project-review")
+    source_skill_key = "devops/phala-cloud-admin-ops"
+    local_skill_key = "phala-cloud-admin-ops"
+    uploaded = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        source_skill_key,
+        local_skill_key=local_skill_key,
+    )
     assert uploaded.status_code == 200, uploaded.text
     linked = await _link(
         client,
@@ -178,13 +197,59 @@ async def test_linked_project_skill_is_composed_into_managed_runtime_manifest(
         decrypt_secrets=False,
     )
 
-    entry = rendered.manifest["skills"]["entries"]["project-review"]
+    entry = rendered.manifest["skills"]["entries"][local_skill_key]
     assert entry["enabled"] is True
     assert entry["source"]["type"] == "project"
     assert entry["source"]["projectId"] == str(workspace_project.id)
     assert entry["source"]["contentHash"] == uploaded.json()["content_hash"]
-    assert urlsplit(entry["source"]["archiveUrl"]).path.endswith("/project-review.tar.gz")
+    archive_path = urlsplit(entry["source"]["archiveUrl"]).path
+    assert archive_path.endswith(f"/{local_skill_key}.tar.gz")
     assert urlsplit(entry["source"]["installUrl"]).path.endswith("/SKILL.md")
+
+    archive = await client.get(archive_path)
+    assert archive.status_code == 200, archive.text
+    with tarfile.open(fileobj=io.BytesIO(archive.content), mode="r:gz") as result:
+        assert result.getnames() == [f"{local_skill_key}/SKILL.md"]
+
+
+@pytest.mark.asyncio
+async def test_connected_project_skill_desired_inventory_uses_local_name(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    environment_project: Project,
+):
+    agent_id = environment_project.origin_environment_id
+    assert agent_id is not None
+    uploaded = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        "devops/phala-cloud-admin-ops",
+        local_skill_key="phala-cloud-admin-ops",
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    capability = await _report_connected_project_skill_capability(
+        client,
+        db_session,
+        user=seed_user,
+        agent_id=agent_id,
+    )
+    assert capability.status_code == 204, capability.text
+    linked = await _link(client, agent_id=agent_id, project_id=workspace_project.id)
+    assert linked.status_code == 200, linked.text
+
+    _set_auth(_connected_agent_auth(seed_user))
+    try:
+        desired = await client.get(
+            "/v1/runtime/project-skills",
+            params={"environment_id": str(agent_id)},
+        )
+    finally:
+        _set_auth(AuthContext(user=seed_user))
+    assert desired.status_code == 200, desired.text
+    assert desired.json()["skills"][0]["skill_key"] == "phala-cloud-admin-ops"
+    assert desired.json()["skills"][0]["archive_url"].endswith("/phala-cloud-admin-ops.tar.gz")
 
 
 @pytest.mark.asyncio
@@ -203,7 +268,7 @@ async def test_link_fails_closed_for_workspace_and_sibling_project_skill_conflic
             user_id=seed_user.id,
             project_id=workspace_project.id,
             skill_key="duplicate",
-            name="Duplicate",
+            name="duplicate",
             description="Conflicts with the Agent Workspace",
             content_hash="1" * 64,
             authority=SKILL_AUTHORITY_CLOUD,
@@ -241,8 +306,8 @@ async def test_link_fails_closed_for_workspace_and_sibling_project_skill_conflic
         Skill(
             user_id=seed_user.id,
             project_id=sibling.id,
-            skill_key="duplicate",
-            name="Duplicate",
+            skill_key="team/duplicate",
+            name="duplicate",
             description="Conflicts with the first linked Project",
             content_hash="2" * 64,
             authority=SKILL_AUTHORITY_CLOUD,
@@ -278,7 +343,7 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
             user_id=seed_user.id,
             project_id=workspace_project.id,
             skill_key="managed-only",
-            name="Managed only",
+            name="managed-only",
             description="Requires managed delivery",
             content_hash="3" * 64,
             authority=SKILL_AUTHORITY_CLOUD,
@@ -318,7 +383,7 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
                 user_id=seed_user.id,
                 project_id=environment_project.id,
                 skill_key="connected-local",
-                name="Connected local",
+                name="connected-local",
                 description="Observed Agent Workspace projection",
                 content_hash="5" * 64,
                 authority=SKILL_AUTHORITY_AGENT_SYNC,
@@ -327,8 +392,8 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
             Skill(
                 user_id=seed_user.id,
                 project_id=connected_workspace_conflict.id,
-                skill_key="connected-local",
-                name="Connected local",
+                skill_key="team/connected-local",
+                name="connected-local",
                 description="Conflicts with the Agent Workspace",
                 content_hash="6" * 64,
                 authority=SKILL_AUTHORITY_CLOUD,
@@ -358,6 +423,15 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
         project_id=workspace_project.id,
     )
     assert connected_link.status_code == 200, connected_link.text
+
+    duplicate_local_name = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        "devops/managed-only",
+        local_skill_key="managed-only",
+    )
+    assert duplicate_local_name.status_code == 409, duplicate_local_name.text
+    assert duplicate_local_name.json()["detail"]["code"] == "project_skill_name_conflict"
 
     # A downgraded Connected Agent still emits the byte-frozen heartbeat contract,
     # but it cannot renew the separate Project Skill lease. Once that observation
@@ -688,7 +762,12 @@ async def test_agent_workspace_upload_rejects_linked_project_key_before_projecti
 ):
     agent_id = environment_project.origin_environment_id
     assert agent_id is not None
-    uploaded = await _upload_project_skill(client, workspace_project.id, "shared-key")
+    uploaded = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        "team/shared-key",
+        local_skill_key="shared-key",
+    )
     assert uploaded.status_code == 200, uploaded.text
     capability = await _report_connected_project_skill_capability(
         client,
@@ -756,7 +835,7 @@ async def test_link_rejects_project_skill_name_outside_native_runtime_contract(
         Skill(
             user_id=seed_user.id,
             project_id=workspace_project.id,
-            skill_key="not_openclaw_safe",
+            skill_key="devops/not_openclaw_safe",
             name="Not OpenClaw safe",
             description="The desired state must be installable by the native CLI",
             content_hash="4" * 64,
