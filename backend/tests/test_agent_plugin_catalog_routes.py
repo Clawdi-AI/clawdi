@@ -224,8 +224,8 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
                 "status": "ok" if plugin_status == "installed" else "error",
                 "activeCliVersion": "1.2.3-test",
                 "applied": {
-                    "etag": f'"sha256:{"a" * 64}"',
-                    "sourceRevision": "a" * 64,
+                    "etag": f'"sha256:{digest_character * 64}"',
+                    "sourceRevision": digest_character * 64,
                     "generation": 1,
                     "instanceId": state.instance_id,
                     "appliedProviderIds": [],
@@ -265,6 +265,7 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
     assert stale.status_code == 200, stale.text
     assert stale.json()["convergence"] == "not_observed"
 
+    installed_at = datetime.now(UTC)
     await ingest_runtime_observation(
         db_session,
         environment_id=channel_agent.id,
@@ -274,8 +275,9 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
             version="1.0.0",
             digest_character="a",
             plugin_status="installed",
+            event_captured=installed_at,
         ),
-        received_at=captured + timedelta(seconds=1),
+        received_at=installed_at,
     )
     await db_session.commit()
     installed = await client.get(
@@ -295,6 +297,7 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
     assert updated.json()["convergence"] == "not_observed"
     assert updated.json()["observed_at"] is None
 
+    failed_at = datetime.now(UTC)
     await ingest_runtime_observation(
         db_session,
         environment_id=channel_agent.id,
@@ -305,8 +308,9 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
             digest_character="b",
             plugin_status="failed",
             error_code="reconcile_failed",
+            event_captured=failed_at,
         ),
-        received_at=captured + timedelta(seconds=3),
+        received_at=failed_at,
     )
     await db_session.commit()
     failed = await client.get(
@@ -315,6 +319,34 @@ async def test_agent_plugin_desired_state_projects_only_exact_observed_identity(
     assert failed.status_code == 200, failed.text
     assert failed.json()["convergence"] == "failed"
     assert failed.json()["observation_error_code"] == "reconcile_failed"
+
+    retried = await client.put(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}",
+        json={"version": "1.1.0"},
+    )
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["convergence"] == "not_observed"
+
+    recovered_at = datetime.now(UTC)
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=channel_agent.id,
+        credential_deployment_id=state.deployment_id,
+        value=observation(
+            sequence=4,
+            version="1.1.0",
+            digest_character="b",
+            plugin_status="installed",
+            event_captured=recovered_at,
+        ),
+        received_at=recovered_at,
+    )
+    await db_session.commit()
+    recovered = await client.get(
+        f"/v1/agents/{channel_agent.id}/agent-plugins/{THIRD_PARTY_PLUGIN_NAME}"
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["convergence"] == "installed"
 
     await _activate_catalog(db_session, version="1.0.0", digest_character="a")
     restored = await client.put(
