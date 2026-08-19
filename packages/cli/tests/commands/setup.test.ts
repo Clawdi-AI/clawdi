@@ -30,6 +30,7 @@ const HERMES_CONFIG_CLI_MOCK = resolve(
 	import.meta.dir,
 	"../../src/test-support/hermes-config-cli-mock.ts",
 );
+const HERMES_TEST_MCP_TOKEN_REF = `\${HERMES_TEST_MCP_TOKEN}`;
 const ENV_KEYS = [
 	"CI",
 	"HOME",
@@ -356,7 +357,7 @@ describe("setup Hermes MCP registration", () => {
 				"  user.server:",
 				"    url: https://mcp.example.test",
 				"    headers:",
-				'      Authorization: "Bearer ${HERMES_TEST_MCP_TOKEN}"',
+				`      Authorization: "Bearer ${HERMES_TEST_MCP_TOKEN_REF}"`,
 				"",
 			].join("\n"),
 		);
@@ -368,7 +369,7 @@ describe("setup Hermes MCP registration", () => {
 		expect(parseYaml(after)).toMatchObject({
 			mcp_servers: {
 				"user.server": {
-					headers: { Authorization: "Bearer ${HERMES_TEST_MCP_TOKEN}" },
+					headers: { Authorization: `Bearer ${HERMES_TEST_MCP_TOKEN_REF}` },
 				},
 				clawdi: { command: "clawdi", args: ["mcp"] },
 			},

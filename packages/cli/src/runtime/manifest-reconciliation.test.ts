@@ -103,6 +103,7 @@ const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 	new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url),
 );
+const HERMES_TEST_PROVIDER_TOKEN_REF = `\${HERMES_TEST_PROVIDER_TOKEN}`;
 const FILE_BROWSER_VERSION = "v1.5.0-stable";
 const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
 const FILE_BROWSER_AMD64_SHA256 =
@@ -2754,7 +2755,7 @@ chmod 0755 '${commandPath}'
 				"    api_key: stale-inline-secret",
 				'  "user.custom":',
 				"    api: https://user-provider.example.test/v1",
-				'    api_key: "${HERMES_TEST_PROVIDER_TOKEN}"',
+				`    api_key: "${HERMES_TEST_PROVIDER_TOKEN_REF}"`,
 				"",
 			].join("\n"),
 		);
@@ -2853,7 +2854,7 @@ chmod 0755 '${commandPath}'
 		});
 		expect(initialHermes.providers?.["user.custom"]).toMatchObject({
 			api: "https://user-provider.example.test/v1",
-			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+			api_key: HERMES_TEST_PROVIDER_TOKEN_REF,
 		});
 		expect(JSON.parse(initialRunConfig)).toMatchObject({
 			secretEnv: {
@@ -2886,7 +2887,7 @@ chmod 0755 '${commandPath}'
 			.providers;
 		expect(switchedProviders).not.toHaveProperty("responses");
 		expect(switchedProviders?.["user.custom"]).toMatchObject({
-			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+			api_key: HERMES_TEST_PROVIDER_TOKEN_REF,
 		});
 		expect(parseYaml(switchedConfig)).toMatchObject({
 			model: { default: "claude-test", provider: "custom:anthropic" },
@@ -2912,7 +2913,7 @@ chmod 0755 '${commandPath}'
 		).providers;
 		expect(deletedProviders).not.toHaveProperty("anthropic");
 		expect(deletedProviders?.["user.custom"]).toMatchObject({
-			api_key: "${HERMES_TEST_PROVIDER_TOKEN}",
+			api_key: HERMES_TEST_PROVIDER_TOKEN_REF,
 		});
 	}, 30_000);
 

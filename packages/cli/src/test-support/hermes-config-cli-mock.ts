@@ -41,7 +41,9 @@ function deepMerge(defaults: unknown, user: unknown): unknown {
 	if (!isRecord(defaults) || !isRecord(user)) return structuredClone(user);
 	const merged: Record<string, unknown> = structuredClone(defaults);
 	for (const [key, value] of Object.entries(user)) {
-		merged[key] = Object.hasOwn(merged, key) ? deepMerge(merged[key], value) : structuredClone(value);
+		merged[key] = Object.hasOwn(merged, key)
+			? deepMerge(merged[key], value)
+			: structuredClone(value);
 	}
 	return merged;
 }
