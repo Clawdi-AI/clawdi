@@ -4778,13 +4778,12 @@ echo spawned > '${installerLog}'
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
 		);
 		const snapshotPaths = runtimeRootLiveMutationTargets(manifest, paths);
-		const openClawDatabase = join(
+		const openClawAgentDirectory = join(
 			paths.userHome,
 			".openclaw",
 			"agents",
 			"main",
 			"agent",
-			"openclaw-agent.sqlite",
 		);
 
 		expect(snapshotPaths).toEqual(
@@ -4827,9 +4826,7 @@ echo spawned > '${installerLog}'
 			expect.arrayContaining([
 				join(paths.userHome, ".hermes", "auth.json"),
 				join(paths.userHome, ".hermes", "auth.lock"),
-				openClawDatabase,
-				`${openClawDatabase}-wal`,
-				`${openClawDatabase}-shm`,
+				openClawAgentDirectory,
 			]),
 		);
 		for (const userWritablePath of [

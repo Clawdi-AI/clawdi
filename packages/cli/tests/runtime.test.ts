@@ -8995,6 +8995,7 @@ fi
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
+${fakeManagedOpenClawProviderPluginCommands()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >/dev/null
   exit 0
