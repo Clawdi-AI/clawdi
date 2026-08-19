@@ -37,6 +37,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	readonly calls: CommandInput[] = [];
 	readonly states = new Map<string, FakePluginState>();
 	availableResult = true;
+	rejectNoScan = false;
 	failProbeInstallName: string | null = null;
 	failLiveEnableVersion: string | null = null;
 	failLiveInstallVersion: string | null = null;
@@ -233,6 +234,9 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			};
 		}
 		if (args[1] === "install") {
+			if (this.rejectNoScan && args.includes("--no-scan")) {
+				return { status: 2, stdout: "", stderr: "error: unrecognized arguments: --no-scan" };
+			}
 			const source = runtime === "hermes" ? fileURLToPath(args[2] ?? "") : (args[2] ?? "");
 			const manifest = this.pluginFromSource(source);
 			if (input.home !== this.liveHome && manifest.name === this.failProbeInstallName) {
@@ -602,6 +606,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			(call) => call.home === runner.liveHome && call.args[1] === "install",
 		);
 		expect(install?.args[2]?.startsWith("file://")).toBe(true);
+		expect(install?.args).toContain("--no-scan");
 		expect(install?.args.join(" ")).not.toContain("github.com");
 		expect(install?.environmentOverrides).toEqual({
 			OPENCLAW_HOME: undefined,
@@ -639,6 +644,19 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 					call.command === "git" && call.args.includes("add") && call.args.includes("--force"),
 			),
 		).toBe(true);
+		expect(runner.get("hermes", desired.name)?.enabled).toBe(true);
+	});
+
+	test("falls back when the native Hermes does not support --no-scan", () => {
+		const runner = new FakeNativeRunner();
+		runner.rejectNoScan = true;
+		const desired = plugin("acme.tools", "1.2.3", "b".repeat(64));
+		const transaction = prepareTransaction(desiredState("hermes", desired), runner);
+		transaction.apply();
+		const installs = runner.calls.filter(
+			(call) => call.home === runner.liveHome && call.args[1] === "install",
+		);
+		expect(installs.map((call) => call.args.includes("--no-scan"))).toEqual([true, false]);
 		expect(runner.get("hermes", desired.name)?.enabled).toBe(true);
 	});
 

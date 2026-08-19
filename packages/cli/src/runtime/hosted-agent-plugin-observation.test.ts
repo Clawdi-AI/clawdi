@@ -214,6 +214,32 @@ describe("hosted Agent Plugin heartbeat observation", () => {
 		]);
 	});
 
+	test("reports a failed attempt at the applied generation with a newer revision", () => {
+		const paths = tempPaths();
+		const desired = installation("1.0.0", "d");
+		writeAppliedManifest(paths, desired);
+		writeReceipt(paths, desired);
+
+		const observed = readHostedAgentPluginsObservation({
+			paths,
+			applied: appliedState(),
+			watchStatus: failedWatchStatus(desired, 7),
+		});
+
+		expect(observed?.installations).toEqual([
+			{
+				installationId,
+				name: "clawdi",
+				version: "1.0.0",
+				contentDigest: `sha256-tree-v1:${"d".repeat(64)}`,
+				sourceRevision: "1".repeat(64),
+				generation: 7,
+				status: "failed",
+				errorCode: "reconcile_failed",
+			},
+		]);
+	});
+
 	test("keeps heartbeat readable and reports unknown when the receipt is corrupt", () => {
 		const paths = tempPaths();
 		const desired = installation("1.0.0", "d");
