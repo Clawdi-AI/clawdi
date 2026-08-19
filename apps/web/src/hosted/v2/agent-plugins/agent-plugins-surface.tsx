@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { useLocation, useRouter } from "@tanstack/react-router";
 import { AlertCircle, Blocks, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import type { AgentRouteSearch } from "@/lib/agent-routes";
+import { agentPluginDetailHref, agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -44,15 +44,15 @@ type PendingPluginMutation = {
 export function AgentPluginsSurface({
 	agentId,
 	runtime,
-	routeSearch,
 }: {
 	agentId: string;
 	runtime: HostedRuntime;
-	routeSearch: AgentRouteSearch;
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const router = useRouter();
+	const pathname = useLocation({ select: (location) => location.pathname });
+	const selectedPlugin = parseAgentPathname(pathname)?.pluginName ?? null;
 	const mutationLock = useRef(false);
 	const [pending, setPending] = useState<PendingPluginMutation>(null);
 	const [query, setQuery] = useState("");
@@ -94,23 +94,15 @@ export function AgentPluginsSurface({
 	);
 
 	const refreshDesired = () => queryClient.invalidateQueries({ queryKey: DESIRED_QUERY_KEY });
-	const navigateToPlugin = (plugin: string | undefined, replace = false) =>
-		router.navigate({
-			to: ".",
-			search: (current) => {
-				const next = { ...current };
-				if (plugin) next.plugin = plugin;
-				else delete next.plugin;
-				return next;
-			},
-			replace,
-			resetScroll: false,
-		});
 	const openPlugin = (name: string) => {
-		void navigateToPlugin(name).catch(() => toast.error("Couldn't open plugin details"));
+		void router
+			.navigate({ href: agentPluginDetailHref(agentId, name), resetScroll: false })
+			.catch(() => toast.error("Couldn't open plugin details"));
 	};
 	const closePlugin = () => {
-		void navigateToPlugin(undefined, true).catch(() => toast.error("Couldn't return to plugins"));
+		void router
+			.navigate({ href: agentSectionHref(agentId, "plugins"), replace: true, resetScroll: false })
+			.catch(() => toast.error("Couldn't return to plugins"));
 	};
 	const install = async (item: AgentPluginInventoryItem) => {
 		if (!item.catalog || mutationLock.current) return;
@@ -144,7 +136,7 @@ export function AgentPluginsSurface({
 			});
 			await refreshDesired();
 			toast.success("Plugin removal started");
-			if (routeSearch.plugin === item.name) closePlugin();
+			if (selectedPlugin === item.name) closePlugin();
 		} catch (error) {
 			toast.error("Couldn't remove plugin", { description: normalizeApiError(error) });
 			throw error;
@@ -208,8 +200,8 @@ export function AgentPluginsSurface({
 		);
 	}
 	const selectedItem =
-		!initialLoading && routeSearch.plugin
-			? inventory.find((item) => item.name === routeSearch.plugin)
+		!initialLoading && selectedPlugin
+			? inventory.find((item) => item.name === selectedPlugin)
 			: null;
 	const categories = useMemo(
 		() =>

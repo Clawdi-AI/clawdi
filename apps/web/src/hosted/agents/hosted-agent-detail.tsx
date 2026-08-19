@@ -652,11 +652,7 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{activeTab === "plugins" ? (
-						<AgentPluginsSurface
-							agentId={environmentId}
-							runtime={runtime}
-							routeSearch={routeSearch}
-						/>
+						<AgentPluginsSurface agentId={environmentId} runtime={runtime} />
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab

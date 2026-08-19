@@ -142,6 +142,7 @@ describe("agent routes", () => {
 		expect(
 			agentRouteOwnsSection("/agents/agent-1/connectors/github", "agent-1", "connectors"),
 		).toBe(false);
+		expect(agentRouteOwnsSection("/agents/agent-1/plugins/sui", "agent-1", "plugins")).toBe(false);
 		expect(agentRouteOwnsSection("/agents/agent-1/skills", "agent-1", "overview")).toBe(false);
 	});
 
@@ -253,13 +254,11 @@ describe("agent routes", () => {
 				tab: "sessions",
 				project: "project 1",
 				vault: 42,
-				plugin: "sui",
 				future: "kept",
 			}),
 		).toEqual({
 			tab: "sessions",
 			project: "project 1",
-			plugin: "sui",
 			future: "kept",
 		});
 	});
@@ -327,6 +326,13 @@ describe("agent routes", () => {
 			sessionId: undefined,
 			skillKey: undefined,
 			connectorName: "google drive",
+		});
+		expect(parseAgentPathname("/agents/agent%201/plugins/sui%20agent")).toEqual({
+			agentId: "agent 1",
+			section: "plugins",
+			sessionId: undefined,
+			skillKey: undefined,
+			pluginName: "sui agent",
 		});
 		expect(parseAgentPathname("/agents/agent%201/vaults")).toEqual({
 			agentId: "agent 1",
