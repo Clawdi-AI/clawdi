@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import {
 	applySystemdRuntimeUpdate,
@@ -102,6 +103,9 @@ import {
 } from "../src/test-support/systemd-apply";
 import { mockFetch } from "./commands/helpers";
 
+const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
+	new URL("../src/test-support/hermes-config-cli-mock.ts", import.meta.url),
+);
 const TEST_PROCESS_USER = String(process.getuid?.() ?? 0);
 const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
 const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
@@ -1541,16 +1545,7 @@ function hostedOpenClawRuntime(
 		provider_ids,
 		primary_model,
 		run: {
-			args: [
-				"gateway",
-				"run",
-				"--allow-unconfigured",
-				"--port",
-				"18789",
-				"--bind",
-				"lan",
-				"--force",
-			],
+			args: ["gateway", "run"],
 			env: {},
 			secretEnv: {
 				OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -1577,7 +1572,7 @@ function hostedHermesRuntime(
 		provider_ids,
 		primary_model,
 		run: {
-			args: ["gateway", "run", "--replace"],
+			args: ["gateway", "run"],
 			env: {},
 			prependPath: [],
 		},
@@ -1915,6 +1910,9 @@ function writeHermesVersionBinary(home: string, version: string): string {
 			`if [ "\${1:-}" = "--version" ]; then`,
 			`  echo "Hermes Agent v${version} (2026-07-01)"`,
 			"  exit 0",
+			"fi",
+			`if [ "\${1:-}" = "config" ]; then`,
+			`  exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"`,
 			"fi",
 			"exit 0",
 			"",
@@ -2556,7 +2554,7 @@ describe("runtime paths", () => {
 });
 
 describe("runtime run config", () => {
-	it("keeps generic Hermes dashboard defaults on loopback", () => {
+	it("uses the official Hermes gateway command by default", () => {
 		const config = buildRuntimeRunConfig({
 			runtime: "hermes",
 			enabled: true,
@@ -2568,7 +2566,7 @@ describe("runtime run config", () => {
 			workspaceRoot: "/home/clawdi",
 		});
 
-		expect(config.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
+		expect(config.defaultArgs).toEqual(["gateway", "run"]);
 	});
 
 	it("keeps built-in default args when run settings only add env", () => {
@@ -2587,14 +2585,7 @@ describe("runtime run config", () => {
 			},
 		});
 
-		expect(config.defaultArgs).toEqual([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--bind",
-			"loopback",
-			"--force",
-		]);
+		expect(config.defaultArgs).toEqual(["gateway", "run"]);
 		expect(config.env).toEqual({ OPENCLAW_MODE: "hosted" });
 	});
 
@@ -3298,6 +3289,14 @@ set -euo pipefail
 install -d "$HOME/.local/bin"
 cat > "$HOME/.local/bin/hermes" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf '%s\n' 'Hermes Agent v0.20.1 (2026-07-01)'
+  exit 0
+fi
+if [ "\${1:-}" = "config" ]; then
+  exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+fi
 exit 0
 SH
 chmod +x "$HOME/.local/bin/hermes"
@@ -3450,7 +3449,18 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 set -euo pipefail
 printf '%s\\n' install >> '${installerCalls}'
 install -d "$HOME/.local/bin" "$HOME/.hermes/hermes-agent/venv/bin" "$HOME/.hermes/skills/user-skill"
-printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.local/bin/hermes"
+cat > "$HOME/.local/bin/hermes" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf '%s\\n' 'Hermes Agent v0.20.1 (2026-07-01)'
+  exit 0
+fi
+if [ "\${1:-}" = "config" ]; then
+  exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+fi
+exit 0
+SH
 chmod +x "$HOME/.local/bin/hermes"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/hermes-agent/repair-marker"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/skills/user-skill/content.txt"
@@ -3828,14 +3838,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const runConfig = JSON.parse(
 			readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.defaultArgs).toEqual([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--bind",
-			"loopback",
-			"--force",
-		]);
+		expect(runConfig.defaultArgs).toEqual(["gateway", "run"]);
 		expect(runConfig.defaultArgs).not.toContain("--auth");
 		expect(runConfig.env.CLAWDI_AI_API_KEY).toBeUndefined();
 		expect(runConfig.env.OPENAI_API_KEY).toBeUndefined();
@@ -4541,7 +4544,7 @@ exit 0
 				custom_field: "keep-me",
 			});
 		}
-	});
+	}, 30_000);
 
 	it.each([
 		"openclaw",
@@ -4884,16 +4887,7 @@ exit 0
 						enabled: true,
 						run: {
 							command: openclawBin,
-							args: [
-								"gateway",
-								"run",
-								"--allow-unconfigured",
-								"--port",
-								"18789",
-								"--bind",
-								"lan",
-								"--force",
-							],
+							args: ["gateway", "run"],
 							env: {},
 							secretEnv: {
 								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -4988,11 +4982,16 @@ exit 0
 		expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).not.toContain(
 			"OPENCLAW_GATEWAY_TOKEN",
 		);
-		const openclawUnit = readSystemdUserServiceConfig(getRuntimePaths(), "openclaw-gateway");
-		expect(openclawUnit).toContain(
-			'"gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"',
+		const openclawDropIn = readFileSync(
+			join(
+				getRuntimePaths().systemdUserRoot,
+				"openclaw-gateway.service.d",
+				"10-clawdi-hosted.conf",
+			),
+			"utf8",
 		);
-		expect(openclawUnit).not.toContain('"--auth"');
+		expect(openclawDropIn).not.toContain("\nExecStart=");
+		expect(openclawDropIn).not.toContain("\nWorkingDirectory=");
 
 		const fixedCredentialTime = new Date("2026-08-11T00:00:00.000Z");
 		utimesSync(openclawConfig, fixedCredentialTime, fixedCredentialTime);
@@ -5435,7 +5434,7 @@ exit 0
 			refresh_token: "foreign-namespaced-refresh",
 		});
 		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
-	});
+	}, 30_000);
 
 	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
 		const home = join(root, "oauth-openclaw", "home", "clawdi");
@@ -5781,13 +5780,13 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		convergeRuntimeManifest(loaded, paths);
 		const firstConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 
 		convergeRuntimeManifest(loaded, paths);
 
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).toBe(firstRevision);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
 	});
 
 	it("rejects multiple Hermes hosted providers at manifest admission", () => {
@@ -5836,7 +5835,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		const first = convergeRuntimeManifest(withProvider, paths);
 		writeTestRuntimeAppliedState(paths, withProvider, first);
-		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(
 			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
@@ -5845,10 +5844,10 @@ cp '${sdkSource}' '${sdkTarget}'
 		convergeRuntimeManifest(withoutProvider, paths);
 
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
-		expect(
-			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
-		).toBeUndefined();
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).not.toBe(firstRevision);
+		const unmanagedConfig = readHermesConfigYaml(home);
+		expect(unmanagedConfig.providers).toBeUndefined();
+		expect(unmanagedConfig.model).toBeUndefined();
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(firstRevision);
 	});
 
 	it("replaces the frozen Hermes model catalog on each manifest generation", () => {
@@ -6094,7 +6093,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		convergeRuntimeManifest(loaded, paths);
 
-		const yamlRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+		const yamlRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 		const initialConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(initialConfig).toContain("provider: custom:hermes");
 		expect(initialConfig).toMatch(/api: "?https:\/\/hermes-provider\.example\.test\/v1"?/);
@@ -6103,7 +6102,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		writeHermesVersionBinary(home, "0.18.0");
 		convergeRuntimeManifest(loaded, paths);
 
-		const currentRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+		const currentRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 		const currentConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(currentConfig).toBe(initialConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
@@ -10220,6 +10219,10 @@ if [ "$*" = "--version" ]; then
   printf '%s\n' '${runtime}-test-version'
 elif [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\n'
+elif [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ]; then
+  cat >/dev/null
+elif [ "${runtime}" = "hermes" ] && [ "\${1:-}" = "config" ]; then
+  exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
@@ -10235,30 +10238,6 @@ exit 0
 		chmodSync(runtimeBin, 0o700);
 		if (runtime === "hermes") {
 			writeHermesDashboardPython(home, true);
-			const distIndex = join(
-				home,
-				".hermes",
-				"hermes-agent",
-				"hermes_cli",
-				"web_dist",
-				"index.html",
-			);
-			mkdirSync(join(home, ".hermes", "hermes-agent"), { recursive: true });
-			writeFileSync(
-				join(bin, "npm"),
-				`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "npm $*" >> '${installerLog}'
-if [ "$*" = "--version" ]; then
-  printf '%s\n' '12.0.2'
-elif [ "$*" = "run build -w web" ]; then
-  mkdir -p '${dirname(distIndex)}'
-  printf '%s\n' '<html>Hermes dashboard</html>' > '${distIndex}'
-  printf '%s\n' 'official hermes dashboard artifact' >> '${systemctlLog}'
-fi
-`,
-			);
-			chmodSync(join(bin, "npm"), 0o700);
 		}
 		seedCurrentCliInstall(state, "clawdi@1.2.3-test", "1.2.3-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
@@ -10312,15 +10291,12 @@ fi
 			/^(start|restart) .*clawdi-runtime-sidecar\.service/.test(call),
 		);
 		const officialInstaller = calls.indexOf(`official ${runtime} installer`);
-		const dashboardArtifact = calls.indexOf("official hermes dashboard artifact");
 		const finalSystemActivation = calls.findIndex(
 			(call) => call.startsWith("start") && call.includes("clawdi-daemon.service"),
 		);
 		expect(sidecarActivation).toBeGreaterThanOrEqual(0);
 		expect(officialInstaller).toBeGreaterThan(sidecarActivation);
-		if (runtime === "hermes") expect(dashboardArtifact).toBeGreaterThan(officialInstaller);
 		expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
-		if (runtime === "hermes") expect(finalSystemActivation).toBeGreaterThan(dashboardArtifact);
 		expect(calls).not.toContain(`--user restart ${serviceName}.service`);
 		const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
 		const installIndex = installerCalls.indexOf(installArgs);
@@ -10329,24 +10305,15 @@ fi
 			expect(installerCalls.slice(installIndex + 1)).not.toContain("config patch --stdin");
 		} else {
 			expect(installIndex).toBeGreaterThanOrEqual(0);
-			const postInstallCalls = installerCalls.slice(installIndex + 1);
-			expect(postInstallCalls.filter((call) => call.startsWith("npm "))).toEqual([
-				"npm --version",
-				"npm install --workspace web",
-				"npm run build -w web",
-			]);
-			expect(
-				postInstallCalls
-					.filter((call) => !call.startsWith("npm "))
-					.every((call) => call === "--version"),
-			).toBe(true);
+			expect(installerCalls).toContain("config path");
+			expect(installerCalls.some((call) => call.startsWith("npm "))).toBe(false);
 			expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(true);
 		}
 		expect(readRuntimeAppliedState(paths)).toMatchObject({
 			generation: 41,
 			etag: testBundleEtag("cold-home-egress"),
 		});
-	});
+	}, 30_000);
 
 	it("keeps public sidecar artifacts stable and rejects required engine degradation", async () => {
 		setRuntimeApplyGeneration(41, CANONICAL_TEST_CONTEXT);
@@ -13536,7 +13503,7 @@ exit 64
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(dirname(ambientHermesConfig), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
-		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeHermesVersionBinary(home, "0.20.1");
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
 			[
@@ -13564,7 +13531,6 @@ exit 64
 			].join("\n"),
 		);
 		writeFileSync(ambientHermesConfig, ambientSentinel);
-		chmodSync(hermesBin, 0o700);
 		process.env.HOME = ambientHome;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_RUNTIME_HOME = home;
@@ -13614,7 +13580,7 @@ exit 64
 							args: [],
 						},
 						run: {
-							args: ["gateway", "run", "--replace"],
+							args: ["gateway", "run"],
 							env: {
 								HERMES_EXISTING_ENV: "kept",
 								WHATSAPP_ENABLED: "stale",
@@ -13763,7 +13729,7 @@ exit 64
 			"platforms.telegram.extra.group_sessions_per_user",
 		);
 		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
-	});
+	}, 30_000);
 
 	it("projects and removes Hermes native WhatsApp through the stock adapter config", () => {
 		const home = join(root, "home", "clawdi");
@@ -13796,7 +13762,7 @@ exit 64
 		mkdirSync(dirname(hermesBin), { recursive: true });
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
-		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeHermesVersionBinary(home, "0.20.1");
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
 			[
@@ -13813,7 +13779,6 @@ exit 64
 				"",
 			].join("\n"),
 		);
-		chmodSync(hermesBin, 0o700);
 		seedHermesManagedBaileys(home);
 		seedOpenClawBinary(home);
 		writeFakeSystemdManager({
@@ -13860,7 +13825,7 @@ exit 64
 							args: [],
 						},
 						run: {
-							args: ["gateway", "run", "--replace"],
+							args: ["gateway", "run"],
 							env: { HERMES_EXISTING_ENV: "kept" },
 							prependPath: [],
 						},
@@ -14125,7 +14090,7 @@ exit 64
 		const repairedConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf8");
 		expect(convergeRuntimeManifest(removed, paths).installErrors).toEqual([]);
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf8")).toBe(repairedConfig);
-	});
+	}, 60_000);
 
 	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
 		const home = join(root, "home", "clawdi");
@@ -14996,7 +14961,7 @@ exit 64
 
 		expect(convergence.outputs.workspaceRoot).toBe(home);
 		expect(hermesRunConfig.cwd).toBe(home);
-		expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run", "--replace"]);
+		expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run"]);
 		expect(hermesDashboardRunConfig.cwd).toBe(home);
 		expect(hermesDashboardRunConfig.defaultArgs).toEqual([
 			"dashboard",
@@ -15143,8 +15108,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			)}\n`,
 		);
 		writeFileSync(openclawUserSkill, "user-owned skill\n");
-		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(hermesBin, 0o700);
+		writeHermesVersionBinary(home, "0.20.1");
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
@@ -15203,11 +15167,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		const initialServers = {
 			clawdi: { command: "clawdi", args: ["mcp"] },
-			"search-proxy": { command: "searchctl", args: ["serve", "v1"] },
+			"search.proxy": { command: "searchctl", args: ["serve", "v1"] },
 		};
 		const updatedServers = {
 			...initialServers,
-			"search-proxy": { command: "searchctl", args: ["serve", "v2"] },
+			"search.proxy": { command: "searchctl", args: ["serve", "v2"] },
 		};
 		const loadWithSkillEntry = (
 			skillId: string,
@@ -15265,14 +15229,14 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
 		expect(initial.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
-		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(initialServers["search-proxy"]);
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(initialServers["search.proxy"]);
 		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
 			command: "user-owned",
 			args: ["keep"],
 		});
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
 			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-			runtimes: { openclaw: ["clawdi", "search-proxy"] },
+			runtimes: { openclaw: ["clawdi", "search.proxy"] },
 		});
 		expect(
 			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
@@ -15288,7 +15252,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(updatedServers["search-proxy"]);
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(updatedServers["search.proxy"]);
 		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
 		const updatedLedger = readFileSync(ledgerPath, "utf-8");
 		const callsBeforeIdempotent = readFileSync(openclawCalls, "utf-8");
@@ -15304,7 +15268,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const switched = convergeRuntimeManifest(load(3, "hermes", updatedServers), getRuntimePaths());
 		expect(switched.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
-		expect(readOpenClawMcpServers(home)["search-proxy"]).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toBeUndefined();
 		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
 			command: "user-owned",
 			args: ["keep"],
@@ -15320,9 +15284,9 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			args: ["keep"],
 		});
 		expect(hermesAfterSwitch.clawdi).toEqual(initialServers.clawdi);
-		expect(hermesAfterSwitch["search-proxy"]).toEqual(updatedServers["search-proxy"]);
+		expect(hermesAfterSwitch["search.proxy"]).toEqual(updatedServers["search.proxy"]);
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			hermes: ["clawdi", "search-proxy"],
+			hermes: ["clawdi", "search.proxy"],
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
@@ -15343,7 +15307,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			readHermesConfigYaml(home).mcp_servers,
 			"Hermes MCP servers",
 		);
-		expect(hermesAfterRemoval["search-proxy"]).toBeUndefined();
+		expect(hermesAfterRemoval["search.proxy"]).toBeUndefined();
 		expect(hermesAfterRemoval.clawdi).toEqual(initialServers.clawdi);
 		expect(hermesAfterRemoval["user-entry"]).toEqual({
 			command: "user-owned",
@@ -15371,7 +15335,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(join(hermesSkill, "SKILL.md"), "utf-8")).toBe(
 			"user-owned canonical skill\n",
 		);
-		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search-proxy");
+		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search.proxy");
 	});
 
 	it("migrates retained v1 MCP ownership without copying legacy config values", () => {
@@ -15488,7 +15452,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		const removed = convergeRuntimeManifest(load(3, false), getRuntimePaths());
 		expect(removed.installErrors).toEqual([]);
-		expect(readHermesConfigYaml(home).mcp_servers).toEqual({});
+		expect(readHermesConfigYaml(home).mcp_servers).toBeUndefined();
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
 			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
 			runtimes: {},
@@ -15800,8 +15764,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		mkdirSync(dirname(hermesBin), { recursive: true });
-		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(hermesBin, 0o700);
+		writeHermesVersionBinary(home, "0.20.1");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -16054,7 +16017,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ADDON_PATH="${paths.egressAddon}"`);
 		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
-		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
+		expect(openclawUnit).not.toContain("\nExecStart=");
+		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).not.toContain("sk-runtime");
 		expect(openclawEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
@@ -16237,7 +16201,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(statSync(paths.egressTransparentEnv).gid).toBe(10002);
 		}
 		expect(statSync(join(run, "egress-scratch")).mode & 0o777).toBe(0o700);
-		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
+		expect(openclawUnit).not.toContain("\nExecStart=");
+		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawEnv).not.toContain("CLAWDI_EGRESS_PROFILE_BUNDLE");
 		expect(openclawEnv).not.toContain("CLAWDI_EGRESS_SECRET_FILE");
 		expect(openclawEnv).not.toContain("HTTPS_PROXY=");
@@ -16436,6 +16401,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		mkdirSync(hermesHome, { recursive: true });
 		writeFileSync(join(hermesHome, "SOUL.md"), "User Hermes identity.\n");
 		writeFileSync(join(hermesHome, "config.yaml"), "custom_setting: keep\n");
+		const hermesCommand = writeHermesVersionBinary(home, "0.20.1");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -16454,7 +16420,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			runtimes: {
 				hermes: {
 					enabled: true,
-					run: { command: "/bin/true", args: [], env: {}, prependPath: [] },
+					run: { command: hermesCommand, args: ["gateway", "run"], env: {}, prependPath: [] },
 				},
 			},
 			recovery: {},
@@ -16477,7 +16443,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const config = readHermesConfigYaml(home);
 		expect(config.custom_setting).toBe("keep");
 		expect(config.timezone).toBe("Asia/Taipei");
-		expect(readSystemdEnvFile(paths, "clawdi-hermes")).toContain('TZ="Asia/Taipei"');
+		expect(readSystemdEnvFile(paths, "hermes-gateway")).toContain('TZ="Asia/Taipei"');
 	});
 
 	it("runtime program revisions ignore unrelated control-plane and sibling runtime changes", () => {

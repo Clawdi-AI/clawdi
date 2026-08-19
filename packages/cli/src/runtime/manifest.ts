@@ -53,17 +53,6 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
-	mergeHermesChannelConfig,
-	mergeHermesConfig,
-	mergeHermesDashboardBasicAuth,
-	mergeHermesRuntimeLocale,
-	renderHermesChannelConfig,
-	renderHermesConfig,
-	renderHermesMcpServer,
-	renderHermesMcpServerRemoval,
-	renderHermesRuntimeLocale,
-} from "../lib/hermes-config-merge";
-import {
 	type OAuthCredentialLedger,
 	oauthCredentialLedgerPath,
 	oauthCredentialLedgerSnapshot,
@@ -92,6 +81,12 @@ import {
 	gcFileBrowserCompanionCandidates,
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
+import {
+	getHermesRawConfigValue,
+	getHermesResolvedConfigValue,
+	type HermesConfigCommandContext,
+	reconcileHermesConfigValue,
+} from "./hermes-config";
 import {
 	type PreparedHostedAgentPlugins,
 	writeHostedAgentPluginReceipt,
@@ -228,11 +223,9 @@ import {
 import {
 	buildRuntimeSystemdUserProgram,
 	installOfficialRuntimeService,
-	planHermesDashboardArtifact,
 	planOfficialRuntimeServices,
 	planRuntimeMutationSystemdUserUnits,
 	planRuntimeSystemdUserMutations,
-	prepareHermesDashboardArtifact,
 	type RuntimeEgressSystemdProgram,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
@@ -1472,11 +1465,50 @@ function updateManagedLocaleFile(path: string, block: string): string {
 	return path;
 }
 
+function hermesConfigContext(
+	observation: RuntimeInstallObservation,
+	home: string,
+	cwd: string,
+): HermesConfigCommandContext {
+	if (!observation.commandPath || !executableExists(observation.commandPath)) {
+		throw new Error("Hermes config command is unavailable");
+	}
+	return { command: observation.commandPath, home, cwd };
+}
+
+function applyHermesDashboardConfig(
+	context: HermesConfigCommandContext,
+	auth: NonNullable<RuntimeManifest["hermesDashboardAuth"]>,
+): void {
+	reconcileHermesConfigValue(context, "dashboard.basic_auth", {
+		username: auth.username,
+		session_ttl_seconds: auth.sessionTtlSeconds,
+	});
+	const currentDisabled = getHermesRawConfigValue(context, "plugins.disabled");
+	if (
+		currentDisabled.exists &&
+		(!Array.isArray(currentDisabled.value) ||
+			currentDisabled.value.some((value) => typeof value !== "string"))
+	) {
+		throw new Error("Hermes config field plugins.disabled must be a string array");
+	}
+	const disabled = new Set(
+		(currentDisabled.exists ? (currentDisabled.value as string[]) : []).filter(
+			(value) => value !== "dashboard_auth/basic",
+		),
+	);
+	disabled.add("dashboard_auth/nous");
+	disabled.add("dashboard_auth/self_hosted");
+	reconcileHermesConfigValue(context, "plugins.disabled", [...disabled].sort());
+}
+
 function applyHostedLocaleProjection(
 	runtime: string,
+	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
 	openClawWorkspaceRoot: string | null,
+	workspaceRoot: string,
 ): string | null {
 	if (manifest.runtimes[runtime]?.enabled !== true) return null;
 	const locale = manifest.locale;
@@ -1489,14 +1521,10 @@ function applyHostedLocaleProjection(
 	if (runtime === "hermes") {
 		const auth = manifest.hermesDashboardAuth;
 		if (!auth && !locale) return null;
+		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
-		makeRuntimeUserPrivateDir(hermesHome, home);
-		const configPath = join(hermesHome, "config.yaml");
-		if (auth) {
-			mergeHermesDashboardBasicAuth(configPath, auth.username, auth.sessionTtlSeconds);
-		}
-		if (locale) mergeHermesRuntimeLocale(configPath, locale.timezone);
-		makeRuntimeUserOwned(configPath);
+		if (auth) applyHermesDashboardConfig(context, auth);
+		if (locale) reconcileHermesConfigValue(context, "timezone", locale.timezone);
 		return locale
 			? updateManagedLocaleFile(join(hermesHome, "SOUL.md"), managedLocaleBlock(locale))
 			: null;
@@ -2572,6 +2600,7 @@ function applyHostedAiProviderProjection(
 				projectionInput,
 				previousProviderIds,
 				home,
+				workspaceRoot,
 			),
 		);
 	}
@@ -2638,6 +2667,7 @@ function previewHostedAiProviderProjectionRevision(
 		observation,
 		projectionInput,
 		previousProviderIds,
+		home,
 		home,
 		false,
 	).revision;
@@ -2874,18 +2904,19 @@ function applyHostedHermesAiProviderProjection(
 	projectionInput: HostedAiProviderProjectionInput | null,
 	previousProviderIds: readonly string[],
 	home: string,
+	workspaceRoot: string,
 	apply = true,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (apply) removeLegacyHermesModelProviderPlugin(home);
 	if (!projectionInput) {
-		const deletedProviderIds = existingHermesProviderIds(
-			configPath,
-			staleProviderIds(new Set(previousProviderIds), new Set()),
-		);
+		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
 		if (apply && deletedProviderIds.length > 0) {
-			mergeHermesConfig(configPath, hermesProviderDeletePatch(deletedProviderIds));
-			makeRuntimeUserOwned(configPath);
+			applyHermesProviderConfig(
+				hermesConfigContext(observation, home, workspaceRoot),
+				{},
+				deletedProviderIds,
+			);
 		}
 		return {
 			path: null,
@@ -2908,14 +2939,20 @@ function applyHostedHermesAiProviderProjection(
 	const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 	if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
 	const activeProviderIds = [...hermesProviderIdsFromPatch(file.content)].sort();
-	const deletedProviderIds = existingHermesProviderIds(
-		configPath,
-		staleProviderIds(new Set(previousProviderIds), new Set(activeProviderIds)),
+	const deletedProviderIds = staleProviderIds(
+		new Set(previousProviderIds),
+		new Set(activeProviderIds),
 	);
 	const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
 	if (apply) {
-		mergeHermesConfig(configPath, patchContent);
-		makeRuntimeUserOwned(configPath);
+		const patch = parseYaml(file.content) as unknown;
+		const root = recordValue(patch);
+		if (!root) throw new Error("Hermes projection patch must be a YAML object.");
+		applyHermesProviderConfig(
+			hermesConfigContext(observation, home, workspaceRoot),
+			root,
+			deletedProviderIds,
+		);
 	}
 	return {
 		path: configPath,
@@ -3144,6 +3181,115 @@ function hermesProviderIdsFromPatch(content: string): Set<string> {
 	);
 }
 
+const HERMES_DIRECT_MODEL_FIELDS = [
+	"base_url",
+	"api_key",
+	"api",
+	"key_env",
+	"api_mode",
+	"auth_mode",
+] as const;
+const HERMES_GENERATED_PROVIDER_FIELDS = [
+	"name",
+	"api",
+	"url",
+	"base_url",
+	"default_model",
+	"model",
+	"models",
+	"discover_models",
+	"transport",
+	"api_mode",
+	"key_env",
+	"api_key",
+	"type",
+	"auth_type",
+] as const;
+
+function applyHermesProviderConfig(
+	context: HermesConfigCommandContext,
+	patch: Record<string, unknown>,
+	deletedProviderIds: readonly string[],
+): void {
+	const patchModel = recordValue(patch.model) ?? {};
+	const modelKeys = new Set<string>([...HERMES_DIRECT_MODEL_FIELDS, ...Object.keys(patchModel)]);
+	for (const key of [...modelKeys].sort()) {
+		const value = Object.hasOwn(patchModel, key) ? patchModel[key] : undefined;
+		reconcileHermesConfigValue(context, `model.${key}`, value === null ? undefined : value);
+	}
+	if (!Object.hasOwn(patchModel, "provider") && deletedProviderIds.length > 0) {
+		const currentProvider = getHermesResolvedConfigValue(context, "model.provider");
+		if (currentProvider.exists && typeof currentProvider.value !== "string") {
+			throw new Error("Hermes config field model.provider must be a string");
+		}
+		const managedSelectors = new Set(
+			deletedProviderIds.flatMap((providerId) => [providerId, `custom:${providerId}`]),
+		);
+		if (currentProvider.exists && managedSelectors.has(currentProvider.value as string)) {
+			reconcileHermesConfigValue(context, "model.provider", undefined);
+			if (!Object.hasOwn(patchModel, "default")) {
+				reconcileHermesConfigValue(context, "model.default", undefined);
+			}
+		}
+	}
+
+	const currentValue = getHermesRawConfigValue(context, "providers");
+	if (currentValue.exists && !isPlainRecord(currentValue.value)) {
+		throw new Error("Hermes config field providers must be an object");
+	}
+	const currentProviders: Record<string, unknown> =
+		currentValue.exists && isPlainRecord(currentValue.value) ? currentValue.value : {};
+	for (const [providerId, provider] of Object.entries(currentProviders)) {
+		if (provider !== undefined && provider !== null && !isPlainRecord(provider)) {
+			throw new Error(`Hermes provider ${providerId} must be an object`);
+		}
+	}
+	const nextProviders: Record<string, unknown> = { ...currentProviders };
+	for (const providerId of deletedProviderIds) delete nextProviders[providerId];
+
+	const patchProviders = recordValue(patch.providers) ?? {};
+	for (const [providerId, providerPatch] of Object.entries(patchProviders)) {
+		if (providerPatch === null) {
+			delete nextProviders[providerId];
+			continue;
+		}
+		if (!isPlainRecord(providerPatch)) continue;
+		const existingProvider = nextProviders[providerId];
+		if (
+			existingProvider !== undefined &&
+			existingProvider !== null &&
+			!isPlainRecord(existingProvider)
+		) {
+			throw new Error(`Hermes provider ${providerId} must be an object`);
+		}
+		const nextProvider: Record<string, unknown> = isPlainRecord(existingProvider)
+			? { ...existingProvider }
+			: {};
+		for (const key of HERMES_GENERATED_PROVIDER_FIELDS) delete nextProvider[key];
+		let wroteGeneratedField = false;
+		for (const [key, value] of Object.entries(providerPatch)) {
+			if (value === null) {
+				delete nextProvider[key];
+				continue;
+			}
+			nextProvider[key] = value;
+			wroteGeneratedField = true;
+		}
+		const hasUserOwnedField = Object.keys(nextProvider).some(
+			(key) => !(HERMES_GENERATED_PROVIDER_FIELDS as readonly string[]).includes(key),
+		);
+		if (wroteGeneratedField || hasUserOwnedField) nextProviders[providerId] = nextProvider;
+		else delete nextProviders[providerId];
+	}
+
+	if (Object.keys(nextProviders).length === 0 && Object.keys(currentProviders).length === 0) return;
+	reconcileHermesConfigValue(
+		context,
+		"providers",
+		Object.keys(nextProviders).length > 0 ? nextProviders : undefined,
+	);
+}
+
 function mergeHermesProviderDeletes(
 	patchContent: string,
 	deletedProviderIds: readonly string[],
@@ -3160,25 +3306,6 @@ function mergeHermesProviderDeletes(
 	}
 	patch.providers = providers;
 	return `${stringifyYaml(patch).trimEnd()}\n`;
-}
-
-function existingHermesProviderIds(configPath: string, providerIds: readonly string[]): string[] {
-	if (providerIds.length === 0 || !existsSync(configPath)) return [];
-	try {
-		const parsed = parseYaml(readFileSync(configPath, "utf-8")) as unknown;
-		const root = recordValue(parsed);
-		const providers = root ? recordValue(root.providers) : null;
-		if (!providers) return [];
-		return providerIds.filter((providerId) => Object.hasOwn(providers, providerId));
-	} catch {
-		return [];
-	}
-}
-
-function hermesProviderDeletePatch(deletedProviderIds: readonly string[]): string {
-	return `${stringifyYaml({
-		providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
-	}).trimEnd()}\n`;
 }
 
 function staleProviderIds(
@@ -3328,6 +3455,68 @@ function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unkn
 	return channels;
 }
 
+function applyHermesNestedConfigPatch(
+	context: HermesConfigCommandContext,
+	prefix: string,
+	patch: Record<string, unknown>,
+): boolean {
+	let changed = false;
+	for (const [key, value] of Object.entries(patch).sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		const path = `${prefix}.${key}`;
+		if (isPlainRecord(value)) {
+			changed = applyHermesNestedConfigPatch(context, path, value) || changed;
+			continue;
+		}
+		changed =
+			reconcileHermesConfigValue(context, path, value === null ? undefined : value) || changed;
+	}
+	return changed;
+}
+
+function applyHermesChannelConfig(
+	context: HermesConfigCommandContext,
+	patch: Record<string, unknown>,
+): boolean {
+	let changed = false;
+	for (const [key, value] of Object.entries(patch).sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		if (key === "telegram" || key === "discord") {
+			changed = reconcileHermesConfigValue(context, key, value) || changed;
+			continue;
+		}
+		if (key === "whatsapp" || key === "display") {
+			if (!isPlainRecord(value))
+				throw new Error(`Hermes channel patch field ${key} must be an object`);
+			changed = applyHermesNestedConfigPatch(context, key, value) || changed;
+			continue;
+		}
+		if (key === "platforms") {
+			if (!isPlainRecord(value)) {
+				throw new Error("Hermes channel patch field platforms must be an object");
+			}
+			for (const [platform, platformConfig] of Object.entries(value).sort(([left], [right]) =>
+				left.localeCompare(right),
+			)) {
+				if ((platform === "telegram" || platform === "whatsapp") && isPlainRecord(platformConfig)) {
+					changed =
+						applyHermesNestedConfigPatch(context, `platforms.${platform}`, platformConfig) ||
+						changed;
+				} else {
+					changed =
+						reconcileHermesConfigValue(context, `platforms.${platform}`, platformConfig) || changed;
+				}
+			}
+			continue;
+		}
+		changed =
+			reconcileHermesConfigValue(context, key, value === null ? undefined : value) || changed;
+	}
+	return changed;
+}
+
 function applyHostedChannelProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
@@ -3344,15 +3533,10 @@ function applyHostedChannelProjection(
 	if (!channels) return false;
 
 	if (name === "hermes") {
-		const configPath = join(home, ".hermes", "config.yaml");
-		return withRuntimeUserFileAccess(() => {
-			const changed = mergeHermesChannelConfig(
-				configPath,
-				buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
-			);
-			makeRuntimeUserOwned(configPath);
-			return changed;
-		});
+		return applyHermesChannelConfig(
+			hermesConfigContext(observation, home, workspaceRoot),
+			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
+		);
 	}
 	runRuntimeUserCommand(
 		observation.commandPath,
@@ -4134,25 +4318,30 @@ function applyHostedMcpProjections(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
 ): string[] {
-	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations);
+	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations, workspaceRoot);
 	const ledgerPath = hostedMcpLedgerPath(paths);
 	const outputs = new Set<string>();
-	// Hermes is one staged atomic file write. Apply it before OpenClaw so the
-	// forward-convergence group completes before the root-owned ledger advances.
+	// Apply Hermes first so both native runtimes converge before the
+	// root-owned ownership ledger advances.
 	for (const runtime of [...plan.runtimes].sort((left, right) =>
 		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
 	)) {
 		if (runtime.mutations.length === 0) continue;
 		if (runtime.name === "hermes") {
-			if (runtime.nextHermesContent === null) {
-				throw new Error("Hermes MCP reconciliation did not produce staged config");
+			if (!runtime.commandPath || !executableExists(runtime.commandPath)) {
+				throw new Error("could not mutate managed Hermes MCP servers: runtime is unavailable");
 			}
-			const nextHermesContent = runtime.nextHermesContent;
-			withRuntimeUserFileAccess(() => {
-				writePrivateFileAtomic(runtime.native.path, nextHermesContent);
-				makeRuntimeUserOwned(runtime.native.path);
-			});
-			outputs.add(runtime.native.path);
+			const nextServers = { ...runtime.native.servers };
+			for (const mutation of runtime.mutations) {
+				if (mutation.kind === "remove") delete nextServers[mutation.serverName];
+				else nextServers[mutation.serverName] = mutation.server;
+			}
+			reconcileHermesConfigValue(
+				{ command: runtime.commandPath, home: plan.home, cwd: workspaceRoot },
+				"mcp_servers",
+				Object.keys(nextServers).length > 0 ? nextServers : undefined,
+			);
+			outputs.add(runtime.commandPath);
 			continue;
 		}
 		if (!runtime.commandPath || !executableExists(runtime.commandPath)) {
@@ -4185,8 +4374,6 @@ type HostedMcpMutation =
 	| { kind: "set"; serverName: string; server: HostedMcpNativeServer };
 
 interface HostedMcpNativeState {
-	path: string;
-	content: string | null;
 	servers: Record<string, unknown>;
 }
 
@@ -4195,7 +4382,6 @@ interface HostedMcpRuntimePlan {
 	native: HostedMcpNativeState;
 	mutations: HostedMcpMutation[];
 	commandPath: string | null;
-	nextHermesContent: string | null;
 }
 
 interface HostedMcpReconciliationPlan {
@@ -4208,6 +4394,7 @@ function buildHostedMcpReconciliationPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+	cwd = hostedRuntimeProjectionHome(manifest, paths),
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -4219,7 +4406,15 @@ function buildHostedMcpReconciliationPlan(
 	const runtimes = HOSTED_RUNTIME_TARGETS.map((name) => {
 		const desiredServers = manifest.runtimes[name]?.enabled === true ? intent.servers : {};
 		const previousServerNames = new Set(ledger.runtimes[name] ?? []);
-		const native = readHostedMcpNativeState(name, home);
+		const observation = observations.get(name);
+		const commandPath = observation?.commandPath ?? runtimeCommandPath(name, home);
+		const needsNativeState = Object.keys(desiredServers).length > 0 || previousServerNames.size > 0;
+		if (name === "hermes" && needsNativeState && (!commandPath || !executableExists(commandPath))) {
+			throw new Error("could not inspect managed Hermes MCP servers: runtime is unavailable");
+		}
+		const native = needsNativeState
+			? readHostedMcpNativeState(name, home, commandPath, cwd)
+			: { servers: {} };
 		for (const serverName of Object.keys(desiredServers).sort()) {
 			if (previousServerNames.has(serverName)) continue;
 			if (Object.hasOwn(native.servers, serverName)) {
@@ -4246,63 +4441,57 @@ function buildHostedMcpReconciliationPlan(
 		if (Object.keys(desiredServers).length > 0) {
 			nextLedger.runtimes[name] = Object.keys(desiredServers).sort();
 		}
-		const observation = observations.get(name);
 		const hasSet = mutations.some((mutation) => mutation.kind === "set");
 		if (hasSet && (!observation?.enabled || observation.status === "install_failed")) {
 			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
 		}
-		const commandPath =
-			name === "openclaw" ? (observation?.commandPath ?? runtimeCommandPath(name, home)) : null;
-		let nextHermesContent: string | null = null;
-		if (name === "hermes" && mutations.length > 0) {
-			nextHermesContent = native.content ?? "";
-			for (const mutation of mutations) {
-				nextHermesContent =
-					mutation.kind === "remove"
-						? renderHermesMcpServerRemoval(nextHermesContent, mutation.serverName)
-						: renderHermesMcpServer(nextHermesContent, mutation.serverName, mutation.server);
-			}
-		}
-		return { name, native, mutations, commandPath, nextHermesContent };
+		return { name, native, mutations, commandPath };
 	});
 	return { home, runtimes, nextLedger };
 }
 
-function readHostedMcpNativeState(name: HostedMcpTarget, home: string): HostedMcpNativeState {
-	const path =
-		name === "openclaw"
-			? join(home, ".openclaw", "openclaw.json")
-			: join(home, ".hermes", "config.yaml");
-	if (!existsSync(path)) return { path, content: null, servers: {} };
+function readHostedMcpNativeState(
+	name: HostedMcpTarget,
+	home: string,
+	commandPath: string | null,
+	cwd: string,
+): HostedMcpNativeState {
+	if (name === "hermes") {
+		if (!commandPath) throw new Error("Hermes config command is unavailable");
+		const current = getHermesRawConfigValue({ command: commandPath, home, cwd }, "mcp_servers");
+		if (!current.exists) return { servers: {} };
+		if (!isPlainRecord(current.value)) {
+			throw new Error("Hermes config field mcp_servers must be an object");
+		}
+		return { servers: current.value };
+	}
+	const path = join(home, ".openclaw", "openclaw.json");
+	if (!existsSync(path)) return { servers: {} };
 	const content = readFileSync(path, "utf-8");
 	let parsed: unknown;
 	try {
-		parsed = name === "openclaw" ? JSON.parse(content) : parseYaml(content);
+		parsed = JSON.parse(content);
 	} catch (error) {
 		throw new Error(
 			`${name} config is invalid: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
-	if (parsed === null && name === "hermes") return { path, content, servers: {} };
 	if (!isPlainRecord(parsed)) throw new Error(`${name} config must be an object`);
-	if (name === "openclaw" && parsed.mcpServers !== undefined) {
+	if (parsed.mcpServers !== undefined) {
 		throw new Error(
 			"openclaw config uses unsupported legacy field mcpServers; canonical MCP state is mcp.servers",
 		);
 	}
-	const mcp = name === "openclaw" ? parsed.mcp : parsed;
-	if (name === "openclaw" && mcp !== undefined && !isPlainRecord(mcp)) {
+	const mcp = parsed.mcp;
+	if (mcp !== undefined && !isPlainRecord(mcp)) {
 		throw new Error("openclaw config field mcp must be an object");
 	}
-	const field = name === "openclaw" ? "servers" : "mcp_servers";
-	const servers = isPlainRecord(mcp) ? mcp[field] : undefined;
-	if (servers === undefined) return { path, content, servers: {} };
+	const servers = isPlainRecord(mcp) ? mcp.servers : undefined;
+	if (servers === undefined) return { servers: {} };
 	if (!isPlainRecord(servers)) {
-		throw new Error(
-			`${name} config field ${name === "openclaw" ? "mcp.servers" : field} must be an object`,
-		);
+		throw new Error("openclaw config field mcp.servers must be an object");
 	}
-	return { path, content, servers };
+	return { servers };
 }
 
 function canonicalJsonEqual(left: unknown, right: unknown): boolean {
@@ -5221,13 +5410,6 @@ function validateRuntimeProjectionPlan(input: {
 		}
 	}
 
-	let hermesConfig = existsSync(join(home, ".hermes", "config.yaml"))
-		? readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")
-		: "";
-	if (manifest.locale && Object.hasOwn(manifest.runtimes, "hermes")) {
-		hermesConfig = renderHermesRuntimeLocale(hermesConfig, manifest.locale.timezone);
-	}
-
 	const codexProvider = hostedCodexManagedProvider(manifest);
 	if (codexProvider) {
 		hostedCodexManagedConfigToml(codexProvider);
@@ -5289,25 +5471,16 @@ function validateRuntimeProjectionPlan(input: {
 				const yamlFile = yamlProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 				if (!yamlFile)
 					throw new Error("Hermes projection did not include a config merge YAML file.");
-				hermesConfig = renderHermesConfig(hermesConfig, yamlFile.content);
-			} else if (
-				!configuredProjectionUnavailable &&
-				(previousProjectedProviderIds.hermes ?? []).length > 0
-			) {
-				hermesConfig = renderHermesConfig(
-					hermesConfig,
-					hermesProviderDeletePatch(previousProjectedProviderIds.hermes ?? []),
-				);
+				if (!recordValue(parseYaml(yamlFile.content) as unknown)) {
+					throw new Error("Hermes projection patch must be a YAML object.");
+				}
 			}
 		}
 
 		const channels = hostedChannelProjection(manifest);
 		if (channels && name === "openclaw") JSON.stringify(openClawManagedChannelsPatch(channels));
 		if (channels && name === "hermes" && runtime.enabled) {
-			hermesConfig = renderHermesChannelConfig(
-				hermesConfig,
-				buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
-			);
+			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
 		}
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
@@ -5484,7 +5657,6 @@ export function runtimeUserMutationTargets(
 ): string[] {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const installerTargets = runtimeInstallerMutationTargets(manifest, home, observations);
-	const hermesAppRoot = join(home, ".hermes", "hermes-agent");
 	const openClawDatabase = join(openClawAgentDir(home), "openclaw-agent.sqlite");
 	const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
 	const channels = hostedChannelProjection(manifest);
@@ -5548,13 +5720,6 @@ export function runtimeUserMutationTargets(
 			}
 			targets.add(target);
 		}
-	}
-	if (
-		manifest.runtimes.hermes?.enabled &&
-		manifest.runtimes.hermes.services?.dashboard &&
-		!installerTargets.includes(hermesAppRoot)
-	) {
-		targets.add(join(hermesAppRoot, "hermes_cli", "web_dist"));
 	}
 	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
 		targets.add(join(paths.localEnvironments, `${agentType}.json`));
@@ -6591,7 +6756,14 @@ export function convergeRuntimeManifest(
 			}
 			try {
 				const localeFile = withRuntimeUserFileAccess(() =>
-					applyHostedLocaleProjection(name, manifest, projectionHome, openClawWorkspaceRoot),
+					applyHostedLocaleProjection(
+						name,
+						observation,
+						manifest,
+						projectionHome,
+						openClawWorkspaceRoot,
+						workspaceRoot,
+					),
 				);
 				if (localeFile) managedLocaleFiles.push(localeFile);
 			} catch (error) {
@@ -6721,18 +6893,6 @@ export function convergeRuntimeManifest(
 			.filter((unitName) => !pendingOfficialUnits.has(unitName))
 			.sort();
 		installReceiptTargets.officialServices = officialServicePlan.targets;
-		const hermesDashboardArtifactPlan = planHermesDashboardArtifact(
-			runtimeSystemdUserPrograms,
-			paths,
-			previousInstallReceipts,
-			opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
-		);
-		if (hermesDashboardArtifactPlan.receiptKey && hermesDashboardArtifactPlan.target) {
-			installReceiptTargets.officialServices.set(
-				hermesDashboardArtifactPlan.receiptKey,
-				hermesDashboardArtifactPlan.target,
-			);
-		}
 		// Agent Plugin mutations must precede every native service installer.
 		// The final activation below restarts the affected runtime units.
 		const appliedAgentPluginTransaction = agentPluginTransaction;
@@ -6764,9 +6924,7 @@ export function convergeRuntimeManifest(
 		}
 		appliedAgentPluginTransaction?.apply();
 		if (
-			(officialServicePlan.pending.length > 0 ||
-				(hermesDashboardArtifactPlan.program !== null &&
-					hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)) &&
+			officialServicePlan.pending.length > 0 &&
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
@@ -6794,13 +6952,6 @@ export function convergeRuntimeManifest(
 				: install();
 			if (error) throw new Error(error);
 		}
-		const artifactError = prepareHermesDashboardArtifact(
-			hermesDashboardArtifactPlan,
-			paths,
-			systemdUnits.egressSidecarActive ? egressSystemdProgram?.systemCaBundle : undefined,
-		);
-		if (artifactError) throw new Error(artifactError);
-
 		hostedRuntimeContract.assertPlatformRoots();
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);

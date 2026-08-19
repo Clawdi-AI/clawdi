@@ -193,11 +193,17 @@ exits 0 and includes rejection of multiple configured `provider_ids`.
 
 ## Hosted Hermes And OpenClaw Delivery
 
-For Hermes, Hosted convergence performs a structured merge into
-`$HERMES_HOME/config.yaml`. It preserves unrelated config, maps portable API
-modes to Hermes transport names, and writes only environment-variable names
-for API-key providers. Codex OAuth uses Hermes' native `openai-codex` selector
-and a reserved Clawdi-owned credential-pool entry. Managed API-key provider
+For Hermes, Hosted convergence uses `hermes config get --json` when it needs a
+resolved value, `unset` for deletion, and `set --force` for scalar writes. Raw
+structured state is read from, and mappings and arrays are atomically
+reconciled in, the YAML path reported by `hermes config path`, because `config
+set` does not provide a portable structured-value contract across supported
+installations. This preserves unrelated config and opaque map keys such as MCP
+names containing dots. The projection maps portable API modes to Hermes
+transport names and writes only environment-variable names for API-key
+providers. Codex OAuth uses
+Hermes' native `openai-codex` selector and a reserved Clawdi-owned
+credential-pool entry. Managed API-key provider
 objects set the upstream-supported `discover_models: false` and explicitly map
 the accepted-generation manifest's frozen `models`; each generation replaces
 all generated provider fields, so removed models do not survive. Generic and

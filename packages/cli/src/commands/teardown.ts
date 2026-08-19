@@ -1,9 +1,8 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { getHermesHome } from "../adapters/paths";
 import {
 	AGENT_TYPES,
 	type AgentType,
@@ -20,6 +19,7 @@ import {
 	migrateLegacyLocalSetupSkill,
 	releaseManagedSkill,
 } from "../runtime/managed-skill-reservation";
+import { reconcileLocalHermesMcp } from "./hermes-mcp";
 
 export async function teardown(opts: {
 	agent?: string;
@@ -187,42 +187,14 @@ function unregisterViaCli(label: string, cmd: string) {
 }
 
 function unregisterHermesMcp() {
-	const configPath = join(getHermesHome(), "config.yaml");
-	if (!existsSync(configPath)) {
-		p.log.info("Hermes: config.yaml not found, nothing to remove");
-		return;
-	}
-
-	const content = readFileSync(configPath, "utf-8");
-
-	const updated = removeAllYamlBlocks(removeAllYamlBlocks(content, "clawdi-mcp"), "clawdi");
-	if (updated === content) {
-		p.log.info("Hermes: clawdi entry not present in config.yaml");
-		return;
-	}
-
 	try {
-		writeFileSync(configPath, updated);
-		p.log.success("Hermes: removed MCP server entry from config.yaml");
+		if (reconcileLocalHermesMcp(false)) {
+			p.log.success("Hermes: removed MCP server registration");
+		} else {
+			p.log.info("Hermes: MCP server already absent");
+		}
 	} catch (e) {
-		p.log.warn(`Hermes: could not edit config.yaml (${errMessage(e)})`);
-		p.log.info(`  Edit ${configPath} manually and remove the clawdi block under mcp_servers`);
+		p.log.warn(`Hermes: could not remove MCP server registration (${errMessage(e)})`);
+		p.log.info("  Check with: hermes config get mcp_servers --json");
 	}
-}
-
-function removeAllYamlBlocks(content: string, key: string): string {
-	let updated = content;
-	while (true) {
-		const block = getYamlBlock(updated, key);
-		if (!block) return updated;
-		updated = updated.replace(block, "");
-	}
-}
-
-function getYamlBlock(content: string, key: string): string | null {
-	const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const match = content.match(
-		new RegExp(`^([ \\t]*)${escaped}:[ \\t]*\\n((?:\\1[ \\t]+.*\\n?)*)`, "m"),
-	);
-	return match?.[0] ?? null;
 }

@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import { mergeHermesPluginScanPolicy } from "../lib/hermes-config-merge";
 import { runHermesAgentPluginCanary } from "./hermes-agent-plugin-canary-client";
 import {
 	type HostedAgentPluginReceipt,
@@ -23,7 +22,6 @@ import {
 	commandResolvable,
 	makeRuntimeUserOwned,
 	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -487,10 +485,10 @@ function createHermesDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				// Written as the runtime user so the native CLI can traverse its own home.
-				withRuntimeUserFileAccess(() =>
-					mergeHermesPluginScanPolicy(join(input.home, ".hermes", "config.yaml")),
-				);
+				const scanPolicy = run(["config", "set", "--force", "plugins.scan_on_install", "false"]);
+				if (scanPolicy.status !== 0) {
+					throw nativeCommandFailure("Hermes Agent Plugin scan policy update failed", scanPolicy);
+				}
 				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
 				const result = run([
 					"plugins",
