@@ -838,8 +838,8 @@ export function createBillingClient(
 		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/subscription/checkout", {
+					params: { header: { "Idempotency-Key": idempotencyKey } },
 					body,
-					headers: { "Idempotency-Key": idempotencyKey },
 				}),
 			),
 		quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>
