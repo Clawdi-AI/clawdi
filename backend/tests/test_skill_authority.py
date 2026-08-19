@@ -343,7 +343,10 @@ async def test_legacy_hidden_project_upload_requires_authentication(
 ):
     response = await anon_client.post(
         f"/api/projects/{environment_project.id}/skills/upload",
-        data={"skill_key": "archive/.system/tool", "content_hash": "a" * 64},
+        data={
+            "skill_key": ".archive/curator/mlops/inference/llama-cpp",
+            "content_hash": "a" * 64,
+        },
         files={"file": ("metadata.tar.gz", b"not materializable", "application/gzip")},
     )
 
@@ -358,7 +361,7 @@ async def test_generic_agent_project_upload_truthfully_ignores_legacy_hidden_met
     seed_project: Project,
     environment_project,
 ):
-    skill_key = "archive/.system/tool"
+    skill_key = ".archive/curator/mlops/inference/llama-cpp"
     data = {"skill_key": skill_key, "content_hash": "a" * 64}
     files = {"file": ("metadata.tar.gz", b"not materializable", "application/gzip")}
 
