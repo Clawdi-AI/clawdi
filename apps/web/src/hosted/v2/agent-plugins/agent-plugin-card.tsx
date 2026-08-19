@@ -53,22 +53,20 @@ export function AgentPluginCard({
 					</IconChip>
 				}
 				title={title}
-				badges={
-					status || hasUpdate ? (
-						<>
-							{status ? (
-								<StatusBadge status={status.tone} withDot>
-									{status.label}
-								</StatusBadge>
-							) : null}
-							{hasUpdate ? <StatusBadge status="info">Update available</StatusBadge> : null}
-						</>
-					) : undefined
-				}
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				footer={[
+					status ? (
+						<StatusBadge key="status" status={status.tone} withDot>
+							{status.label}
+						</StatusBadge>
+					) : null,
+					hasUpdate ? (
+						<StatusBadge key="update" status="info">
+							Update available
+						</StatusBadge>
+					) : null,
 					item.catalog?.publisher,
 					version,
 					item.catalog ? agentPluginComponentSummary(item.catalog) : null,

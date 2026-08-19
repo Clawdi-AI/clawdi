@@ -85,15 +85,21 @@ export function buildAgentPluginInventory(
 		.sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/**
+ * Group assignment follows live state, with one exception: a card the user
+ * just clicked Install/Update on stays in Available while the install is in
+ * flight (`not_observed`), so the grid never reshuffles mid-action. Once the
+ * install reaches a terminal state (or the plugin is removed) the card regroups.
+ */
 export function assignAgentPluginGroups(
 	previous: ReadonlyMap<string, AgentPluginGroup>,
 	inventory: readonly AgentPluginInventoryItem[],
 ): Map<string, AgentPluginGroup> {
-	const next = new Map(previous);
+	const next = new Map<string, AgentPluginGroup>();
 	for (const item of inventory) {
-		if (!next.has(item.name)) {
-			next.set(item.name, item.desired ? "installed" : "available");
-		}
+		const pinned =
+			previous.get(item.name) === "available" && item.desired?.convergence === "not_observed";
+		next.set(item.name, pinned ? "available" : item.desired ? "installed" : "available");
 	}
 	return next;
 }
