@@ -102,7 +102,6 @@ def _test_runtime_settings():
     prev_channel_long_poll_max = settings.channel_long_poll_max_seconds
     prev_channel_long_poll_interval = settings.channel_long_poll_interval_seconds
     prev_discord_gateway_poll_interval = settings.discord_gateway_poll_interval_seconds
-    prev_project_skill_specs = settings.project_skill_hosted_cli_package_specs
     prev_plugin_catalog_sync_enabled = settings.plugin_catalog_sync_enabled
     settings.vault_encryption_key = secrets.token_hex(32)
     settings.encryption_key = secrets.token_hex(32)
@@ -110,7 +109,6 @@ def _test_runtime_settings():
     settings.channel_long_poll_max_seconds = 0.05
     settings.channel_long_poll_interval_seconds = 0.005
     settings.discord_gateway_poll_interval_seconds = 0.01
-    settings.project_skill_hosted_cli_package_specs = ["clawdi@1.2.3-test"]
     settings.plugin_catalog_sync_enabled = False
     try:
         yield
@@ -121,7 +119,6 @@ def _test_runtime_settings():
         settings.channel_long_poll_max_seconds = prev_channel_long_poll_max
         settings.channel_long_poll_interval_seconds = prev_channel_long_poll_interval
         settings.discord_gateway_poll_interval_seconds = prev_discord_gateway_poll_interval
-        settings.project_skill_hosted_cli_package_specs = prev_project_skill_specs
         settings.plugin_catalog_sync_enabled = prev_plugin_catalog_sync_enabled
 
 

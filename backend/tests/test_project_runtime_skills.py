@@ -25,7 +25,6 @@ from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
 from app.services import project_runtime_skills
 from app.services.file_store import get_file_store
-from app.services.project_runtime_skills import CONNECTED_PROJECT_SKILL_CAPABILITY_TTL
 from app.services.runtime_source import (
     load_runtime_source_batch,
     render_runtime_source,
@@ -213,7 +212,7 @@ async def test_linked_project_skill_is_composed_into_managed_runtime_manifest(
 
 
 @pytest.mark.asyncio
-async def test_connected_project_skill_desired_inventory_uses_local_name(
+async def test_connected_project_skill_desired_inventory_ignores_capability_observation(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -236,6 +235,11 @@ async def test_connected_project_skill_desired_inventory_uses_local_name(
         agent_id=agent_id,
     )
     assert capability.status_code == 204, capability.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    agent.project_skill_reconcile_version = None
+    agent.project_skill_reconcile_observed_at = None
+    await db_session.commit()
     linked = await _link(client, agent_id=agent_id, project_id=workspace_project.id)
     assert linked.status_code == 200, linked.text
 
@@ -330,7 +334,7 @@ async def test_link_fails_closed_for_workspace_and_sibling_project_skill_conflic
 
 
 @pytest.mark.asyncio
-async def test_connected_agent_and_project_skill_write_fail_before_mutation(
+async def test_connected_desired_state_ignores_capability_lease_but_preserves_conflicts(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -350,16 +354,12 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
         )
     )
     await db_session.commit()
-    connected_conflict = await _link(
+    connected_link = await _link(
         client,
         agent_id=environment_project.origin_environment_id,
         project_id=workspace_project.id,
     )
-    assert connected_conflict.status_code == 409, connected_conflict.text
-    assert connected_conflict.json()["detail"] == {
-        "code": "project_skill_delivery_update_required",
-        "message": "Update this Agent, then try again.",
-    }
+    assert connected_link.status_code == 200, connected_link.text
 
     capability = await _report_connected_project_skill_capability(
         client,
@@ -417,13 +417,6 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
         )
     ).scalar_one_or_none() is None
 
-    connected_link = await _link(
-        client,
-        agent_id=environment_project.origin_environment_id,
-        project_id=workspace_project.id,
-    )
-    assert connected_link.status_code == 200, connected_link.text
-
     duplicate_local_name = await _upload_project_skill(
         client,
         workspace_project.id,
@@ -433,10 +426,8 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
     assert duplicate_local_name.status_code == 409, duplicate_local_name.text
     assert duplicate_local_name.json()["detail"]["code"] == "project_skill_name_conflict"
 
-    # A downgraded Connected Agent still emits the byte-frozen heartbeat contract,
-    # but it cannot renew the separate Project Skill lease. Once that observation
-    # is stale, every graph mutation fails closed without disturbing the existing
-    # linked Project or its Vault access.
+    # The capability report remains observable for old clients, but its freshness
+    # is not a precondition for control-plane desired-state changes.
     downgraded = await client.post(
         f"/v1/agents/{environment_project.origin_environment_id}/sync-heartbeat",
         json={},
@@ -449,28 +440,25 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
     assert connected_agent is not None
     assert connected_agent.connected_agent_registered_at is not None
     assert connected_agent.project_skill_reconcile_version == 1
-    connected_agent.project_skill_reconcile_observed_at = (
-        datetime.now(UTC) - CONNECTED_PROJECT_SKILL_CAPABILITY_TTL - timedelta(seconds=1)
-    )
+    connected_agent.project_skill_reconcile_observed_at = datetime.now(UTC) - timedelta(days=1)
     await db_session.commit()
-    rejected_connected_write = await _upload_project_skill(
+    created_with_stale_lease = await _upload_project_skill(
         client,
         workspace_project.id,
         "after-downgrade",
     )
-    assert rejected_connected_write.status_code == 409, rejected_connected_write.text
-    assert rejected_connected_write.json()["detail"] == {
-        "code": "project_skill_delivery_update_required",
-        "message": "Update this Agent, then try again.",
-    }
-    rejected_connected_delete = await client.delete(
+    assert created_with_stale_lease.status_code == 200, created_with_stale_lease.text
+    updated_with_stale_lease = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        "managed-only",
+        marker="Updated with stale lease",
+    )
+    assert updated_with_stale_lease.status_code == 200, updated_with_stale_lease.text
+    deleted_with_stale_lease = await client.delete(
         f"/v1/projects/{workspace_project.id}/skills/managed-only"
     )
-    assert rejected_connected_delete.status_code == 409, rejected_connected_delete.text
-    assert rejected_connected_delete.json()["detail"] == {
-        "code": "project_skill_delivery_update_required",
-        "message": "Update this Agent, then try again.",
-    }
+    assert deleted_with_stale_lease.status_code == 200, deleted_with_stale_lease.text
     assert (
         await db_session.execute(
             select(Skill).where(
@@ -479,7 +467,7 @@ async def test_connected_agent_and_project_skill_write_fail_before_mutation(
                 Skill.is_active,
             )
         )
-    ).scalar_one_or_none() is not None
+    ).scalar_one_or_none() is None
 
     _set_auth(
         AuthContext(
@@ -561,7 +549,7 @@ async def test_connected_capability_report_rejects_hosted_v2_deployment(
 
 
 @pytest.mark.asyncio
-async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
+async def test_legacy_v1_hosted_identity_cannot_use_connected_runtime_endpoints(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -663,29 +651,32 @@ async def test_legacy_v1_hosted_identity_cannot_report_or_read_project_desired(
 
     uploaded = await _upload_project_skill(client, workspace_project.id, "legacy-v1-closed")
     assert uploaded.status_code == 200, uploaded.text
-    rejected_link = await _link(
+    linked = await _link(
         client,
         agent_id=legacy_v1_agent_id,
         project_id=workspace_project.id,
     )
-    assert rejected_link.status_code == 409, rejected_link.text
-    assert rejected_link.json()["detail"]["code"] == "project_skill_delivery_update_required"
+    assert linked.status_code == 200, linked.text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unsupported_evidence", ["unobserved", "old-cli"])
-async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_render(
+@pytest.mark.parametrize(
+    "runtime_evidence", ["missing-observation", "stale-observation", "old-cli"]
+)
+async def test_hosted_desired_state_ignores_runtime_evidence(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
     workspace_project: Project,
     channel_agent,
-    unsupported_evidence: str,
+    runtime_evidence: str,
 ):
     observation = await db_session.get(HostedRuntimeConfigObservation, channel_agent.id)
     assert observation is not None
-    if unsupported_evidence == "unobserved":
+    if runtime_evidence == "missing-observation":
         await db_session.delete(observation)
+    elif runtime_evidence == "stale-observation":
+        observation.observed_at = datetime.now(UTC) - timedelta(days=1)
     else:
         state = await db_session.get(HostedRuntimeState, channel_agent.id)
         assert state is not None
@@ -694,16 +685,12 @@ async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_r
     uploaded = await _upload_project_skill(client, workspace_project.id, "needs-ready-agent")
     assert uploaded.status_code == 200, uploaded.text
 
-    rejected = await _link(
+    linked = await _link(
         client,
         agent_id=channel_agent.id,
         project_id=workspace_project.id,
     )
-    assert rejected.status_code == 409, rejected.text
-    assert rejected.json()["detail"] == {
-        "code": "project_skill_delivery_update_required",
-        "message": "Update this Agent, then try again.",
-    }
+    assert linked.status_code == 200, linked.text
     assert (
         await db_session.execute(
             select(AgentProjectBinding).where(
@@ -711,22 +698,15 @@ async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_r
                 AgentProjectBinding.project_id == workspace_project.id,
             )
         )
-    ).scalar_one_or_none() is None
+    ).scalar_one_or_none() is not None
 
-    # Links created before this source shape existed may already be present.
-    # Preserve their Vault access, but do not expose Project Skill intent to an
-    # old or unobserved Hosted V2 CLI merely because the binding row exists.
-    db_session.add(
-        AgentProjectBinding(
-            agent_id=channel_agent.id,
-            project_id=workspace_project.id,
-            binding_type="context",
-            priority=1,
-            default_write_enabled=False,
-            created_by_user_id=seed_user.id,
-        )
+    updated = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        "needs-ready-agent",
+        marker="Updated desired state",
     )
-    await db_session.commit()
+    assert updated.status_code == 200, updated.text
     await _make_runtime_renderable(
         db_session,
         user=seed_user,
@@ -745,7 +725,7 @@ async def test_unsupported_hosted_v2_deployment_rejects_link_and_project_skill_r
         decrypt_secrets=False,
     )
     entries = rendered.manifest.get("skills", {}).get("entries", {})
-    assert "needs-ready-agent" not in entries
+    assert entries["needs-ready-agent"]["source"]["contentHash"] == updated.json()["content_hash"]
 
 
 @pytest.mark.asyncio

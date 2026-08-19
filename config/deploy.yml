@@ -9,13 +9,6 @@
 # runtime shape lives here. The image entrypoint (app.runtime_entrypoint)
 # selects the process via CLAWDI_PROCESS_ROLE, runs migrations for the api
 # role, and drains on SIGTERM — no command overrides needed.
-<%
-require "json"
-clawdi_cli_version = JSON.parse(
-  File.read("packages/cli/package.json", encoding: Encoding::UTF_8)
-).fetch("version")
-%>
-
 service: clawdi
 image: clawdi-ai/clawdi-backend
 
@@ -312,8 +305,6 @@ env:
     CORS_ORIGINS: '["https://www.clawdi.ai","https://clawdi.ai","https://api.clawdi.ai","https://cloud.clawdi.ai"]'
     TRUST_FORWARDED_FOR: "true"
     PLUGIN_CATALOG_SYNC_ENABLED: "true"
-    # The CLI package manifest is the version authority; do not duplicate its release pin.
-    PROJECT_SKILL_HOSTED_CLI_PACKAGE_SPECS: '["clawdi@<%= clawdi_cli_version %>"]'
     FILE_STORE_TYPE: s3
     MEMORY_EMBEDDING_MODE: local
     DB_POOL_SIZE: 20
