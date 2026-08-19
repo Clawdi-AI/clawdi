@@ -8,6 +8,8 @@ let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions
 let computeSubscriptionAssignment:
 	| SubscriptionsSectionModule["computeSubscriptionAssignment"]
 	| null = null;
+let computeSubscriptionIdentity: SubscriptionsSectionModule["computeSubscriptionIdentity"] | null =
+	null;
 let reusableInventoryState: SubscriptionsSectionModule["reusableInventoryState"] | null = null;
 
 beforeAll(async () => {
@@ -17,6 +19,7 @@ beforeAll(async () => {
 	const module = await import("@/hosted/billing/subscription/subscriptions-section");
 	sortLoadedSubscriptions = module.sortLoadedSubscriptions;
 	computeSubscriptionAssignment = module.computeSubscriptionAssignment;
+	computeSubscriptionIdentity = module.computeSubscriptionIdentity;
 	reusableInventoryState = module.reusableInventoryState;
 });
 
@@ -80,6 +83,22 @@ describe("SubscriptionsSection", () => {
 		).toBe("unavailable");
 		expect(computeSubscriptionAssignment(staleAssigned, new Set())).toBe("assigned");
 		expect(computeSubscriptionAssignment(staleOrphan, new Set())).toBe("unavailable");
+
+		if (!computeSubscriptionIdentity) throw new Error("Subscriptions helpers were not loaded");
+		expect(computeSubscriptionIdentity(staleAssigned, "assigned", undefined, null)).toMatchObject({
+			kind: "agent",
+			name: "reusable",
+		});
+		expect(
+			computeSubscriptionIdentity(staleOrphan, "unavailable", undefined, null, true),
+		).toBeUndefined();
+		expect(computeSubscriptionIdentity(staleOrphan, "unavailable", undefined, null)).toEqual({
+			kind: "unavailable",
+			label: "Deleted agent",
+		});
+		expect(
+			computeSubscriptionIdentity(staleIncluded, "unavailable", undefined, null),
+		).toBeUndefined();
 	});
 
 	test("stably prioritizes loaded current subscriptions without mutating query data", () => {

@@ -4192,6 +4192,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 test("accepted detail delete dismisses immediately while teardown finishes in the background", async ({
 	page,
 }) => {
+	const deleteRequestBodies: string[] = [];
 	const deleteRequests: string[] = [];
 	const deploymentListRequests: string[] = [];
 	const completedDeleteIds = new Set<string>();
@@ -4199,6 +4200,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 		completedDeleteIds,
+		deleteRequestBodies,
 		deleteRequests,
 		deploymentListRequests,
 	});
@@ -4222,6 +4224,9 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
+	await expect
+		.poll(() => deleteRequestBodies.map((body) => JSON.parse(body)))
+		.toEqual([{ subscription_choice: "cancel_subscription" }]);
 	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 	await expect
 		.poll(() => page.evaluate(() => window.history.length))
