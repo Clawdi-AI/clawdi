@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.102
+
+Package: `clawdi@0.13.102`
+
+### Fixed
+
+- Hosted v2 OpenClaw deployments now repair private runtime state-directory
+  ownership before official installer and config-repair commands run, allowing
+  existing deployments with legacy ownership drift to converge normally.
+
 ## Clawdi CLI v0.13.101
 
 Package: `clawdi@0.13.101`
