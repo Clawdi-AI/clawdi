@@ -859,8 +859,8 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		const configCommands = readFileSync(join(paths.runRoot, "hermes-dashboard.log"), "utf8");
 		expect(configCommands).toContain("hermes config path");
-		expect(configCommands).toContain("hermes config set --force dashboard.basic_auth");
-		expect(configCommands).toContain("hermes config set --force plugins.disabled");
+		expect(configCommands).not.toContain("hermes config set --force dashboard.basic_auth");
+		expect(configCommands).not.toContain("hermes config set --force plugins.disabled");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 
 		const rotated = convergeRuntimeManifest(
@@ -1155,7 +1155,7 @@ describe("runtime manifest services", () => {
 		}
 	});
 
-	test("converges official service state before installers restart units", () => {
+	test("upgrades legacy hosted drop-ins before official installers restart units", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
@@ -1171,7 +1171,10 @@ describe("runtime manifest services", () => {
 			const dropInPath = join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf");
 			const envPath = join(paths.systemdEnvRoot, `${name}.service.env`);
 			mkdirSync(dirname(dropInPath), { recursive: true });
-			writeFileSync(dropInPath, `[Service]\nEnvironmentFile=${envPath}\n`);
+			writeFileSync(
+				dropInPath,
+				`[Service]\nEnvironmentFile=${envPath}\nWorkingDirectory=/legacy/clawdi\nExecStart=\nExecStart=/legacy/clawdi gateway run\n`,
+			);
 			writeFakeGatewayCli({
 				path: command,
 				logPath,
@@ -1248,8 +1251,9 @@ describe("runtime manifest services", () => {
 			"openclaw gateway install --force --json",
 		]);
 		for (const name of ["openclaw-gateway", "hermes-gateway"]) {
+			const envPath = join(paths.systemdEnvRoot, `${name}.service.env`);
 			expect(readFileSync(join(paths.runRoot, `${name}-installer-state.env`), "utf8")).toBe(
-				readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8"),
+				readFileSync(envPath, "utf8"),
 			);
 			const installerDropIn = readFileSync(
 				join(paths.runRoot, `${name}-installer-state.conf`),
@@ -1263,6 +1267,8 @@ describe("runtime manifest services", () => {
 			);
 			expect(installerDropIn).not.toContain("\nExecStart=");
 			expect(installerDropIn).not.toContain("\nWorkingDirectory=");
+			expect(installerDropIn).toContain(`ConditionPathExists=${envPath}`);
+			expect(installerDropIn).toContain(`EnvironmentFile=${envPath}`);
 		}
 	});
 

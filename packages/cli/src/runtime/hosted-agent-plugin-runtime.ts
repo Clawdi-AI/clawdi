@@ -227,6 +227,17 @@ function runNative(
 	});
 }
 
+/** Native CLIs explain failures on stderr; keep a tail so apply errors are diagnosable. */
+function nativeCommandFailure(prefix: string, result: AgentPluginCommandResult): Error {
+	const detail = (result.stderr.trim() || result.stdout.trim())
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.filter((line) => line.length > 0)
+		.slice(-8)
+		.join("\n");
+	return new Error(detail ? `${prefix}: ${detail}` : prefix);
+}
+
 function assertNativeId(nativeId: string): void {
 	if (nativeId.length > 128 || !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(nativeId)) {
 		throw new Error("native Agent Plugin identity is unsafe");
@@ -361,7 +372,9 @@ function createOpenClawDriver(input: {
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
 				const result = run(["plugins", "install", sourceDir, "--force"]);
-				if (result.status !== 0) throw new Error("OpenClaw native Agent Plugin install failed");
+				if (result.status !== 0) {
+					throw nativeCommandFailure("OpenClaw native Agent Plugin install failed", result);
+				}
 			});
 			const installed = observe(prepared.name);
 			if (!installed) {
@@ -373,7 +386,9 @@ function createOpenClawDriver(input: {
 		},
 		setEnabled(observation, enabled) {
 			const result = run(["plugins", enabled ? "enable" : "disable", observation.nativeId]);
-			if (result.status !== 0) throw new Error("OpenClaw native Agent Plugin state change failed");
+			if (result.status !== 0) {
+				throw nativeCommandFailure("OpenClaw native Agent Plugin state change failed", result);
+			}
 		},
 		remove(observation) {
 			if (!observation.compatible) {
@@ -381,7 +396,9 @@ function createOpenClawDriver(input: {
 			}
 			if (observation.enabled) this.setEnabled(observation, false);
 			const result = run(["plugins", "uninstall", observation.nativeId, "--force"]);
-			if (result.status !== 0) throw new Error("OpenClaw native Agent Plugin uninstall failed");
+			if (result.status !== 0) {
+				throw nativeCommandFailure("OpenClaw native Agent Plugin uninstall failed", result);
+			}
 		},
 	};
 }
@@ -468,6 +485,10 @@ function createHermesDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
+				const scanPolicy = run(["config", "set", "--force", "plugins.scan_on_install", "false"]);
+				if (scanPolicy.status !== 0) {
+					throw nativeCommandFailure("Hermes Agent Plugin scan policy update failed", scanPolicy);
+				}
 				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
 				const result = run([
 					"plugins",
@@ -476,7 +497,9 @@ function createHermesDriver(input: {
 					"--force",
 					"--no-enable",
 				]);
-				if (result.status !== 0) throw new Error("Hermes native Agent Plugin install failed");
+				if (result.status !== 0) {
+					throw nativeCommandFailure("Hermes native Agent Plugin install failed", result);
+				}
 			});
 			const installed = observe(prepared.name);
 			if (!installed) throw new Error("Hermes did not report the installed Agent Plugin");
@@ -486,13 +509,17 @@ function createHermesDriver(input: {
 			const args = ["plugins", enabled ? "enable" : "disable", observation.nativeId];
 			if (enabled) args.push("--no-allow-tool-override");
 			const result = run(args);
-			if (result.status !== 0) throw new Error("Hermes native Agent Plugin state change failed");
+			if (result.status !== 0) {
+				throw nativeCommandFailure("Hermes native Agent Plugin state change failed", result);
+			}
 		},
 		remove(observation) {
 			if (!observation.compatible) throw new Error("refusing to remove an unmanaged Hermes plugin");
 			if (observation.enabled) this.setEnabled(observation, false);
 			const result = run(["plugins", "remove", observation.nativeId]);
-			if (result.status !== 0) throw new Error("Hermes native Agent Plugin remove failed");
+			if (result.status !== 0) {
+				throw nativeCommandFailure("Hermes native Agent Plugin remove failed", result);
+			}
 		},
 	};
 }

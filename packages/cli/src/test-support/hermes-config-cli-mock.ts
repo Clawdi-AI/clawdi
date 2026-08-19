@@ -117,7 +117,6 @@ function unsetNested(config: Record<string, unknown>, key: string): boolean {
 
 function parseValue(raw: string): unknown {
 	const value = raw.trim();
-	if (value.startsWith("{") || value.startsWith("[")) return parseYaml(value) as unknown;
 	if (/^(true|yes|on)$/i.test(value)) return true;
 	if (/^(false|no|off)$/i.test(value)) return false;
 	if (/^\d+$/.test(value)) return Number(value);
