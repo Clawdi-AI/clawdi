@@ -77,9 +77,10 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
 )
 from app.services.project_runtime_skills import (
-    RUNTIME_PROJECT_SKILL_KEY_PATTERN,
+    RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN,
     agent_supports_project_skills,
     project_skill_file_signature,
+    project_skill_runtime_identity,
 )
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
@@ -175,6 +176,7 @@ class RuntimeProjectSkill:
     id: UUID
     project_id: UUID
     skill_key: str
+    local_skill_key: str
     content_hash: str
 
 
@@ -417,6 +419,10 @@ async def load_runtime_source_batch(
                 id=skill.id,
                 project_id=skill.project_id,
                 skill_key=skill.skill_key,
+                local_skill_key=project_skill_runtime_identity(
+                    skill.skill_key,
+                    skill.name,
+                ).local_skill_key,
                 content_hash=skill.content_hash,
             )
         )
@@ -512,28 +518,29 @@ def _project_runtime_skills(
     base_url = public_api_url.rstrip("/")
     owners: dict[str, UUID] = {}
     for skill in project_skills:
-        if RUNTIME_PROJECT_SKILL_KEY_PATTERN.fullmatch(skill.skill_key) is None:
+        if RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN.fullmatch(skill.local_skill_key) is None:
             raise RuntimeSourceError(
-                f'Project Skill "{skill.skill_key}" is not compatible with managed Agent delivery'
+                f'Project Skill "{skill.skill_key}" has an incompatible SKILL.md name'
             )
-        if skill.skill_key in entries:
+        if skill.local_skill_key in entries:
             raise RuntimeSourceError(
-                f'Project Skill "{skill.skill_key}" conflicts with this Agent\'s Workspace'
+                f'Project Skill "{skill.local_skill_key}" conflicts with this Agent\'s Workspace'
             )
-        existing_project = owners.get(skill.skill_key)
+        existing_project = owners.get(skill.local_skill_key)
         if existing_project is not None:
             raise RuntimeSourceError(
-                f'Project Skill "{skill.skill_key}" is provided by more than one linked Project'
+                f'Project Skill "{skill.local_skill_key}" is provided by more than one linked '
+                "Project"
             )
-        owners[skill.skill_key] = skill.project_id
+        owners[skill.local_skill_key] = skill.project_id
         signature = project_skill_file_signature(
             signing_key=signing_key,
             agent_id=environment_id,
             skill_id=skill.id,
             content_hash=skill.content_hash,
         )
-        encoded_key = quote(skill.skill_key, safe="")
-        entries[skill.skill_key] = {
+        encoded_key = quote(skill.local_skill_key, safe="")
+        entries[skill.local_skill_key] = {
             "enabled": True,
             "source": {
                 "type": "project",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import tarfile
+from copy import copy
 from pathlib import Path, PurePosixPath
 from typing import TypeGuard
 
@@ -173,6 +174,54 @@ def tar_from_content(skill_key: str, content: str) -> tuple[bytes, int]:
         tf.addfile(info, io.BytesIO(encoded))
 
     return buf.getvalue(), 1
+
+
+def reroot_skill_archive(data: bytes, source_skill_key: str, local_skill_key: str) -> bytes:
+    """Repackage a validated Skill under its runtime-local directory name."""
+    if source_skill_key == local_skill_key:
+        return data
+    validate_tar(data)
+    source_parts = PurePosixPath(source_skill_key).parts
+    local_parts = PurePosixPath(local_skill_key).parts
+    if not source_parts or not local_parts:
+        raise TarValidationError("Skill archive identity is invalid")
+
+    output = io.BytesIO()
+    try:
+        with (
+            tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as source,
+            tarfile.open(fileobj=output, mode="w:gz") as target,
+        ):
+            for member in source:
+                member_parts = PurePosixPath(member.name).parts
+                if not member_parts:
+                    raise TarValidationError("Skill archive contains an invalid path")
+                if (
+                    len(member_parts) < len(source_parts)
+                    and member_parts == source_parts[: len(member_parts)]
+                ):
+                    if not member.isdir():
+                        raise TarValidationError("Skill archive root is invalid")
+                    continue
+                if member_parts[: len(source_parts)] != source_parts:
+                    raise TarValidationError(
+                        "Skill archive root does not match its source identity"
+                    )
+
+                rewritten = copy(member)
+                rewritten.name = "/".join((*local_parts, *member_parts[len(source_parts) :]))
+                if "path" in rewritten.pax_headers:
+                    rewritten.pax_headers = {**rewritten.pax_headers, "path": rewritten.name}
+                if member.isfile():
+                    extracted = source.extractfile(member)
+                    if extracted is None:
+                        raise TarValidationError("Archive file could not be read")
+                    target.addfile(rewritten, extracted)
+                else:
+                    target.addfile(rewritten)
+    except tarfile.TarError as exc:
+        raise TarValidationError("Invalid tar archive") from exc
+    return output.getvalue()
 
 
 def replace_skill_md(data: bytes, skill_key: str, content: str) -> tuple[bytes, int]:

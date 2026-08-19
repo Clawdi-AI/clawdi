@@ -48,6 +48,28 @@ def test_validate_tar_preserves_total_expanded_limit(
         )
 
 
+def test_reroot_skill_archive_preserves_the_file_tree() -> None:
+    source_key = "devops/phala-cloud-admin-ops"
+    local_key = "phala-cloud-admin-ops"
+    source = _archive(
+        (
+            (f"{source_key}/SKILL.md", b"---\nname: phala-cloud-admin-ops\n---\n"),
+            (f"{source_key}/references/runbook.md", b"runbook\n"),
+        )
+    )
+
+    rerooted = tar_utils.reroot_skill_archive(source, source_key, local_key)
+
+    with tarfile.open(fileobj=io.BytesIO(rerooted), mode="r:gz") as archive:
+        assert sorted(archive.getnames()) == [
+            f"{local_key}/SKILL.md",
+            f"{local_key}/references/runbook.md",
+        ]
+    assert _compute_file_tree_hash(source, source_key) == _compute_file_tree_hash(
+        rerooted, local_key
+    )
+
+
 def test_unicode_tree_hash_matches_typescript_archive_fixture() -> None:
     fixture = Path(__file__).parents[2] / "test-fixtures" / "skill-hash" / "unicode-tree.tar.gz.b64"
     archive = b64decode(fixture.read_text(encoding="ascii"))

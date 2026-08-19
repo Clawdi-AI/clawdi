@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -32,15 +33,21 @@ from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.sync_events import queue_runtime_manifest_changed
 
 # OpenClaw's native `skills install --as` contract accepts this slug shape.
-# Keeping Project-delivered keys inside the strictest native runtime contract
-# prevents a desired manifest from succeeding but failing during installation.
-RUNTIME_PROJECT_SKILL_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+# Source keys may be namespaced. The SKILL.md name is the local install identity
+# and must fit the strictest native runtime contract.
+RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 PROJECT_SKILL_RECONCILE_VERSION = 1
 # The Connected daemon renews every four to six minutes. Ten minutes provides
 # normal retry margin while still closing stale or downgraded Agents promptly.
 CONNECTED_PROJECT_SKILL_CAPABILITY_TTL = timedelta(minutes=10)
 MAX_AGENT_PROJECT_SKILLS = 1000
 _CONNECTED_PROJECT_SKILL_AGENT_TYPES = frozenset({"claude_code", "codex", "hermes", "openclaw"})
+
+
+@dataclass(frozen=True)
+class ProjectSkillRuntimeIdentity:
+    source_skill_key: str
+    local_skill_key: str
 
 
 def _advisory_key(namespace: str, value: UUID) -> int:
@@ -163,41 +170,62 @@ async def _connected_workspace_skill_keys(
     return set(rows.scalars())
 
 
-def _assert_runtime_skill_key(skill_key: str) -> None:
-    if RUNTIME_PROJECT_SKILL_KEY_PATTERN.fullmatch(skill_key) is not None:
+def assert_project_skill_runtime_identity(identity: ProjectSkillRuntimeIdentity) -> None:
+    if RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN.fullmatch(identity.local_skill_key) is not None:
         return
     raise HTTPException(
         status.HTTP_409_CONFLICT,
         detail={
             "code": "project_skill_name_incompatible",
             "message": (
-                f'Skill "{skill_key}" cannot be linked to an Agent. Rename it using '
-                "lowercase letters, numbers, or inner hyphens (up to 64 characters)."
+                f'Skill "{identity.source_skill_key}" cannot be linked to an Agent. '
+                "Update its SKILL.md name to use lowercase letters, numbers, or inner "
+                "hyphens (up to 64 characters)."
             ),
-            "skill_key": skill_key,
+            "skill_key": identity.source_skill_key,
         },
     )
 
 
-async def _project_skill_keys(db: AsyncSession, project_id: UUID) -> set[str]:
+def project_skill_runtime_identity(
+    source_skill_key: str,
+    declared_name: str,
+) -> ProjectSkillRuntimeIdentity:
+    """Resolve the runtime identity while preserving legacy flat-key Skills."""
+    local_skill_key = declared_name
+    if (
+        RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN.fullmatch(local_skill_key) is None
+        and RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN.fullmatch(source_skill_key) is not None
+    ):
+        local_skill_key = source_skill_key
+    return ProjectSkillRuntimeIdentity(
+        source_skill_key=source_skill_key,
+        local_skill_key=local_skill_key,
+    )
+
+
+async def _project_skill_identities(
+    db: AsyncSession,
+    project_id: UUID,
+) -> tuple[ProjectSkillRuntimeIdentity, ...]:
     rows = await db.execute(
-        select(Skill.skill_key).where(
+        select(Skill.skill_key, Skill.name).where(
             Skill.project_id == project_id,
             Skill.authority == SKILL_AUTHORITY_CLOUD,
             Skill.is_active,
         )
     )
-    return set(rows.scalars())
+    return tuple(project_skill_runtime_identity(skill_key, name) for skill_key, name in rows)
 
 
-async def _other_project_skill_keys(
+async def _other_project_local_skill_keys(
     db: AsyncSession,
     *,
     agent_id: UUID,
     project_id: UUID,
 ) -> set[str]:
     rows = await db.execute(
-        select(Skill.skill_key)
+        select(Skill.skill_key, Skill.name)
         .join(
             AgentProjectBinding,
             AgentProjectBinding.project_id == Skill.project_id,
@@ -213,7 +241,9 @@ async def _other_project_skill_keys(
             Skill.is_active,
         )
     )
-    return set(rows.scalars())
+    return {
+        project_skill_runtime_identity(skill_key, name).local_skill_key for skill_key, name in rows
+    }
 
 
 async def _linked_project_skill_count(db: AsyncSession, *, agent_id: UUID) -> int:
@@ -318,12 +348,22 @@ async def _assert_agent_accepts_project_skills(
     *,
     agent_id: UUID,
     project_id: UUID,
-    skill_keys: set[str],
+    skill_identities: Iterable[ProjectSkillRuntimeIdentity],
 ) -> None:
-    if not skill_keys:
+    identities = tuple(skill_identities)
+    if not identities:
         return
-    for skill_key in sorted(skill_keys):
-        _assert_runtime_skill_key(skill_key)
+    for identity in sorted(identities, key=lambda value: value.source_skill_key):
+        assert_project_skill_runtime_identity(identity)
+
+    local_owners: dict[str, list[str]] = {}
+    for identity in identities:
+        local_owners.setdefault(identity.local_skill_key, []).append(identity.source_skill_key)
+    duplicate_local_keys = {
+        local_skill_key
+        for local_skill_key, source_skill_keys in local_owners.items()
+        if len(source_skill_keys) > 1
+    }
 
     agent, state, observation, has_environment_bound_key = await _agent_runtime_delivery_evidence(
         db, agent_id=agent_id
@@ -340,13 +380,14 @@ async def _assert_agent_accepts_project_skills(
         if state is not None
         else await _connected_workspace_skill_keys(db, agent=agent)
     )
-    workspace_conflicts = skill_keys & workspace_skill_keys
-    project_conflicts = skill_keys & await _other_project_skill_keys(
+    local_skill_keys = set(local_owners)
+    workspace_conflicts = local_skill_keys & workspace_skill_keys
+    project_conflicts = local_skill_keys & await _other_project_local_skill_keys(
         db,
         agent_id=agent_id,
         project_id=project_id,
     )
-    conflicts = sorted(workspace_conflicts | project_conflicts)
+    conflicts = sorted(duplicate_local_keys | workspace_conflicts | project_conflicts)
     if not conflicts:
         return
     skill_key = conflicts[0]
@@ -360,6 +401,22 @@ async def _assert_agent_accepts_project_skills(
             ),
             "skill_key": skill_key,
         },
+    )
+
+
+async def _assert_agent_project_skill_delivery_supported(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+) -> None:
+    agent, state, observation, has_environment_bound_key = await _agent_runtime_delivery_evidence(
+        db, agent_id=agent_id
+    )
+    _assert_agent_supports_project_skills(
+        agent,
+        state,
+        observation,
+        has_environment_bound_key=has_environment_bound_key,
     )
 
 
@@ -514,7 +571,7 @@ async def assert_project_link_compatible(
         db,
         agent_id=agent_id,
         project_id=project_id,
-        skill_keys=await _project_skill_keys(db, project_id),
+        skill_identities=await _project_skill_identities(db, project_id),
     )
     await _assert_project_link_skill_capacity(
         db,
@@ -528,16 +585,27 @@ async def assert_project_skill_write_compatible(
     *,
     project_id: UUID,
     skill_key: str,
+    local_skill_key: str | None = None,
     enforce_total_limit: bool = True,
 ) -> list[UUID]:
     """Lock the graph and prove a Cloud Skill write has one runtime owner."""
     agent_ids = await lock_project_runtime_graph(db, project_id)
+    proposed_identities: tuple[ProjectSkillRuntimeIdentity, ...] = ()
+    if local_skill_key is not None:
+        proposed_identities = tuple(
+            identity
+            for identity in await _project_skill_identities(db, project_id)
+            if identity.source_skill_key != skill_key
+        ) + (project_skill_runtime_identity(skill_key, local_skill_key),)
     for agent_id in agent_ids:
+        if local_skill_key is None:
+            await _assert_agent_project_skill_delivery_supported(db, agent_id=agent_id)
+            continue
         await _assert_agent_accepts_project_skills(
             db,
             agent_id=agent_id,
             project_id=project_id,
-            skill_keys={skill_key},
+            skill_identities=proposed_identities,
         )
     if enforce_total_limit:
         await _assert_project_skill_write_capacity(
@@ -560,7 +628,7 @@ async def assert_agent_workspace_skill_write_compatible(
     if not skill_keys:
         return
     rows = await db.execute(
-        select(Skill.skill_key)
+        select(Skill.skill_key, Skill.name)
         .join(
             AgentProjectBinding,
             AgentProjectBinding.project_id == Skill.project_id,
@@ -575,8 +643,10 @@ async def assert_agent_workspace_skill_write_compatible(
             Skill.is_active,
         )
     )
-    project_skill_keys = set(rows.scalars())
-    conflicts = sorted(skill_keys & project_skill_keys)
+    project_local_skill_keys = {
+        project_skill_runtime_identity(skill_key, name).local_skill_key for skill_key, name in rows
+    }
+    conflicts = sorted(skill_keys & project_local_skill_keys)
     if conflicts:
         skill_key = conflicts[0]
         raise HTTPException(
@@ -590,7 +660,7 @@ async def assert_agent_workspace_skill_write_compatible(
                 "skill_key": skill_key,
             },
         )
-    if project_skill_keys:
+    if project_local_skill_keys:
         (
             agent,
             state,

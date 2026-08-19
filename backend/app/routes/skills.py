@@ -1387,6 +1387,7 @@ async def _do_upload_skill(
             db,
             project_id=project_id,
             skill_key=skill_key,
+            local_skill_key=name,
         )
         # Project archive can cross the initial authorization read while the
         # archive is being validated. Re-check after the Project graph lock.
@@ -2201,6 +2202,7 @@ async def _do_install_skill(
         db,
         project_id=project_id,
         skill_key=skill_key,
+        local_skill_key=fetched.name,
     )
     await _project_upload_authority(db, auth, project_id, allow_agent_alias=False)
     await db.commit()
@@ -2214,6 +2216,7 @@ async def _do_install_skill(
         db,
         project_id=project_id,
         skill_key=skill_key,
+        local_skill_key=fetched.name,
     )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
