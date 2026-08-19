@@ -15,6 +15,7 @@ const IMAGE_RELEASE_WORKFLOW = ".github/workflows/clawdi-image-release.yml";
 const DEPLOYMENT_FILE_INPUTS = [
 	".github/actions/setup-bun-ci/action.yml",
 	"config/deploy.yml",
+	"packages/cli/package.json",
 	"scripts/deploy-whatsapp-sidecar.sh",
 ] as const;
 
