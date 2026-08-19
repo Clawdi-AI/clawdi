@@ -25,7 +25,7 @@
 - Alice owns project `engineering`.
 - Bob receives viewer access and uses `engineering` with Agent `atlas`.
 - Carol accepts an invitation, then declines a later one.
-- Dana operates multiple agents and changes attachment order.
+- Dana operates multiple agents and changes advanced Vault resolution priority.
 - Evan is removed during cleanup.
 
 CLI examples assume:
@@ -69,9 +69,9 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | --- | --- | --- | --- |
 | Project owner human | Share `engineering`, inspect who has access, and revoke access without controlling recipients' agents. | `clawdi project share`, `invite`, `members --remove`, `unshare`; dashboard equivalent in web PR. | Sharing grants Project membership only; it never attaches the Project to an Agent unless the recipient or operator explicitly asks. |
 | Recipient human | Accept, decline, or leave shared Project access, then decide whether an Agent should use it. | `clawdi inbox accept`, `decline`, `project leave`, optional `inbox accept --agent` or later `agent projects attach`; dashboard equivalent in web PR. | Accepting without an explicit Agent leaves all Agents unchanged; viewer access cannot become the Agent Project. |
-| Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `attach`, `detach`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; attachments are ordered read sources. |
+| Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `attach`, `detach`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; Vault resolution priority is an advanced CLI concern. |
 | Local operator human using `clawdi run` | Run a local command with vault env from an explicit or linked Project. | CLI only; `clawdi run --project`, `clawdi project folder link/status/unlink`, `clawdi run --no-project-folder`. | Folder links are local selection hints for `run`; they do not grant membership, change cloud state, or attach Projects to Agents. |
-| Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent Project APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by explicit order; conflicts block by default and include provenance without leaking plaintext. |
+| Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent Project APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by Vault resolution priority; conflicts block by default and include provenance without leaking plaintext. |
 | Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes affected attached Projects while preserving owner data and rejecting sharing changes from Agent API keys. |
 
 ## Flow 1: Owner Creates And Shares
@@ -194,7 +194,7 @@ Expected:
 
 ## Flow 5: Agent Operator Manages Projects
 
-Dana reviews Agent Project and attachments, then changes read order.
+Dana reviews Agent Project and attachments, then changes advanced Vault resolution priority.
 
 ```bash
 clawdi agent projects list <atlas-id> --json
@@ -207,11 +207,12 @@ clawdi agent projects detach <atlas-id> --project @alice/engineering
 Expected:
 
 - Agent Project is always visible and fixed.
-- Attachment order is explicit and stable.
+- Vault resolution priority is explicit and stable.
 - Detaching a Project stops that Agent from using the Project but does not remove membership.
 
-Web PR follow-up: Agent detail should show the fixed Agent Project plus
-ordered attached Projects with attach, move, and detach actions.
+The Agent detail shows the fixed Agent Project plus linked Projects with attach
+and detach actions. Advanced Vault resolution priority remains available in the
+CLI and API.
 
 ## Flow 6: Local Project Folder Selection For Run
 
@@ -263,7 +264,7 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --debug --json
 Expected default behavior:
 
 - The command fails with `vault_conflicts_blocked`.
-- The response shows Project order, winning candidate metadata, and conflicts.
+- The response shows Vault resolution priority, winning candidate metadata, and conflicts.
 - The blocked response does not include plaintext.
 
 Explicit allow branch:
@@ -274,8 +275,8 @@ clawdi vault resolve OPENAI_API_KEY --agent <atlas-id> --allow-conflicts --debug
 
 Expected:
 
-- First match wins according to the Agent's Project order.
-- Provenance shows the source project, order, vault slug, section, and item name.
+- First match wins according to the Agent's Vault resolution priority.
+- Provenance shows the source project, Vault resolution priority, vault slug, section, and item name.
 
 Security branch:
 

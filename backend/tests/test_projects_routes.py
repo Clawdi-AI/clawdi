@@ -224,6 +224,58 @@ async def test_agents_project_filter_is_explicit_and_bounded(
     assert [agent["id"] for agent in response.json()] == [str(channel_agent.id)]
 
 
+async def test_project_batch_link_preserves_an_existing_owned_agent(
+    client,
+    db_session,
+    workspace_project,
+    channel_agent,
+    second_channel_agent,
+):
+    first_link = await client.post(
+        f"/v1/agents/{channel_agent.id}/project-bindings/context",
+        json={"project_id": str(workspace_project.id)},
+    )
+    assert first_link.status_code == 200, first_link.text
+
+    linked = await client.post(
+        f"/v1/projects/{workspace_project.id}/agents",
+        json={"agent_ids": [str(second_channel_agent.id)]},
+    )
+    assert linked.status_code == 200, linked.text
+    assert linked.json() == {
+        "project_id": str(workspace_project.id),
+        "bound_agent_ids": [str(second_channel_agent.id)],
+    }
+
+    bindings = (
+        (
+            await db_session.execute(
+                select(AgentProjectBinding).where(
+                    AgentProjectBinding.project_id == workspace_project.id,
+                    AgentProjectBinding.binding_type == "context",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {binding.agent_id for binding in bindings} == {
+        channel_agent.id,
+        second_channel_agent.id,
+    }
+
+    detail = await client.get(f"/v1/projects/{workspace_project.id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["agent_count"] == 2
+
+    filtered = await client.get("/v1/agents", params={"project_id": str(workspace_project.id)})
+    assert filtered.status_code == 200, filtered.text
+    assert {agent["id"] for agent in filtered.json()} == {
+        str(channel_agent.id),
+        str(second_channel_agent.id),
+    }
+
+
 async def test_global_search_finds_projects_by_name_and_slug(client):
     created = await client.post("/v1/projects", json={"name": "Redpill Launch"})
     assert created.status_code == 201, created.text
@@ -232,9 +284,7 @@ async def test_global_search_finds_projects_by_name_and_slug(client):
     by_name = await client.get("/v1/search", params={"q": "redpill"})
     assert by_name.status_code == 200, by_name.text
     project_hits = [h for h in by_name.json()["results"] if h["type"] == "project"]
-    assert [(h["id"], h["href"]) for h in project_hits] == [
-        (project_id, f"/projects/{project_id}")
-    ]
+    assert [(h["id"], h["href"]) for h in project_hits] == [(project_id, f"/projects/{project_id}")]
 
     by_slug = await client.get("/v1/search", params={"q": "redpill-launch"})
     slug_hits = [h for h in by_slug.json()["results"] if h["type"] == "project"]

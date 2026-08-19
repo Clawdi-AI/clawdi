@@ -25,6 +25,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import VaultProjectAttachment
+from app.services.agent_bindings import attach_project_to_owned_agents
 from app.services.agent_lifecycle import active_project_filter
 from app.services.project_runtime_skills import (
     lock_project_change,
@@ -123,6 +124,15 @@ class ProjectUpdate(BaseModel):
 class ProjectArchiveResponse(BaseModel):
     status: str = "archived"
     unlinked_agent_count: int
+
+
+class ProjectAgentLinkBody(BaseModel):
+    agent_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class ProjectAgentLinkResponse(BaseModel):
+    project_id: str
+    bound_agent_ids: list[str]
 
 
 def _project_response(
@@ -431,6 +441,26 @@ async def update_project(
         vault_count=counts.vault_count,
         agent_count=counts.agent_count,
         member_count=counts.member_count,
+    )
+
+
+@router.post("/{project_id}/agents", response_model=ProjectAgentLinkResponse)
+async def link_project_agents(
+    project_id: UUID,
+    body: ProjectAgentLinkBody,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> ProjectAgentLinkResponse:
+    bound_agent_ids = await attach_project_to_owned_agents(
+        db,
+        user_id=auth.user_id,
+        project_id=project_id,
+        raw_agent_ids=body.agent_ids,
+    )
+    await db.commit()
+    return ProjectAgentLinkResponse(
+        project_id=str(project_id),
+        bound_agent_ids=bound_agent_ids,
     )
 
 

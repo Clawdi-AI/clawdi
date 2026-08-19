@@ -47,9 +47,7 @@ async function expectNoHorizontalOverflow(page: Page) {
 	expect(widths.content).toBeLessThanOrEqual(widths.viewport + 1);
 }
 
-test("Project detail uses explicit local pages and whole-bundle Link at mobile and desktop", async ({
-	page,
-}) => {
+test("Project detail uses explicit local pages at mobile and desktop", async ({ page }) => {
 	let project = {
 		id: projectId,
 		name: "Client Review",
@@ -69,7 +67,6 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 	};
 	const projectResourceRequests: string[] = [];
 	const boundedAgentRequests: string[] = [];
-	const linkedBodies: unknown[] = [];
 	const updateBodies: unknown[] = [];
 	const vaultCreateRequests: Array<{ url: URL; body: unknown }> = [];
 
@@ -105,18 +102,6 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 					created_at: now,
 				},
 			]);
-		}
-		if (path === `/v1/agents/${agentId}/project-bindings/context`) {
-			linkedBodies.push(request.postDataJSON());
-			return fulfill(route, {
-				id: "55555555-5555-4555-8555-555555555555",
-				agent_id: agentId,
-				project_id: projectId,
-				binding_type: "context",
-				priority: 1,
-				default_write_enabled: false,
-				created_at: now,
-			});
 		}
 		if (path === "/v1/skills") {
 			projectResourceRequests.push(request.url());
@@ -253,12 +238,6 @@ test("Project detail uses explicit local pages and whole-bundle Link at mobile a
 
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await expectNoHorizontalOverflow(page);
-	await page.getByRole("button", { name: "Link project" }).click();
-	const linkDialog = page.getByRole("dialog", { name: "Link project to Agent" });
-	await expect(linkDialog).toContainText("Skills and attached Vaults as one bundle");
-	await linkDialog.getByRole("button", { name: "Link project" }).click();
-	await expect.poll(() => linkedBodies).toEqual([{ project_id: projectId }]);
-
 	await page
 		.getByRole("tablist", { name: "Project pages" })
 		.getByRole("tab", { name: "Access" })
