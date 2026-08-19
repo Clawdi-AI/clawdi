@@ -552,6 +552,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 
 function hostedHermesManifestFixture(
 	overrides: Record<string, unknown> = {},
+	gatewayArgs?: string[],
 ): Record<string, unknown> {
 	return hostedManifestFixture({
 		runtime: "hermes",
@@ -572,7 +573,7 @@ function hostedHermesManifestFixture(
 		},
 		runtimes: {
 			hermes: hostedRuntimeFixture({
-				run: undefined,
+				run: gatewayArgs === undefined ? undefined : { args: gatewayArgs },
 				services: {
 					dashboard: {
 						args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
@@ -584,8 +585,21 @@ function hostedHermesManifestFixture(
 	});
 }
 
+const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
+	"gateway",
+	"run",
+	"--allow-unconfigured",
+	"--port",
+	"18789",
+	"--bind",
+	"lan",
+	"--force",
+];
+const LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS = ["gateway", "run", "--replace"];
+
 function hostedOpenClawV2ManifestFixture(
 	overrides: Record<string, unknown> = {},
+	gatewayArgs: string[] = ["gateway", "run"],
 ): Record<string, unknown> {
 	const publicUrl = "https://agent.example.test/control";
 	return hostedManifestFixture({
@@ -599,7 +613,7 @@ function hostedOpenClawV2ManifestFixture(
 			openclaw: hostedRuntimeFixture({
 				run: {
 					command: "openclaw",
-					args: ["gateway", "run"],
+					args: gatewayArgs,
 					env: {},
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -850,6 +864,21 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse(serviceGatewayTokenEnvironment).success,
 		).toBe(false);
+	});
+	test("normalizes previous gateway args during the official-unit rollout", () => {
+		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
+		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacy).success).toBe(true);
+		const legacyHermes = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedHermesManifestFixture({}, LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS),
+		);
+		expect(hostedManifestToRuntimeManifest(legacyHermes).runtimes.hermes.run?.args).toEqual([
+			"gateway",
+			"run",
+		]);
+
+		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
 	});
 	test("requires official Basic auth and direct 9119 exposure for hosted Hermes v2", () => {
 		const valid = hostedHermesManifestFixture();
@@ -2033,8 +2062,10 @@ chmod 0755 '${commandPath}'
 		);
 		chmodSync(openclawBin, 0o700);
 
-		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(hostedOpenClawV2ManifestFixture());
+		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
+		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(legacy);
 		const projected = hostedManifestToRuntimeManifest(hosted);
+		expect(projected.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
 		const normalized: RuntimeManifest = {
 			...projected,
 			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-native-auth"),
@@ -2083,6 +2114,12 @@ chmod 0755 '${commandPath}'
 		);
 		expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 		expect(gatewayEnv).not.toContain("gateway-token");
+		const gatewayDropIn = readFileSync(
+			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+			"utf8",
+		);
+		expect(gatewayDropIn).not.toContain("\nExecStart=");
+		expect(gatewayDropIn).not.toContain("\nWorkingDirectory=");
 		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1))).toContain(
 			"clawdi-runtime-sidecar.service",
 		);

@@ -24,6 +24,7 @@ import {
 	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
+	isHostedGatewayRunArgs,
 	manifestSchema,
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
@@ -480,11 +481,11 @@ export function hostedManifestToRuntimeManifest(
 					home: paths.userHome,
 					args: officialInstallArgs(selectedRuntime, paths.userHome),
 				},
-				run: hostedRuntimeRunSettings(runtime.run),
+				run: hostedRuntimeRunSettings(selectedRuntime, runtime.run),
 				services: Object.fromEntries(
 					Object.entries(runtime.services ?? {}).map(([service, run]) => [
 						service,
-						hostedRuntimeServiceRunSettings(run),
+						copyHostedRuntimeRunSettings(run),
 					]),
 				),
 				...hostedRuntimeProviderBinding(runtime),
@@ -521,7 +522,18 @@ function hostedRuntimeProviderBinding(
 	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
 }
 
-function hostedRuntimeRunSettings(run: RuntimeRunSettings | undefined): RuntimeRunSettings {
+function hostedRuntimeRunSettings(
+	runtime: NormalizableHostedRuntimeManifest["runtime"],
+	run: RuntimeRunSettings | undefined,
+): RuntimeRunSettings {
+	const settings = copyHostedRuntimeRunSettings(run);
+	if (isHostedGatewayRunArgs(runtime, run?.args)) {
+		settings.args = ["gateway", "run"];
+	}
+	return settings;
+}
+
+function copyHostedRuntimeRunSettings(run: RuntimeRunSettings | undefined): RuntimeRunSettings {
 	const settings: RuntimeRunSettings = {
 		env: run?.env ?? {},
 		prependPath: run?.prependPath ?? [],
@@ -531,10 +543,6 @@ function hostedRuntimeRunSettings(run: RuntimeRunSettings | undefined): RuntimeR
 	if (run?.secretEnv !== undefined) settings.secretEnv = run.secretEnv;
 	if (run?.cwd !== undefined) settings.cwd = run.cwd;
 	return settings;
-}
-
-function hostedRuntimeServiceRunSettings(run: RuntimeRunSettings): RuntimeRunSettings {
-	return hostedRuntimeRunSettings(run);
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
@@ -613,7 +621,7 @@ function validateManifestSemantics(
 				errors.push("OpenClaw v2 native Control UI requires an explicit public allowed origin");
 			}
 			const run = manifest.runtimes.openclaw?.run;
-			if (JSON.stringify(run?.args) !== JSON.stringify(["gateway", "run"])) {
+			if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
 				errors.push("OpenClaw v2 gateway must use the official gateway run command");
 			}
 			if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
