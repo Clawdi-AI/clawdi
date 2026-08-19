@@ -143,15 +143,19 @@ Verified upstream behavior:
 
 OpenClaw doctor scans generated model catalogs independently of provider
 execution precedence. A historical Clawdi projection serialized the literal
-SecretRef marker `CLAWDI_AI_API_KEY` into `models.json`; without matching plugin
-setup metadata, doctor did not recognize it as non-secret and persisted it as
-the first `clawdi:default` API-key profile. The supported prevention is for the
-Clawdi plugin manifest to declare
-`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]`, which
-feeds the marker into OpenClaw's known provider env-var list before doctor
-collection.
+SecretRef marker `CLAWDI_AI_API_KEY` into `models.json`; doctor did not
+recognize it as non-secret and persisted it as the first `clawdi:default`
+API-key profile. OpenClaw reads known env markers from installed plugin setup
+metadata. Hosted v2 therefore installs and enables a credential-free,
+Clawdi-owned metadata plugin declaring
+`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]` before
+provider projection and cleanup. Convergence verifies the effective marker via
+the public provider-env-vars SDK and fails closed if OpenClaw did not register
+it. This contract does not depend on a legacy plugin. The audited `8f382a2`
+source is provenance evidence, not a Hosted pin; the v2 official installer
+selects `openclaw@latest`.
 
-Core Hosted convergence:
+Hosted v2 convergence:
 
 - sends a target-native provider patch instead of editing OpenClaw config
   files directly;
@@ -159,18 +163,32 @@ Core Hosted convergence:
   environment-backed `apiKey` references;
 - treats the managed `clawdi` provider as reserved and its environment
   SecretRef as the only API-key authority;
-- only when the accepted manifest proves that managed projection, atomically
+- installs and verifies the credential-free provider metadata before writing
+  the generated model catalog, preventing doctor from treating the SecretRef
+  marker as credential material;
+- only when the accepted v2 bundle proves that managed projection, atomically
   removes normalized `clawdi` config auth profiles/order and uses the public
   provider-auth helper to remove normalized `clawdi` stored profiles plus
   order, `lastGood`, and usage state;
 - covers the default/main auth store, the active agent store, state-tree agent
-  stores, and explicitly configured agent directories;
+  stores, and explicitly configured agent directories in the same rollback
+  snapshot; clean preflight results do not write config or auth stores;
+- runs inside root-owned runtime manifest convergence before gateway
+  activation, independently of doctor and model/chat health; cleanup failure
+  blocks authority commit and remains retryable on the next reconcile;
 - uses the native OpenAI subscription route for Codex OAuth;
 - owns only a namespaced `openai:clawdi-<provider-hash>` profile;
 - preserves all non-`clawdi` config, profiles, order entries, and native Codex
   OAuth state, and does nothing in unmanaged mode; and
 - fails closed before cleanup when either public config-mutation or
   provider-auth boundary is unavailable.
+
+Hosted v2 rollout is a separate delivery requirement: publish the exact CLI
+package, select it in Hosted, and accept a controlled rollout for each existing
+deployment. The root-owned shim installs and verifies that package, atomically
+activates it, and self-reexecs before manifest convergence. This repair does
+not require a runtime-image rebuild, but changing the global CLI setting alone
+does not advance an existing deployment generation.
 
 ## Shared Safety Boundaries
 

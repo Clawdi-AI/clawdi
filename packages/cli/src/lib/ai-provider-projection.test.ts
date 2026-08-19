@@ -279,6 +279,7 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"baseUrl": "https://api.openai.com/v1"');
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
+		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
 
 		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog);
 		expect(hermes.files[0]?.content).toContain('provider: "custom:openai-main"');

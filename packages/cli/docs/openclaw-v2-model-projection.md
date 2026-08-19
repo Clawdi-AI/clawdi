@@ -50,11 +50,11 @@ only an environment-backed OpenClaw `apiKey` reference with explicit
 not written into the provider patch.
 
 The normalized `clawdi` provider is reserved for this managed projection. Its
-`CLAWDI_AI_API_KEY` environment SecretRef is the sole API-key authority. Older
-generated catalogs accidentally serialized that marker literally, and an
-OpenClaw doctor fix could persist it as a local `clawdi:default` profile before
-the plugin declared its env metadata. Prevention belongs in the plugin
-manifest:
+`CLAWDI_AI_API_KEY` environment SecretRef is the sole API-key authority.
+OpenClaw serializes that SecretRef id as a marker in generated `models.json`,
+and doctor scans that catalog independently of explicit provider auth. Before
+provider projection, Hosted v2 installs and enables a credential-free,
+Clawdi-owned OpenClaw plugin whose setup metadata declares:
 
 ```json
 {
@@ -64,16 +64,33 @@ manifest:
 }
 ```
 
-Explicit provider auth controls execution precedence but does not replace that
-doctor marker declaration. During a proven managed `clawdi` env projection,
-convergence uses the public config-mutation SDK to remove normalized `clawdi`
-entries from `auth.profiles` and `auth.order`, including order references to
-the removed IDs. It then uses the public provider-auth SDK to remove all
-normalized `clawdi` profiles and related order, `lastGood`, and usage state
-from the default/main store, active agent store, discovered state-tree agents,
-and configured custom agent directories. Empty auth containers are normalized.
+Convergence verifies the effective marker through the public provider-env-vars
+SDK and fails closed before projection or cleanup if it is absent. Explicit
+`auth: "api-key"` controls execution precedence but does not replace this
+doctor prevention. The audited OpenClaw source commit is provenance evidence,
+not a v2 runtime pin; the official installer selects `openclaw@latest`. No
+legacy Hosted plugin participates in this contract.
+
+During every proven managed v2 `clawdi` env projection, convergence uses the
+public config-mutation SDK to remove normalized `clawdi` entries from
+`auth.profiles` and `auth.order`, including order references to the removed
+IDs. It then uses the public provider-auth SDK to remove all normalized
+`clawdi` profiles and related order, `lastGood`, and usage state from the
+default/main store, active agent store, discovered state-tree agents, and
+configured custom agent directories. Empty auth containers are normalized.
 Non-`clawdi` config and profiles are preserved, and unmanaged mode does not run
-the cleanup.
+the cleanup. Read-only preflight skips clean config and store mutations, and all
+discovered stores are added to the convergence rollback snapshot before cleanup.
+
+This repairs existing deployments after the exact CLI package is published,
+selected in Hosted, and accepted through the existing per-deployment controlled
+rollout. The root-owned shim installs and verifies the package, atomically
+activates it, and self-reexecs before manifest convergence; a runtime-image
+rebuild is not required. Changing the global package setting alone does not
+advance existing deployment generations. Cleanup is part of the root-owned
+runtime manifest convergence transaction and runs before gateway activation;
+it does not call doctor or wait for gateway chat/model success. Failure leaves
+the convergence authority uncommitted and retryable on the next reconcile.
 
 Codex OAuth uses OpenClaw's native subscription route. Credential convergence
 uses the public `openclaw/plugin-sdk/provider-auth` export and a namespaced

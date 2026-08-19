@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.98
+
+Package: `clawdi@0.13.98`
+
+### Fixed
+
+- Hosted v2 OpenClaw deployments now keep their managed environment SecretRef
+  as the sole `clawdi` API-key authority, prevent doctor from persisting its
+  marker as a credential, and remove stale local `clawdi` auth state during
+  normal runtime reconciliation.
+
 ## Clawdi CLI v0.13.96
 
 Package: `clawdi@0.13.96`

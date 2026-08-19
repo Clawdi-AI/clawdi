@@ -43,7 +43,7 @@ export const AGENT_TARGET_CONTRACTS: Record<
 		settingMethod:
 			"public openclaw/plugin-sdk/config-mutation for provider projection; openclaw config patch --stdin for other native patches",
 		verifiedContractBaseline:
-			"OpenClaw 2026.7.1-2 public config-mutation/provider-auth SDK contracts and namespaced SQLite profiles",
+			"OpenClaw public config-mutation/provider-auth SDK contracts and namespaced profiles (2026.7.1-2 audit sample; runtime capability-gated)",
 		status: "enabled",
 	},
 };
@@ -296,10 +296,8 @@ function buildOpenClawProjection(
 					compactObject({
 						baseUrl: openClawBaseUrlForProvider(provider),
 						api: openClawProviderApiLabel(provider.api_mode),
-						auth: apiKeyEnv ? "api-key" : undefined,
-						apiKey: apiKeyEnv
-							? { source: "env", provider: "default", id: apiKeyEnv }
-							: undefined,
+						auth: apiKeyEnv && provider.id === CLAWDI_MANAGED_PROVIDER_ID ? "api-key" : undefined,
+						apiKey: apiKeyEnv ? { source: "env", provider: "default", id: apiKeyEnv } : undefined,
 						models: openClawModels(
 							provider,
 							provider.id === primaryProvider.id ? primaryModel.model : undefined,

@@ -113,6 +113,7 @@ function writeOpenClawPublicAuthSdkFixture(home: string): void {
 			exports: {
 				"./plugin-sdk/config-mutation": "./config-mutation.mjs",
 				"./plugin-sdk/provider-auth": "./provider-auth.mjs",
+				"./plugin-sdk/provider-env-vars": "./provider-env-vars.mjs",
 			},
 		}),
 	);
@@ -157,6 +158,49 @@ export async function removeProviderAuthProfilesWithLock() {
 }
 `,
 	);
+	writeFileSync(
+		join(packageRoot, "provider-env-vars.mjs"),
+		`import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+export function listKnownProviderAuthEnvVarNames() {
+  const stateDir = process.env.OPENCLAW_STATE_DIR || join(process.env.HOME, ".openclaw");
+  const manifestPath = join(stateDir, "extensions", "clawdi-managed-provider", "openclaw.plugin.json");
+  if (!existsSync(manifestPath)) return [];
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const provider = manifest.setup?.providers?.find((entry) => entry?.id === "clawdi");
+  return Array.isArray(provider?.envVars) ? provider.envVars : [];
+}
+`,
+	);
+}
+
+function fakeManagedOpenClawProviderPluginCommands(): string {
+	return `
+state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+plugin_root="$state_dir/extensions/clawdi-managed-provider"
+if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
+  test -f "$plugin_root/openclaw.plugin.json" || exit 1
+  enabled=false
+  status=disabled
+  if [ -f "$plugin_root/.enabled" ]; then enabled=true; status=loaded; fi
+  source_path="$(cat "$plugin_root/.source-path")"
+  printf '{"plugin":{"id":"clawdi-managed-provider","source":"%s/index.js","origin":"global","status":"%s","version":"1.0.0","enabled":%s},"install":{"source":"path","sourcePath":"%s","installPath":"%s","version":"1.0.0"}}\\n' "$plugin_root" "$status" "$enabled" "$source_path" "$plugin_root"
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ]; then
+  rm -rf "$plugin_root"
+  mkdir -p "$(dirname "$plugin_root")" "$state_dir/state"
+  cp -R "$3" "$plugin_root"
+  printf '%s\\n' "$3" > "$plugin_root/.source-path"
+  printf '%s\\n' installed > "$state_dir/state/openclaw.sqlite"
+  exit 0
+fi
+if [ "$*" = "plugins enable clawdi-managed-provider" ]; then
+  test -f "$plugin_root/openclaw.plugin.json"
+  touch "$plugin_root/.enabled"
+  exit 0
+fi
+`;
 }
 
 function readFileTree(root: string): string {
@@ -1505,6 +1549,7 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
   exit 0
 fi
+${fakeManagedOpenClawProviderPluginCommands()}
 cat >/dev/null || true
 exit 0
 `,

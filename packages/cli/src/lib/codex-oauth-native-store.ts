@@ -143,6 +143,13 @@ export function resolveOpenClawConfigMutationSdkExport(
 	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/config-mutation");
 }
 
+export function resolveOpenClawProviderEnvVarsSdkExport(
+	home: string,
+	startPaths: ReadonlyArray<string | null | undefined>,
+): string | null {
+	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/provider-env-vars");
+}
+
 export function resolveOpenClawDeviceBootstrapSdkExport(
 	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
@@ -378,7 +385,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [providerAuthSdkPath, configMutationSdkPath, home] = process.argv.slice(1);
+const [providerAuthSdkPath, configMutationSdkPath, home, action, expectedAgentDirsJson = "[]"] = process.argv.slice(1);
 const providerAuth = await import(pathToFileURL(providerAuthSdkPath).href);
 const configMutation = await import(pathToFileURL(configMutationSdkPath).href);
 if (
@@ -403,7 +410,10 @@ const normalizePath = (value) => {
 };
 const stateDir = normalizePath(process.env.OPENCLAW_STATE_DIR?.trim() || join(home, ".openclaw"));
 const defaultAgentDir = join(stateDir, "agents", "main", "agent");
-const agentDirs = new Set([normalizePath(providerAuth.resolveOpenClawAgentDir())]);
+const agentDirs = new Set([defaultAgentDir, normalizePath(providerAuth.resolveOpenClawAgentDir({}))]);
+if (process.env.OPENCLAW_AGENT_DIR?.trim()) {
+  agentDirs.add(normalizePath(process.env.OPENCLAW_AGENT_DIR));
+}
 const agentsRoot = join(stateDir, "agents");
 if (existsSync(agentsRoot)) {
   for (const entry of readdirSync(agentsRoot, { withFileTypes: true })) {
@@ -431,6 +441,21 @@ for (const agent of configuredAgents) {
   if (agent && typeof agent === "object" && typeof agent.agentDir === "string" && agent.agentDir.trim()) {
     agentDirs.add(normalizePath(agent.agentDir));
   }
+}
+const discoveredAgentDirs = [...agentDirs].sort();
+if (action === "discover") {
+  process.stdout.write(JSON.stringify({ agentDirs: discoveredAgentDirs }));
+  process.exit(0);
+}
+if (action !== "cleanup") throw new Error("invalid OpenClaw managed auth cleanup action");
+const expectedAgentDirs = JSON.parse(expectedAgentDirsJson);
+if (
+  !Array.isArray(expectedAgentDirs) ||
+  expectedAgentDirs.some((agentDir) => typeof agentDir !== "string") ||
+  JSON.stringify([...new Set(expectedAgentDirs.map(normalizePath))].sort()) !==
+    JSON.stringify(discoveredAgentDirs)
+) {
+  throw new Error("OpenClaw managed auth store targets changed after transaction snapshot");
 }
 
 const cleanupConfigAuth = (config, apply) => {
@@ -500,10 +525,9 @@ if (cleanupConfigAuth(snapshot.sourceConfig, false)) {
   });
 }
 
-agentDirs.delete(defaultAgentDir);
-const targets = [undefined, ...agentDirs];
 let cleanedStores = 0;
-for (const agentDir of targets) {
+for (const discoveredAgentDir of discoveredAgentDirs) {
+  const agentDir = discoveredAgentDir === defaultAgentDir ? undefined : discoveredAgentDir;
   const store = providerAuth.ensureAuthProfileStoreForLocalUpdate(agentDir);
   if (!isRecord(store) || !isRecord(store.profiles)) {
     throw new Error("OpenClaw provider-auth store is invalid");
@@ -525,5 +549,5 @@ for (const agentDir of targets) {
   if (result === null) throw new Error("OpenClaw provider-auth cleanup failed");
   cleanedStores += 1;
 }
-process.stdout.write(JSON.stringify({ scannedStores: targets.length, cleanedStores }));
+process.stdout.write(JSON.stringify({ scannedStores: discoveredAgentDirs.length, cleanedStores }));
 `;

@@ -175,6 +175,13 @@ import {
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
+import {
+	ensureManagedOpenClawProviderPlugin,
+	managedOpenClawConfigPath,
+	managedOpenClawProviderPluginMutationTargets,
+	managedOpenClawStateDir,
+	openClawProviderEnvVarsSdkPath,
+} from "./openclaw-managed-provider-plugin";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
@@ -1840,6 +1847,7 @@ function hasManagedClawdiOpenClawApiKeyProjection(manifest: RuntimeManifest): bo
 		(entry) => entry.id === CLAWDI_MANAGED_PROVIDER_ID,
 	);
 	return (
+		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
 		runtime?.enabled === true &&
 		runtime.providerMode === "configured" &&
 		typeof sourceProviderId === "string" &&
@@ -2061,7 +2069,7 @@ function runHermesCodexAuth(
 }
 
 function openClawAgentDir(home: string): string {
-	return join(home, ".openclaw", "agents", "main", "agent");
+	return join(managedOpenClawStateDir(home), "agents", "main", "agent");
 }
 
 function openClawProviderAuthSdkPath(
@@ -2149,13 +2157,15 @@ const OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE = `
 import { pathToFileURL } from "node:url";
 const providerAuth = await import(pathToFileURL(process.argv[1]).href);
 const configMutation = await import(pathToFileURL(process.argv[2]).href);
+const providerEnvVars = await import(pathToFileURL(process.argv[3]).href);
 if (
   typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
   typeof providerAuth.listProfilesForProvider !== "function" ||
   typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
   typeof providerAuth.resolveOpenClawAgentDir !== "function" ||
   typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
-  typeof configMutation.mutateConfigFile !== "function"
+  typeof configMutation.mutateConfigFile !== "function" ||
+  typeof providerEnvVars.listKnownProviderAuthEnvVarNames !== "function"
 ) {
   throw new Error("required public OpenClaw auth cleanup exports are missing");
 }
@@ -2200,6 +2210,11 @@ function requireOpenClawManagedProviderAuthCleanupCapability(
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE,
 			providerAuthSdkPath,
 			configMutationSdkPath,
+			openClawProviderEnvVarsSdkPath({
+				home,
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+			}),
 		],
 		home,
 		home,
@@ -2365,6 +2380,7 @@ function removeOpenClawManagedProviderAuthProfiles(
 	observation: RuntimeInstallObservation,
 	home: string,
 	workspaceRoot: string,
+	agentDirs: readonly string[],
 ): void {
 	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
 	if (!configMutationSdkPath) {
@@ -2379,6 +2395,8 @@ function removeOpenClawManagedProviderAuthProfiles(
 			openClawProviderAuthSdkPath(observation, home),
 			configMutationSdkPath,
 			home,
+			"cleanup",
+			JSON.stringify(agentDirs),
 		],
 		home,
 		workspaceRoot,
@@ -2386,10 +2404,50 @@ function removeOpenClawManagedProviderAuthProfiles(
 	if (result.status !== 0) {
 		throw new Error(
 			`OpenClaw managed provider-auth cleanup failed: ${
-				tail(String(result.stderr ?? "")) ?? "unknown"
+				tail(String(result.stderr || result.stdout || "")) ?? "unknown"
 			}`,
 		);
 	}
+}
+
+function discoverOpenClawManagedProviderAuthAgentDirs(
+	observation: RuntimeInstallObservation,
+	home: string,
+): string[] {
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	if (!configMutationSdkPath) {
+		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
+	}
+	const result = spawnRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
+			openClawProviderAuthSdkPath(observation, home),
+			configMutationSdkPath,
+			home,
+			"discover",
+		],
+		home,
+		home,
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`OpenClaw managed provider-auth store discovery failed: ${
+				tail(String(result.stderr || result.stdout || "")) ?? "unknown"
+			}`,
+		);
+	}
+	const output = recordValue(JSON.parse(String(result.stdout || "{}")) as unknown);
+	if (!output || !Array.isArray(output.agentDirs)) {
+		throw new Error("OpenClaw managed provider-auth store discovery returned invalid output");
+	}
+	const agentDirs = output.agentDirs.filter((path): path is string => typeof path === "string");
+	if (agentDirs.length !== output.agentDirs.length || agentDirs.length === 0) {
+		throw new Error("OpenClaw managed provider-auth store discovery returned invalid targets");
+	}
+	return agentDirs;
 }
 
 function runtimeOAuthLedgerOwnership(
@@ -2711,6 +2769,7 @@ function applyHostedAiProviderProjection(
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
 	openClawOwnerBrowserBootstrapSupported: boolean,
+	openClawManagedAuthAgentDirs: readonly string[],
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -2742,6 +2801,13 @@ function applyHostedAiProviderProjection(
 		);
 	}
 	if (name === "openclaw") {
+		if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
+			ensureManagedOpenClawProviderPlugin({
+				home,
+				commandPath: observation.commandPath,
+				appRoot: observation.appRoot,
+			});
+		}
 		applyOpenClawGatewayHostedProjection(
 			observation.commandPath,
 			manifest,
@@ -2755,7 +2821,17 @@ function applyHostedAiProviderProjection(
 			applyOpenClawHostedProviderPatch(observation, providerPatch, home, workspaceRoot);
 		}
 		if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
-			removeOpenClawManagedProviderAuthProfiles(observation, home, workspaceRoot);
+			if (openClawManagedAuthAgentDirs.length === 0) {
+				throw new Error(
+					"OpenClaw managed provider-auth stores were not transactionally discovered",
+				);
+			}
+			removeOpenClawManagedProviderAuthProfiles(
+				observation,
+				home,
+				workspaceRoot,
+				openClawManagedAuthAgentDirs,
+			);
 		}
 		return {
 			path: observation.commandPath,
@@ -3547,9 +3623,7 @@ function openClawGatewayHostedPatchIsApplied(
 	patch: Record<string, unknown>,
 ): boolean {
 	try {
-		const current = JSON.parse(
-			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8"),
-		) as unknown;
+		const current = JSON.parse(readFileSync(managedOpenClawConfigPath(home), "utf-8")) as unknown;
 		return jsonMergePatchIsApplied(current, patch);
 	} catch {
 		return false;
@@ -5832,7 +5906,6 @@ export function runtimeUserMutationTargets(
 ): string[] {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const installerTargets = runtimeInstallerMutationTargets(manifest, home, observations);
-	const openClawDatabase = join(openClawAgentDir(home), "openclaw-agent.sqlite");
 	const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
 	const channels = hostedChannelProjection(manifest);
 	const channelPluginTargets = channels
@@ -5841,20 +5914,21 @@ export function runtimeUserMutationTargets(
 				.map((channel) => join(home, ".openclaw", "extensions", channel))
 		: [];
 	const targets = new Set<string>([
-		join(home, ".openclaw", "openclaw.json"),
+		managedOpenClawConfigPath(home),
 		join(home, ".hermes", "config.yaml"),
 		join(home, ".hermes", "SOUL.md"),
 		hermesAuthPath(home),
 		join(dirname(hermesAuthPath(home)), "auth.lock"),
-		openClawDatabase,
-		`${openClawDatabase}-wal`,
-		`${openClawDatabase}-shm`,
+		openClawAgentDir(home),
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 		legacyHermesModelProviderPluginDir(home),
 		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,
 	]);
+	if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
+		for (const target of managedOpenClawProviderPluginMutationTargets(home)) targets.add(target);
+	}
 	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		if (manifest.runtimes[name]?.enabled !== true) continue;
@@ -6196,6 +6270,7 @@ export function convergeRuntimeManifest(
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
 	let openClawOwnerBrowserBootstrapSupported = false;
+	let openClawManagedAuthAgentDirs: string[] = [];
 
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const hermesSkillNativeReconciler =
@@ -6459,6 +6534,30 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
+		const managedOpenClawObservation = observations.get("openclaw");
+		if (managedOpenClawObservation && hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
+			openClawManagedAuthAgentDirs = discoverOpenClawManagedProviderAuthAgentDirs(
+				managedOpenClawObservation,
+				projectionHome,
+			);
+			const supplementalTargets = openClawManagedAuthAgentDirs.filter(
+				(path) => !liveSnapshot.entries.has(path),
+			);
+			if (supplementalTargets.length > 0) {
+				const supplementalSnapshot = captureRuntimeLiveSnapshot({
+					rootTargets: [],
+					trustedRootDirectories: [],
+					runtimeUserTargets: supplementalTargets,
+					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
+					runtimeUserSymlinkTargets: [],
+					metadataTargets: [],
+				});
+				for (const [path, node] of supplementalSnapshot.entries) {
+					if (!liveSnapshot.entries.has(path)) liveSnapshot.entries.set(path, node);
+				}
+				ensureRuntimeUserOwnershipBoundaries(supplementalTargets);
+			}
+		}
 		if (
 			openClawWorkspaceRoot &&
 			resolve(openClawSkillDriver.resolveWorkspace({ home: projectionHome })) !==
@@ -6964,6 +7063,7 @@ export function convergeRuntimeManifest(
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
 					openClawOwnerBrowserBootstrapSupported,
+					openClawManagedAuthAgentDirs,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {

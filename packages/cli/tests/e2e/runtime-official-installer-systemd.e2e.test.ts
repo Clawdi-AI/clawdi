@@ -18,12 +18,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
 	SystemdRuntimeTransaction,
 } from "../../src/commands/runtime";
-import { resolveOpenClawProviderAuthSdkExport } from "../../src/lib/codex-oauth-native-store";
+import {
+	resolveOpenClawProviderAuthSdkExport,
+	resolveOpenClawProviderEnvVarsSdkExport,
+} from "../../src/lib/codex-oauth-native-store";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -31,6 +35,7 @@ import {
 } from "../../src/runtime/manifest";
 import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
 import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
+import { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-managed-provider-plugin";
 import { getRuntimePaths } from "../../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 
@@ -347,7 +352,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(secondaryAgentDir, { recursive: true });
 	chownSync(secondaryAgentRoot, runtimeUid, runtimeGid);
 	chownSync(secondaryAgentDir, runtimeUid, runtimeGid);
-	const configRoot = join(root, "openclaw");
+	const configRoot = join(clawdiHome, "openclaw-config");
 	mkdirSync(configRoot, { mode: 0o700 });
 	chownSync(configRoot, runtimeUid, runtimeGid);
 	const configPath = join(configRoot, "openclaw.json");
@@ -458,73 +463,83 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(seededAuth.status, seededAuth.stderr).toBe(0);
 
 		const manifest: RuntimeManifest = {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "hdep_real_openclaw_size_drop",
-		environmentId: "env_real_openclaw_size_drop",
-		instanceId: "hri_real_openclaw_size_drop",
-		generation: 1,
-		issuedAt: "2026-08-11T23:08:17.000Z",
-		workspaceRoot: runtimeHome,
-		controlPlane: { apiUrl: "https://cloud-api.example.test" },
-		projection: {
-			providers: {
-				clawdi: {
-					type: "custom_openai_compatible",
-					managed_by: "clawdi",
-					baseUrl: "https://ai-gateway.example.test/v1",
-					models: [
-						{
-							id: "sol",
-							label: "Sol",
-							api_mode: "openai_chat",
-							input_modalities: ["text"],
-							supports_tools: true,
-							supports_reasoning: true,
-							context_window: 200_000,
-							max_tokens: 64_000,
-							cost: { input: 1.5, output: 12, cache_read: 0.15, cache_write: 1.5 },
-						},
-					],
-					apiMode: "openai_responses",
-					runtimeEnvName: "CLAWDI_AI_API_KEY",
-					apiKeySecretRef: "secret://providers/clawdi/api-key",
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_real_openclaw_size_drop",
+			environmentId: "env_real_openclaw_size_drop",
+			instanceId: "hri_real_openclaw_size_drop",
+			generation: 1,
+			issuedAt: "2026-08-11T23:08:17.000Z",
+			workspaceRoot: runtimeHome,
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			openclawGatewayAuth: {
+				mode: "token",
+				tokenRef: "secret://runtime/openclaw/gateway-token",
+				deviceAuthRequired: false,
+				activation: { enabled: true, capability: "openclaw-native-auth-v1" },
+			},
+			projection: {
+				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+				providers: {
+					clawdi: {
+						type: "custom_openai_compatible",
+						managed_by: "clawdi",
+						baseUrl: "https://ai-gateway.example.test/v1",
+						models: [
+							{
+								id: "sol",
+								label: "Sol",
+								api_mode: "openai_chat",
+								input_modalities: ["text"],
+								supports_tools: true,
+								supports_reasoning: true,
+								context_window: 200_000,
+								max_tokens: 64_000,
+								cost: { input: 1.5, output: 12, cache_read: 0.15, cache_write: 1.5 },
+							},
+						],
+						apiMode: "openai_responses",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
+						apiKeySecretRef: "secret://providers/clawdi/api-key",
+					},
 				},
 			},
-		},
-		runtimes: {
-			openclaw: {
-				enabled: true,
-				providerMode: "configured",
-				provider_ids: ["clawdi"],
-				primary_model: { provider_id: "clawdi", model: "sol" },
-				run: { command: commandPath, args: ["gateway", "run"], env: {}, prependPath: [] },
-				services: {},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					providerMode: "configured",
+					provider_ids: ["clawdi"],
+					primary_model: { provider_id: "clawdi", model: "sol" },
+					run: { command: commandPath, args: ["gateway", "run"], env: {}, prependPath: [] },
+					services: {},
+				},
 			},
-		},
-		recovery: {},
-	};
+			recovery: {},
+		};
 		const load: RuntimeManifestLoad = {
-		manifest,
-		source: "remote-datasource",
-		sourcePath: "real-openclaw-size-drop-fixture",
-		offline: false,
-		secretValues: { "secret://providers/clawdi/api-key": "sk-size-drop-fixture" },
-		applyContext: {
-			kind: "context-file",
-			backend: "incus",
-			identity: {
-				generation: manifest.generation,
-				manifestETag: '"real-size-drop-test"',
-				applyReceiptId: "real-size-drop-test-receipt",
-				bootNonce: "real-size-drop-test-boot",
+			manifest,
+			source: "remote-datasource",
+			sourcePath: "real-openclaw-size-drop-fixture",
+			offline: false,
+			secretValues: {
+				"secret://providers/clawdi/api-key": "sk-size-drop-fixture",
+				"secret://runtime/openclaw/gateway-token": "size-drop-gateway-token",
 			},
-			manifestSource: {
-				type: "http",
-				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_size_drop",
-				auth: { type: "bearer", token: "real-size-drop-test-auth-token" },
+			applyContext: {
+				kind: "context-file",
+				backend: "incus",
+				identity: {
+					generation: manifest.generation,
+					manifestETag: '"real-size-drop-test"',
+					applyReceiptId: "real-size-drop-test-receipt",
+					bootNonce: "real-size-drop-test-boot",
+				},
+				manifestSource: {
+					type: "http",
+					url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_size_drop",
+					auth: { type: "bearer", token: "real-size-drop-test-auth-token" },
+				},
 			},
-		},
-	};
+		};
 
 		const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 		if (!projectionInput) throw new Error("expected OpenClaw provider projection");
@@ -561,6 +576,60 @@ test("projects a large OpenClaw provider model-list reduction through the public
 
 		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 		expect(convergence.installErrors).toEqual([]);
+		const pluginInspect = spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`OPENCLAW_CONFIG_PATH=${configPath}`,
+				`OPENCLAW_STATE_DIR=${openClawStateDir}`,
+				commandPath,
+				"plugins",
+				"inspect",
+				CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
+				"--json",
+			],
+			{ encoding: "utf8" },
+		);
+		expect(pluginInspect.status, pluginInspect.stderr).toBe(0);
+		expect(JSON.parse(pluginInspect.stdout)).toMatchObject({
+			plugin: {
+				id: CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
+				enabled: true,
+				status: "loaded",
+			},
+			install: { source: "path" },
+		});
+		const providerEnvVarsSdkPath = resolveOpenClawProviderEnvVarsSdkExport(runtimeHome, [
+			commandPath,
+		]);
+		expect(providerEnvVarsSdkPath).not.toBeNull();
+		if (!providerEnvVarsSdkPath) {
+			throw new Error("official OpenClaw provider-env-vars SDK is unavailable");
+		}
+		const markerProbe = spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`OPENCLAW_CONFIG_PATH=${configPath}`,
+				`OPENCLAW_STATE_DIR=${openClawStateDir}`,
+				join(runtimeHome, ".local", "tools", "node", "bin", "node"),
+				"--input-type=module",
+				"--eval",
+				"const sdk = await import(process.argv[1]); process.stdout.write(JSON.stringify(sdk.listKnownProviderAuthEnvVarNames()));",
+				pathToFileURL(providerEnvVarsSdkPath).href,
+			],
+			{ encoding: "utf8" },
+		);
+		expect(markerProbe.status, markerProbe.stderr).toBe(0);
+		expect(JSON.parse(markerProbe.stdout)).toContain("CLAWDI_AI_API_KEY");
 		const inspectedAuth = runProviderAuthHelper("inspect");
 		expect(inspectedAuth.status, inspectedAuth.stderr).toBe(0);
 		const authStores = JSON.parse(inspectedAuth.stdout) as Array<{
@@ -596,7 +665,12 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		);
 		expect(appliedConfig.models.providers["user-owned"]).toEqual(userProvider);
 		expect(appliedConfig.agents.defaults.workspace).toBe(existingConfig.agents.defaults.workspace);
-		expect(appliedConfig.gateway).toEqual(existingConfig.gateway);
+		expect(appliedConfig.gateway).toEqual({
+			mode: "local",
+			port: 18_789,
+			bind: "lan",
+			auth: { mode: "token", token: "size-drop-gateway-token" },
+		});
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
 		expect(appliedConfig.auth).toEqual({
 			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
@@ -641,7 +715,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		rmSync(secondaryAgentRoot, { recursive: true, force: true });
 		rmSync(root, { recursive: true, force: true });
 	}
-}, 60_000);
+}, 120_000);
 
 test("persists and serves the managed token through the real official OpenClaw gateway", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
@@ -874,10 +948,13 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
 	process.env.CLAWDI_AUTH_TOKEN = "real-filebrowser-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-	const openClawConfig = join(runtimeHome, ".openclaw", "openclaw.json");
-	const openClawWorkspaceRoot = join(runtimeHome, ".openclaw", "workspace");
-	mkdirSync(dirname(openClawConfig), { recursive: true, mode: 0o700 });
-	chownSync(dirname(openClawConfig), runtimeUid, runtimeGid);
+	const openClawStateDir = join(runtimeHome, ".openclaw-files-e2e");
+	const openClawConfig = join(openClawStateDir, "openclaw.json");
+	const openClawWorkspaceRoot = join(openClawStateDir, "workspace");
+	mkdirSync(openClawStateDir, { recursive: true, mode: 0o700 });
+	chownSync(openClawStateDir, runtimeUid, runtimeGid);
+	process.env.OPENCLAW_STATE_DIR = openClawStateDir;
+	process.env.OPENCLAW_CONFIG_PATH = openClawConfig;
 	writeFileSync(
 		openClawConfig,
 		`${JSON.stringify({
@@ -1119,10 +1196,7 @@ http.createServer((request, response) => {
 	expect(gatewayEnv).not.toContain("sk-clawdi-provider");
 	const projectedOpenClawConfig = JSON.parse(readFileSync(openClawConfig, "utf8")) as {
 		models?: {
-			providers?: Record<
-				string,
-				{ auth?: string; baseUrl?: string; apiKey?: { id?: string } }
-			>;
+			providers?: Record<string, { auth?: string; baseUrl?: string; apiKey?: { id?: string } }>;
 		};
 	};
 	expect(projectedOpenClawConfig.models?.providers?.clawdi).toMatchObject({
@@ -1323,4 +1397,4 @@ http.createServer((request, response) => {
 	});
 	expect(tenantRead.status).toBe(0);
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
-}, 90_000);
+}, 120_000);
