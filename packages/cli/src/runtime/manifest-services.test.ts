@@ -169,7 +169,7 @@ EOF
 	${input.failUninstall ? "exit 42" : `rm -f '${input.unitPath}'`}
 	;;
   "config patch --stdin") cat >/dev/null ;;
-  "config get "*|"config set "*|"config unset "*)
+  "config path"|"config get "*|"config set "*|"config unset "*)
     printf '%s %s\n' '${input.runtime}' "$*" >> '${input.logPath}'
     exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
     ;;
@@ -858,9 +858,9 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).not.toContain("opaque-password-value");
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		const configCommands = readFileSync(join(paths.runRoot, "hermes-dashboard.log"), "utf8");
-		expect(configCommands).toContain("hermes config get dashboard.basic_auth --json");
+		expect(configCommands).toContain("hermes config path");
 		expect(configCommands).toContain("hermes config set --force dashboard.basic_auth");
-		expect(configCommands).toContain("hermes config get plugins.disabled --json");
+		expect(configCommands).toContain("hermes config set --force plugins.disabled");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 
 		const rotated = convergeRuntimeManifest(
