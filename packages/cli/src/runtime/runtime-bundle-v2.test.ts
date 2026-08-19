@@ -142,9 +142,6 @@ const defaultAgentDir = () => join(
   "main",
   "agent",
 );
-export function resolveOpenClawAgentDir() {
-  return process.env.OPENCLAW_AGENT_DIR || defaultAgentDir();
-}
 export function ensureAuthProfileStoreForLocalUpdate() {
   return { profiles: {}, order: {}, lastGood: {}, usageStats: {} };
 }

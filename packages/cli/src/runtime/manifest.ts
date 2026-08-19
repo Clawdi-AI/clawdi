@@ -2249,7 +2249,6 @@ if (
   typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
   typeof providerAuth.listProfilesForProvider !== "function" ||
   typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
-  typeof providerAuth.resolveOpenClawAgentDir !== "function" ||
   typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
   typeof configMutation.mutateConfigFile !== "function" ||
   typeof providerEnvVars.listKnownProviderAuthEnvVarNames !== "function"

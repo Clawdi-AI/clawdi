@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.101
+
+Package: `clawdi@0.13.101`
+
+### Fixed
+
+- Hosted v2 OpenClaw recovery now checks only the public SDK exports shipped by
+  the pinned OpenClaw package, allowing existing deployments to upgrade and
+  clean stale managed-provider credentials before gateway activation.
+
 ## Clawdi CLI v0.13.100
 
 Package: `clawdi@0.13.100`

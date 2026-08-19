@@ -392,7 +392,6 @@ if (
   typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
   typeof providerAuth.listProfilesForProvider !== "function" ||
   typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
-  typeof providerAuth.resolveOpenClawAgentDir !== "function" ||
   typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
   typeof configMutation.mutateConfigFile !== "function"
 ) {
@@ -410,7 +409,7 @@ const normalizePath = (value) => {
 };
 const stateDir = normalizePath(process.env.OPENCLAW_STATE_DIR?.trim() || join(home, ".openclaw"));
 const defaultAgentDir = join(stateDir, "agents", "main", "agent");
-const agentDirs = new Set([defaultAgentDir, normalizePath(providerAuth.resolveOpenClawAgentDir({}))]);
+const agentDirs = new Set([defaultAgentDir]);
 if (process.env.OPENCLAW_AGENT_DIR?.trim()) {
   agentDirs.add(normalizePath(process.env.OPENCLAW_AGENT_DIR));
 }
