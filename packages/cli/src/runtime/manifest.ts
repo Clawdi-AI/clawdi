@@ -1232,8 +1232,15 @@ function openClawConfigWriterVersion(home: string): string | null {
 	}
 	const version = meta.lastTouchedVersion;
 	if (version === undefined) return null;
-	if (typeof version !== "string" || !isValidSemver(version)) {
-		throw new Error("OpenClaw config meta.lastTouchedVersion must be valid SemVer");
+	if (
+		typeof version !== "string" ||
+		version.length === 0 ||
+		version.length > 128 ||
+		version.trim() !== version
+	) {
+		throw new Error(
+			"OpenClaw config meta.lastTouchedVersion must be a non-empty trimmed string of at most 128 characters",
+		);
 	}
 	return version;
 }

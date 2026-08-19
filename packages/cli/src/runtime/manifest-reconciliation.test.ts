@@ -5035,7 +5035,7 @@ echo spawned > '${installerLog}'
 		).toEqual([join(home, ".local", "bin", "openclaw"), join(home, ".local", "tools")].sort());
 	});
 
-	test("reinstalls hosted v2 OpenClaw exactly and delegates config compatibility to upstream", () => {
+	test("passes historical config writer versions unchanged to the exact OpenClaw installer", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
 		const commandPath = join(home, ".local", "bin", "openclaw");
@@ -5046,9 +5046,10 @@ echo spawned > '${installerLog}'
 		const installerResultPath = join(fixtureRoot, "installer-result");
 		const installerLog = join(fixtureRoot, "installer.log");
 		const desiredVersion = HOSTED_V2_OPENCLAW_VERSION;
+		const configWriterVersion = "2026.8.1.beta.1";
 		const config = {
 			meta: {
-				lastTouchedVersion: desiredVersion,
+				lastTouchedVersion: configWriterVersion,
 				migrations: { applied: ["agents.entries"] },
 			},
 			agents: { entries: [{ id: "main" }] },
@@ -5074,7 +5075,7 @@ esac
 			installerPath,
 			`#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> '${installerLog}'
+printf '%s\n' "$#" "$@" >> '${installerLog}'
 cp '${installerResultPath}' '${installedVersionPath}'
 `,
 		);
@@ -5122,11 +5123,13 @@ cp '${installerResultPath}' '${installedVersionPath}'
 		const expectedArgs = [
 			...officialInstallArgs("openclaw", home, desiredVersion),
 			"--compatible-with",
-			desiredVersion,
-		].join(" ");
+			configWriterVersion,
+		];
 		expect(readFileSync(installerLog, "utf8").trim().split("\n")).toEqual([
-			expectedArgs,
-			expectedArgs,
+			String(expectedArgs.length),
+			...expectedArgs,
+			String(expectedArgs.length),
+			...expectedArgs,
 		]);
 	});
 
