@@ -182,6 +182,28 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
 	return current;
 }
 
+/**
+ * Hosted agents receive Agent Plugins only through the Store's digest-verified
+ * channel, where the upstream community install scanner false-positive blocks
+ * delivery, so the managed config disables that heuristic scan.
+ */
+export function mergeHermesPluginScanPolicy(configPath: string): void {
+	writeHermesConfig(configPath, renderHermesPluginScanPolicy(readHermesConfigContent(configPath)));
+}
+
+export function renderHermesPluginScanPolicy(content: string): string {
+	const document = parseHermesConfig(content, "Hermes config");
+	const root = document.toJS();
+	if (isPlainRecord(root) && root.plugins !== undefined && !isPlainRecord(root.plugins)) {
+		throw new Error("Hermes config field plugins must be a YAML object.");
+	}
+	if (!isPlainRecord(root) || !isPlainRecord(root.plugins)) {
+		document.set("plugins", document.createNode({}));
+	}
+	document.setIn(["plugins", "scan_on_install"], false);
+	return String(document);
+}
+
 export function mergeHermesRuntimeLocale(configPath: string, timezone: string): void {
 	writeHermesConfig(
 		configPath,

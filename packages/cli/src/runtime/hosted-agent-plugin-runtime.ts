@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { mergeHermesPluginScanPolicy } from "../lib/hermes-config-merge";
 import { runHermesAgentPluginCanary } from "./hermes-agent-plugin-canary-client";
 import {
 	type HostedAgentPluginReceipt,
@@ -485,20 +486,15 @@ function createHermesDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
+				mergeHermesPluginScanPolicy(join(input.home, ".hermes", "config.yaml"));
 				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
-				const args = [
+				const result = run([
 					"plugins",
 					"install",
 					pathToFileURL(sourceDir).href,
 					"--force",
 					"--no-enable",
-				];
-				// Store plugins are digest-verified by the control plane, so the native
-				// community-plugin security scan is skipped when the runtime supports it.
-				let result = run([...args, "--no-scan"]);
-				if (result.status !== 0 && result.stderr.includes("unrecognized arguments")) {
-					result = run(args);
-				}
+				]);
 				if (result.status !== 0) {
 					throw nativeCommandFailure("Hermes native Agent Plugin install failed", result);
 				}
