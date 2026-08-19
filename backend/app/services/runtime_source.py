@@ -78,7 +78,6 @@ from app.services.managed_ai_provider import (
 )
 from app.services.project_runtime_skills import (
     RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN,
-    agent_supports_project_skills,
     project_skill_file_signature,
     project_skill_runtime_identity,
 )
@@ -400,19 +399,7 @@ async def load_runtime_source_batch(
     project_skills: dict[UUID, list[RuntimeProjectSkill]] = {}
     for environment_id, skill in project_skill_rows:
         runtime_row = rows.get(environment_id)
-        if (
-            runtime_row is None
-            or runtime_row.state is None
-            or not agent_supports_project_skills(
-                runtime_row.environment,
-                runtime_row.state,
-                runtime_row.observation,
-                has_environment_bound_key=False,
-            )
-        ):
-            # Existing Vault-only bindings predate Project Skill delivery. Keep
-            # those links usable, but never render the new source shape until
-            # this exact Hosted V2 deployment has proven a compatible, Ready CLI.
+        if runtime_row is None or runtime_row.state is None:
             continue
         project_skills.setdefault(environment_id, []).append(
             RuntimeProjectSkill(

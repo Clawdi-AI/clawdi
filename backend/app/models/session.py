@@ -110,10 +110,8 @@ class AgentEnvironment(Base, TimestampMixin):
     # OAuth CLI or unbound unmanaged API key. Historical ambiguous rows remain
     # NULL; Admin, managed, and environment-bound registration never qualify.
     connected_agent_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Connected Agent-only leased capability observation. Legacy V1 deployments
-    # never use it; Hosted V2 deployments prove readiness through their desired
-    # manifest and same-generation observation. Old Connected daemons cannot
-    # renew observed_at, so a downgrade expires instead of retaining evidence.
+    # Connected Agent-only compatibility observation retained for deployed CLI
+    # clients. Desired-state reads and writes do not depend on these fields.
     project_skill_reconcile_version: Mapped[int | None] = mapped_column(Integer)
     project_skill_reconcile_observed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)

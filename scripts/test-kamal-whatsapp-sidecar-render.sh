@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 render_root="$(mktemp -d)"
@@ -13,12 +12,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-test "$(ruby -e 'print Encoding.default_external.name')" = "US-ASCII"
 test "$(kamal version)" = "2.12.0"
 mkdir -p "${render_root}/config" "${render_root}/.kamal"
 cp "${repo_root}/config/deploy.yml" "${render_root}/config/deploy.yml"
-mkdir -p "${render_root}/packages/cli"
-cp "${repo_root}/packages/cli/package.json" "${render_root}/packages/cli/package.json"
 
 secret_keys=(
 	KAMAL_REGISTRY_USERNAME
@@ -131,7 +127,6 @@ RUBY
 		DEPLOY_IMAGE_VERSION="${expected_version}" \
 		ruby - "${render_root}/config/deploy.yml" "${expected_version}" <<'RUBY'
 require "kamal"
-require "json"
 require "pathname"
 
 config_path, expected_version = ARGV
@@ -142,13 +137,6 @@ config = Kamal::Configuration.create_from(
 expected_logging_args = [ "--log-driver", '"journald"' ]
 
 raise "top-level logging did not render journald" unless config.logging_args == expected_logging_args
-cli_version = JSON.parse(
-  File.read("packages/cli/package.json", encoding: Encoding::UTF_8)
-).fetch("version")
-expected_project_skill_specs = [ "clawdi@#{cli_version}" ].to_json
-unless config.raw_config.dig("env", "clear", "PROJECT_SKILL_HOSTED_CLI_PACKAGE_SPECS") == expected_project_skill_specs
-  raise "Project Skill Hosted CLI package specs drifted from packages/cli/package.json"
-end
 config.roles.each do |role|
   raise "#{role.name} logging drifted" unless role.logging_args == expected_logging_args
 end

@@ -33,7 +33,6 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
     MAX_AGENT_PROJECT_SKILLS,
-    agent_supports_project_skills,
     assert_agent_project_skill_total,
     assert_project_skill_runtime_identity,
     project_skill_file_signature,
@@ -192,6 +191,8 @@ async def report_project_skill_capability(
     require_auth_scopes(auth, "skills:write")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
     agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
+    # Compatibility observation only; desired-state reads and writes never
+    # consult these fields.
     agent.project_skill_reconcile_version = body.project_skill_reconcile_version
     agent.project_skill_reconcile_observed_at = datetime.now(UTC)
     await db.commit()
@@ -251,20 +252,7 @@ async def get_agent_project_skills(
     """Return one Agent's complete linked-Project Skill inventory."""
     require_auth_scopes(auth, "skills:read")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
-    agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
-    if not agent_supports_project_skills(
-        agent,
-        None,
-        None,
-        has_environment_bound_key=False,
-    ):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "project_skill_delivery_update_required",
-                "message": "Update this Agent, then try again.",
-            },
-        )
+    await _connected_agent(db, auth=auth, agent_id=agent_id)
     membership = ProjectMembership.__table__.alias("desired_project_skill_membership")
     rows = (
         (

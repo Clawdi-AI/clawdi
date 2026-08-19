@@ -275,15 +275,13 @@ async def _register_agent_identity(
         )
         connected_registration = hosted_state is None and environment_bound_key_id is None
     if connected_registration:
-        # This is origin evidence, not capability evidence. A current Connected
-        # Agent must still renew its separate short-lived Project Skill lease.
-        # Existing Hosted V2 state or a Legacy V1 environment-bound key is
-        # positive deployment evidence and prevents an account-level CLI token
-        # from reclassifying that durable Agent identity.
+        # This durable origin evidence authorizes Connected-only runtime APIs.
+        # Existing Hosted V2 state or a Legacy V1 environment-bound key prevents
+        # an account-level CLI token from reclassifying that Agent identity.
         registered.env.connected_agent_registered_at = datetime.now(UTC)
     else:
         # A managed or environment-bound registration is positive evidence
-        # against the Connected runtime shape; do not retain an earlier lease.
+        # against the Connected runtime shape; do not retain its observations.
         clear_connected_agent_registration(registered.env)
     await db.commit()
     return EnvironmentCreatedResponse(id=str(registered.env.id))

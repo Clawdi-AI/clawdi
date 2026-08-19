@@ -12,36 +12,26 @@ import hmac
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import exists, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.agent_project_binding import AgentProjectBinding
-from app.models.api_key import ApiKey
-from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import PersistedHostedRuntimeSkills
-from app.schemas.runtime_observed import HostedRuntimeObservedV2
-from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.sync_events import queue_runtime_manifest_changed
 
 # OpenClaw's native `skills install --as` contract accepts this slug shape.
 # Source keys may be namespaced. The SKILL.md name is the local install identity
 # and must fit the strictest native runtime contract.
 RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-PROJECT_SKILL_RECONCILE_VERSION = 1
-# The Connected daemon renews every four to six minutes. Ten minutes provides
-# normal retry margin while still closing stale or downgraded Agents promptly.
-CONNECTED_PROJECT_SKILL_CAPABILITY_TTL = timedelta(minutes=10)
 MAX_AGENT_PROJECT_SKILLS = 1000
-_CONNECTED_PROJECT_SKILL_AGENT_TYPES = frozenset({"claude_code", "codex", "hermes", "openclaw"})
 
 
 @dataclass(frozen=True)
@@ -365,15 +355,22 @@ async def _assert_agent_accepts_project_skills(
         if len(source_skill_keys) > 1
     }
 
-    agent, state, observation, has_environment_bound_key = await _agent_runtime_delivery_evidence(
-        db, agent_id=agent_id
-    )
-    _assert_agent_supports_project_skills(
-        agent,
-        state,
-        observation,
-        has_environment_bound_key=has_environment_bound_key,
-    )
+    row = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    agent, state = row
 
     workspace_skill_keys = (
         _runtime_state_skill_keys(state)
@@ -401,162 +398,6 @@ async def _assert_agent_accepts_project_skills(
             ),
             "skill_key": skill_key,
         },
-    )
-
-
-async def _assert_agent_project_skill_delivery_supported(
-    db: AsyncSession,
-    *,
-    agent_id: UUID,
-) -> None:
-    agent, state, observation, has_environment_bound_key = await _agent_runtime_delivery_evidence(
-        db, agent_id=agent_id
-    )
-    _assert_agent_supports_project_skills(
-        agent,
-        state,
-        observation,
-        has_environment_bound_key=has_environment_bound_key,
-    )
-
-
-async def _agent_runtime_delivery_evidence(
-    db: AsyncSession,
-    *,
-    agent_id: UUID,
-) -> tuple[
-    AgentEnvironment,
-    HostedRuntimeState | None,
-    HostedRuntimeConfigObservation | None,
-    bool,
-]:
-    has_environment_bound_key = exists().where(
-        ApiKey.environment_id == AgentEnvironment.id,
-    )
-    row = (
-        await db.execute(
-            select(
-                AgentEnvironment,
-                HostedRuntimeState,
-                HostedRuntimeConfigObservation,
-                has_environment_bound_key,
-            )
-            .outerjoin(
-                HostedRuntimeState,
-                HostedRuntimeState.environment_id == AgentEnvironment.id,
-            )
-            .outerjoin(
-                HostedRuntimeConfigObservation,
-                HostedRuntimeConfigObservation.environment_id == AgentEnvironment.id,
-            )
-            .where(
-                AgentEnvironment.id == agent_id,
-                AgentEnvironment.archived_at.is_(None),
-            )
-        )
-    ).first()
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    return row[0], row[1], row[2], row[3]
-
-
-def _assert_agent_supports_project_skills(
-    agent: AgentEnvironment,
-    state: HostedRuntimeState | None,
-    observation: HostedRuntimeConfigObservation | None,
-    *,
-    has_environment_bound_key: bool,
-) -> None:
-    if not agent_supports_project_skills(
-        agent,
-        state,
-        observation,
-        has_environment_bound_key=has_environment_bound_key,
-    ):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "project_skill_delivery_update_required",
-                "message": "Update this Agent, then try again.",
-            },
-        )
-
-
-def agent_supports_project_skills(
-    agent: AgentEnvironment,
-    state: HostedRuntimeState | None,
-    observation: HostedRuntimeConfigObservation | None,
-    *,
-    has_environment_bound_key: bool,
-) -> bool:
-    """Require evidence from exactly one authoritative Agent runtime shape."""
-    if state is not None:
-        if state.cli_package_spec not in settings.project_skill_hosted_cli_package_specs:
-            return False
-        if observation is None or observation.observed_at is None:
-            return False
-        now = datetime.now(UTC)
-        observed_at = observation.observed_at
-        if observed_at.tzinfo is None:
-            observed_at = observed_at.replace(tzinfo=UTC)
-        if now - observed_at > timedelta(seconds=settings.runtime_observation_freshness_seconds):
-            return False
-        if agent.last_sync_at is None or agent.last_sync_error:
-            return False
-        last_sync_at = agent.last_sync_at
-        if last_sync_at.tzinfo is None:
-            last_sync_at = last_sync_at.replace(tzinfo=UTC)
-        if now - last_sync_at > timedelta(seconds=settings.runtime_observation_freshness_seconds):
-            return False
-        try:
-            diagnostics = HostedRuntimeObservedV2.model_validate(observation.diagnostics)
-        except ValueError:
-            return False
-        expected_version = state.cli_package_spec.removeprefix("clawdi@")
-        expected_generation = resolve_runtime_apply_generation(
-            generation=state.generation,
-            apply_generation=state.apply_generation,
-        )
-        return bool(
-            diagnostics.status == "ok"
-            and diagnostics.converge_error is None
-            and diagnostics.active_cli_version == expected_version
-            and diagnostics.applied is not None
-            and diagnostics.applied.instance_id == state.instance_id
-            and diagnostics.applied.generation == expected_generation
-            and observation.observed_config_generation == expected_generation
-            and observation.observed_manifest_etag == diagnostics.applied.etag
-            and observation.observed_source_revision == diagnostics.applied.source_revision
-        )
-
-    # Explicit hosted identities without Hosted V2 state are Legacy V1
-    # deployments (or incomplete provisioning), never Connected fallbacks.
-    if agent.registration_key is None:
-        return False
-
-    # registration_key is necessary but not sufficient: historical Admin
-    # registration without an explicit id created the same key for Legacy V1
-    # Hosted deployments. Only a fresh current self-managed registration writes
-    # this positive Connected origin marker; ambiguous historical rows remain
-    # NULL and fail closed even if old environment-bound keys are later removed.
-    if agent.connected_agent_registered_at is None:
-        return False
-
-    # A persisted environment-bound workload key is independent positive
-    # evidence against the Connected path. Its absence is never used as proof.
-    if has_environment_bound_key:
-        return False
-
-    observed_at = agent.project_skill_reconcile_observed_at
-    if observed_at is None:
-        return False
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=UTC)
-    age = datetime.now(UTC) - observed_at
-    return (
-        agent.agent_type in _CONNECTED_PROJECT_SKILL_AGENT_TYPES
-        and agent.project_skill_reconcile_version == PROJECT_SKILL_RECONCILE_VERSION
-        and timedelta(0) <= age <= CONNECTED_PROJECT_SKILL_CAPABILITY_TTL
     )
 
 
@@ -590,23 +431,19 @@ async def assert_project_skill_write_compatible(
 ) -> list[UUID]:
     """Lock the graph and prove a Cloud Skill write has one runtime owner."""
     agent_ids = await lock_project_runtime_graph(db, project_id)
-    proposed_identities: tuple[ProjectSkillRuntimeIdentity, ...] = ()
     if local_skill_key is not None:
         proposed_identities = tuple(
             identity
             for identity in await _project_skill_identities(db, project_id)
             if identity.source_skill_key != skill_key
         ) + (project_skill_runtime_identity(skill_key, local_skill_key),)
-    for agent_id in agent_ids:
-        if local_skill_key is None:
-            await _assert_agent_project_skill_delivery_supported(db, agent_id=agent_id)
-            continue
-        await _assert_agent_accepts_project_skills(
-            db,
-            agent_id=agent_id,
-            project_id=project_id,
-            skill_identities=proposed_identities,
-        )
+        for agent_id in agent_ids:
+            await _assert_agent_accepts_project_skills(
+                db,
+                agent_id=agent_id,
+                project_id=project_id,
+                skill_identities=proposed_identities,
+            )
     if enforce_total_limit:
         await _assert_project_skill_write_capacity(
             db,
