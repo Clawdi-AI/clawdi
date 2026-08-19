@@ -33,7 +33,14 @@ def _multipart_body(*, skill_key: str | None) -> tuple[bytes, str]:
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_preflight_rejects_invalid_key_before_inner_app():
+@pytest.mark.parametrize(
+    ("skill_key", "expected_status"),
+    [("../system", 422), ("team/install", 400)],
+)
+async def test_skill_upload_preflight_rejects_unsafe_legacy_project_keys_before_inner_app(
+    skill_key: str,
+    expected_status: int,
+):
     called = False
 
     async def inner_app(_scope: Scope, _receive: Receive, _send: Send) -> None:
@@ -42,19 +49,22 @@ async def test_skill_upload_preflight_rejects_invalid_key_before_inner_app():
         raise AssertionError("inner app should not receive invalid skill uploads")
 
     app = SkillUploadPreflightMiddleware(inner_app)
-    body, content_type = _multipart_body(skill_key=".system")
+    body, content_type = _multipart_body(skill_key=skill_key)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.post(
-            "/v1/projects/00000000-0000-0000-0000-000000000000/skills/upload",
+            "/api/projects/00000000-0000-0000-0000-000000000000/skills/upload",
             content=body,
             headers={"Content-Type": content_type},
         )
 
-    assert response.status_code == 422
-    assert response.json() == {"detail": "Invalid skill_key"}
+    assert response.status_code == expected_status
+    if expected_status == 422:
+        assert response.json() == {"detail": "Invalid skill_key"}
+    else:
+        assert "reserved suffix" in response.json()["detail"]
     assert called is False
 
 

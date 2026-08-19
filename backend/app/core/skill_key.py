@@ -40,6 +40,17 @@ def is_valid_skill_key(skill_key: str) -> bool:
     )
 
 
+def is_legacy_hidden_skill_key(skill_key: str) -> bool:
+    """Accept only otherwise-valid keys with dot-prefixed components."""
+    parts = skill_key.split("/")
+    visible_key = "/".join(part.removeprefix(".") for part in parts)
+    return (
+        len(skill_key) <= MAX_SKILL_KEY_LEN
+        and visible_key != skill_key
+        and is_valid_skill_key(visible_key)
+    )
+
+
 def validate_derived_skill_key(skill_key: str) -> str:
     """Validate a server-derived skill_key before storage.
 

@@ -59,6 +59,7 @@ from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
 from app.routes.sharing import router as sharing_router
 from app.routes.skills import agent_router as skills_agent_router
+from app.routes.skills import legacy_project_upload_router as skills_legacy_project_upload_router
 from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
@@ -387,6 +388,13 @@ _VERSIONED_ROUTERS = (
     sharing_router,
     me_router,
     agent_project_bindings_router,
+)
+# This released /api upload adapter must precede the generic /api project
+# router; it is intentionally absent from /v1 and OpenAPI.
+app.include_router(
+    skills_legacy_project_upload_router,
+    prefix="/api",
+    include_in_schema=False,
 )
 for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")

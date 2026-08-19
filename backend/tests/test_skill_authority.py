@@ -337,6 +337,65 @@ async def test_generic_agent_project_upload_and_delete_support_mixed_cli_version
 
 
 @pytest.mark.asyncio
+async def test_legacy_hidden_project_upload_requires_authentication(
+    anon_client: httpx.AsyncClient,
+    environment_project,
+):
+    response = await anon_client.post(
+        f"/api/projects/{environment_project.id}/skills/upload",
+        data={"skill_key": "archive/.system/tool", "content_hash": "a" * 64},
+        files={"file": ("metadata.tar.gz", b"not materializable", "application/gzip")},
+    )
+
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.asyncio
+async def test_generic_agent_project_upload_truthfully_ignores_legacy_hidden_metadata(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    seed_project: Project,
+    environment_project,
+):
+    skill_key = "archive/.system/tool"
+    data = {"skill_key": skill_key, "content_hash": "a" * 64}
+    files = {"file": ("metadata.tar.gz", b"not materializable", "application/gzip")}
+
+    _set_auth(_api_key_auth(seed_user))
+    canonical = await client.post(
+        f"/v1/projects/{environment_project.id}/skills/upload",
+        data=data,
+        files=files,
+    )
+    assert canonical.status_code == 422, canonical.text
+
+    cloud = await client.post(
+        f"/api/projects/{seed_project.id}/skills/upload",
+        data=data,
+        files=files,
+    )
+    assert cloud.status_code == 422, cloud.text
+
+    ignored = await client.post(
+        f"/api/projects/{environment_project.id}/skills/upload",
+        data=data,
+        files=files,
+    )
+    assert ignored.status_code == 200, ignored.text
+    assert ignored.json() == {"ignored": True}
+    assert (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == environment_project.id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("protocol", "expected_status", "expected_code"),
     [
