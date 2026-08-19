@@ -110,7 +110,9 @@ export async function vaultResolveCommand(
 				);
 			} else {
 				console.error(
-					chalk.gray("Re-run with --allow-conflicts to use the first project in agent order."),
+					chalk.gray(
+						"Re-run with --allow-conflicts to use the first project by Vault resolution priority.",
+					),
 				);
 			}
 		} else {

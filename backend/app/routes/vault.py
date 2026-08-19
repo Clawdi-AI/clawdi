@@ -1007,7 +1007,8 @@ def _resolve_exact_vault_reference_from_index(
                 "reference": reference,
                 "message": (
                     "Vault reference exists in multiple attached Projects; "
-                    "pass allow_conflicts=true to use the first Project in Agent order."
+                    "pass allow_conflicts=true to use the first Project by "
+                    "Vault resolution priority."
                 ),
                 "winner": {
                     "source_project_id": winner["source_project_id"],
@@ -1295,7 +1296,8 @@ async def resolve_vault(
                     "key": key,
                     "message": (
                         "Vault key exists in multiple attached Projects; "
-                        "pass allow_conflicts=true to use the first Project in Agent order."
+                        "pass allow_conflicts=true to use the first Project by "
+                        "Vault resolution priority."
                     ),
                     "winner": {
                         "source_project_id": winner["source_project_id"],
@@ -1363,7 +1365,8 @@ async def resolve_vault(
                     "code": "vault_conflicts_blocked",
                     "message": (
                         "Vault keys conflict across attached Projects; "
-                        "pass allow_conflicts=true to use the first Project in Agent order."
+                        "pass allow_conflicts=true to use the first Project by "
+                        "Vault resolution priority."
                     ),
                     "conflicts": conflicts,
                 },

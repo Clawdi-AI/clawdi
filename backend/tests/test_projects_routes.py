@@ -224,21 +224,27 @@ async def test_agents_project_filter_is_explicit_and_bounded(
     assert [agent["id"] for agent in response.json()] == [str(channel_agent.id)]
 
 
-async def test_project_batch_link_is_additive_for_two_owned_agents(
+async def test_project_batch_link_preserves_an_existing_owned_agent(
     client,
     db_session,
     workspace_project,
     channel_agent,
     second_channel_agent,
 ):
+    first_link = await client.post(
+        f"/v1/agents/{channel_agent.id}/project-bindings/context",
+        json={"project_id": str(workspace_project.id)},
+    )
+    assert first_link.status_code == 200, first_link.text
+
     linked = await client.post(
         f"/v1/projects/{workspace_project.id}/agents",
-        json={"agent_ids": [str(channel_agent.id), str(second_channel_agent.id)]},
+        json={"agent_ids": [str(second_channel_agent.id)]},
     )
     assert linked.status_code == 200, linked.text
     assert linked.json() == {
         "project_id": str(workspace_project.id),
-        "bound_agent_ids": [str(channel_agent.id), str(second_channel_agent.id)],
+        "bound_agent_ids": [str(second_channel_agent.id)],
     }
 
     bindings = (
