@@ -2045,9 +2045,6 @@ export function ensureAuthProfileStoreForLocalUpdate(agentDir) {
   appendFileSync(callsPath, "ensure " + agentDir + "\\n");
   return readStore(agentDir);
 }
-export function resolveOpenClawAgentDir() {
-  return process.env.OPENCLAW_AGENT_DIR || defaultAgentDir();
-}
 export function listProfilesForProvider(store, provider) {
   appendFileSync(callsPath, "list " + provider + "\\n");
   const providerKey = provider.trim().toLowerCase();
