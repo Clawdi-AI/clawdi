@@ -205,20 +205,20 @@ interface RuntimeWatchTickOptions {
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
-class RuntimeAgentPluginReconcileError extends Error {
+class RuntimeResourceProjectionReconcileError extends Error {
+	constructor(error: unknown) {
+		super(error instanceof Error ? error.message : String(error), { cause: error });
+		this.name = "RuntimeResourceProjectionReconcileError";
+	}
+}
+
+class RuntimeAgentPluginReconcileError extends RuntimeResourceProjectionReconcileError {
 	constructor(
 		readonly installationNames: readonly string[],
 		error: unknown,
 	) {
-		super(error instanceof Error ? error.message : String(error), { cause: error });
+		super(error);
 		this.name = "RuntimeAgentPluginReconcileError";
-	}
-}
-
-class RuntimeSkillProjectionReconcileError extends Error {
-	constructor(error: unknown) {
-		super(error instanceof Error ? error.message : String(error), { cause: error });
-		this.name = "RuntimeSkillProjectionReconcileError";
 	}
 }
 
@@ -2227,9 +2227,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 					error.installationNames,
 				);
 			}
-			resourceProjectionFailure =
-				error instanceof RuntimeAgentPluginReconcileError ||
-				error instanceof RuntimeSkillProjectionReconcileError;
+			resourceProjectionFailure = error instanceof RuntimeResourceProjectionReconcileError;
 			throw error;
 		}
 		if (applyResult.kind === "cli_handoff") {
@@ -2428,7 +2426,7 @@ async function applyRuntimeDesiredState(
 					},
 				);
 			} catch (error) {
-				throw new RuntimeSkillProjectionReconcileError(error);
+				throw new RuntimeResourceProjectionReconcileError(error);
 			}
 		}
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);

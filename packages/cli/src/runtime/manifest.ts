@@ -4676,10 +4676,11 @@ function openClawPluginInstallMatchesSpec(
 	install: z.infer<typeof openClawPluginInspectSchema>["install"],
 	spec: string,
 ): boolean {
-	if (spec.startsWith("clawhub:")) {
-		return install.source === "clawhub" && install.clawhubPackage === spec.slice("clawhub:".length);
+	const recordedSpecs = [install.spec, install.resolvedSpec];
+	if (install.source === "clawhub" && install.clawhubPackage) {
+		recordedSpecs.push(`clawhub:${install.clawhubPackage}`);
 	}
-	return install.spec === spec || install.resolvedSpec === spec;
+	return recordedSpecs.includes(spec);
 }
 
 function verifiedReceiptCurrentRevision(
@@ -7237,6 +7238,7 @@ export function convergeRuntimeManifest(
 				"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 			);
 		}
+		const rollbackPreservedRuntimeHealth = installErrors.length === installErrorCountBeforeRollback;
 		installErrors.unshift(`runtime apply failed: ${applyError}`);
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -7245,7 +7247,7 @@ export function convergeRuntimeManifest(
 			enabledRuntimes,
 			installErrors,
 			failureHealthImpact:
-				resourceProjectionFailure && installErrors.length === installErrorCountBeforeRollback + 1
+				resourceProjectionFailure && rollbackPreservedRuntimeHealth
 					? "resource_projection"
 					: "runtime",
 			projectedProviderIds: Object.fromEntries(

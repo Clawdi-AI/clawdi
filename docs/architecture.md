@@ -396,7 +396,7 @@ native runtime contracts: Hermes receives the signed `SKILL.md` URL through
 invalidates the signed file lookup.
 
 Hermes URL delivery follows the upstream native adapter verified at
-[`NousResearch/hermes-agent@e624e9fde561e1add9388384012b295fde669ade`](https://github.com/NousResearch/hermes-agent/blob/e624e9fde561e1add9388384012b295fde669ade/tools/skills_hub.py#L1431-L1528):
+[`NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0`](https://github.com/NousResearch/hermes-agent/blob/aec331899e4748739927fddf02a54327e64419a0/tools/skills_hub.py#L1425-L1558):
 it installs `SKILL.md` plus explicitly referenced files from the supported
 Skill directories and runs Hermes' normal quarantine and security scan. The
 CLI compares the native result with that exact projection; an older Hermes

@@ -263,11 +263,7 @@ case "$*" in
 	printf '%s\\n' '${JSON.stringify(pluginInspectFixture(input.pluginSourcePath))}' > '${input.inspectStatePath}'
 	;;
   "plugins install @openclaw/discord")
-	if [ -f '${input.pluginSourcePath}' ]; then
-	  printf 'plugin already exists: %s\\n' '${input.pluginSourcePath}' >&2
-	  exit 1
-	fi
-	exit 64
+	exit 1
 	;;
   "config patch --stdin") cat >/dev/null ;;
   *) exit 64 ;;

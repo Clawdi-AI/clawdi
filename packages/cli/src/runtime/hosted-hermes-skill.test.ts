@@ -38,8 +38,7 @@ with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
 if sys.argv[1:3] == ["skills", "install"]:
     assert "--yes" in sys.argv and "--name" in sys.argv
     name = sys.argv[sys.argv.index("--name") + 1]
-    if os.environ.get("FAKE_HERMES_INSTALL_BLOCK") == "1":
-        print("Installation blocked: Blocked by the native security policy.")
+    if os.environ.get("FAKE_HERMES_INSTALL_NOOP") == "1":
         raise SystemExit(0)
     target = root / name
     marker = root / ".native-installed" / name
@@ -108,7 +107,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			archiveSha256: "b".repeat(64),
 			tarBytes: readFileSync(archive),
 		};
-		process.env.FAKE_HERMES_INSTALL_BLOCK = "1";
+		process.env.FAKE_HERMES_INSTALL_NOOP = "1";
 
 		expect(() =>
 			hostedHermesSkillExactSourceDriver.install({
@@ -117,14 +116,12 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				skill,
 				previouslyReserved: false,
 			}),
-		).toThrow(
-			"did not preserve the exact native catalog projection: Installation blocked: Blocked by the native security policy.",
-		);
+		).toThrow("did not preserve the exact native catalog projection");
 		expect(readFileSync(commandLog, "utf8").trim()).toBe(
 			`skills install ${installUrl} --name review-pr --yes`,
 		);
 		expect(existsSync(join(home, ".hermes", "skills", "review-pr"))).toBe(false);
-		delete process.env.FAKE_HERMES_INSTALL_BLOCK;
+		delete process.env.FAKE_HERMES_INSTALL_NOOP;
 	});
 
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {

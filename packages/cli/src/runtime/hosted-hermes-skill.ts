@@ -1,6 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
@@ -86,18 +85,11 @@ function runHermesUninstall(input: { home: string; appRoot: string }, skillId: s
 	return runHermes(input, ["skills", "uninstall", skillId], "y\n");
 }
 
-function installFailureDiagnostic(result: ReturnType<typeof runHermes>): string | null {
-	const output = sanitizeMetadata(String(result.stderr || result.stdout));
-	const marker = "Installation blocked:";
-	const markerIndex = output.lastIndexOf(marker);
-	return markerIndex === -1 ? null : safeTruncate(output.slice(markerIndex), 500);
-}
-
 const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "assets", "examples"]);
 const HERMES_SUPPORT_REFERENCE =
 	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
 
-/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@e624e9fde561e1add9388384012b295fde669ade. */
+/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0. */
 function expectedHermesNativeTree(sourceDir: string) {
 	const catalogTree = collectManagedSkillTree(sourceDir);
 	const skillMd = catalogTree?.get("SKILL.md");
@@ -177,9 +169,8 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 									`Hermes official install produced invalid Skill bytes and native rollback failed: ${String(rollback.stderr || rollback.stdout).trim() || (existsSync(target) ? "Skill target still exists" : "unknown error")}`,
 								);
 						}
-						const diagnostic = installFailureDiagnostic(result);
 						throw new Error(
-							`Hermes official install did not preserve the exact native catalog projection${diagnostic ? `: ${diagnostic}` : ""}`,
+							"Hermes official install did not preserve the exact native catalog projection",
 						);
 					}
 					writeManagedSkillReceipt(receipt);
