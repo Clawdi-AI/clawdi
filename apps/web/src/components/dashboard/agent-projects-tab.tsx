@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Link2, Plus, Trash2 } from "lucide-react";
+import { Link2, Plus, Save, Trash2 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -28,7 +28,6 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -86,6 +85,9 @@ export function AgentProjectsTab({
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+			}),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
 			queryClient.invalidateQueries({ queryKey: ["skills"] }),
 			queryClient.invalidateQueries({ queryKey: ["vaults"] }),
@@ -144,14 +146,14 @@ function AgentProjectsPanel({
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(() => new Set());
-	const [linkOpen, setLinkOpen] = useState(false);
+	const [managedProjectIds, setManagedProjectIds] = useState<Set<string>>(() => new Set());
+	const [manageOpen, setManageOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectDescription, setNewProjectDescription] = useState("");
 	// React Query pending state is post-render. These refs reject a second
 	// submit synchronously, before another mutation can queue in the same frame.
-	const linkExistingLockedRef = useRef(false);
+	const manageProjectsLockedRef = useRef(false);
 	const createProjectLockedRef = useRef(false);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
@@ -160,7 +162,7 @@ function AgentProjectsPanel({
 		() => new Map(projects.map((project) => [project.id, project])),
 		[projects],
 	);
-	const linkProjects = useMemo(
+	const manageableProjects = useMemo(
 		() => projects.filter(isCustomProject).sort(compareProjectsForUse),
 		[projects],
 	);
@@ -168,29 +170,43 @@ function AgentProjectsPanel({
 		() => new Set(bindings.map((binding) => binding.project_id)),
 		[bindings],
 	);
-	const selectedProjects = linkProjects.filter(
-		(project) => selectedProjectIds.has(project.id) && !linkedProjectIds.has(project.id),
-	);
+	const projectIdsToAdd = manageableProjects
+		.filter((project) => managedProjectIds.has(project.id) && !linkedProjectIds.has(project.id))
+		.map((project) => project.id);
+	const projectIdsToRemove = manageableProjects
+		.filter((project) => linkedProjectIds.has(project.id) && !managedProjectIds.has(project.id))
+		.map((project) => project.id);
+	const hasProjectChanges = projectIdsToAdd.length > 0 || projectIdsToRemove.length > 0;
 
-	const linkContexts = useMutation({
-		mutationFn: async (projectIds: string[]) => {
+	const updateProjectLinks = useMutation({
+		mutationFn: async ({
+			addProjectIds,
+			removeProjectIds,
+		}: {
+			addProjectIds: string[];
+			removeProjectIds: string[];
+		}) => {
 			return unwrap(
-				await api.POST("/v1/agents/{agent_id}/projects", {
+				await api.PATCH("/v1/agents/{agent_id}/projects", {
 					params: { path: { agent_id: agentId } },
-					body: { project_ids: projectIds },
+					body: {
+						add_project_ids: addProjectIds,
+						remove_project_ids: removeProjectIds,
+					},
 				}),
 			);
 		},
-		onSuccess: async (_response, projectIds) => {
+		onSuccess: async () => {
 			await onChanged();
-			setSelectedProjectIds(new Set());
-			setLinkOpen(false);
-			toast.success(projectIds.length === 1 ? "Project linked" : "Projects linked");
+			setManageOpen(false);
+			toast.success("Project access updated");
 		},
 		onError: (error) =>
-			toast.error("Couldn't link Projects", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update Project access", {
+				description: normalizeApiError(error),
+			}),
 		onSettled: () => {
-			linkExistingLockedRef.current = false;
+			manageProjectsLockedRef.current = false;
 		},
 	});
 
@@ -218,11 +234,13 @@ function AgentProjectsPanel({
 		},
 	});
 
-	const submitExistingProjectLinks = () => {
-		const projectIds = selectedProjects.map((project) => project.id);
-		if (projectIds.length === 0 || linkExistingLockedRef.current) return;
-		linkExistingLockedRef.current = true;
-		linkContexts.mutate(projectIds);
+	const submitProjectChanges = () => {
+		if (!hasProjectChanges || manageProjectsLockedRef.current) return;
+		manageProjectsLockedRef.current = true;
+		updateProjectLinks.mutate({
+			addProjectIds: projectIdsToAdd,
+			removeProjectIds: projectIdsToRemove,
+		});
 	};
 
 	const submitCreateProject = () => {
@@ -273,12 +291,12 @@ function AgentProjectsPanel({
 						size="sm"
 						disabled={actionsDisabled}
 						onClick={() => {
-							setSelectedProjectIds(new Set());
-							setLinkOpen(true);
+							setManagedProjectIds(new Set(contexts.map((binding) => binding.project_id)));
+							setManageOpen(true);
 						}}
 					>
 						<Link2 className="size-3.5" />
-						Link projects
+						Manage projects
 					</Button>
 				</>
 			}
@@ -396,50 +414,43 @@ function AgentProjectsPanel({
 			)}
 
 			<Dialog
-				open={linkOpen}
-				onOpenChange={setLinkOpen}
+				open={manageOpen}
+				onOpenChange={setManageOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setSelectedProjectIds(new Set());
+					if (!open) setManagedProjectIds(new Set());
 				}}
 			>
 				<DialogContent className="sm:max-w-lg" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link projects to Agent</DialogTitle>
-						<DialogDescription>
-							Select Projects to add. Existing links stay in place.
-						</DialogDescription>
+						<DialogTitle>Manage projects</DialogTitle>
+						<DialogDescription>Choose which Projects this Agent can use.</DialogDescription>
 					</DialogHeader>
 					<form
 						className="space-y-4"
 						onSubmit={(event) => {
 							event.preventDefault();
-							submitExistingProjectLinks();
+							submitProjectChanges();
 						}}
 					>
-						{linkProjects.length > 0 ? (
+						{manageableProjects.length > 0 ? (
 							<div className="max-h-80 divide-y overflow-y-auto rounded-md border">
-								{linkProjects.map((project) => {
+								{manageableProjects.map((project) => {
 									const name = displayProjectName(project);
 									const checkboxId = `agent-project-${project.id}`;
-									const isLinked = linkedProjectIds.has(project.id);
-									const isSelected = selectedProjectIds.has(project.id);
+									const isSelected = managedProjectIds.has(project.id);
 									return (
 										<label
 											key={project.id}
 											htmlFor={checkboxId}
-											className={
-												isLinked
-													? "flex items-center gap-3 bg-muted/30 px-3 py-3"
-													: "flex cursor-pointer items-center gap-3 px-3 py-3 hover:bg-muted/20"
-											}
+											className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/20"
 										>
 											<Checkbox
 												id={checkboxId}
-												checked={isLinked || isSelected}
-												disabled={isLinked || linkContexts.isPending}
-												aria-label={isLinked ? `${name} already linked` : `Link ${name}`}
+												checked={isSelected}
+												disabled={updateProjectLinks.isPending}
+												aria-label={`${name} access`}
 												onCheckedChange={(checked) => {
-													setSelectedProjectIds((current) => {
+													setManagedProjectIds((current) => {
 														const next = new Set(current);
 														if (checked === true) next.add(project.id);
 														else next.delete(project.id);
@@ -452,32 +463,24 @@ function AgentProjectsPanel({
 												showKind={false}
 												className="min-w-0 flex-1"
 											/>
-											<Badge variant={isLinked ? "secondary" : "outline"} className="shrink-0">
-												{isLinked ? "Linked" : "Available"}
-											</Badge>
 										</label>
 									);
 								})}
 							</div>
 						) : (
-							<p className="text-sm text-muted-foreground">No Projects are available to link.</p>
+							<p className="text-sm text-muted-foreground">No Projects are available.</p>
 						)}
 						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setLinkOpen(false)}>
+							<Button type="button" variant="ghost" onClick={() => setManageOpen(false)}>
 								Cancel
 							</Button>
-							<Button
-								type="submit"
-								disabled={selectedProjects.length === 0 || linkContexts.isPending}
-							>
-								{linkContexts.isPending ? (
+							<Button type="submit" disabled={!hasProjectChanges || updateProjectLinks.isPending}>
+								{updateProjectLinks.isPending ? (
 									<Spinner className="size-3.5" />
 								) : (
-									<Plus className="size-3.5" />
+									<Save className="size-3.5" />
 								)}
-								{linkContexts.isPending
-									? "Linking…"
-									: `Link ${selectedProjects.length} ${selectedProjects.length === 1 ? "Project" : "Projects"}`}
+								Save changes
 							</Button>
 						</DialogFooter>
 					</form>

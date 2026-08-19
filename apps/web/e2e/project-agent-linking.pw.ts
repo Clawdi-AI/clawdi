@@ -32,14 +32,12 @@ async function fulfill(route: Route, body: unknown) {
 	await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-test("Project link dialog adds multiple Agents without replacing existing links", async ({
-	page,
-}) => {
+test("Project Agent manager saves additions and removals as one delta", async ({ page }) => {
 	const linkedAgent = agent(linkedAgentId, "Review Agent");
 	const buildAgent = agent(buildAgentId, "Build Agent");
 	const deployAgent = agent(deployAgentId, "Deploy Agent");
-	let availableAgentsLinked = false;
-	const linkBodies: unknown[] = [];
+	const managedAgentIds = new Set([linkedAgentId]);
+	const deltaBodies: unknown[] = [];
 	let projectDetailReads = 0;
 	let filteredAgentReads = 0;
 	const project = () => ({
@@ -56,7 +54,7 @@ test("Project link dialog adds multiple Agents without replacing existing links"
 		owner_handle: "dev-user",
 		skill_count: 0,
 		vault_count: 0,
-		agent_count: availableAgentsLinked ? 3 : 1,
+		agent_count: managedAgentIds.size,
 		member_count: 0,
 	});
 
@@ -64,12 +62,18 @@ test("Project link dialog adds multiple Agents without replacing existing links"
 		const request = route.request();
 		const url = new URL(request.url());
 		const path = url.pathname;
-		if (path === `/v1/projects/${projectId}/agents` && request.method() === "POST") {
-			linkBodies.push(request.postDataJSON());
-			availableAgentsLinked = true;
+		if (path === `/v1/projects/${projectId}/agents` && request.method() === "PATCH") {
+			const body = request.postDataJSON() as {
+				add_agent_ids: string[];
+				remove_agent_ids: string[];
+			};
+			deltaBodies.push(body);
+			for (const agentId of body.remove_agent_ids) managedAgentIds.delete(agentId);
+			for (const agentId of body.add_agent_ids) managedAgentIds.add(agentId);
 			return fulfill(route, {
 				project_id: projectId,
-				bound_agent_ids: [buildAgentId, deployAgentId],
+				added_agent_ids: body.add_agent_ids,
+				removed_agent_ids: body.remove_agent_ids,
 			});
 		}
 		if (path === `/v1/projects/${projectId}`) {
@@ -82,7 +86,7 @@ test("Project link dialog adds multiple Agents without replacing existing links"
 				filteredAgentReads += 1;
 				return fulfill(
 					route,
-					availableAgentsLinked ? [linkedAgent, buildAgent, deployAgent] : [linkedAgent],
+					[linkedAgent, buildAgent, deployAgent].filter((agent) => managedAgentIds.has(agent.id)),
 				);
 			}
 			return fulfill(route, [linkedAgent, buildAgent, deployAgent]);
@@ -100,23 +104,28 @@ test("Project link dialog adds multiple Agents without replacing existing links"
 	const agentsSection = page.locator("#agents");
 	await expect(agentsSection.getByText("Review Agent", { exact: true })).toBeVisible();
 
-	await page.getByRole("button", { name: "Link project" }).click();
-	const dialog = page.getByRole("dialog", { name: "Link project to Agents" });
-	const linkedCheckbox = dialog.getByRole("checkbox", { name: "Review Agent already linked" });
+	await page.getByRole("button", { name: "Manage agents" }).click();
+	const dialog = page.getByRole("dialog", { name: "Manage agents" });
+	const linkedCheckbox = dialog.getByRole("checkbox", { name: "Review Agent access" });
 	await expect(linkedCheckbox).toBeChecked();
-	await expect(linkedCheckbox).toBeDisabled();
-	await expect(dialog.getByText("Linked", { exact: true })).toBeVisible();
+	await expect(linkedCheckbox).toBeEnabled();
+	await expect(dialog.getByText("Linked", { exact: true })).toHaveCount(0);
+	await expect(dialog.getByText("Available", { exact: true })).toHaveCount(0);
 
-	await dialog.getByRole("checkbox", { name: "Link Build Agent" }).click();
-	await dialog.getByRole("checkbox", { name: "Link Deploy Agent" }).click();
-	await dialog.getByRole("button", { name: "Link 2 Agents" }).click();
+	await linkedCheckbox.click();
+	await expect(linkedCheckbox).not.toBeChecked();
+	const buildCheckbox = dialog.getByRole("checkbox", { name: "Build Agent access" });
+	await expect(buildCheckbox).not.toBeChecked();
+	await buildCheckbox.click();
+	await dialog.getByRole("button", { name: "Save changes" }).click();
 
-	await expect.poll(() => linkBodies).toEqual([{ agent_ids: [buildAgentId, deployAgentId] }]);
+	await expect
+		.poll(() => deltaBodies)
+		.toEqual([{ add_agent_ids: [buildAgentId], remove_agent_ids: [linkedAgentId] }]);
 	await expect(dialog).toHaveCount(0);
-	await expect(agentsSection.getByText("3", { exact: true })).toBeVisible();
-	await expect(agentsSection.getByText("Review Agent", { exact: true })).toBeVisible();
+	await expect(agentsSection.getByText("Review Agent", { exact: true })).toHaveCount(0);
 	await expect(agentsSection.getByText("Build Agent", { exact: true })).toBeVisible();
-	await expect(agentsSection.getByText("Deploy Agent", { exact: true })).toBeVisible();
+	await expect(agentsSection.getByText("Deploy Agent", { exact: true })).toHaveCount(0);
 	await expect.poll(() => projectDetailReads).toBeGreaterThan(1);
 	await expect.poll(() => filteredAgentReads).toBeGreaterThan(1);
 });

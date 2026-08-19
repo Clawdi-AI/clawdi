@@ -13,6 +13,7 @@ import {
 	LogOut,
 	Pencil,
 	Plus,
+	Save,
 	Share2,
 	Trash2,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import {
 	Suspense,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { toast } from "sonner";
@@ -630,8 +632,8 @@ export default function ProjectDetailPage({
 	const peopleCount: CountValue | undefined = project.member_count + 1;
 	const agentCount: CountValue | undefined = project.agent_count;
 
-	const addToAgentDialog = (trigger: ReactElement) => (
-		<UseProjectWithAgentDialog
+	const manageAgentsDialog = (trigger: ReactElement) => (
+		<ManageProjectAgentsDialog
 			project={project}
 			environments={environments.data ?? []}
 			linkedEnvironments={boundAgents.data ?? []}
@@ -645,7 +647,7 @@ export default function ProjectDetailPage({
 			onOpenChange={handleUseWithAgentOpenChange}
 		>
 			{trigger}
-		</UseProjectWithAgentDialog>
+		</ManageProjectAgentsDialog>
 	);
 	const projectIdentity = identityFor(displayProjectName(project));
 	const workspaceIdentity = identityFor("Workspace");
@@ -751,10 +753,10 @@ export default function ProjectDetailPage({
 						) : !focus && !isAgentScope && isShareableProject ? (
 							<>
 								{!joinedFromShare
-									? addToAgentDialog(
+									? manageAgentsDialog(
 											<Button size="sm">
 												<Bot className="mr-1.5 size-3.5" />
-												Link project
+												Manage agents
 											</Button>,
 										)
 									: null}
@@ -786,7 +788,7 @@ export default function ProjectDetailPage({
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
-							Link project
+							Manage agents
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -1568,7 +1570,7 @@ function SharedAccessPanel({
 	);
 }
 
-function UseProjectWithAgentDialog({
+function ManageProjectAgentsDialog({
 	project,
 	environments,
 	linkedEnvironments,
@@ -1591,8 +1593,8 @@ function UseProjectWithAgentDialog({
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
-	const projectName = displayProjectName(project);
-	const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(() => new Set());
+	const [managedAgentIds, setManagedAgentIds] = useState<Set<string>>(() => new Set());
+	const updateAgentsLockedRef = useRef(false);
 	const orderedEnvironments = useMemo(
 		() => [...environments].sort(compareAgentEnvironments),
 		[environments],
@@ -1601,25 +1603,42 @@ function UseProjectWithAgentDialog({
 		() => new Set(linkedEnvironments.map((environment) => environment.id)),
 		[linkedEnvironments],
 	);
-	const selectedAgents = orderedEnvironments.filter(
-		(environment) => selectedAgentIds.has(environment.id) && !linkedAgentIds.has(environment.id),
-	);
+	const agentIdsToAdd = orderedEnvironments
+		.filter(
+			(environment) => managedAgentIds.has(environment.id) && !linkedAgentIds.has(environment.id),
+		)
+		.map((environment) => environment.id);
+	const agentIdsToRemove = orderedEnvironments
+		.filter(
+			(environment) => linkedAgentIds.has(environment.id) && !managedAgentIds.has(environment.id),
+		)
+		.map((environment) => environment.id);
+	const hasAgentChanges = agentIdsToAdd.length > 0 || agentIdsToRemove.length > 0;
 
 	useEffect(() => {
-		if (!open) setSelectedAgentIds(new Set());
-	}, [open]);
+		setManagedAgentIds(open ? new Set(linkedAgentIds) : new Set());
+	}, [open, linkedAgentIds]);
 
-	const addProjectToAgents = useMutation({
-		mutationFn: async (agentIds: string[]) => {
-			if (agentIds.length === 0) throw new Error("Choose at least one agent");
+	const updateProjectAgents = useMutation({
+		mutationFn: async ({
+			addAgentIds,
+			removeAgentIds,
+		}: {
+			addAgentIds: string[];
+			removeAgentIds: string[];
+		}) => {
 			return unwrap(
-				await api.POST("/v1/projects/{project_id}/agents", {
+				await api.PATCH("/v1/projects/{project_id}/agents", {
 					params: { path: { project_id: project.id } },
-					body: { agent_ids: agentIds },
+					body: {
+						add_agent_ids: addAgentIds,
+						remove_agent_ids: removeAgentIds,
+					},
 				}),
 			);
 		},
-		onSuccess: async (_response, agentIds) => {
+		onSuccess: async (response) => {
+			const changedAgentIds = [...response.added_agent_ids, ...response.removed_agent_ids];
 			await Promise.all([
 				qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
 				qc.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
@@ -1627,30 +1646,41 @@ function UseProjectWithAgentDialog({
 				qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
 				qc.invalidateQueries({ queryKey: ["skills"] }),
 				qc.invalidateQueries({ queryKey: ["vaults"] }),
-				...agentIds.map((agentId) =>
+				...changedAgentIds.flatMap((agentId) => [
 					qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) }),
-				),
+					qc.invalidateQueries({
+						queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+					}),
+				]),
 			]);
-			setSelectedAgentIds(new Set());
-			toast.success("Project linked", {
-				description: `${agentIds.length} ${agentIds.length === 1 ? "Agent can" : "Agents can"} now use ${projectName}'s Skills and attached Vaults.`,
-			});
+			toast.success("Agent access updated");
 			onOpenChange(false);
 		},
 		onError: (error) => {
-			toast.error("Couldn't link project", {
+			toast.error("Couldn't update Agent access", {
 				description: normalizeApiError(error),
 			});
 		},
+		onSettled: () => {
+			updateAgentsLockedRef.current = false;
+		},
 	});
+	const submitAgentChanges = () => {
+		if (!hasAgentChanges || updateAgentsLockedRef.current) return;
+		updateAgentsLockedRef.current = true;
+		updateProjectAgents.mutate({
+			addAgentIds: agentIdsToAdd,
+			removeAgentIds: agentIdsToRemove,
+		});
+	};
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Link project to Agents</DialogTitle>
-					<DialogDescription>Select Agents to add. Existing links stay in place.</DialogDescription>
+					<DialogTitle>Manage agents</DialogTitle>
+					<DialogDescription>Choose which Agents can use this Project.</DialogDescription>
 				</DialogHeader>
 
 				{isLoadingAgents ? (
@@ -1667,29 +1697,31 @@ function UseProjectWithAgentDialog({
 						</AlertDescription>
 					</Alert>
 				) : (
-					<div className="space-y-4">
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							submitAgentChanges();
+						}}
+					>
 						<div className="max-h-80 divide-y overflow-y-auto rounded-md border">
 							{orderedEnvironments.map((environment) => {
 								const name = agentDisplayName(environment);
 								const checkboxId = `project-agent-${environment.id}`;
-								const isLinked = linkedAgentIds.has(environment.id);
-								const isSelected = selectedAgentIds.has(environment.id);
+								const isSelected = managedAgentIds.has(environment.id);
 								return (
 									<label
 										key={environment.id}
 										htmlFor={checkboxId}
-										className={cn(
-											"flex items-center gap-3 px-3 py-3",
-											isLinked ? "bg-muted/30" : "cursor-pointer hover:bg-muted/20",
-										)}
+										className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/20"
 									>
 										<Checkbox
 											id={checkboxId}
-											checked={isLinked || isSelected}
-											disabled={isLinked || addProjectToAgents.isPending}
-											aria-label={isLinked ? `${name} already linked` : `Link ${name}`}
+											checked={isSelected}
+											disabled={updateProjectAgents.isPending}
+											aria-label={`${name} access`}
 											onCheckedChange={(checked) => {
-												setSelectedAgentIds((current) => {
+												setManagedAgentIds((current) => {
 													const next = new Set(current);
 													if (checked === true) next.add(environment.id);
 													else next.delete(environment.id);
@@ -1713,29 +1745,21 @@ function UseProjectWithAgentDialog({
 											]}
 											className="min-w-0 flex-1"
 										/>
-										<Badge variant={isLinked ? "secondary" : "outline"} className="shrink-0">
-											{isLinked ? "Linked" : "Available"}
-										</Badge>
 									</label>
 								);
 							})}
 						</div>
 
 						<DialogFooter>
-							<Button variant="ghost" onClick={() => onOpenChange(false)}>
+							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button
-								onClick={() => addProjectToAgents.mutate(selectedAgents.map((agent) => agent.id))}
-								disabled={selectedAgents.length === 0 || addProjectToAgents.isPending}
-							>
-								{addProjectToAgents.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-								{addProjectToAgents.isPending
-									? "Linking…"
-									: `Link ${selectedAgents.length} ${selectedAgents.length === 1 ? "Agent" : "Agents"}`}
+							<Button type="submit" disabled={!hasAgentChanges || updateProjectAgents.isPending}>
+								{updateProjectAgents.isPending ? <Spinner /> : <Save className="size-3.5" />}
+								Save changes
 							</Button>
 						</DialogFooter>
-					</div>
+					</form>
 				)}
 			</DialogContent>
 		</Dialog>

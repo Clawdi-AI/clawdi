@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -9,7 +10,7 @@ from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
 from app.services import sync_events
-from tests.conftest import create_env_with_project
+from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
 
 pytestmark = pytest.mark.asyncio
 
@@ -274,6 +275,136 @@ async def test_project_batch_link_preserves_an_existing_owned_agent(
         str(channel_agent.id),
         str(second_channel_agent.id),
     }
+
+
+async def test_project_agent_delta_is_atomic_and_skips_noop_notifications(
+    client,
+    db_session,
+    seed_user,
+    workspace_project,
+    channel_agent,
+    second_channel_agent,
+):
+    conflicting_agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"project-delta-conflict-{uuid.uuid4().hex[:8]}",
+        machine_name="Conflict Agent",
+        agent_type="openclaw",
+    )
+    conflicting_state = await create_test_hosted_runtime_state(
+        db_session,
+        conflicting_agent,
+        runtime_name="openclaw",
+    )
+    conflicting_state.skills = {"entries": {"duplicate": {"enabled": False, "version": 1}}}
+    db_session.add(
+        Skill(
+            user_id=seed_user.id,
+            project_id=workspace_project.id,
+            skill_key="duplicate",
+            name="Duplicate",
+            description="Conflicts with one Agent Workspace",
+            content_hash="d" * 64,
+            authority=SKILL_AUTHORITY_CLOUD,
+        )
+    )
+    await db_session.commit()
+    user_id = seed_user.id
+    project_id = workspace_project.id
+    first_agent_id = channel_agent.id
+    second_agent_id = second_channel_agent.id
+    conflicting_agent_id = conflicting_agent.id
+
+    existing = await client.post(
+        f"/v1/agents/{first_agent_id}/project-bindings/context",
+        json={"project_id": str(project_id)},
+    )
+    assert existing.status_code == 200, existing.text
+
+    first_queue = sync_events.subscribe(
+        user_id,
+        frozenset(),
+        environment_id=first_agent_id,
+    )
+    second_queue = sync_events.subscribe(
+        user_id,
+        frozenset(),
+        environment_id=second_agent_id,
+    )
+    conflict_queue = sync_events.subscribe(
+        user_id,
+        frozenset(),
+        environment_id=conflicting_agent_id,
+    )
+    try:
+        changed = await client.patch(
+            f"/v1/projects/{project_id}/agents",
+            json={
+                "add_agent_ids": [str(second_agent_id)],
+                "remove_agent_ids": [str(first_agent_id)],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json() == {
+            "project_id": str(project_id),
+            "added_agent_ids": [str(second_agent_id)],
+            "removed_agent_ids": [str(first_agent_id)],
+        }
+        for queue, agent_id in (
+            (first_queue, first_agent_id),
+            (second_queue, second_agent_id),
+        ):
+            assert queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(agent_id),
+            }
+            assert queue.empty()
+        assert conflict_queue.empty()
+
+        noop = await client.patch(
+            f"/v1/projects/{project_id}/agents",
+            json={
+                "add_agent_ids": [str(second_agent_id)],
+                "remove_agent_ids": [str(first_agent_id)],
+            },
+        )
+        assert noop.status_code == 200, noop.text
+        assert noop.json()["added_agent_ids"] == []
+        assert noop.json()["removed_agent_ids"] == []
+        assert first_queue.empty()
+        assert second_queue.empty()
+        assert conflict_queue.empty()
+
+        conflict = await client.patch(
+            f"/v1/projects/{project_id}/agents",
+            json={
+                "add_agent_ids": [str(conflicting_agent_id)],
+                "remove_agent_ids": [str(second_agent_id)],
+            },
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["code"] == "project_skill_name_conflict"
+        await db_session.rollback()
+
+        linked_agent_ids = set(
+            (
+                await db_session.execute(
+                    select(AgentProjectBinding.agent_id).where(
+                        AgentProjectBinding.project_id == project_id,
+                        AgentProjectBinding.binding_type == "context",
+                    )
+                )
+            ).scalars()
+        )
+        assert linked_agent_ids == {second_agent_id}
+        assert first_queue.empty()
+        assert second_queue.empty()
+        assert conflict_queue.empty()
+    finally:
+        sync_events.unsubscribe(user_id, first_queue)
+        sync_events.unsubscribe(user_id, second_queue)
+        sync_events.unsubscribe(user_id, conflict_queue)
 
 
 async def test_global_search_finds_projects_by_name_and_slug(client):
