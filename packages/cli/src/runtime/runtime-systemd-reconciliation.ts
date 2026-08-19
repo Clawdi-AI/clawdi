@@ -105,12 +105,6 @@ export interface OfficialRuntimeServicePlan {
 	}>;
 }
 
-export interface HermesDashboardArtifactPlan {
-	program: RuntimeSystemdUserProgram | null;
-	receiptKey: string | null;
-	target: RuntimeInstallReceiptTarget | null;
-}
-
 export interface RuntimeSystemdUserMutationPlan {
 	targets: string[];
 	symlinkTargets: string[];
@@ -668,170 +662,10 @@ export function planOfficialRuntimeServices(
 	return { targets, pending };
 }
 
-// Hermes upstream bounds Node dependency installation at 600s and declares
-// npm "<11.10.0 || >=12.0.0" in its root package.json:
-// https://github.com/NousResearch/hermes-agent/blob/4b60979dc188655eb4fb81abf292890147ec2d4c/scripts/install.sh#L2797-L2803
-// https://github.com/NousResearch/hermes-agent/blob/4b60979dc188655eb4fb81abf292890147ec2d4c/package.json#L55-L58
-const HERMES_NPM_VERSION_TIMEOUT_MS = 30_000;
-const HERMES_NPM_INSTALL_TIMEOUT_MS = 600_000;
-const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
 const RUNTIME_VERSION_PROBE_TIMEOUT_MS = 10_000;
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
 const RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS = 15_000;
-// This key deliberately reuses the existing officialServices receipt group:
-// the artifact is a prerequisite of Clawdi's compatibility dashboard service,
-// not a new install authority or receipt schema.
-const HERMES_DASHBOARD_ARTIFACT_RECEIPT = "hermes-dashboard:artifact";
-const HERMES_DASHBOARD_NPM_CONSTRAINT = "<11.10.0 || >=12.0.0";
-
-function isHermesDashboardProgram(program: RuntimeSystemdUserProgram): boolean {
-	return program.runtime === "hermes" && program.service === "dashboard";
-}
-
-function hermesDashboardArtifactIndex(paths: RuntimePaths): string {
-	return join(paths.userHome, ".hermes", "hermes-agent", "hermes_cli", "web_dist", "index.html");
-}
-
-function hermesDashboardArtifactCurrentRevision(paths: RuntimePaths): string | null {
-	const root = dirname(hermesDashboardArtifactIndex(paths));
-	try {
-		const rootStat = lstatSync(root);
-		if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
-		const files: Array<{ path: string; contentSha256: string }> = [];
-		const visit = (directory: string, relativeDirectory: string): boolean => {
-			for (const entry of readdirSync(directory, { withFileTypes: true })) {
-				const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-				const path = join(directory, entry.name);
-				if (entry.isSymbolicLink()) return false;
-				if (entry.isDirectory()) {
-					if (!visit(path, relativePath)) return false;
-					continue;
-				}
-				if (!entry.isFile()) return false;
-				files.push({
-					path: relativePath,
-					contentSha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
-				});
-			}
-			return true;
-		};
-		if (!visit(root, "") || !files.some((file) => file.path === "index.html")) return null;
-		return runtimeContentSha256(files.sort((left, right) => left.path.localeCompare(right.path)));
-	} catch {
-		return null;
-	}
-}
-
-function hermesDashboardArtifactDesiredRevision(commandRevision: string): string {
-	return runtimeContentSha256({
-		commandRevision,
-		npmConstraint: HERMES_DASHBOARD_NPM_CONSTRAINT,
-		commands: ["npm install --workspace web", "npm run build -w web"],
-		installTimeoutMs: HERMES_NPM_INSTALL_TIMEOUT_MS,
-		buildTimeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
-	});
-}
-
-export function planHermesDashboardArtifact(
-	programs: RuntimeSystemdUserProgram[],
-	paths: RuntimePaths,
-	receipts: RuntimeInstallReceipts | null,
-	executePrerequisites: boolean,
-): HermesDashboardArtifactPlan {
-	if (!executePrerequisites) return { program: null, receiptKey: null, target: null };
-	const program = programs.find(isHermesDashboardProgram);
-	if (!program) return { program: null, receiptKey: null, target: null };
-	const command = runtimeCommandPath("hermes", paths.userHome) ?? program.command;
-	const commandRevision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
-	const desiredRevision = commandRevision
-		? hermesDashboardArtifactDesiredRevision(commandRevision)
-		: "";
-	const currentRevision = () => hermesDashboardArtifactCurrentRevision(paths);
-	const expectedCurrentRevision = commandRevision
-		? verifiedReceiptCurrentRevision(
-				receipts?.officialServices[HERMES_DASHBOARD_ARTIFACT_RECEIPT],
-				desiredRevision,
-				currentRevision,
-			)
-		: null;
-	return {
-		program,
-		receiptKey: HERMES_DASHBOARD_ARTIFACT_RECEIPT,
-		target: { desiredRevision, currentRevision, expectedCurrentRevision },
-	};
-}
-
-function supportedHermesNpmVersion(version: string): boolean {
-	const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
-	if (!match) return false;
-	const major = Number(match[1]);
-	const minor = Number(match[2]);
-	return major < 11 || (major === 11 && minor < 10) || major >= 12;
-}
-
-function validateHermesNpmVersion(
-	paths: RuntimePaths,
-	appRoot: string,
-	egressSystemCaFile?: string,
-): string | null {
-	const result = spawnRuntimeUserCommand("npm", ["--version"], paths.userHome, appRoot, {
-		timeoutMs: HERMES_NPM_VERSION_TIMEOUT_MS,
-		egressSystemCaFile,
-	});
-	if (result.status !== 0 || result.error) {
-		return `Hermes dashboard prerequisite could not determine npm version: ${
-			result.error?.message ?? `npm exited ${result.status ?? "without status"}`
-		}`;
-	}
-	const version = String(result.stdout ?? "").trim();
-	if (!supportedHermesNpmVersion(version)) {
-		return `Hermes dashboard prerequisite requires npm <11.10.0 or >=12.0.0; found ${
-			version || "an unrecognized version"
-		}`;
-	}
-	return null;
-}
-
-export function prepareHermesDashboardArtifact(
-	plan: HermesDashboardArtifactPlan,
-	paths: RuntimePaths,
-	egressSystemCaFile?: string,
-): string | null {
-	if (!plan.program || !plan.target || plan.target.expectedCurrentRevision) return null;
-	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
-	const command = runtimeCommandPath("hermes", paths.userHome) ?? plan.program.command;
-	const commandRevision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
-	if (!commandRevision) {
-		return `Hermes dashboard prerequisite could not determine the installed Hermes command revision: ${command}`;
-	}
-	plan.target.desiredRevision = hermesDashboardArtifactDesiredRevision(commandRevision);
-	if (!commandResolvable("npm")) {
-		return "Hermes dashboard prerequisite command is unavailable: npm";
-	}
-	const versionError = validateHermesNpmVersion(paths, appRoot, egressSystemCaFile);
-	if (versionError) return versionError;
-	try {
-		runRuntimeUserCommand("npm", ["install", "--workspace", "web"], "", paths.userHome, appRoot, {
-			timeoutMs: HERMES_NPM_INSTALL_TIMEOUT_MS,
-			egressSystemCaFile,
-		});
-		runRuntimeUserCommand("npm", ["run", "build", "-w", "web"], "", paths.userHome, appRoot, {
-			timeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
-			egressSystemCaFile,
-		});
-		const currentRevision = hermesDashboardArtifactCurrentRevision(paths);
-		if (!currentRevision) {
-			return `Hermes dashboard prerequisite did not produce ${hermesDashboardArtifactIndex(paths)}`;
-		}
-		plan.target.expectedCurrentRevision = currentRevision;
-		return null;
-	} catch (error) {
-		return `Hermes dashboard prerequisite failed: ${
-			error instanceof Error ? error.message : String(error)
-		}`;
-	}
-}
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -1035,12 +869,9 @@ function writeSystemdUserUnit(
 	});
 }
 
-function writeSystemdUserDropIn(input: {
+function writeSystemdUserEnvironmentDropIn(input: {
 	paths: RuntimePaths;
 	name: string;
-	command: string;
-	args: string[];
-	cwd: string;
 	env: Record<string, string>;
 }): string {
 	const unitName = systemdUnitFileName(input.name);
@@ -1061,12 +892,9 @@ function writeSystemdUserDropIn(input: {
 		"",
 		"[Service]",
 		`# ClawdiEnvironmentRevision=${envRevision}`,
-		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		'Environment="XDG_RUNTIME_DIR=%t"',
 		'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"',
 		`EnvironmentFile=${systemdPath(envFile)}`,
-		"ExecStart=",
-		`ExecStart=${systemdExec(input.command, input.args)}`,
 		"",
 	];
 	return withRuntimeUserFileAccess(() => {
@@ -1610,10 +1438,6 @@ function writeRuntimeSystemdUserProgram(input: {
 	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[4];
 }): string {
 	const { program } = input;
-	const args =
-		isHermesDashboardProgram(program) && !program.args.includes("--skip-build")
-			? [...program.args, "--skip-build"]
-			: program.args;
 	const name = runtimeSystemdProgramName(program);
 	const unitName = systemdUnitFileName(name);
 	const runtimeEnv = { ...program.env };
@@ -1643,12 +1467,9 @@ function writeRuntimeSystemdUserProgram(input: {
 		...(descriptor?.unitEnv?.(unitName) ?? {}),
 	};
 	if (officialRuntimeServiceInstallArgs(program)) {
-		return writeSystemdUserDropIn({
+		return writeSystemdUserEnvironmentDropIn({
 			paths: input.paths,
 			name,
-			command: program.command,
-			args,
-			cwd: program.cwd,
 			env,
 		});
 	}
@@ -1657,7 +1478,7 @@ function writeRuntimeSystemdUserProgram(input: {
 		name,
 		description: `Clawdi hosted ${program.runtime}${program.service ? ` ${program.service}` : ""}`,
 		command: program.command,
-		args,
+		args: program.args,
 		cwd: program.cwd,
 		env,
 	});

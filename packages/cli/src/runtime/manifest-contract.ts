@@ -30,6 +30,41 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
 };
 
+const HOSTED_GATEWAY_RUN_ARGS = ["gateway", "run"] as const;
+const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
+	"gateway",
+	"run",
+	"--allow-unconfigured",
+	"--port",
+	"18789",
+	"--bind",
+	"lan",
+	"--force",
+] as const;
+const LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS = ["gateway", "run", "--replace"] as const;
+
+function exactStringArray(value: unknown, expected: readonly string[]): boolean {
+	return (
+		Array.isArray(value) &&
+		value.length === expected.length &&
+		value.every((entry, index) => entry === expected[index])
+	);
+}
+
+export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: unknown): boolean {
+	// Keep the previous producer shape readable while the fleet moves to a CLI
+	// that leaves command ownership with the official gateway unit.
+	return (
+		exactStringArray(value, HOSTED_GATEWAY_RUN_ARGS) ||
+		exactStringArray(
+			value,
+			runtime === "openclaw"
+				? LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS
+				: LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS,
+		)
+	);
+}
+
 const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
 	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
@@ -909,22 +944,10 @@ function validateHostedRuntimeManifestV2(
 	}
 	const run = manifest.runtimes.openclaw?.run;
 	const gatewayArgs = run?.args;
-	if (
-		JSON.stringify(gatewayArgs) !==
-		JSON.stringify([
-			"gateway",
-			"run",
-			"--allow-unconfigured",
-			"--port",
-			"18789",
-			"--bind",
-			"lan",
-			"--force",
-		])
-	) {
+	if (!isHostedGatewayRunArgs("openclaw", gatewayArgs)) {
 		ctx.addIssue({
 			code: "custom",
-			message: "OpenClaw v2 gateway must bind directly to the pod network on port 18789",
+			message: "OpenClaw v2 gateway must use the official gateway run command",
 			path: ["runtimes", "openclaw", "run", "args"],
 		});
 	}
