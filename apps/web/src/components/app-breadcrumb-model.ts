@@ -1,6 +1,7 @@
 import type { BreadcrumbSegmentTitles } from "@/components/breadcrumb-title";
 import {
 	type AgentRouteSearch,
+	agentPluginDetailHref,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
@@ -115,6 +116,11 @@ function buildAgentBreadcrumbTrail(
 
 	const sectionLabel = agentSectionLabel(route.section);
 	const sectionHref = agentSectionHref(route.agentId, route.section);
+	if (route.pluginName) {
+		const detailHref = agentPluginDetailHref(route.agentId, route.pluginName);
+		trail.push({ key: route.section, label: sectionLabel, href: sectionHref });
+		return finishTrail(trail, segmentTitle(segmentTitles, detailHref) ?? route.pluginName);
+	}
 	const detailTitle =
 		route.sessionId || route.memoryId || route.connectorName ? overrideTitle : null;
 	if (route.sessionId || route.memoryId || route.connectorName) {

@@ -104,6 +104,18 @@ describe("AppBreadcrumb semantic trail", () => {
 			"Connectors",
 			"GitHub",
 		]);
+		expect(
+			labels(`/agents/${agentId}/plugins/sui-agent`, {
+				segmentTitles: {
+					[`/agents/${agentId}/plugins/sui-agent`]: { title: "Sui Agent" },
+				},
+			}),
+		).toEqual(["e2e-2", "Plugins", "Sui Agent"]);
+		expect(labels(`/agents/${agentId}/plugins/sui-agent`)).toEqual([
+			"e2e-2",
+			"Plugins",
+			"sui-agent",
+		]);
 	});
 
 	test("keeps every Agent parent link clean while reading explicit detail context", () => {

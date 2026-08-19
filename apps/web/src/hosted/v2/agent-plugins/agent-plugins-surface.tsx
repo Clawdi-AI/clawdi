@@ -6,6 +6,7 @@ import { AlertCircle, Blocks, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { useSetBreadcrumbSegmentTitle } from "@/components/breadcrumb-title";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS, HeroCardSkeleton } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
@@ -31,6 +32,7 @@ import {
 	agentPluginMatches,
 	assignAgentPluginGroups,
 	buildAgentPluginInventory,
+	pluginDisplayName,
 	pluginHasUpdate,
 } from "./agent-plugin-model";
 
@@ -203,6 +205,10 @@ export function AgentPluginsSurface({
 		!initialLoading && selectedPlugin
 			? inventory.find((item) => item.name === selectedPlugin)
 			: null;
+	useSetBreadcrumbSegmentTitle(
+		selectedItem ? agentPluginDetailHref(agentId, selectedItem.name) : null,
+		selectedItem ? pluginDisplayName(selectedItem) : null,
+	);
 	const categories = useMemo(
 		() =>
 			[
