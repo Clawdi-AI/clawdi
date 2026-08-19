@@ -3844,7 +3844,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("canonicalizes legacy managed v2 Chat input to Responses while replacing models", () => {
+	it("projects explicit OpenClaw API-key ownership while preserving stale auth profiles", () => {
 		const home = join(root, "model-switch", "home", "clawdi");
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
 		const run = join(root, "model-switch", "run", "clawdi");
@@ -3864,6 +3864,12 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		} = writeOpenClawConfigMutationFixture(home, {
 			gateway: { mode: "local", port: 19_001 },
 			logging: { level: "debug" },
+			auth: {
+				profiles: {
+					"clawdi:default": { provider: "clawdi", mode: "api_key" },
+				},
+				order: { clawdi: ["clawdi:default"] },
+			},
 			models: {
 				providers: {
 					"user-owned": {
@@ -3934,6 +3940,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			expect.objectContaining({ id: "sol" }),
 		]);
 		expect(appliedConfig.models.providers.clawdi.api).toBe("openai-responses");
+		expect(appliedConfig.models.providers.clawdi.auth).toBe("api-key");
 		expect(appliedConfig.models.providers.clawdi.apiKey).toEqual({
 			source: "env",
 			provider: "default",
@@ -3944,6 +3951,10 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		]);
 		expect(appliedConfig.gateway).toEqual({ mode: "local", port: 19_001 });
 		expect(appliedConfig.logging).toEqual({ level: "debug" });
+		expect(appliedConfig.auth).toEqual({
+			profiles: { "clawdi:default": { provider: "clawdi", mode: "api_key" } },
+			order: { clawdi: ["clawdi:default"] },
+		});
 		expect(JSON.stringify(appliedConfig)).not.toContain("legacy-");
 
 		writeTestRuntimeAppliedState(paths, loaded, convergence);

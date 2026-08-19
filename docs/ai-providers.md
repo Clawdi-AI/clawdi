@@ -230,9 +230,15 @@ This contract is verified against `openclaw@2026.7.1-2`, official source commit
 [`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
 The discovery skip is implemented in
 [`models-config.plan.ts`](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/agents/models-config.plan.ts#L115-L120).
-API-key providers use env-backed `apiKey` references. Codex OAuth uses the
-native subscription route and the public provider-auth SDK with a namespaced
-Clawdi-owned profile.
+API-key providers use env-backed `apiKey` references and explicitly set
+`auth: "api-key"`. This makes the provider entry the credential owner, so its
+SecretRef resolves before generic persisted-profile fallback. The precedence
+contract is verified in OpenClaw's
+[`model-auth-provider-config.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider-config.ts#L216-L226)
+and
+[`model-auth-provider.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider.ts#L310-L337).
+Codex OAuth uses the native subscription route and the public provider-auth SDK
+with a namespaced Clawdi-owned profile.
 
 OAuth reconcile is durable and target-native:
 

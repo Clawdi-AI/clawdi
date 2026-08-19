@@ -946,10 +946,16 @@ http.createServer((request, response) => {
 	expect(gatewayEnv).not.toMatch(/^OPENAI_API_KEY=/m);
 	expect(gatewayEnv).not.toContain("sk-clawdi-provider");
 	const projectedOpenClawConfig = JSON.parse(readFileSync(openClawConfig, "utf8")) as {
-		models?: { providers?: Record<string, { baseUrl?: string; apiKey?: { id?: string } }> };
+		models?: {
+			providers?: Record<
+				string,
+				{ auth?: string; baseUrl?: string; apiKey?: { id?: string } }
+			>;
+		};
 	};
 	expect(projectedOpenClawConfig.models?.providers?.clawdi).toMatchObject({
 		baseUrl: "https://ai-gateway.example.test/v1",
+		auth: "api-key",
 		apiKey: { id: "CLAWDI_AI_API_KEY" },
 	});
 	expect(existsSync(join(runtimeHome, ".clawdi"))).toBe(false);

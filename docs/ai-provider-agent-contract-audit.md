@@ -143,7 +143,8 @@ Core Hosted convergence:
 
 - sends a target-native provider patch instead of editing OpenClaw config
   files directly;
-- projects API-key providers with environment-backed `apiKey` references;
+- projects API-key providers with explicit `auth: "api-key"` ownership and
+  environment-backed `apiKey` references;
 - uses the native OpenAI subscription route for Codex OAuth;
 - owns only a namespaced `openai:clawdi-<provider-hash>` profile;
 - preserves unrelated profiles and order entries; and

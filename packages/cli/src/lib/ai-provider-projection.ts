@@ -289,20 +289,24 @@ function buildOpenClawProjection(
 	const projectedProviders = Object.fromEntries(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
-			.map((provider) => [
-				openClawProjectedProviderId(provider),
-				compactObject({
-					baseUrl: openClawBaseUrlForProvider(provider),
-					api: openClawProviderApiLabel(provider.api_mode),
-					apiKey: openClawApiKeyEnvForProvider(provider)
-						? { source: "env", provider: "default", id: openClawApiKeyEnvForProvider(provider) }
-						: undefined,
-					models: openClawModels(
-						provider,
-						provider.id === primaryProvider.id ? primaryModel.model : undefined,
-					),
-				}),
-			]),
+			.map((provider) => {
+				const apiKeyEnv = openClawApiKeyEnvForProvider(provider);
+				return [
+					openClawProjectedProviderId(provider),
+					compactObject({
+						baseUrl: openClawBaseUrlForProvider(provider),
+						api: openClawProviderApiLabel(provider.api_mode),
+						auth: apiKeyEnv ? "api-key" : undefined,
+						apiKey: apiKeyEnv
+							? { source: "env", provider: "default", id: apiKeyEnv }
+							: undefined,
+						models: openClawModels(
+							provider,
+							provider.id === primaryProvider.id ? primaryModel.model : undefined,
+						),
+					}),
+				];
+			}),
 	);
 	const usesNativeCodex = providers.some(usesNativeCodexOpenAiProvider);
 	const usesEnvSecrets = providers
