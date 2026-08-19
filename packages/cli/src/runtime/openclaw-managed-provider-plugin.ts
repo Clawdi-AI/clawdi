@@ -110,16 +110,16 @@ export function managedOpenClawProviderPluginMutationTargets(home: string): stri
 	];
 }
 
-function sourceIsCurrent(sourceDir: string): boolean {
+function pluginDirectoryIsCurrent(directory: string): boolean {
 	try {
-		const stat = lstatSync(sourceDir);
+		const stat = lstatSync(directory);
 		if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
-		const entries = readdirSync(sourceDir).sort();
+		const entries = readdirSync(directory).sort();
 		if (entries.length !== pluginFiles.size) return false;
 		return entries.every((entry) => {
 			const expected = pluginFiles.get(entry);
 			if (expected === undefined) return false;
-			const path = join(sourceDir, entry);
+			const path = join(directory, entry);
 			const file = lstatSync(path);
 			return file.isFile() && !file.isSymbolicLink() && readFileSync(path, "utf8") === expected;
 		});
@@ -129,17 +129,20 @@ function sourceIsCurrent(sourceDir: string): boolean {
 	}
 }
 
-function materializePluginSource(home: string): string {
-	const sourceDir = managedOpenClawProviderPluginSourceDir(home);
-	if (sourceIsCurrent(sourceDir)) return sourceDir;
+function materializePluginDirectory(directory: string): string {
+	if (pluginDirectoryIsCurrent(directory)) return directory;
 	withRuntimeUserFileAccess(() => {
-		rmSync(sourceDir, { recursive: true, force: true });
-		mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
+		rmSync(directory, { recursive: true, force: true });
+		mkdirSync(directory, { recursive: true, mode: 0o700 });
 		for (const [name, content] of pluginFiles) {
-			writeFileSync(join(sourceDir, name), content, { mode: 0o600 });
+			writeFileSync(join(directory, name), content, { mode: 0o600 });
 		}
 	});
-	return sourceDir;
+	return directory;
+}
+
+function materializePluginSource(home: string): string {
+	return materializePluginDirectory(managedOpenClawProviderPluginSourceDir(home));
 }
 
 type PluginInspect = ReturnType<typeof managedOpenClawPluginInspectSchema.parse>;
@@ -287,6 +290,15 @@ export function requireManagedOpenClawProviderMarker(input: {
 	if (result.status !== 0) {
 		throw commandFailure("OpenClaw managed provider env marker verification failed", result);
 	}
+}
+
+export function stageManagedOpenClawProviderMarker(input: {
+	home: string;
+	commandPath?: string | null;
+	appRoot?: string | null;
+}): void {
+	materializePluginDirectory(managedOpenClawProviderPluginInstallDir(input.home));
+	requireManagedOpenClawProviderMarker(input);
 }
 
 export function ensureManagedOpenClawProviderPlugin(input: {

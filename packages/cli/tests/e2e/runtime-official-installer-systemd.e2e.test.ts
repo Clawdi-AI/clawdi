@@ -573,6 +573,22 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(beforeBytes).toBeGreaterThan(5_000);
 		expect(rejectedBytes).toBeLessThan(Math.floor(beforeBytes * 0.5));
 		expect(readFileSync(configPath, "utf8")).toBe(originalConfig);
+		writeFileSync(
+			configPath,
+			`${JSON.stringify(
+				{
+					...existingConfig,
+					agents: {
+						...existingConfig.agents,
+						list: [{ id: "main", workspace: null }],
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			{ mode: 0o600 },
+		);
+		chownSync(configPath, runtimeUid, runtimeGid);
 
 		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 		expect(convergence.installErrors).toEqual([]);
@@ -672,6 +688,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			auth: { mode: "token", token: "size-drop-gateway-token" },
 		});
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
+		expect(appliedConfig.agents.list).toEqual([{ id: "main" }]);
 		expect(appliedConfig.auth).toEqual({
 			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
 			order: { openai: ["openai:user"] },

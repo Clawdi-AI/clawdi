@@ -1233,6 +1233,7 @@ state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 plugin_root="$state_dir/extensions/clawdi-managed-provider"
 if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   test -f "$plugin_root/openclaw.plugin.json" || exit 1
+  test -f "$plugin_root/.source-path" || exit 1
   enabled=false
   status=disabled
   if [ -f "$plugin_root/.enabled" ]; then enabled=true; status=loaded; fi
@@ -1310,7 +1311,20 @@ function writeOpenClawConfigMutationFixture(
 set -euo pipefail
 printf '%s\n' "$*" >> '${commandLog}'
 if [ "\${1:-}" = "--version" ]; then printf 'openclaw test-version\n'; exit 0; fi
-if [ "$*" = "agents list --json" ]; then printf '[{"id":"main","workspace":"${home}/.openclaw/workspace"}]\n'; exit 0; fi
+if [ "$*" = "agents list --json" ]; then
+  if grep -q 'legacyInvalidConfig' '${configPath}' 2>/dev/null; then exit 1; fi
+  printf '[{"id":"main","workspace":"${home}/.openclaw/workspace"}]\n'
+  exit 0
+fi
+if [ "$*" = "config validate --json" ] && grep -q 'legacyInvalidConfig' '${configPath}' 2>/dev/null; then
+  printf '{"valid":false,"path":"${configPath}","issues":[{"path":"meta","message":"Invalid input"},{"path":"agents","message":"Invalid input"}]}\n'
+  exit 1
+fi
+if [ "$*" = "doctor --fix --non-interactive" ]; then
+  grep -q 'CLAWDI_AI_API_KEY' "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json"
+  printf '{}\n' > '${configPath}'
+  exit 0
+fi
 ${fakeManagedOpenClawProviderPluginCommands()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then cat >/dev/null; fi
 exit 0
@@ -2435,6 +2449,37 @@ function hostedSingleProviderModeLoad(
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		},
 	};
+}
+
+function hostedManagedOpenClawV2Load(home: string, generation: number): RuntimeManifestLoad {
+	const load = hostedSingleProviderModeLoad(home, "openclaw", "configured", generation, {
+		hostedV2: true,
+	});
+	const providerId = "clawdi-v2-deployment-42";
+	const providers = {
+		[providerId]: {
+			...load.manifest.projection?.providers?.["clawdi-managed"],
+			model: "sol",
+			models: [{ id: "sol" }],
+			apiMode: "openai_chat",
+		},
+	};
+	load.manifest = {
+		...load.manifest,
+		runtimes: {
+			openclaw: {
+				...load.manifest.runtimes.openclaw,
+				provider_ids: [providerId],
+				primary_model: { provider_id: providerId, model: "sol" },
+			},
+		},
+		projection: { ...load.manifest.projection, providers },
+		egressProfiles: hostedManifestEgressProfiles({
+			providers,
+			terminalTooling: load.manifest.projection?.terminalTooling,
+		}),
+	};
+	return load;
 }
 
 function writeTestRuntimeAppliedState(
@@ -3986,6 +4031,43 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
+	it("stages the managed provider marker before repairing invalid OpenClaw config", () => {
+		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
+		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
+		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
+		const { configPath, commandLog } = writeOpenClawConfigMutationFixture(home, {
+			legacyInvalidConfig: true,
+			meta: "legacy",
+			agents: [],
+		});
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
+			join(root, "invalid-openclaw-config", "provider-auth"),
+			join(root, "invalid-openclaw-config", "provider-auth-calls.log"),
+		);
+		const paths = getRuntimePaths();
+		const loaded = hostedManagedOpenClawV2Load(home, 1);
+		loaded.manifest.egressEngine = seedMitmproxyCache(paths);
+
+		const convergence = convergeRuntimeManifest(loaded, paths, {
+			hostedOpenClawSkillDriver,
+		});
+
+		expect(convergence.installErrors).toEqual([]);
+		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
+		const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
+		const installIndex = commands.findIndex(
+			(command) => command.startsWith("plugins install ") && command.endsWith(" --force"),
+		);
+		expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
+		expect(installIndex).toBeGreaterThan(doctorIndex);
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
+	});
+
 	it("removes reserved OpenClaw provider auth from every store only for managed env projection", () => {
 		const home = join(root, "model-switch", "home", "clawdi");
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
@@ -4142,37 +4224,8 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 
 		const paths = getRuntimePaths();
-		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "configured", 2, {
-			hostedV2: true,
-		});
+		const loaded = hostedManagedOpenClawV2Load(home, 2);
 		loaded.manifest.egressEngine = seedMitmproxyCache(paths);
-		const providerId = "clawdi-v2-deployment-42";
-		const providers = {
-			[providerId]: {
-				...loaded.manifest.projection?.providers?.["clawdi-managed"],
-				model: "sol",
-				models: [{ id: "sol" }],
-				apiMode: "openai_chat",
-			},
-		};
-		loaded.manifest = {
-			...loaded.manifest,
-			runtimes: {
-				openclaw: {
-					...loaded.manifest.runtimes.openclaw,
-					provider_ids: [providerId],
-					primary_model: { provider_id: providerId, model: "sol" },
-				},
-			},
-			projection: {
-				...loaded.manifest.projection,
-				providers,
-			},
-			egressProfiles: hostedManifestEgressProfiles({
-				providers,
-				terminalTooling: loaded.manifest.projection?.terminalTooling,
-			}),
-		};
 
 		const beforeFailedConfig = readFileSync(openclawConfig, "utf8");
 		const beforeFailedStores = new Map(
