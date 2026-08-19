@@ -126,6 +126,7 @@ function subscription(
 ): Subscription {
 	return {
 		subscription_id: subscriptionId,
+		subscription_kind: "paid",
 		plan_slug: "compute_performance",
 		funding_source: "stripe",
 		status,
@@ -460,6 +461,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 				items: [
 					subscription("active", "active", { agent_name: longAgentName }),
 					subscription("included", "active", {
+						subscription_kind: "included_basic",
 						plan_slug: "compute_basic",
 						funding_source: null,
 						price_cents: 0,

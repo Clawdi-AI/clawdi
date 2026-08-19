@@ -77,6 +77,7 @@ function subscriptionManagement(
 ): ComputeSubscriptionManagementResult {
 	return computeSubscriptionManagement({
 		entitlement: {
+			subscriptionKind: subscription.subscription_kind,
 			deploymentId: subscription.deployment_id,
 			planSlug: subscription.plan_slug,
 			fundingSource: subscription.funding_source,
@@ -99,10 +100,13 @@ function subscriptionManagement(
 export function computeSubscriptionAssignment(
 	subscription: Pick<
 		ComputeSubscriptionListItem,
-		"deployment_id" | "is_orphan" | "subscription_id"
+		"deployment_id" | "is_orphan" | "subscription_id" | "subscription_kind"
 	>,
 	reusableSubscriptionIds: ReadonlySet<string>,
 ): "available" | "assigned" | "unavailable" {
+	if (subscription.subscription_kind === "included_basic") {
+		return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+	}
 	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";
 	return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
 }
@@ -154,6 +158,7 @@ function SubscriptionRow({
 	const pendingPlanSlug = pendingComputePlanSlug(subscription);
 	const actions = resolveComputeSubscriptionActions({
 		entitlement: {
+			subscriptionKind: subscription.subscription_kind,
 			deploymentId: subscription.deployment_id,
 			planSlug: subscription.plan_slug,
 			fundingSource: subscription.funding_source,
@@ -190,7 +195,10 @@ function SubscriptionRow({
 	})();
 	const hasActions =
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
-	const fundingSource = computeFundingSource(subscription.plan_slug, subscription);
+	const fundingSource =
+		subscription.subscription_kind === "included_basic"
+			? "included_basic"
+			: computeFundingSource(subscription.plan_slug, subscription);
 	const managementReason =
 		actions.find((candidate) => candidate.kind === "upgrade" || candidate.kind === "manage")
 			?.disabledReason ?? null;
@@ -212,17 +220,25 @@ function SubscriptionRow({
 		includeSchedule: !isHistoricalAccountSubscription(subscription),
 	});
 	const identity: ComputeSubscriptionIdentity =
-		assignment === "available"
-			? { kind: "available", label: "Available for a new agent" }
-			: assignment === "assigned" && agentHref
-				? {
-						kind: "agent",
-						name: agentTile?.name ?? subscription.agent_name ?? "Agent",
-						agentType: agentTile?.agentType ?? null,
-						avatarUrl: agentTile?.avatarUrl,
-						href: agentHref,
-					}
-				: { kind: "unavailable", label: "Deleted agent" };
+		subscription.subscription_kind === "included_basic"
+			? {
+					kind: "agent",
+					name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+					agentType: agentTile?.agentType ?? null,
+					avatarUrl: agentTile?.avatarUrl,
+					href: agentHref ?? undefined,
+				}
+			: assignment === "available"
+				? { kind: "available", label: "Available for a new agent" }
+				: assignment === "assigned" && agentHref
+					? {
+							kind: "agent",
+							name: agentTile?.name ?? subscription.agent_name ?? "Agent",
+							agentType: agentTile?.agentType ?? null,
+							avatarUrl: agentTile?.avatarUrl,
+							href: agentHref,
+						}
+					: { kind: "unavailable", label: "Deleted agent" };
 
 	return (
 		<li className="grid min-w-0 lg:row-span-5 lg:grid-rows-subgrid">

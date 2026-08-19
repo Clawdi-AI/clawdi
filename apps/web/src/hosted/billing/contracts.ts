@@ -16,6 +16,7 @@ export type ComputeCancelScheduledPlanChangeRequest =
 	Schemas["V2ComputeCancelScheduledPlanChangeRequest"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];
 export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
+export type IncludedBasicAvailability = Schemas["V2ComputeIncludedBasicAvailabilityResponse"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
 export type ComputePlanChangeProgress = Schemas["ComputePlanChangeProgress"];

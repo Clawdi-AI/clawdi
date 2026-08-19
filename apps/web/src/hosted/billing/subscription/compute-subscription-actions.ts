@@ -29,6 +29,7 @@ export type ComputeSubscriptionAction =
 	| ComputeSubscriptionRecoveryAction;
 
 export type ComputeSubscriptionActionEntitlement = {
+	subscriptionKind?: "included_basic" | "paid";
 	deploymentId: string | null | undefined;
 	planSlug: string | null | undefined;
 	fundingSource: "stripe" | "wallet" | null | undefined;
@@ -95,7 +96,10 @@ export function resolveComputeSubscriptionActions({
 		funding_source: entitlement.fundingSource,
 		price_cents: entitlement.priceCents,
 	});
-	const paid = fundingSource === "stripe" || fundingSource === "wallet";
+	const paid =
+		entitlement.subscriptionKind === "paid" ||
+		(entitlement.subscriptionKind === undefined &&
+			(fundingSource === "stripe" || fundingSource === "wallet"));
 	const canCancel = paid && !entitlement.cancelAtPeriodEnd && CANCELABLE_STATUSES.has(status);
 	const cancel = canCancel ? action("cancel") : null;
 

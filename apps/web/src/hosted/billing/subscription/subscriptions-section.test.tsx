@@ -26,6 +26,7 @@ function subscription(
 ): ComputeSubscriptionListItem {
 	return {
 		subscription_id: subscriptionId,
+		subscription_kind: "paid",
 		plan_slug: "compute_basic",
 		funding_source: "stripe",
 		status,
@@ -69,6 +70,14 @@ describe("SubscriptionsSection", () => {
 		expect(computeSubscriptionAssignment(staleOrphan, new Set([staleOrphan.subscription_id]))).toBe(
 			"available",
 		);
+		const staleIncluded = {
+			...staleOrphan,
+			subscription_kind: "included_basic" as const,
+			funding_source: null,
+		};
+		expect(
+			computeSubscriptionAssignment(staleIncluded, new Set([staleIncluded.subscription_id])),
+		).toBe("unavailable");
 		expect(computeSubscriptionAssignment(staleAssigned, new Set())).toBe("assigned");
 		expect(computeSubscriptionAssignment(staleOrphan, new Set())).toBe("unavailable");
 	});

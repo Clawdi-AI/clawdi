@@ -12,7 +12,6 @@ import {
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	type HostedDeployCheckoutRequest,
 	type HostedDeployComputePlanSlug,
-	type HostedDeployDeployment,
 	type HostedDeployManagedModel,
 	type HostedDeployOperation,
 	type HostedDeployPlan,
@@ -21,6 +20,7 @@ import {
 	type HostedDeployRuntime,
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionQuoteRequest,
+	type HostedIncludedBasicAvailability,
 	type HostedSavedAiProvider,
 	hostedAiProviderAvailabilityIssue,
 	hostedDeployRuntimeLabel,
@@ -31,7 +31,6 @@ import {
 	projectHostedDeployRequest,
 	resolveHostedDeployIncludedBasicSelection,
 	selectHostedDeployOfferForTerm,
-	usesHostedDeployIncludedBasicSlot,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
 import chalk from "chalk";
@@ -216,7 +215,7 @@ export function parseDeployCommandOptions(options: DeployCommandOptions): Parsed
 export interface HostedDeployGateway {
 	supportsPaidCheckout(): boolean;
 	getPlans(): Promise<HostedDeployPlan[]>;
-	listDeployments(): Promise<HostedDeployDeployment[]>;
+	getIncludedBasicAvailability(): Promise<HostedIncludedBasicAvailability>;
 	getManagedModels(): Promise<HostedDeployManagedModel[]>;
 	getSavedAiProviders(): Promise<HostedSavedAiProvider[]>;
 	quoteSubscription(
@@ -639,12 +638,13 @@ export async function runDeployFlow(
 				return [];
 			})
 		: Promise.resolve([]);
-	const [plans, deployments, managedModels, savedProviderInventory] = await Promise.all([
-		dependencies.client.getPlans(),
-		dependencies.client.listDeployments(),
-		needsManagedModels ? dependencies.client.getManagedModels() : Promise.resolve([]),
-		savedProvidersPromise,
-	]);
+	const [plans, includedBasicAvailability, managedModels, savedProviderInventory] =
+		await Promise.all([
+			dependencies.client.getPlans(),
+			dependencies.client.getIncludedBasicAvailability(),
+			needsManagedModels ? dependencies.client.getManagedModels() : Promise.resolve([]),
+			savedProvidersPromise,
+		]);
 	const savedProviders = projectUserSelectableAiProviders(savedProviderInventory);
 
 	let runtime = parsed.runtime ?? DEFAULT_HOSTED_DEPLOY_RUNTIME;
@@ -798,15 +798,11 @@ export async function runDeployFlow(
 	let term = parsed.billingTermMonths ?? DEFAULT_HOSTED_DEPLOY_BILLING_TERM;
 	const basicPlan = plans.find((plan) => plan.slug === "compute_basic");
 	const performancePlan = plans.find((plan) => plan.slug === "compute_performance");
-	const includedSlotUsage = usesHostedDeployIncludedBasicSlot(deployments);
 	let basicSelection = resolveHostedDeployIncludedBasicSelection({
 		basicPlan,
 		billingTermMonths: term,
-		includedSlotAvailable: existingBasicCreateRequest
-			? true
-			: includedSlotUsage === null
-				? null
-				: !includedSlotUsage,
+		includedSlotAvailable:
+			existingBasicCreateRequest || includedBasicAvailability.available_slots > 0,
 	});
 	let performanceSelection = performancePlan
 		? selectHostedDeployOfferForTerm(performancePlan, term)
@@ -899,11 +895,8 @@ export async function runDeployFlow(
 		basicSelection = resolveHostedDeployIncludedBasicSelection({
 			basicPlan,
 			billingTermMonths: term,
-			includedSlotAvailable: existingBasicCreateRequest
-				? true
-				: includedSlotUsage === null
-					? null
-					: !includedSlotUsage,
+			includedSlotAvailable:
+				existingBasicCreateRequest || includedBasicAvailability.available_slots > 0,
 		});
 		performanceSelection = performancePlan
 			? selectHostedDeployOfferForTerm(performancePlan, term)

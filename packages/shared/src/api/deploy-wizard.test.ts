@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
 	HostedDeployCheckoutUiMode,
-	HostedDeployDeployment,
 	HostedDeployPlan,
 	HostedDeployRequestStatus,
 } from "./deploy-wizard";
@@ -13,7 +12,6 @@ import {
 	projectHostedDeployRequest,
 	resolveHostedDeployIncludedBasicSelection,
 	selectHostedDeployOfferForTerm,
-	usesHostedDeployIncludedBasicSlot,
 	validateAndBuildHostedDeployRequest,
 } from "./deploy-wizard";
 
@@ -58,89 +56,6 @@ function plan(
 		ram_gb: 4,
 		disk_size: 20,
 		offers,
-	};
-}
-
-function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeployment {
-	return {
-		resource: {
-			id: "hdep_test",
-			name: "Hermes",
-			commercial_revision: 0,
-			deployment_target: "test",
-			metadata: {
-				generation: 1,
-				manifestETag: "manifest-1",
-				resourceVersion: "1",
-				createdAt: "2026-07-28T00:00:00Z",
-				updatedAt: "2026-07-28T00:00:00Z",
-			},
-			spec: {
-				schema_version: 1,
-				desired_lifecycle: "running",
-				runtime: "hermes",
-				runtime_version: "test",
-				resources: { vcpu: 2, memory_mib: 4096, disk_gib: 20 },
-				agents: [],
-				ports: [],
-				runtime_configuration: { providers: [], features: [] },
-				rollout_nonce: 0,
-				secret_references: [],
-			},
-			status: {
-				summary_state: "running",
-				observedGeneration: 1,
-				conditions: [],
-				driver_acknowledged_generation: 1,
-				driver_applied_generation: 1,
-				driver_observation_sequence: 1,
-				endpoints: [],
-			},
-		},
-		agent_id: "11111111-1111-4111-8111-111111111111",
-		clawdi_cloud_environments: {},
-		ai_provider_auth_kinds: { hermes: "managed" },
-		accepted_operation: null,
-		commercial_display: {
-			compute_subscription: {
-				status: "active",
-				funding_source: null,
-				payment_state: "ok",
-				billing_term_months: 1,
-				price_cents: 0,
-				currency: "usd",
-				cancel_at_period_end: false,
-			},
-			latest_funding_fact: null,
-		},
-		current_plan_slug: "compute_basic",
-		upgrade_available: true,
-		upgrade_eligibility: { eligible: true, reason: null },
-		compute_slot_occupancy:
-			occupiesSlot === null
-				? null
-				: {
-						occupies_slot: occupiesSlot,
-						backing_infra: occupiesSlot ? "present" : "absent",
-						reason: occupiesSlot ? "backing_infra_present" : "authoritative_absence",
-					},
-	};
-}
-
-function acceptedDeleteOperation(): NonNullable<HostedDeployDeployment["accepted_operation"]> {
-	return {
-		name: "operations/delete-hdep_test",
-		metadata: {
-			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-			deploymentId: "hdep_test",
-			verb: "delete",
-			targetGeneration: 2,
-			manifestETag: "manifest-delete",
-			createTime: "2026-07-28T00:01:00Z",
-			updateTime: "2026-07-28T00:01:00Z",
-		},
-		done: false,
-		response: null,
 	};
 }
 
@@ -253,48 +168,6 @@ describe("hosted deploy request contract", () => {
 describe("hosted deploy compute and payment contract", () => {
 	test("keeps every product checkout mode in the generated narrow union", () => {
 		expect(checkoutModeIsExact).toBe(true);
-	});
-
-	test("distinguishes an occupied, available, and unknown included Basic slot", () => {
-		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(true)])).toBe(true);
-		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(false)])).toBe(false);
-		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(null)])).toBeNull();
-	});
-
-	test("honors delete_accepted occupancy while backing infrastructure remains", () => {
-		const deleting = includedDeployment(false);
-		deleting.compute_slot_occupancy = {
-			occupies_slot: false,
-			backing_infra: "present",
-			reason: "delete_accepted",
-		};
-
-		expect(usesHostedDeployIncludedBasicSlot([deleting])).toBe(false);
-	});
-
-	test("optimistically releases the included Basic slot as soon as delete is accepted", () => {
-		const deleting = includedDeployment(true);
-		deleting.accepted_operation = acceptedDeleteOperation();
-
-		expect(usesHostedDeployIncludedBasicSlot([deleting])).toBe(false);
-		expect(usesHostedDeployIncludedBasicSlot([deleting, includedDeployment(true)])).toBe(true);
-	});
-
-	test("restores included Basic occupancy when an accepted delete is cancelled", () => {
-		const restored = includedDeployment(true);
-		const acceptedDelete = acceptedDeleteOperation();
-		restored.accepted_operation = {
-			...acceptedDelete,
-			done: true,
-			error: {
-				code: 1,
-				message: "Delete was cancelled before teardown.",
-				details: [],
-			},
-			response: null,
-		};
-
-		expect(usesHostedDeployIncludedBasicSlot([restored])).toBe(true);
 	});
 
 	test("requires an explicit Basic offer once the free slot is occupied", () => {
