@@ -200,12 +200,16 @@ describe("AI provider projection", () => {
 		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
 			agents?: { defaults?: { model?: { primary?: string } } };
 			models?: {
-				providers?: Record<string, { api?: string; apiKey?: { id?: string }; baseUrl?: string }>;
+				providers?: Record<
+					string,
+					{ api?: string; apiKey?: { id?: string }; auth?: string; baseUrl?: string }
+				>;
 			};
 		};
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
+			auth: "api-key",
 			apiKey: { id: "CLAWDI_AI_API_KEY" },
 		});
 		expect(Object.keys(openclawPatch.models?.providers ?? {})).toEqual([
@@ -275,6 +279,7 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"baseUrl": "https://api.openai.com/v1"');
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
+		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
 
 		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog);
 		expect(hermes.files[0]?.content).toContain('provider: "custom:openai-main"');

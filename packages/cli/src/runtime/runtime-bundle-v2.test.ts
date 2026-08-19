@@ -99,6 +99,110 @@ function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): Ru
 	});
 }
 
+function writeOpenClawPublicAuthSdkFixture(home: string): void {
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, "{}\n");
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: {
+				"./plugin-sdk/config-mutation": "./config-mutation.mjs",
+				"./plugin-sdk/provider-auth": "./provider-auth.mjs",
+				"./plugin-sdk/provider-env-vars": "./provider-env-vars.mjs",
+			},
+		}),
+	);
+	writeFileSync(
+		join(packageRoot, "config-mutation.mjs"),
+		`import { readFileSync, writeFileSync } from "node:fs";
+const configPath = ${JSON.stringify(configPath)};
+export async function readConfigFileSnapshotForWrite() {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  return { snapshot: { valid: true, config, sourceConfig: structuredClone(config) } };
+}
+export async function mutateConfigFile(options) {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
+}
+`,
+	);
+	writeFileSync(
+		join(packageRoot, "provider-auth.mjs"),
+		`import { join } from "node:path";
+const defaultAgentDir = () => join(
+  process.env.OPENCLAW_STATE_DIR || join(process.env.HOME, ".openclaw"),
+  "agents",
+  "main",
+  "agent",
+);
+export function resolveOpenClawAgentDir() {
+  return process.env.OPENCLAW_AGENT_DIR || defaultAgentDir();
+}
+export function ensureAuthProfileStoreForLocalUpdate() {
+  return { profiles: {}, order: {}, lastGood: {}, usageStats: {} };
+}
+export function listProfilesForProvider(store, provider) {
+  const normalized = provider.trim().toLowerCase();
+  return Object.entries(store.profiles)
+    .filter(([, credential]) => credential?.provider?.trim().toLowerCase() === normalized)
+    .map(([profileId]) => profileId);
+}
+export async function removeProviderAuthProfilesWithLock() {
+  throw new Error("clean provider-auth fixture must not be mutated");
+}
+`,
+	);
+	writeFileSync(
+		join(packageRoot, "provider-env-vars.mjs"),
+		`import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+export function listKnownProviderAuthEnvVarNames() {
+  const stateDir = process.env.OPENCLAW_STATE_DIR || join(process.env.HOME, ".openclaw");
+  const manifestPath = join(stateDir, "extensions", "clawdi-managed-provider", "openclaw.plugin.json");
+  if (!existsSync(manifestPath)) return [];
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const provider = manifest.setup?.providers?.find((entry) => entry?.id === "clawdi");
+  return Array.isArray(provider?.envVars) ? provider.envVars : [];
+}
+`,
+	);
+}
+
+function fakeManagedOpenClawProviderPluginCommands(): string {
+	return `
+state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+plugin_root="$state_dir/extensions/clawdi-managed-provider"
+if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
+  test -f "$plugin_root/openclaw.plugin.json" || exit 1
+  enabled=false
+  status=disabled
+  if [ -f "$plugin_root/.enabled" ]; then enabled=true; status=loaded; fi
+  source_path="$(cat "$plugin_root/.source-path")"
+  printf '{"plugin":{"id":"clawdi-managed-provider","source":"%s/index.js","origin":"global","status":"%s","version":"1.0.0","enabled":%s},"install":{"source":"path","sourcePath":"%s","installPath":"%s","version":"1.0.0"}}\\n' "$plugin_root" "$status" "$enabled" "$source_path" "$plugin_root"
+  exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ]; then
+  rm -rf "$plugin_root"
+  mkdir -p "$(dirname "$plugin_root")" "$state_dir/state"
+  cp -R "$3" "$plugin_root"
+  printf '%s\\n' "$3" > "$plugin_root/.source-path"
+  printf '%s\\n' installed > "$state_dir/state/openclaw.sqlite"
+  exit 0
+fi
+if [ "$*" = "plugins enable clawdi-managed-provider" ]; then
+  test -f "$plugin_root/openclaw.plugin.json"
+  touch "$plugin_root/.enabled"
+  exit 0
+fi
+`;
+}
+
 function readFileTree(root: string): string {
 	if (!existsSync(root)) return "";
 	const stat = lstatSync(root);
@@ -1445,11 +1549,13 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
   exit 0
 fi
+${fakeManagedOpenClawProviderPluginCommands()}
 cat >/dev/null || true
 exit 0
 `,
 		);
 		chmodSync(openclawBin, 0o700);
+		writeOpenClawPublicAuthSdkFixture(paths.userHome);
 
 		let networkAvailable = true;
 		globalThis.fetch = Object.assign(

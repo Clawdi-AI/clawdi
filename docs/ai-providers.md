@@ -232,13 +232,64 @@ SecretRef preflight, config-path ownership, locking, and compare-and-swap guards
 remain active. Gateway and channel patches continue to use `openclaw config
 patch --stdin`.
 
-This contract is verified against `openclaw@2026.7.1-2`, official source commit
+The repository regression-audits these public SDK and projection mechanics with
+`openclaw@2026.7.1-2`, official source commit
 [`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
+That artifact is an audit sample, not the Hosted v2 runtime pin; the official
+installer selects `openclaw@latest` and convergence capability-gates the APIs it
+uses.
 The discovery skip is implemented in
 [`models-config.plan.ts`](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/agents/models-config.plan.ts#L115-L120).
-API-key providers use env-backed `apiKey` references. Codex OAuth uses the
-native subscription route and the public provider-auth SDK with a namespaced
-Clawdi-owned profile.
+API-key providers use env-backed `apiKey` references and explicitly set
+`auth: "api-key"`. This makes the provider entry win execution-time credential
+selection, but it does not govern doctor migration. The precedence contract is
+verified in OpenClaw's
+[`model-auth-provider-config.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider-config.ts#L216-L226)
+and
+[`model-auth-provider.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/agents/model-auth-provider.ts#L310-L337).
+
+`clawdi` is the reserved provider for the Hosted v2 managed projection, and its
+environment SecretRef is the sole API-key authority. OpenClaw model generation
+serializes the SecretRef id as the literal `CLAWDI_AI_API_KEY` marker in
+`models.json`. Without provider metadata declaring that env name, OpenClaw
+doctor treats the marker as credential material and allocates
+`clawdi:default`. Doctor's collection and allocation are independent of
+execution precedence in
+[`doctor-model-catalog-credentials.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/commands/doctor-model-catalog-credentials.ts#L54-L76).
+OpenClaw builds its known env markers from discovered plugin metadata through
+[`provider-env-vars.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/secrets/provider-env-vars.ts#L198-L220),
+and installed plugins may declare
+`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]`. Hosted
+v2 convergence materializes a credential-free, Clawdi-owned metadata plugin and
+uses OpenClaw's official local plugin install/enable lifecycle before provider
+projection or cleanup. It then verifies `CLAWDI_AI_API_KEY` through the public
+`openclaw/plugin-sdk/provider-env-vars` export and fails closed if the marker is
+not registered. Explicit `auth: "api-key"` remains necessary for execution
+precedence but is not the doctor prevention mechanism. Commit `8f382a2` is
+source provenance for this contract, not a Hosted v2 runtime pin; the official
+installer owns the selected `openclaw@latest` artifact.
+
+When the accepted Hosted v2 manifest proves that exact managed projection,
+root-owned convergence uses OpenClaw's public config-mutation and provider-auth
+SDKs to remove every normalized `clawdi` auth registration and stored profile.
+The read-only preflight skips clean config/store writes. Transactional discovery
+covers the default/main store, the active
+`OPENCLAW_AGENT_DIR`, discovered state-tree agents, and explicitly configured
+agent directories; related order, `lastGood`, and usage references are removed
+by the owning APIs. Other providers, native Codex OAuth profiles, and unmanaged
+mode are preserved. Codex OAuth continues to use the native subscription route
+and a namespaced Clawdi-owned profile.
+
+Existing Hosted v2 deployments receive this repair through the root-owned
+runtime manifest converge path. After publishing the exact CLI package, Hosted
+selects it and accepts a controlled rollout for each existing deployment. The
+root-owned shim installs and verifies the package, atomically activates it, and
+self-reexecs before manifest convergence; no runtime-image rebuild is required.
+Changing the global package setting alone does not advance existing deployment
+generations. Cleanup runs before gateway activation and does not depend on a
+successful model response, a chat request, or OpenClaw doctor. A cleanup error
+prevents applied-authority commit, so the deployment remains incomplete and
+the next reconcile retries it.
 
 OAuth reconcile is durable and target-native:
 
