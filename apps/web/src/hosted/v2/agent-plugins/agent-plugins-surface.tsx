@@ -29,6 +29,7 @@ import {
 	type AgentPluginGroup,
 	type AgentPluginInventoryItem,
 	agentPluginInstallability,
+	agentPluginIsStalled,
 	agentPluginMatches,
 	assignAgentPluginGroups,
 	buildAgentPluginInventory,
@@ -79,10 +80,16 @@ export function AgentPluginsSurface({
 		"/v1/agents/{agent_id}/agent-plugins",
 		{ params: { path: { agent_id: agentId } } },
 		{
-			refetchInterval: (query) =>
-				query.state.data?.plugins.some((plugin) => plugin.convergence === "not_observed")
+			refetchInterval: (query) => {
+				const plugins = query.state.data?.plugins;
+				if (!plugins?.some((plugin) => plugin.convergence === "not_observed")) return false;
+				const now = new Date();
+				return plugins.some(
+					(plugin) => plugin.convergence === "not_observed" && !agentPluginIsStalled(plugin, now),
+				)
 					? 5_000
-					: false,
+					: 60_000;
+			},
 			refetchIntervalInBackground: false,
 		},
 	);

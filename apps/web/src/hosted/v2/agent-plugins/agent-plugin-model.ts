@@ -19,11 +19,60 @@ export type AgentPluginInstallability = {
 	reason: string | null;
 };
 
+const EXACT_SEMVER_PATTERN =
+	/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+/** SemVer precedence; null when either side is not exact SemVer. */
+export function compareAgentPluginVersions(left: string, right: string): number | null {
+	const a = EXACT_SEMVER_PATTERN.exec(left);
+	const b = EXACT_SEMVER_PATTERN.exec(right);
+	if (!a || !b) return null;
+	for (let i = 1; i <= 3; i++) {
+		const diff = Number(a[i]) - Number(b[i]);
+		if (diff !== 0) return diff < 0 ? -1 : 1;
+	}
+	const preLeft = a[4];
+	const preRight = b[4];
+	if (!preLeft && !preRight) return 0;
+	if (!preLeft) return 1;
+	if (!preRight) return -1;
+	const idsLeft = preLeft.split(".");
+	const idsRight = preRight.split(".");
+	for (let i = 0; i < Math.max(idsLeft.length, idsRight.length); i++) {
+		const x = idsLeft[i];
+		const y = idsRight[i];
+		if (x === undefined) return -1;
+		if (y === undefined) return 1;
+		const numericX = /^\d+$/.test(x);
+		const numericY = /^\d+$/.test(y);
+		if (numericX && numericY) {
+			const diff = Number(x) - Number(y);
+			if (diff !== 0) return diff < 0 ? -1 : 1;
+		} else if (numericX !== numericY) {
+			return numericX ? -1 : 1;
+		} else if (x !== y) {
+			return x < y ? -1 : 1;
+		}
+	}
+	return 0;
+}
+
 export function buildAgentPluginInventory(
 	catalog: readonly AgentPluginCatalogEntry[],
 	desired: readonly AgentPluginDesiredState[],
 ): AgentPluginInventoryItem[] {
-	const catalogByName = new Map(catalog.map((entry) => [entry.name, entry]));
+	const catalogByName = new Map<string, AgentPluginCatalogEntry>();
+	for (const entry of catalog) {
+		const existing = catalogByName.get(entry.name);
+		if (!existing) {
+			catalogByName.set(entry.name, entry);
+			continue;
+		}
+		// Unparseable versions fall back to last-write-wins.
+		if ((compareAgentPluginVersions(entry.version, existing.version) ?? 1) > 0) {
+			catalogByName.set(entry.name, entry);
+		}
+	}
 	const desiredByName = new Map(desired.map((entry) => [entry.plugin_name, entry]));
 	const names = new Set([...catalogByName.keys(), ...desiredByName.keys()]);
 
@@ -58,7 +107,22 @@ export function pluginVersion(item: AgentPluginInventoryItem): string {
 }
 
 export function pluginHasUpdate(item: AgentPluginInventoryItem): boolean {
-	return Boolean(item.catalog && item.desired && item.catalog.version !== item.desired.version);
+	if (!item.catalog || !item.desired) return false;
+	const comparison = compareAgentPluginVersions(item.catalog.version, item.desired.version);
+	return comparison === null ? item.catalog.version !== item.desired.version : comparison > 0;
+}
+
+/** After this long without an observation, the agent — not the install — is the holdup. */
+export const AGENT_PLUGIN_STALL_THRESHOLD_MS = 10 * 60 * 1000;
+
+export function agentPluginIsStalled(
+	desired: AgentPluginDesiredState,
+	now: Date = new Date(),
+): boolean {
+	return (
+		desired.convergence === "not_observed" &&
+		now.getTime() - new Date(desired.updated_at).getTime() > AGENT_PLUGIN_STALL_THRESHOLD_MS
+	);
 }
 
 export function agentPluginInstallability(
@@ -97,7 +161,10 @@ export function agentPluginInstallability(
 	return { installable: true, label: "Install", reason: null };
 }
 
-export function agentPluginStatusPresentation(desired: AgentPluginDesiredState): {
+export function agentPluginStatusPresentation(
+	desired: AgentPluginDesiredState,
+	now: Date = new Date(),
+): {
 	label: string;
 	tone: StatusTone;
 	description: string;
@@ -116,11 +183,19 @@ export function agentPluginStatusPresentation(desired: AgentPluginDesiredState):
 				description: observationErrorDescription(desired.observation_error_code),
 			};
 		case "not_observed":
-			return {
-				label: "Installing",
-				tone: "warning",
-				description: "This plugin is being installed. You can leave this page while it finishes.",
-			};
+			return agentPluginIsStalled(desired, now)
+				? {
+						label: "Waiting for agent",
+						tone: "warning",
+						description:
+							"The agent has not picked this up yet. It will finish once the agent is back online.",
+					}
+				: {
+						label: "Installing",
+						tone: "warning",
+						description:
+							"This plugin is being installed. You can leave this page while it finishes.",
+					};
 	}
 }
 

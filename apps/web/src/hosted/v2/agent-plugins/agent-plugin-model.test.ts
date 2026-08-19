@@ -81,9 +81,10 @@ describe("Agent Plugin model", () => {
 	});
 
 	test("maps the three observed convergence states without mutation-only states", () => {
-		expect(agentPluginStatusPresentation(desired("sui")).label).toBe("Installed");
+		const now = new Date("2026-08-16T00:00:30Z");
+		expect(agentPluginStatusPresentation(desired("sui"), now).label).toBe("Installed");
 		expect(
-			agentPluginStatusPresentation(desired("sui", { convergence: "not_observed" })).label,
+			agentPluginStatusPresentation(desired("sui", { convergence: "not_observed" }), now).label,
 		).toBe("Installing");
 		expect(
 			agentPluginStatusPresentation(
@@ -91,11 +92,38 @@ describe("Agent Plugin model", () => {
 					convergence: "failed",
 					observation_error_code: "receipt_mismatch",
 				}),
+				now,
 			),
 		).toMatchObject({
 			label: "Install failed",
 			description: "The installed plugin does not match the requested version.",
 		});
+	});
+
+	test("distinguishes a stalled install from an active one", () => {
+		const pending = desired("sui", { convergence: "not_observed" });
+		expect(agentPluginStatusPresentation(pending, new Date("2026-08-16T00:05:00Z")).label).toBe(
+			"Installing",
+		);
+		expect(agentPluginStatusPresentation(pending, new Date("2026-08-16T00:11:00Z")).label).toBe(
+			"Waiting for agent",
+		);
+	});
+
+	test("keeps the latest catalog version and only flags real upgrades", () => {
+		const inventory = buildAgentPluginInventory(
+			[catalogEntry("sui", { version: "2.0.0" }), catalogEntry("sui", { version: "10.0.0" })],
+			[desired("sui", { version: "2.0.0" })],
+		);
+		expect(inventory).toHaveLength(1);
+		expect(inventory[0]?.catalog?.version).toBe("10.0.0");
+		expect(pluginHasUpdate(inventory[0])).toBe(true);
+
+		const downgraded = buildAgentPluginInventory(
+			[catalogEntry("sui", { version: "1.0.0" })],
+			[desired("sui", { version: "2.0.0" })],
+		);
+		expect(pluginHasUpdate(downgraded[0])).toBe(false);
 	});
 
 	test("combines catalog installability with the selected hosted runtime", () => {

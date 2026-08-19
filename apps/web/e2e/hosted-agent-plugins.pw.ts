@@ -40,7 +40,7 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 		observation_error_code: null,
 		observed_at: null,
 		created_at: "2026-08-17T00:00:00Z",
-		updated_at: "2026-08-17T00:00:00Z",
+		updated_at: new Date().toISOString(),
 	};
 	await stubHostedApi(page, {
 		canUseAgentPluginsUI: true,
