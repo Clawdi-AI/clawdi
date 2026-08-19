@@ -11,7 +11,9 @@
 # role, and drains on SIGTERM — no command overrides needed.
 <%
 require "json"
-clawdi_cli_version = JSON.parse(File.read("packages/cli/package.json")).fetch("version")
+clawdi_cli_version = JSON.parse(
+  File.read("packages/cli/package.json", encoding: Encoding::UTF_8)
+).fetch("version")
 %>
 
 service: clawdi
