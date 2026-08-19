@@ -23,6 +23,7 @@ import {
 	commandResolvable,
 	makeRuntimeUserOwned,
 	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -486,7 +487,10 @@ function createHermesDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				mergeHermesPluginScanPolicy(join(input.home, ".hermes", "config.yaml"));
+				// Written as the runtime user so the native CLI can traverse its own home.
+				withRuntimeUserFileAccess(() =>
+					mergeHermesPluginScanPolicy(join(input.home, ".hermes", "config.yaml")),
+				);
 				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
 				const result = run([
 					"plugins",
