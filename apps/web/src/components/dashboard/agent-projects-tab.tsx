@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Link2, Plus, Save, Trash2 } from "lucide-react";
+import { Link2, Plus, Save } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -30,7 +30,6 @@ import {
 } from "@/components/projects/project-resource-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	Dialog,
 	DialogContent,
@@ -253,22 +252,6 @@ function AgentProjectsPanel({
 		});
 	};
 
-	const removeBinding = useMutation({
-		mutationFn: async (bindingId: string) => {
-			await unwrap(
-				await api.DELETE("/v1/agents/{agent_id}/project-bindings/{binding_id}", {
-					params: { path: { agent_id: agentId, binding_id: bindingId } },
-				}),
-			);
-		},
-		onSuccess: async () => {
-			await onChanged();
-			toast.success("Project unlinked");
-		},
-		onError: (error) =>
-			toast.error("Couldn't unlink project", { description: normalizeApiError(error) }),
-	});
-
 	const actionsDisabled = !primary || isLoading || Boolean(bindingsError || projectsError);
 	const header = (
 		<PageHeader
@@ -361,8 +344,6 @@ function AgentProjectsPanel({
 				>
 					{contexts.map((binding) => {
 						const project = projectsById.get(binding.project_id);
-						const projectName = project ? displayProjectName(project) : "Unavailable Project";
-						const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
 						return (
 							<li
 								key={binding.id}
@@ -370,43 +351,11 @@ function AgentProjectsPanel({
 								data-binding-type={binding.binding_type}
 								data-testid="agent-project-card"
 							>
-								<AgentProjectCard
-									project={project}
-									navigationScope={navigationScope}
-									actions={
-										<div>
-											<ConfirmAction
-												title="Unlink this Project?"
-												description={
-													<>
-														<p>
-															This Agent will stop using {projectName}&apos;s Skills and attached
-															Vaults.
-														</p>
-														<p>The Project and its resources remain unchanged.</p>
-													</>
-												}
-												confirmLabel="Unlink project"
-												destructive
-												onConfirm={() => removeBinding.mutateAsync(binding.id)}
-											>
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													disabled={isRemoving}
-													title="Unlink project"
-													aria-label={`Unlink ${projectName}`}
-												>
-													{isRemoving ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Trash2 className="size-3.5 text-destructive" />
-													)}
-												</Button>
-											</ConfirmAction>
-										</div>
-									}
-								/>
+								{project ? (
+									<ProjectResourceCard project={project} navigationScope={navigationScope} />
+								) : (
+									<UnavailableProjectResourceCard />
+								)}
 							</li>
 						);
 					})}
@@ -550,22 +499,5 @@ function AgentProjectsPanel({
 				</DialogContent>
 			</Dialog>
 		</div>
-	);
-}
-
-function AgentProjectCard({
-	project,
-	navigationScope,
-	actions,
-}: {
-	project: ProjectRow | undefined;
-	navigationScope: ResourceNavigationScope;
-	actions?: ReactNode;
-}) {
-	if (!project) {
-		return <UnavailableProjectResourceCard actions={actions} />;
-	}
-	return (
-		<ProjectResourceCard project={project} actions={actions} navigationScope={navigationScope} />
 	);
 }

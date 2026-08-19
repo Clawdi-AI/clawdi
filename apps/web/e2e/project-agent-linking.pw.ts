@@ -103,6 +103,7 @@ test("Project Agent manager saves additions and removals as one delta", async ({
 	});
 	const agentsSection = page.locator("#agents");
 	await expect(agentsSection.getByText("Review Agent", { exact: true })).toBeVisible();
+	await expect(agentsSection.getByText("Linked", { exact: true })).toHaveCount(0);
 
 	await page.getByRole("button", { name: "Manage agents" }).click();
 	const dialog = page.getByRole("dialog", { name: "Manage agents" });

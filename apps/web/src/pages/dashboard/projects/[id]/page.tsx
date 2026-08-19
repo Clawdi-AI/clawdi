@@ -1183,11 +1183,7 @@ export default function ProjectDetailPage({
 										<Badge variant="secondary" className="shrink-0">
 											Workspace
 										</Badge>
-									) : (
-										<Badge variant="outline" className="shrink-0">
-											Linked
-										</Badge>
-									)}
+									) : null}
 									<Link
 										{...agentSectionLink(env.id, "projects")}
 										className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"

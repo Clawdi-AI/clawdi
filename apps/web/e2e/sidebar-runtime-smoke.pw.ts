@@ -1010,24 +1010,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await projectCards.nth(0).hover();
 	await expect(projectStack.getByText(/Project order/)).toHaveCount(0);
 	await expect(projectStack.getByRole("button", { name: /Move .* (up|down)/ })).toHaveCount(0);
-	await expect(
-		projectCards.nth(0).getByRole("button", { name: "Unlink Team Knowledge" }),
-	).toBeVisible();
-	await expect
-		.poll(() =>
-			projectCards
-				.nth(0)
-				.getByRole("button", { name: "Unlink Team Knowledge" })
-				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
-		)
-		.toBe("1");
-	await projectCards.nth(0).getByRole("button", { name: "Unlink Team Knowledge" }).click();
-	await expect(page).toHaveURL(/\/agents\/11111111-1111-4111-8111-111111111111\/project-access$/);
-	const removeProjectDialog = page.getByRole("alertdialog", { name: "Unlink this Project?" });
-	await expect(removeProjectDialog).toContainText(
-		"This Agent will stop using Team Knowledge's Skills and attached Vaults.",
-	);
-	await removeProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await expect(projectCards.nth(0).getByRole("button", { name: /Unlink/ })).toHaveCount(0);
 	await expect(projectStack.getByLabel("Project to link")).toHaveCount(0);
 	await expect(
 		projectStack.getByRole("button", { name: "Create project", exact: true }),
@@ -1118,14 +1101,6 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
 		),
 	).toBe(1);
-	await expect
-		.poll(() =>
-			projectCards
-				.nth(0)
-				.getByRole("button", { name: "Unlink Team Knowledge" })
-				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
-		)
-		.toBe("1");
 	const longTitle = projectCards.nth(1).getByRole("heading", { name: longContextProjectName });
 	const longDescription = projectCards.nth(1).getByText(longContextProjectDescription, {
 		exact: true,
