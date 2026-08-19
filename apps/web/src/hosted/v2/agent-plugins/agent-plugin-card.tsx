@@ -81,14 +81,14 @@ export function AgentPluginCard({
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
-				footer={[item.catalog?.publisher, version]}
-				footerClassName="mt-0"
-			>
-				<div className="mt-auto flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-					<span className="min-w-0 text-xs text-muted-foreground">
-						{agentPluginComponentSummary(item.catalog)}
-					</span>
-					<div className="relative z-10 flex shrink-0 items-center gap-1.5">
+				footer={[
+					item.catalog?.publisher,
+					version,
+					item.catalog ? agentPluginComponentSummary(item.catalog) : null,
+				]}
+				actionsVisibility="always"
+				actions={
+					<>
 						{item.desired ? (
 							<ConfirmAction
 								title={`Remove ${title}?`}
@@ -98,10 +98,10 @@ export function AgentPluginCard({
 								onConfirm={() => onRemove(item)}
 							>
 								<Button
-									variant="outline"
+									variant="ghost"
 									size="sm"
 									disabled={mutationsBlocked}
-									className="text-destructive hover:text-destructive"
+									className="text-muted-foreground hover:text-destructive"
 								>
 									{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
 									{pendingAction === "remove" ? "Removing…" : "Remove"}
@@ -144,9 +144,9 @@ export function AgentPluginCard({
 								{pendingAction === "retry" ? "Retrying…" : "Retry"}
 							</Button>
 						) : null}
-					</div>
-				</div>
-			</HeroCard>
+					</>
+				}
+			/>
 		</div>
 	);
 }

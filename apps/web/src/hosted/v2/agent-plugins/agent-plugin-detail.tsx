@@ -13,7 +13,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { DetailMeta, DetailPanel, DetailStats } from "@/components/detail/layout";
+import { DetailMeta, DetailStats } from "@/components/detail/layout";
 import { IconChip } from "@/components/icon-chip";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
@@ -258,12 +258,12 @@ function PluginDetailActions({
 function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }) {
 	if (!entry) {
 		return (
-			<DetailPanel className="space-y-3">
+			<section className="space-y-3">
 				<PanelHeading />
 				<p className="text-sm text-muted-foreground">
 					Details are no longer available for this plugin.
 				</p>
-			</DetailPanel>
+			</section>
 		);
 	}
 	const skills = entry.components.skills;
@@ -271,7 +271,7 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 		left.localeCompare(right),
 	);
 	return (
-		<DetailPanel className="space-y-4">
+		<section className="space-y-4">
 			<PanelHeading />
 			{skills.length === 0 && servers.length === 0 ? (
 				<p className="text-sm text-muted-foreground">This plugin has no listed components.</p>
@@ -281,7 +281,7 @@ function PluginDetailsPanel({ entry }: { entry: AgentPluginCatalogEntry | null }
 					<ComponentGroup icon={Server} label="MCP servers" names={servers} />
 				</>
 			)}
-		</DetailPanel>
+		</section>
 	);
 }
 

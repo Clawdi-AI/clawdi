@@ -388,6 +388,7 @@ export function HeroCard({
 	description,
 	footer,
 	actions,
+	actionsVisibility = "responsive",
 	link,
 	onClick,
 	ariaLabel,
@@ -403,6 +404,8 @@ export function HeroCard({
 	description?: ReactNode;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
+	/** Action visibility rhythm; `responsive` recedes until hover/focus on desktop. */
+	actionsVisibility?: "responsive" | "always";
 	link?: EntityCardLinkOptions;
 	/** Whole-card button for state-driven detail views. Ignored when `link` is set. */
 	onClick?: () => void;
@@ -422,7 +425,9 @@ export function HeroCard({
 			{icon || actions ? (
 				<div className="flex items-start justify-between gap-2">
 					{icon ? <div className="shrink-0">{icon}</div> : <span aria-hidden />}
-					{actions ? <EntityCardActions>{actions}</EntityCardActions> : null}
+					{actions ? (
+						<EntityCardActions visibility={actionsVisibility}>{actions}</EntityCardActions>
+					) : null}
 				</div>
 			) : null}
 			<div className="min-w-0">
