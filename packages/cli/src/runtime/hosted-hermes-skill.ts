@@ -66,24 +66,33 @@ function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
 	return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${skill.source.commit}/${skillPath}`;
 }
 
-function runHermes(input: { home: string; appRoot: string }, args: string[]) {
+function runHermes(input: { home: string; appRoot: string }, args: string[], stdin?: string) {
 	return spawnRuntimeUserCommand(
 		commandPath(input.home, input.appRoot),
 		args,
 		input.home,
 		input.appRoot,
 		{
+			input: stdin,
 			timeoutMs: 120_000,
 			maxBufferBytes: 1024 * 1024,
 		},
 	);
 }
 
+function runHermesUninstall(
+	input: { home: string; appRoot: string },
+	skillId: string,
+) {
+	// Hermes exposes no --yes flag for this subcommand; its confirmation reads stdin.
+	return runHermes(input, ["skills", "uninstall", skillId], "y\n");
+}
+
 const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "assets", "examples"]);
 const HERMES_SUPPORT_REFERENCE =
 	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
 
-/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0. */
+/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@e624e9fde561e1add9388384012b295fde669ade. */
 function expectedHermesNativeTree(sourceDir: string) {
 	const catalogTree = collectManagedSkillTree(sourceDir);
 	const skillMd = catalogTree?.get("SKILL.md");
@@ -157,15 +166,10 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 						);
 					if (!nativeResultMatches(sourceDir, target)) {
 						if (!hadTarget) {
-							const rollback = runHermes(input, [
-								"skills",
-								"uninstall",
-								input.skill.skillId,
-								"--yes",
-							]);
-							if (rollback.status !== 0)
+							const rollback = runHermesUninstall(input, input.skill.skillId);
+							if (rollback.status !== 0 || existsSync(target))
 								throw new Error(
-									`Hermes official install produced invalid Skill bytes and native rollback failed: ${String(rollback.stderr || rollback.stdout).trim() || "unknown error"}`,
+									`Hermes official install produced invalid Skill bytes and native rollback failed: ${String(rollback.stderr || rollback.stdout).trim() || (existsSync(target) ? "Skill target still exists" : "unknown error")}`,
 								);
 						}
 						throw new Error(
@@ -203,11 +207,13 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		}
 		if (!managedSkillReceiptMatchesIdentity(receipt))
 			throw new Error("Hermes Skill bytes no longer match the manifest ownership receipt");
-		const result = runHermes(input, ["skills", "uninstall", input.skillId, "--yes"]);
+		const result = runHermesUninstall(input, input.skillId);
 		if (result.status !== 0)
 			throw new Error(
 				`Hermes official Skill uninstall failed: ${String(result.stderr || result.stdout).trim() || "unknown error"}`,
 			);
+		if (existsSync(target))
+			throw new Error("Hermes official Skill uninstall did not remove the Skill target");
 		rmSync(receipt.path, { force: true });
 		return "removed";
 	},

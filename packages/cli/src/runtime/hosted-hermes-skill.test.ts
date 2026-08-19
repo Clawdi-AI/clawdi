@@ -53,7 +53,12 @@ if sys.argv[1:3] == ["skills", "install"]:
     if os.environ.get("FAKE_HERMES_INSTALL_FAIL_AFTER_WRITE") == "1":
         raise SystemExit(44)
 elif sys.argv[1:3] == ["skills", "uninstall"]:
-    assert sys.argv[-1] == "--yes"
+    if len(sys.argv) != 4:
+        print("hermes skills uninstall: error: unrecognized arguments: " + " ".join(sys.argv[4:]), file=sys.stderr)
+        raise SystemExit(2)
+    if sys.stdin.readline().strip().lower() not in {"y", "yes"}:
+        print("Cancelled.")
+        raise SystemExit(0)
     if os.environ.get("FAKE_HERMES_UNINSTALL_FAIL") == "1":
         raise SystemExit(43)
     shutil.rmtree(root / sys.argv[3])
@@ -67,7 +72,7 @@ else:
 }
 
 describe("Hermes exact-source Workspace Skill driver", () => {
-	test("passes the signed Project Skill URL to Hermes native install", () => {
+	test("rolls back invalid Project Skill bytes through the Hermes uninstall contract", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-project-skill-"));
 		delete process.env.CLAWDI_RUNTIME_USER;
 		const home = join(root, "home");
@@ -102,16 +107,24 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			archiveSha256: "b".repeat(64),
 			tarBytes: readFileSync(archive),
 		};
+		const invalidSourceDir = join(root, "invalid-source", "review-pr");
+		mkdirSync(invalidSourceDir, { recursive: true });
+		writeFileSync(join(invalidSourceDir, "SKILL.md"), "# Wrong bytes\n");
+		process.env.FAKE_HERMES_SOURCE = invalidSourceDir;
 
-		expect(
+		expect(() =>
 			hostedHermesSkillExactSourceDriver.install({
 				home,
 				appRoot,
 				skill,
 				previouslyReserved: false,
 			}),
-		).toBe("installed");
-		expect(readFileSync(commandLog, "utf8")).toContain(`skills install ${installUrl}`);
+		).toThrow("did not preserve the exact native catalog projection");
+		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+			`skills install ${installUrl} --name review-pr --yes`,
+			"skills uninstall review-pr",
+		]);
+		expect(existsSync(join(home, ".hermes", "skills", "review-pr"))).toBe(false);
 	});
 
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {
