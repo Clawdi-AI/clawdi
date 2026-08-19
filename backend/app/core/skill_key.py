@@ -41,13 +41,14 @@ def is_valid_skill_key(skill_key: str) -> bool:
 
 
 def is_legacy_hidden_skill_key(skill_key: str) -> bool:
-    """Accept only otherwise-valid keys with dot-prefixed components."""
+    """Accept safe dot-prefixed metadata paths without the stored-key depth cap."""
     parts = skill_key.split("/")
     visible_key = "/".join(part.removeprefix(".") for part in parts)
     return (
         len(skill_key) <= MAX_SKILL_KEY_LEN
         and visible_key != skill_key
-        and is_valid_skill_key(visible_key)
+        and all(is_valid_skill_key(part.removeprefix(".")) for part in parts)
+        and not has_reserved_skill_key_suffix(visible_key)
     )
 
 
