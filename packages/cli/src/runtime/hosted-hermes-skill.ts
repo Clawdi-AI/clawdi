@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
@@ -80,12 +81,16 @@ function runHermes(input: { home: string; appRoot: string }, args: string[], std
 	);
 }
 
-function runHermesUninstall(
-	input: { home: string; appRoot: string },
-	skillId: string,
-) {
+function runHermesUninstall(input: { home: string; appRoot: string }, skillId: string) {
 	// Hermes exposes no --yes flag for this subcommand; its confirmation reads stdin.
 	return runHermes(input, ["skills", "uninstall", skillId], "y\n");
+}
+
+function installFailureDiagnostic(result: ReturnType<typeof runHermes>): string | null {
+	const output = sanitizeMetadata(String(result.stderr || result.stdout));
+	const marker = "Installation blocked:";
+	const markerIndex = output.lastIndexOf(marker);
+	return markerIndex === -1 ? null : safeTruncate(output.slice(markerIndex), 500);
 }
 
 const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "assets", "examples"]);
@@ -165,15 +170,16 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 							`Hermes official Skill install failed: ${String(result.stderr || result.stdout).trim() || "unknown error"}`,
 						);
 					if (!nativeResultMatches(sourceDir, target)) {
-						if (!hadTarget) {
+						if (!hadTarget && existsSync(target)) {
 							const rollback = runHermesUninstall(input, input.skill.skillId);
 							if (rollback.status !== 0 || existsSync(target))
 								throw new Error(
 									`Hermes official install produced invalid Skill bytes and native rollback failed: ${String(rollback.stderr || rollback.stdout).trim() || (existsSync(target) ? "Skill target still exists" : "unknown error")}`,
 								);
 						}
+						const diagnostic = installFailureDiagnostic(result);
 						throw new Error(
-							"Hermes official install did not preserve the exact native catalog projection",
+							`Hermes official install did not preserve the exact native catalog projection${diagnostic ? `: ${diagnostic}` : ""}`,
 						);
 					}
 					writeManagedSkillReceipt(receipt);

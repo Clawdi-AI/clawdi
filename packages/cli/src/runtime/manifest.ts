@@ -280,6 +280,7 @@ export interface RuntimeConvergenceResult {
 	mode: "normal" | "degraded-offline";
 	enabledRuntimes: string[];
 	installErrors: string[];
+	failureHealthImpact: "runtime" | "resource_projection" | null;
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames: string[];
 	outputs: {
@@ -309,6 +310,13 @@ export interface RuntimeConvergenceResult {
 		instanceSemaphores: string[];
 		bootFinished: string;
 	};
+}
+
+class RuntimeResourceProjectionError extends Error {
+	constructor(error: unknown) {
+		super(error instanceof Error ? error.message : String(error), { cause: error });
+		this.name = "RuntimeResourceProjectionError";
+	}
 }
 
 export function planHostedAgentPluginConvergence(input: {
@@ -3649,6 +3657,7 @@ function installOpenClawChannelPlugins(input: {
 		const currentRevision = () =>
 			channelPluginCurrentRevision({
 				channel,
+				specs,
 				commandPath: input.commandPath,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
@@ -3683,31 +3692,20 @@ function runPluginInstallWithFallback(
 	let lastError: unknown = null;
 	for (const spec of specs) {
 		try {
-			runRuntimeUserCommand(commandPath, ["plugins", "install", spec], "", home, workspaceRoot);
+			runRuntimeUserCommand(
+				commandPath,
+				["plugins", "install", spec, "--force"],
+				"",
+				home,
+				workspaceRoot,
+			);
 			return;
 		} catch (error) {
-			if (isOpenClawPluginAlreadyInstalledError(error)) return;
 			lastError = error;
 		}
 	}
 	if (lastError instanceof Error) throw lastError;
 	throw new Error(`OpenClaw plugin install failed for ${specs.join(" or ")}`);
-}
-
-function isOpenClawPluginAlreadyInstalledError(error: unknown): boolean {
-	const text = commandErrorText(error).toLowerCase();
-	return text.includes("plugin already exists:");
-}
-
-function commandErrorText(error: unknown): string {
-	if (typeof error !== "object" || error === null) return String(error);
-	const parts: string[] = [];
-	const output = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
-	for (const value of [output.message, output.stdout, output.stderr]) {
-		if (typeof value === "string") parts.push(value);
-		else if (Buffer.isBuffer(value)) parts.push(value.toString("utf8"));
-	}
-	return parts.join("\n");
 }
 
 function channelPluginEntries(
@@ -4595,13 +4593,14 @@ function channelPluginDesiredRevision(input: {
 	return runtimeContentSha256({
 		runtime: "openclaw",
 		pluginIdentity: input.channel,
-		installerCommand: ["plugins", "install"],
+		installerCommand: ["plugins", "install", "--force"],
 		specs: input.specs,
 	});
 }
 
 function channelPluginCurrentRevision(input: {
 	channel: string;
+	specs: readonly string[];
 	commandPath: string;
 	home: string;
 	workspaceRoot: string;
@@ -4630,6 +4629,7 @@ function channelPluginCurrentRevision(input: {
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
 		if (
 			plugin.id !== input.channel ||
+			!input.specs.some((spec) => openClawPluginInstallMatchesSpec(install, spec)) ||
 			plugin.status !== "loaded" ||
 			!plugin.enabled ||
 			!version ||
@@ -4670,6 +4670,16 @@ function channelPluginCurrentRevision(input: {
 	} catch {
 		return null;
 	}
+}
+
+function openClawPluginInstallMatchesSpec(
+	install: z.infer<typeof openClawPluginInspectSchema>["install"],
+	spec: string,
+): boolean {
+	if (spec.startsWith("clawhub:")) {
+		return install.source === "clawhub" && install.clawhubPackage === spec.slice("clawhub:".length);
+	}
+	return install.spec === spec || install.resolvedSpec === spec;
 }
 
 function verifiedReceiptCurrentRevision(
@@ -5330,6 +5340,7 @@ function runtimeConvergenceWithoutApply(input: {
 	workspaceRoot: string;
 	enabledRuntimes: string[];
 	installErrors: string[];
+	failureHealthImpact?: "runtime" | "resource_projection";
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
@@ -5342,6 +5353,7 @@ function runtimeConvergenceWithoutApply(input: {
 		mode: input.load.offline ? "degraded-offline" : "normal",
 		enabledRuntimes: input.enabledRuntimes,
 		installErrors: input.installErrors,
+		failureHealthImpact: input.failureHealthImpact ?? "runtime",
 		projectedProviderIds: input.projectedProviderIds,
 		agentPluginFailedNames: input.agentPluginFailedNames ?? [],
 		outputs: {
@@ -6307,7 +6319,7 @@ export function convergeRuntimeManifest(
 				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
 					agentPluginFailedNames.add(name);
 				}
-				throw error;
+				throw new RuntimeResourceProjectionError(error);
 			}
 			agentPluginTransaction = planned.transaction;
 			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
@@ -6615,6 +6627,7 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) {
 			throw new Error(installErrors.join("; "));
 		}
+		const skillProjectionErrors: string[] = [];
 		for (const name of HOSTED_RUNTIME_TARGETS) {
 			try {
 				applyHostedBundledSkills(
@@ -6626,7 +6639,7 @@ export function convergeRuntimeManifest(
 					openClawSkillDriver,
 				);
 			} catch (error) {
-				installErrors.push(
+				skillProjectionErrors.push(
 					`runtime ${name} skill projection failed: ${
 						error instanceof Error ? error.message : String(error)
 					}`,
@@ -6642,7 +6655,7 @@ export function convergeRuntimeManifest(
 				hermesSkillNativeReconciler,
 			);
 		} catch (error) {
-			installErrors.push(
+			skillProjectionErrors.push(
 				`runtime hermes sourced Skill projection failed: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
@@ -6659,7 +6672,7 @@ export function convergeRuntimeManifest(
 					openClawSkillDriver,
 				);
 			} catch (error) {
-				installErrors.push(
+				skillProjectionErrors.push(
 					`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
@@ -6671,8 +6684,13 @@ export function convergeRuntimeManifest(
 				`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
+		installErrors.push(...skillProjectionErrors);
 		if (installErrors.length > 0) {
-			throw new Error(installErrors.join("; "));
+			const error = new Error(installErrors.join("; "));
+			if (installErrors.length === skillProjectionErrors.length) {
+				throw new RuntimeResourceProjectionError(error);
+			}
+			throw error;
 		}
 
 		for (const runtime of ["hermes", "openclaw"] as const) {
@@ -6922,7 +6940,11 @@ export function convergeRuntimeManifest(
 			}
 			agentPluginMutationAttempted = true;
 		}
-		appliedAgentPluginTransaction?.apply();
+		try {
+			appliedAgentPluginTransaction?.apply();
+		} catch (error) {
+			throw new RuntimeResourceProjectionError(error);
+		}
 		if (
 			officialServicePlan.pending.length > 0 &&
 			systemdUnits.egressSidecarActive &&
@@ -6991,6 +7013,7 @@ export function convergeRuntimeManifest(
 			mode: load.offline ? "degraded-offline" : "normal",
 			enabledRuntimes,
 			installErrors,
+			failureHealthImpact: null,
 			projectedProviderIds,
 			agentPluginFailedNames: [],
 			outputs: {
@@ -7043,7 +7066,7 @@ export function convergeRuntimeManifest(
 					for (const name of opts.preparedHostedAgentPlugins?.desired.keys() ?? []) {
 						agentPluginFailedNames.add(name);
 					}
-					throw error;
+					throw new RuntimeResourceProjectionError(error);
 				}
 			}
 			opts.commitAuthority?.(convergence, {
@@ -7091,12 +7114,14 @@ export function convergeRuntimeManifest(
 		}
 		return convergence;
 	} catch (error) {
+		const resourceProjectionFailure = error instanceof RuntimeResourceProjectionError;
 		if (agentPluginMutationAttempted) {
 			for (const name of agentPluginTransaction?.mutationNames ?? []) {
 				agentPluginFailedNames.add(name);
 			}
 		}
 		const applyError = error instanceof Error ? error.message : String(error);
+		const installErrorCountBeforeRollback = installErrors.length;
 		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
 		const rollbackRequiresQuiesce =
 			systemdMutated || agentPluginQuiesceAttempted || agentPluginMutationAttempted;
@@ -7219,6 +7244,10 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
+			failureHealthImpact:
+				resourceProjectionFailure && installErrors.length === installErrorCountBeforeRollback + 1
+					? "resource_projection"
+					: "runtime",
 			projectedProviderIds: Object.fromEntries(
 				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
 					runtime,

@@ -215,6 +215,13 @@ class RuntimeAgentPluginReconcileError extends Error {
 	}
 }
 
+class RuntimeSkillProjectionReconcileError extends Error {
+	constructor(error: unknown) {
+		super(error instanceof Error ? error.message : String(error), { cause: error });
+		this.name = "RuntimeSkillProjectionReconcileError";
+	}
+}
+
 function writable(path: string): boolean {
 	try {
 		accessSync(path, constants.W_OK);
@@ -2113,6 +2120,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	let failureEtag: string | null = null;
 	let agentPluginFailure: ReturnType<typeof failedHostedAgentPluginsObservation> = null;
+	let resourceProjectionFailure = false;
 	const retryDeferred =
 		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
 	const manifestEtag =
@@ -2219,6 +2227,9 @@ async function runtimeWatchTickAfterCliReconciliation(
 					error.installationNames,
 				);
 			}
+			resourceProjectionFailure =
+				error instanceof RuntimeAgentPluginReconcileError ||
+				error instanceof RuntimeSkillProjectionReconcileError;
 			throw error;
 		}
 		if (applyResult.kind === "cli_handoff") {
@@ -2297,6 +2308,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 				systemdUnitsChanged,
 				systemdApply: systemdApplyResult,
 				convergence: convergence.outputs,
+				...(cliUpdateError === null &&
+				convergence.failureHealthImpact === "resource_projection" &&
+				cliRollback.status !== "error"
+					? { healthImpact: "resource_projection" }
+					: {}),
 				...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 			};
 		}
@@ -2326,6 +2342,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			errors: [message],
 			error: message,
 			...(failureEtag ? { etag: failureEtag } : {}),
+			...(resourceProjectionFailure ? { healthImpact: "resource_projection" } : {}),
 			...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 		};
 	}
@@ -2400,11 +2417,20 @@ async function applyRuntimeDesiredState(
 				);
 			}
 		}
-		const preparedHostedSourcedSkills =
-			opts.preparedHostedSourcedSkills ??
-			(await prepareHostedSourcedSkillArchives(load.manifest, paths, {
-				authToken: load.applyContext?.manifestSource.auth.token,
-			}));
+		let preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills;
+		if (preparedHostedSourcedSkills === undefined) {
+			try {
+				preparedHostedSourcedSkills = await prepareHostedSourcedSkillArchives(
+					load.manifest,
+					paths,
+					{
+						authToken: load.applyContext?.manifestSource.auth.token,
+					},
+				);
+			} catch (error) {
+				throw new RuntimeSkillProjectionReconcileError(error);
+			}
+		}
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 		const previousUserDesiredRevisions = preserveActiveUnits
 			? readSystemdUserDesiredRevisions(paths, previousSystemdUnits.user.keys())

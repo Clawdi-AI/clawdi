@@ -100,10 +100,15 @@ function observedStatus(
 	hasAppliedAuthority: boolean,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
-	if (watchEvent?.status === "error") return "error";
 	if (bootStatus?.status === "error") return "error";
 	if (systemd?.status === "error") return "error";
 	if (providers && Object.values(providers).some((provider) => provider.status === "error")) {
+		return "error";
+	}
+	if (
+		watchEvent?.status === "error" &&
+		(!hasAppliedAuthority || watchEvent.healthImpact !== "resource_projection")
+	) {
 		return "error";
 	}
 	if (!hasAppliedAuthority) return "unknown";

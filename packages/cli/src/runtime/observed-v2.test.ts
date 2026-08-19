@@ -6,6 +6,7 @@ import { getCliVersion } from "../lib/version";
 import { writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
+import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
 
 const originalEnv = { ...process.env };
 const roots: string[] = [];
@@ -14,6 +15,64 @@ afterEach(() => {
 	process.env = { ...originalEnv };
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+function healthyAppliedRuntimePaths() {
+	const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-watch-error-"));
+	roots.push(root);
+	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+	process.env.CLAWDI_RUN_DIR = join(root, "run");
+	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.serviceStateRoot);
+	writeRuntimeAppliedState(
+		{
+			schemaVersion: "clawdi.runtimeAppliedState.v2",
+			appliedAt: "2026-08-19T00:00:00.000Z",
+			instanceId: "hri_watch_error",
+			etag: '"bundle-applied"',
+			manifestETag: '"manifest-applied"',
+			applyReceiptId: "apply-receipt-watch-error",
+			bootNonce: "boot-nonce-watch-error",
+			sourceRevision: "d".repeat(64),
+			generation: 1,
+			contentIdentity: {
+				sourcePath: "https://runtime.test/v1/runtime/manifest",
+				sha256: "e".repeat(64),
+			},
+			providerIds: [],
+			projectedProviderIds: {},
+		},
+		paths,
+	);
+	writeRuntimeBootStatus(
+		buildRuntimeBootStatus(
+			{
+				mode: "normal",
+				status: "ok",
+				stage: "final",
+				bootId: "boot-watch-error",
+				runtimeMode: "hosted",
+				activeGeneration: 1,
+				instanceId: "hri_watch_error",
+				enabledRuntimes: ["hermes"],
+				errors: [],
+				exitCode: 0,
+				datasource: "RuntimeSource",
+				hostPolicy: {
+					source: "file",
+					path: paths.hostPolicy,
+					exists: true,
+					valid: true,
+					mode: "hosted",
+				},
+				timestamp: "2026-08-19T00:00:00.000Z",
+			},
+			paths,
+		),
+		paths,
+	);
+	return paths;
+}
 
 describe("hosted runtime observed v2", () => {
 	test("reports authority only from applied state and the active process version", () => {
@@ -71,5 +130,38 @@ describe("hosted runtime observed v2", () => {
 		const observed = readHostedRuntimeObserved(getRuntimePaths({ mode: "hosted" }));
 		expect(observed?.applied).toBeNull();
 		expect(observed?.status).toBe("unknown");
+	});
+
+	test("keeps last-good runtime healthy when a desired projection fails", () => {
+		const paths = healthyAppliedRuntimePaths();
+		writeRuntimeWatchStatus(
+			{
+				status: "error",
+				stage: "final",
+				error: "runtime hermes sourced Skill projection failed",
+				healthImpact: "resource_projection",
+			},
+			paths,
+		);
+
+		const observed = readHostedRuntimeObserved(paths);
+		expect(observed?.status).toBe("ok");
+		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
+	});
+
+	test("reports an untyped watch apply failure as unhealthy", () => {
+		const paths = healthyAppliedRuntimePaths();
+		writeRuntimeWatchStatus(
+			{
+				status: "error",
+				stage: "final",
+				error: "runtime apply failed",
+			},
+			paths,
+		);
+
+		const observed = readHostedRuntimeObserved(paths);
+		expect(observed?.status).toBe("error");
+		expect(observed?.convergeError).toBe("runtime apply failed");
 	});
 });

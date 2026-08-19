@@ -253,14 +253,21 @@ set -euo pipefail
 case "$*" in
 	  "--version") printf '%s\\n' '${input.version ?? "OpenClaw 2026.7.29"}' ;;
   "plugins inspect discord --json") cat '${input.inspectStatePath}' ;;
-  "plugins install @openclaw/discord")
+  "plugins install @openclaw/discord --force")
 	mkdir -p '${dirname(input.inspectStatePath)}'
-	printf '%s\\n' '@openclaw/discord' >> '${input.installLogPath}'
+	printf '%s\\n' 'plugins install @openclaw/discord --force' >> '${input.installLogPath}'
 	[ ! -f '${input.failInstallMarker}' ] || exit 73
 	mkdir -p '${dirname(input.pluginSourcePath)}'
 	printf '%s\\n' 'export const discordPlugin = true;' > '${input.pluginSourcePath}'
 	chmod 0644 '${input.pluginSourcePath}'
 	printf '%s\\n' '${JSON.stringify(pluginInspectFixture(input.pluginSourcePath))}' > '${input.inspectStatePath}'
+	;;
+  "plugins install @openclaw/discord")
+	if [ -f '${input.pluginSourcePath}' ]; then
+	  printf 'plugin already exists: %s\\n' '${input.pluginSourcePath}' >&2
+	  exit 1
+	fi
+	exit 64
 	;;
   "config patch --stdin") cat >/dev/null ;;
   *) exit 64 ;;
