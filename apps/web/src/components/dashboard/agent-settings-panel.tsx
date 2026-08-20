@@ -27,7 +27,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { agentDetailQueryKey, agentDetailQueryOptions } from "@/lib/agent-queries";
+import { agentDetailQueryKey, agentDetailQueryOptions, agentsQueryKey } from "@/lib/agent-queries";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -41,7 +41,7 @@ const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
 	queryClient.setQueryData(agentDetailQueryKey(environment.id), environment);
-	queryClient.setQueryData<Environment[]>(["get", "/v1/agents", {}], (current) =>
+	queryClient.setQueryData<Environment[]>(agentsQueryKey, (current) =>
 		current?.map((item) => (item.id === environment.id ? environment : item)),
 	);
 }

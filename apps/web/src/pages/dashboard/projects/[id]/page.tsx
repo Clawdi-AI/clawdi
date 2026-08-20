@@ -99,7 +99,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
-import { agentDetailQueryOptions } from "@/lib/agent-queries";
+import { agentDetailQueryKey, agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	agentProjectDetailHref,
 	agentProjectResourceHref,
@@ -1640,7 +1640,7 @@ function ManageProjectAgentsDialog({
 				...changedAgentIds.flatMap((agentId) => [
 					qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) }),
 					qc.invalidateQueries({
-						queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+						queryKey: agentDetailQueryKey(agentId),
 					}),
 				]),
 			]);
