@@ -15758,7 +15758,15 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			hermes: ["clawdi", "search.proxy"],
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
-		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
+		const hermesSkillReceipt = JSON.parse(
+			readFileSync(join(dirname(hermesSkill), ".clawdi-manifest-receipts", "clawdi.json"), "utf-8"),
+		);
+		expect(hermesSkillReceipt).toEqual({
+			schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",
+			skillId: "clawdi",
+			ownershipIdentity: expect.stringMatching(/^content-sha256\0[a-f0-9]{64}$/),
+			treeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
 		process.env.CLAWDI_RUNTIME_MODE = "local";
 		expect(() =>
 			convergeRuntimeManifest(load(4, "hermes", updatedServers, true), getRuntimePaths()),
