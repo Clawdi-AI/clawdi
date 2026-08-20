@@ -1042,7 +1042,12 @@ Root system services use the absolute managed CLI path for watch, daemon, and
 sidecar commands. OpenClaw and Hermes user services execute their official
 binaries and do not add any platform install directory to `PATH`. Tenant tools
 use their normal home locations and inherited npm/XDG location overrides are
-cleared before official installers run. Unlike the root-owned, exactly managed
+cleared before official installers run. When a root process runs a command as
+the tenant user, it strips platform credentials (cloud auth token, daemon RPC
+token, egress secret file) from that command's environment and removes the
+tenant-writable `~/.local/bin` and `~/.openclaw/bin` directories from its
+`PATH`, so a tenant-planted binary cannot shadow a system command or capture a
+platform secret. Unlike the root-owned, exactly managed
 Clawdi CLI above, Hosted Codex is user-version-owned: Clawdi bootstraps Codex
 into the standard tenant-owned `~/.local` npm prefix only when its package
 metadata or executable is missing or damaged. A healthy installed Codex version
@@ -1556,7 +1561,7 @@ authentication overrides. The manifest identity is:
 The reader still accepts the previous producer argv containing
 `--allow-unconfigured --port 18789 --bind lan --force` long enough for an old
 CLI to self-upgrade, then normalizes it before matching the official service.
-The exact pinned OpenClaw installer currently writes an absolute Node/CLI
+The official OpenClaw installer currently writes an absolute Node/CLI
 entrypoint with `gateway --port 18789`; that upstream argv is deliberately not
 duplicated or overridden by Clawdi.
 
