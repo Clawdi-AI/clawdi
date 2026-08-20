@@ -1,5 +1,5 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
@@ -25,6 +25,12 @@ function codexDir() {
 }
 function sessionsDir() {
 	return join(codexDir(), "sessions");
+}
+function archivedSessionsDir() {
+	return join(codexDir(), "archived_sessions");
+}
+function sessionRoots() {
+	return [sessionsDir(), archivedSessionsDir()];
 }
 function skillsDir() {
 	return join(codexDir(), "skills");
@@ -68,9 +74,9 @@ function collectJsonlFiles(root: string): string[] {
 	const results: string[] = [];
 	if (!existsSync(root)) return results;
 
-	// Directory layout: YYYY/MM/DD/rollout-*.jsonl. Full walk every push —
-	// the content-hash cache in `lib/sessions-lock.ts` decides which files
-	// to actually upload, so there's no point pruning at the FS level.
+	// Directory layout: YYYY/MM/DD/rollout-*.jsonl. Complete inventory
+	// collection walks every file; watcher and queue paths use the bounded
+	// collectors below.
 	const walk = (dir: string) => {
 		let entries: Dirent[];
 		try {
@@ -94,15 +100,139 @@ function collectJsonlFiles(root: string): string[] {
 	return results;
 }
 
+function isWithinSessionRoot(path: string): boolean {
+	return sessionRoots().some((root) => {
+		const fromRoot = relative(root, path);
+		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
+	});
+}
+
+function resolveProjectFilter(projectFilter?: string): string | null {
+	return projectFilter ? resolve(projectFilter) : null;
+}
+
+function parseSessionFile(filePath: string, absFilter: string | null): RawSession | null {
+	let content: string;
+	try {
+		content = readFileSync(filePath, "utf-8");
+	} catch {
+		return null;
+	}
+	const lines = content.split("\n").filter(Boolean);
+	if (lines.length === 0) return null;
+
+	let sessionId: string | null = null;
+	let projectPath: string | null = null;
+	let startedAt: Date | null = null;
+	let endedAt: Date | null = null;
+	let lastModel: string | null = null;
+	const modelsUsed = new Set<string>();
+	const messages: SessionMessage[] = [];
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let cacheReadTokens = 0;
+
+	for (const line of lines) {
+		let parsed: SessionLine;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			continue;
+		}
+
+		const ts = parsed.timestamp ? new Date(parsed.timestamp) : null;
+		if (ts && !Number.isNaN(ts.getTime())) {
+			if (!startedAt) startedAt = ts;
+			endedAt = ts;
+		}
+
+		if (parsed.type === "session_meta") {
+			sessionId = parsed.payload?.id ?? sessionId;
+			projectPath = parsed.payload?.cwd ?? projectPath;
+			if (parsed.payload?.timestamp) {
+				const headerTs = new Date(parsed.payload.timestamp);
+				if (!Number.isNaN(headerTs.getTime())) startedAt = headerTs;
+			}
+			continue;
+		}
+
+		if (parsed.type === "turn_context") {
+			const model = parsed.payload?.model;
+			if (model) {
+				lastModel = model;
+				modelsUsed.add(model);
+			}
+			continue;
+		}
+
+		if (parsed.type === "event_msg" && parsed.payload?.type === "token_count") {
+			const total = parsed.payload.info?.total_token_usage;
+			if (total) {
+				inputTokens = total.input_tokens ?? inputTokens;
+				outputTokens = total.output_tokens ?? outputTokens;
+				cacheReadTokens = total.cached_input_tokens ?? cacheReadTokens;
+			}
+			continue;
+		}
+
+		if (parsed.type === "response_item" && parsed.payload?.type === "message") {
+			const role = parsed.payload.role;
+			if (role !== "user" && role !== "assistant") continue;
+			const text = extractMessageText(parsed.payload.content);
+			if (!text) continue;
+			messages.push({
+				role,
+				content: text,
+				model: role === "assistant" ? (lastModel ?? undefined) : undefined,
+				timestamp: ts?.toISOString(),
+			});
+		}
+	}
+
+	if (!sessionId || messages.length === 0 || !startedAt) return null;
+	if (absFilter) {
+		if (!projectPath) return null;
+		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
+	}
+
+	endedAt ??= startedAt;
+	const firstRealUser = messages.find(
+		(message) => message.role === "user" && !message.content.startsWith("<environment_context>"),
+	);
+
+	return {
+		localSessionId: sessionId,
+		projectPath,
+		startedAt,
+		endedAt,
+		messageCount: messages.length,
+		inputTokens,
+		outputTokens,
+		cacheReadTokens,
+		model: lastModel,
+		modelsUsed: [...modelsUsed],
+		durationSeconds: durationSecondsBetween(startedAt, endedAt),
+		summary: firstRealUser ? safeTruncate(firstRealUser.content, 200) : null,
+		messages,
+		rawFilePath: filePath,
+	};
+}
+
 export class CodexAdapter implements AgentAdapter {
 	readonly agentType = "codex" as const;
+	private sessionPaths = new Map<string, string>();
+	private hasCompleteSessionPathInventory = false;
 
 	async detect(): Promise<boolean> {
 		// Bare `~/.codex/` could be a leftover. Require either the sessions
 		// dir (created on first `codex` run) or `config.toml` (created when
 		// the user edits codex config).
 		if (!existsSync(codexDir())) return false;
-		return existsSync(sessionsDir()) || existsSync(join(codexDir(), "config.toml"));
+		return (
+			existsSync(sessionsDir()) ||
+			existsSync(archivedSessionsDir()) ||
+			existsSync(join(codexDir(), "config.toml"))
+		);
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -110,134 +240,68 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
-		if (!existsSync(sessionsDir())) return { sessions: [], dedupedCount: 0 };
-
-		const { projectFilter } = opts;
-
-		let absFilter: string | null = null;
-		if (projectFilter) {
-			const { resolve } = await import("node:path");
-			absFilter = resolve(projectFilter);
+		const sessionsById = new Map<string, RawSession>();
+		const pathsById = new Map<string, string>();
+		const absFilter = resolveProjectFilter(opts.projectFilter);
+		for (const root of sessionRoots()) {
+			for (const filePath of collectJsonlFiles(root)) {
+				const session = parseSessionFile(filePath, absFilter);
+				if (session && !sessionsById.has(session.localSessionId)) {
+					sessionsById.set(session.localSessionId, session);
+					pathsById.set(session.localSessionId, filePath);
+				}
+			}
 		}
-
-		const files = collectJsonlFiles(sessionsDir());
-		const sessions: RawSession[] = [];
-
-		for (const filePath of files) {
-			let content: string;
-			try {
-				content = readFileSync(filePath, "utf-8");
-			} catch {
-				continue;
-			}
-			const lines = content.split("\n").filter(Boolean);
-			if (lines.length === 0) continue;
-
-			let sessionId: string | null = null;
-			let projectPath: string | null = null;
-			let startedAt: Date | null = null;
-			let endedAt: Date | null = null;
-			let lastModel: string | null = null;
-			const modelsUsed = new Set<string>();
-			const messages: SessionMessage[] = [];
-			let inputTokens = 0;
-			let outputTokens = 0;
-			let cacheReadTokens = 0;
-
-			for (const line of lines) {
-				let parsed: SessionLine;
-				try {
-					parsed = JSON.parse(line);
-				} catch {
-					continue;
-				}
-
-				const ts = parsed.timestamp ? new Date(parsed.timestamp) : null;
-				if (ts && !Number.isNaN(ts.getTime())) {
-					if (!startedAt) startedAt = ts;
-					endedAt = ts;
-				}
-
-				if (parsed.type === "session_meta") {
-					sessionId = parsed.payload?.id ?? sessionId;
-					projectPath = parsed.payload?.cwd ?? projectPath;
-					if (parsed.payload?.timestamp) {
-						const headerTs = new Date(parsed.payload.timestamp);
-						if (!Number.isNaN(headerTs.getTime())) startedAt = headerTs;
-					}
-					continue;
-				}
-
-				if (parsed.type === "turn_context") {
-					const m = parsed.payload?.model;
-					if (m) {
-						lastModel = m;
-						modelsUsed.add(m);
-					}
-					continue;
-				}
-
-				if (parsed.type === "event_msg" && parsed.payload?.type === "token_count") {
-					const total = parsed.payload.info?.total_token_usage;
-					if (total) {
-						inputTokens = total.input_tokens ?? inputTokens;
-						outputTokens = total.output_tokens ?? outputTokens;
-						cacheReadTokens = total.cached_input_tokens ?? cacheReadTokens;
-					}
-					continue;
-				}
-
-				if (parsed.type === "response_item" && parsed.payload?.type === "message") {
-					const role = parsed.payload.role;
-					if (role !== "user" && role !== "assistant") continue;
-					const text = extractMessageText(parsed.payload.content);
-					if (!text) continue;
-					messages.push({
-						role,
-						content: text,
-						model: role === "assistant" ? (lastModel ?? undefined) : undefined,
-						timestamp: ts?.toISOString(),
-					});
-				}
-			}
-
-			if (!sessionId || messages.length === 0 || !startedAt) continue;
-
-			if (absFilter) {
-				if (!projectPath) continue;
-				if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) continue;
-			}
-
-			if (!endedAt) endedAt = startedAt;
-			const durationSeconds = durationSecondsBetween(startedAt, endedAt);
-
-			const firstRealUser = messages.find(
-				(m) => m.role === "user" && !m.content.startsWith("<environment_context>"),
-			);
-			const summary = firstRealUser ? safeTruncate(firstRealUser.content, 200) : null;
-
-			sessions.push({
-				localSessionId: sessionId,
-				projectPath,
-				startedAt,
-				endedAt,
-				messageCount: messages.length,
-				inputTokens,
-				outputTokens,
-				cacheReadTokens,
-				model: lastModel,
-				modelsUsed: [...modelsUsed],
-				durationSeconds,
-				summary,
-				messages,
-				rawFilePath: filePath,
-			});
+		if (opts.projectFilter) {
+			for (const [sessionId, path] of pathsById) this.sessionPaths.set(sessionId, path);
+		} else {
+			this.sessionPaths = pathsById;
+			this.hasCompleteSessionPathInventory = true;
 		}
 
 		// Codex stores long-conversation history via in-file `compacted`
 		// entries rather than spawning new sessionId files, so it cannot
 		// produce the resume-chain duplication that ClaudeCodeAdapter dedupes.
-		return { sessions, dedupedCount: 0 };
+		return { sessions: [...sessionsById.values()], dedupedCount: 0 };
+	}
+
+	async collectSession(localSessionId: string): Promise<RawSession | null> {
+		const knownPath = this.sessionPaths.get(localSessionId);
+		if (knownPath) {
+			const current = parseSessionFile(knownPath, null);
+			if (current?.localSessionId === localSessionId) return current;
+			this.sessionPaths.delete(localSessionId);
+		}
+		if (this.hasCompleteSessionPathInventory) return null;
+		return (
+			(await this.collectSessions()).sessions.find(
+				(session) => session.localSessionId === localSessionId,
+			) ?? null
+		);
+	}
+
+	async collectSessionsForPaths(
+		paths: readonly string[],
+		opts: CollectSessionsOptions = {},
+	): Promise<CollectSessionsResult | null> {
+		const files = new Set<string>();
+		for (const path of paths.map((candidate) => resolve(candidate))) {
+			if (!isWithinSessionRoot(path) || !path.endsWith(".jsonl")) return null;
+			for (const [sessionId, knownPath] of this.sessionPaths) {
+				if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
+			}
+			if (existsSync(path)) files.add(path);
+		}
+		const sessionsById = new Map<string, RawSession>();
+		const absFilter = resolveProjectFilter(opts.projectFilter);
+		for (const filePath of files) {
+			const session = parseSessionFile(filePath, absFilter);
+			if (session) {
+				sessionsById.set(session.localSessionId, session);
+				this.sessionPaths.set(session.localSessionId, filePath);
+			}
+		}
+		return { sessions: [...sessionsById.values()], dedupedCount: 0 };
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
@@ -311,10 +375,8 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	getSessionsWatchPaths(): string[] {
-		// Codex dumps every session under `~/.codex/sessions/`. We
-		// watch the root recursively and let `collectSessions`
-		// re-enumerate on change.
-		return [sessionsDir()];
+		const existingRoots = sessionRoots().filter((root) => existsSync(root));
+		return existingRoots.length > 0 ? existingRoots : [sessionsDir()];
 	}
 
 	async removeLocalSkill(key: string): Promise<void> {

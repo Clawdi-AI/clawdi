@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
@@ -94,8 +94,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 		const { projectFilter } = opts;
 
-		const sessions: RawSession[] = [];
-		const uuidsBySession = new Map<RawSession, Set<string>>();
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
 			d.isDirectory(),
 		);
@@ -115,42 +113,103 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			);
 		}
 
-		for (const projectDir of projectDirs) {
-			const projectPath = join(projectsDir(), projectDir.name);
-			const jsonlFiles = readdirSync(projectPath).filter((f) => f.endsWith(".jsonl"));
+		return this.collectProjectSessions(
+			projectDirs.map((projectDir) => projectDir.name),
+			absFilter,
+		);
+	}
 
-			for (const file of jsonlFiles) {
-				const filePath = join(projectPath, file);
-				const sessionId = basename(file, ".jsonl");
+	async collectSession(localSessionId: string): Promise<RawSession | null> {
+		if (!existsSync(projectsDir()) || basename(localSessionId) !== localSessionId) return null;
+		const matches: Array<{ filePath: string; projectDirName: string }> = [];
+		for (const projectDir of readdirSync(projectsDir(), { withFileTypes: true })) {
+			if (!projectDir.isDirectory()) continue;
+			const filePath = join(projectsDir(), projectDir.name, `${localSessionId}.jsonl`);
+			if (existsSync(filePath)) matches.push({ filePath, projectDirName: projectDir.name });
+		}
+		if (matches.length !== 1) {
+			if (matches.length === 0) return null;
+			return (
+				(await this.collectSessions()).sessions.find(
+					(session) => session.localSessionId === localSessionId,
+				) ?? null
+			);
+		}
+		return (
+			this.collectProjectSessions([matches[0].projectDirName], null).sessions.find(
+				(session) => session.localSessionId === localSessionId,
+			) ?? null
+		);
+	}
 
+	async collectSessionsForPaths(
+		paths: readonly string[],
+		opts: CollectSessionsOptions = {},
+	): Promise<CollectSessionsResult | null> {
+		const projectDirNames = new Set<string>();
+		for (const path of paths) {
+			const fromRoot = relative(projectsDir(), path);
+			const parts = fromRoot.split(/[\\/]/);
+			if (
+				isAbsolute(fromRoot) ||
+				fromRoot.startsWith("..") ||
+				parts.length !== 2 ||
+				!parts[1].endsWith(".jsonl")
+			) {
+				return null;
+			}
+			projectDirNames.add(parts[0]);
+		}
+		if (projectDirNames.size === 0) return null;
+
+		const absFilter = opts.projectFilter
+			? (await import("node:path")).resolve(opts.projectFilter)
+			: null;
+		return this.collectProjectSessions([...projectDirNames], absFilter);
+	}
+
+	private collectProjectSessions(
+		projectDirNames: readonly string[],
+		absFilter: string | null,
+	): CollectSessionsResult {
+		const sessions: RawSession[] = [];
+		const uuidsBySession = new Map<RawSession, Set<string>>();
+		for (const projectDirName of projectDirNames) {
+			const projectPath = join(projectsDir(), projectDirName);
+			if (!existsSync(projectPath)) continue;
+			for (const file of readdirSync(projectPath).filter((name) => name.endsWith(".jsonl"))) {
 				try {
-					const parsed = this.parseSessionJsonl(filePath, projectDir.name);
+					const parsed = this.parseRawSession(join(projectPath, file), projectDirName);
 					if (!parsed) continue;
-
-					if (absFilter) {
-						const cwd = parsed.projectPath;
-						if (!cwd) continue;
-						if (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)) continue;
+					const cwd = parsed.session.projectPath;
+					if (absFilter && (!cwd || (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)))) {
+						continue;
 					}
-
-					const { uuidSet, ...sessionFields } = parsed;
-					const session: RawSession = {
-						...sessionFields,
-						localSessionId: sessionId,
-						rawFilePath: filePath,
-					};
-					sessions.push(session);
-					uuidsBySession.set(session, uuidSet);
+					sessions.push(parsed.session);
+					uuidsBySession.set(parsed.session, parsed.uuidSet);
 				} catch {
-					// Skip unparseable sessions
+					// Skip files that disappear or become unreadable during collection.
 				}
 			}
 		}
-
-		// Dedupe resume chains. The Map is local to this module — it goes out of
-		// use when this function returns and is GC'd, so uuid data never
-		// leaks into RawSession or anywhere downstream.
 		return dedupeResumeChains(sessions, uuidsBySession);
+	}
+
+	private parseRawSession(
+		filePath: string,
+		projectDirName: string,
+	): { session: RawSession; uuidSet: Set<string> } | null {
+		const parsed = this.parseSessionJsonl(filePath, projectDirName);
+		if (!parsed) return null;
+		const { uuidSet, ...sessionFields } = parsed;
+		return {
+			session: {
+				...sessionFields,
+				localSessionId: basename(filePath, ".jsonl"),
+				rawFilePath: filePath,
+			},
+			uuidSet,
+		};
 	}
 
 	private parseSessionJsonl(filePath: string, _projectDirName: string): ParsedSession | null {

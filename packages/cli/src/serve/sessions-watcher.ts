@@ -9,14 +9,9 @@
  * One watcher per adapter. Adapters return a list of paths via
  * `getSessionsWatchPaths()` — directories (Claude Code / Codex /
  * OpenClaw) or SQLite database/sidecar files (Hermes). Any change
- * resets the adapter-wide quiescence timer; once the timer fires,
- * `onPathStable` runs and the engine re-enumerates sessions to
- * find what changed.
- *
- * Why path-level (not per-session) debounce: the watcher doesn't
- * know which session a given fs event corresponds to; the
- * adapter does. Letting the adapter re-enumerate on a "stable"
- * tick is simpler and avoids leaking session-id parsing here.
+ * resets the adapter-wide quiescence timer. Concrete filenames are
+ * accumulated across the window and handed to the adapter once stable;
+ * ambiguous platform events retain an explicit full-scan fallback.
  *
  * Two modes mirror the skill watcher:
  *
@@ -34,8 +29,13 @@ import { log, toErrorMessage } from "./log";
 export interface SessionWatcherOptions {
 	paths: string[];
 	abort: AbortSignal;
-	onPathStable: () => void;
+	onPathStable: (change: SessionWatchChange) => void;
 	forcePoll?: boolean;
+}
+
+export interface SessionWatchChange {
+	paths: string[];
+	requiresFullScan: boolean;
 }
 
 interface SessionFsWatcher {
@@ -51,7 +51,7 @@ export interface SessionWatcherDependencies {
 	createWatcher: (
 		path: string,
 		options: { persistent: false; recursive: boolean },
-		onChange: () => void,
+		onChange: (eventType?: string, filename?: string | Buffer | null) => void,
 	) => SessionFsWatcher;
 	poll: (opts: SessionWatcherOptions) => Promise<void>;
 	stableTimer: SessionTimerScheduler;
@@ -110,6 +110,8 @@ async function fsWatchLoop(
 	dependencies: SessionWatcherDependencies,
 ): Promise<void> {
 	const watchers: SessionFsWatcher[] = [];
+	const pendingPaths = new Set<string>();
+	let requiresFullScan = false;
 	let cancelStableTimer: (() => void) | null = null;
 	let cleaned = false;
 	let settled = false;
@@ -152,13 +154,21 @@ async function fsWatchLoop(
 	// Re-check after registration to close the race with a pre-aborted caller.
 	if (opts.abort.aborted) onAbort();
 
-	const armStable = () => {
+	const armStable = (path?: string) => {
 		if (settled || opts.abort.aborted) return;
+		if (path) pendingPaths.add(path);
+		else requiresFullScan = true;
 		cancelStableTimer?.();
 		cancelStableTimer = dependencies.stableTimer.schedule(() => {
 			cancelStableTimer = null;
 			if (settled || opts.abort.aborted) return;
-			opts.onPathStable();
+			const change = {
+				paths: [...pendingPaths],
+				requiresFullScan,
+			};
+			pendingPaths.clear();
+			requiresFullScan = false;
+			opts.onPathStable(change);
 		}, SESSION_STABLE_AFTER_MS);
 	};
 
@@ -177,8 +187,14 @@ async function fsWatchLoop(
 				const watcher = dependencies.createWatcher(
 					p,
 					{ persistent: false, recursive: isDir },
-					() => {
-						if (!opts.abort.aborted) armStable();
+					(_eventType, filename) => {
+						if (opts.abort.aborted) return;
+						if (!isDir) {
+							armStable(p);
+							return;
+						}
+						const relativePath = typeof filename === "string" ? filename : filename?.toString();
+						armStable(relativePath ? join(p, relativePath) : undefined);
 					},
 				);
 				watchers.push(watcher);
@@ -229,12 +245,19 @@ async function fsWatchLoop(
 export interface SessionPollDependencies {
 	now: () => number;
 	pathSignature: (path: string) => Promise<string>;
+	pathSnapshot?: (path: string) => Promise<SessionPathSnapshot>;
 	sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+export interface SessionPathSnapshot {
+	signature: string;
+	entries: ReadonlyMap<string, string> | null;
 }
 
 const defaultSessionPollDependencies: SessionPollDependencies = {
 	now: () => performance.now(),
 	pathSignature: sessionPathSignature,
+	pathSnapshot: sessionPathSnapshot,
 	sleep: sleepForSessionPoll,
 };
 
@@ -242,12 +265,12 @@ export async function pollSessionPaths(
 	opts: SessionWatcherOptions,
 	dependencies: SessionPollDependencies = defaultSessionPollDependencies,
 ): Promise<void> {
-	const lastSig = new Map<string, string>();
+	const lastSnapshot = new Map<string, SessionPathSnapshot>();
 	for (const p of opts.paths) {
 		if (opts.abort.aborted) return;
-		const signature = await dependencies.pathSignature(p);
+		const snapshot = await readPollSnapshot(p, dependencies);
 		if (opts.abort.aborted) return;
-		lastSig.set(p, signature);
+		lastSnapshot.set(p, snapshot);
 	}
 
 	log.info("sessions_watcher.mode", {
@@ -258,6 +281,8 @@ export async function pollSessionPaths(
 	});
 
 	let stableDeadline: number | null = null;
+	const pendingPaths = new Set<string>();
+	let requiresFullScan = false;
 	while (!opts.abort.aborted) {
 		const now = dependencies.now();
 		const delayMs =
@@ -270,12 +295,18 @@ export async function pollSessionPaths(
 		let anyChanged = false;
 		for (const p of opts.paths) {
 			if (opts.abort.aborted) return;
-			const cur = await dependencies.pathSignature(p);
+			const cur = await readPollSnapshot(p, dependencies);
 			if (opts.abort.aborted) return;
-			const prev = lastSig.get(p) ?? "";
-			if (cur !== prev) {
-				lastSig.set(p, cur);
+			const prev = lastSnapshot.get(p) ?? { signature: "", entries: null };
+			if (cur.signature !== prev.signature) {
+				lastSnapshot.set(p, cur);
 				anyChanged = true;
+				const changedPaths = diffSnapshotEntries(prev.entries, cur.entries);
+				if (changedPaths === null || changedPaths.length === 0) {
+					requiresFullScan = true;
+				} else {
+					for (const changedPath of changedPaths) pendingPaths.add(changedPath);
+				}
 			}
 		}
 		const observedAt = dependencies.now();
@@ -286,9 +317,38 @@ export async function pollSessionPaths(
 		if (stableDeadline !== null && observedAt >= stableDeadline) {
 			stableDeadline = null;
 			if (opts.abort.aborted) return;
-			opts.onPathStable();
+			const change = {
+				paths: [...pendingPaths],
+				requiresFullScan,
+			};
+			pendingPaths.clear();
+			requiresFullScan = false;
+			opts.onPathStable(change);
 		}
 	}
+}
+
+async function readPollSnapshot(
+	path: string,
+	dependencies: SessionPollDependencies,
+): Promise<SessionPathSnapshot> {
+	if (dependencies.pathSnapshot) return dependencies.pathSnapshot(path);
+	return { signature: await dependencies.pathSignature(path), entries: null };
+}
+
+function diffSnapshotEntries(
+	previous: ReadonlyMap<string, string> | null,
+	current: ReadonlyMap<string, string> | null,
+): string[] | null {
+	if (previous === null || current === null) return null;
+	const changed = new Set<string>();
+	for (const [path, signature] of current) {
+		if (previous.get(path) !== signature) changed.add(path);
+	}
+	for (const path of previous.keys()) {
+		if (!current.has(path)) changed.add(path);
+	}
+	return [...changed];
 }
 
 /** Per-path signature that detects appends to existing files
@@ -302,19 +362,12 @@ export async function pollSessionPaths(
  * stable timer. Container-mode (CLAWDI_SERVE_MODE=container)
  * + active conversation = silently no session push.
  *
- * Now: for files we keep `mtime:size`. For directories we walk
- * up to MAX_ENTRIES top-level + child entries and aggregate
- * `mtime:size` per file, folded into a streaming sha256. The
- * fold is bounded in memory (one hash state regardless of dir
- * size) and content-sensitive at every entry — appending to an
- * existing file changes its mtime+size and therefore the hash.
- *
- * Why a fold rather than a parts list with a cap: the previous
- * cap-and-truncate implementation silently collapsed every state
- * past 4096 entries to the same dir-mtime fallback signature,
- * which the parent dir's mtime didn't bump on file APPEND.
- * Active session dirs with hundreds of files would silently stop
- * detecting transcript writes once they crossed the cap.
+ * For files we keep `mtime:size`. For directories we fold every
+ * file's path, mtime, and size into a sha256 and retain a bounded
+ * metadata map so the poller can identify concrete changes. Once
+ * the cap is exceeded, the complete aggregate remains valid but
+ * path tracking becomes `null`, requesting a safe full scan.
+ * No file content is read.
  */
 // Depth budget for the walk's RECURSION into subdirectories.
 // Files at every depth are statted; only further recursion is
@@ -330,18 +383,28 @@ export async function pollSessionPaths(
 // fit comfortably; the budget just needs to be wide enough for
 // the deepest supported adapter.
 const SIG_MAX_DEPTH = 3;
+export const SESSION_PATH_TRACKED_ENTRY_LIMIT = 4_096;
 
 export async function sessionPathSignature(p: string): Promise<string> {
+	return (await sessionPathSnapshot(p)).signature;
+}
+
+export async function sessionPathSnapshot(
+	p: string,
+	maxTrackedEntries = SESSION_PATH_TRACKED_ENTRY_LIMIT,
+): Promise<SessionPathSnapshot> {
 	try {
 		const s = await stat(p);
 		if (!s.isDirectory()) {
-			return `f:${s.mtimeMs}:${s.size}`;
+			const signature = `f:${s.mtimeMs}:${s.size}`;
+			return { signature, entries: new Map([[p, signature]]) };
 		}
 		// Streaming hash: sorted readdir order at each level so the
 		// same on-disk state always produces the same digest. Files
 		// are stat'd individually; directories recurse up to depth.
 		// No content read — just metadata.
 		const h = createHash("sha256");
+		let entriesByPath: Map<string, string> | null = new Map();
 		let counted = 0;
 		const walk = async (dir: string, depth: number): Promise<void> => {
 			let entries: import("node:fs").Dirent[];
@@ -356,7 +419,12 @@ export async function sessionPathSignature(p: string): Promise<string> {
 				if (e.isFile()) {
 					try {
 						const fs = await stat(full);
-						h.update(`${e.name}:${fs.mtimeMs}:${fs.size};`);
+						const signature = `${fs.mtimeMs}:${fs.size}`;
+						h.update(`${full}:${signature};`);
+						if (entriesByPath) {
+							if (entriesByPath.size < maxTrackedEntries) entriesByPath.set(full, signature);
+							else entriesByPath = null;
+						}
 						counted += 1;
 					} catch {
 						/* race: file vanished between readdir and stat */
@@ -372,12 +440,15 @@ export async function sessionPathSignature(p: string): Promise<string> {
 			}
 		};
 		await walk(p, 0);
-		return `d:${counted}:${h.digest("hex")}`;
+		return {
+			signature: `d:${counted}:${h.digest("hex")}`,
+			entries: entriesByPath,
+		};
 	} catch {
 		// Path missing / permission denied — treat as empty
 		// signature so it shows up as "changed" if the path
 		// later appears.
-		return "";
+		return { signature: "", entries: new Map() };
 	}
 }
 

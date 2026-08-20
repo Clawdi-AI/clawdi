@@ -33,6 +33,25 @@ interface SqliteDatabase {
 	close(): void;
 }
 
+interface SessionRow {
+	id: string;
+	source: string | null;
+	model: string | null;
+	title: string | null;
+	started_at: number;
+	ended_at: number | null;
+	message_count: number | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens: number | null;
+}
+
+interface MessageRow {
+	role: string;
+	content: string;
+	timestamp: number;
+}
+
 /**
  * Open a Hermes SQLite db using the runtime's built-in binding:
  * - Under Bun: `bun:sqlite` (built-in, the dev/test default).
@@ -110,37 +129,27 @@ export class HermesAdapter implements AgentAdapter {
 		// always scan the whole `sessions` table. Cost is negligible
 		// (dozens to hundreds of rows). `projectFilter` has no analogue
 		// in Hermes' data model and is silently ignored.
-		if (!existsSync(stateDbPath())) return { sessions: [], dedupedCount: 0 };
+		return { sessions: await this.collectCurrentSessions(), dedupedCount: 0 };
+	}
 
+	async collectSession(localSessionId: string): Promise<RawSession | null> {
+		return (await this.collectCurrentSessions(localSessionId))[0] ?? null;
+	}
+
+	private async collectCurrentSessions(localSessionId?: string): Promise<RawSession[]> {
+		if (!existsSync(stateDbPath())) return [];
 		const db = await openHermesDb(stateDbPath());
 		try {
-			interface SessionRow {
-				id: string;
-				source: string | null;
-				model: string | null;
-				title: string | null;
-				started_at: number;
-				ended_at: number | null;
-				message_count: number | null;
-				input_tokens: number | null;
-				output_tokens: number | null;
-				cache_read_tokens: number | null;
-			}
-			interface MessageRow {
-				role: string;
-				content: string;
-				timestamp: number;
-			}
-
+			const selectSessions = `
+				SELECT id, source, model, title, started_at, ended_at,
+				       message_count, input_tokens, output_tokens, cache_read_tokens
+				FROM sessions
+				${localSessionId === undefined ? "" : "WHERE id = ?"}
+				ORDER BY started_at DESC
+			`;
 			const rows = db
-				.prepare(`
-					SELECT id, source, model, title, started_at, ended_at,
-					       message_count, input_tokens, output_tokens, cache_read_tokens
-					FROM sessions
-					ORDER BY started_at DESC
-				`)
-				.all() as SessionRow[];
-
+				.prepare(selectSessions)
+				.all(...(localSessionId === undefined ? [] : [localSessionId])) as SessionRow[];
 			const msgStmt = db.prepare(`
 				SELECT role, content, timestamp
 				FROM messages
@@ -196,9 +205,7 @@ export class HermesAdapter implements AgentAdapter {
 				});
 			}
 
-			// Hermes stores one row per session with a stable id — no resume-
-			// chain duplication to dedupe.
-			return { sessions, dedupedCount: 0 };
+			return sessions;
 		} finally {
 			db.close();
 		}

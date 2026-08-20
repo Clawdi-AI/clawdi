@@ -195,6 +195,27 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect(ids).toEqual(["oc-financial-001", "oc-session-001"]);
 	});
 
+	it("watches every personality and narrows concrete transcript changes", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		const adapter = new OpenClawAdapter();
+		const mainSessions = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		const financialSessions = join(tmpHome, ".openclaw", "agents", "financial", "sessions");
+		expect(adapter.getSessionsWatchPaths().sort()).toEqual(
+			[mainSessions, financialSessions].sort(),
+		);
+		expect(
+			(
+				await adapter.collectSessionsForPaths([join(financialSessions, "oc-financial-001.jsonl")])
+			)?.sessions.map((session) => session.localSessionId),
+		).toEqual(["oc-financial-001"]);
+		expect(
+			await adapter.collectSessionsForPaths([
+				join(financialSessions, "sessions.json"),
+				join(financialSessions, "oc-financial-001.jsonl"),
+			]),
+		).toBeNull();
+	});
+
 	it("handles production schema: composite index keys + absolute sessionFile", async () => {
 		// Mirror what real openclaw writes: index keyed by `agent:main:…`
 		// composite strings, with the UUID in `entry.sessionId` and an

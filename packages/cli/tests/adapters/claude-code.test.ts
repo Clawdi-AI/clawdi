@@ -124,6 +124,25 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		const s = (await a.collectSessions()).sessions[0]!;
 		expect(s.summary).toBe("hello");
 	});
+
+	it("limits concrete path collection to the affected project", async () => {
+		writeResumeSessionFile({
+			cwd: "/Users/fixture/other-project",
+			sessionId: "other-project-session",
+			uuids: uuidRange("other", 4),
+		});
+		const changedPath = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"11111111-2222-3333-4444-555555555555.jsonl",
+		);
+		const result = await new ClaudeCodeAdapter().collectSessionsForPaths([changedPath]);
+		expect(result?.sessions.map((session) => session.localSessionId)).toEqual([
+			"11111111-2222-3333-4444-555555555555",
+		]);
+	});
 });
 
 /**
@@ -186,6 +205,23 @@ function uuidRange(prefix: string, n: number): string[] {
 }
 
 describe("ClaudeCodeAdapter dedupeResumeChains", () => {
+	it("suppresses a queued predecessor when a successor appears before exact reread", async () => {
+		const cwd = "/Users/fixture/resume-before-drain";
+		const predecessorUuids = uuidRange("queued", 12);
+		writeResumeSessionFile({ cwd, sessionId: "queued-predecessor", uuids: predecessorUuids });
+		const adapter = new ClaudeCodeAdapter();
+		expect(await adapter.collectSession("queued-predecessor")).not.toBeNull();
+
+		writeResumeSessionFile({
+			cwd,
+			sessionId: "new-successor",
+			uuids: [...predecessorUuids, ...uuidRange("new", 4)],
+		});
+
+		expect(await adapter.collectSession("queued-predecessor")).toBeNull();
+		expect((await adapter.collectSession("new-successor"))?.localSessionId).toBe("new-successor");
+	});
+
 	it("dedupes A when A.uuids ⊂ B.uuids in the same project (resume chain)", async () => {
 		const cwd = "/Users/fixture/resume-test";
 		const aUuids = uuidRange("u", 12);
