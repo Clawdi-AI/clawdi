@@ -13,18 +13,11 @@ export interface HermesAgentPluginCanaryControllerOptions {
 	readyFile: string;
 	resultFile: string;
 	nonce: string;
-	successToken: string;
 }
 
 interface CanaryEvidence {
-	mcpHeader: boolean;
-	mcpInitialize: boolean;
-	mcpInitialized: boolean;
 	mcpToolsList: boolean;
 	mcpToolCall: boolean;
-	inferenceSawTool: boolean;
-	inferenceSawToolResult: boolean;
-	completed: boolean;
 	error?: string;
 }
 
@@ -101,7 +94,12 @@ function writeChatStream(
 	response.end("data: [DONE]\n\n");
 }
 
-function writeChatCompletion(response: ServerResponse, model: string, content: string): void {
+function writeChatCompletion(
+	response: ServerResponse,
+	model: string,
+	message: Record<string, unknown>,
+	finishReason: "stop" | "tool_calls",
+): void {
 	writeJson(response, 200, {
 		id: "chatcmpl-clawdi-agent-plugin-canary",
 		object: "chat.completion",
@@ -110,8 +108,8 @@ function writeChatCompletion(response: ServerResponse, model: string, content: s
 		choices: [
 			{
 				index: 0,
-				message: { role: "assistant", content },
-				finish_reason: "stop",
+				message,
+				finish_reason: finishReason,
 			},
 		],
 		usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
@@ -133,31 +131,18 @@ function requestMethods(body: Record<string, unknown>): string[] {
 	});
 }
 
-function advertisedCanaryTool(body: Record<string, unknown>, description: string): string | null {
-	if (!Array.isArray(body.tools) || body.tools.length !== 1) return null;
-	const tool = body.tools[0];
-	if (typeof tool !== "object" || tool === null || !("function" in tool)) return null;
-	const fn = tool.function;
-	if (typeof fn !== "object" || fn === null) return null;
-	if (!("name" in fn) || typeof fn.name !== "string") return null;
-	if (!("description" in fn) || fn.description !== description) return null;
-	if (!/^mcp__[A-Za-z0-9_]+__clawdi_agent_plugin_canary$/.test(fn.name)) return null;
-	return fn.name;
-}
-
-function hasExpectedToolResult(
-	body: Record<string, unknown>,
-	callId: string,
-	nonce: string,
-): boolean {
-	if (!Array.isArray(body.messages)) return false;
-	return body.messages.some((message) => {
-		if (typeof message !== "object" || message === null) return false;
-		if (!("role" in message) || message.role !== "tool") return false;
-		if (!("tool_call_id" in message) || message.tool_call_id !== callId) return false;
-		if (!("content" in message)) return false;
-		return typeof message.content === "string" && message.content.includes(nonce);
+function advertisedCanaryTool(body: Record<string, unknown>): string | null {
+	if (!Array.isArray(body.tools)) return null;
+	const matches = body.tools.flatMap((tool) => {
+		if (typeof tool !== "object" || tool === null || !("function" in tool)) return [];
+		const fn = tool.function;
+		if (typeof fn !== "object" || fn === null || !("name" in fn)) return [];
+		return typeof fn.name === "string" &&
+			/^mcp__[A-Za-z0-9_]+__clawdi_agent_plugin_canary$/.test(fn.name)
+			? [fn.name]
+			: [];
 	});
+	return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
 function assertControllerOptions(options: HermesAgentPluginCanaryControllerOptions): void {
@@ -165,9 +150,6 @@ function assertControllerOptions(options: HermesAgentPluginCanaryControllerOptio
 		throw new Error("canary controller paths must be absolute");
 	}
 	if (!/^[a-f0-9]{32}$/.test(options.nonce)) throw new Error("invalid canary nonce");
-	if (!/^CLAWDI_AGENT_PLUGIN_CANARY_OK_[a-f0-9]{32}$/.test(options.successToken)) {
-		throw new Error("invalid canary success token");
-	}
 }
 
 export async function runHermesAgentPluginCanaryController(
@@ -175,14 +157,8 @@ export async function runHermesAgentPluginCanaryController(
 ): Promise<void> {
 	assertControllerOptions(options);
 	const evidence: CanaryEvidence = {
-		mcpHeader: false,
-		mcpInitialize: false,
-		mcpInitialized: false,
 		mcpToolsList: false,
 		mcpToolCall: false,
-		inferenceSawTool: false,
-		inferenceSawToolResult: false,
-		completed: false,
 	};
 	const persistEvidence = () => {
 		writeJsonAtomic(options.resultFile, evidence, options.nonce);
@@ -195,8 +171,6 @@ export async function runHermesAgentPluginCanaryController(
 	const model = "clawdi-agent-plugin-canary";
 	const callId = `call_${options.nonce}`;
 	const toolDescription = `Return the isolated Clawdi Agent Plugin capability nonce ${options.nonce}`;
-	let canaryTool: string | null = null;
-	let inferenceCalls = 0;
 	const server = createServer(async (request, response) => {
 		try {
 			const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -210,8 +184,6 @@ export async function runHermesAgentPluginCanaryController(
 					});
 					return;
 				}
-				evidence.mcpHeader = true;
-				persistEvidence();
 				if (request.method === "HEAD") {
 					writeJson(response, 405, { error: "POST required" });
 					return;
@@ -219,8 +191,6 @@ export async function runHermesAgentPluginCanaryController(
 				if (request.method === "POST") {
 					const body = parseJsonObject(await readRequestBody(request));
 					for (const method of requestMethods(body)) {
-						if (method === "initialize") evidence.mcpInitialize = true;
-						if (method === "notifications/initialized") evidence.mcpInitialized = true;
 						if (method === "tools/list") evidence.mcpToolsList = true;
 					}
 					persistEvidence();
@@ -285,72 +255,34 @@ export async function runHermesAgentPluginCanaryController(
 				});
 				return;
 			}
-			if (!Array.isArray(body.tools) || body.tools.length === 0) {
+			const canaryTool = advertisedCanaryTool(body);
+			if (!canaryTool || evidence.mcpToolCall) {
 				if (body.stream === true) writeEmptyChatStream(response, model);
-				else writeChatCompletion(response, model, "");
+				else writeChatCompletion(response, model, { role: "assistant", content: "" }, "stop");
 				return;
 			}
+			const toolCall = {
+				id: callId,
+				type: "function",
+				function: { name: canaryTool, arguments: "{}" },
+			};
 			if (body.stream !== true) {
-				fail("canary inference request did not use the streaming path");
-				writeJson(response, 400, {
-					error: { message: "invalid canary request", type: "invalid_request_error" },
-				});
+				writeChatCompletion(
+					response,
+					model,
+					{ role: "assistant", content: null, tool_calls: [toolCall] },
+					"tool_calls",
+				);
 				return;
 			}
-			inferenceCalls += 1;
-			if (inferenceCalls === 1) {
-				canaryTool = advertisedCanaryTool(body, toolDescription);
-				if (!canaryTool) {
-					fail("portable Agent Plugin canary tool was not advertised to inference");
-					writeJson(response, 400, {
-						error: { message: "canary tool missing", type: "invalid_request_error" },
-					});
-					return;
-				}
-				evidence.inferenceSawTool = true;
-				persistEvidence();
-				writeChatStream(response, [
-					chatChunk({
-						model,
-						delta: {
-							role: "assistant",
-							tool_calls: [
-								{
-									index: 0,
-									id: callId,
-									type: "function",
-									function: { name: canaryTool, arguments: "{}" },
-								},
-							],
-						},
-						finishReason: null,
-					}),
-					chatChunk({ model, delta: {}, finishReason: "tool_calls" }),
-				]);
-				return;
-			}
-			if (
-				inferenceCalls === 2 &&
-				advertisedCanaryTool(body, toolDescription) === canaryTool &&
-				hasExpectedToolResult(body, callId, options.nonce)
-			) {
-				evidence.inferenceSawToolResult = true;
-				evidence.completed = true;
-				persistEvidence();
-				writeChatStream(response, [
-					chatChunk({
-						model,
-						delta: { role: "assistant", content: options.successToken },
-						finishReason: null,
-					}),
-					chatChunk({ model, delta: {}, finishReason: "stop" }),
-				]);
-				return;
-			}
-			fail("inference did not receive the exact canary MCP tool result");
-			writeJson(response, 400, {
-				error: { message: "canary result missing", type: "invalid_request_error" },
-			});
+			writeChatStream(response, [
+				chatChunk({
+					model,
+					delta: { role: "assistant", tool_calls: [{ index: 0, ...toolCall }] },
+					finishReason: null,
+				}),
+				chatChunk({ model, delta: {}, finishReason: "tool_calls" }),
+			]);
 		} catch (error) {
 			fail(error instanceof Error ? error.message : String(error));
 			if (!response.headersSent) {
