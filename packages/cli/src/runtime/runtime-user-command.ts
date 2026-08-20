@@ -3,9 +3,11 @@ import { accessSync, chownSync, constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import { clearPlatformCredentialEnv } from "./platform-credential-env";
 import { parsePositiveLinuxId } from "./transparent-egress";
 
 const RUNTIME_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
+const DEFAULT_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 export interface RuntimeUserIdentity {
 	uid: number;
@@ -283,12 +285,14 @@ function runtimeUserCommandEnv(
 	} = {},
 ): NodeJS.ProcessEnv {
 	const runtimeDir = runtimeUid === null ? null : `/run/user/${runtimeUid}`;
+	const tenantBinPaths = [join(home, ".local", "bin"), join(home, ".openclaw", "bin")];
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: home,
-		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
-			.filter(Boolean)
-			.join(":"),
+		PATH:
+			runtimeUid === null
+				? [...tenantBinPaths, process.env.PATH].filter(Boolean).join(":")
+				: runtimeUserSystemPath(tenantBinPaths),
 		...(runtimeDir
 			? {
 					XDG_RUNTIME_DIR: runtimeDir,
@@ -304,7 +308,17 @@ function runtimeUserCommandEnv(
 	if (options.egressSystemCaFile) {
 		applyEgressTransparentRuntimeEnv(env, { caFile: options.egressSystemCaFile });
 	}
+	clearPlatformCredentialEnv(env);
 	return env;
+}
+
+function runtimeUserSystemPath(tenantBinPaths: readonly string[]): string {
+	const inheritedPath = process.env.PATH || DEFAULT_SYSTEM_PATH;
+	const path = inheritedPath
+		.split(":")
+		.filter((entry) => entry && !tenantBinPaths.includes(entry))
+		.join(":");
+	return path || DEFAULT_SYSTEM_PATH;
 }
 
 export function clearTenantToolLocationOverrides(env: NodeJS.ProcessEnv): void {
@@ -411,12 +425,14 @@ export function spawnRuntimeUserCommand(
 				resolver: options.resolver,
 			})
 		: { command, args, env: {} };
+	const env = {
+		...runtimeUserCommandEnv(home, runtimeUid, options),
+		...child.env,
+		...options.environment,
+	};
+	clearPlatformCredentialEnv(env);
 	return spawnSync(child.command, child.args, {
-		env: {
-			...runtimeUserCommandEnv(home, runtimeUid, options),
-			...child.env,
-			...options.environment,
-		},
+		env,
 		cwd,
 		encoding: "utf8",
 		input: options.input,
