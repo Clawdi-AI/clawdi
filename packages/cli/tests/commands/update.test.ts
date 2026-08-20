@@ -28,6 +28,7 @@ import {
 	type NativeTarget,
 	nativeAssetName,
 } from "../../src/lib/native-release-manifest";
+import { getCliVersion } from "../../src/lib/version";
 import {
 	createRestartCoordination,
 	type RestartCoordination,
@@ -329,7 +330,6 @@ describe("update --json", () => {
 
 		// Read the current version from package.json via fetch indirection — the registry returns it.
 		// getCliVersion() reads from disk; we match it by echoing the same value.
-		const { getCliVersion } = await import("../../src/lib/version");
 		const current = getCliVersion();
 
 		const { restore } = mockFetch([
@@ -490,7 +490,7 @@ describe("update install", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 			},
 		]);
 		process.env.CLAWDI_NATIVE_PROBE_LOG = probeLog;
@@ -539,7 +539,7 @@ describe("update install", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 			},
 		]);
 		try {
@@ -584,7 +584,7 @@ describe("update install", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 			},
 		]);
 		try {
@@ -616,7 +616,7 @@ describe("update install", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 			},
 		]);
 		try {
@@ -657,7 +657,7 @@ describe("update install", () => {
 			{
 				method: "GET",
 				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 			},
 		]);
 		try {
@@ -1134,7 +1134,7 @@ describe("maybeAutoUpdate", () => {
 		expect(fetches).toHaveLength(0);
 		expect(workers).toHaveLength(1);
 		expect(workers[0]?.latest).toBeUndefined();
-		expect(workers[0]?.channel).toBe("latest");
+		expect(workers[0]?.channel).toBe(getCliVersion().includes("-") ? "beta" : "latest");
 	});
 
 	it("prints `Updated clawdi to vX` when last-version differs from current", async () => {
@@ -1368,7 +1368,7 @@ async function runNativeForegroundFailure(
 		{
 			method: "GET",
 			path: "/clawdi",
-			response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+			response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
 		},
 	]);
 	try {
@@ -1406,6 +1406,10 @@ function testFetcher(
 	implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>,
 ): typeof fetch {
 	return Object.assign(implementation, { preconnect: fetch.preconnect });
+}
+
+function releaseTags(version: string): { latest: string; beta: string } {
+	return { latest: version, beta: version };
 }
 
 function writeDaemonHealth(agent: string, version: string): void {
