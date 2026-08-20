@@ -70,7 +70,7 @@ interface RuntimeCliBadVersion {
 	registry: string | null;
 	version: string;
 	reason: string;
-	markedAt: string;
+	markedAt?: string;
 }
 
 interface RuntimeCliVerification {
@@ -109,6 +109,7 @@ const NPM_INSTALL_TIMEOUT_MS = 180_000;
 const VERSION_SMOKE_TIMEOUT_MS = 20_000;
 const RUNTIME_VERIFY_TIMEOUT_MS = 20_000;
 const CLI_VERIFY_CACHE_MAX_AGE_MS = 300_000;
+const CLI_BAD_VERSION_TTL_MS = 60 * 60 * 1000;
 const HOSTED_TENANT_PATH_CLI = "/usr/local/bin/clawdi";
 const HOSTED_SYSTEM_NPM_CLI = "/usr/local/lib/node_modules/clawdi/bin/clawdi.mjs";
 
@@ -165,7 +166,7 @@ const cliBadVersionStateSchema = z
 		registry: z.string().min(1).nullable(),
 		version: z.string().min(1),
 		reason: z.string(),
-		markedAt: z.string().min(1),
+		markedAt: z.string().min(1).optional(),
 	})
 	.strict();
 
@@ -576,7 +577,7 @@ function installCliPackage(
 	const installPlan = cliInstallPlan(paths, packageSpec, registry);
 	if (isBadCliVersion(paths, packageSpec, registry, installPlan.version)) {
 		throw new Error(
-			`clawdi CLI ${installPlan.version} is marked bad after rollback; waiting for a newer resolved version`,
+			`clawdi CLI ${installPlan.version} is marked bad after rollback; retry deferred until the rollback cooldown expires`,
 		);
 	}
 	const npmPrefix = installPlan.npmPrefix;
@@ -1349,12 +1350,22 @@ function isBadCliVersion(
 	version: string,
 ): boolean {
 	const state = readCliUpgradeState(paths);
+	const now = Date.now();
 	return (state.badVersions ?? []).some(
 		(entry) =>
 			entry.packageSpec === packageSpec &&
 			(entry.registry ?? null) === registry &&
-			entry.version === version,
+			entry.version === version &&
+			badVersionIsActive(entry, now),
 	);
+}
+
+function badVersionIsActive(entry: RuntimeCliBadVersion, now: number): boolean {
+	if (!entry.markedAt) return false;
+	const markedAt = Date.parse(entry.markedAt);
+	if (!Number.isFinite(markedAt)) return false;
+	const ageMs = now - markedAt;
+	return ageMs >= 0 && ageMs < CLI_BAD_VERSION_TTL_MS;
 }
 
 function readCliUpgradeState(paths: RuntimePaths): RuntimeCliUpgradeState {

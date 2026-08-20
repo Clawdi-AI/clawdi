@@ -11555,6 +11555,28 @@ chmod +x "$prefix/bin/clawdi"
 		});
 	});
 
+	it("reads legacy CLI journals whose bad-version entries have no timestamp", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-legacy-bad-version"),
+			join(root, "run-cli-legacy-bad-version"),
+		);
+		pointManagedCliAt(paths, newIdentity);
+		writeCliBootstrapFixture(paths, newIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity,
+			badVersions: [{ version: newIdentity.version, reason: "legacy rollback" }],
+		});
+		const legacyState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		delete legacyState.badVersions[0].markedAt;
+		writeFileSync(paths.cliUpgradeState, `${JSON.stringify(legacyState)}\n`);
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, newIdentity.version);
+
+		expect(recovered).toEqual({ status: "unchanged", selfReexec: false });
+	});
+
 	it("accepts a verified external bootstrap that supersedes a stale activated transaction", () => {
 		const { paths, previousIdentity, newIdentity, bootstrapIdentity } =
 			seedExternalCliBootstrapRecoveryFixture(
@@ -12758,31 +12780,39 @@ chmod +x "$prefix/bin/clawdi"
 						version: currentVersion,
 					}),
 				);
+				const retryManifest: RuntimeManifest = {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_cli_rollback",
+					environmentId: "env_cli_rollback",
+					instanceId: "iid_cli_rollback",
+					generation: 18,
+					issuedAt: "2026-06-06T00:00:00Z",
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec: `clawdi@${currentVersion}`,
+						registry: "https://registry.npmjs.org",
+					},
+					runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+					recovery: {},
+				};
 				const beforeRetryLog = readFileSync(npmLog, "utf-8");
-				expect(() =>
-					applyRuntimeCliDesiredState(
-						{
-							schemaVersion: "clawdi.runtimeDesiredState.v1",
-							deploymentId: "dep_cli_rollback",
-							environmentId: "env_cli_rollback",
-							instanceId: "iid_cli_rollback",
-							generation: 18,
-							issuedAt: "2026-06-06T00:00:00Z",
-							controlPlane: { apiUrl: "https://cloud-api.test" },
-							clawdiCli: {
-								source: "npm:clawdi",
-								packageSpec: `clawdi@${currentVersion}`,
-								registry: "https://registry.npmjs.org",
-							},
-							runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
-							recovery: {},
-						},
-						paths,
-					),
-				).toThrow(/marked bad/);
+				expect(() => applyRuntimeCliDesiredState(retryManifest, paths)).toThrow(/marked bad/);
 				const afterRetryLog = readFileSync(npmLog, "utf-8");
 				expect(afterRetryLog.split("\n").filter((line) => line.startsWith("install ")).length).toBe(
 					beforeRetryLog.split("\n").filter((line) => line.startsWith("install ")).length,
+				);
+
+				upgradeState.badVersions[0].markedAt = new Date(
+					Date.now() - 60 * 60 * 1000 - 1_000,
+				).toISOString();
+				writeFileSync(paths.cliUpgradeState, `${JSON.stringify(upgradeState)}\n`);
+
+				const retried = applyRuntimeCliDesiredState(retryManifest, paths);
+				expect(retried.status).toBe("installed");
+				const afterTtlLog = readFileSync(npmLog, "utf-8");
+				expect(afterTtlLog.split("\n").filter((line) => line.startsWith("install ")).length).toBe(
+					beforeRetryLog.split("\n").filter((line) => line.startsWith("install ")).length + 1,
 				);
 			} finally {
 				restore();
