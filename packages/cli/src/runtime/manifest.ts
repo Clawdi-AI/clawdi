@@ -1228,11 +1228,7 @@ function materializeInstaller(
 	return { path, cleanup: dir };
 }
 
-function runOfficialInstaller(
-	name: string,
-	install: RuntimeInstall,
-	options: { force?: boolean } = {},
-): RuntimeInstallObservation {
+function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
 	const installStartedAt = new Date().toISOString();
 	const installStartedMs = Date.now();
 	const finish = (
@@ -1265,7 +1261,7 @@ function runOfficialInstaller(
 			error: `unsupported runtime ${name}`,
 		});
 	}
-	if (executableExists(commandPath) && !options.force) {
+	if (executableExists(commandPath)) {
 		return finish({
 			runtime: name,
 			enabled: true,
@@ -1338,7 +1334,6 @@ function observeRuntimeInstall(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
 	home: string,
-	planned?: RuntimeInstallObservation,
 ) {
 	if (!runtime.enabled) {
 		return {
@@ -1396,15 +1391,7 @@ function observeRuntimeInstall(
 			error: `runtime ${name} is enabled but missing install metadata`,
 		} satisfies RuntimeInstallObservation;
 	}
-	const commandPath = runtimeCommandPath(name, runtime.install.home);
-	const repairDashboardCapability =
-		name === "hermes" &&
-		Boolean(runtime.services?.dashboard) &&
-		Boolean(commandPath && executableExists(commandPath)) &&
-		planned?.status === "configured";
-	const observation = runOfficialInstaller(name, runtime.install, {
-		force: repairDashboardCapability,
-	});
+	const observation = runOfficialInstaller(name, runtime.install);
 	if (observation.error) return observation;
 	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return capabilityError
@@ -1421,12 +1408,10 @@ function planRuntimeInstallObservation(
 	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
-	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return {
 		runtime: name,
 		enabled: true,
-		status:
-			commandPath && executableExists(commandPath) && !capabilityError ? "present" : "configured",
+		status: commandPath && executableExists(commandPath) ? "present" : "configured",
 		executionUser: null,
 		commandPath,
 		appRoot,
@@ -2001,24 +1986,6 @@ function hostedRuntimeOAuthCredentials(
 	});
 }
 
-function hostedRuntimeOAuthDeclared(
-	manifest: RuntimeManifest,
-	runtime: "hermes" | "openclaw",
-): boolean {
-	if (manifest.runtimes[runtime]?.enabled !== true) return false;
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers) return false;
-	return (manifest.runtimes[runtime]?.provider_ids ?? []).some((providerId) => {
-		const auth = recordValue(recordValue(providers[providerId])?.auth);
-		return (
-			auth?.type === "agent_profile" &&
-			auth.tool === "codex" &&
-			typeof auth.credentialSecretRef === "string" &&
-			typeof auth.credentialRevision === "string"
-		);
-	});
-}
-
 function hermesAuthPath(home: string): string {
 	return join(home, ".hermes", "auth.json");
 }
@@ -2293,28 +2260,12 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 		requireCapabilities(input.observation);
 		return input.observation;
 	} catch (initialError) {
-		const install = input.manifest.runtimes.openclaw?.install;
-		if (!install) {
-			throw new Error(
-				`${requirement} requires the public OpenClaw SDK, and no official installer repair is authorized: ${
-					initialError instanceof Error ? initialError.message : String(initialError)
-				}`,
-			);
-		}
-		const repaired = runOfficialInstaller("openclaw", install, { force: true });
-		if (repaired.error) {
-			throw new Error(`OpenClaw provider-auth capability repair failed: ${repaired.error}`);
-		}
-		try {
-			requireCapabilities(repaired);
-		} catch (repairError) {
-			throw new Error(
-				`OpenClaw provider-auth capability remains unavailable after official installer repair: ${
-					repairError instanceof Error ? repairError.message : String(repairError)
-				}`,
-			);
-		}
-		return repaired;
+		const detail = initialError instanceof Error ? initialError.message : String(initialError);
+		throw new Error(
+			`${requirement} requires the public OpenClaw SDK; automatic runtime reinstall is disabled: ${
+				tail(detail) ?? "capability probe failed"
+			}`,
+		);
 	}
 }
 
@@ -5815,15 +5766,13 @@ export function runtimeInstallerMutationTargets(
 	manifest: RuntimeManifest,
 	home: string,
 	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
-	options: { includeOAuthRefresh?: boolean } = {},
 ): string[] {
 	const targets = new Set<string>();
 	const openclawObservation = observations.get("openclaw");
 	if (
 		manifest.runtimes.openclaw?.enabled &&
 		manifest.runtimes.openclaw.install &&
-		(openclawObservation?.status !== "present" ||
-			(options.includeOAuthRefresh !== false && hostedRuntimeOAuthDeclared(manifest, "openclaw")))
+		openclawObservation?.status !== "present"
 	) {
 		targets.add(join(home, ".local", "bin", "openclaw"));
 		targets.add(join(home, ".local", "tools"));
@@ -5879,9 +5828,7 @@ function runtimeColdInstallMutationPlan(
 	});
 	if (!pending) return null;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
-	const runtimeUserTargets = runtimeInstallerMutationTargets(manifest, home, observations, {
-		includeOAuthRefresh: false,
-	}).sort();
+	const runtimeUserTargets = runtimeInstallerMutationTargets(manifest, home, observations).sort();
 	if (runtimeUserTargets.length === 0) return null;
 	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
 	const metadataTargets = [
@@ -6450,12 +6397,7 @@ export function convergeRuntimeManifest(
 			ensureRuntimeUserOwnershipBoundaries(coldInstallPlan.runtimeUserOwnershipTargets);
 		}
 		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(
-				name,
-				runtime,
-				projectionHome,
-				observations.get(name),
-			);
+			const observation = observeRuntimeInstall(name, runtime, projectionHome);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
 			if (name === "openclaw" && observation.enabled && observation.commandPath) {
