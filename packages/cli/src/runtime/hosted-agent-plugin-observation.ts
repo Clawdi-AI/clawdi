@@ -250,14 +250,7 @@ export function readHostedAgentPluginsObservation(input: {
 
 	const appliedGeneration = resolveRuntimeApplyGeneration(input.applied);
 	const currentFailures = failed.installations.filter(
-		(observation) =>
-			observation.generation > appliedGeneration ||
-			// Plugin-only attempts share a generation. Keep both a different revision
-			// and a failed retry of the currently applied installation identity.
-			(observation.generation === appliedGeneration &&
-				(observation.sourceRevision !== input.applied.sourceRevision ||
-					applied?.installations.some((installation) => sameIdentity(observation, installation)) ===
-						true)),
+		(observation) => observation.generation >= appliedGeneration,
 	);
 	if (currentFailures.length === 0) return applied;
 	const failedNames = new Set(currentFailures.map((observation) => observation.name));
