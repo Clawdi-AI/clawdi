@@ -4,6 +4,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -396,7 +397,7 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(durable).toMatchObject({ lastCapturedAt: "2026-07-16T05:00:00.000Z" });
 	});
 
-	test("retires only the matching terminally stale buffered event", () => {
+	test("retires only the matching rejected buffered event", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -407,10 +408,49 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 		const stale = session.nextEvent();
 		if (!stale) throw new Error("expected stale buffered event");
-		expect(session.retireTerminallyStale("different-event")).toBe(false);
+		expect(session.retireRejected("different-event")).toBe(false);
 		expect(session.nextEvent()).toEqual(stale);
-		expect(session.retireTerminallyStale(stale.event.eventId)).toBe(true);
+		expect(session.retireRejected(stale.event.eventId)).toBe(true);
 		expect(session.nextEvent()).not.toEqual(stale);
+	});
+
+	test.each([
+		["invalid JSON", "{not-json"],
+		[
+			"unknown schema",
+			JSON.stringify({ schemaVersion: "clawdi.runtimeHeartbeatObservation.v999" }),
+		],
+	] as const)("quarantines %s state and starts fresh", (_name, corruptedState) => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const statePath = runtimeHeartbeatObservationStatePath(paths, "env_corrupt_state");
+		mkdirSync(dirname(statePath), { recursive: true });
+		writeFileSync(statePath, corruptedState);
+
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_corrupt_state",
+			paths,
+			now: () => new Date("2026-07-16T06:00:00.000Z"),
+			createId: idSequence(["fresh-boot-session", "fresh-event-000001"]),
+		});
+		const event = session.nextEvent();
+
+		expect(event?.event).toMatchObject({
+			bootSessionId: "fresh-boot-session",
+			sequence: 1,
+			eventId: "fresh-event-000001",
+		});
+		const quarantineNames = readdirSync(dirname(statePath)).filter((name) =>
+			name.startsWith(`${basename(statePath)}.corrupt-`),
+		);
+		expect(quarantineNames).toHaveLength(1);
+		const quarantineName = quarantineNames[0];
+		if (!quarantineName) throw new Error("expected quarantined heartbeat state");
+		expect(readFileSync(join(dirname(statePath), quarantineName), "utf-8")).toBe(corruptedState);
+		expect(JSON.parse(readFileSync(statePath, "utf-8"))).toMatchObject({
+			schemaVersion: "clawdi.runtimeHeartbeatObservation.v2",
+			nextSequence: 2,
+		});
 	});
 
 	test("does not advance in-memory sequence when buffering fails to persist", () => {

@@ -28,6 +28,7 @@ type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObse
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
 const SYSTEMD_FAILURE_EVIDENCE_MAX_LENGTH = 500;
+const SYSTEMD_OBSERVED_UNIT_LIMIT = 30;
 const SENSITIVE_FAILURE_EVIDENCE =
 	/(?:^|[^a-z0-9])(?:api[_-]?key|key|token|secret|password|passwd|credential|authorization|bearer)(?:[^a-z0-9]|$)|(?:^|\s)[A-Z][A-Z0-9_]{1,}=|(?:^|[^a-z0-9])(?:sk-|gh[pousr]_|clawdi_)[a-z0-9_-]+/i;
 
@@ -67,7 +68,10 @@ export function readHostedRuntimeObserved(
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
 		cli: summarizeCliBootstrap(cliBootstrap),
 	};
-	if (systemd) observed.systemd = systemd;
+	if (systemd) {
+		observed.systemd = systemd;
+		if (systemd.unitCount > systemd.units.length) observed.truncated = true;
+	}
 	if (providers) observed.providers = providers;
 	if (appliedState && options.includeAgentPlugins) {
 		const agentPlugins = readHostedAgentPluginsObservation({
@@ -248,13 +252,24 @@ function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd 
 	const userUnits = managedSystemdUnitNames(paths.systemdUserRoot).map((unit) =>
 		systemdUnitStatus("user", unit, paths),
 	);
-	const units = [...systemUnits, ...userUnits].slice(0, 30);
-	if (units.length === 0) return null;
+	const allUnits = [...systemUnits, ...userUnits];
+	if (allUnits.length === 0) return null;
+	const units = representativeSystemdUnits(systemUnits, userUnits);
 	return {
-		status: systemdUnitsStatus(units),
-		unitCount: units.length,
+		status: systemdUnitsStatus(allUnits),
+		unitCount: allUnits.length,
 		units,
 	};
+}
+
+function representativeSystemdUnits(
+	systemUnits: HostedRuntimeObservedSystemdUnit[],
+	userUnits: HostedRuntimeObservedSystemdUnit[],
+): HostedRuntimeObservedSystemdUnit[] {
+	const reservedForUser = Math.min(userUnits.length, SYSTEMD_OBSERVED_UNIT_LIMIT / 2);
+	const systemLimit = Math.min(systemUnits.length, SYSTEMD_OBSERVED_UNIT_LIMIT - reservedForUser);
+	const userLimit = Math.min(userUnits.length, SYSTEMD_OBSERVED_UNIT_LIMIT - systemLimit);
+	return [...systemUnits.slice(0, systemLimit), ...userUnits.slice(0, userLimit)];
 }
 
 function managedSystemdUnitNames(root: string): string[] {

@@ -7,6 +7,7 @@ import { type RuntimeAppliedStateV2, writeRuntimeAppliedState } from "./applied-
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
 import {
 	HostedRuntimeObservationProducer,
+	isPermanentRuntimeObservationRejection,
 	runRuntimeObservationProducer,
 } from "./observation-producer";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -335,6 +336,47 @@ describe("hosted runtime observation producer", () => {
 		});
 	});
 
+	test("retires a permanently rejected event and captures a fresh observation", async () => {
+		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		const submitted: components["schemas"]["RuntimeObservationEventV2"][] = [];
+		const ids = ["boot-session-0001", "rejected-event-0001", "fresh-event-000002"];
+		const times = [new Date("2026-07-22T00:01:00.000Z"), new Date("2026-07-22T00:02:00.000Z")];
+		const producer = new HostedRuntimeObservationProducer({
+			abort: new AbortController().signal,
+			paths,
+			contextPath: runtimeContextPath(paths),
+			submit: async (_environmentId, event) => {
+				submitted.push(event);
+				return submitted.length === 1 ? "terminal-rejected" : "accepted";
+			},
+			sessionFactory: (environmentId, sessionPaths) =>
+				new HostedRuntimeHeartbeatSession({
+					environmentId,
+					paths: sessionPaths,
+					createId: () => {
+						const id = ids.shift();
+						if (!id) throw new Error("test ID sequence exhausted");
+						return id;
+					},
+					now: () => {
+						const time = times.shift();
+						if (!time) throw new Error("test clock sequence exhausted");
+						return time;
+					},
+				}),
+		});
+
+		expect(await producer.sendOnce()).toEqual({ outcome: "sent" });
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(submitted.map((event) => event.eventId)).toEqual([
+			"rejected-event-0001",
+			"fresh-event-000002",
+		]);
+		expect(submitted[1]?.sequence).toBe(2);
+	});
+
 	test("does not let an unresolved old-tuple request block rotation", async () => {
 		const paths = tempRuntimePaths();
 		writeApplyIdentityFile(paths, 1);
@@ -374,6 +416,73 @@ describe("hosted runtime observation producer", () => {
 
 		expect(submitted.map((event) => event.applied.generation)).toEqual([1, 2]);
 		expect(submitted[1]).toMatchObject({ sequence: 1, applied: { generation: 2 } });
+	});
+
+	test("forgets retired identity schedules and in-flight attempts", async () => {
+		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		const abort = new AbortController();
+		const submitted: number[] = [];
+		let firstGenerationOneResolve: ((result: "accepted") => void) | null = null;
+		let generationOneAttempts = 0;
+		let delayCalls = 0;
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			contextPath: runtimeContextPath(paths),
+			submit: async (_environmentId, event) => {
+				submitted.push(event.applied.generation);
+				if (event.applied.generation !== 1) return "accepted";
+				generationOneAttempts += 1;
+				if (generationOneAttempts === 1) {
+					return await new Promise<"accepted">((resolve) => {
+						firstGenerationOneResolve = resolve;
+					});
+				}
+				return await new Promise<"accepted">(() => {});
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				delayCalls += 1;
+				clock += ms;
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				if (delayCalls === 1) {
+					writeApplyIdentityFile(paths, 2);
+					writeRuntimeAppliedState(appliedState(2), paths);
+					firstGenerationOneResolve?.("accepted");
+					await Promise.resolve();
+					await Promise.resolve();
+				} else if (delayCalls === 2 || delayCalls === 4) {
+					writeApplyIdentityFile(paths, 1);
+					writeRuntimeAppliedState(appliedState(1), paths);
+				} else if (delayCalls === 3) {
+					writeApplyIdentityFile(paths, 2);
+					writeRuntimeAppliedState(appliedState(2), paths);
+				} else if (generationOneAttempts === 3 || delayCalls >= 8) {
+					abort.abort();
+				}
+			},
+		});
+
+		expect(submitted).toEqual([1, 2, 1, 2, 1]);
+	});
+
+	test.each([
+		[400, true],
+		[401, true],
+		[403, true],
+		[404, true],
+		[409, true],
+		[422, true],
+		[429, false],
+		[500, false],
+	] as const)("classifies HTTP %i permanent rejection as %s", (status, expected) => {
+		expect(isPermanentRuntimeObservationRejection({ response: { status } })).toBe(expected);
 	});
 
 	test("reports a non-ok to ok transition within five seconds", async () => {

@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from "../lib/private-file";
+import { log, toErrorMessage } from "../serve/log";
 import {
 	type RuntimeAppliedState,
 	readRuntimeAppliedState,
@@ -72,10 +73,19 @@ const observedSystemdUnitSchema = z
 const observedSystemdSchema = z
 	.object({
 		status: z.enum(["ok", "error", "unknown"]),
-		unitCount: z.number().int().nonnegative(),
+		unitCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 		units: z.array(observedSystemdUnitSchema),
 	})
-	.strict();
+	.strict()
+	.superRefine((systemd, ctx) => {
+		if (systemd.unitCount < systemd.units.length) {
+			ctx.addIssue({
+				code: "custom",
+				message: "unitCount must include every reported systemd unit",
+				path: ["unitCount"],
+			});
+		}
+	});
 
 const observedSupervisorProgramSchema = z
 	.object({
@@ -114,7 +124,7 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		agentPlugins: agentPluginsObservationSchema.nullable().optional(),
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
-		truncated: z.literal(false).nullable().optional(),
+		truncated: z.boolean().nullable().optional(),
 		generation: positiveSafeIntegerSchema,
 		manifestETag: z.string().min(1).max(128),
 		applyReceiptId: z.string().min(16).max(128),
@@ -133,6 +143,17 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 				code: "custom",
 				message: "reportedAt must equal the original capturedAt for companion events",
 				path: ["reportedAt"],
+			});
+		}
+		if (
+			event.systemd &&
+			event.systemd.unitCount > event.systemd.units.length &&
+			event.truncated !== true
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "truncated must be true when systemd units are omitted",
+				path: ["truncated"],
 			});
 		}
 		if (event.predecessorBootSessionId === event.bootSessionId) {
@@ -241,10 +262,8 @@ export class HostedRuntimeHeartbeatSession {
 		this.createId = options.createId ?? randomUUID;
 		this.createSuccessorId = options.createSuccessorId ?? randomUUID;
 		this.statePath = runtimeHeartbeatObservationStatePath(this.paths, options.environmentId);
-		const persisted = this.paths.mode === "hosted" ? readState(this.statePath) : null;
-		if (persisted && persisted.environmentId !== options.environmentId) {
-			throw new Error("runtime heartbeat state environment binding does not match");
-		}
+		const persisted =
+			this.paths.mode === "hosted" ? readState(this.statePath, options.environmentId) : null;
 		this.state = null;
 		this.initializeAppliedState(persisted);
 	}
@@ -433,7 +452,7 @@ export class HostedRuntimeHeartbeatSession {
 		return true;
 	}
 
-	retireTerminallyStale(eventId: string): boolean {
+	retireRejected(eventId: string): boolean {
 		return this.clearPending(eventId);
 	}
 
@@ -460,18 +479,50 @@ export function runtimeHeartbeatObservationStatePath(
 	return join(paths.runtimeHeartbeatRoot, `${environmentKey}.json`);
 }
 
-function readState(path: string): PersistedHeartbeatState | LegacyHeartbeatState | null {
-	if (!existsSync(path)) return null;
+function readState(
+	path: string,
+	environmentId: string,
+): PersistedHeartbeatState | LegacyHeartbeatState | null {
+	let serialized: string;
 	try {
-		const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
-		return z.union([heartbeatStateSchema, legacyHeartbeatStateSchema]).parse(raw);
+		serialized = readFileSync(path, "utf-8");
 	} catch (error) {
+		if (hasErrorCode(error, "ENOENT")) return null;
 		throw new Error(
-			`invalid durable runtime heartbeat state at ${path}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			`unable to read durable runtime heartbeat state at ${path}: ${toErrorMessage(error)}`,
 		);
 	}
+
+	try {
+		const raw: unknown = JSON.parse(serialized);
+		const state = z.union([heartbeatStateSchema, legacyHeartbeatStateSchema]).parse(raw);
+		if (state.environmentId !== environmentId) {
+			throw new Error("runtime heartbeat state environment binding does not match");
+		}
+		if (state.pending) decodePendingEvent(state.pending);
+		return state;
+	} catch (error) {
+		const quarantinePath = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
+		try {
+			renameSync(path, quarantinePath);
+		} catch (quarantineError) {
+			throw new Error(
+				`invalid durable runtime heartbeat state at ${path}: ${toErrorMessage(
+					error,
+				)}; quarantine failed: ${toErrorMessage(quarantineError)}`,
+			);
+		}
+		log.warn("daemon.runtime_heartbeat_state_quarantined", {
+			path,
+			quarantine_path: quarantinePath,
+			error: error instanceof z.ZodError ? "state schema validation failed" : toErrorMessage(error),
+		});
+		return null;
+	}
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+	return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 function writeState(paths: RuntimePaths, path: string, state: PersistedHeartbeatState): void {

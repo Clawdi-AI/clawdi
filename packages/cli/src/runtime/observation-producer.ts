@@ -26,7 +26,7 @@ const runtimeInstanceIdentitySchema = z
 	})
 	.passthrough();
 
-type ObservationSubmitResult = "accepted" | "terminal-stale";
+type ObservationSubmitResult = "accepted" | "terminal-rejected";
 type RuntimeObservedStatus = HostedRuntimeObservedEvent["status"];
 
 type ObservationSendResult =
@@ -66,6 +66,7 @@ export class HostedRuntimeObservationProducer {
 	private readonly sessionFactory: NonNullable<RuntimeObservationProducerOptions["sessionFactory"]>;
 	private session: HostedRuntimeHeartbeatSession | null = null;
 	private environmentId: string | null = null;
+	private lastAttestationError: string | null = null;
 
 	constructor(options: RuntimeObservationProducerOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
@@ -82,7 +83,7 @@ export class HostedRuntimeObservationProducer {
 					params: { path: { environment_id: environmentId } },
 					body: event,
 				});
-				if (isSafelyTerminalRuntimeObservationFailure(response)) return "terminal-stale";
+				if (isPermanentRuntimeObservationRejection(response)) return "terminal-rejected";
 				unwrap(response);
 				return "accepted";
 			};
@@ -111,11 +112,11 @@ export class HostedRuntimeObservationProducer {
 			if (this.currentAttestedIdentityKey() !== context.identityKey) {
 				return { outcome: "sent" };
 			}
-			if (result === "terminal-stale") {
-				if (!this.session.retireTerminallyStale(buffered.event.eventId)) {
-					throw new Error("terminally stale runtime observation did not match buffered event");
+			if (result === "terminal-rejected") {
+				if (!this.session.retireRejected(buffered.event.eventId)) {
+					throw new Error("rejected runtime observation did not match buffered event");
 				}
-				log.warn("daemon.runtime_observation_retired_stale", {
+				log.warn("daemon.runtime_observation_retired_rejected", {
 					event_id: buffered.event.eventId,
 					captured_at: buffered.event.capturedAt,
 				});
@@ -135,7 +136,18 @@ export class HostedRuntimeObservationProducer {
 	}
 
 	currentAttestedIdentityKey(): string | null {
-		return this.readAttestedContext()?.identityKey ?? null;
+		try {
+			const identityKey = this.readAttestedContext()?.identityKey ?? null;
+			this.lastAttestationError = null;
+			return identityKey;
+		} catch (error) {
+			const message = toErrorMessage(error);
+			if (message !== this.lastAttestationError) {
+				log.warn("daemon.runtime_observation_attestation_invalid", { error: message });
+				this.lastAttestationError = message;
+			}
+			return null;
+		}
 	}
 
 	private readAttestedContext(): AttestedRuntimeObservationContext | null {
@@ -174,6 +186,8 @@ export async function runRuntimeObservationProducer(
 	while (!options.abort.aborted) {
 		try {
 			const identityKey = producer.currentAttestedIdentityKey();
+			pruneRetiredIdentityEntries(activeAttempts, identityKey);
+			pruneRetiredIdentityEntries(schedules, identityKey);
 			if (identityKey && !activeAttempts.has(identityKey)) {
 				const schedule = schedules.get(identityKey) ?? {
 					nextAttemptAt: 0,
@@ -199,7 +213,9 @@ export async function runRuntimeObservationProducer(
 						}
 						schedule.nextAttemptAt =
 							completedAt + (result.outcome === "idle" ? IDLE_RETRY_INTERVAL_MS : interval);
-						activeAttempts.delete(identityKey);
+						if (activeAttempts.get(identityKey) === attempt) {
+							activeAttempts.delete(identityKey);
+						}
 					});
 					activeAttempts.set(identityKey, attempt);
 				}
@@ -239,6 +255,20 @@ export function isSafelyTerminalRuntimeObservationFailure(result: {
 	if (result.response.status !== 422 || !isUnknownRecord(result.error)) return false;
 	const detail = result.error.detail;
 	return isUnknownRecord(detail) && detail.code === "runtime_observation_captured_at_too_old";
+}
+
+export function isPermanentRuntimeObservationRejection(result: {
+	response: { status: number };
+}): boolean {
+	return (
+		result.response.status >= 400 && result.response.status < 500 && result.response.status !== 429
+	);
+}
+
+function pruneRetiredIdentityEntries<T>(entries: Map<string, T>, identityKey: string | null): void {
+	for (const key of entries.keys()) {
+		if (key !== identityKey) entries.delete(key);
+	}
 }
 
 function abortableDelay(ms: number, abort: AbortSignal): Promise<void> {

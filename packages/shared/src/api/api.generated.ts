@@ -6917,7 +6917,7 @@ export interface components {
             /** Convergeerror */
             convergeError?: string | null;
             /** Truncated */
-            truncated?: false | null;
+            truncated?: boolean | null;
             /** Generation */
             generation?: number | null;
             /** Manifestetag */

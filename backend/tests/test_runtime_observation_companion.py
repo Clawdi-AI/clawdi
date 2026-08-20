@@ -178,6 +178,33 @@ def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> N
         RuntimeObservationEventV2.model_validate({**payload, "generation": 2})
 
 
+def test_runtime_observation_accepts_explicitly_truncated_systemd_summary() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True)
+    systemd = {
+        "status": "ok",
+        "unitCount": 62,
+        "units": [
+            {
+                "scope": "system",
+                "name": "clawdi-runtime-watch.service",
+                "activeState": "active",
+                "subState": "running",
+                "status": "ok",
+            }
+        ],
+    }
+
+    observed = RuntimeObservationEventV2.model_validate(
+        {**payload, "systemd": systemd, "truncated": True}
+    )
+
+    assert observed.systemd is not None
+    assert observed.systemd.unit_count == 62
+    assert observed.truncated is True
+    with pytest.raises(ValueError, match="truncated must be true"):
+        RuntimeObservationEventV2.model_validate({**payload, "systemd": systemd})
+
+
 def test_agent_plugin_observation_rejects_stale_or_unfenced_apply_identity() -> None:
     payload = _payload(generation=2).model_dump(mode="json", by_alias=True)
     installation = {

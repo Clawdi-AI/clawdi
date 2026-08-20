@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
 import { writeRuntimeAppliedState } from "./applied-state";
@@ -163,5 +163,35 @@ describe("hosted runtime observed v2", () => {
 		const observed = readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("error");
 		expect(observed?.convergeError).toBe("runtime apply failed");
+	});
+
+	test("reports complete systemd counts with representative scoped truncation", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-truncation-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		process.env.CLAWDI_RUNTIME_USER = userInfo().username;
+		const paths = getRuntimePaths({ mode: "hosted" });
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
+		mkdirSync(paths.systemdSystemRoot, { recursive: true });
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		const systemctl = join(root, "systemctl");
+		writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\\nSubState=running\\n'\n");
+		chmodSync(systemctl, 0o700);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		for (let index = 0; index < 31; index += 1) {
+			const suffix = index.toString().padStart(2, "0");
+			writeFileSync(join(paths.systemdSystemRoot, `clawdi-system-${suffix}.service`), "");
+			writeFileSync(join(paths.systemdUserRoot, `clawdi-user-${suffix}.service`), "");
+		}
+
+		const observed = readHostedRuntimeObserved(paths);
+
+		expect(observed?.truncated).toBe(true);
+		expect(observed?.systemd?.unitCount).toBe(62);
+		expect(observed?.systemd?.units).toHaveLength(30);
+		expect(observed?.systemd?.units.filter((unit) => unit.scope === "system")).toHaveLength(15);
+		expect(observed?.systemd?.units.filter((unit) => unit.scope === "user")).toHaveLength(15);
 	});
 });
