@@ -1,3 +1,4 @@
+// Upgrade procedure: packages/cli/docs/managed-baileys-compat-upgrade.md
 import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
