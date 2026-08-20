@@ -210,7 +210,7 @@ export function AutoReloadSetupDialog({
 		>
 			<DialogContent
 				data-hosted="true"
-				className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg"
+				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
 			>
 				<DialogHeader>
 					<div className="flex items-center gap-3">
