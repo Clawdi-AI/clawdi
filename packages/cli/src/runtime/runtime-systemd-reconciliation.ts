@@ -1480,6 +1480,7 @@ function writeRuntimeSystemdUserProgram(input: {
 				CLAWDI_HOME: input.paths.clawdiHome,
 				CLAWDI_RUNTIME_REV: revision,
 			};
+	if (input.manifest.locale) env.TZ = input.manifest.locale.timezone;
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
 			paths: input.paths,

@@ -2089,7 +2089,10 @@ chmod 0755 '${commandPath}'
 		);
 		chmodSync(openclawBin, 0o700);
 
-		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
+		const legacy = hostedOpenClawV2ManifestFixture(
+			{ locale: { language: "es", timezone: "Europe/Madrid" } },
+			LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS,
+		);
 		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(legacy);
 		const projected = hostedManifestToRuntimeManifest(hosted);
 		expect(projected.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
@@ -2139,6 +2142,7 @@ chmod 0755 '${commandPath}'
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
+		expect(gatewayEnv).toContain('TZ="Europe/Madrid"');
 		expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 		expect(gatewayEnv).not.toContain("gateway-token");
 		const gatewayDropIn = readFileSync(
