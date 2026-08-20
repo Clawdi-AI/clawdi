@@ -396,12 +396,13 @@ native runtime contracts: Hermes receives the signed `SKILL.md` URL through
 invalidates the signed file lookup.
 
 Hermes URL delivery follows the upstream native adapter verified at
-[`NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0`](https://github.com/NousResearch/hermes-agent/blob/aec331899e4748739927fddf02a54327e64419a0/tools/skills_hub.py#L1425-L1558):
+[`NousResearch/hermes-agent@a77ee88ce29c4f1d89f8d60e5b662322645072d8`](https://github.com/NousResearch/hermes-agent/blob/a77ee88ce29c4f1d89f8d60e5b662322645072d8/tools/skills_hub.py#L1428-L1564):
 it installs `SKILL.md` plus explicitly referenced files from the supported
 Skill directories and runs Hermes' normal quarantine and security scan. The
-CLI compares the native result with that exact projection; an older Hermes
-that only installs one file fails closed and rolls back instead of silently
-accepting incomplete Skill bytes.
+URL adapter decodes `SKILL.md` as HTTP text and writes it as UTF-8 while support
+files remain byte payloads, so the CLI compares against that same native
+projection. An older Hermes that only installs one file fails closed and rolls
+back instead of silently accepting incomplete Skill bytes.
 
 OpenClaw directory delivery follows the upstream native CLI verified at
 [`openclaw/openclaw@74014c286d36a4fd8ec16d451333a17e8776fcfe`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/cli/skills-cli.ts#L615-L695).

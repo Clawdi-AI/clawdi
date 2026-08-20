@@ -45,7 +45,8 @@ if sys.argv[1:3] == ["skills", "install"]:
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md", target / "SKILL.md")
+    source_skill = Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md"
+    (target / "SKILL.md").write_text(source_skill.read_bytes().decode("utf-8", errors="replace"), encoding="utf-8")
     support = Path(os.environ["FAKE_HERMES_SOURCE"]) / "references" / "guide.md"
     if support.exists() and os.environ.get("FAKE_HERMES_OMIT_SUPPORT") != "1":
         (target / "references").mkdir(parents=True, exist_ok=True)
@@ -134,7 +135,9 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		mkdirSync(sourceDir, { recursive: true });
 		const skillV1 = "# Review PR\n\n[Guide](references/guide.md)\n";
 		const skillV2 = "# Review PR v2\n\n[Guide](references/guide.md)\n";
-		writeFileSync(join(sourceDir, "SKILL.md"), skillV1);
+		const skillV1Source = Buffer.concat([Buffer.from(skillV1), Buffer.from([0xff])]);
+		const skillV1Native = Buffer.from(skillV1Source.toString("utf8"), "utf8");
+		writeFileSync(join(sourceDir, "SKILL.md"), skillV1Source);
 		mkdirSync(join(sourceDir, "references"), { recursive: true });
 		writeFileSync(join(sourceDir, "references", "guide.md"), "Pinned guide\n");
 		writeFileSync(join(sourceDir, "skill.json"), '{"catalog_only":true}\n');
@@ -168,7 +171,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		).toBe("installed");
 		const target = join(home, ".hermes", "skills", "review-pr");
 		const receipt = join(home, ".hermes", "skills", ".clawdi-manifest-receipts", "review-pr.json");
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
+		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
 		expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe("Pinned guide\n");
 		expect(existsSync(join(target, "skill.json"))).toBe(false);
 		expect(readFileSync(commandLog, "utf8")).not.toContain("--force");
@@ -182,7 +185,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 
 		writeFileSync(join(target, "SKILL.md"), "forged user bytes\n");
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
-		writeFileSync(join(target, "SKILL.md"), skillV1);
+		writeFileSync(join(target, "SKILL.md"), skillV1Native);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(existsSync(join(root, "wrong-profile", "skills", "review-pr"))).toBe(false);
 

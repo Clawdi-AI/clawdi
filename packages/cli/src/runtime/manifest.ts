@@ -89,6 +89,7 @@ import {
 	reconcileHermesConfigValue,
 } from "./hermes-config";
 import {
+	hostedAgentPluginReceiptsPath,
 	type PreparedHostedAgentPlugins,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
@@ -156,6 +157,7 @@ import {
 } from "./managed-channel-reconciliation";
 import {
 	installReservedManagedSkill,
+	managedSkillReservationLedgerPath,
 	managedSkillReservationOwner,
 	managedSkillReservations,
 	releaseManagedSkill,
@@ -172,7 +174,6 @@ import {
 } from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
-	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
 import {
@@ -290,7 +291,7 @@ export interface RuntimeConvergenceResult {
 	mode: "normal" | "degraded-offline";
 	enabledRuntimes: string[];
 	installErrors: string[];
-	failureHealthImpact: "runtime" | "resource_projection" | null;
+	resourceProjectionErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames: string[];
 	outputs: {
@@ -322,11 +323,12 @@ export interface RuntimeConvergenceResult {
 	};
 }
 
-class RuntimeResourceProjectionError extends Error {
-	constructor(error: unknown) {
-		super(error instanceof Error ? error.message : String(error), { cause: error });
-		this.name = "RuntimeResourceProjectionError";
-	}
+export interface RuntimeResourcePreparationFailures {
+	agentPlugins?: {
+		error: string;
+		installationNames: readonly string[];
+	};
+	sourcedSkills?: string;
 }
 
 export function planHostedAgentPluginConvergence(input: {
@@ -4609,29 +4611,85 @@ function applyHostedOpenClawSourcedSkills(
 	return ids.map((id) => join(skillsRoot, id));
 }
 
-type HostedSkillProjectionEntry =
-	| { id: string; version: number; digest: string }
-	| { id: string; source: HostedSkillSource };
-
-function hostedSkillProjection(
-	manifest: RuntimeManifest,
-	runtime: string,
-): HostedSkillProjectionEntry[] | null {
-	if (runtime !== "openclaw" && runtime !== "hermes") return null;
-	if (manifest.runtimes[runtime]?.enabled !== true) return [];
-	const projection: HostedSkillProjectionEntry[] = [];
-	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
-		([left], [right]) => left.localeCompare(right),
-	)) {
-		if (desired.enabled !== true) continue;
-		if ("source" in desired) {
-			projection.push({ id: skillId, source: desired.source });
-			continue;
-		}
-		const bundled = resolveHostedBundledSkill(skillId, desired.version);
-		projection.push({ id: bundled.id, version: bundled.version, digest: bundled.digest });
+function runHostedSkillProjectionStep(label: string, step: () => void): void {
+	try {
+		step();
+	} catch (error) {
+		throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, {
+			cause: error,
+		});
 	}
-	return projection;
+}
+
+function reconcileHostedSkillProjection(input: {
+	manifest: RuntimeManifest;
+	observations: ReadonlyMap<string, RuntimeInstallObservation>;
+	home: string;
+	openClawWorkspaceRoot: string | null;
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	hermesDriver: HostedHermesSkillExactSourceDriver;
+	openClawDriver: HostedOpenClawSkillDriver;
+}): void {
+	const {
+		manifest,
+		observations,
+		home,
+		openClawWorkspaceRoot,
+		preparedSourcedSkills,
+		hermesDriver,
+		openClawDriver,
+	} = input;
+	runHostedSkillProjectionStep("runtime Skill projection planning failed", () => {
+		recoverHostedSourcedSkillReservations(manifest, home, preparedSourcedSkills, hermesDriver);
+		if (openClawWorkspaceRoot) {
+			recoverHostedOpenClawBundledSkillReservations(
+				manifest,
+				openClawWorkspaceRoot,
+				openClawDriver,
+			);
+			recoverHostedOpenClawSourcedSkillReservations(
+				manifest,
+				openClawWorkspaceRoot,
+				preparedSourcedSkills,
+				openClawDriver,
+			);
+		}
+		for (const name of HOSTED_RUNTIME_TARGETS) {
+			validateHostedSkillsPlan(name, manifest, home, openClawWorkspaceRoot, preparedSourcedSkills);
+		}
+	});
+	for (const name of HOSTED_RUNTIME_TARGETS) {
+		runHostedSkillProjectionStep(`runtime ${name} skill projection failed`, () => {
+			applyHostedBundledSkills(
+				name,
+				observations.get(name),
+				manifest,
+				home,
+				openClawWorkspaceRoot,
+				openClawDriver,
+			);
+		});
+	}
+	runHostedSkillProjectionStep("runtime hermes sourced Skill projection failed", () => {
+		applyHostedSourcedSkills(
+			observations.get("hermes"),
+			manifest,
+			home,
+			preparedSourcedSkills,
+			hermesDriver,
+		);
+	});
+	if (!openClawWorkspaceRoot) return;
+	runHostedSkillProjectionStep("runtime openclaw sourced Skill delivery failed", () => {
+		applyHostedOpenClawSourcedSkills(
+			observations.get("openclaw"),
+			manifest,
+			home,
+			openClawWorkspaceRoot,
+			preparedSourcedSkills,
+			openClawDriver,
+		);
+	});
 }
 
 function applyHostedMcpProjections(
@@ -5445,7 +5503,6 @@ function runtimeProgramRevisionForManifest(
 					: (manifest.locale?.timezone ?? null),
 			mcp: hostedTarget ? hostedMcpIntent(manifest) : null,
 			provider: providerProjectionRevision,
-			skills: hostedSkillProjection(manifest, runtime),
 		},
 		desiredRuntime,
 		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
@@ -5466,12 +5523,8 @@ function validateRuntimeManifestPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	openClawWorkspaceRoot: string | null,
-	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
-	for (const name of HOSTED_RUNTIME_TARGETS) {
-		validateHostedSkillsPlan(name, manifest, home, openClawWorkspaceRoot, preparedSourcedSkills);
-	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
 		const runtimeName = runtimeNameSchema.parse(name);
 		const providerEnvironment = runtime.enabled
@@ -5676,7 +5729,6 @@ function runtimeConvergenceWithoutApply(input: {
 	workspaceRoot: string;
 	enabledRuntimes: string[];
 	installErrors: string[];
-	failureHealthImpact?: "runtime" | "resource_projection";
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
@@ -5689,7 +5741,7 @@ function runtimeConvergenceWithoutApply(input: {
 		mode: input.load.offline ? "degraded-offline" : "normal",
 		enabledRuntimes: input.enabledRuntimes,
 		installErrors: input.installErrors,
-		failureHealthImpact: input.failureHealthImpact ?? "runtime",
+		resourceProjectionErrors: [],
 		projectedProviderIds: input.projectedProviderIds,
 		agentPluginFailedNames: input.agentPluginFailedNames ?? [],
 		outputs: {
@@ -6096,6 +6148,15 @@ export function runtimeUserMutationTargets(
 	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
 		targets.add(join(paths.localEnvironments, `${agentType}.json`));
 	}
+	return [...targets].sort();
+}
+
+function hostedSkillMutationTargets(
+	manifest: RuntimeManifest,
+	home: string,
+	openClawWorkspaceRoot: string | null,
+): string[] {
+	const targets = new Set<string>();
 	for (const runtime of HOSTED_RUNTIME_TARGETS) {
 		for (const skillId of hostedBundledSkillIds()) {
 			const target = hostedBundledSkillTargetDir(
@@ -6309,6 +6370,7 @@ export function convergeRuntimeManifest(
 		fileBrowserReadinessProbe?: (url: string) => boolean;
 		preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 		preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
+		resourcePreparationFailures?: RuntimeResourcePreparationFailures;
 		hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 		hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
 		hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
@@ -6322,7 +6384,11 @@ export function convergeRuntimeManifest(
 	) {
 		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	}
-	if (hasUnsupportedAgentPluginInstallations(manifest) && !opts.preparedHostedAgentPlugins) {
+	if (
+		hasUnsupportedAgentPluginInstallations(manifest) &&
+		!opts.preparedHostedAgentPlugins &&
+		!opts.resourcePreparationFailures?.agentPlugins
+	) {
 		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 	}
 	const secretValues = runtimeSecretValues(load);
@@ -6354,6 +6420,7 @@ export function convergeRuntimeManifest(
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
 	const agentPluginFailedNames = new Set<string>();
 	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
+	let skillProjectionSnapshot: RuntimeLiveSnapshot | null = null;
 	let agentPluginQuiesceAttempted = false;
 	let agentPluginUnitsQuiesced = false;
 	let agentPluginMutationAttempted = false;
@@ -6384,6 +6451,7 @@ export function convergeRuntimeManifest(
 	const runConfigs: string[] = [];
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
+	const resourceProjectionErrors: string[] = [];
 	const appliedState = readRuntimeAppliedState(paths);
 	let previousInstallReceipts: RuntimeInstallReceipts | null = null;
 	const installReceiptTargets: RuntimeInstallReceiptTargets = {
@@ -6399,6 +6467,16 @@ export function convergeRuntimeManifest(
 	let openClawManagedAuthAgentDirs: string[] = [];
 
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
+	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
+	if (opts.resourcePreparationFailures?.sourcedSkills) {
+		resourceProjectionErrors.push(opts.resourcePreparationFailures.sourcedSkills);
+	}
+	if (opts.resourcePreparationFailures?.agentPlugins) {
+		resourceProjectionErrors.push(opts.resourcePreparationFailures.agentPlugins.error);
+		for (const name of opts.resourcePreparationFailures.agentPlugins.installationNames) {
+			agentPluginFailedNames.add(name);
+		}
+	}
 	const hermesSkillNativeReconciler =
 		opts.hostedHermesSkillExactSourceDriver ?? hostedHermesSkillExactSourceDriver;
 	const openClawSkillDriver = opts.hostedOpenClawSkillDriver ?? hostedOpenClawSkillDriver;
@@ -6540,31 +6618,7 @@ export function convergeRuntimeManifest(
 						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
 				})
 			: null;
-		recoverHostedSourcedSkillReservations(
-			manifest,
-			projectionHome,
-			preparedHostedSourcedSkills,
-			hermesSkillNativeReconciler,
-		);
-		if (openClawWorkspaceRoot) {
-			recoverHostedOpenClawBundledSkillReservations(
-				manifest,
-				openClawWorkspaceRoot,
-				openClawSkillDriver,
-			);
-			recoverHostedOpenClawSourcedSkillReservations(
-				manifest,
-				openClawWorkspaceRoot,
-				preparedHostedSourcedSkills,
-				openClawSkillDriver,
-			);
-		}
-		validateRuntimeManifestPlan(
-			manifest,
-			paths,
-			openClawWorkspaceRoot,
-			preparedHostedSourcedSkills,
-		);
+		validateRuntimeManifestPlan(manifest, paths, openClawWorkspaceRoot);
 		validateRuntimeProjectionPlan({
 			manifest,
 			paths,
@@ -6743,7 +6797,12 @@ export function convergeRuntimeManifest(
 				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
 					agentPluginFailedNames.add(name);
 				}
-				throw new RuntimeResourceProjectionError(error);
+				resourceProjectionErrors.push(
+					`runtime Agent Plugin projection planning failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+				planned = { transaction: null };
 			}
 			agentPluginTransaction = planned.transaction;
 			if (agentPluginTransaction?.hasMutations && !opts.systemdApply) {
@@ -7051,54 +7110,46 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) {
 			throw new Error(installErrors.join("; "));
 		}
-		const skillProjectionErrors: string[] = [];
-		for (const name of HOSTED_RUNTIME_TARGETS) {
+		if (sourcedSkillsPrepared) {
 			try {
-				applyHostedBundledSkills(
-					name,
-					observations.get(name),
+				const skillMutationTargets = hostedSkillMutationTargets(
 					manifest,
 					projectionHome,
 					openClawWorkspaceRoot,
-					openClawSkillDriver,
 				);
-			} catch (error) {
-				skillProjectionErrors.push(
-					`runtime ${name} skill projection failed: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-				);
-			}
-		}
-		try {
-			applyHostedSourcedSkills(
-				observations.get("hermes"),
-				manifest,
-				projectionHome,
-				preparedHostedSourcedSkills,
-				hermesSkillNativeReconciler,
-			);
-		} catch (error) {
-			skillProjectionErrors.push(
-				`runtime hermes sourced Skill projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		if (openClawWorkspaceRoot) {
-			try {
-				applyHostedOpenClawSourcedSkills(
-					observations.get("openclaw"),
+				skillProjectionSnapshot = captureRuntimeLiveSnapshot({
+					rootTargets: [managedSkillReservationLedgerPath()],
+					trustedRootDirectories: [paths.managedResourceRoot],
+					runtimeUserTargets: skillMutationTargets,
+					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
+					runtimeUserSymlinkTargets: [],
+					metadataTargets: mutationAncestorMetadataTargets(skillMutationTargets, [
+						paths.userHome,
+						paths.clawdiHome,
+					]),
+				});
+				reconcileHostedSkillProjection({
 					manifest,
-					projectionHome,
+					observations,
+					home: projectionHome,
 					openClawWorkspaceRoot,
-					preparedHostedSourcedSkills,
-					openClawSkillDriver,
-				);
+					preparedSourcedSkills: preparedHostedSourcedSkills,
+					hermesDriver: hermesSkillNativeReconciler,
+					openClawDriver: openClawSkillDriver,
+				});
 			} catch (error) {
-				skillProjectionErrors.push(
-					`runtime openclaw sourced Skill delivery failed: ${error instanceof Error ? error.message : String(error)}`,
-				);
+				const projectionError = error instanceof Error ? error.message : String(error);
+				try {
+					if (skillProjectionSnapshot) restoreRuntimeLiveSnapshot(skillProjectionSnapshot);
+				} catch (rollbackError) {
+					throw new Error(
+						`runtime Skill projection failed and could not be rolled back: ${projectionError}; ${
+							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+						}`,
+					);
+				}
+				skillProjectionSnapshot = null;
+				resourceProjectionErrors.push(projectionError);
 			}
 		}
 		try {
@@ -7108,13 +7159,8 @@ export function convergeRuntimeManifest(
 				`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		}
-		installErrors.push(...skillProjectionErrors);
 		if (installErrors.length > 0) {
-			const error = new Error(installErrors.join("; "));
-			if (installErrors.length === skillProjectionErrors.length) {
-				throw new RuntimeResourceProjectionError(error);
-			}
-			throw error;
+			throw new Error(installErrors.join("; "));
 		}
 
 		for (const runtime of ["hermes", "openclaw"] as const) {
@@ -7350,10 +7396,14 @@ export function convergeRuntimeManifest(
 			agentPluginQuiesceAttempted = true;
 			opts.systemdApply?.quiesce(agentPluginQuiesceUserUnits);
 			agentPluginUnitsQuiesced = true;
-			if (appliedAgentPluginTransaction.snapshotTargets.length > 0) {
+			agentPluginMutationAttempted = true;
+		}
+		let agentPluginApplyCompleted = false;
+		try {
+			if (appliedAgentPluginTransaction) {
 				agentPluginSnapshot = captureRuntimeLiveSnapshot({
-					rootTargets: [],
-					trustedRootDirectories: [],
+					rootTargets: [hostedAgentPluginReceiptsPath(paths)],
+					trustedRootDirectories: [paths.statusRoot],
 					runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
 					runtimeUserTrustedRoots: [projectionHome],
 					runtimeUserSymlinkTargets: [],
@@ -7363,12 +7413,44 @@ export function convergeRuntimeManifest(
 					),
 				});
 			}
-			agentPluginMutationAttempted = true;
-		}
-		try {
 			appliedAgentPluginTransaction?.apply();
+			agentPluginApplyCompleted = true;
+			if (appliedAgentPluginTransaction) {
+				writeHostedAgentPluginReceipt(appliedAgentPluginTransaction.nextReceipt, paths);
+			}
 		} catch (error) {
-			throw new RuntimeResourceProjectionError(error);
+			const failedNames = agentPluginApplyCompleted
+				? opts.preparedHostedAgentPlugins?.desired.keys()
+				: appliedAgentPluginTransaction?.mutationNames;
+			for (const name of failedNames ?? []) {
+				agentPluginFailedNames.add(name);
+			}
+			const rollbackErrors = appliedAgentPluginTransaction?.rollback() ?? [];
+			try {
+				if (agentPluginSnapshot) restoreRuntimeLiveSnapshot(agentPluginSnapshot);
+			} catch (rollbackError) {
+				rollbackErrors.push(
+					`runtime Agent Plugin snapshot rollback failed: ${
+						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+					}`,
+				);
+			}
+			if (rollbackErrors.length > 0) {
+				throw new Error(
+					`runtime Agent Plugin projection failed and could not be rolled back: ${[
+						error instanceof Error ? error.message : String(error),
+						...rollbackErrors,
+					].join("; ")}`,
+				);
+			}
+			resourceProjectionErrors.push(
+				`runtime Agent Plugin projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			agentPluginTransaction = null;
+			agentPluginSnapshot = null;
+			agentPluginMutationAttempted = false;
 		}
 		if (
 			officialServicePlan.pending.length > 0 &&
@@ -7438,9 +7520,9 @@ export function convergeRuntimeManifest(
 			mode: load.offline ? "degraded-offline" : "normal",
 			enabledRuntimes,
 			installErrors,
-			failureHealthImpact: null,
+			resourceProjectionErrors,
 			projectedProviderIds,
-			agentPluginFailedNames: [],
+			agentPluginFailedNames: [...agentPluginFailedNames].sort(),
 			outputs: {
 				processManager: "systemd",
 				workspaceRoot,
@@ -7484,16 +7566,6 @@ export function convergeRuntimeManifest(
 				force: true,
 			});
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
-			if (agentPluginTransaction) {
-				try {
-					writeHostedAgentPluginReceipt(agentPluginTransaction.nextReceipt, paths);
-				} catch (error) {
-					for (const name of opts.preparedHostedAgentPlugins?.desired.keys() ?? []) {
-						agentPluginFailedNames.add(name);
-					}
-					throw new RuntimeResourceProjectionError(error);
-				}
-			}
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
 				(systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
@@ -7539,14 +7611,12 @@ export function convergeRuntimeManifest(
 		}
 		return convergence;
 	} catch (error) {
-		const resourceProjectionFailure = error instanceof RuntimeResourceProjectionError;
 		if (agentPluginMutationAttempted) {
 			for (const name of agentPluginTransaction?.mutationNames ?? []) {
 				agentPluginFailedNames.add(name);
 			}
 		}
 		const applyError = error instanceof Error ? error.message : String(error);
-		const installErrorCountBeforeRollback = installErrors.length;
 		const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
 		const rollbackRequiresQuiesce =
 			systemdMutated || agentPluginQuiesceAttempted || agentPluginMutationAttempted;
@@ -7566,14 +7636,26 @@ export function convergeRuntimeManifest(
 		let filesystemRollbackSucceeded = false;
 		if (candidateQuiesced) {
 			if (agentPluginTransaction) installErrors.push(...agentPluginTransaction.rollback());
-			let pluginFilesystemRollbackSucceeded = true;
+			let resourceFilesystemRollbackSucceeded = true;
 			if (agentPluginSnapshot) {
 				try {
 					restoreRuntimeLiveSnapshot(agentPluginSnapshot);
 				} catch (rollbackError) {
-					pluginFilesystemRollbackSucceeded = false;
+					resourceFilesystemRollbackSucceeded = false;
 					installErrors.push(
 						`runtime Agent Plugin filesystem rollback failed: ${
+							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+						}`,
+					);
+				}
+			}
+			if (skillProjectionSnapshot) {
+				try {
+					restoreRuntimeLiveSnapshot(skillProjectionSnapshot);
+				} catch (rollbackError) {
+					resourceFilesystemRollbackSucceeded = false;
+					installErrors.push(
+						`runtime Skill filesystem rollback failed: ${
 							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
 						}`,
 					);
@@ -7595,7 +7677,7 @@ export function convergeRuntimeManifest(
 				} else if (!egressRollbackAuthorityVerified) {
 					rmSync(egressSecretFilePath(paths), { force: true });
 				}
-				filesystemRollbackSucceeded = pluginFilesystemRollbackSucceeded;
+				filesystemRollbackSucceeded = resourceFilesystemRollbackSucceeded;
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime filesystem rollback failed: ${
@@ -7662,7 +7744,6 @@ export function convergeRuntimeManifest(
 				"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 			);
 		}
-		const rollbackPreservedRuntimeHealth = installErrors.length === installErrorCountBeforeRollback;
 		installErrors.unshift(`runtime apply failed: ${applyError}`);
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -7670,10 +7751,6 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
-			failureHealthImpact:
-				resourceProjectionFailure && rollbackPreservedRuntimeHealth
-					? "resource_projection"
-					: "runtime",
 			projectedProviderIds: Object.fromEntries(
 				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
 					runtime,

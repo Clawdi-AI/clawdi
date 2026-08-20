@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-15 |
+| Last updated | 2026-08-20 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -907,19 +907,22 @@ affected runtime user units are quiesced; the adapter then captures the exact
 native package directories, runtime plugin configuration, receipt, and
 OpenClaw SQLite/WAL/SHM preimage before applying any native mutation. Any
 package change forces those units through final restart and readiness even when
-their unit/config revision did not change. If native mutation or a later
-installer fails before final activation, compensation runs native rollback,
-filesystem and database snapshot restoration, then systemd rollback and unit
-restart while the affected units remain stopped. Unrelated units are not
-globally quiesced when systemd remains pristine. Native rollback errors remain
-visible, and authority commits only after native state and receipt converge.
+their unit/config revision did not change. A package mutation or receipt failure
+runs native compensation and restores that resource preimage while the affected
+units remain stopped; successful compensation lets core config, official
+services, and final readiness continue. If compensation itself fails, or a
+later core step fails after package success, the outer filesystem/systemd
+transaction restores the whole candidate. Unrelated units are not globally
+quiesced when systemd remains pristine. The plugin receipt advances only with
+native state; native rollback errors remain core failures.
 
 Online preparation stores verified archives in private ownership-keyed cache
-entries. Failed convergence removes entries first created by that attempt while
-retaining the previously committed rollback set. After authority commits, GC
-keeps only receipt-owned archives and ignores unknown or symlink entries.
-Offline convergence never fetches: it revalidates the retained archive and
-fails repair explicitly when that cache is missing or corrupt.
+entries. Failed preparation removes entries first created by that attempt.
+Recoverable projection failure retains the verified desired and rollback
+archives for retry; after native state and receipt converge, GC keeps only
+receipt-owned archives and ignores unknown or symlink entries. Offline
+convergence never fetches: it revalidates the retained archive and reports the
+resource unavailable when that cache is missing or corrupt.
 
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile
@@ -966,6 +969,12 @@ disable releases its ownership without importing or resurrecting a stale
 projection. No reservation or managed target is projected into user Skill
 inventory.
 
+Hosted Skill recovery, ownership validation, native delivery, target trees,
+Hermes `.hub` state, and the reservation ledger form one bounded resource
+transaction. Preparation failure skips that transaction. The first live
+failure stops later Skill commands and restores its exact preimage; a failed
+restore is promoted to a core Apply failure.
+
 MCP remains independent of Skills and has no user declaration or mutation
 contract in this release. The dashboard therefore exposes no MCP page. The safe
 inventory API treats a valid empty or platform-only runtime state as an
@@ -983,12 +992,19 @@ as the desired intent sequence and the ETag as effective content identity. A
 generation-only control-plane bump therefore produces a new ETag so `runtime
 watch` converges immediately.
 
-Reconciliation validates and plans projections before live mutation, completes
-required installers before Apply, and commits last-good, remote ETags, and
+Core reconciliation validates and plans its projections before live mutation,
+completes required installers before Apply, and commits last-good, remote ETags, and
 root-owned `0600` `status/runtime-applied.json` only after managed files and
 systemd state apply successfully. A recoverable Apply failure restores the
 previous Clawdi-owned files and systemd declaration and leaves those authority
 records unchanged.
+
+Skill and Agent Plugin delivery are retryable resource projections outside that
+core commit gate. A resource-only failure leaves no partial resource state,
+does not roll back a successful CLI upgrade, and does not reject the manifest
+generation. `runtime watch` reports `healthImpact=resource_projection` and
+retries with bounded backoff while runtime readiness continues to use the
+committed core authority.
 The last-good manifest and scoped secret cache are each replaced atomically,
 then `runtime-applied.json` is replaced atomically as the final commit record.
 After a crash, strict-v2 offline load requires that final record to match the
@@ -1662,8 +1678,9 @@ fallback for environments that reject custom WebSocket subprotocols.
 
 ## Recovery Rules
 
-- Cache only manifests that validate and converge without install/projection
-  errors.
+- Cache only manifests that validate and converge without core install or
+  projection errors. A retryable Skill or Agent Plugin error may cache the
+  committed core desired state after its resource preimage is restored.
 - Use ETags for remote refreshes where the datasource supports them.
 - Offline boot is allowed only when `recovery.allowOfflineBoot` is true and the
   cached manifest does not require missing secret values. Its root-only secret

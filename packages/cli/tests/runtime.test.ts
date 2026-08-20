@@ -12431,16 +12431,16 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("runtime watch never enters a failing projection after CLI activation", async () => {
+	it("runtime watch commits core after CLI activation when Agent Plugin preparation fails", async () => {
 		setRuntimeApplyGeneration(16);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
-		const openclawInstaller = join(root, "install-openclaw.sh");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
+		const currentVersion = getCliVersion();
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -12462,7 +12462,7 @@ install -d "$prefix/bin"
 cat > "$prefix/bin/clawdi" <<'SH'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
-  echo "1.3.0-test.1"
+  echo "${currentVersion}"
   exit 0
 fi
 if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
@@ -12475,34 +12475,11 @@ chmod +x "$prefix/bin/clawdi"
 `,
 		);
 		chmodSync(join(bin, "npm"), 0o700);
-		writeFileSync(
-			openclawInstaller,
-			`#!/usr/bin/env bash
-set -euo pipefail
-install -d "$HOME/.local/bin"
-cat > "$HOME/.local/bin/openclaw" <<'SH'
-#!/usr/bin/env bash
-if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
-  echo "projection boom" >&2
-  exit 73
-fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  exit 0
-fi
-printf 'unexpected openclaw command: %s\\n' "$*" >&2
-exit 64
-SH
-chmod +x "$HOME/.local/bin/openclaw"
-`,
-		);
-		chmodSync(openclawInstaller, 0o700);
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -12529,7 +12506,7 @@ chmod +x "$HOME/.local/bin/openclaw"
 								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 								clawdiCli: {
 									source: "npm:clawdi",
-									packageSpec: "clawdi@1.3.0-test.1",
+									packageSpec: `clawdi@${currentVersion}`,
 									registry: "https://registry.npmjs.org",
 								},
 								agentPlugins: {
@@ -12588,6 +12565,43 @@ chmod +x "$HOME/.local/bin/openclaw"
 			expect(existsSync(join(home, ".local", "bin", "openclaw"))).toBe(false);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 			expect(existsSync(getRuntimePaths().appliedState)).toBe(false);
+
+			seedOpenClawBinary(home);
+			installSuccessfulSystemctlFixture();
+			logs.length = 0;
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			const failedProjection = JSON.parse(logs[0]);
+			expect(failedProjection).toMatchObject({
+				status: "error",
+				stage: "final",
+				healthImpact: "resource_projection",
+				activeGeneration: 16,
+				rejectedGeneration: null,
+				cliUpdate: { status: "current" },
+			});
+			expect(failedProjection.errors.join("\n")).toContain(
+				"Agent Plugin package preparation failed",
+			);
+			expect(failedProjection.cliRollback).toBeUndefined();
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({ generation: 16 });
+			expect(JSON.parse(readFileSync(getRuntimePaths().cliUpgradeState, "utf-8"))).toMatchObject({
+				transaction: null,
+				badVersions: [],
+			});
+
+			logs.length = 0;
+			process.exitCode = undefined;
+			await runtimeInit({ nonInteractive: true, json: true });
+
+			expect(process.exitCode).toBe(0);
+			const bootStatus = JSON.parse(logs[0]);
+			expect(bootStatus).toMatchObject({ status: "ok", activeGeneration: 16, errors: [] });
+			expect(bootStatus.resourceProjectionErrors.join("\n")).toContain(
+				"Agent Plugin package preparation failed",
+			);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -15658,19 +15672,26 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			};
 		};
 
-		expect(() =>
-			convergeRuntimeManifest(
-				loadWithSkillEntry("unknown", { enabled: true, version: 1 }),
-				getRuntimePaths(),
-			),
-		).toThrow("no bundled hosted skill is registered for unknown");
-		expect(() =>
-			convergeRuntimeManifest(
-				loadWithSkillEntry("clawdi", { enabled: true, version: 2 }),
-				getRuntimePaths(),
-			),
-		).toThrow("no bundled hosted skill clawdi version 2 is registered");
-		expect(existsSync(ledgerPath)).toBe(false);
+		const unknownSkill = convergeRuntimeManifest(
+			loadWithSkillEntry("unknown", { enabled: true, version: 1 }),
+			getRuntimePaths(),
+		);
+		expect(unknownSkill.installErrors).toEqual([]);
+		expect(unknownSkill.resourceProjectionErrors.join("\n")).toContain(
+			"no bundled hosted skill is registered for unknown",
+		);
+		const unknownSkillVersion = convergeRuntimeManifest(
+			loadWithSkillEntry("clawdi", { enabled: true, version: 2 }),
+			getRuntimePaths(),
+		);
+		expect(unknownSkillVersion.installErrors).toEqual([]);
+		expect(unknownSkillVersion.resourceProjectionErrors.join("\n")).toContain(
+			"no bundled hosted skill clawdi version 2 is registered",
+		);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
+			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
+			runtimes: { openclaw: ["clawdi", "search.proxy"] },
+		});
 
 		const openclawSkill = join(home, ".openclaw", "workspace", "skills", "clawdi");
 		mkdirSync(openclawSkill, { recursive: true });
@@ -15682,11 +15703,15 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			digest: "a".repeat(64),
 			manager: "local-setup",
 		});
-		expect(() =>
-			convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths()),
-		).toThrow(`refusing to replace unmanaged clawdi skill at ${openclawSkill}`);
+		const collision = convergeRuntimeManifest(
+			load(1, "openclaw", initialServers),
+			getRuntimePaths(),
+		);
+		expect(collision.installErrors).toEqual([]);
+		expect(collision.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged clawdi skill at ${openclawSkill}`,
+		);
 		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).toBe("local setup skill\n");
-		expect(existsSync(ledgerPath)).toBe(false);
 		releaseManagedSkill({
 			targetDir: openclawSkill,
 			id: "clawdi",

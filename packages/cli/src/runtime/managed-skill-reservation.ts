@@ -74,6 +74,10 @@ function ledgerPath(): string {
 	return join(getClawdiDir(), "managed-resources", LEDGER_FILE);
 }
 
+export function managedSkillReservationLedgerPath(): string {
+	return ledgerPath();
+}
+
 function legacyHostedLedgerPath(path: string): string | null {
 	const runtimePaths = getRuntimePaths({ mode: "hosted" });
 	return path === join(runtimePaths.managedResourceRoot, LEDGER_FILE)

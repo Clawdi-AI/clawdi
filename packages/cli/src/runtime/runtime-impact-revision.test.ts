@@ -26,7 +26,6 @@ describe("runtime impact revisions", () => {
 				locale: null,
 				mcp: null,
 				provider: null,
-				skills: null,
 			},
 			desiredRuntime: { enabled: true, services: {} },
 			secretValues: { TOKEN: "one" },

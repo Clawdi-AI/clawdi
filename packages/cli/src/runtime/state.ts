@@ -61,6 +61,7 @@ export interface RuntimeBootStatus {
 	};
 	error?: string;
 	errors: string[];
+	resourceProjectionErrors?: string[];
 	exitCode: number;
 	datasource: "RuntimeSource";
 	hostPolicy: {

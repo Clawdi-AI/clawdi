@@ -24,7 +24,7 @@ const fsOriginals = {
 };
 const captureRuntimeLiveSnapshotOriginal = actualSnapshot.captureRuntimeLiveSnapshot;
 const mutations: string[] = [];
-let capturedPlan: RuntimeManagedMutationPlan | null = null;
+const capturedPlans: RuntimeManagedMutationPlan[] = [];
 let recording = false;
 
 function record(path: realFs.PathOrFileDescriptor): void {
@@ -96,7 +96,7 @@ mock.module("node:fs", () => ({
 mock.module("./live-state-snapshot", () => ({
 	...actualSnapshot,
 	captureRuntimeLiveSnapshot: (plan: RuntimeManagedMutationPlan) => {
-		capturedPlan = plan;
+		capturedPlans.push(plan);
 		return captureRuntimeLiveSnapshotOriginal(plan);
 	},
 }));
@@ -205,6 +205,7 @@ exit 0
 		fsOriginals.writeFileSync(egressEngineBinary, "#!/bin/sh\nexit 0\n");
 		fsOriginals.chmodSync(egressEngineBinary, 0o755);
 		ensureRuntimeStateDirs(paths);
+		capturedPlans.length = 0;
 		recording = true;
 		const result = convergeRuntimeManifest(load, paths, {
 			cacheLastGood: false,
@@ -220,12 +221,17 @@ exit 0
 		});
 		recording = false;
 		expect(result.installErrors).toEqual([]);
-		expect(capturedPlan).not.toBeNull();
-		if (!capturedPlan) throw new Error("runtime mutation plan was not captured");
+		expect(capturedPlans.length).toBeGreaterThan(0);
 
-		const rootTargets = capturedPlan.rootTargets.map((path) => resolve(path));
-		const runtimeUserTargets = capturedPlan.runtimeUserTargets.map((path) => resolve(path));
-		const metadataTargets = capturedPlan.metadataTargets.map((path) => resolve(path));
+		const rootTargets = capturedPlans.flatMap((plan) =>
+			plan.rootTargets.map((path) => resolve(path)),
+		);
+		const runtimeUserTargets = capturedPlans.flatMap((plan) =>
+			plan.runtimeUserTargets.map((path) => resolve(path)),
+		);
+		const metadataTargets = capturedPlans.flatMap((plan) =>
+			plan.metadataTargets.map((path) => resolve(path)),
+		);
 		expect(rootTargets.filter((target) => runtimeUserTargets.includes(target))).toEqual([]);
 
 		const scopedMutations = [...new Set(mutations.map(atomicTarget))].filter((path) =>
