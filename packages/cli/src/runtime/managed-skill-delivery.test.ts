@@ -69,3 +69,35 @@ test("never treats a null fingerprint as ownership of an absent target", () => {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("treats backup cleanup failure as GC after the operation commits", () => {
+	const root = mkdtempSync(join(tmpdir(), "managed-skill-commit-"));
+	try {
+		const target = join(root, "skills", "review-pr");
+		const receipt = join(root, "receipts", "review-pr.json");
+		mkdirSync(target, { recursive: true });
+		mkdirSync(join(root, "receipts"), { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "previous\n");
+		writeFileSync(receipt, "previous receipt\n");
+
+		expect(
+			withManagedTargetRollback({
+				target,
+				receipt,
+				operation: () => {
+					mkdirSync(target, { recursive: true });
+					writeFileSync(join(target, "SKILL.md"), "committed\n");
+					writeFileSync(receipt, "committed receipt\n");
+					return "installed" as const;
+				},
+				remove: () => {
+					throw new Error("injected backup cleanup failure");
+				},
+			}),
+		).toBe("installed");
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("committed\n");
+		expect(readFileSync(receipt, "utf8")).toBe("committed receipt\n");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import type { GithubArchiveFetcher } from "../lib/github-skill-archive";
 import {
 	fetchGithubSkillArchive,
@@ -9,6 +11,10 @@ import {
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
 import { extractTarGz, snapshotSkillArchive } from "../lib/tar";
+import {
+	assertHostedBundledSkillCatalogDigest,
+	resolveHostedBundledSkill,
+} from "./hosted-bundled-skill";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { HostedSkillSource } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
@@ -28,7 +34,9 @@ interface HostedSourcedSkillArchiveReceipt {
 
 export interface PreparedHostedSourcedSkill {
 	skillId: string;
-	source: HostedSkillSource;
+	source:
+		| HostedSkillSource
+		| { type: "bundled"; version: number; digest: string; assetDirectory: string };
 	/** Stable canonical ownership identity; independent of tar encoding and cache lifetime. */
 	sourceIdentity: string;
 	/** Byte hash used only to detect corruption in the local archive cache. */
@@ -44,6 +52,38 @@ function sourceIdentity(skillId: string, source: HostedSkillSource): string {
 	return source.type === "github"
 		? ["github", skillId, source.url, source.path, source.commit].join("\0")
 		: ["project", skillId, source.projectId, source.contentHash].join("\0");
+}
+
+export function prepareHostedBundledSkillArchive(
+	skillId: string,
+	version: number,
+): PreparedHostedSourcedSkill {
+	const catalogEntry = resolveHostedBundledSkill(skillId, version);
+	const sourceDir = resolve(resolveCurrentCliResourceRoot(), "skills", catalogEntry.assetDirectory);
+	if (basename(sourceDir) !== skillId || !existsSync(join(sourceDir, "SKILL.md"))) {
+		throw new Error(`bundled hosted skill asset ${catalogEntry.assetDirectory} is unavailable`);
+	}
+	assertHostedBundledSkillCatalogDigest(catalogEntry, sourceDir);
+	const packed = spawnSync("tar", ["-czf", "-", "-C", dirname(sourceDir), skillId], {
+		stdio: ["ignore", "pipe", "pipe"],
+		maxBuffer: MAX_CACHED_ARCHIVE_BYTES,
+	});
+	if (packed.status !== 0 || !Buffer.isBuffer(packed.stdout)) {
+		throw new Error(`bundled hosted skill ${skillId} could not be archived`);
+	}
+	const tarBytes = packed.stdout;
+	return {
+		skillId,
+		source: {
+			type: "bundled",
+			version,
+			digest: catalogEntry.digest,
+			assetDirectory: catalogEntry.assetDirectory,
+		},
+		sourceIdentity: `content-sha256\0${catalogEntry.digest}`,
+		archiveSha256: sha256(tarBytes),
+		tarBytes,
+	};
 }
 
 function cachePaths(paths: RuntimePaths, skillId: string, source: HostedSkillSource) {
@@ -230,7 +270,11 @@ export async function prepareHostedSourcedSkillArchives(
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
 		([left], [right]) => left.localeCompare(right),
 	)) {
-		if (!desired.enabled || !("source" in desired)) continue;
+		if (!desired.enabled) continue;
+		if (!("source" in desired)) {
+			prepared.set(skillId, prepareHostedBundledSkillArchive(skillId, desired.version));
+			continue;
+		}
 		if (desired.source.type === "project") {
 			assertProjectSkillEndpoints(manifest, skillId, desired.source);
 		}
