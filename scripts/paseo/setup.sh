@@ -72,7 +72,7 @@ require_command() {
   fi
 }
 
-require_command bun "bun is required. Install Bun >= 1.3 before creating a Paseo worktree."
+require_command bun "bun is required. Install Bun >= 1.4 before creating a Paseo worktree."
 require_command node "Node.js is required to run the web app in Paseo."
 require_command uv "uv is required for backend dependencies."
 require_command docker "Docker is required for local PostgreSQL."

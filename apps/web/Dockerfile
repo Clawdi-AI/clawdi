@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM oven/bun:1.3.14 AS deps
+FROM oven/bun:1.4.0 AS deps
 
 WORKDIR /app
 
@@ -30,7 +30,7 @@ COPY . .
 
 RUN bun run --cwd apps/web build
 
-FROM oven/bun:1.3.14 AS runtime
+FROM oven/bun:1.4.0 AS runtime
 
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \

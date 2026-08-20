@@ -1,13 +1,13 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
+import type { DataTableColumnDef } from "@/components/ui/data-table";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
-const summaryColumn: ColumnDef<SessionListItem> = {
+const summaryColumn: DataTableColumnDef<SessionListItem> = {
 	id: "summary",
 	accessorKey: "summary",
 	header: "Summary",
@@ -41,7 +41,7 @@ const summaryColumn: ColumnDef<SessionListItem> = {
 	size: 420,
 };
 
-const agentColumn: ColumnDef<SessionListItem> = {
+const agentColumn: DataTableColumnDef<SessionListItem> = {
 	id: "agent",
 	accessorFn: (s) =>
 		`${s.agent_display_name ?? ""} ${s.agent_default_name ?? ""} ${s.agent_name ?? ""} ${s.machine_name ?? ""} ${s.agent_type ?? ""}`,
@@ -50,7 +50,7 @@ const agentColumn: ColumnDef<SessionListItem> = {
 	size: 180,
 };
 
-const startedColumn: ColumnDef<SessionListItem> = {
+const startedColumn: DataTableColumnDef<SessionListItem> = {
 	id: "started_at",
 	accessorKey: "started_at",
 	enableSorting: true,
@@ -66,7 +66,7 @@ const startedColumn: ColumnDef<SessionListItem> = {
 	size: 110,
 };
 
-const lastActivityColumn: ColumnDef<SessionListItem> = {
+const lastActivityColumn: DataTableColumnDef<SessionListItem> = {
 	id: "last_activity_at",
 	accessorKey: "last_activity_at",
 	enableSorting: true,
@@ -84,7 +84,7 @@ const lastActivityColumn: ColumnDef<SessionListItem> = {
 	size: 110,
 };
 
-const messagesColumn: ColumnDef<SessionListItem> = {
+const messagesColumn: DataTableColumnDef<SessionListItem> = {
 	id: "message_count",
 	accessorFn: (s) => s.message_count,
 	enableSorting: true,
@@ -101,7 +101,7 @@ const messagesColumn: ColumnDef<SessionListItem> = {
 	size: 90,
 };
 
-const tokensColumn: ColumnDef<SessionListItem> = {
+const tokensColumn: DataTableColumnDef<SessionListItem> = {
 	id: "tokens",
 	accessorFn: (s) => s.input_tokens + s.output_tokens,
 	enableSorting: true,
@@ -121,7 +121,7 @@ const tokensColumn: ColumnDef<SessionListItem> = {
 	size: 90,
 };
 
-export const sessionColumns: ColumnDef<SessionListItem>[] = [
+export const sessionColumns: DataTableColumnDef<SessionListItem>[] = [
 	summaryColumn,
 	agentColumn,
 	messagesColumn,
@@ -130,13 +130,13 @@ export const sessionColumns: ColumnDef<SessionListItem>[] = [
 	lastActivityColumn,
 ];
 
-const lastActivityColumnPlain: ColumnDef<SessionListItem> = {
+const lastActivityColumnPlain: DataTableColumnDef<SessionListItem> = {
 	...lastActivityColumn,
 	enableSorting: false,
 	header: "Last activity",
 };
 
-export const sessionColumnsCompact: ColumnDef<SessionListItem>[] = [
+export const sessionColumnsCompact: DataTableColumnDef<SessionListItem>[] = [
 	summaryColumn,
 	agentColumn,
 	lastActivityColumnPlain,

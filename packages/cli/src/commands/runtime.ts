@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { EventEmitter } from "node:events";
 import { accessSync, chmodSync, chownSync, constants, existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
 import { z } from "zod";
@@ -2013,14 +2014,15 @@ function runningAsRootCommand(): boolean {
 }
 
 function waitForShutdownSignal(): Promise<void> {
+	const processEvents: EventEmitter = process;
 	return new Promise((resolve) => {
 		const done = () => {
-			process.off("SIGTERM", done);
-			process.off("SIGINT", done);
+			processEvents.removeListener("SIGTERM", done);
+			processEvents.removeListener("SIGINT", done);
 			resolve();
 		};
-		process.once("SIGTERM", done);
-		process.once("SIGINT", done);
+		processEvents.once("SIGTERM", done);
+		processEvents.once("SIGINT", done);
 	});
 }
 

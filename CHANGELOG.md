@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.109
+
+Package: `clawdi@0.13.109`
+
+### Improved
+
+- Updated the CLI build toolchain for Bun 1.4 while retaining the supported
+  Node.js 22 runtime baseline.
+
 ## Clawdi CLI v0.13.108
 
 Package: `clawdi@0.13.108`

@@ -1,16 +1,21 @@
 "use client";
 
-import type { Column } from "@tanstack/react-table";
+import type { RowData } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
+import type { DataTableColumn } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";
 
-interface Props<T, V> {
-	column: Column<T, V>;
+interface Props<T extends RowData, V> {
+	column: DataTableColumn<T, V>;
 	children: React.ReactNode;
 	className?: string;
 }
 
-export function DataTableColumnHeader<T, V>({ column, children, className }: Props<T, V>) {
+export function DataTableColumnHeader<T extends RowData, V>({
+	column,
+	children,
+	className,
+}: Props<T, V>) {
 	if (!column.getCanSort()) {
 		return <div className={cn("text-sm font-medium", className)}>{children}</div>;
 	}

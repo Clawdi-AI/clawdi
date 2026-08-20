@@ -129,7 +129,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 	});
 
 	test("builds with the repository toolchain and runs on non-root Node", () => {
-		expect(dockerfile).toContain("FROM oven/bun:1.3.14-alpine");
+		expect(dockerfile).toContain("FROM oven/bun:1.4.0-alpine");
 		expect(dockerfile).toContain("bun install --frozen-lockfile --production");
 		expect(dockerfile).toContain("FROM node:24.19.0-alpine AS runtime");
 		expect(dockerfile).toContain("USER node:node");
