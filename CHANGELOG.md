@@ -10,9 +10,9 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
-## Clawdi CLI v0.13.108-beta.0
+## Clawdi CLI v0.13.108
 
-Package: `clawdi@0.13.108-beta.0`
+Package: `clawdi@0.13.108`
 
 ### Fixed
 
