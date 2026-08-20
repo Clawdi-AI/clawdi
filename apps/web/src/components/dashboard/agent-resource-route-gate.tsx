@@ -8,9 +8,9 @@ import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 

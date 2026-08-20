@@ -99,6 +99,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	agentProjectDetailHref,
 	agentProjectResourceHref,
@@ -107,7 +108,6 @@ import {
 	agentSectionLink,
 	agentSkillDetailLink,
 } from "@/lib/agent-routes";
-import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";

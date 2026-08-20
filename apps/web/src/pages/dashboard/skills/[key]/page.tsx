@@ -47,13 +47,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
 } from "@/lib/agent-routes";
-import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";

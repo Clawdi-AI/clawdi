@@ -32,8 +32,8 @@ import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
-import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
+import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
