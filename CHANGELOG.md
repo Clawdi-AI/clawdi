@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.103
+
+Package: `clawdi@0.13.103`
+
+### Fixed
+
+- Hosted v2 deployments now keep core runtime convergence and CLI upgrades
+  healthy when a Skill or Agent Plugin cannot be projected after exact local
+  rollback. Resource delivery remains visible and retryable without blocking
+  the agent or its browser interface.
+
 ## Clawdi CLI v0.13.102
 
 Package: `clawdi@0.13.102`
