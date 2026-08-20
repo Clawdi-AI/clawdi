@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
@@ -11,13 +11,13 @@ import {
 } from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
-	CollectSessionsOptions,
-	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
+	SessionScanRequest,
+	SessionScanResult,
 } from "./base";
-import { getClaudeHome, SKIP_DIRS } from "./paths";
+import { getClaudeHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
 
 function claudeDir() {
@@ -89,19 +89,38 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return absPath.replace(/\//g, "-");
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
-		if (!existsSync(projectsDir())) return { sessions: [], dedupedCount: 0 };
+	async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+		if (!existsSync(projectsDir())) {
+			return { sessions: [], dedupedCount: 0, coverage: "complete" };
+		}
 
-		const { projectFilter } = opts;
+		const { projectFilter } = request;
+		const absFilter = projectFilter ? resolve(projectFilter) : null;
+		if (request.kind === "paths") {
+			const root = resolve(projectsDir());
+			const projectDirNames = new Set<string>();
+			for (const candidate of request.paths) {
+				const path = resolve(candidate);
+				const parts = relative(root, path).split(/[\\/]/);
+				if (
+					!isPathWithinRoots(path, [root]) ||
+					parts.length !== 2 ||
+					!parts[1].endsWith(".jsonl")
+				) {
+					return this.collectSessions({ kind: "complete", projectFilter });
+				}
+				projectDirNames.add(parts[0]);
+			}
+			if (projectDirNames.size > 0) {
+				return this.collectProjectSessions([...projectDirNames], absFilter, "partial");
+			}
+		}
 
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
 			d.isDirectory(),
 		);
 
-		let absFilter: string | null = null;
-		if (projectFilter) {
-			const { resolve } = await import("node:path");
-			absFilter = resolve(projectFilter);
+		if (absFilter) {
 			const targetDir = this.pathToProjectDir(absFilter);
 			// Coarse pre-filter on the encoded dir name: keep the target and any
 			// dir whose name starts with "target-". Because "/" and in-segment "-"
@@ -116,10 +135,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return this.collectProjectSessions(
 			projectDirs.map((projectDir) => projectDir.name),
 			absFilter,
+			"complete",
 		);
 	}
 
-	async collectSession(localSessionId: string): Promise<RawSession | null> {
+	async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		if (!existsSync(projectsDir()) || basename(localSessionId) !== localSessionId) return null;
 		const matches: Array<{ filePath: string; projectDirName: string }> = [];
 		for (const projectDir of readdirSync(projectsDir(), { withFileTypes: true })) {
@@ -130,48 +150,23 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		if (matches.length !== 1) {
 			if (matches.length === 0) return null;
 			return (
-				(await this.collectSessions()).sessions.find(
+				(await this.collectSessions({ kind: "complete" })).sessions.find(
 					(session) => session.localSessionId === localSessionId,
 				) ?? null
 			);
 		}
 		return (
-			this.collectProjectSessions([matches[0].projectDirName], null).sessions.find(
+			this.collectProjectSessions([matches[0].projectDirName], null, "partial").sessions.find(
 				(session) => session.localSessionId === localSessionId,
 			) ?? null
 		);
 	}
 
-	async collectSessionsForPaths(
-		paths: readonly string[],
-		opts: CollectSessionsOptions = {},
-	): Promise<CollectSessionsResult | null> {
-		const projectDirNames = new Set<string>();
-		for (const path of paths) {
-			const fromRoot = relative(projectsDir(), path);
-			const parts = fromRoot.split(/[\\/]/);
-			if (
-				isAbsolute(fromRoot) ||
-				fromRoot.startsWith("..") ||
-				parts.length !== 2 ||
-				!parts[1].endsWith(".jsonl")
-			) {
-				return null;
-			}
-			projectDirNames.add(parts[0]);
-		}
-		if (projectDirNames.size === 0) return null;
-
-		const absFilter = opts.projectFilter
-			? (await import("node:path")).resolve(opts.projectFilter)
-			: null;
-		return this.collectProjectSessions([...projectDirNames], absFilter);
-	}
-
 	private collectProjectSessions(
 		projectDirNames: readonly string[],
 		absFilter: string | null,
-	): CollectSessionsResult {
+		coverage: SessionScanResult["coverage"],
+	): SessionScanResult {
 		const sessions: RawSession[] = [];
 		const uuidsBySession = new Map<RawSession, Set<string>>();
 		for (const projectDirName of projectDirNames) {
@@ -192,7 +187,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				}
 			}
 		}
-		return dedupeResumeChains(sessions, uuidsBySession);
+		return dedupeResumeChains(sessions, uuidsBySession, coverage);
 	}
 
 	private parseRawSession(
@@ -427,10 +422,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			tarGzBytes,
 		);
 	}
-
-	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
-		return ["claude", ...args];
-	}
 }
 
 /**
@@ -450,7 +441,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 function dedupeResumeChains(
 	sessions: RawSession[],
 	uuids: Map<RawSession, Set<string>>,
-): CollectSessionsResult {
+	coverage: SessionScanResult["coverage"],
+): SessionScanResult {
 	// Group by projectPath — resume chains are always within a single cwd.
 	const byProject = new Map<string, RawSession[]>();
 	for (const s of sessions) {
@@ -496,5 +488,6 @@ function dedupeResumeChains(
 	return {
 		sessions: sessions.filter((s) => !dedupedIds.has(s.localSessionId)),
 		dedupedCount: dedupedIds.size,
+		coverage,
 	};
 }

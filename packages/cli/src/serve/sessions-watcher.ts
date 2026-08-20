@@ -11,7 +11,7 @@
  * OpenClaw) or SQLite database/sidecar files (Hermes). Any change
  * resets the adapter-wide quiescence timer. Concrete filenames are
  * accumulated across the window and handed to the adapter once stable;
- * ambiguous platform events retain an explicit full-scan fallback.
+ * ambiguous platform events request a complete rescan.
  *
  * Two modes mirror the skill watcher:
  *
@@ -29,14 +29,11 @@ import { log, toErrorMessage } from "./log";
 export interface SessionWatcherOptions {
 	paths: string[];
 	abort: AbortSignal;
-	onPathStable: (change: SessionWatchChange) => void;
+	onPathStable: (event: SessionWatchEvent) => void;
 	forcePoll?: boolean;
 }
 
-export interface SessionWatchChange {
-	paths: string[];
-	requiresFullScan: boolean;
-}
+export type SessionWatchEvent = { kind: "rescan" } | { kind: "paths"; paths: string[] };
 
 interface SessionFsWatcher {
 	close: () => void;
@@ -111,7 +108,7 @@ async function fsWatchLoop(
 ): Promise<void> {
 	const watchers: SessionFsWatcher[] = [];
 	const pendingPaths = new Set<string>();
-	let requiresFullScan = false;
+	let pendingRescan = false;
 	let cancelStableTimer: (() => void) | null = null;
 	let cleaned = false;
 	let settled = false;
@@ -157,18 +154,17 @@ async function fsWatchLoop(
 	const armStable = (path?: string) => {
 		if (settled || opts.abort.aborted) return;
 		if (path) pendingPaths.add(path);
-		else requiresFullScan = true;
+		else pendingRescan = true;
 		cancelStableTimer?.();
 		cancelStableTimer = dependencies.stableTimer.schedule(() => {
 			cancelStableTimer = null;
 			if (settled || opts.abort.aborted) return;
-			const change = {
-				paths: [...pendingPaths],
-				requiresFullScan,
-			};
+			const event: SessionWatchEvent = pendingRescan
+				? { kind: "rescan" }
+				: { kind: "paths", paths: [...pendingPaths] };
 			pendingPaths.clear();
-			requiresFullScan = false;
-			opts.onPathStable(change);
+			pendingRescan = false;
+			opts.onPathStable(event);
 		}, SESSION_STABLE_AFTER_MS);
 	};
 
@@ -282,7 +278,7 @@ export async function pollSessionPaths(
 
 	let stableDeadline: number | null = null;
 	const pendingPaths = new Set<string>();
-	let requiresFullScan = false;
+	let pendingRescan = false;
 	while (!opts.abort.aborted) {
 		const now = dependencies.now();
 		const delayMs =
@@ -303,7 +299,7 @@ export async function pollSessionPaths(
 				anyChanged = true;
 				const changedPaths = diffSnapshotEntries(prev.entries, cur.entries);
 				if (changedPaths === null || changedPaths.length === 0) {
-					requiresFullScan = true;
+					pendingRescan = true;
 				} else {
 					for (const changedPath of changedPaths) pendingPaths.add(changedPath);
 				}
@@ -317,13 +313,12 @@ export async function pollSessionPaths(
 		if (stableDeadline !== null && observedAt >= stableDeadline) {
 			stableDeadline = null;
 			if (opts.abort.aborted) return;
-			const change = {
-				paths: [...pendingPaths],
-				requiresFullScan,
-			};
+			const event: SessionWatchEvent = pendingRescan
+				? { kind: "rescan" }
+				: { kind: "paths", paths: [...pendingPaths] };
 			pendingPaths.clear();
-			requiresFullScan = false;
-			opts.onPathStable(change);
+			pendingRescan = false;
+			opts.onPathStable(event);
 		}
 	}
 }

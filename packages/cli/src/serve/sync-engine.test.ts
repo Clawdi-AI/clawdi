@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CollectSessionsResult, RawSession } from "../adapters/base";
+import type { RawSession } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import { cacheKey, readSessionsLock } from "../lib/sessions-lock";
@@ -49,24 +49,13 @@ import {
 } from "./sync-engine";
 
 describe("stable session enqueue abort fence", () => {
-	it("does not enqueue after collection resolves into an abort", async () => {
+	it("does not enqueue after collection finishes into an abort", async () => {
 		const abort = new AbortController();
-		let resolveCollection: ((result: CollectSessionsResult) => void) | undefined;
-		const collection = new Promise<CollectSessionsResult>((resolve) => {
-			resolveCollection = resolve;
-		});
 		const queued: unknown[] = [];
 		const inFlight = new Map<string, string>();
-		const running = enqueueChangedSessionsAfterStability({
-			abort: abort.signal,
-			collectSessions: () => collection,
-			queue: { enqueue: (item: unknown) => queued.push(item) },
-			lastPushedHash: new Map(),
-			inFlightHash: inFlight,
-		});
-
 		abort.abort();
-		resolveCollection?.({
+		const enqueued = await enqueueChangedSessionsAfterStability({
+			abort: abort.signal,
 			sessions: [
 				{
 					localSessionId: "session-1",
@@ -85,10 +74,12 @@ describe("stable session enqueue abort fence", () => {
 					rawFilePath: "/sessions/1.jsonl",
 				},
 			],
-			dedupedCount: 0,
+			queue: { enqueue: (item: unknown) => queued.push(item) },
+			lastPushedHash: new Map(),
+			inFlightHash: inFlight,
 		});
 
-		expect(await running).toBe(0);
+		expect(enqueued).toBe(0);
 		expect(queued).toEqual([]);
 		expect(inFlight.size).toBe(0);
 	});
@@ -124,8 +115,7 @@ describe("Session deletion convergence", () => {
 				rawFilePath: "/sessions/deleted-session.jsonl",
 			};
 			const adapter = adapterRegistry.hermes.create();
-			adapter.collectSessions = async () => ({ sessions: [session], dedupedCount: 0 });
-			adapter.collectSession = async () => session;
+			adapter.resolveSession = async () => session;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
 				const path = new URL(request.url).pathname;
@@ -207,10 +197,7 @@ describe("Session deletion convergence", () => {
 		}
 	});
 
-	it.each([
-		"exact",
-		"fallback",
-	] as const)("re-reads newer session content at drain via the %s collector", async (mode) => {
+	it("re-reads newer session content at drain", async () => {
 		const root = mkdtempSync(join(tmpdir(), "session-current-drain-"));
 		const originalHome = process.env.HOME;
 		const originalState = process.env.CLAWDI_STATE_DIR;
@@ -220,7 +207,7 @@ describe("Session deletion convergence", () => {
 			process.env.HOME = root;
 			process.env.CLAWDI_STATE_DIR = join(root, "serve");
 			const enqueuedSession: RawSession = {
-				localSessionId: `current-session-${mode}`,
+				localSessionId: "current-session",
 				projectPath: "/project",
 				startedAt: new Date(0),
 				endedAt: new Date(1_000),
@@ -233,7 +220,7 @@ describe("Session deletion convergence", () => {
 				durationSeconds: 1,
 				summary: "current content",
 				messages: [{ role: "user", content: "before enqueue" }],
-				rawFilePath: `/sessions/current-session-${mode}.jsonl`,
+				rawFilePath: "/sessions/current-session.jsonl",
 			};
 			const currentSession: RawSession = {
 				...enqueuedSession,
@@ -250,20 +237,11 @@ describe("Session deletion convergence", () => {
 				.update(JSON.stringify(currentSession.messages))
 				.digest("hex");
 			const adapter = adapterRegistry.hermes.create();
-			let collectionCalls = 0;
-			adapter.collectSessions = async () => {
-				collectionCalls += 1;
-				return { sessions: [currentSession], dedupedCount: 0 };
+			let resolveCalls = 0;
+			adapter.resolveSession = async () => {
+				resolveCalls += 1;
+				return currentSession;
 			};
-			let exactCalls = 0;
-			if (mode === "exact") {
-				adapter.collectSession = async () => {
-					exactCalls += 1;
-					return currentSession;
-				};
-			} else {
-				Object.defineProperty(adapter, "collectSession", { value: undefined });
-			}
 			let sentMetadata: Record<string, unknown> | undefined;
 			let sentMessages: unknown;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -323,8 +301,7 @@ describe("Session deletion convergence", () => {
 			);
 
 			expect(outcome).toBe("applied");
-			expect(exactCalls).toBe(mode === "exact" ? 1 : 0);
-			expect(collectionCalls).toBe(mode === "fallback" ? 1 : 0);
+			expect(resolveCalls).toBe(1);
 			expect(sentMetadata).toMatchObject({
 				content_hash: currentHash,
 				message_count: 2,

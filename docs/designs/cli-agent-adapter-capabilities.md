@@ -2,15 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed for owner review; not implemented |
+| Status | PR-A implemented in Clawdi CLI 0.13.106; PR-B deferred |
 | Last updated | 2026-08-20 |
 | Owner | CLI sync layer |
 | Prerequisite | [PR #1109](https://github.com/Clawdi-AI/clawdi/pull/1109), including [`8b571e756`](https://github.com/Clawdi-AI/clawdi/commit/8b571e75678b5684d0a300312e8b2718d1bdb687) |
 
-This document defines two deliberately separate adapter changes. Immediate
-PR-A is a behavior-preserving cleanup of the Session contract introduced by PR
-#1109. Later PR-B separates `SkillStore` immediately before the first real
-session-only adapter needs that boundary.
+This document defines two deliberately separate adapter changes. PR-A was
+implemented in Clawdi CLI 0.13.106 as a behavior-preserving cleanup of the
+Session contract introduced by PR #1109. PR-B remains deferred until
+immediately before the first real session-only adapter needs `SkillStore`.
 
 Neither PR changes the fact that Session support is mandatory for every
 `AgentAdapter`. Do not turn the adapter into a bag of optional capabilities.
@@ -33,7 +33,7 @@ Neither PR changes the fact that Session support is mandatory for every
    Hosted runtime path. They are not local Session drivers and do not justify
    optional Session methods on `AgentAdapter`.
 
-PR-A follows PR #1109 and must not include a new adapter.
+PR-A followed PR #1109 and included no new adapter.
 
 ## PR-A Session Contract
 
@@ -61,8 +61,8 @@ export interface AgentAdapter {
 }
 ```
 
-Session methods are required. Skill methods remain directly on `AgentAdapter`
-in PR-A and remain required for all four registered adapters.
+Session methods are required. PR-A kept Skill methods directly on
+`AgentAdapter`, required for all four registered adapters.
 
 ### Collection And Coverage
 
@@ -98,9 +98,9 @@ canonical Session that should be uploaded now.
 The Codex active-to-archive absence bug is already fixed in PR #1109 commit
 `8b571e756`. That commit removes the stale complete-inventory early return and
 adds coverage for moving a learned Session from `sessions/` to
-`archived_sessions/`. PR-A preserves that behavior; it only removes the
+`archived_sessions/`. PR-A preserved that behavior and removed only the
 residual optional-resolution fallback and completeness plumbing from the
-engine. Do not duplicate the fix or its regression test.
+engine. It did not duplicate the fix or its regression test.
 
 ### Watcher And Engine Flow
 
@@ -134,14 +134,14 @@ sha256(JSON.stringify(session.messages))
 
 ### Path Containment And Dead API
 
-Replace the repeated Claude Code, Codex, and OpenClaw containment logic with one
+The repeated Claude Code, Codex, and OpenClaw containment logic now lives in one
 small shared helper. It validates that a resolved candidate path is inside one
 of the adapter's declared roots. File extensions, existence checks, storage
 layout, and parsing remain adapter-specific.
 
-`buildRunCommand` has no caller. Remove it from `AgentAdapter`, all four
-implementations, and the tests that only assert command-prefix construction.
-Do not replace it with a runner abstraction without a real caller.
+`buildRunCommand` had no caller and was removed from `AgentAdapter`, all four
+implementations, and the tests that only asserted command-prefix construction.
+No runner abstraction replaced it.
 
 ## Deferred PR-B
 
@@ -210,28 +210,29 @@ compatibility migration when no format changes. Follow
 [`api-compatibility.md`](../api-compatibility.md) for any separately authorized
 wire change.
 
-## PR-A Implementation Order
+## PR-A Implementation
 
-1. Add the unified request/result types, explicit coverage, mandatory
-   `resolveSession`, and watcher event union. Leave Skill methods in place.
-2. Adapt all four Session implementations, add the shared containment helper,
-   and remove `buildRunCommand`.
-3. Make the watcher emit `SessionWatchEvent` and make the engine consume one
+1. Added the unified request/result types, explicit coverage, mandatory
+   `resolveSession`, and watcher event union while keeping Skill methods in
+   place.
+2. Adapted all four Session implementations, added the shared containment
+   helper, and removed `buildRunCommand`.
+3. Changed the watcher to emit `SessionWatchEvent` and the engine to consume one
    request/result path with no optional probes or side completeness flag.
-4. Make queue drain call `resolveSession` directly and preserve the current
-   hash-before-upload behavior.
-5. Remove obsolete fallback plumbing and stale comments. Do not change public
-   behavior, persistence, APIs, Skill workflows, or runtime boundaries.
+4. Changed queue drain to call `resolveSession` directly while preserving the
+   existing hash-before-upload behavior.
+5. Removed obsolete fallback plumbing and stale comments without changing
+   public behavior, persistence, APIs, Skill workflows, or runtime boundaries.
 
 Done: the PR contains no new adapter, Skill capability split, Agent Plugin
 change, wire change, persisted-state migration, or duplicate regression test.
 
 ## Verification
 
-Preserve PR #1109's existing coverage for bounded and ambiguous watcher
+PR-A preserved PR #1109's existing coverage for bounded and ambiguous watcher
 changes, periodic complete scans, queue-time re-reads, and Codex
-active-to-archive resolution. Update fixtures only as required by the contract
-rename. Do not add tests for TypeScript declarations, a fake session-only
+active-to-archive resolution. Fixtures changed only as required by the contract
+rename. It added no tests for TypeScript declarations, a fake session-only
 adapter, or the already-covered Codex move.
 
 ```bash

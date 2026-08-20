@@ -348,7 +348,7 @@ async function scanOneAgent(
 		// `collectSessions` also reports a `dedupedCount` (resume chains it
 		// collapsed). That's internal housekeeping — not actionable and not
 		// perceptible to the user — so it isn't surfaced.
-		sessions = (await adapter.collectSessions({ projectFilter })).sessions;
+		sessions = (await adapter.collectSessions({ kind: "complete", projectFilter })).sessions;
 	}
 	if (modules.includes("skills")) {
 		// Always route local Skills through the authenticated Agent claim

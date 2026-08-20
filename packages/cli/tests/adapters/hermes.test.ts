@@ -46,7 +46,7 @@ describe("HermesAdapter.detect", () => {
 describe("HermesAdapter.collectSessions", () => {
 	it("returns the plain-string-model session with correct token counters", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		const plain = sessions.find((s) => s.localSessionId === "s-plain");
 		expect(plain).toBeDefined();
 		expect(plain).toMatchObject({
@@ -63,13 +63,13 @@ describe("HermesAdapter.collectSessions", () => {
 		expect(plain?.messages[0]?.content).toBe("hello");
 		expect(plain?.messages[1]?.role).toBe("assistant");
 		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
-		expect((await a.collectSession("s-plain"))?.messages).toEqual(plain?.messages);
-		expect(await a.collectSession("missing-session")).toBeNull();
+		expect((await a.resolveSession("s-plain"))?.messages).toEqual(plain?.messages);
+		expect(await a.resolveSession("missing-session")).toBeNull();
 	});
 
 	it("parses a JSON-blob model field via parseModelField", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json).toBeDefined();
 		expect(json?.model).toBe("gpt-5.3-codex");
@@ -86,7 +86,7 @@ describe("HermesAdapter.collectSessions", () => {
 		db.close();
 
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json?.model).toBe("gpt-5.3-codex");
 		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
@@ -94,26 +94,26 @@ describe("HermesAdapter.collectSessions", () => {
 
 	it("skips sessions with no extractable messages", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		expect(sessions.find((s) => s.localSessionId === "s-empty")).toBeUndefined();
 	});
 
 	it("orders sessions by started_at DESC", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		// s-json started later than s-plain; s-empty is filtered out
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["s-json", "s-plain"]);
 	});
 
 	it("projectPath is null for every Hermes session (by design)", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		for (const s of sessions) expect(s.projectPath).toBeNull();
 	});
 
 	it("rawFilePath includes the session id anchor", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		expect(sessions[0]?.rawFilePath).toContain("state.db#");
 	});
 });
@@ -184,12 +184,5 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		const a = new HermesAdapter();
 		const p = a.getSkillPath("foo");
 		expect(p).toBe(join(tmpHome, ".hermes", "skills", "foo", "SKILL.md"));
-	});
-});
-
-describe("HermesAdapter.buildRunCommand", () => {
-	it("prefixes arguments with the hermes binary", () => {
-		const a = new HermesAdapter();
-		expect(a.buildRunCommand(["hello", "world"], {})).toEqual(["hermes", "hello", "world"]);
 	});
 });
