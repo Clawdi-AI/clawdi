@@ -1510,16 +1510,18 @@ OpenClaw gateway token is not part of that environment:
 ConditionPathExists=/run/clawdi/systemd/env/openclaw-gateway.service.env
 
 [Service]
-Environment="XDG_RUNTIME_DIR=%t"
-Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
+UnsetEnvironment=CLAWDI_AUTH_TOKEN
 EnvironmentFile=/run/clawdi/systemd/env/openclaw-gateway.service.env
 ```
 
 `ExecStart` and `WorkingDirectory` remain solely in the official base unit and
 are deliberately absent from the Clawdi-owned drop-in.
 
-The generated environment file includes
-`CLAWDI_HOME=/var/lib/clawdi-user`; it never points into the tenant home.
+The gateway environment file contains only desired runtime/provider
+environment, any required CA trust variables, and `CLAWDI_RUNTIME_REV`. It does
+not add `HOME`, `PATH`, `TZ`, `CLAWDI_HOME`, or `CLAWDI_AUTH_TOKEN`; the
+OpenClaw gateway token is also absent because the official config and installer
+own it.
 
 When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
 interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
