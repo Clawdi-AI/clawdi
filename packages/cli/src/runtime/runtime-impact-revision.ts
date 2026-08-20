@@ -10,7 +10,6 @@ export interface RuntimeProgramRevisionInput {
 		locale: unknown;
 		mcp: unknown;
 		provider: string | null;
-		skills: unknown;
 	};
 	desiredRuntime: RuntimeManifest["runtimes"][string] | undefined;
 	secretValues: Record<string, string>;

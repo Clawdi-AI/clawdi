@@ -610,6 +610,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "b".repeat(64));
 		const transaction = prepareTransaction(desiredState("hermes", desired), runner);
+		expect(transaction.snapshotTargets).toContain(join(runner.liveHome, ".hermes", "config.yaml"));
 		transaction.apply();
 		const installIndex = runner.calls.findIndex(
 			(call) => call.home === runner.liveHome && call.args[1] === "install",

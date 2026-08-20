@@ -89,7 +89,7 @@ const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "asse
 const HERMES_SUPPORT_REFERENCE =
 	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
 
-/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@aec331899e4748739927fddf02a54327e64419a0. */
+/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@a77ee88ce29c4f1d89f8d60e5b662322645072d8. */
 function expectedHermesNativeTree(sourceDir: string) {
 	const catalogTree = collectManagedSkillTree(sourceDir);
 	const skillMd = catalogTree?.get("SKILL.md");
@@ -99,7 +99,11 @@ function expectedHermesNativeTree(sourceDir: string) {
 		/(?:references|templates|scripts|assets|examples)\/(?:[^\s)`"'<>]*\/)?\.\.(?:\/|$)/m.test(text)
 	)
 		return null;
-	const expected = new Map<string, Buffer>([["SKILL.md", skillMd]]);
+	// UrlSource fetches SKILL.md as HTTP text and quarantine_bundle writes that
+	// text as UTF-8. Support files stay byte-for-byte HTTP payloads.
+	const expected = new Map<string, Buffer>([
+		["SKILL.md", Buffer.from(skillMd.toString("utf8"), "utf8")],
+	]);
 	for (const match of text.matchAll(HERMES_SUPPORT_REFERENCE)) {
 		let relative: string;
 		try {

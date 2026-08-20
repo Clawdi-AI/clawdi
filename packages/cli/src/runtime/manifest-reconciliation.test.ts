@@ -1290,6 +1290,37 @@ chmod 0755 '${commandPath}'
 				agentPlugins: testAgentPluginDesiredState(desired),
 			},
 		};
+		let isolatedAuthorityCommits = 0;
+		let isolatedActivations = 0;
+		const isolated = convergeRuntimeManifest(
+			manifestLoad(nextManifest, "agent-plugin-isolated-failure"),
+			paths,
+			{
+				cacheLastGood: false,
+				preparedHostedAgentPlugins: preparedTestAgentPluginState(desired, previous),
+				commitAuthority: () => isolatedAuthorityCommits++,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: () => {
+						isolatedActivations += 1;
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					quiesce: () => undefined,
+					rollback: () => {
+						throw new Error("isolated Agent Plugin failure must not roll back core");
+					},
+				},
+			},
+		);
+		expect(isolated.installErrors).toEqual([]);
+		expect(isolated.resourceProjectionErrors.join("\n")).toContain(
+			"OpenClaw native Agent Plugin state change failed",
+		);
+		expect(isolated.agentPluginFailedNames).toEqual(["acme.tools"]);
+		expect(isolatedAuthorityCommits).toBe(1);
+		expect(isolatedActivations).toBe(1);
+		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
+
 		writeFileSync(eventLog, "");
 		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");
 		const rollbackLifecycle: string[] = [];
@@ -4357,16 +4388,22 @@ echo spawned > '${installerLog}'
 		const userOwnedSibling = join(paths.userHome, ".hermes", "skills", "user-owned");
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
-		expect(() =>
-			convergeRuntimeManifest(manifestLoad(desiredManifest, "catalog-collision"), paths, {
+		const collision = convergeRuntimeManifest(
+			manifestLoad(desiredManifest, "catalog-collision"),
+			paths,
+			{
 				preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 				hostedHermesSkillExactSourceDriver: {
 					install: () => "installed",
 					verifyOwned: () => false,
 					uninstall: () => "removed",
 				},
-			}),
-		).toThrow(`refusing to replace unmanaged review-pr skill at ${skillDir}`);
+			},
+		);
+		expect(collision.installErrors).toEqual([]);
+		expect(collision.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged review-pr skill at ${skillDir}`,
+		);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
 		rmSync(skillDir, { recursive: true, force: true });
 		mkdirSync(userOwnedSibling, { recursive: true });
@@ -4402,26 +4439,32 @@ echo spawned > '${installerLog}'
 			preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 			hostedHermesSkillExactSourceDriver: nativeReconciler,
 		};
+		let authorityCommits = 0;
 		const lostResponse = convergeRuntimeManifest(
 			manifestLoad(desiredManifest, "catalog-lost-native-response"),
 			paths,
-			options,
+			{ ...options, commitAuthority: () => authorityCommits++ },
 		);
-		expect(lostResponse.installErrors.join("\n")).toContain("lost native install response");
-		expect(lostResponse.failureHealthImpact).toBe("resource_projection");
+		expect(lostResponse.installErrors).toEqual([]);
+		expect(lostResponse.resourceProjectionErrors.join("\n")).toContain(
+			"lost native install response",
+		);
+		expect(authorityCommits).toBe(1);
 		expect(installs).toEqual([false]);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
 		expect(existsSync(skillDir)).toBe(false);
 
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "forged user bytes\n");
-		expect(() =>
-			convergeRuntimeManifest(
-				manifestLoad(desiredManifest, "catalog-forged-partial-commit"),
-				paths,
-				options,
-			),
-		).toThrow(`refusing to replace unmanaged review-pr skill at ${skillDir}`);
+		const forged = convergeRuntimeManifest(
+			manifestLoad(desiredManifest, "catalog-forged-partial-commit"),
+			paths,
+			options,
+		);
+		expect(forged.installErrors).toEqual([]);
+		expect(forged.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged review-pr skill at ${skillDir}`,
+		);
 		expect(verifyCalls).toBe(1);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(false);
 
@@ -4664,7 +4707,7 @@ echo spawned > '${installerLog}'
 			},
 		});
 		expect(result.installErrors.join("\n")).toContain("injected systemd activation failure");
-		expect(result.failureHealthImpact).toBe("runtime");
+		expect(result.resourceProjectionErrors).toEqual([]);
 		for (const path of rootManagedPaths) {
 			const expected = previous.get(path);
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
@@ -4805,7 +4848,6 @@ echo spawned > '${installerLog}'
 				paths.appliedState,
 				paths.oauthCredentialRoot,
 				paths.installReceipts,
-				hostedAgentPluginReceiptsPath(paths),
 				paths.runConfigRoot,
 				paths.egressProfileBundle,
 				paths.installInventory,

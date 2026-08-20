@@ -69,6 +69,7 @@ import {
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
+	type RuntimeResourcePreparationFailures,
 	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
@@ -203,23 +204,6 @@ interface RuntimeWatchTickOptions {
 	now: number;
 	applyContext?: RuntimeApplyContext;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
-}
-
-class RuntimeResourceProjectionReconcileError extends Error {
-	constructor(error: unknown) {
-		super(error instanceof Error ? error.message : String(error), { cause: error });
-		this.name = "RuntimeResourceProjectionReconcileError";
-	}
-}
-
-class RuntimeAgentPluginReconcileError extends RuntimeResourceProjectionReconcileError {
-	constructor(
-		readonly installationNames: readonly string[],
-		error: unknown,
-	) {
-		super(error);
-		this.name = "RuntimeAgentPluginReconcileError";
-	}
 }
 
 function writable(path: string): boolean {
@@ -1995,23 +1979,26 @@ async function runtimeInitLocked(
 		}
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
-		const installOk = runtimeErrors.length === 0;
-		if (installOk) completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		const runtimeReady = runtimeErrors.length === 0;
+		if (runtimeReady) completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
 				mode: convergence.mode,
-				status: installOk ? "ok" : "error",
+				status: runtimeReady ? "ok" : "error",
 				stage: "final",
 				bootId,
 				runtimeMode: mode,
 				activeGeneration: activeAppliedState?.generation ?? null,
-				rejectedGeneration: installOk ? null : convergence.manifest.generation,
+				rejectedGeneration: runtimeReady ? null : convergence.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
 				enabledRuntimes: convergence.enabledRuntimes,
 				error: runtimeErrors[0],
 				errors: runtimeErrors,
-				exitCode: installOk ? 0 : 23,
+				...(convergence.resourceProjectionErrors.length > 0
+					? { resourceProjectionErrors: convergence.resourceProjectionErrors }
+					: {}),
+				exitCode: runtimeReady ? 0 : 23,
 				datasource: "RuntimeSource",
 				hostPolicy: hostPolicySummary(hostPolicy),
 				manifestSource: {
@@ -2034,7 +2021,7 @@ async function runtimeInitLocked(
 			);
 			console.log(chalk.gray(`  status: ${paths.bootStatus}`));
 		}
-		process.exitCode = installOk ? 0 : 23;
+		process.exitCode = runtimeReady ? 0 : 23;
 		return;
 	}
 
@@ -2120,7 +2107,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	let failureEtag: string | null = null;
 	let agentPluginFailure: ReturnType<typeof failedHostedAgentPluginsObservation> = null;
-	let resourceProjectionFailure = false;
 	const retryDeferred =
 		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
 	const manifestEtag =
@@ -2195,41 +2181,28 @@ async function runtimeWatchTickAfterCliReconciliation(
 			paths,
 		);
 		const applyIdentity = loaded.applyContext?.identity ?? null;
-		let applyResult: RuntimeApplyResult;
-		try {
-			applyResult = await applyRuntimeDesiredState(loaded, paths, {
-				authorityCommit: (convergence, authority) =>
-					commitRuntimeAppliedState({
-						load: loaded,
-						paths,
-						etag: bundleEtag,
-						sourceRevision,
-						convergence,
-						applyIdentity,
-						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-						daemonProgramRevision: authority.daemonProgramRevision,
-						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-						userProcessRevisionAliases: authority.userProcessRevisionAliases,
-					}),
-				continueOnCliUpdateError: true,
-				deferCliInstall: opts.deferCliInstall,
-				deferCliInstallReason: opts.deferCliInstallReason,
-				manifestIdentity,
-				recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
-				requireSystemdApplied: applyIdentity !== null,
-				hostedRuntimeContract: opts.hostedRuntimeContract,
-			});
-		} catch (error) {
-			if (error instanceof RuntimeAgentPluginReconcileError) {
-				agentPluginFailure = failedHostedAgentPluginsObservation(
-					loaded.manifest,
+		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
+			authorityCommit: (convergence, authority) =>
+				commitRuntimeAppliedState({
+					load: loaded,
+					paths,
+					etag: bundleEtag,
 					sourceRevision,
-					error.installationNames,
-				);
-			}
-			resourceProjectionFailure = error instanceof RuntimeResourceProjectionReconcileError;
-			throw error;
-		}
+					convergence,
+					applyIdentity,
+					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+					daemonProgramRevision: authority.daemonProgramRevision,
+					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+					userProcessRevisionAliases: authority.userProcessRevisionAliases,
+				}),
+			continueOnCliUpdateError: true,
+			deferCliInstall: opts.deferCliInstall,
+			deferCliInstallReason: opts.deferCliInstallReason,
+			manifestIdentity,
+			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
+			requireSystemdApplied: applyIdentity !== null,
+			hostedRuntimeContract: opts.hostedRuntimeContract,
+		});
 		if (applyResult.kind === "cli_handoff") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
@@ -2276,7 +2249,14 @@ async function runtimeWatchTickAfterCliReconciliation(
 		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
-		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
+		const runtimeErrors = [
+			...(cliUpdateError ? [cliUpdateError] : []),
+			...convergence.installErrors,
+		];
+		const resourceProjectionErrors = [...convergence.resourceProjectionErrors];
+		const errors = [...runtimeErrors, ...resourceProjectionErrors];
+		const resourceProjectionOnly =
+			runtimeErrors.length === 0 && resourceProjectionErrors.length > 0;
 		let selfReexec = cliUpdate.selfReexec;
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
@@ -2287,8 +2267,14 @@ async function runtimeWatchTickAfterCliReconciliation(
 				sourceRevision,
 				convergence.agentPluginFailedNames,
 			);
-			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
-			if (cliRollback.status === "rolled_back") selfReexec = true;
+			const cliRollback = resourceProjectionOnly
+				? null
+				: maybeRollbackFailedCliUpgrade(paths, errors);
+			if (cliRollback?.status === "rolled_back") selfReexec = true;
+			if (resourceProjectionOnly) {
+				const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+				selfReexec = selfReexec || completion.selfReexec;
+			}
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2297,20 +2283,16 @@ async function runtimeWatchTickAfterCliReconciliation(
 				errors,
 				error: errors[0],
 				activeGeneration: activeAppliedState?.generation ?? null,
-				rejectedGeneration: convergence.manifest.generation,
+				rejectedGeneration: resourceProjectionOnly ? null : convergence.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
 				etag: bundleEtag,
 				cliUpdate,
-				cliRollback,
+				...(cliRollback ? { cliRollback } : {}),
 				selfReexec,
 				systemdUnitsChanged,
 				systemdApply: systemdApplyResult,
 				convergence: convergence.outputs,
-				...(cliUpdateError === null &&
-				convergence.failureHealthImpact === "resource_projection" &&
-				cliRollback.status !== "error"
-					? { healthImpact: "resource_projection" }
-					: {}),
+				...(resourceProjectionOnly ? { healthImpact: "resource_projection" } : {}),
 				...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 			};
 		}
@@ -2340,7 +2322,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 			errors: [message],
 			error: message,
 			...(failureEtag ? { etag: failureEtag } : {}),
-			...(resourceProjectionFailure ? { healthImpact: "resource_projection" } : {}),
 			...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
 		};
 	}
@@ -2382,6 +2363,7 @@ async function applyRuntimeDesiredState(
 	opts: RuntimeApplyOptions = {},
 ): Promise<RuntimeApplyResult> {
 	let preparedHostedAgentPlugins = opts.preparedHostedAgentPlugins;
+	const resourcePreparationFailures: RuntimeResourcePreparationFailures = {};
 	let preservePreparedAgentPluginArchives = false;
 	try {
 		let cliUpdate: RuntimeCliUpdateResult;
@@ -2409,10 +2391,14 @@ async function applyRuntimeDesiredState(
 					offline: load.offline,
 				});
 			} catch (error) {
-				throw new RuntimeAgentPluginReconcileError(
-					Object.keys(load.manifest.projection?.agentPlugins?.installations ?? {}).sort(),
-					error,
-				);
+				resourcePreparationFailures.agentPlugins = {
+					error: `runtime Agent Plugin package preparation failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+					installationNames: Object.keys(
+						load.manifest.projection?.agentPlugins?.installations ?? {},
+					).sort(),
+				};
 			}
 		}
 		let preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills;
@@ -2426,7 +2412,9 @@ async function applyRuntimeDesiredState(
 					},
 				);
 			} catch (error) {
-				throw new RuntimeResourceProjectionReconcileError(error);
+				resourcePreparationFailures.sourcedSkills = `runtime sourced Skill archive preparation failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`;
 			}
 		}
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -2447,6 +2435,9 @@ async function applyRuntimeDesiredState(
 			hostedRuntimeContract: opts.hostedRuntimeContract,
 			preparedHostedSourcedSkills,
 			...(preparedHostedAgentPlugins ? { preparedHostedAgentPlugins } : {}),
+			...(Object.keys(resourcePreparationFailures).length > 0
+				? { resourcePreparationFailures }
+				: {}),
 			...(opts.hostedAgentPluginCommandRunner
 				? { hostedAgentPluginCommandRunner: opts.hostedAgentPluginCommandRunner }
 				: {}),

@@ -366,7 +366,12 @@ function createOpenClawDriver(input: {
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "openclaw", nativeId),
 		mutationStateTargets() {
 			const database = join(input.home, ".openclaw", "state", "openclaw.sqlite");
-			return [database, `${database}-wal`, `${database}-shm`];
+			return [
+				join(input.home, ".openclaw", "openclaw.json"),
+				database,
+				`${database}-wal`,
+				`${database}-shm`,
+			];
 		},
 		observe,
 		install(prepared) {
@@ -481,7 +486,7 @@ function createHermesDriver(input: {
 	return {
 		runtime: "hermes",
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "hermes", nativeId),
-		mutationStateTargets: () => [],
+		mutationStateTargets: () => [join(input.home, ".hermes", "config.yaml")],
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
