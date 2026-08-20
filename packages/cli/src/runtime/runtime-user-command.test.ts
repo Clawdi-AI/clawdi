@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +9,9 @@ import {
 	commandExists,
 	createPrivilegeDropResolver,
 	runRuntimeUserCommand,
+	runtimeUserUid,
 	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
 test("command existence follows shell resolution", () => {
@@ -296,4 +298,27 @@ describe("runtime user command timeout", () => {
 		expect(result.status).toBeNull();
 		expect(result.error?.message).toContain("ETIMEDOUT");
 	});
+});
+
+test("fully drops root identity when spawned during runtime-user file access", () => {
+	if (process.geteuid?.() !== 0 || !commandExists(NUMERIC_PRIVILEGE_TOOL)) return;
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-spawn-identity-"));
+	const command = join(root, "identity-probe");
+	const output = join(root, "uid");
+	const previousRuntimeUser = process.env.CLAWDI_RUNTIME_USER;
+	try {
+		chmodSync(root, 0o777);
+		writeFileSync(command, '#!/usr/bin/env bash\nid -u > "$1"\n', { mode: 0o755 });
+		process.env.CLAWDI_RUNTIME_USER = "nobody";
+		const result = withRuntimeUserFileAccess(() =>
+			spawnRuntimeUserCommand(command, [output], root, root),
+		);
+		expect(result.status).toBe(0);
+		expect(readFileSync(output, "utf8").trim()).toBe(String(runtimeUserUid("nobody")));
+		expect(statSync(output).uid).toBe(runtimeUserUid("nobody"));
+	} finally {
+		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
+		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
+		rmSync(root, { recursive: true, force: true });
+	}
 });
