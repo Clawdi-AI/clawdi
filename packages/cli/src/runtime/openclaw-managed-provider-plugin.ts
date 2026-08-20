@@ -200,25 +200,6 @@ function runPluginCommand(command: string, args: string[], home: string, operati
 	if (result.status !== 0) throw commandFailure(operation, result);
 }
 
-export function openClawProviderEnvVarsSdkPath(input: {
-	context: OpenClawHostedContext;
-	commandPath?: string | null;
-	appRoot?: string | null;
-}): string {
-	const testOverride = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_ENV_VARS_SDK?.trim();
-	if (testOverride) {
-		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
-			throw new Error(
-				"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_ENV_VARS_SDK requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1",
-			);
-		}
-		return testOverride;
-	}
-	const resolved = input.context.resolveSdkExport("provider-env-vars", input);
-	if (!resolved) throw new Error("installed OpenClaw provider-env-vars SDK export is unavailable");
-	return resolved;
-}
-
 const VERIFY_MARKER_HELPER = `
 import { pathToFileURL } from "node:url";
 const sdk = await import(pathToFileURL(process.argv[1]).href);
@@ -231,16 +212,17 @@ if (!Array.isArray(names) || !names.includes(${JSON.stringify(MANAGED_AI_PROVIDE
 }
 `;
 
-export function requireManagedOpenClawProviderMarker(input: {
-	context: OpenClawHostedContext;
-	commandPath?: string | null;
-	appRoot?: string | null;
-}): void {
+function requireManagedOpenClawProviderMarker(context: OpenClawHostedContext): void {
 	const result = spawnRuntimeUserCommand(
 		"node",
-		["--input-type=module", "--eval", VERIFY_MARKER_HELPER, openClawProviderEnvVarsSdkPath(input)],
-		input.context.home,
-		input.context.home,
+		[
+			"--input-type=module",
+			"--eval",
+			VERIFY_MARKER_HELPER,
+			context.requireSdkExport("providerEnvVars"),
+		],
+		context.home,
+		context.home,
 	);
 	if (result.status !== 0) {
 		throw commandFailure("OpenClaw managed provider env marker verification failed", result);
@@ -250,7 +232,6 @@ export function requireManagedOpenClawProviderMarker(input: {
 export function ensureManagedOpenClawProviderPlugin(input: {
 	context: OpenClawHostedContext;
 	commandPath: string;
-	appRoot?: string | null;
 }): void {
 	const sourceDir = materializePluginSource(input.context);
 	let observation = inspectPlugin(input.commandPath, input.context.home);
@@ -261,7 +242,7 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 		observation.plugin.status === "loaded"
 	) {
 		try {
-			requireManagedOpenClawProviderMarker(input);
+			requireManagedOpenClawProviderMarker(input.context);
 			return;
 		} catch {
 			observation = null;
@@ -308,5 +289,5 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 			)}`,
 		);
 	}
-	requireManagedOpenClawProviderMarker(input);
+	requireManagedOpenClawProviderMarker(input.context);
 }

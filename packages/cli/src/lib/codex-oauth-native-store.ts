@@ -77,13 +77,27 @@ export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string
 		.digest("hex")}`;
 }
 
-function resolveOpenClawSdkExport(
+export const OPENCLAW_SDK_EXPORT_PATHS = {
+	configMutation: "config-mutation",
+	deviceBootstrap: "device-bootstrap",
+	providerAuth: "provider-auth",
+	providerEnvVars: "provider-env-vars",
+} as const;
+
+export function resolveOpenClawSdkExport(
 	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
-	exportPath: `openclaw/plugin-sdk/${string}`,
+	exportPath: (typeof OPENCLAW_SDK_EXPORT_PATHS)[keyof typeof OPENCLAW_SDK_EXPORT_PATHS],
 ): string | null {
 	const packageRoots = new Set<string>();
-	for (const startPath of openClawSdkStartPaths(home, startPaths)) {
+	const stateRoot = join(home, ".openclaw");
+	for (const startPath of [
+		...startPaths,
+		join(stateRoot, "lib", "node_modules", "openclaw"),
+		join(stateRoot, "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+		join(home, ".local", "tools", "node", "lib", "node_modules", "openclaw"),
+	]) {
 		if (!startPath || !existsSync(startPath)) continue;
 		let current = realpathSync(startPath);
 		if (!existsSync(join(current, "package.json"))) current = dirname(current);
@@ -111,27 +125,15 @@ function resolveOpenClawSdkExport(
 	}
 	for (const packageRoot of packageRoots) {
 		try {
-			const resolved = createRequire(join(packageRoot, "package.json")).resolve(exportPath);
+			const resolved = createRequire(join(packageRoot, "package.json")).resolve(
+				`openclaw/plugin-sdk/${exportPath}`,
+			);
 			if (existsSync(resolved)) return resolved;
 		} catch {
 			// The installed package does not expose this public SDK subpath.
 		}
 	}
 	return null;
-}
-
-export function openClawSdkStartPaths(
-	home: string,
-	runtimePaths: ReadonlyArray<string | null | undefined>,
-): ReadonlyArray<string | null | undefined> {
-	const stateRoot = join(home, ".openclaw");
-	return [
-		...runtimePaths,
-		join(stateRoot, "lib", "node_modules", "openclaw"),
-		join(stateRoot, "node_modules", "openclaw"),
-		join(home, ".local", "lib", "node_modules", "openclaw"),
-		join(home, ".local", "tools", "node", "lib", "node_modules", "openclaw"),
-	];
 }
 
 export const OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS = [
@@ -151,34 +153,6 @@ export const OPENCLAW_PROVIDER_ENV_VARS_EXPORTS = ["listKnownProviderAuthEnvVarN
 
 export function openClawSdkFunctionGuard(namespace: string, exports: readonly string[]): string {
 	return exports.map((name) => `typeof ${namespace}.${name} !== "function"`).join(" ||\n  ");
-}
-
-export function resolveOpenClawProviderAuthSdkExport(
-	home: string,
-	startPaths: ReadonlyArray<string | null | undefined>,
-): string | null {
-	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/provider-auth");
-}
-
-export function resolveOpenClawConfigMutationSdkExport(
-	home: string,
-	startPaths: ReadonlyArray<string | null | undefined>,
-): string | null {
-	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/config-mutation");
-}
-
-export function resolveOpenClawProviderEnvVarsSdkExport(
-	home: string,
-	startPaths: ReadonlyArray<string | null | undefined>,
-): string | null {
-	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/provider-env-vars");
-}
-
-export function resolveOpenClawDeviceBootstrapSdkExport(
-	home: string,
-	startPaths: ReadonlyArray<string | null | undefined>,
-): string | null {
-	return resolveOpenClawSdkExport(home, startPaths, "openclaw/plugin-sdk/device-bootstrap");
 }
 
 export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {

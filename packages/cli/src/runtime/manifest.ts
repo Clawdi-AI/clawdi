@@ -173,10 +173,7 @@ import {
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
-import {
-	ensureManagedOpenClawProviderPlugin,
-	openClawProviderEnvVarsSdkPath,
-} from "./openclaw-managed-provider-plugin";
+import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
@@ -1966,34 +1963,6 @@ function runHermesCodexAuth(
 	);
 }
 
-function openClawProviderAuthSdkPath(
-	observation: RuntimeInstallObservation | undefined,
-	context: OpenClawHostedContext,
-): string {
-	const testOverride = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK?.trim();
-	if (testOverride) {
-		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
-			throw new Error(
-				"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1",
-			);
-		}
-		return testOverride;
-	}
-	const resolved = context.resolveSdkExport("provider-auth", {
-		commandPath: observation?.commandPath,
-		appRoot: observation?.appRoot,
-	});
-	if (!resolved) throw new Error("installed OpenClaw provider-auth SDK export is unavailable");
-	return resolved;
-}
-
-function openClawDeviceBootstrapSdkPath(
-	observation: RuntimeInstallObservation,
-	context: OpenClawHostedContext,
-): string | null {
-	return context.resolveSdkExport("device-bootstrap", observation);
-}
-
 const OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE = `
 import { pathToFileURL } from "node:url";
 const sdk = await import(pathToFileURL(process.argv[1]).href);
@@ -2003,11 +1972,8 @@ const normalized = typeof sdk.normalizeDeviceBootstrapProfile === "function"
 process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : "unsupported");
 `;
 
-function openClawSupportsOwnerBrowserBootstrap(
-	observation: RuntimeInstallObservation,
-	context: OpenClawHostedContext,
-): boolean {
-	const sdkPath = openClawDeviceBootstrapSdkPath(observation, context);
+function openClawSupportsOwnerBrowserBootstrap(context: OpenClawHostedContext): boolean {
+	const sdkPath = context.sdk.deviceBootstrap;
 	if (!sdkPath) return false;
 	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
@@ -2051,11 +2017,8 @@ if (
 }
 `;
 
-function requireOpenClawProviderAuthCapability(
-	observation: RuntimeInstallObservation | undefined,
-	context: OpenClawHostedContext,
-): void {
-	const sdkPath = openClawProviderAuthSdkPath(observation, context);
+function requireOpenClawProviderAuthCapability(context: OpenClawHostedContext): void {
+	const sdkPath = context.requireSdkExport("providerAuth");
 	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
@@ -2072,12 +2035,9 @@ function requireOpenClawProviderAuthCapability(
 	}
 }
 
-function requireOpenClawManagedProviderAuthCleanupCapability(
-	observation: RuntimeInstallObservation,
-	context: OpenClawHostedContext,
-): void {
-	const providerAuthSdkPath = openClawProviderAuthSdkPath(observation, context);
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
+function requireOpenClawManagedProviderAuthCleanupCapability(context: OpenClawHostedContext): void {
+	const providerAuthSdkPath = context.requireSdkExport("providerAuth");
+	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
@@ -2090,11 +2050,7 @@ function requireOpenClawManagedProviderAuthCleanupCapability(
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE,
 			providerAuthSdkPath,
 			configMutationSdkPath,
-			openClawProviderEnvVarsSdkPath({
-				context,
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-			}),
+			context.requireSdkExport("providerEnvVars"),
 		],
 		context.home,
 		context.home,
@@ -2111,27 +2067,22 @@ function requireOpenClawManagedProviderAuthCleanupCapability(
 function ensureHostedOpenClawProviderAuthCapability(input: {
 	manifest: RuntimeManifest;
 	secretValues: Record<string, string> | undefined;
-	observation: RuntimeInstallObservation;
 	context: OpenClawHostedContext;
-}): RuntimeInstallObservation {
+}): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, "openclaw", input.secretValues);
 	const cleanupManagedProvider = input.context.managedApiKeyProjection;
-	if (desired.length === 0 && !cleanupManagedProvider) return input.observation;
+	if (desired.length === 0 && !cleanupManagedProvider) return;
 	const requirement =
 		desired.length > 0 && cleanupManagedProvider
 			? "OpenClaw credential convergence"
 			: cleanupManagedProvider
 				? "OpenClaw managed API-key cleanup"
 				: "OpenClaw OAuth";
-	const requireCapabilities = (observation: RuntimeInstallObservation): void => {
-		if (desired.length > 0) requireOpenClawProviderAuthCapability(observation, input.context);
-		if (cleanupManagedProvider) {
-			requireOpenClawManagedProviderAuthCleanupCapability(observation, input.context);
-		}
-	};
 	try {
-		requireCapabilities(input.observation);
-		return input.observation;
+		if (desired.length > 0) requireOpenClawProviderAuthCapability(input.context);
+		if (cleanupManagedProvider) {
+			requireOpenClawManagedProviderAuthCleanupCapability(input.context);
+		}
 	} catch (initialError) {
 		const detail = initialError instanceof Error ? initialError.message : String(initialError);
 		throw new Error(
@@ -2143,7 +2094,6 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 }
 
 function runOpenClawProviderAuthCommand(
-	observation: RuntimeInstallObservation | undefined,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	action: OpenClawProviderAuthAction,
@@ -2171,7 +2121,7 @@ function runOpenClawProviderAuthCommand(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_PROVIDER_AUTH_HELPER,
-			openClawProviderAuthSdkPath(observation, context),
+			context.requireSdkExport("providerAuth"),
 			context.agentDirs.main,
 			action,
 			profileId,
@@ -2193,7 +2143,6 @@ function runOpenClawProviderAuthCommand(
 }
 
 function observeOpenClawProviderAuth(
-	observation: RuntimeInstallObservation | undefined,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	profileId: string,
@@ -2202,7 +2151,6 @@ function observeOpenClawProviderAuth(
 ): NativeOAuthCredentialObservation {
 	return nativeOAuthObservation(
 		runOpenClawProviderAuthCommand(
-			observation,
 			context,
 			workspaceRoot,
 			"inspect",
@@ -2215,7 +2163,6 @@ function observeOpenClawProviderAuth(
 }
 
 function runOpenClawProviderAuth(
-	observation: RuntimeInstallObservation | undefined,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	action: Exclude<OpenClawProviderAuthAction, "inspect">,
@@ -2227,7 +2174,6 @@ function runOpenClawProviderAuth(
 ): NativeOAuthCredentialMutationResult {
 	return nativeOAuthMutationResult(
 		runOpenClawProviderAuthCommand(
-			observation,
 			context,
 			workspaceRoot,
 			action,
@@ -2241,11 +2187,10 @@ function runOpenClawProviderAuth(
 }
 
 function removeOpenClawManagedProviderAuthProfiles(
-	observation: RuntimeInstallObservation,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
+	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
@@ -2255,7 +2200,7 @@ function removeOpenClawManagedProviderAuthProfiles(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
-			openClawProviderAuthSdkPath(observation, context),
+			context.requireSdkExport("providerAuth"),
 			configMutationSdkPath,
 			context.home,
 			"cleanup",
@@ -2273,11 +2218,8 @@ function removeOpenClawManagedProviderAuthProfiles(
 	}
 }
 
-function discoverOpenClawManagedProviderAuthAgentDirs(
-	observation: RuntimeInstallObservation,
-	context: OpenClawHostedContext,
-): string[] {
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
+function discoverOpenClawManagedProviderAuthAgentDirs(context: OpenClawHostedContext): string[] {
+	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
@@ -2287,7 +2229,7 @@ function discoverOpenClawManagedProviderAuthAgentDirs(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
-			openClawProviderAuthSdkPath(observation, context),
+			context.requireSdkExport("providerAuth"),
 			configMutationSdkPath,
 			context.home,
 			"discover",
@@ -2339,7 +2281,6 @@ function runtimeOAuthLedgerOwnership(
 
 function observeHostedRuntimeOAuthCredential(input: {
 	runtime: "hermes" | "openclaw";
-	observation?: RuntimeInstallObservation;
 	home: string;
 	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
@@ -2357,7 +2298,6 @@ function observeHostedRuntimeOAuthCredential(input: {
 		);
 	}
 	return observeOpenClawProviderAuth(
-		input.observation,
 		input.openClawContext,
 		input.workspaceRoot,
 		input.nativeProfileId,
@@ -2369,7 +2309,6 @@ function observeHostedRuntimeOAuthCredential(input: {
 function executeHostedRuntimeOAuthAction(input: {
 	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>;
 	runtime: "hermes" | "openclaw";
-	observation?: RuntimeInstallObservation;
 	home: string;
 	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
@@ -2405,7 +2344,6 @@ function executeHostedRuntimeOAuthAction(input: {
 		);
 	} else {
 		result = runOpenClawProviderAuth(
-			input.observation,
 			input.openClawContext,
 			input.workspaceRoot,
 			adapterAction,
@@ -2426,7 +2364,6 @@ function executeHostedRuntimeOAuthAction(input: {
 
 function removeHostedRuntimeOAuthCredential(input: {
 	runtime: "hermes" | "openclaw";
-	observation?: RuntimeInstallObservation;
 	home: string;
 	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
@@ -2449,7 +2386,6 @@ function removeHostedRuntimeOAuthCredential(input: {
 		);
 	} else {
 		result = runOpenClawProviderAuth(
-			input.observation,
 			input.openClawContext,
 			input.workspaceRoot,
 			"remove",
@@ -2511,7 +2447,6 @@ function assertRuntimeNativeMutationBeforeEvidence(
 
 function reconcileHostedRuntimeOAuthCredentials(input: {
 	runtime: "hermes" | "openclaw";
-	observation?: RuntimeInstallObservation;
 	manifest: RuntimeManifest;
 	secretValues: Record<string, string> | undefined;
 	paths: RuntimePaths;
@@ -2533,7 +2468,6 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			const ownership = runtimeOAuthLedgerOwnership(ledger);
 			const native = observeHostedRuntimeOAuthCredential({
 				runtime: input.runtime,
-				observation: input.observation,
 				home: input.home,
 				openClawContext: input.openClawContext,
 				workspaceRoot: input.workspaceRoot,
@@ -2568,7 +2502,6 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 				};
 				removeHostedRuntimeOAuthCredential({
 					runtime: input.runtime,
-					observation: input.observation,
 					home: input.home,
 					openClawContext: input.openClawContext,
 					workspaceRoot: input.workspaceRoot,
@@ -2593,7 +2526,6 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 		);
 		const native = observeHostedRuntimeOAuthCredential({
 			runtime: input.runtime,
-			observation: input.observation,
 			home: input.home,
 			openClawContext: input.openClawContext,
 			workspaceRoot: input.workspaceRoot,
@@ -2619,7 +2551,6 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 		executeHostedRuntimeOAuthAction({
 			decision,
 			runtime: input.runtime,
-			observation: input.observation,
 			home: input.home,
 			openClawContext: input.openClawContext,
 			workspaceRoot: input.workspaceRoot,
@@ -2688,7 +2619,7 @@ function applyHostedAiProviderProjection(
 					"OpenClaw managed provider-auth stores were not transactionally discovered",
 				);
 			}
-			removeOpenClawManagedProviderAuthProfiles(observation, openClawContext, workspaceRoot);
+			removeOpenClawManagedProviderAuthProfiles(openClawContext, workspaceRoot);
 		}
 		return {
 			path: observation.commandPath,
@@ -3118,20 +3049,13 @@ await sdk.mutateConfigFile({
 });
 `;
 
-function openClawConfigMutationSdkPath(
-	observation: RuntimeInstallObservation,
-	context: OpenClawHostedContext,
-): string | null {
-	return context.resolveSdkExport("config-mutation", observation);
-}
-
 function applyOpenClawHostedProviderPatch(
 	observation: RuntimeInstallObservation,
 	patch: OpenClawHostedProviderPatch,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
-	const sdkPath = openClawConfigMutationSdkPath(observation, context);
+	const sdkPath = context.sdk.configMutation;
 	if (!sdkPath) {
 		runRuntimeUserCommand(
 			observation.commandPath ?? "openclaw",
@@ -5955,9 +5879,7 @@ export function convergeRuntimeManifest(
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	// Runtime-user state ownership is a platform invariant, not a manifest
 	// mutation: repair it before snapshots so rollback cannot restore drift.
-	if (openClawContext.hostedV2 && openClawContext.enabled) {
-		enforceRuntimeUserOwnership(openClawContext.ownership);
-	}
+	enforceRuntimeUserOwnership(openClawContext.ownership);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
@@ -6084,11 +6006,10 @@ export function convergeRuntimeManifest(
 			const observation = observeRuntimeInstall(name, runtime, projectionHome);
 			observations.set(name, observation);
 			if (observation.error) installErrors.push(observation.error);
+			if (name === "openclaw") openClawContext.refreshSdkExports(observation);
 			if (name === "openclaw" && observation.enabled && observation.commandPath) {
-				openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
-					observation,
-					openClawContext,
-				);
+				openClawOwnerBrowserBootstrapSupported =
+					openClawSupportsOwnerBrowserBootstrap(openClawContext);
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
@@ -6110,7 +6031,6 @@ export function convergeRuntimeManifest(
 			ensureManagedOpenClawProviderPlugin({
 				context: openClawContext,
 				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
 			});
 		}
 	} catch (error) {
@@ -6247,19 +6167,11 @@ export function convergeRuntimeManifest(
 		const openClawObservation = observations.get("openclaw");
 		if (openClawObservation) {
 			try {
-				const capableObservation = ensureHostedOpenClawProviderAuthCapability({
+				ensureHostedOpenClawProviderAuthCapability({
 					manifest,
 					secretValues,
-					observation: openClawObservation,
 					context: openClawContext,
 				});
-				observations.set("openclaw", capableObservation);
-				if (capableObservation !== openClawObservation) {
-					openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
-						capableObservation,
-						openClawContext,
-					);
-				}
 			} catch (error) {
 				installErrors.push(
 					`runtime openclaw credential capability check failed: ${
@@ -6271,10 +6183,8 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 		const managedOpenClawObservation = observations.get("openclaw");
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
-			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
-				managedOpenClawObservation,
-				openClawContext,
-			);
+			openClawContext.agentDirs.managed =
+				discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
 			const supplementalTargets = openClawContext.agentDirs.managed.filter(
 				(path) => !liveSnapshot.entries.has(path),
 			);
@@ -6749,7 +6659,6 @@ export function convergeRuntimeManifest(
 				try {
 					reconcileHostedRuntimeOAuthCredentials({
 						runtime: name,
-						observation,
 						manifest,
 						secretValues,
 						paths,

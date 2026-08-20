@@ -8,7 +8,6 @@ import {
 	lstatSync,
 	mkdirSync,
 	readdirSync,
-	type Stats,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
@@ -392,68 +391,61 @@ function positiveLinuxIdEnv(key: string, fallback: number): number {
 
 export function runtimeUserDirectoryOwnership(
 	path: string,
-	options: { mode?: number; recursive?: boolean; ancestorsUnder?: string } = {},
+	options: { mode?: number; ancestorsUnder?: string } = {},
 ): RuntimeUserOwnershipRule[] {
 	const target = resolve(path);
 	const paths = [target];
 	if (options.ancestorsUnder) {
 		const boundary = resolve(options.ancestorsUnder);
 		const relativeTarget = relative(boundary, target);
-		if (relativeTarget.startsWith("..") || isAbsolute(relativeTarget)) {
+		if (relativeTarget === ".." || relativeTarget.startsWith("../") || isAbsolute(relativeTarget)) {
 			throw new Error(`runtime-user directory is outside its ownership boundary: ${target}`);
 		}
-		let current = dirname(target);
-		while (current === boundary || current.startsWith(`${boundary}/`)) {
+		for (let current = dirname(target); ; current = dirname(current)) {
 			paths.push(current);
 			if (current === boundary) break;
-			current = dirname(current);
 		}
 	}
-	return [...new Set(paths)]
-		.sort((left, right) => left.length - right.length || left.localeCompare(right))
-		.map((entry) => ({
-			path: entry,
-			owner: "runtime-user",
-			kind: "directory",
-			...(entry === target && options.mode !== undefined ? { mode: options.mode } : {}),
-			recursive: entry === target && options.recursive === true,
-		}));
+	return runtimeUserOwnershipRules(paths, "directory", options, target);
 }
 
-export function runtimeUserExistingOwnership(
+export const runtimeUserExistingOwnership = (paths: readonly string[]) =>
+	runtimeUserOwnershipRules(paths, "existing", {});
+
+function runtimeUserOwnershipRules(
 	paths: readonly string[],
-	options: { recursive?: boolean } = {},
+	kind: RuntimeUserOwnershipRule["kind"],
+	options: { mode?: number },
+	target?: string,
 ): RuntimeUserOwnershipRule[] {
 	return [...new Set(paths.map((path) => resolve(path)))]
 		.sort((left, right) => left.length - right.length || left.localeCompare(right))
 		.map((path) => ({
 			path,
 			owner: "runtime-user",
-			kind: "existing",
-			recursive: options.recursive === true,
+			kind,
+			...(path === target && options.mode !== undefined ? { mode: options.mode } : {}),
+			recursive: false,
 		}));
 }
 
 export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnershipRule[]): void {
+	if (rules.length === 0) return;
 	const identity = runtimeFilesystemIdentity();
 	for (const rule of rules) {
 		if (rule.kind === "directory") mkdirSync(rule.path, { recursive: true });
-		const node = ownershipNode(rule);
-		if (!node) continue;
+		let node: NonNullable<ReturnType<typeof lstatSync>>;
+		try {
+			node = lstatSync(rule.path);
+		} catch (error) {
+			if (rule.kind === "existing" && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
 		if (rule.kind === "directory" && (!node.isDirectory() || node.isSymbolicLink())) {
 			throw new Error(`runtime-user ownership path must be a real directory: ${rule.path}`);
 		}
 		enforceRuntimeUserNodeOwnership(rule.path, node, identity, rule.recursive);
 		if (rule.mode !== undefined) chmodSync(rule.path, rule.mode);
-	}
-}
-
-function ownershipNode(rule: RuntimeUserOwnershipRule): Stats | null {
-	try {
-		return lstatSync(rule.path);
-	} catch (error) {
-		if (rule.kind === "existing" && (error as NodeJS.ErrnoException).code === "ENOENT") return null;
-		throw error;
 	}
 }
 
@@ -470,7 +462,7 @@ function runtimeFilesystemIdentity(): RuntimeUserIdentity | null {
 
 function enforceRuntimeUserNodeOwnership(
 	path: string,
-	node: Stats,
+	node: NonNullable<ReturnType<typeof lstatSync>>,
 	identity: RuntimeUserIdentity | null,
 	recursive: boolean,
 ): void {

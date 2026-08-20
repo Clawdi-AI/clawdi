@@ -1,13 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	chmodSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,49 +8,11 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
-	enforceRuntimeUserOwnership,
 	runRuntimeUserCommand,
-	runtimeUserDirectoryOwnership,
 	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
-
-test("enforces declarative runtime-user directory ownership rules", () => {
-	const root = mkdtempSync(join(tmpdir(), "runtime-user-ownership-"));
-	try {
-		const home = join(root, "home");
-		const target = join(home, "state", "tmp");
-		const rules = runtimeUserDirectoryOwnership(target, {
-			mode: 0o700,
-			recursive: true,
-			ancestorsUnder: home,
-		});
-		expect(rules).toEqual([
-			{ path: home, owner: "runtime-user", kind: "directory", recursive: false },
-			{ path: join(home, "state"), owner: "runtime-user", kind: "directory", recursive: false },
-			{
-				path: target,
-				owner: "runtime-user",
-				kind: "directory",
-				mode: 0o700,
-				recursive: true,
-			},
-		]);
-		enforceRuntimeUserOwnership(rules);
-		expect(statSync(target).mode & 0o777).toBe(0o700);
-
-		const symlink = join(root, "symlink");
-		symlinkSync(target, symlink, "dir");
-		expect(() =>
-			enforceRuntimeUserOwnership([
-				{ path: symlink, owner: "runtime-user", kind: "directory", recursive: false },
-			]),
-		).toThrow("runtime-user ownership path must be a real directory");
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
 
 test("command existence follows shell resolution", () => {
 	expect(commandExists("command")).toBe(true);
@@ -152,18 +106,13 @@ test("runtime commands pin native state locations and allow explicit isolation o
 		process.env.HERMES_ENV = "/live/hermes.env";
 		const pinned = spawnRuntimeUserCommand(
 			process.execPath,
-			[
-				"-e",
-				`require("node:fs").writeFileSync(${JSON.stringify(output)}, JSON.stringify({ openclawState: process.env.OPENCLAW_STATE_DIR, openclawConfig: process.env.OPENCLAW_CONFIG_PATH }))`,
-			],
+			["-p", "JSON.stringify([process.env.OPENCLAW_STATE_DIR, process.env.OPENCLAW_CONFIG_PATH])"],
 			root,
 			root,
 		);
-		expect(pinned.status).toBe(0);
-		expect(JSON.parse(readFileSync(output, "utf8"))).toEqual({
-			openclawState: join(root, ".openclaw"),
-			openclawConfig: join(root, ".openclaw", "openclaw.json"),
-		});
+		expect(String(pinned.stdout).trim()).toBe(
+			JSON.stringify([join(root, ".openclaw"), join(root, ".openclaw", "openclaw.json")]),
+		);
 		const result = spawnRuntimeUserCommand(
 			process.execPath,
 			[

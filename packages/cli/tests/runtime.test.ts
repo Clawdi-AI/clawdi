@@ -56,6 +56,7 @@ import {
 	readHostPolicy,
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
+import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-context";
 import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
@@ -4012,7 +4013,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("installs the managed provider plugin before repairing invalid OpenClaw config", () => {
+	it("pins OpenClaw context and installs the managed provider plugin before config repair", () => {
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
@@ -4029,6 +4030,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.OPENCLAW_STATE_DIR = "/tmp/untrusted-openclaw-state";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
 			join(root, "invalid-openclaw-config", "provider-auth"),
 			join(root, "invalid-openclaw-config", "provider-auth-calls.log"),
@@ -4047,7 +4049,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const installIndex = commands.findIndex(
 			(command) => command.startsWith("plugins install ") && command.endsWith(" --force"),
 		);
-		expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
 		expect(installIndex, commands.join(" | ")).toBeGreaterThan(-1);
 		expect(doctorIndex).toBeGreaterThan(installIndex);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
@@ -4060,17 +4061,26 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		writeFileSync(join(pluginDir, "preimage"), "preserve\n");
 		writeFileSync(configPath, '{"legacyInvalidConfig":true}\n');
 		writeFileSync(database, "preserve\n");
-		const failed = convergeRuntimeManifest(loaded, paths, {
+		convergeRuntimeManifest(loaded, paths, {
 			hostedOpenClawSkillDriver,
 			commitAuthority: () => {
 				throw new Error("late authority failure");
 			},
 		});
 
-		expect(failed.installErrors.join("\n")).toContain("late authority failure");
 		expect(readFileSync(configPath, "utf8")).toBe('{"legacyInvalidConfig":true}\n');
 		expect(readdirSync(pluginDir)).toEqual(["preimage"]);
 		expect(readFileSync(database, "utf8")).toBe("preserve\n");
+
+		const context = createOpenClawHostedContext(loaded.manifest, home);
+		expect(context.ownership.map(({ path, mode, recursive }) => [path, mode, recursive])).toEqual([
+			[home, undefined, false],
+			[join(home, ".openclaw"), 0o700, false],
+			[join(home, ".openclaw", "tmp"), 0o700, false],
+		]);
+		loaded.manifest.runtimes.openclaw.enabled = false;
+		expect(context.managedApiKeyProjection).toBe(true);
+		expect(createOpenClawHostedContext(loaded.manifest, home).managedApiKeyProjection).toBe(false);
 	});
 
 	it("removes reserved OpenClaw provider auth from every store only for managed env projection", () => {

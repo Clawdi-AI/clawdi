@@ -15,11 +15,9 @@ import { dirname, join } from "node:path";
 import {
 	HERMES_CODEX_AUTH_HELPER,
 	hermesCodexAuthInvocation,
+	OPENCLAW_SDK_EXPORT_PATHS,
 	oauthCredentialFingerprint,
-	resolveOpenClawConfigMutationSdkExport,
-	resolveOpenClawDeviceBootstrapSdkExport,
-	resolveOpenClawProviderAuthSdkExport,
-	resolveOpenClawProviderEnvVarsSdkExport,
+	resolveOpenClawSdkExport,
 } from "./codex-oauth-native-store";
 
 const tempRoots: string[] = [];
@@ -97,10 +95,13 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 
 		expect(lstatSync(commandPath).isFile()).toBe(true);
 		expect(lstatSync(commandPath).isSymbolicLink()).toBe(false);
-		expect(resolveOpenClawProviderAuthSdkExport(home, [commandPath])).toBe(providerAuthPath);
-		expect(resolveOpenClawConfigMutationSdkExport(home, [commandPath])).toBe(configMutationPath);
-		expect(resolveOpenClawDeviceBootstrapSdkExport(home, [commandPath])).toBe(deviceBootstrapPath);
-		expect(resolveOpenClawProviderEnvVarsSdkExport(home, [commandPath])).toBe(providerEnvVarsPath);
+		const resolveSdk = (
+			path: (typeof OPENCLAW_SDK_EXPORT_PATHS)[keyof typeof OPENCLAW_SDK_EXPORT_PATHS],
+		) => resolveOpenClawSdkExport(home, [commandPath], path);
+		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.providerAuth)).toBe(providerAuthPath);
+		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.configMutation)).toBe(configMutationPath);
+		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.deviceBootstrap)).toBe(deviceBootstrapPath);
+		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.providerEnvVars)).toBe(providerEnvVarsPath);
 	});
 
 	test("preserves a future Hermes store version and unrelated pool entries", () => {

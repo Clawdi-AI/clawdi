@@ -20,8 +20,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-	resolveOpenClawProviderAuthSdkExport,
-	resolveOpenClawProviderEnvVarsSdkExport,
+	resolveOpenClawSdkExport as resolveSdk,
+	OPENCLAW_SDK_EXPORT_PATHS as SDK_EXPORTS,
 } from "../../src/lib/codex-oauth-native-store";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
@@ -434,7 +434,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	ensureRuntimeStateDirs(paths);
 
 	try {
-		const providerAuthSdkPath = resolveOpenClawProviderAuthSdkExport(runtimeHome, [commandPath]);
+		const providerAuthSdkPath = resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.providerAuth);
 		expect(providerAuthSdkPath).not.toBeNull();
 		if (!providerAuthSdkPath) throw new Error("official OpenClaw provider-auth SDK is unavailable");
 		const authTargets = [null, activeAgentDir, secondaryAgentDir];
@@ -619,9 +619,11 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			},
 			install: { source: "path" },
 		});
-		const providerEnvVarsSdkPath = resolveOpenClawProviderEnvVarsSdkExport(runtimeHome, [
-			commandPath,
-		]);
+		const providerEnvVarsSdkPath = resolveSdk(
+			runtimeHome,
+			[commandPath],
+			SDK_EXPORTS.providerEnvVars,
+		);
 		expect(providerEnvVarsSdkPath).not.toBeNull();
 		if (!providerEnvVarsSdkPath) {
 			throw new Error("official OpenClaw provider-env-vars SDK is unavailable");
