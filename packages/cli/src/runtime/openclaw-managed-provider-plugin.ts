@@ -247,15 +247,6 @@ export function requireManagedOpenClawProviderMarker(input: {
 	}
 }
 
-export function stageManagedOpenClawProviderMarker(input: {
-	context: OpenClawHostedContext;
-	commandPath?: string | null;
-	appRoot?: string | null;
-}): void {
-	materializePluginDirectory(input.context.providerPlugin.installDir);
-	requireManagedOpenClawProviderMarker(input);
-}
-
 export function ensureManagedOpenClawProviderPlugin(input: {
 	context: OpenClawHostedContext;
 	commandPath: string;

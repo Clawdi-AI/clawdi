@@ -4012,7 +4012,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("stages the managed provider marker before repairing invalid OpenClaw config", () => {
+	it("installs the managed provider plugin before repairing invalid OpenClaw config", () => {
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
@@ -4048,9 +4048,29 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			(command) => command.startsWith("plugins install ") && command.endsWith(" --force"),
 		);
 		expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
-		expect(installIndex).toBeGreaterThan(doctorIndex);
+		expect(installIndex, commands.join(" | ")).toBeGreaterThan(-1);
+		expect(doctorIndex).toBeGreaterThan(installIndex);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
 		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
+
+		const pluginDir = join(home, ".openclaw", "extensions", "clawdi-managed-provider");
+		const database = join(home, ".openclaw", "state", "openclaw.sqlite");
+		rmSync(pluginDir, { recursive: true });
+		mkdirSync(pluginDir);
+		writeFileSync(join(pluginDir, "preimage"), "preserve\n");
+		writeFileSync(configPath, '{"legacyInvalidConfig":true}\n');
+		writeFileSync(database, "preserve\n");
+		const failed = convergeRuntimeManifest(loaded, paths, {
+			hostedOpenClawSkillDriver,
+			commitAuthority: () => {
+				throw new Error("late authority failure");
+			},
+		});
+
+		expect(failed.installErrors.join("\n")).toContain("late authority failure");
+		expect(readFileSync(configPath, "utf8")).toBe('{"legacyInvalidConfig":true}\n');
+		expect(readdirSync(pluginDir)).toEqual(["preimage"]);
+		expect(readFileSync(database, "utf8")).toBe("preserve\n");
 	});
 
 	it("removes reserved OpenClaw provider auth from every store only for managed env projection", () => {

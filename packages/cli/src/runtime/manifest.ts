@@ -176,7 +176,6 @@ import {
 import {
 	ensureManagedOpenClawProviderPlugin,
 	openClawProviderEnvVarsSdkPath,
-	stageManagedOpenClawProviderMarker,
 } from "./openclaw-managed-provider-plugin";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -2671,13 +2670,6 @@ function applyHostedAiProviderProjection(
 		);
 	}
 	if (name === "openclaw") {
-		if (openClawContext.managedApiKeyProjection) {
-			ensureManagedOpenClawProviderPlugin({
-				context: openClawContext,
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-			});
-		}
 		applyOpenClawGatewayHostedProjection(
 			observation.commandPath,
 			manifest,
@@ -5581,21 +5573,51 @@ function excludeRuntimeSnapshotCoverage(
 	};
 }
 
-function managedOpenClawMarkerBootstrapMutationPlan(
+function managedOpenClawPluginBootstrapMutationPlan(
 	context: OpenClawHostedContext,
 	paths: RuntimePaths,
 ): RuntimeManagedMutationPlan | null {
 	if (!context.managedApiKeyProjection) return null;
-	const target = context.providerPlugin.installDir;
+	const targets = context.providerPlugin.mutationTargets;
 	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
 	return {
 		rootTargets: [],
 		trustedRootDirectories: [],
-		runtimeUserTargets: [target],
+		runtimeUserTargets: targets,
 		runtimeUserTrustedRoots,
 		runtimeUserSymlinkTargets: [],
-		metadataTargets: mutationAncestorMetadataTargets([target], runtimeUserTrustedRoots),
+		metadataTargets: mutationAncestorMetadataTargets(targets, runtimeUserTrustedRoots),
 	};
+}
+
+class RuntimeSnapshotRollbackStack {
+	readonly #snapshots: Array<{ failure: string; snapshot: RuntimeLiveSnapshot }> = [];
+
+	capture(failure: string, plan: RuntimeManagedMutationPlan): RuntimeLiveSnapshot {
+		const snapshot = captureRuntimeLiveSnapshot(plan);
+		this.#snapshots.push({ failure, snapshot });
+		return snapshot;
+	}
+
+	restore(): string[] {
+		const errors: string[] = [];
+		for (const { failure, snapshot } of this.#snapshots.splice(0).reverse()) {
+			try {
+				restoreRuntimeLiveSnapshot(snapshot);
+			} catch (error) {
+				errors.push(`${failure}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+		return errors;
+	}
+
+	failure(error: unknown): unknown {
+		const rollbackErrors = this.restore();
+		if (rollbackErrors.length === 0) return error;
+		return new Error(
+			`${error instanceof Error ? error.message : String(error)}; ${rollbackErrors.join("; ")}`,
+		);
+	}
 }
 
 function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
@@ -6048,11 +6070,11 @@ export function convergeRuntimeManifest(
 	}
 
 	const coldInstallPlan = runtimeColdInstallMutationPlan(manifest, paths, observations);
-	const coldInstallSnapshot = coldInstallPlan
-		? captureRuntimeLiveSnapshot(coldInstallPlan.snapshot)
-		: null;
-	const markerBootstrapPlan = managedOpenClawMarkerBootstrapMutationPlan(openClawContext, paths);
-	let markerBootstrapSnapshot: RuntimeLiveSnapshot | null = null;
+	const rollbackSnapshots = new RuntimeSnapshotRollbackStack();
+	if (coldInstallPlan) {
+		rollbackSnapshots.capture("runtime installer rollback failed", coldInstallPlan.snapshot);
+	}
+	const pluginBootstrapPlan = managedOpenClawPluginBootstrapMutationPlan(openClawContext, paths);
 	try {
 		if (coldInstallPlan) {
 			hostedRuntimeContract.assertPlatformRoots();
@@ -6070,47 +6092,29 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
-		if (markerBootstrapPlan) {
-			markerBootstrapSnapshot = captureRuntimeLiveSnapshot(markerBootstrapPlan);
+		if (pluginBootstrapPlan) {
+			rollbackSnapshots.capture(
+				"OpenClaw managed provider plugin rollback failed",
+				pluginBootstrapPlan,
+			);
 			enforceRuntimeUserOwnership(
 				runtimeUserExistingOwnership([
-					...markerBootstrapPlan.metadataTargets,
-					...markerBootstrapPlan.runtimeUserTargets,
+					...pluginBootstrapPlan.metadataTargets,
+					...pluginBootstrapPlan.runtimeUserTargets,
 				]),
 			);
 			const observation = observations.get("openclaw");
 			if (!observation?.commandPath) {
-				throw new Error("OpenClaw managed provider marker requires an installed runtime");
+				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
 			}
-			stageManagedOpenClawProviderMarker({
+			ensureManagedOpenClawProviderPlugin({
 				context: openClawContext,
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 			});
 		}
 	} catch (error) {
-		if (markerBootstrapSnapshot) {
-			try {
-				restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
-			} catch (rollbackError) {
-				installErrors.push(
-					`OpenClaw managed provider marker rollback failed: ${
-						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-					}`,
-				);
-			}
-		}
-		if (coldInstallSnapshot) {
-			try {
-				restoreRuntimeLiveSnapshot(coldInstallSnapshot);
-			} catch (rollbackError) {
-				installErrors.push(
-					`runtime installer rollback failed: ${
-						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-					}`,
-				);
-			}
-		}
+		installErrors.push(...rollbackSnapshots.restore());
 		const message = error instanceof Error ? error.message : String(error);
 		if (!installErrors.includes(message)) installErrors.unshift(message);
 		return runtimeConvergenceWithoutApply({
@@ -6174,13 +6178,10 @@ export function convergeRuntimeManifest(
 			observations,
 		});
 	} catch (error) {
-		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
-		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
-		throw error;
+		throw rollbackSnapshots.failure(error);
 	}
 	if (mutationPlan.systemdDriftErrors.length > 0) {
-		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
-		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
+		installErrors.push(...rollbackSnapshots.restore());
 		installErrors.push(...mutationPlan.systemdDriftErrors);
 		return runtimeConvergenceWithoutApply({
 			load,
@@ -6203,20 +6204,12 @@ export function convergeRuntimeManifest(
 		if (coldInstallPlan) {
 			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, coldInstallPlan.snapshot);
 		}
-		if (markerBootstrapPlan) {
-			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, markerBootstrapPlan);
+		if (pluginBootstrapPlan) {
+			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, pluginBootstrapPlan);
 		}
-		liveSnapshot = captureRuntimeLiveSnapshot(snapshotPlan);
-		for (const earlierSnapshot of [coldInstallSnapshot, markerBootstrapSnapshot]) {
-			if (!earlierSnapshot) continue;
-			for (const [path, node] of earlierSnapshot.entries) {
-				if (!liveSnapshot.entries.has(path)) liveSnapshot.entries.set(path, node);
-			}
-		}
+		liveSnapshot = rollbackSnapshots.capture("runtime filesystem rollback failed", snapshotPlan);
 	} catch (error) {
-		if (markerBootstrapSnapshot) restoreRuntimeLiveSnapshot(markerBootstrapSnapshot);
-		if (coldInstallSnapshot) restoreRuntimeLiveSnapshot(coldInstallSnapshot);
-		throw error;
+		throw rollbackSnapshots.failure(error);
 	}
 	let systemdActivationApplied = false;
 	let restartDaemon = false;
@@ -7184,7 +7177,8 @@ export function convergeRuntimeManifest(
 			}
 			try {
 				hostedRuntimeContract.assertPlatformRoots();
-				restoreRuntimeLiveSnapshot(liveSnapshot);
+				const snapshotRollbackErrors = rollbackSnapshots.restore();
+				installErrors.push(...snapshotRollbackErrors);
 				if (rollbackEgressSecretOverride) {
 					writeEgressSecretMaterial(rollbackEgressSecretOverride, paths);
 				} else if (rollbackEgressSecretRevision) {
@@ -7198,7 +7192,8 @@ export function convergeRuntimeManifest(
 				} else if (!egressRollbackAuthorityVerified) {
 					rmSync(egressSecretFilePath(paths), { force: true });
 				}
-				filesystemRollbackSucceeded = resourceFilesystemRollbackSucceeded;
+				filesystemRollbackSucceeded =
+					resourceFilesystemRollbackSucceeded && snapshotRollbackErrors.length === 0;
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime filesystem rollback failed: ${

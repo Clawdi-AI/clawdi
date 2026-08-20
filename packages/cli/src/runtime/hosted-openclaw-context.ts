@@ -54,6 +54,7 @@ export function createOpenClawHostedContext(
 	home: string,
 ): OpenClawHostedContext {
 	const stateRoot = join(home, ".openclaw");
+	const configPath = join(stateRoot, "openclaw.json");
 	const database = join(stateRoot, "state", "openclaw.sqlite");
 	const sourceDir = join(stateRoot, "managed-sources", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const installDir = join(stateRoot, "extensions", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
@@ -63,7 +64,7 @@ export function createOpenClawHostedContext(
 		enabled: manifest.runtimes.openclaw?.enabled === true,
 		managedApiKeyProjection: hasManagedApiKeyProjection(manifest),
 		stateRoot,
-		configPath: join(stateRoot, "openclaw.json"),
+		configPath,
 		tmpDir: join(stateRoot, "tmp"),
 		ownership: [
 			{ path: home, owner: "runtime-user", kind: "directory", recursive: false },
@@ -90,7 +91,14 @@ export function createOpenClawHostedContext(
 		providerPlugin: {
 			sourceDir,
 			installDir,
-			mutationTargets: [sourceDir, installDir, database, `${database}-wal`, `${database}-shm`],
+			mutationTargets: [
+				configPath,
+				sourceDir,
+				installDir,
+				database,
+				`${database}-wal`,
+				`${database}-shm`,
+			],
 		},
 		resolveSdkExport(exportName, location) {
 			const startPaths = [location.commandPath, location.appRoot];
