@@ -39,7 +39,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
-import type { AgentAdapter, CollectSessionsResult, RawSession } from "../adapters/base";
+import type { AgentAdapter, RawSession, SessionScanRequest } from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
@@ -63,7 +63,7 @@ import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { reconcileConnectedProjectSkills } from "./project-skill-reconcile";
 import { type QueueItem, RetryQueue } from "./queue";
-import { type SessionWatchChange, watchSessions } from "./sessions-watcher";
+import { type SessionWatchEvent, watchSessions } from "./sessions-watcher";
 import {
 	consumeSse,
 	type ServerEvent,
@@ -242,11 +242,10 @@ export class SyncHealth {
 
 interface StableSessionEnqueueOptions {
 	abort: AbortSignal;
-	collectSessions: () => Promise<CollectSessionsResult>;
+	sessions: readonly RawSession[];
 	queue: Pick<RetryQueue, "enqueue">;
 	lastPushedHash: ReadonlyMap<string, string>;
 	inFlightHash: Map<string, string>;
-	onPresentSessions?: (resources: ReadonlySet<string>) => void;
 }
 
 function sessionContentHash(session: RawSession): string {
@@ -257,11 +256,8 @@ export async function enqueueChangedSessionsAfterStability(
 	opts: StableSessionEnqueueOptions,
 ): Promise<number> {
 	if (opts.abort.aborted) return 0;
-	const { sessions } = await opts.collectSessions();
-	if (opts.abort.aborted) return 0;
-	opts.onPresentSessions?.(new Set(sessions.map((session) => `session:${session.localSessionId}`)));
 	let enqueued = 0;
-	for (const session of sessions) {
+	for (const session of opts.sessions) {
 		if (opts.abort.aborted) return enqueued;
 		const hash = sessionContentHash(session);
 		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
@@ -782,39 +778,26 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 	};
 
-	// Prefer an adapter's bounded path collector for concrete watcher events.
-	// Ambiguous events and the periodic safety scan retain the complete scan.
-	const onSessionsStable = async (change?: SessionWatchChange) => {
+	const onSessionsStable = async (event?: SessionWatchEvent) => {
 		if (opts.abort.aborted) return;
 		try {
-			let completeInventory = true;
-			const collectSessions = async (): Promise<CollectSessionsResult> => {
-				if (
-					change &&
-					!change.requiresFullScan &&
-					change.paths.length > 0 &&
-					opts.adapter.collectSessionsForPaths
-				) {
-					const targeted = await opts.adapter.collectSessionsForPaths(change.paths);
-					if (targeted !== null) {
-						completeInventory = false;
-						return targeted;
-					}
-				}
-				const complete = await opts.adapter.collectSessions();
-				return complete;
-			};
+			const request: SessionScanRequest = event?.kind === "paths" ? event : { kind: "complete" };
+			const result = await opts.adapter.collectSessions(request);
 			const enqueued = await enqueueChangedSessionsAfterStability({
 				abort: opts.abort,
-				collectSessions,
+				sessions: result.sessions,
 				queue,
 				lastPushedHash: lastPushedSessionHash,
 				inFlightHash: inFlightSessionHash,
-				onPresentSessions: (resources) => {
-					if (completeInventory) syncHealth.clearAbsent("push", "session:", resources);
-				},
 			});
 			if (opts.abort.aborted) return;
+			if (result.coverage === "complete") {
+				syncHealth.clearAbsent(
+					"push",
+					"session:",
+					new Set(result.sessions.map((session) => `session:${session.localSessionId}`)),
+				);
+			}
 			syncHealth.clear("push", "session_scan");
 			if (enqueued > 0) {
 				log.info("engine.sessions_enqueued", { count: enqueued });
@@ -1558,15 +1541,6 @@ export async function processQueueItem(
 	return "not_applied";
 }
 
-async function resolveQueuedSession(
-	adapter: AgentAdapter,
-	localSessionId: string,
-): Promise<RawSession | null> {
-	if (adapter.collectSession) return adapter.collectSession(localSessionId);
-	const { sessions } = await adapter.collectSessions();
-	return sessions.find((session) => session.localSessionId === localSessionId) ?? null;
-}
-
 /** Upload a single session via the same two-step `clawdi push`
  * uses: POST /api/sessions/batch (metadata) → POST
  * /api/sessions/{id}/upload (content) when the server says it
@@ -1585,7 +1559,7 @@ async function uploadSessionFromQueue(
 ): Promise<
 	{ outcome: "applied"; actualHash: string } | { outcome: "absent" } | { outcome: "not_applied" }
 > {
-	const session = await resolveQueuedSession(opts.adapter, item.local_session_id);
+	const session = await opts.adapter.resolveSession(item.local_session_id);
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
 		return { outcome: "absent" };

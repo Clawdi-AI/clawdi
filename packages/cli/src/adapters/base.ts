@@ -27,20 +27,9 @@ export interface RawSession {
 	contentHash?: string;
 }
 
-/**
- * Options for `AgentAdapter.collectSessions`.
- *
- * `projectFilter` restricts to sessions whose stored `cwd` / project path
- * equals or is under the given absolute path. Hermes ignores this — its
- * data model has no project linkage.
- *
- * Adapters always do a full scan and return every session that matches
- * the project filter. Whether to actually push a session to the server
- * is decided in `pushOneAgent` against `~/.clawdi/sessions-lock.json`.
- */
-export interface CollectSessionsOptions {
-	projectFilter?: string;
-}
+export type SessionScanRequest =
+	| { kind: "complete"; projectFilter?: string }
+	| { kind: "paths"; paths: readonly string[]; projectFilter?: string };
 
 /**
  * Return shape of `AgentAdapter.collectSessions`.
@@ -52,9 +41,10 @@ export interface CollectSessionsOptions {
  * their storage formats don't produce cross-file duplication (e.g. Codex
  * keeps long-conversation history in-file via `compacted` entries).
  */
-export interface CollectSessionsResult {
+export interface SessionScanResult {
 	sessions: RawSession[];
 	dedupedCount: number;
+	coverage: "complete" | "partial";
 }
 
 export interface RawSkill {
@@ -75,24 +65,8 @@ export interface AgentAdapter {
 	detect(): Promise<boolean>;
 	getVersion(): Promise<string | null>;
 
-	collectSessions(opts?: CollectSessionsOptions): Promise<CollectSessionsResult>;
-	/**
-	 * Re-read one session from its current backing store, when supported.
-	 * Implementations must not return a cached transcript payload.
-	 */
-	collectSession?(localSessionId: string): Promise<RawSession | null>;
-	/**
-	 * Parse only sessions represented by concrete watcher paths.
-	 *
-	 * Returns `null` when any path cannot be resolved safely to a bounded
-	 * session set. The daemon then falls back to `collectSessions()`. The
-	 * result is a partial inventory, so callers must not infer deletion of
-	 * sessions omitted from it.
-	 */
-	collectSessionsForPaths?(
-		paths: readonly string[],
-		opts?: CollectSessionsOptions,
-	): Promise<CollectSessionsResult | null>;
+	collectSessions(request: SessionScanRequest): Promise<SessionScanResult>;
+	resolveSession(localSessionId: string): Promise<RawSession | null>;
 	collectSkills(): Promise<RawSkill[]>;
 	/** Enumerate skill_keys present on disk WITHOUT reading SKILL.md
 	 * content. Used by the daemon's hot-path rescan / boot listing
@@ -129,10 +103,7 @@ export interface AgentAdapter {
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi daemon` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
-	 * files there) or database/sidecar files (Hermes uses SQLite). The
-	 * daemon passes concrete changed paths to `collectSessionsForPaths`
-	 * when the platform provides them, with `collectSessions` as the safe
-	 * fallback for ambiguous events and shared data stores.
+	 * files there) or database/sidecar files (Hermes uses SQLite).
 	 *
 	 * Returning paths that don't exist yet is fine — the watcher
 	 * skips missing roots and reattaches when `mkdir` lands. The
@@ -155,6 +126,4 @@ export interface AgentAdapter {
 	 * inventory reconciliation does so with its durable materialization receipt.
 	 * An already absent target is handled idempotently. */
 	removeLocalSkill(key: string): Promise<void>;
-
-	buildRunCommand(args: string[], env: Record<string, string>): string[];
 }

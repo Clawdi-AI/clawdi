@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { extractTarGz } from "../lib/tar";
@@ -18,18 +18,18 @@ import {
 } from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
-	CollectSessionsOptions,
-	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
+	SessionScanRequest,
+	SessionScanResult,
 } from "./base";
 import {
 	listOpenClawAgentWorkspaces,
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
 } from "./openclaw-workspace";
-import { getOpenClawHome, SKIP_DIRS } from "./paths";
+import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
 
 function openclawDir() {
@@ -89,11 +89,6 @@ function listAgentDirs(): string[] {
 		);
 		return [];
 	}
-}
-
-function isWithin(path: string, root: string): boolean {
-	const fromRoot = relative(root, path);
-	return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
 }
 
 interface SessionEntry {
@@ -168,44 +163,49 @@ export class OpenClawAdapter implements AgentAdapter {
 		);
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
-		return (await this.collectSessionsMatching(opts)).result;
+	async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+		if (request.kind === "complete") {
+			const { result } = await this.collectSessionsMatching(request);
+			return { ...result, coverage: "complete" };
+		}
+		if (request.paths.length === 0) {
+			return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+		}
+		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
+		const transcriptPaths = new Set<string>();
+		for (const path of request.paths) {
+			const normalized = resolve(path);
+			if (
+				!isPathWithinRoots(normalized, sessionRoots) ||
+				basename(normalized) === "sessions.json" ||
+				!normalized.endsWith(".jsonl")
+			) {
+				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+			}
+			transcriptPaths.add(normalized);
+		}
+
+		const collection = await this.collectSessionsMatching(request, transcriptPaths);
+		for (const path of transcriptPaths) {
+			if (existsSync(path) && !collection.matchedTranscriptPaths.has(path)) {
+				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+			}
+		}
+		return { ...collection.result, coverage: "partial" };
 	}
 
-	async collectSession(localSessionId: string): Promise<RawSession | null> {
+	async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		return (
 			(await this.collectSessionsMatching({}, undefined, localSessionId)).result.sessions[0] ?? null
 		);
 	}
 
-	async collectSessionsForPaths(
-		paths: readonly string[],
-		opts: CollectSessionsOptions = {},
-	): Promise<CollectSessionsResult | null> {
-		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
-		const transcriptPaths = new Set<string>();
-		for (const path of paths) {
-			const normalized = resolve(path);
-			if (!sessionRoots.some((root) => isWithin(normalized, root))) return null;
-			if (basename(normalized) === "sessions.json") return null;
-			if (!normalized.endsWith(".jsonl")) return null;
-			transcriptPaths.add(normalized);
-		}
-		if (transcriptPaths.size === 0) return null;
-
-		const collection = await this.collectSessionsMatching(opts, transcriptPaths);
-		for (const path of transcriptPaths) {
-			if (existsSync(path) && !collection.matchedTranscriptPaths.has(path)) return null;
-		}
-		return collection.result;
-	}
-
 	private async collectSessionsMatching(
-		opts: CollectSessionsOptions,
+		opts: { projectFilter?: string },
 		transcriptPaths?: ReadonlySet<string>,
 		localSessionId?: string,
 	): Promise<{
-		result: CollectSessionsResult;
+		result: Pick<SessionScanResult, "sessions" | "dedupedCount">;
 		matchedTranscriptPaths: Set<string>;
 	}> {
 		const agentDirs = listAgentDirs();
@@ -556,9 +556,5 @@ export class OpenClawAdapter implements AgentAdapter {
 		tarGzBytes: Buffer,
 	): Promise<void> {
 		await this.installOfficialSkillArchive(key, `${key}__${ownerHandle}`, tarGzBytes);
-	}
-
-	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
-		return ["openclaw", ...args];
 	}
 }

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 /**
  * Directory names to skip when scanning for skills. Applied by every adapter's
@@ -8,6 +8,13 @@ import { join } from "node:path";
  * registry.ts already imports every adapter.
  */
 export const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "__pycache__"]);
+
+export function isPathWithinRoots(path: string, roots: readonly string[]): boolean {
+	return roots.some((root) => {
+		const fromRoot = relative(root, path);
+		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
+	});
+}
 
 // All getters compute lazily. Module-level constants would freeze the path at
 // import time and ignore env changes (and break per-test HOME overrides).

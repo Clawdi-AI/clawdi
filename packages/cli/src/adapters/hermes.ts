@@ -12,11 +12,11 @@ import {
 } from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
-	CollectSessionsOptions,
-	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
+	SessionScanRequest,
+	SessionScanResult,
 } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
@@ -124,15 +124,15 @@ export class HermesAdapter implements AgentAdapter {
 		return readCommandVersion("hermes", ["--version"]);
 	}
 
-	async collectSessions(_opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
+	async collectSessions(_request: SessionScanRequest): Promise<SessionScanResult> {
 		// Hermes' SQLite is a single file with no per-row stat info, so we
 		// always scan the whole `sessions` table. Cost is negligible
 		// (dozens to hundreds of rows). `projectFilter` has no analogue
 		// in Hermes' data model and is silently ignored.
-		return { sessions: await this.collectCurrentSessions(), dedupedCount: 0 };
+		return { sessions: await this.collectCurrentSessions(), dedupedCount: 0, coverage: "complete" };
 	}
 
-	async collectSession(localSessionId: string): Promise<RawSession | null> {
+	async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		return (await this.collectCurrentSessions(localSessionId))[0] ?? null;
 	}
 
@@ -343,9 +343,5 @@ export class HermesAdapter implements AgentAdapter {
 			this.getSharedSkillPath(key, ownerHandle),
 			tarGzBytes,
 		);
-	}
-
-	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
-		return ["hermes", ...args];
 	}
 }

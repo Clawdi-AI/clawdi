@@ -9,6 +9,7 @@ import {
 	pollSessionPaths,
 	SESSION_IDLE_POLL_INTERVAL_MS,
 	SESSION_STABLE_AFTER_MS,
+	type SessionWatchEvent,
 	sessionPathSignature,
 	sessionPathSnapshot,
 	sleepForSessionPoll,
@@ -76,7 +77,7 @@ describe("pollSessionPaths", () => {
 		const abort = new AbortController();
 		let now = 0;
 		const sessionPath = "/sessions/changed.jsonl";
-		const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+		const changes: SessionWatchEvent[] = [];
 
 		await pollSessionPaths(
 			{
@@ -102,7 +103,7 @@ describe("pollSessionPaths", () => {
 			},
 		);
 
-		expect(changes).toEqual([{ paths: [sessionPath], requiresFullScan: false }]);
+		expect(changes).toEqual([{ kind: "paths", paths: [sessionPath] }]);
 	});
 
 	test("bounds tracked entries and requests a full scan when the cap is exceeded", async () => {
@@ -110,7 +111,7 @@ describe("pollSessionPaths", () => {
 		const abort = new AbortController();
 		let now = 0;
 		let sleepCalls = 0;
-		const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+		const changes: SessionWatchEvent[] = [];
 		try {
 			writeFileSync(join(root, "first.jsonl"), "first");
 			writeFileSync(join(root, "second.jsonl"), "second");
@@ -137,7 +138,7 @@ describe("pollSessionPaths", () => {
 				},
 			);
 
-			expect(changes).toEqual([{ paths: [], requiresFullScan: true }]);
+			expect(changes).toEqual([{ kind: "rescan" }]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -382,7 +383,7 @@ test("debounces rapid fs events into one concrete changed-path batch", async () 
 	const abort = new AbortController();
 	let onChange: (eventType?: string, filename?: string | Buffer | null) => void = () => {};
 	let fireStable = () => {};
-	const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+	const changes: SessionWatchEvent[] = [];
 	try {
 		const running = watchSessions(
 			{
@@ -414,10 +415,10 @@ test("debounces rapid fs events into one concrete changed-path batch", async () 
 
 		expect(changes).toEqual([
 			{
+				kind: "paths",
 				paths: [join(root, "first.jsonl"), join(root, "archived/second.jsonl")],
-				requiresFullScan: false,
 			},
-			{ paths: [], requiresFullScan: true },
+			{ kind: "rescan" },
 		]);
 		abort.abort();
 		await running;

@@ -1,5 +1,5 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
@@ -11,13 +11,13 @@ import {
 } from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
-	CollectSessionsOptions,
-	CollectSessionsResult,
 	RawSession,
 	RawSkill,
 	SessionMessage,
+	SessionScanRequest,
+	SessionScanResult,
 } from "./base";
-import { getCodexHome, SKIP_DIRS } from "./paths";
+import { getCodexHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import { readCommandVersion } from "./version";
 
 function codexDir() {
@@ -98,13 +98,6 @@ function collectJsonlFiles(root: string): string[] {
 
 	walk(root);
 	return results;
-}
-
-function isWithinSessionRoot(path: string): boolean {
-	return sessionRoots().some((root) => {
-		const fromRoot = relative(root, path);
-		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
-	});
 }
 
 function resolveProjectFilter(projectFilter?: string): string | null {
@@ -238,10 +231,36 @@ export class CodexAdapter implements AgentAdapter {
 		return readCommandVersion("codex", ["--version"]);
 	}
 
-	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
+	async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+		const absFilter = resolveProjectFilter(request.projectFilter);
+		if (request.kind === "paths") {
+			if (request.paths.length === 0) {
+				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+			}
+			const roots = sessionRoots().map((root) => resolve(root));
+			const files = new Set<string>();
+			for (const path of request.paths.map((candidate) => resolve(candidate))) {
+				if (!isPathWithinRoots(path, roots) || !path.endsWith(".jsonl")) {
+					return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				}
+				for (const [sessionId, knownPath] of this.sessionPaths) {
+					if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
+				}
+				if (existsSync(path)) files.add(path);
+			}
+			const sessionsById = new Map<string, RawSession>();
+			for (const filePath of files) {
+				const session = parseSessionFile(filePath, absFilter);
+				if (session) {
+					sessionsById.set(session.localSessionId, session);
+					this.sessionPaths.set(session.localSessionId, filePath);
+				}
+			}
+			return { sessions: [...sessionsById.values()], dedupedCount: 0, coverage: "partial" };
+		}
+
 		const sessionsById = new Map<string, RawSession>();
 		const pathsById = new Map<string, string>();
-		const absFilter = resolveProjectFilter(opts.projectFilter);
 		for (const root of sessionRoots()) {
 			for (const filePath of collectJsonlFiles(root)) {
 				const session = parseSessionFile(filePath, absFilter);
@@ -251,7 +270,7 @@ export class CodexAdapter implements AgentAdapter {
 				}
 			}
 		}
-		if (opts.projectFilter) {
+		if (request.projectFilter) {
 			for (const [sessionId, path] of pathsById) this.sessionPaths.set(sessionId, path);
 		} else {
 			this.sessionPaths = pathsById;
@@ -260,10 +279,10 @@ export class CodexAdapter implements AgentAdapter {
 		// Codex stores long-conversation history via in-file `compacted`
 		// entries rather than spawning new sessionId files, so it cannot
 		// produce the resume-chain duplication that ClaudeCodeAdapter dedupes.
-		return { sessions: [...sessionsById.values()], dedupedCount: 0 };
+		return { sessions: [...sessionsById.values()], dedupedCount: 0, coverage: "complete" };
 	}
 
-	async collectSession(localSessionId: string): Promise<RawSession | null> {
+	async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		const knownPath = this.sessionPaths.get(localSessionId);
 		if (knownPath) {
 			const current = parseSessionFile(knownPath, null);
@@ -271,34 +290,10 @@ export class CodexAdapter implements AgentAdapter {
 			this.sessionPaths.delete(localSessionId);
 		}
 		return (
-			(await this.collectSessions()).sessions.find(
+			(await this.collectSessions({ kind: "complete" })).sessions.find(
 				(session) => session.localSessionId === localSessionId,
 			) ?? null
 		);
-	}
-
-	async collectSessionsForPaths(
-		paths: readonly string[],
-		opts: CollectSessionsOptions = {},
-	): Promise<CollectSessionsResult | null> {
-		const files = new Set<string>();
-		for (const path of paths.map((candidate) => resolve(candidate))) {
-			if (!isWithinSessionRoot(path) || !path.endsWith(".jsonl")) return null;
-			for (const [sessionId, knownPath] of this.sessionPaths) {
-				if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
-			}
-			if (existsSync(path)) files.add(path);
-		}
-		const sessionsById = new Map<string, RawSession>();
-		const absFilter = resolveProjectFilter(opts.projectFilter);
-		for (const filePath of files) {
-			const session = parseSessionFile(filePath, absFilter);
-			if (session) {
-				sessionsById.set(session.localSessionId, session);
-				this.sessionPaths.set(session.localSessionId, filePath);
-			}
-		}
-		return { sessions: [...sessionsById.values()], dedupedCount: 0 };
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
@@ -402,9 +397,5 @@ export class CodexAdapter implements AgentAdapter {
 			this.getSharedSkillPath(key, ownerHandle),
 			tarGzBytes,
 		);
-	}
-
-	buildRunCommand(args: string[], _env: Record<string, string>): string[] {
-		return ["codex", ...args];
 	}
 }

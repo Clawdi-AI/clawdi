@@ -48,7 +48,7 @@ describe("CodexAdapter.collectSessions", () => {
 
 	it("parses the fixture session with session_meta + turn_context + messages + token_count", async () => {
 		const a = new CodexAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		expect(sessions).toHaveLength(1);
 		const s = sessions[0]!;
 		expect(s).toMatchObject({
@@ -73,22 +73,24 @@ describe("CodexAdapter.collectSessions", () => {
 	it("filters by projectFilter", async () => {
 		const a = new CodexAdapter();
 		expect(
-			(await a.collectSessions({ projectFilter: "/Users/fixture/project" })).sessions,
+			(await a.collectSessions({ kind: "complete", projectFilter: "/Users/fixture/project" }))
+				.sessions,
 		).toHaveLength(1);
 		expect(
-			(await a.collectSessions({ projectFilter: "/Users/other/project" })).sessions,
+			(await a.collectSessions({ kind: "complete", projectFilter: "/Users/other/project" }))
+				.sessions,
 		).toHaveLength(0);
 	});
 
 	it("returns empty when sessions dir is missing", async () => {
 		rmSync(join(tmpHome, ".codex", "sessions"), { recursive: true, force: true });
 		const a = new CodexAdapter();
-		expect((await a.collectSessions()).sessions).toEqual([]);
+		expect((await a.collectSessions({ kind: "complete" })).sessions).toEqual([]);
 	});
 
 	it("summary skips <environment_context> prefix user messages", async () => {
 		const a = new CodexAdapter();
-		const s = (await a.collectSessions()).sessions[0]!;
+		const s = (await a.collectSessions({ kind: "complete" })).sessions[0]!;
 		// First non-environment_context user message is "hello"
 		expect(s.summary).toBe("hello");
 	});
@@ -116,14 +118,16 @@ describe("CodexAdapter.collectSessions", () => {
 
 		const adapter = new CodexAdapter();
 		expect(
-			(await adapter.collectSessions()).sessions.map((session) => session.localSessionId),
+			(await adapter.collectSessions({ kind: "complete" })).sessions.map(
+				(session) => session.localSessionId,
+			),
 		).toEqual(["019ae46c-52d9-7e51-9527-1b105eb42d1b", "019ae46c-52d9-7e51-9527-1b105eb42d2c"]);
 		expect(adapter.getSessionsWatchPaths()).toEqual([
 			join(tmpHome, ".codex", "sessions"),
 			archivedRoot,
 		]);
 		expect(
-			(await adapter.collectSessionsForPaths([archivedPath]))?.sessions.map(
+			(await adapter.collectSessions({ kind: "paths", paths: [archivedPath] })).sessions.map(
 				(session) => session.localSessionId,
 			),
 		).toEqual(["019ae46c-52d9-7e51-9527-1b105eb42d2c"]);
@@ -135,12 +139,12 @@ describe("CodexAdapter.collectSessions", () => {
 		mkdirSync(join(tmpHome, ".codex", "archived_sessions"), { recursive: true });
 
 		const adapter = new CodexAdapter();
-		const learned = (await adapter.collectSessions()).sessions[0];
+		const learned = (await adapter.collectSessions({ kind: "complete" })).sessions[0];
 		if (!learned) throw new Error("expected Codex session fixture");
 		expect(learned.localSessionId).toBe(sessionId);
 		renameSync(learned.rawFilePath, archivedPath);
 
-		expect(await adapter.collectSession(sessionId)).toMatchObject({
+		expect(await adapter.resolveSession(sessionId)).toMatchObject({
 			localSessionId: sessionId,
 			rawFilePath: archivedPath,
 		});
@@ -168,12 +172,5 @@ describe("CodexAdapter.writeSkillArchive + getSkillPath", () => {
 		const extracted = join(tmpHome, ".codex", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
 		expect(readFileSync(extracted, "utf-8")).toContain("name: demo");
-	});
-});
-
-describe("CodexAdapter.buildRunCommand", () => {
-	it("prefixes args with codex", () => {
-		const a = new CodexAdapter();
-		expect(a.buildRunCommand(["exec"], {})).toEqual(["codex", "exec"]);
 	});
 });

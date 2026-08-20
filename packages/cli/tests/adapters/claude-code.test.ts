@@ -76,7 +76,7 @@ describe("ClaudeCodeAdapter.detect", () => {
 describe("ClaudeCodeAdapter.collectSessions", () => {
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
-		const { sessions, dedupedCount } = await a.collectSessions();
+		const { sessions, dedupedCount } = await a.collectSessions({ kind: "complete" });
 		expect(sessions).toHaveLength(1);
 		expect(dedupedCount).toBe(0);
 		const s = sessions[0]!;
@@ -97,16 +97,22 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 
 	it("extracts text from array content blocks (type:text)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		const texts = sessions[0]?.messages.map((m) => m.content);
 		expect(texts).toEqual(["hello", "world", "one more", "done"]);
 	});
 
 	it("filters by projectFilter (matching cwd → encoded dir)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const matched = await a.collectSessions({ projectFilter: "/Users/fixture/project" });
+		const matched = await a.collectSessions({
+			kind: "complete",
+			projectFilter: "/Users/fixture/project",
+		});
 		expect(matched.sessions).toHaveLength(1);
-		const notMatched = await a.collectSessions({ projectFilter: "/Users/other/project" });
+		const notMatched = await a.collectSessions({
+			kind: "complete",
+			projectFilter: "/Users/other/project",
+		});
 		expect(notMatched.sessions).toHaveLength(0);
 	});
 
@@ -114,14 +120,14 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		const shortPath = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "short.jsonl");
 		writeFileSync(shortPath, `${JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" })}\n`);
 		const a = new ClaudeCodeAdapter();
-		const { sessions } = await a.collectSessions();
+		const { sessions } = await a.collectSessions({ kind: "complete" });
 		// original long session still counts, short file is skipped
 		expect(sessions).toHaveLength(1);
 	});
 
 	it("first user message populates the summary (capped at 200 chars)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const s = (await a.collectSessions()).sessions[0]!;
+		const s = (await a.collectSessions({ kind: "complete" })).sessions[0]!;
 		expect(s.summary).toBe("hello");
 	});
 
@@ -138,8 +144,12 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 			"-Users-fixture-project",
 			"11111111-2222-3333-4444-555555555555.jsonl",
 		);
-		const result = await new ClaudeCodeAdapter().collectSessionsForPaths([changedPath]);
-		expect(result?.sessions.map((session) => session.localSessionId)).toEqual([
+		const result = await new ClaudeCodeAdapter().collectSessions({
+			kind: "paths",
+			paths: [changedPath],
+		});
+		expect(result.coverage).toBe("partial");
+		expect(result.sessions.map((session) => session.localSessionId)).toEqual([
 			"11111111-2222-3333-4444-555555555555",
 		]);
 	});
@@ -210,7 +220,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		const predecessorUuids = uuidRange("queued", 12);
 		writeResumeSessionFile({ cwd, sessionId: "queued-predecessor", uuids: predecessorUuids });
 		const adapter = new ClaudeCodeAdapter();
-		expect(await adapter.collectSession("queued-predecessor")).not.toBeNull();
+		expect(await adapter.resolveSession("queued-predecessor")).not.toBeNull();
 
 		writeResumeSessionFile({
 			cwd,
@@ -218,8 +228,8 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 			uuids: [...predecessorUuids, ...uuidRange("new", 4)],
 		});
 
-		expect(await adapter.collectSession("queued-predecessor")).toBeNull();
-		expect((await adapter.collectSession("new-successor"))?.localSessionId).toBe("new-successor");
+		expect(await adapter.resolveSession("queued-predecessor")).toBeNull();
+		expect((await adapter.resolveSession("new-successor"))?.localSessionId).toBe("new-successor");
 	});
 
 	it("dedupes A when A.uuids ⊂ B.uuids in the same project (resume chain)", async () => {
@@ -236,7 +246,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		});
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ projectFilter: cwd });
+		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(1);
 		expect(result.sessions.map((s) => s.localSessionId)).toEqual(["bbbb-bbbb"]);
@@ -253,7 +263,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "cccc-cccc", uuids: cUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ projectFilter: cwd });
+		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(2);
 		expect(result.sessions.map((s) => s.localSessionId)).toEqual(["cccc-cccc"]);
@@ -275,7 +285,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		});
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions();
+		const result = await adapter.collectSessions({ kind: "complete" });
 		// project to just the two we wrote — the fixture's pre-existing session
 		// would otherwise pad the result count
 		const ours = result.sessions.filter((s) =>
@@ -296,7 +306,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "bbbb-bbbb", uuids: bUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ projectFilter: cwd });
+		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
@@ -311,7 +321,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "bbbb-bbbb", uuids: bUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ projectFilter: cwd });
+		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
@@ -322,7 +332,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "aaaa-aaaa", uuids: uuidRange("u", 15) });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ projectFilter: cwd });
+		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions).toHaveLength(1);
@@ -429,12 +439,5 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 	it("getSkillPath returns skills/<key>/SKILL.md under Claude home", () => {
 		const a = new ClaudeCodeAdapter();
 		expect(a.getSkillPath("xyz")).toBe(join(tmpHome, ".claude", "skills", "xyz", "SKILL.md"));
-	});
-});
-
-describe("ClaudeCodeAdapter.buildRunCommand", () => {
-	it("prefixes args with claude", () => {
-		const a = new ClaudeCodeAdapter();
-		expect(a.buildRunCommand(["--help"], {})).toEqual(["claude", "--help"]);
 	});
 });

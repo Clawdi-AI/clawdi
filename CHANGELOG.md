@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.106
+
+Package: `clawdi@0.13.106`
+
+### Improved
+
+- Multi-agent Session sync now uses targeted local scans for faster updates,
+  while cloud Session metadata can be searched and read across agents.
+
 ## Clawdi CLI v0.13.105
 
 Package: `clawdi@0.13.105`
