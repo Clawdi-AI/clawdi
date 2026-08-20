@@ -1,5 +1,5 @@
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	accessSync,
 	constants,
@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { log, toErrorMessage } from "../serve/log";
 import { HOSTED_RUNTIME_HOME, HOSTED_RUNTIME_USER } from "./hosted-runtime-contract";
 import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
@@ -1028,9 +1029,14 @@ function reconcileCliUpgradeTransaction(
 	paths: RuntimePaths,
 	opts: RuntimeCliReconciliationOptions = {},
 ): RuntimeCliReconciliationResult {
+	const hadUpgradeState = existsSync(paths.cliUpgradeState);
 	const state = readCliUpgradeState(paths);
 	const transaction = state.transaction ?? null;
-	if (!transaction) return { status: "unchanged", selfReexec: false };
+	if (!transaction) {
+		return hadUpgradeState && !existsSync(paths.cliUpgradeState)
+			? cliReconciliationResult(paths, "unchanged", opts.runningVersion)
+			: { status: "unchanged", selfReexec: false };
+	}
 	if (transaction.rollback) {
 		finishCliRollback(paths, transaction);
 		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
@@ -1162,30 +1168,8 @@ function cliInstallIdentitiesMatch(
 
 function verifiedActiveBootstrapIdentity(paths: RuntimePaths): RuntimeCliInstallIdentity | null {
 	const status = readBootstrapStatus(paths.cliBootstrapStatus);
-	const activeTarget = activeLinkTarget(paths.cliManagedBin);
-	if (
-		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
-		status.status !== "installed" ||
-		status.source !== "npm" ||
-		status.error !== null ||
-		status.activePath !== paths.cliManagedBin ||
-		status.activeTarget !== activeTarget ||
-		status.npmCache !== paths.cliNpmCache ||
-		typeof status.packageSpec !== "string" ||
-		(status.registry !== null && typeof status.registry !== "string") ||
-		typeof status.npmPrefix !== "string" ||
-		typeof status.activeTarget !== "string" ||
-		typeof status.version !== "string"
-	) {
-		return null;
-	}
-	const identity: RuntimeCliInstallIdentity = {
-		packageSpec: status.packageSpec,
-		registry: status.registry,
-		npmPrefix: status.npmPrefix,
-		activeTarget: status.activeTarget,
-		version: status.version,
-	};
+	const identity = cliBootstrapIdentity(paths, status);
+	if (!identity || activeLinkTarget(paths.cliManagedBin) !== identity.activeTarget) return null;
 	if (!verifyStoredCliIdentity(paths, identity)) return null;
 	const currentStatus = readBootstrapStatus(paths.cliBootstrapStatus);
 	return activeLinkTarget(paths.cliManagedBin) === identity.activeTarget &&
@@ -1195,6 +1179,34 @@ function verifiedActiveBootstrapIdentity(paths: RuntimePaths): RuntimeCliInstall
 		currentStatus.npmCache === paths.cliNpmCache
 		? identity
 		: null;
+}
+
+function cliBootstrapIdentity(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliInstallIdentity | null {
+	if (
+		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
+		status.status !== "installed" ||
+		status.source !== "npm" ||
+		status.error !== null ||
+		status.activePath !== paths.cliManagedBin ||
+		status.npmCache !== paths.cliNpmCache ||
+		typeof status.packageSpec !== "string" ||
+		(status.registry !== null && typeof status.registry !== "string") ||
+		typeof status.npmPrefix !== "string" ||
+		typeof status.activeTarget !== "string" ||
+		typeof status.version !== "string"
+	) {
+		return null;
+	}
+	return {
+		packageSpec: status.packageSpec,
+		registry: status.registry,
+		npmPrefix: status.npmPrefix,
+		activeTarget: status.activeTarget,
+		version: status.version,
+	};
 }
 
 function cliReconciliationResult(
@@ -1374,22 +1386,82 @@ function readCliUpgradeState(paths: RuntimePaths): RuntimeCliUpgradeState {
 	try {
 		parsed = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")) as unknown;
 	} catch (error) {
-		throw new Error(
-			`invalid clawdi CLI upgrade transaction JSON: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		return quarantineInvalidCliUpgradeState(paths, `invalid JSON: ${toErrorMessage(error)}`);
 	}
-	const schemaVersion =
-		typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>).schemaVersion
-			: undefined;
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		return quarantineInvalidCliUpgradeState(paths, "state must be a JSON object");
+	}
+	const schemaVersion = (parsed as Record<string, unknown>).schemaVersion;
 	if (schemaVersion === "clawdi.cliUpgradeState.v2") {
 		const result = cliUpgradeStateV2Schema.safeParse(parsed);
 		if (!result.success) {
-			throw new Error(`invalid clawdi CLI upgrade transaction: ${result.error.issues[0]?.message}`);
+			return quarantineInvalidCliUpgradeState(
+				paths,
+				`invalid v2 state: ${result.error.issues[0]?.message ?? "schema validation failed"}`,
+			);
 		}
 		return result.data;
 	}
+	if (typeof schemaVersion !== "string") {
+		return quarantineInvalidCliUpgradeState(paths, "schemaVersion must be a string");
+	}
 	throw new Error(`unsupported clawdi CLI upgrade transaction schema: ${String(schemaVersion)}`);
+}
+
+function quarantineInvalidCliUpgradeState(
+	paths: RuntimePaths,
+	reason: string,
+): RuntimeCliUpgradeState {
+	try {
+		repairCliInstallAfterInvalidUpgradeState(paths);
+	} catch (error) {
+		throw new Error(
+			`invalid clawdi CLI upgrade state: ${reason}; disk recovery failed: ${toErrorMessage(error)}`,
+		);
+	}
+	const quarantinePath = `${paths.cliUpgradeState}.corrupt-${Date.now()}-${randomUUID()}`;
+	try {
+		renameSync(paths.cliUpgradeState, quarantinePath);
+	} catch (error) {
+		throw new Error(
+			`invalid clawdi CLI upgrade state: ${reason}; quarantine failed: ${toErrorMessage(error)}`,
+		);
+	}
+	log.warn("runtime.cli_upgrade_state_quarantined", {
+		path: paths.cliUpgradeState,
+		quarantine_path: quarantinePath,
+		error: reason,
+	});
+	return emptyCliUpgradeState();
+}
+
+function repairCliInstallAfterInvalidUpgradeState(paths: RuntimePaths): void {
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	const activeIdentity = verifiedActiveCliIdentity(paths, status);
+	if (activeIdentity) {
+		const verification = verifyStoredCliIdentity(paths, activeIdentity);
+		if (!verification) {
+			throw new Error("invalid clawdi CLI upgrade state has an unverifiable active CLI target");
+		}
+		writeCliBootstrapStatus(paths, activeIdentity, verification);
+		return;
+	}
+
+	const bootstrapIdentity = cliBootstrapIdentity(paths, status);
+	if (bootstrapIdentity) {
+		const verification = verifyStoredCliIdentity(paths, bootstrapIdentity);
+		if (verification) {
+			swapActiveCli(paths.cliManagedBin, bootstrapIdentity.activeTarget);
+			writeCliBootstrapStatus(paths, bootstrapIdentity, verification);
+			return;
+		}
+	}
+
+	if (activeLinkTarget(paths.cliManagedBin) === null && !existsSync(paths.cliBootstrapStatus))
+		return;
+	throw new Error(
+		"invalid clawdi CLI upgrade state cannot be quarantined because the active CLI installation is not recoverable",
+	);
 }
 
 function writeCliUpgradeState(paths: RuntimePaths, state: RuntimeCliUpgradeState): void {

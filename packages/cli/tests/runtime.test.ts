@@ -769,6 +769,12 @@ function writeCliTransactionFixture(
 	);
 }
 
+function cliUpgradeQuarantineFiles(paths: RuntimePaths): string[] {
+	return readdirSync(dirname(paths.cliUpgradeState))
+		.filter((name) => name.startsWith("cli-upgrade-state.json.corrupt-"))
+		.map((name) => join(dirname(paths.cliUpgradeState), name));
+}
+
 function seedCliRecoveryFixture(state: string, run: string) {
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -11973,27 +11979,129 @@ exit 64
 		}
 	});
 
-	it("fails closed on a corrupt CLI transaction journal before install or prune", () => {
+	it("quarantines corrupt CLI state and continues with the requested upgrade", () => {
 		const state = join(root, "state-cli-corrupt-journal");
 		const run = join(root, "run-cli-corrupt-journal");
+		const bin = join(root, "bin-cli-corrupt-journal");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+test -n "$prefix"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo '1.2.4'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		seedCurrentCliInstall(state, "clawdi@1.2.3", "1.2.3");
 		const paths = getRuntimePaths();
-		const activeTarget = readlinkSync(paths.cliManagedBin);
-		const lastGood = join(paths.cliNpmPrefix, "packages", "1.2.2", "bin", "clawdi");
-		mkdirSync(dirname(lastGood), { recursive: true });
-		writeFileSync(lastGood, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(lastGood, 0o700);
 		writeFileSync(paths.cliUpgradeState, "{broken journal");
 
-		expect(() => applyRuntimeCliDesiredState(cliManifest("1.2.4"), paths)).toThrow(
-			/invalid clawdi CLI upgrade transaction JSON/,
+		try {
+			const result = applyRuntimeCliDesiredState(cliManifest("1.2.4"), paths);
+			const quarantined = cliUpgradeQuarantineFiles(paths);
+
+			expect(result.status).toBe("installed");
+			expect(result.version).toBe("1.2.4");
+			expect(result.selfReexec).toBe(true);
+			expect(quarantined).toHaveLength(1);
+			expect(readFileSync(quarantined[0], "utf-8")).toBe("{broken journal");
+			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
+				transaction: { phase: "activated", newIdentity: { version: "1.2.4" } },
+			});
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("repairs an interrupted activation before discarding corrupt CLI state", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-corrupt-half-activation"),
+			join(root, "run-cli-corrupt-half-activation"),
 		);
-		expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
-		expect(existsSync(lastGood)).toBe(true);
-		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe("{broken journal");
+		pointManagedCliAt(paths, newIdentity);
+		writeFileSync(paths.cliUpgradeState, "{broken journal");
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, previousIdentity.version);
+		const bootstrap = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		expect(recovered).toEqual({ status: "unchanged", selfReexec: true });
+		expect(readlinkSync(paths.cliManagedBin)).toBe(newIdentity.activeTarget);
+		expect(bootstrap).toMatchObject({
+			activeTarget: newIdentity.activeTarget,
+			version: newIdentity.version,
+		});
+		expect(cliUpgradeQuarantineFiles(paths)).toHaveLength(1);
+		expect(
+			applyRuntimeCliDesiredState(cliManifest(newIdentity.version), paths, {
+				runningVersion: newIdentity.version,
+			}).status,
+		).toBe("current");
+	});
+
+	it("quarantines structurally invalid state for the current CLI upgrade schema", () => {
+		const state = join(root, "state-cli-invalid-current-schema");
+		const run = join(root, "run-cli-invalid-current-schema");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@1.2.3", "1.2.3");
+		const paths = getRuntimePaths();
+		writeFileSync(
+			paths.cliUpgradeState,
+			`${JSON.stringify({ schemaVersion: "clawdi.cliUpgradeState.v2", transaction: null })}\n`,
+		);
+
+		expect(applyRuntimeCliDesiredState(cliManifest("1.2.3"), paths).status).toBe("current");
+		expect(cliUpgradeQuarantineFiles(paths)).toHaveLength(1);
+		expect(existsSync(paths.cliUpgradeState)).toBe(false);
+	});
+
+	it("preserves and rejects CLI upgrade state from a future schema", () => {
+		const state = join(root, "state-cli-future-schema");
+		const run = join(root, "run-cli-future-schema");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@1.2.3", "1.2.3");
+		const paths = getRuntimePaths();
+		const futureState = `${JSON.stringify({
+			schemaVersion: "clawdi.cliUpgradeState.v3",
+			transaction: null,
+			badVersions: [],
+		})}\n`;
+		writeFileSync(paths.cliUpgradeState, futureState);
+
+		expect(() => applyRuntimeCliDesiredState(cliManifest("1.2.3"), paths)).toThrow(
+			"unsupported clawdi CLI upgrade transaction schema: clawdi.cliUpgradeState.v3",
+		);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(futureState);
+		expect(cliUpgradeQuarantineFiles(paths)).toHaveLength(0);
 	});
 
 	it("recovers an exact CLI install when matching bootstrap status has no version", () => {
