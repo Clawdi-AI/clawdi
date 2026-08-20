@@ -26,7 +26,7 @@ COPY packages/whatsapp-baileys-sidecar/tsconfig.build.json packages/whatsapp-bai
 COPY packages/whatsapp-baileys-sidecar/src packages/whatsapp-baileys-sidecar/src
 RUN bun run --cwd packages/whatsapp-baileys-sidecar build
 
-FROM node:24.18.0-alpine AS runtime
+FROM node:24.19.0-alpine AS runtime
 
 RUN apk add --no-cache ca-certificates
 

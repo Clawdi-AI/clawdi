@@ -96,7 +96,7 @@ cd backend
 uv run --extra mem0 python scripts/type_governance.py inventory
 ```
 
-The current CI Python 3.14 non-gating BasedPyright 1.39.9 inventory is:
+The current CI Python 3.14 non-gating BasedPyright 1.39.10 inventory is:
 
 | Area | Files | Errors |
 | --- | ---: | ---: |
@@ -119,28 +119,28 @@ strict-clean. The five reviewed SDK boundary owners have these exact gates:
 
 | SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
 | --- | --- | --- |
-| `core/sentry.py` | strict / 0 | `sentry-sdk==2.66.1`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
-| `services/composio.py` | strict / 0 | `composio==0.18.1`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
-| `services/file_store_s3.py` | strict / 0 | `boto3==1.43.14`, `botocore==1.43.14`, `boto3-stubs==1.43.14`, `boto3-stubs-full==1.43.14`, and `botocore-stubs==1.43.14`; the all-in-one generated service bundle resolves the complete public `boto3.client` overload while the S3 literal overload returns the generated `S3Client`. The runtime construction call is unchanged, and the adapter validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
-| `services/memory_provider_mem0.py` | standard / 19 | Optional `mem0ai==2.0.14` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the five public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/delete results before domain conversion. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/client/main.py). |
+| `core/sentry.py` | strict / 0 | `sentry-sdk==2.68.0`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
+| `services/composio.py` | strict / 0 | `composio==0.20.0`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
+| `services/file_store_s3.py` | strict / 0 | `boto3==1.43.67`, `botocore==1.43.67`, `boto3-stubs==1.43.67`, `boto3-stubs-full==1.43.67`, and `botocore-stubs==1.43.67`; the all-in-one generated service bundle resolves the complete public `boto3.client` overload while the S3 literal overload returns the generated `S3Client`. The runtime construction call is unchanged, and the adapter validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
+| `services/memory_provider_mem0.py` | standard / 19 | Optional `mem0ai==2.0.18` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the five public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/delete results before domain conversion. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/client/main.py). |
 | `services/postgres_listener.py` | strict / 0 | `asyncpg==0.31.0`, `asyncpg-stubs==0.31.3`; listener callbacks accept a validated string payload only, and connection/listener failures map to `PostgresListenerError`. |
 
-The five Boto distributions use their latest common public patch, 1.43.14:
-[boto3](https://pypi.org/pypi/boto3/1.43.14/json),
-[botocore](https://pypi.org/pypi/botocore/1.43.14/json),
-[boto3-stubs](https://pypi.org/pypi/boto3-stubs/1.43.14/json),
-[boto3-stubs-full](https://pypi.org/pypi/boto3-stubs-full/1.43.14/json), and
-[botocore-stubs](https://pypi.org/pypi/botocore-stubs/1.43.14/json).
+The five Boto distributions use their latest common public patch, 1.43.67:
+[boto3](https://pypi.org/pypi/boto3/1.43.67/json),
+[botocore](https://pypi.org/pypi/botocore/1.43.67/json),
+[boto3-stubs](https://pypi.org/pypi/boto3-stubs/1.43.67/json),
+[boto3-stubs-full](https://pypi.org/pypi/boto3-stubs-full/1.43.67/json), and
+[botocore-stubs](https://pypi.org/pypi/botocore-stubs/1.43.67/json).
 The generated base stubs declare both public `boto3.client("s3")` and
 `Session.client("s3")` as returning `S3Client`. With only the S3 extra,
 BasedPyright also sees unresolved return types in the same overload set for
 services whose generated packages are absent, so strict mode reports the
 member as partially Unknown. The official all-in-one bundle supplies those
-generated return types, including the same 1.43.14 `mypy_boto3_s3` module
+generated return types, including the same 1.43.67 `mypy_boto3_s3` module
 published by the standalone
-[S3 distribution](https://pypi.org/pypi/mypy-boto3-s3/1.43.14/json), while the
+[S3 distribution](https://pypi.org/pypi/mypy-boto3-s3/1.43.67/json), while the
 application keeps boto3's public default-session construction path unchanged.
-The official botocore 1.43.14 and formerly pinned 1.43.62 S3 models have the
+The official botocore 1.43.67 and formerly pinned 1.43.62 S3 models have the
 same `PutObject`, `GetObject`, `HeadObject`, and `DeleteObject` operation
 shapes used by this adapter. Their only transitive shape difference for those
 operations is the unused `Expires` field (`string` versus `timestamp`); the

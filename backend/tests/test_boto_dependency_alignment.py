@@ -10,7 +10,7 @@ from packaging.utils import canonicalize_name
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = BACKEND_ROOT.parent
-BOTO_VERSION = "1.43.14"
+BOTO_VERSION = "1.43.67"
 BOTO_DISTRIBUTIONS = frozenset(
     {
         "boto3",

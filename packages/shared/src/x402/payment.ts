@@ -221,6 +221,7 @@ export async function payX402Topup(input: {
 	}
 
 	const client = new x402Client(strictRequirementSelector(requirement))
+		.setSpendControls(false)
 		.register(X402_BASE_NETWORK, new ExactEvmScheme(input.signer))
 		.registerPolicy((version, requirements) =>
 			version === 2

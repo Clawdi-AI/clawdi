@@ -86,7 +86,7 @@ jobs:
       - name: Resolve last successful deployment authority
         id: deployment-authority
         if: github.event_name == 'workflow_run'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           retries: 3
           script: |

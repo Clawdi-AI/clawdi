@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG BUN_VERSION=1.3.14
-ARG NODE_VERSION=24.18.0
+ARG NODE_VERSION=24.19.0
 ARG UV_VERSION=0.11.14
 
 FROM oven/bun:${BUN_VERSION} AS bun

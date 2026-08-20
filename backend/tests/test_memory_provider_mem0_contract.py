@@ -87,7 +87,7 @@ async def test_pinned_memory_client_public_http_contract(
         assert await provider.count(USER_ID) == 1
         assert await provider.delete(USER_ID, "owned-memory") is True
 
-    assert version("mem0ai") == "2.0.14"
+    assert version("mem0ai") == "2.0.18"
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/v1/ping/"),
         ("POST", "/v3/memories/add/"),

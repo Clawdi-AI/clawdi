@@ -80,10 +80,10 @@ the following are provisioned in the release environment:
   state is ever lost, issue a new one-off key instead of making this key
   reusable.
 
-The official Kubernetes `pause` 3.10.1 image, pinned by its immutable manifest
+The official Kubernetes `pause` 3.10.2 image, pinned by its immutable manifest
 digest, owns a stable network namespace. Kernel-mode Tailscale, an egress guard,
 and Baileys join it with Docker's `container:clawdi-whatsapp-netns` network
-mode. Tailscale uses the official v1.98.10 image pinned by immutable digest,
+mode. Tailscale uses the official v1.102.2 image pinned by immutable digest,
 `/dev/net/tun`, and only `NET_ADMIN` plus `NET_RAW` (required by the image's
 iptables-legacy control socket after dropping Docker's default capabilities).
 Its identity persists under `/home/phala/clawdi-whatsapp/tailscale-state`.
@@ -106,7 +106,7 @@ Tailscale still provides both IPv4 and IPv6 on `tailscale0`; the Docker-facing
 IPv4 bridge fallback is rejected and no IPv6 underlay exists. Baileys uses
 `100.100.100.100` through a read-only resolver file, so Docker's `127.0.0.11`
 underlay DNS is not an escape path.
-`TS_ACCEPT_DNS=true` is still required: in v1.98.10, disabled CorpDNS returns
+`TS_ACCEPT_DNS=true` is still required: in v1.102.2, disabled CorpDNS returns
 from `dnsConfigForNetmap` before exit-node/default resolvers are populated for
 Quad100. Enabling it makes Quad100 use the tailnet and exit-node DNS policy;
 the resolver file only directs Baileys' separate mount namespace to that
@@ -149,10 +149,10 @@ state directory unless intentionally revoking the Tailscale node identity.
 Upstream contracts:
 
 - [Tailscale Docker image parameters](https://tailscale.com/kb/1282/docker)
-- [Tailscale containerboot environment contract](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L14-L58)
-- [Tailscale v1.98.10 Quad100/default-resolver construction](https://github.com/tailscale/tailscale/blob/v1.98.10/ipn/ipnlocal/node_backend.go#L736-L950)
+- [Tailscale containerboot environment contract](https://github.com/tailscale/tailscale/blob/v1.102.2/cmd/containerboot/main.go#L14-L63)
+- [Tailscale v1.102.2 Quad100/default-resolver construction](https://github.com/tailscale/tailscale/blob/v1.102.2/ipn/ipnlocal/node_backend.go#L1440-L1635)
 - [Docker container network mode](https://docs.docker.com/engine/network/#container-networks)
-- [Tailscale kernel-mode TUN setup](https://github.com/tailscale/tailscale/blob/v1.98.10/cmd/containerboot/main.go#L182-L186)
+- [Tailscale kernel-mode TUN setup](https://github.com/tailscale/tailscale/blob/v1.102.2/cmd/containerboot/main.go#L327-L347)
 - [Kamal 2.12 accessory lifecycle](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89)
 
 ## Storage gate

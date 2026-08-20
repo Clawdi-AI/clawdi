@@ -15,8 +15,8 @@
 		"pino": "^10.3.1"
 	},
 	"devDependencies": {
-		"@types/node": "^22.20.0",
+		"@types/node": "^22.20.1",
 		"typescript": "catalog:",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	}
 }

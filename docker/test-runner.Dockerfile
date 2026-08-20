@@ -1,12 +1,14 @@
 ARG BUN_VERSION=1.3.14
-ARG NODE_VERSION=24.18.0
-ARG UV_VERSION=0.9.30
+ARG NODE_VERSION=24.19.0
+ARG UV_VERSION=0.11.14
 
 FROM oven/bun:${BUN_VERSION} AS bun
 FROM node:${NODE_VERSION}-bookworm AS node
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-FROM ghcr.io/astral-sh/uv:${UV_VERSION}-python3.12-bookworm
+FROM python:3.12-bookworm
 
+COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun /usr/local/bin/bunx /usr/local/bin/bunx
 COPY --from=node /usr/local/bin/node /usr/local/bin/node

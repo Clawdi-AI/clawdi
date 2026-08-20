@@ -104,7 +104,7 @@ accessories:
     service: clawdi-whatsapp-netns
     # Kubernetes' official, immutable pause image owns the pod-style network
     # namespace. Workloads join it with Docker's container network mode.
-    image: registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c
+    image: registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     network: kamal
     labels:
@@ -116,9 +116,9 @@ accessories:
 
   whatsapp-tailscale:
     service: clawdi-whatsapp-tailscale
-    # Official image and immutable multi-architecture manifest for v1.98.10.
-    # https://hub.docker.com/r/tailscale/tailscale/tags?name=v1.98.10
-    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    # Official image and immutable multi-architecture manifest for v1.102.2.
+    # https://hub.docker.com/r/tailscale/tailscale/tags?name=v1.102.2
+    image: tailscale/tailscale:v1.102.2@sha256:321ce041508c19079b57a28b6666c8d81ab0b08accc0a2585b3ab663d557ac24
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     network: container:clawdi-whatsapp-netns
     labels:
@@ -158,7 +158,7 @@ accessories:
 
   whatsapp-egress-guard:
     service: clawdi-whatsapp-egress-guard
-    image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0
+    image: tailscale/tailscale:v1.102.2@sha256:321ce041508c19079b57a28b6666c8d81ab0b08accc0a2585b3ab663d557ac24
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     network: container:clawdi-whatsapp-netns
     labels:

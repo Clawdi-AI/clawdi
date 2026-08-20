@@ -119,7 +119,7 @@ EXPECTED_CONFIG = {
     "include": OWNED_INCLUDE,
     "strict": list(STRICT_PRODUCTION_FILES),
 }
-EXPECTED_VERSION = "1.39.9"
+EXPECTED_VERSION = "1.39.10"
 INVENTORY_AREAS = ("app", "tests", "scripts", "alembic")
 PRODUCTION_PATHSPEC = ":(top,glob)backend/app/**/*.py"
 
