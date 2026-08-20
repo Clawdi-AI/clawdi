@@ -103,7 +103,11 @@ function writeReceipt(paths: RuntimePaths, desired: ReturnType<typeof installati
 	);
 }
 
-function failedWatchStatus(desired: ReturnType<typeof installation>, generation: number) {
+function failedWatchStatus(
+	desired: ReturnType<typeof installation>,
+	generation: number,
+	revision = "1".repeat(64),
+) {
 	return {
 		event: {
 			status: "error",
@@ -115,7 +119,7 @@ function failedWatchStatus(desired: ReturnType<typeof installation>, generation:
 						name: "clawdi",
 						version: desired.version,
 						contentDigest: desired.contentDigest,
-						sourceRevision: "1".repeat(64),
+						sourceRevision: revision,
 						generation,
 						status: "failed",
 						errorCode: "reconcile_failed",
@@ -233,6 +237,32 @@ describe("hosted Agent Plugin heartbeat observation", () => {
 				version: "1.0.0",
 				contentDigest: `sha256-tree-v1:${"d".repeat(64)}`,
 				sourceRevision: "1".repeat(64),
+				generation: 7,
+				status: "failed",
+				errorCode: "reconcile_failed",
+			},
+		]);
+	});
+
+	test("reports a failed reconvergence at the applied identity", () => {
+		const paths = tempPaths();
+		const desired = installation("1.0.0", "d");
+		writeAppliedManifest(paths, desired);
+		writeReceipt(paths, desired);
+
+		const observed = readHostedAgentPluginsObservation({
+			paths,
+			applied: appliedState(),
+			watchStatus: failedWatchStatus(desired, 7, sourceRevision),
+		});
+
+		expect(observed?.installations).toEqual([
+			{
+				installationId,
+				name: "clawdi",
+				version: "1.0.0",
+				contentDigest: `sha256-tree-v1:${"d".repeat(64)}`,
+				sourceRevision,
 				generation: 7,
 				status: "failed",
 				errorCode: "reconcile_failed",

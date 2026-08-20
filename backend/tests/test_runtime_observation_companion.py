@@ -209,18 +209,16 @@ def test_agent_plugin_observation_rejects_stale_or_unfenced_apply_identity() -> 
             }
         )
 
-    with pytest.raises(ValueError, match="failed Agent Plugin observation is stale"):
-        RuntimeObservationEventV2.model_validate(
-            {
-                **payload,
-                "agentPlugins": {
-                    "schemaVersion": 1,
-                    "installations": [
-                        {**installation, "generation": 2, "sourceRevision": "a" * 64}
-                    ],
-                },
-            }
-        )
+    same_applied_identity = RuntimeObservationEventV2.model_validate(
+        {
+            **payload,
+            "agentPlugins": {
+                "schemaVersion": 1,
+                "installations": [{**installation, "generation": 2, "sourceRevision": "a" * 64}],
+            },
+        }
+    )
+    assert same_applied_identity.agent_plugins is not None
 
     same_generation_new_revision = RuntimeObservationEventV2.model_validate(
         {
