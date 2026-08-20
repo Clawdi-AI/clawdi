@@ -163,19 +163,12 @@ interface RuntimeApplyOptions {
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
-	manifestIdentity?: RuntimeManifestIdentity;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
-}
-
-interface RuntimeManifestIdentity {
-	generation?: number | null;
-	etag?: string | null;
-	previouslyApplied?: boolean;
 }
 
 interface RuntimeWatchFailureBackoff {
@@ -831,10 +824,6 @@ async function runtimeInitLocked(
 						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 						userProcessRevisionAliases: authority.userProcessRevisionAliases,
 					}),
-				manifestIdentity: {
-					generation: convergenceLoad.manifest.generation,
-					etag: loaded.etag ?? null,
-				},
 				requireSystemdApplied: applyIdentity !== null,
 				hostedRuntimeContract: opts.hostedRuntimeContract,
 			});
@@ -913,7 +902,11 @@ async function runtimeInitLocked(
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
 		const runtimeReady = runtimeErrors.length === 0;
-		if (runtimeReady) completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		if (runtimeReady) {
+			completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		} else {
+			maybeRollbackFailedCliUpgrade(paths, runtimeErrors);
+		}
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		emitRuntimeInitStatus({
 			opts,
@@ -1100,11 +1093,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 			throw new Error("runtime bundle is missing applied authority identity");
 		}
 		failureEtag = bundleEtag;
-		const manifestIdentity = runtimeManifestIdentityForWatch(
-			loaded.manifest.generation,
-			bundleEtag,
-			paths,
-		);
 		const applyIdentity = loaded.applyContext?.identity ?? null;
 		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
 			authorityCommit: (convergence, authority) =>
@@ -1123,7 +1111,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
 			deferCliInstallReason: opts.deferCliInstallReason,
-			manifestIdentity,
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			requireSystemdApplied: applyIdentity !== null,
 			hostedRuntimeContract: opts.hostedRuntimeContract,
@@ -1296,7 +1283,6 @@ async function applyRuntimeDesiredState(
 			cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
 				deferInstall: opts.deferCliInstall,
 				deferReason: opts.deferCliInstallReason,
-				rollbackEligible: opts.manifestIdentity?.previouslyApplied,
 				runningVersion: getCliVersion(),
 			});
 		} catch (error) {
@@ -1522,19 +1508,6 @@ function runtimeCliUpdateError(
 		version: null,
 		selfReexec: false,
 		error: error instanceof Error ? error.message : String(error),
-	};
-}
-
-function runtimeManifestIdentityForWatch(
-	generation: number,
-	observedManifestEtag: string | null,
-	paths: RuntimePaths,
-): RuntimeManifestIdentity {
-	const appliedState = readRuntimeAppliedState(paths);
-	return {
-		generation,
-		etag: observedManifestEtag,
-		previouslyApplied: appliedState?.etag === observedManifestEtag,
 	};
 }
 
