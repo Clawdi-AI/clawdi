@@ -3,14 +3,19 @@ import { join } from "node:path";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
+	managedSkillMarkerMatchesIdentity,
 	managedSkillReceiptMatchesIdentity,
-	managedSkillReceiptOwnsTarget,
 	managedSkillTreesEqual,
 	withManagedTargetRollback,
 	withStagedManagedSkill,
 	writeManagedSkillReceipt,
 } from "./managed-skill-delivery";
-import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
+import { replaceManagedSkillDirectoryAtomic } from "./managed-skill-reservation";
+import {
+	executableExists,
+	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
 
 const RECEIPT_SCHEMA = "clawdi.hermesManifestSkillReceipt.v2";
 
@@ -22,9 +27,15 @@ export interface HostedHermesSkillExactSourceDriver {
 		previouslyReserved: boolean;
 	}): "installed" | "unchanged";
 	verifyOwned(input: { home: string; appRoot: string; skill: PreparedHostedSourcedSkill }): boolean;
+	hasOwnershipReceipt(input: { home: string; skillId: string; ownershipIdentity: string }): boolean;
 	uninstall(input: {
 		home: string;
 		appRoot: string;
+		skillId: string;
+		ownershipIdentity: string;
+	}): "absent" | "removed";
+	cleanupManifestOwned(input: {
+		home: string;
 		skillId: string;
 		ownershipIdentity: string;
 	}): "absent" | "removed";
@@ -54,6 +65,9 @@ function receiptInput(home: string, skillId: string, ownershipIdentity: string) 
 
 function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
 	if (skill.source.type === "project") return skill.source.installUrl;
+	if (skill.source.type === "bundled") {
+		throw new Error("bundled Hermes Skills do not have a remote install URL");
+	}
 	const repository = new URL(skill.source.url);
 	const [owner, repo] = repository.pathname.slice(1).split("/");
 	if (!owner || !repo)
@@ -126,9 +140,15 @@ function expectedHermesNativeTree(sourceDir: string) {
 	return expected;
 }
 
-function nativeResultMatches(sourceDir: string, target: string): boolean {
+function nativeResultMatches(
+	skill: PreparedHostedSourcedSkill,
+	sourceDir: string,
+	target: string,
+): boolean {
 	return managedSkillTreesEqual(
-		expectedHermesNativeTree(sourceDir),
+		skill.source.type === "bundled"
+			? collectManagedSkillTree(sourceDir)
+			: expectedHermesNativeTree(sourceDir),
 		collectManagedSkillTree(target),
 	);
 }
@@ -141,16 +161,23 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 			const hadTarget = existsSync(target);
 			if (hadTarget && !input.previouslyReserved)
 				throw new Error("Hermes Skill target is not paired with a manifest reservation");
-			if (nativeResultMatches(sourceDir, target) && managedSkillReceiptMatchesIdentity(receipt))
+			if (
+				nativeResultMatches(input.skill, sourceDir, target) &&
+				managedSkillReceiptMatchesIdentity(receipt)
+			)
 				return "unchanged";
-			if (hadTarget && !managedSkillReceiptOwnsTarget(receipt))
-				throw new Error(
-					"refusing to replace a Hermes Skill without a matching Clawdi ownership receipt",
-				);
 			return withManagedTargetRollback({
 				target,
 				receipt: receipt.path,
 				operation: () => {
+					if (input.skill.source.type === "bundled") {
+						withRuntimeUserFileAccess(() => replaceManagedSkillDirectoryAtomic(sourceDir, target));
+						if (!nativeResultMatches(input.skill, sourceDir, target)) {
+							throw new Error("Hermes bundled Skill activation changed exact source bytes");
+						}
+						writeManagedSkillReceipt(receipt);
+						return "installed" as const;
+					}
 					const args = [
 						"skills",
 						"install",
@@ -165,7 +192,7 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 						throw new Error(
 							`Hermes official Skill install failed: ${String(result.stderr || result.stdout).trim() || "unknown error"}`,
 						);
-					if (!nativeResultMatches(sourceDir, target)) {
+					if (!nativeResultMatches(input.skill, sourceDir, target)) {
 						if (!hadTarget && existsSync(target)) {
 							const rollback = runHermesUninstall(input, input.skill.skillId);
 							if (rollback.status !== 0 || existsSync(target))
@@ -187,10 +214,15 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		return withStagedManagedSkill(
 			input.skill,
 			(sourceDir) =>
-				nativeResultMatches(sourceDir, targetDir(input.home, input.skill.skillId)) &&
+				nativeResultMatches(input.skill, sourceDir, targetDir(input.home, input.skill.skillId)) &&
 				managedSkillReceiptMatchesIdentity(
 					receiptInput(input.home, input.skill.skillId, input.skill.sourceIdentity),
 				),
+		);
+	},
+	hasOwnershipReceipt(input) {
+		return managedSkillMarkerMatchesIdentity(
+			receiptInput(input.home, input.skillId, input.ownershipIdentity),
 		);
 	},
 	uninstall(input) {
@@ -215,6 +247,20 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 			);
 		if (existsSync(target))
 			throw new Error("Hermes official Skill uninstall did not remove the Skill target");
+		rmSync(receipt.path, { force: true });
+		return "removed";
+	},
+	cleanupManifestOwned(input) {
+		const target = targetDir(input.home, input.skillId);
+		const receipt = receiptInput(input.home, input.skillId, input.ownershipIdentity);
+		if (!existsSync(target)) {
+			rmSync(receipt.path, { force: true });
+			return "absent";
+		}
+		if (!managedSkillReceiptMatchesIdentity(receipt)) {
+			throw new Error("Hermes Skill bytes no longer match the manifest ownership receipt");
+		}
+		withRuntimeUserFileAccess(() => rmSync(target, { recursive: true }));
 		rmSync(receipt.path, { force: true });
 		return "removed";
 	},

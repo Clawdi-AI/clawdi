@@ -11,8 +11,9 @@ import {
 	rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 
 const MAX_ENTRIES = 1024;
@@ -199,6 +200,9 @@ export function withStagedManagedSkill<T>(
 	skill: PreparedHostedSourcedSkill,
 	operation: (sourceDir: string) => T,
 ): T {
+	if (createHash("sha256").update(skill.tarBytes).digest("hex") !== skill.archiveSha256) {
+		throw new Error("prepared Skill archive digest mismatch");
+	}
 	const root = mkdtempSync(join(tmpdir(), "clawdi-managed-skill-"));
 	try {
 		const extracted = spawnSync("tar", ["-xzf", "-", "-C", root], {
@@ -218,6 +222,12 @@ export function withStagedManagedSkill<T>(
 			} else chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
 		};
 		makeReadable(root);
+		if (
+			skill.source.type === "bundled" &&
+			managedSkillDirectoryDigest(sourceDir) !== skill.source.digest
+		) {
+			throw new Error("prepared bundled Skill tree digest mismatch");
+		}
 		return operation(sourceDir);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -226,16 +236,23 @@ export function withStagedManagedSkill<T>(
 
 export function withManagedTargetRollback<T>(input: {
 	target: string;
-	receipt: string;
+	receipt?: string;
 	operation: () => T;
 	rename?: typeof renameSync;
+	remove?: typeof rmSync;
 }): T {
 	const rename = input.rename ?? renameSync;
+	const remove = input.remove ?? rmSync;
 	const suffix = randomBytes(8).toString("hex");
-	const targetBackup = `${input.target}.clawdi-rollback-${suffix}`;
-	const receiptBackup = `${input.receipt}.clawdi-rollback-${suffix}`;
+	const targetBackup = join(
+		dirname(input.target),
+		`.${basename(input.target)}-clawdi-rollback-${suffix}`,
+	);
+	const receiptBackup = input.receipt
+		? join(dirname(input.receipt), `.${basename(input.receipt)}-clawdi-rollback-${suffix}`)
+		: undefined;
 	const hadTarget = existsSync(input.target);
-	const hadReceipt = existsSync(input.receipt);
+	const hadReceipt = input.receipt !== undefined && existsSync(input.receipt);
 	let targetMoved = false;
 	let receiptMoved = false;
 	try {
@@ -243,40 +260,30 @@ export function withManagedTargetRollback<T>(input: {
 			rename(input.target, targetBackup);
 			targetMoved = true;
 		}
-		if (hadReceipt) {
+		if (hadReceipt && input.receipt && receiptBackup) {
 			rename(input.receipt, receiptBackup);
 			receiptMoved = true;
 		}
 	} catch (error) {
-		if (receiptMoved) rename(receiptBackup, input.receipt);
+		if (receiptMoved && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
 		if (targetMoved) rename(targetBackup, input.target);
 		throw error;
 	}
+	let result: T;
 	try {
-		const result = input.operation();
-		rmSync(targetBackup, { recursive: true, force: true });
-		rmSync(receiptBackup, { force: true });
-		return result;
+		result = input.operation();
 	} catch (error) {
-		rmSync(input.target, { recursive: true, force: true });
-		rmSync(input.receipt, { force: true });
+		remove(input.target, { recursive: true, force: true });
+		if (input.receipt) remove(input.receipt, { force: true });
 		if (hadTarget) rename(targetBackup, input.target);
-		if (hadReceipt) rename(receiptBackup, input.receipt);
+		if (hadReceipt && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
 		throw error;
 	}
-}
-
-export function withTargetTreeRollback<T>(input: { target: string; operation: () => T }): T {
-	const backup = `${input.target}.clawdi-rollback-${randomBytes(8).toString("hex")}`;
-	const hadTarget = existsSync(input.target);
-	if (hadTarget) renameSync(input.target, backup);
+	// The operation returning is the commit point. Backup cleanup is GC and
+	// must never roll back a live target or its ownership receipt.
 	try {
-		const result = input.operation();
-		rmSync(backup, { recursive: true, force: true });
-		return result;
-	} catch (error) {
-		rmSync(input.target, { recursive: true, force: true });
-		if (hadTarget) renameSync(backup, input.target);
-		throw error;
-	}
+		remove(targetBackup, { recursive: true, force: true });
+		if (receiptBackup) remove(receiptBackup, { force: true });
+	} catch {}
+	return result;
 }

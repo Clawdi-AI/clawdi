@@ -9,7 +9,7 @@ import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	collectManagedSkillTree,
 	managedSkillTreesEqual,
-	withTargetTreeRollback,
+	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import {
 	migrateLegacyLocalSetupSkill,
@@ -505,7 +505,7 @@ export class OpenClawAdapter implements AgentAdapter {
 			if (!existsSync(join(sourceDir, "SKILL.md")))
 				throw new Error("Skill archive is missing SKILL.md");
 			mutateUserSkillTarget(targetDir, installedSlug, () =>
-				withTargetTreeRollback({
+				withManagedTargetRollback({
 					target: targetDir,
 					operation: () => {
 						const result = spawnSync(

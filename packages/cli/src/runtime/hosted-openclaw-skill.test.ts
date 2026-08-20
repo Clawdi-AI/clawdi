@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -213,6 +214,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	const archive = join(root, "review-pr.tar.gz");
 	const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
 	if (packed.status !== 0) throw new Error("test tar creation failed");
+	const tarBytes = readFileSync(archive);
 	const skill = {
 		skillId: "review-pr",
 		source: {
@@ -222,8 +224,8 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 			commit: "a".repeat(40),
 		},
 		sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0${"a".repeat(40)}`,
-		archiveSha256: "b".repeat(64),
-		tarBytes: readFileSync(archive),
+		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
+		tarBytes,
 	};
 
 	expect(existsSync(workspaceRoot)).toBe(false);

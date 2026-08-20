@@ -30,11 +30,13 @@ export interface HostedOpenClawSkillDriver {
 		skillId: string;
 		sourceDir: string;
 		ownershipIdentity: string;
+		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
 	install(input: {
 		home: string;
 		workspaceRoot: string;
 		skill: PreparedHostedSourcedSkill;
+		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
 	hasOwnershipReceipt(input: {
 		workspaceRoot: string;
@@ -191,7 +193,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
 		if (nativeResultMatches(input.sourceDir, target) && managedSkillReceiptMatchesIdentity(receipt))
 			return "unchanged";
-		if (existsSync(target) && !managedSkillMarkerOwnsTarget(receipt))
+		if (existsSync(target) && !input.previouslyReserved && !managedSkillMarkerOwnsTarget(receipt))
 			throw new Error(
 				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
 			);
@@ -239,6 +241,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 				skillId: input.skill.skillId,
 				sourceDir,
 				ownershipIdentity: input.skill.sourceIdentity,
+				previouslyReserved: input.previouslyReserved,
 			}),
 		);
 	},

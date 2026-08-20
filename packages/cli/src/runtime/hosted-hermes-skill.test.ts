@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -16,6 +17,14 @@ import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive"
 
 const originalEnv = { ...process.env };
 let root = "";
+
+function preparedArchive(path: string): { archiveSha256: string; tarBytes: Buffer } {
+	const tarBytes = readFileSync(path);
+	return {
+		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
+		tarBytes,
+	};
+}
 
 afterEach(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
@@ -105,8 +114,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				"22222222-2222-4222-8222-222222222222",
 				"a".repeat(64),
 			].join("\0"),
-			archiveSha256: "b".repeat(64),
-			tarBytes: readFileSync(archive),
+			...preparedArchive(archive),
 		};
 		process.env.FAKE_HERMES_INSTALL_NOOP = "1";
 
@@ -157,8 +165,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			skillId: "review-pr",
 			source,
 			sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0\0${"a".repeat(40)}`,
-			archiveSha256: "b".repeat(64),
-			tarBytes: readFileSync(archive),
+			...preparedArchive(archive),
 		};
 		const input = {
 			home,
@@ -178,14 +185,31 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(readFileSync(commandLog, "utf8")).toContain(`/${source.commit}/SKILL.md`);
 		expect(readFileSync(commandLog, "utf8")).not.toContain(`/${source.commit}//SKILL.md`);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
+		expect(
+			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
+				home,
+				skillId: "review-pr",
+				ownershipIdentity: skill.sourceIdentity,
+			}),
+		).toBe(true);
+		expect(
+			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
+				home,
+				skillId: "review-pr",
+				ownershipIdentity: `${skill.sourceIdentity}-other`,
+			}),
+		).toBe(false);
 		const receiptBytes = readFileSync(receipt);
 		rmSync(receipt);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
-		writeFileSync(receipt, receiptBytes);
+		writeFileSync(receipt, receiptBytes, { mode: 0o600 });
 
 		writeFileSync(join(target, "SKILL.md"), "forged user bytes\n");
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
-		writeFileSync(join(target, "SKILL.md"), skillV1Native);
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
+			"installed",
+		);
+		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(existsSync(join(root, "wrong-profile", "skills", "review-pr"))).toBe(false);
 
@@ -211,8 +235,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			sourceIdentity:
 				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
 				"c".repeat(40),
-			archiveSha256: "c".repeat(64),
-			tarBytes: readFileSync(updateArchive),
+			...preparedArchive(updateArchive),
 		};
 		expect(
 			hostedHermesSkillExactSourceDriver.install({
@@ -245,7 +268,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const failingSkill = {
 			...updatedSkill,
 			sourceIdentity: `${updatedSkill.sourceIdentity}-failure-test`,
-			tarBytes: readFileSync(failingArchive),
+			...preparedArchive(failingArchive),
 		};
 		expect(() =>
 			hostedHermesSkillExactSourceDriver.install({

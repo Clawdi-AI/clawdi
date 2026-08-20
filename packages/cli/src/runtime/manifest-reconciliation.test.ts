@@ -39,7 +39,10 @@ import {
 	type HostedAgentPluginCommandRunner,
 	hostedAgentPluginCommands,
 } from "./hosted-agent-plugin-runtime";
-import { loadHostedBundledSkill, reconcileHostedBundledSkill } from "./hosted-bundled-skill";
+import {
+	assertHostedBundledSkillCatalogDigest,
+	resolveHostedBundledSkill,
+} from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import { readRuntimeInstallReceipts } from "./install-receipts";
@@ -4268,9 +4271,9 @@ echo spawned > '${installerLog}'
 		const driftedSource = join(fixtureRoot, "drifted-skill-source");
 		cpSync(skillSource, driftedSource, { recursive: true });
 		writeFileSync(join(driftedSource, "SKILL.md"), "catalog drift\n");
-		expect(() => loadHostedBundledSkill("clawdi", 1, driftedSource)).toThrow(
-			"catalog digest mismatch",
-		);
+		expect(() =>
+			assertHostedBundledSkillCatalogDigest(resolveHostedBundledSkill("clawdi", 1), driftedSource),
+		).toThrow("catalog digest mismatch");
 
 		for (const path of protectedSourceAncestors) chmodSync(path, 0o700);
 		const accountPrivilegeTool = ["run", "user"].join("");
@@ -4387,8 +4390,10 @@ echo spawned > '${installerLog}'
 				preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 				hostedHermesSkillExactSourceDriver: {
 					install: () => "installed",
+					hasOwnershipReceipt: () => false,
 					verifyOwned: () => false,
 					uninstall: () => "removed",
+					cleanupManifestOwned: () => "removed",
 				},
 			},
 		);
@@ -4412,20 +4417,21 @@ echo spawned > '${installerLog}'
 				if (installs.length === 1) throw new Error("lost native install response");
 				return "unchanged" as const;
 			},
-			verifyOwned: (input: { skill: PreparedHostedSourcedSkill }) => {
+			hasOwnershipReceipt: (input: { ownershipIdentity: string }) => {
 				verifyCalls += 1;
 				return (
-					input.skill.sourceIdentity === prepared.sourceIdentity &&
-					JSON.stringify(input.skill.source) === JSON.stringify(prepared.source) &&
+					input.ownershipIdentity === prepared.sourceIdentity &&
 					existsSync(join(skillDir, "SKILL.md")) &&
 					readFileSync(join(skillDir, "SKILL.md"), "utf8") === "manifest-owned\n"
 				);
 			},
+			verifyOwned: () => false,
 			uninstall: () => {
 				uninstalls += 1;
 				rmSync(skillDir, { recursive: true, force: true });
 				return "removed" as const;
 			},
+			cleanupManifestOwned: () => "removed" as const,
 		};
 		const options = {
 			preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
@@ -4529,11 +4535,12 @@ echo spawned > '${installerLog}'
 		expect(result.installErrors).toEqual([]);
 		const stagedSource = readFileSync(sourceLog, "utf8").trim();
 		expect(stagedSource).not.toBe(packageSource);
-		expect(stagedSource.startsWith(join(tmpdir(), "clawdi-hosted-bundled-skill-"))).toBe(true);
+		expect(stagedSource.startsWith(join(tmpdir(), "clawdi-managed-skill-"))).toBe(true);
 		expect(existsSync(stagedSource)).toBe(false);
 		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
 			readFileSync(join(packageSource, "SKILL.md")),
 		);
+		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
 		expect(
 			existsSync(
 				join(
@@ -4573,8 +4580,14 @@ echo spawned > '${installerLog}'
 		const openClawWorkspaceRoot = join(paths.userHome, ".openclaw", "workspace");
 		const target = join(openClawWorkspaceRoot, "skills", "clawdi");
 		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
-		const bundle = loadHostedBundledSkill("clawdi", 1, source);
-		reconcileHostedBundledSkill({ bundle, targetDir: target, reserved: true });
+		mkdirSync(dirname(target), { recursive: true });
+		cpSync(source, target, { recursive: true });
+		chmodSync(target, 0o755);
+		chmodSync(join(target, "SKILL.md"), 0o644);
+		writeFileSync(
+			join(target, ".clawdi-managed.json"),
+			`${JSON.stringify({ managedBy: "clawdi runtime init", skillName: "clawdi" })}\n`,
+		);
 		const manifest = baseManifest(
 			paths,
 			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
