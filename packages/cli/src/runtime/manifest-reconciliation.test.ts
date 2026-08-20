@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
 	type TestConvergeOptions,
@@ -66,9 +67,8 @@ import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
+	hostedFixtureCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
-	hostedRuntimeManifestFixtureResponseSchema,
-	hostedRuntimeManifestResponseSchema,
 	hostedRuntimeManifestSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_URLS,
@@ -81,12 +81,17 @@ import {
 import {
 	hostedManifestToRuntimeManifest,
 	loadCommittedRuntimeManifest,
+	normalizeHostedRuntimeBundleV2,
 	type RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { planRuntimeMutationSystemdUserUnits } from "./runtime-systemd-reconciliation";
-import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
+import {
+	canonicalSecretRefSchema,
+	normalizeSecretValues,
+	runtimeSecretValue,
+} from "./secret-values";
 import { ensureRuntimeStateDirs } from "./state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
@@ -113,6 +118,9 @@ const FILE_BROWSER_AMD64_SHA256 =
 	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
 const FILE_BROWSER_ARM64_SHA256 =
 	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
+const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestSchema.safeExtend({
+	clawdiCli: hostedFixtureCliPayloadPolicySchema,
+});
 const TEST_HOSTED_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-auth-token",
 	"secret://runtime/openclaw/gateway-token": "gateway-token",
@@ -626,6 +634,19 @@ function hostedOpenClawV2ManifestFixture(
 	});
 }
 
+function normalizeHostedBundleFixture(
+	manifest: Record<string, unknown>,
+	secretValues: Record<string, string>,
+): RuntimeManifestLoad {
+	return normalizeHostedRuntimeBundleV2({
+		schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+		sourceRevision: "a".repeat(64),
+		manifest,
+		channelBindings: [],
+		secretValues,
+	});
+}
+
 function writeFakeGatewayCli(input: {
 	path: string;
 	runtime: "openclaw" | "hermes";
@@ -825,12 +846,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			const withBridge = { ...valid, bridge: {} };
 			expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
 			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
-			expect(
-				hostedRuntimeManifestResponseSchema.safeParse({
-					manifest: withBridge,
-					secretValues: {},
-				}).success,
-			).toBe(false);
 		},
 	);
 
@@ -840,7 +855,13 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		const missingAuth = structuredClone(valid);
 		delete (missingAuth.system as { openclawGatewayAuth?: unknown }).openclawGatewayAuth;
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(missingAuth).success).toBe(false);
+		const missingAuthResult = hostedRuntimeBundleV2ManifestSchema.safeParse(missingAuth);
+		expect(missingAuthResult.success).toBe(false);
+		expect(
+			missingAuthResult.error?.issues.some(
+				(issue) => issue.message === "OpenClaw native auth activation must be explicitly enabled",
+			),
+		).toBe(false);
 
 		const inactive = structuredClone(valid);
 		(
@@ -853,6 +874,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			mismatchedOrigin.system as { openclawControlUiAllowedOrigins: string[] }
 		).openclawControlUiAllowedOrigins = ["https://other.example.test"];
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(mismatchedOrigin).success).toBe(true);
+		const missingOrigin = structuredClone(valid);
+		(
+			missingOrigin.system as { openclawControlUiAllowedOrigins: string[] }
+		).openclawControlUiAllowedOrigins = [];
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(missingOrigin).success).toBe(false);
 	});
 
 	test("keeps hosted runtime process ownership on the exact upstream commands", () => {
@@ -1660,7 +1686,7 @@ chmod 0755 '${commandPath}'
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
-	test.each(["secret://provider.stale.apiKey", "secret://provider.stale.apiKey"])(
+	test.each(["secret://provider.stale.apiKey", "secret://provider.other.apiKey"])(
 		"rejects provider secret value %s in unmanaged mode",
 		(secretRef) => {
 			const runtime = hostedRuntimeFixture({
@@ -1672,12 +1698,9 @@ chmod 0755 '${commandPath}'
 				providers: {},
 				runtimes: { openclaw: runtime },
 			});
-			expect(
-				hostedRuntimeManifestResponseSchema.safeParse({
-					manifest,
-					secretValues: { [secretRef]: "secret" },
-				}).success,
-			).toBe(false);
+			expect(() => normalizeHostedBundleFixture(manifest, { [secretRef]: "secret" })).toThrow(
+				"unmanaged provider mode must not include provider secret values",
+			);
 		},
 	);
 
@@ -1688,12 +1711,7 @@ chmod 0755 '${commandPath}'
 		const codexRef = TEST_HOSTED_CODEX_TOOLING.codex.provider.apiKeySecretRef;
 		expect(codexRef).toBeDefined();
 		for (const secretRef of [codexRef, `secret://${codexRef}`]) {
-			expect(
-				hostedRuntimeManifestResponseSchema.safeParse({
-					manifest,
-					secretValues: { [secretRef]: "secret" },
-				}).success,
-			).toBe(true);
+			expect(() => normalizeHostedBundleFixture(manifest, { [secretRef]: "secret" })).not.toThrow();
 		}
 	});
 
@@ -2159,20 +2177,17 @@ chmod 0755 '${commandPath}'
 
 	test("rejects hosted manifests without an explicit CLI package policy", () => {
 		expect(() =>
-			hostedRuntimeManifestResponseSchema.parse({
-				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					runtime: "openclaw",
-					deploymentId: "hdep_missing_cli_policy",
-					environmentId: "env_missing_cli_policy",
-					instanceId: "hri_missing_cli_policy",
-					generation: 1,
-					issuedAt: "2026-07-11T00:00:00.000Z",
-					locale: TEST_HOSTED_LOCALE,
-					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
-					runtimes: { openclaw: { enabled: true } },
-				},
-				secretValues: {},
+			hostedRuntimeManifestSchema.parse({
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
+				deploymentId: "hdep_missing_cli_policy",
+				environmentId: "env_missing_cli_policy",
+				instanceId: "hri_missing_cli_policy",
+				generation: 1,
+				issuedAt: "2026-07-11T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
+				controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+				runtimes: { openclaw: { enabled: true } },
 			}),
 		).toThrow(/clawdiCli/);
 	});
@@ -2253,21 +2268,18 @@ chmod 0755 '${commandPath}'
 		},
 	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
 		expect(() =>
-			hostedRuntimeManifestResponseSchema.parse({
-				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					runtime: "openclaw",
-					deploymentId: "hdep_invalid_cli_policy",
-					environmentId: "env_invalid_cli_policy",
-					instanceId: "hri_invalid_cli_policy",
-					generation: 1,
-					issuedAt: "2026-07-11T00:00:00.000Z",
-					locale: TEST_HOSTED_LOCALE,
-					controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
-					clawdiCli,
-					runtimes: { openclaw: { enabled: true } },
-				},
-				secretValues: {},
+			hostedRuntimeManifestSchema.parse({
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
+				deploymentId: "hdep_invalid_cli_policy",
+				environmentId: "env_invalid_cli_policy",
+				instanceId: "hri_invalid_cli_policy",
+				generation: 1,
+				issuedAt: "2026-07-11T00:00:00.000Z",
+				locale: TEST_HOSTED_LOCALE,
+				controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+				clawdiCli,
+				runtimes: { openclaw: { enabled: true } },
 			}),
 		).toThrow();
 	});
@@ -2305,20 +2317,14 @@ chmod 0755 '${commandPath}'
 			});
 			const expected = packageSpec === atLimit;
 			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(expected);
-			expect(
-				hostedRuntimeManifestFixtureResponseSchema.safeParse({
-					manifest,
-					secretValues: {},
-				}).success,
-			).toBe(expected);
+			expect(hostedRuntimeManifestFixtureSchema.safeParse(manifest).success).toBe(expected);
 		}
 	});
 
 	test("rejects raw secretValues keys in the Hosted fixture contract", () => {
 		expect(
-			hostedRuntimeManifestFixtureResponseSchema.safeParse({
-				manifest: hostedManifestFixture(),
-				secretValues: { "tool.codex.apiKey": "must-be-rejected" },
+			z.record(canonicalSecretRefSchema, z.string()).safeParse({
+				"tool.codex.apiKey": "must-be-rejected",
 			}).success,
 		).toBe(false);
 	});
@@ -2441,11 +2447,10 @@ chmod 0755 '${commandPath}'
 			},
 		};
 
-		const parsedResponse = hostedRuntimeManifestResponseSchema.parse(hostedResponse);
-		const hostedManifest = hostedRuntimeManifestSchema.parse(parsedResponse.manifest);
+		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
 		const normalized = {
 			manifest: hostedManifestToRuntimeManifest(hostedManifest),
-			secretValues: normalizeSecretValues(parsedResponse.secretValues),
+			secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		};
 		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 		expect(normalized.manifest.runtime).toBe("openclaw");

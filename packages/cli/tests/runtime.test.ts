@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 import {
 	commitRuntimeAppliedState,
 	runtimeAppliedContentIdentity,
@@ -69,9 +70,10 @@ import {
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
 import {
-	hostedRuntimeManifestResponseSchema,
+	hostedRuntimeManifestSchema,
 	manifestSchema,
 	officialInstallArgs,
+	validateUnmanagedProviderSecretValues,
 } from "../src/runtime/manifest-contract";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -84,7 +86,7 @@ import {
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
-import { normalizeSecretValues } from "../src/runtime/secret-values";
+import { canonicalSecretRefSchema, normalizeSecretValues } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
@@ -147,6 +149,14 @@ function explicitTestApplyContext(
 		},
 	};
 }
+
+const hostedRuntimeManifestResponseSchema = z
+	.object({
+		manifest: hostedRuntimeManifestSchema,
+		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
+	})
+	.strict()
+	.superRefine(validateUnmanagedProviderSecretValues);
 
 function normalizeHostedManifestFixture(value: unknown): {
 	manifest: RuntimeManifest;

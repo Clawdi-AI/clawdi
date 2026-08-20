@@ -24,18 +24,18 @@ import {
 	hasUnsupportedAgentPluginInstallations,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
+	hostedRuntimeSemanticIssues,
 	isHostedGatewayRunArgs,
-	isHostedHermesDashboardArgs,
 	manifestSchema,
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
+	validateUnmanagedProviderSecretValues,
 } from "./manifest-contract";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
 import {
-	canonicalSecretRefName,
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
 	runtimeSecretValue,
@@ -119,22 +119,7 @@ const hostedRuntimeBundleV2Schema = z
 		secretValues: z.record(canonicalSecretRefSchema, z.string()),
 	})
 	.strict()
-	.superRefine((bundle, ctx) => {
-		const runtime = bundle.manifest.runtimes[bundle.manifest.runtime];
-		if (runtime?.providerMode !== "unmanaged") return;
-		const codexSecretRef = canonicalSecretRefName(
-			bundle.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
-		);
-		for (const rawSecretRef of Object.keys(bundle.secretValues)) {
-			const secretRef = canonicalSecretRefName(rawSecretRef);
-			if (!secretRef?.startsWith("provider.") || secretRef === codexSecretRef) continue;
-			ctx.addIssue({
-				code: "custom",
-				message: "unmanaged provider mode must not include provider secret values",
-				path: ["secretValues", rawSecretRef],
-			});
-		}
-	});
+	.superRefine(validateUnmanagedProviderSecretValues);
 
 export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
 	const bundle = hostedRuntimeBundleV2Schema.parse(value);
@@ -323,7 +308,7 @@ type RemoteRuntimeManifestResult =
 	| RuntimeManifestFailure
 	| RuntimeManifestNotModified;
 
-async function loadRemoteRuntimeManifestPipeline(
+export async function loadRemoteRuntimeManifest(
 	paths: RuntimePaths,
 	opts: { ifNoneMatch?: string; applyContext?: RuntimeApplyContext } = {},
 ): Promise<RemoteRuntimeManifestResult> {
@@ -354,7 +339,7 @@ async function loadRemoteRuntimeManifestPipeline(
 			sourcePath: fetched.url,
 			notModified: true,
 			etag: fetched.etag ?? opts.ifNoneMatch,
-			...runtimeApplyContextLoadFields(applyContext),
+			applyContext,
 		};
 	}
 
@@ -388,15 +373,8 @@ async function loadRemoteRuntimeManifestPipeline(
 	return {
 		...loaded,
 		etag: fetched.etag,
-		...runtimeApplyContextLoadFields(applyContext),
+		applyContext,
 	};
-}
-
-export async function loadRemoteRuntimeManifest(
-	paths: RuntimePaths,
-	opts: { ifNoneMatch?: string; applyContext?: RuntimeApplyContext } = {},
-): Promise<RemoteRuntimeManifestResult> {
-	return loadRemoteRuntimeManifestPipeline(paths, opts);
 }
 
 function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
@@ -405,12 +383,6 @@ function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
 		stage: "local",
 		errors: [error instanceof Error ? error.message : String(error)],
 	};
-}
-
-function runtimeApplyContextLoadFields(applyContext: RuntimeApplyContext): {
-	applyContext: RuntimeApplyContext;
-} {
-	return { applyContext };
 }
 
 function assertRuntimeApplyIdentityMatchesManifest(
@@ -591,41 +563,20 @@ function validateManifestSemantics(
 	}
 	if (manifest.runtime) {
 		const runtime = manifest.runtime;
-		const runtimeKeys = Object.keys(manifest.runtimes);
-		if (!runtimeKeys.includes(runtime)) {
-			errors.push(`manifest runtime ${runtime} must have a matching runtimes.${runtime} entry`);
-		}
-		for (const key of runtimeKeys) {
-			if (key !== runtime) {
-				errors.push(`single-runtime manifest must not declare runtimes.${key}`);
-			}
-		}
-		if (manifest.runtimes[runtime]?.enabled !== true) {
-			errors.push(`manifest runtime ${runtime} must be enabled`);
-		}
+		const system = plainRecord(manifest.projection?.system);
+		errors.push(
+			...hostedRuntimeSemanticIssues({
+				hostedV2: isHostedV2,
+				runtime,
+				runtimes: manifest.runtimes,
+				openclawGatewayAuth: manifest.openclawGatewayAuth,
+				hermesDashboardAuth: manifest.hermesDashboardAuth,
+				openclawControlUiAllowedOrigins: system?.openclawControlUiAllowedOrigins,
+				providers: manifest.projection?.providers,
+			}).map((issue) => issue.message),
+		);
 		if (runtime === "openclaw" && isHostedV2) {
-			const auth = manifest.openclawGatewayAuth;
-			if (!auth) {
-				errors.push("OpenClaw v2 native Control UI requires official gateway token authentication");
-			}
-			if (auth?.activation.enabled !== true) {
-				errors.push("OpenClaw native auth activation must be explicitly enabled");
-			}
-			const system = manifest.projection?.system;
-			const origins =
-				typeof system === "object" && system !== null && !Array.isArray(system)
-					? (system as Record<string, unknown>).openclawControlUiAllowedOrigins
-					: null;
-			if (!Array.isArray(origins) || origins.length === 0) {
-				errors.push("OpenClaw v2 native Control UI requires an explicit public allowed origin");
-			}
 			const run = manifest.runtimes.openclaw?.run;
-			if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
-				errors.push("OpenClaw v2 gateway must use the official gateway run command");
-			}
-			if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
-				errors.push("OpenClaw v2 gateway token must use the declared environment secret reference");
-			}
 			if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
 				errors.push("OpenClaw v2 gateway token must not be embedded in manifest env");
 			}
@@ -637,30 +588,6 @@ function validateManifestSemantics(
 						}
 					}
 				}
-			}
-			for (const provider of Object.values(manifest.projection?.providers ?? {})) {
-				if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
-				const envName = (provider as Record<string, unknown>).runtimeEnvName;
-				if (envName === "OPENCLAW_GATEWAY_TOKEN") {
-					errors.push("OpenClaw v2 provider environment must not target native auth controls");
-				}
-			}
-		}
-		if (runtime === "hermes" && isHostedV2) {
-			if (!manifest.hermesDashboardAuth) {
-				errors.push("hermes direct dashboard requires official password authentication");
-			}
-			if (manifest.hermesDashboardAuth?.activation.enabled !== true) {
-				errors.push("hermes password authentication must be explicitly enabled");
-			}
-			if (manifest.openclawGatewayAuth) {
-				errors.push("OpenClaw gateway auth is only valid for the OpenClaw runtime");
-			}
-			if (!isHostedGatewayRunArgs("hermes", manifest.runtimes.hermes?.run?.args)) {
-				errors.push("Hermes gateway must use the official gateway run command");
-			}
-			if (!isHostedHermesDashboardArgs(manifest.runtimes.hermes?.services.dashboard?.args)) {
-				errors.push("hermes dashboard must bind directly to 0.0.0.0:9119");
 			}
 		}
 	}
@@ -733,7 +660,7 @@ export async function loadRuntimeManifest(
 	} catch (error) {
 		return runtimeApplyContextFailure(error);
 	}
-	const remote = await loadRemoteRuntimeManifestPipeline(paths, { applyContext });
+	const remote = await loadRemoteRuntimeManifest(paths, { applyContext });
 	const fetchFailed =
 		"errors" in remote &&
 		remote.mode === "repair" &&
@@ -871,7 +798,7 @@ function loadLastGoodManifest(
 				sourcePath: paths.manifestLastGood,
 				offline: true,
 				secretValues: cached.secretValues,
-				...runtimeApplyContextLoadFields(applyContext),
+				applyContext,
 			};
 		}
 		return {
@@ -879,7 +806,7 @@ function loadLastGoodManifest(
 			source: "last-good-cache",
 			sourcePath: paths.manifestLastGood,
 			offline: true,
-			...runtimeApplyContextLoadFields(applyContext),
+			applyContext,
 		};
 	} catch (error) {
 		return {

@@ -800,32 +800,166 @@ const hostedRuntimeManifestBaseSchema = z
 
 type HostedRuntimeManifestBase = z.infer<typeof hostedRuntimeManifestBaseSchema>;
 
+interface HostedRuntimeSemanticRun {
+	args?: readonly string[];
+	secretEnv?: Readonly<Record<string, string>>;
+}
+
+interface HostedRuntimeSemanticEntry {
+	enabled?: boolean;
+	run?: HostedRuntimeSemanticRun;
+	services?: Readonly<Record<string, HostedRuntimeSemanticRun>>;
+}
+
+export interface HostedRuntimeSemanticView {
+	hostedV2: boolean;
+	runtime: string;
+	runtimes: Readonly<Record<string, HostedRuntimeSemanticEntry | undefined>>;
+	openclawGatewayAuth?: {
+		tokenRef?: string;
+		activation: { enabled?: boolean };
+	};
+	hermesDashboardAuth?: { activation: { enabled?: boolean } };
+	openclawControlUiAllowedOrigins?: unknown;
+	providers?: Readonly<Record<string, unknown>>;
+}
+
+export interface HostedRuntimeSemanticIssue {
+	message: string;
+	path: string[];
+}
+
+export function hostedRuntimeSemanticIssues(
+	view: HostedRuntimeSemanticView,
+): HostedRuntimeSemanticIssue[] {
+	const issues: HostedRuntimeSemanticIssue[] = [];
+	const addIssue = (message: string, path: string[]): void => {
+		issues.push({ message, path });
+	};
+	const systemPath = (...path: string[]): string[] => ["system", ...path];
+	const runtimePath = (...path: string[]): string[] => ["runtimes", view.runtime, ...path];
+	const runtimeKeys = Object.keys(view.runtimes);
+	const selectedRuntime = view.runtimes[view.runtime];
+	if (!selectedRuntime) {
+		addIssue(`runtimes.${view.runtime} must be present for selected runtime`, [
+			"runtimes",
+			view.runtime,
+		]);
+	}
+	for (const key of runtimeKeys) {
+		if (key === view.runtime) continue;
+		addIssue("hosted runtime manifests must declare exactly one selected runtime", [
+			"runtimes",
+			key,
+		]);
+	}
+	if (selectedRuntime?.enabled !== true) {
+		addIssue("selected runtime must be enabled", ["runtimes", view.runtime, "enabled"]);
+	}
+	if (!view.hostedV2) return issues;
+
+	if (view.runtime === "openclaw") {
+		const auth = view.openclawGatewayAuth;
+		if (!auth) {
+			addIssue(
+				"OpenClaw v2 native Control UI requires official gateway token authentication",
+				systemPath("openclawGatewayAuth"),
+			);
+		} else if (auth.activation.enabled !== true) {
+			addIssue(
+				"OpenClaw native auth activation must be explicitly enabled",
+				systemPath("openclawGatewayAuth", "activation", "enabled"),
+			);
+		}
+		if (
+			!Array.isArray(view.openclawControlUiAllowedOrigins) ||
+			view.openclawControlUiAllowedOrigins.length === 0
+		) {
+			addIssue(
+				"OpenClaw v2 native Control UI requires an explicit public allowed origin",
+				systemPath("openclawControlUiAllowedOrigins"),
+			);
+		}
+		const run = view.runtimes.openclaw?.run;
+		if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
+			addIssue(
+				"OpenClaw v2 gateway must use the official gateway run command",
+				runtimePath("run", "args"),
+			);
+		}
+		if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
+			addIssue(
+				"OpenClaw v2 gateway token must use the declared environment secret reference",
+				runtimePath("run", "secretEnv", "OPENCLAW_GATEWAY_TOKEN"),
+			);
+		}
+		for (const [providerId, provider] of Object.entries(view.providers ?? {})) {
+			if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+			if ((provider as Record<string, unknown>).runtimeEnvName === "OPENCLAW_GATEWAY_TOKEN") {
+				addIssue("OpenClaw v2 provider environment must not target native auth controls", [
+					"providers",
+					providerId,
+					"runtimeEnvName",
+				]);
+			}
+		}
+	}
+
+	if (view.runtime === "hermes") {
+		if (!view.hermesDashboardAuth) {
+			addIssue(
+				"hermes direct dashboard requires official password authentication",
+				systemPath("hermesDashboardAuth"),
+			);
+		}
+		if (view.hermesDashboardAuth?.activation.enabled !== true) {
+			addIssue(
+				"hermes password authentication must be explicitly enabled",
+				systemPath("hermesDashboardAuth", "activation", "enabled"),
+			);
+		}
+		if (view.openclawGatewayAuth) {
+			addIssue(
+				"OpenClaw gateway auth is only valid for the OpenClaw runtime",
+				systemPath("openclawGatewayAuth"),
+			);
+		}
+		if (!isHostedGatewayRunArgs("hermes", view.runtimes.hermes?.run?.args)) {
+			addIssue(
+				"Hermes gateway must use the official gateway run command",
+				runtimePath("run", "args"),
+			);
+		}
+		if (!isHostedHermesDashboardArgs(view.runtimes.hermes?.services?.dashboard?.args)) {
+			addIssue(
+				"hermes dashboard must bind directly to 0.0.0.0:9119",
+				runtimePath("services", "dashboard", "args"),
+			);
+		}
+	}
+	return issues;
+}
+
+function hostedRuntimeManifestSemanticView(
+	manifest: HostedRuntimeManifestBase,
+): HostedRuntimeSemanticView {
+	return {
+		hostedV2: true,
+		runtime: manifest.runtime,
+		runtimes: manifest.runtimes,
+		openclawGatewayAuth: manifest.system.openclawGatewayAuth,
+		hermesDashboardAuth: manifest.system.hermesDashboardAuth,
+		openclawControlUiAllowedOrigins: manifest.system.openclawControlUiAllowedOrigins,
+		providers: manifest.providers,
+	};
+}
+
 function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
 ): void {
-	const runtimeKeys = Object.keys(manifest.runtimes);
-	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
-	if (!manifest.runtimes[manifest.runtime]) {
-		ctx.addIssue({
-			code: "custom",
-			message: `runtimes.${manifest.runtime} must be present for selected runtime`,
-			path: ["runtimes", manifest.runtime],
-		});
-	}
-	for (const key of unexpectedRuntimeKeys) {
-		ctx.addIssue({
-			code: "custom",
-			message: "hosted runtime manifests must declare exactly one selected runtime",
-			path: ["runtimes", key],
-		});
-	}
-	if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
-		ctx.addIssue({
-			code: "custom",
-			message: "selected runtime must be enabled",
-			path: ["runtimes", manifest.runtime, "enabled"],
-		});
+	for (const issue of hostedRuntimeSemanticIssues(hostedRuntimeManifestSemanticView(manifest))) {
+		ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
 	}
 	const selectedRuntime = manifest.runtimes[manifest.runtime];
 	if (selectedRuntime) {
@@ -851,27 +985,6 @@ function validateHostedRuntimeManifest(
 	}
 	if (manifest.runtime === "hermes") {
 		const runtime = manifest.runtimes.hermes;
-		if (!manifest.system.hermesDashboardAuth) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hermes direct dashboard requires official password authentication",
-				path: ["system", "hermesDashboardAuth"],
-			});
-		}
-		if (manifest.system.hermesDashboardAuth?.activation.enabled !== true) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hermes password authentication must be explicitly enabled",
-				path: ["system", "hermesDashboardAuth", "activation", "enabled"],
-			});
-		}
-		if (runtime && !isHostedGatewayRunArgs("hermes", runtime.run.args)) {
-			ctx.addIssue({
-				code: "custom",
-				message: "Hermes gateway must use the official gateway run command",
-				path: ["runtimes", "hermes", "run", "args"],
-			});
-		}
 		if (runtime?.run.secretEnv) {
 			ctx.addIssue({
 				code: "custom",
@@ -887,13 +1000,6 @@ function validateHostedRuntimeManifest(
 				path: ["runtimes", "hermes", "services"],
 			});
 		}
-		if (!isHostedHermesDashboardArgs(runtime?.services.dashboard?.args)) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hermes dashboard must bind directly to 0.0.0.0:9119",
-				path: ["runtimes", "hermes", "services", "dashboard", "args"],
-			});
-		}
 	} else if (manifest.system.hermesDashboardAuth) {
 		ctx.addIssue({
 			code: "custom",
@@ -901,76 +1007,15 @@ function validateHostedRuntimeManifest(
 			path: ["system", "hermesDashboardAuth"],
 		});
 	}
-	if (manifest.runtime !== "openclaw" && manifest.system.openclawGatewayAuth) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw gateway auth is only valid for the OpenClaw runtime",
-			path: ["system", "openclawGatewayAuth"],
-		});
-	}
-	validateHostedRuntimeManifestV2(manifest, ctx);
-}
-
-function validateHostedRuntimeManifestV2(
-	manifest: HostedRuntimeManifestBase,
-	ctx: z.RefinementCtx,
-): void {
-	if (manifest.runtime !== "openclaw") return;
-	const auth = manifest.system.openclawGatewayAuth;
-	if (!manifest.system.openclawGatewayAuth) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw v2 native Control UI requires official gateway token authentication",
-			path: ["system", "openclawGatewayAuth"],
-		});
-	}
-	if (auth?.activation.enabled !== true) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw native auth activation must be explicitly enabled",
-			path: ["system", "openclawGatewayAuth", "activation", "enabled"],
-		});
-	}
-	const allowedOrigins = manifest.system.openclawControlUiAllowedOrigins ?? [];
-	if (allowedOrigins.length === 0) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw v2 native Control UI requires an explicit public allowed origin",
-			path: ["system", "openclawControlUiAllowedOrigins"],
-		});
-	}
-	const run = manifest.runtimes.openclaw?.run;
-	const gatewayArgs = run?.args;
-	if (!isHostedGatewayRunArgs("openclaw", gatewayArgs)) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw v2 gateway must use the official gateway run command",
-			path: ["runtimes", "openclaw", "run", "args"],
-		});
-	}
-	if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
-		ctx.addIssue({
-			code: "custom",
-			message: "OpenClaw v2 gateway token must use the declared environment secret reference",
-			path: ["runtimes", "openclaw", "run", "secretEnv", "OPENCLAW_GATEWAY_TOKEN"],
-		});
-	}
-	if (Object.keys(manifest.runtimes.openclaw?.services ?? {}).length > 0) {
+	if (
+		manifest.runtime === "openclaw" &&
+		Object.keys(manifest.runtimes.openclaw?.services ?? {}).length > 0
+	) {
 		ctx.addIssue({
 			code: "custom",
 			message: "OpenClaw hosted runtime must not declare auxiliary services",
 			path: ["runtimes", "openclaw", "services"],
 		});
-	}
-	for (const [providerId, provider] of Object.entries(manifest.providers)) {
-		const envName = provider.runtimeEnvName;
-		if (envName === "OPENCLAW_GATEWAY_TOKEN") {
-			ctx.addIssue({
-				code: "custom",
-				message: "OpenClaw v2 provider environment must not target native auth controls",
-				path: ["providers", providerId, "runtimeEnvName"],
-			});
-		}
 	}
 }
 
@@ -990,43 +1035,33 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 	})
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
-export const hostedRuntimeManifestResponseSchema = z
-	.object({
-		manifest: hostedRuntimeManifestSchema,
-		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
-	})
-	.strict()
-	.superRefine((response, ctx) => {
-		const runtime = response.manifest.runtimes[response.manifest.runtime];
-		if (runtime?.providerMode !== "unmanaged") return;
-		const codexSecretRef = canonicalSecretRefName(
-			response.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
-		);
-		for (const rawSecretRef of Object.keys(response.secretValues)) {
-			const secretRef = canonicalSecretRefName(rawSecretRef);
-			if (!secretRef?.startsWith("provider.") || secretRef === codexSecretRef) continue;
-			ctx.addIssue({
-				code: "custom",
-				message: "unmanaged provider mode must not include provider secret values",
-				path: ["secretValues", rawSecretRef],
-			});
-		}
-	});
 
-const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestBaseSchema
-	.safeExtend({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-		clawdiCli: hostedFixtureCliPayloadPolicySchema,
-	})
-	.strict()
-	.superRefine(validateHostedRuntimeManifest);
-
-export const hostedRuntimeManifestFixtureResponseSchema = z
-	.object({
-		manifest: hostedRuntimeManifestFixtureSchema,
-		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
-	})
-	.strict();
+export function validateUnmanagedProviderSecretValues(
+	response: {
+		manifest: {
+			runtime: string;
+			runtimes: Readonly<Record<string, { providerMode?: "configured" | "unmanaged" } | undefined>>;
+			terminalTooling?: { codex: { provider: { apiKeySecretRef?: string | null } } };
+		};
+		secretValues: Readonly<Record<string, string>>;
+	},
+	ctx: z.RefinementCtx,
+): void {
+	const runtime = response.manifest.runtimes[response.manifest.runtime];
+	if (runtime?.providerMode !== "unmanaged") return;
+	const codexSecretRef = canonicalSecretRefName(
+		response.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
+	);
+	for (const rawSecretRef of Object.keys(response.secretValues)) {
+		const secretRef = canonicalSecretRefName(rawSecretRef);
+		if (!secretRef?.startsWith("provider.") || secretRef === codexSecretRef) continue;
+		ctx.addIssue({
+			code: "custom",
+			message: "unmanaged provider mode must not include provider secret values",
+			path: ["secretValues", rawSecretRef],
+		});
+	}
+}
 
 export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;

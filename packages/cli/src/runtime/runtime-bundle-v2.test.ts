@@ -1466,7 +1466,7 @@ describe("hosted runtime bundle v2", () => {
 		);
 	});
 
-	test("caches the effective projected manifest and complete active secret union", () => {
+	test("caches the complete active secret union and revalidates shared semantics", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-cache-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -1495,6 +1495,23 @@ describe("hosted runtime bundle v2", () => {
 			expect(cacheStat.uid).toBe(0);
 			expect(cacheStat.gid).toBe(0);
 		}
+		const applyContext = setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
+		if (!projected.manifest.projection) throw new Error("golden bundle projection is unavailable");
+		projected.manifest.projection.system = { openclawControlUiAllowedOrigins: [] };
+		cacheRuntimeLastGoodManifest(projected.manifest, paths, projected.secretValues);
+		globalThis.fetch = Object.assign(async () => Promise.reject(new Error("offline")), {
+			preconnect: () => undefined,
+		});
+
+		const loaded = await loadRuntimeManifest(paths, { applyContext });
+		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
+			"cached OpenClaw v2 native Control UI requires an explicit public allowed origin",
+		);
 	});
 
 	test("rebuilds the exact active egress secret file from the golden bundle offline", async () => {
