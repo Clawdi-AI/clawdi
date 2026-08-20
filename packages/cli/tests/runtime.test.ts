@@ -20,15 +20,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import {
-	applySystemdRuntimeUpdate,
 	commitRuntimeAppliedState,
-	readSystemdUnitSnapshot,
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
 	runtimeOnlyChangesCliPackage,
 	runtimePublicContentRevision,
 	runtimeWatch as runtimeWatchWithContext,
-	SystemdRuntimeTransaction,
 } from "../src/commands/runtime";
 import {
 	nativeOAuthProfileId,
@@ -94,6 +91,11 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../src/runtime/state";
+import {
+	applySystemdRuntimeUpdate,
+	readSystemdUnitSnapshot,
+	SystemdRuntimeTransaction,
+} from "../src/runtime/systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";

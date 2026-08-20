@@ -20,11 +20,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-	applySystemdRuntimeUpdate,
-	readSystemdUnitSnapshot,
-	SystemdRuntimeTransaction,
-} from "../../src/commands/runtime";
-import {
 	resolveOpenClawProviderAuthSdkExport,
 	resolveOpenClawProviderEnvVarsSdkExport,
 } from "../../src/lib/codex-oauth-native-store";
@@ -38,6 +33,11 @@ import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
 import { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-managed-provider-plugin";
 import { getRuntimePaths } from "../../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../../src/runtime/state";
+import {
+	applySystemdRuntimeUpdate,
+	readSystemdUnitSnapshot,
+	SystemdRuntimeTransaction,
+} from "../../src/runtime/systemd-transaction";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
 const FILE_BROWSER_VERSION = "v1.5.0-stable";

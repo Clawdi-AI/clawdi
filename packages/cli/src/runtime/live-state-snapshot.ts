@@ -17,7 +17,7 @@ import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { runningAsRoot } from "./runtime-user-command";
-import { isGeneratedRuntimeSystemdFile } from "./systemd-user";
+import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
 
 type RuntimeLiveSnapshotNode =
 	| { kind: "missing" }
@@ -240,26 +240,8 @@ export function restoreRuntimeLiveSnapshot(snapshot: RuntimeLiveSnapshot): void 
 }
 
 function addExistingManagedSystemdSystemPaths(paths: RuntimePaths, result: Set<string>): void {
-	if (!existsSync(paths.systemdSystemRoot)) return;
-	for (const entry of readdirSync(paths.systemdSystemRoot)) {
-		const path = join(paths.systemdSystemRoot, entry);
-		if (
-			entry.endsWith(".service") &&
-			(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path))
-		) {
-			result.add(path);
-		}
-		if (!entry.endsWith(".service.d")) continue;
-		const dropIn = join(path, "10-clawdi-hosted.conf");
-		if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
-	}
-}
-
-function isGeneratedSystemdFile(path: string): boolean {
-	try {
-		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
-	} catch {
-		return false;
+	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdSystemRoot)) {
+		result.add(entry.path);
 	}
 }
 
@@ -267,7 +249,7 @@ function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): str
 	return [
 		...new Set(
 			snapshotPaths
-				.filter((path) => basename(path) === "10-clawdi-hosted.conf")
+				.filter((path) => basename(path) === RUNTIME_SYSTEMD_DROP_IN_FILE)
 				.map((path) => dirname(path)),
 		),
 	].sort();

@@ -9,7 +9,11 @@ import {
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
-import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import {
+	type RuntimeApplyIdentity,
+	runtimeApplyIdentitiesEqual,
+	runtimeApplyIdentitySchema,
+} from "./apply-identity";
 import { agentPluginsObservationSchema } from "./hosted-agent-plugin-observation";
 import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
@@ -253,7 +257,10 @@ export class HostedRuntimeHeartbeatSession {
 			this.currentBootIdentity = null;
 			return false;
 		}
-		if (this.currentBootIdentity && sameApplyIdentity(this.currentBootIdentity, applyIdentity)) {
+		if (
+			this.currentBootIdentity &&
+			runtimeApplyIdentitiesEqual(this.currentBootIdentity, applyIdentity)
+		) {
 			this.capturedAppliedState = appliedState;
 			return false;
 		}
@@ -274,7 +281,7 @@ export class HostedRuntimeHeartbeatSession {
 		if (!appliedState || !applyIdentity) return;
 
 		let candidate: PersistedHeartbeatState;
-		if (persisted && sameApplyIdentity(persisted.bootIdentity, applyIdentity)) {
+		if (persisted && runtimeApplyIdentitiesEqual(persisted.bootIdentity, applyIdentity)) {
 			if (persisted.schemaVersion === "clawdi.runtimeHeartbeatObservation.v1") {
 				candidate = {
 					schemaVersion: "clawdi.runtimeHeartbeatObservation.v2",
@@ -516,16 +523,4 @@ function nonEmptyId(value: string, name: string): string {
 	const normalized = value.trim();
 	if (!normalized) throw new Error(`${name} must not be empty`);
 	return normalized;
-}
-
-function sameApplyIdentity(
-	left: Pick<PersistedBootIdentity, keyof RuntimeApplyIdentity>,
-	right: RuntimeApplyIdentity,
-): boolean {
-	return (
-		left.generation === right.generation &&
-		left.manifestETag === right.manifestETag &&
-		left.applyReceiptId === right.applyReceiptId &&
-		left.bootNonce === right.bootNonce
-	);
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
@@ -11,7 +11,8 @@ import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
-import { isGeneratedRuntimeSystemdFile, runtimeUserName } from "./systemd-user";
+import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
+import { runtimeUserName } from "./systemd-user";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
@@ -257,30 +258,7 @@ function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd 
 }
 
 function managedSystemdUnitNames(root: string): string[] {
-	if (!existsSync(root)) return [];
-	const units = new Set<string>();
-	for (const entry of readdirSync(root)) {
-		if (entry.endsWith(".service")) {
-			if (entry.startsWith("clawdi-") || isGeneratedSystemdPath(join(root, entry))) {
-				units.add(entry);
-			}
-			continue;
-		}
-		if (!entry.endsWith(".service.d")) continue;
-		const unitName = entry.slice(0, -".d".length);
-		if (isGeneratedSystemdPath(join(root, entry, "10-clawdi-hosted.conf"))) {
-			units.add(unitName);
-		}
-	}
-	return [...units].sort();
-}
-
-function isGeneratedSystemdPath(path: string): boolean {
-	try {
-		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
-	} catch {
-		return false;
-	}
+	return [...new Set(managedRuntimeSystemdUnitEntries(root).map((entry) => entry.unitName))].sort();
 }
 
 function systemdUnitStatus(
@@ -421,23 +399,6 @@ function runRuntimeUserSystemctl(
 			output: error instanceof Error ? error.message : String(error),
 		};
 	}
-}
-
-function systemctlPath(): string {
-	return process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
-}
-
-function parseSystemctlShow(output: string): Record<string, string> {
-	return Object.fromEntries(
-		output
-			.split(/\r?\n/)
-			.map((line) => line.trim())
-			.filter(Boolean)
-			.map((line) => {
-				const index = line.indexOf("=");
-				return index === -1 ? [line, ""] : [line.slice(0, index), line.slice(index + 1)];
-			}),
-	);
 }
 
 function systemdUnitsStatus(units: HostedRuntimeObservedSystemdUnit[]): ObservedStatus {
