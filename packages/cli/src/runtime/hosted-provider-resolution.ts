@@ -5,14 +5,54 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import {
+	CLAWDI_MANAGED_PROVIDER_ID,
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_API_MODE,
 	isAiProviderApiMode,
 	isAiProviderType,
+	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
+
+export type HostedAiProviderProjectionInput = {
+	catalog: AiProviderCatalog;
+	primaryModel: AgentPrimaryModel;
+};
+
+export function agentTargetProjectionInput(
+	input: HostedAiProviderProjectionInput | null,
+): HostedAiProviderProjectionInput | null {
+	if (!input) return null;
+	const providerIdMap = new Map<string, string>();
+	const providers = input.catalog.providers.map((provider) => {
+		if (provider.managed_by !== "clawdi") return provider;
+		const id = isClawdiManagedV2ProviderId(provider.id)
+			? CLAWDI_MANAGED_PROVIDER_ID
+			: provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID || provider.id.startsWith("clawdi-managed")
+				? provider.id
+				: CLAWDI_MANAGED_V1_PROVIDER_ID;
+		providerIdMap.set(provider.id, id);
+		return {
+			...provider,
+			id,
+			api_mode: isClawdiManagedV2ProviderId(id) ? CLAWDI_MANAGED_V2_API_MODE : provider.api_mode,
+		} satisfies AiProviderCatalog["providers"][number];
+	});
+	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);
+	if (!primaryProviderId) return input;
+	return {
+		catalog: {
+			...input.catalog,
+			providers,
+			defaults: { ...input.catalog.defaults, chat_provider_id: primaryProviderId },
+		},
+		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
+	};
+}
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,

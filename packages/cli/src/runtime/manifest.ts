@@ -18,17 +18,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AiProviderCatalog } from "@clawdi/shared";
-import {
-	CLAWDI_MANAGED_PROVIDER_ID,
-	CLAWDI_MANAGED_V1_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_API_MODE,
-	isClawdiManagedV2ProviderId,
-	MANAGED_AI_PROVIDER_RUNTIME_ENV,
-} from "@clawdi/shared";
+import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
-import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	decideChatGptOAuthCredentialReconciliation,
 	intentLedgerForDecision,
@@ -43,13 +36,15 @@ import {
 	nativeOAuthObservation,
 	nativeOAuthProfileId,
 	type OAuthCredentialOwnership,
+	OPENCLAW_CONFIG_MUTATION_EXPORTS,
 	OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
+	OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS,
 	OPENCLAW_PROVIDER_AUTH_HELPER,
+	OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS,
+	OPENCLAW_PROVIDER_ENV_VARS_EXPORTS,
 	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
-	resolveOpenClawConfigMutationSdkExport,
-	resolveOpenClawDeviceBootstrapSdkExport,
-	resolveOpenClawProviderAuthSdkExport,
+	openClawSdkFunctionGuard,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
@@ -110,8 +105,11 @@ import {
 	type HostedHermesSkillExactSourceDriver,
 	hostedHermesSkillExactSourceDriver,
 } from "./hosted-hermes-skill";
+import { createOpenClawHostedContext, type OpenClawHostedContext } from "./hosted-openclaw-context";
 import { type HostedOpenClawSkillDriver, hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
+	agentTargetProjectionInput,
+	type HostedAiProviderProjectionInput,
 	hostedAiProviderCatalog,
 	hostedProviderEnvironment,
 	hostedProviderRequiresApiKey,
@@ -178,10 +176,6 @@ import {
 } from "./manifest-resources";
 import {
 	ensureManagedOpenClawProviderPlugin,
-	managedOpenClawConfigPath,
-	managedOpenClawProviderPluginInstallDir,
-	managedOpenClawProviderPluginMutationTargets,
-	managedOpenClawStateDir,
 	openClawProviderEnvVarsSdkPath,
 	stageManagedOpenClawProviderMarker,
 } from "./openclaw-managed-provider-plugin";
@@ -976,21 +970,16 @@ function makeRuntimeUserPrivateDir(path: string, home: string): void {
 	}
 }
 
-function ensureHostedOpenClawStateDirectories(manifest: RuntimeManifest, home: string): void {
-	if (
-		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2" ||
-		manifest.runtimes.openclaw?.enabled !== true
-	)
-		return;
-	const stateRoot = join(home, ".openclaw");
-	for (const path of [stateRoot, join(stateRoot, "tmp")]) {
+function ensureHostedOpenClawStateDirectories(context: OpenClawHostedContext): void {
+	if (!context.hostedV2 || !context.enabled) return;
+	for (const path of [context.stateRoot, context.tmpDir]) {
 		if (existsSync(path)) {
 			const node = lstatSync(path);
 			if (!node.isDirectory() || node.isSymbolicLink()) {
 				throw new Error(`hosted OpenClaw state path must be a real directory: ${path}`);
 			}
 		}
-		makeRuntimeUserPrivateDir(path, home);
+		makeRuntimeUserPrivateDir(path, context.home);
 	}
 }
 
@@ -1827,67 +1816,6 @@ interface HostedCodexManagedProvider {
 	baseUrl: string;
 }
 
-export type HostedAiProviderProjectionInput = {
-	catalog: AiProviderCatalog;
-	primaryModel: AgentPrimaryModel;
-};
-
-function agentTargetProjectionInput(
-	input: HostedAiProviderProjectionInput | null,
-): HostedAiProviderProjectionInput | null {
-	if (!input) return null;
-	const providerIdMap = new Map<string, string>();
-	const providers = input.catalog.providers.map((provider) => {
-		if (provider.managed_by !== "clawdi") return provider;
-		const id = isClawdiManagedV2ProviderId(provider.id)
-			? CLAWDI_MANAGED_PROVIDER_ID
-			: provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID || provider.id.startsWith("clawdi-managed")
-				? provider.id
-				: CLAWDI_MANAGED_V1_PROVIDER_ID;
-		providerIdMap.set(provider.id, id);
-		return {
-			...provider,
-			id,
-			api_mode: isClawdiManagedV2ProviderId(id) ? CLAWDI_MANAGED_V2_API_MODE : provider.api_mode,
-		} satisfies AiProviderCatalog["providers"][number];
-	});
-	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);
-	if (!primaryProviderId) return input;
-	return {
-		catalog: {
-			...input.catalog,
-			providers,
-			defaults: { ...input.catalog.defaults, chat_provider_id: primaryProviderId },
-		},
-		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
-	};
-}
-
-function hasManagedClawdiOpenClawApiKeyProjection(manifest: RuntimeManifest): boolean {
-	const runtime = manifest.runtimes.openclaw;
-	const sourceProviderId = runtime?.provider_ids?.[0];
-	const sourceProvider = sourceProviderId
-		? recordValue(manifest.projection?.providers?.[sourceProviderId])
-		: null;
-	const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, "openclaw"));
-	const provider = projectionInput?.catalog.providers.find(
-		(entry) => entry.id === CLAWDI_MANAGED_PROVIDER_ID,
-	);
-	return (
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
-		runtime?.enabled === true &&
-		runtime.providerMode === "configured" &&
-		typeof sourceProviderId === "string" &&
-		isClawdiManagedV2ProviderId(sourceProviderId) &&
-		sourceProvider?.managed_by === "clawdi" &&
-		stringValue(sourceProvider.apiKeySecretRef) !== null &&
-		provider?.managed_by === "clawdi" &&
-		provider.runtime_env_name === MANAGED_AI_PROVIDER_RUNTIME_ENV &&
-		provider.auth.type === "api_key" &&
-		provider.auth.source === "managed"
-	);
-}
-
 function runtimeOAuthLedgerPath(
 	paths: RuntimePaths,
 	runtime: "hermes" | "openclaw",
@@ -2077,13 +2005,9 @@ function runHermesCodexAuth(
 	);
 }
 
-function openClawAgentDir(home: string): string {
-	return join(managedOpenClawStateDir(home), "agents", "main", "agent");
-}
-
 function openClawProviderAuthSdkPath(
 	observation: RuntimeInstallObservation | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 ): string {
 	const testOverride = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK?.trim();
 	if (testOverride) {
@@ -2094,29 +2018,19 @@ function openClawProviderAuthSdkPath(
 		}
 		return testOverride;
 	}
-	const commandPath = observation?.commandPath;
-	const resolved = resolveOpenClawProviderAuthSdkExport(home, [
-		commandPath,
-		observation?.appRoot,
-		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
-		join(home, ".openclaw", "node_modules", "openclaw"),
-		join(home, ".local", "lib", "node_modules", "openclaw"),
-	]);
+	const resolved = context.resolveSdkExport("provider-auth", {
+		commandPath: observation?.commandPath,
+		appRoot: observation?.appRoot,
+	});
 	if (!resolved) throw new Error("installed OpenClaw provider-auth SDK export is unavailable");
 	return resolved;
 }
 
 function openClawDeviceBootstrapSdkPath(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 ): string | null {
-	return resolveOpenClawDeviceBootstrapSdkExport(home, [
-		observation.commandPath,
-		observation.appRoot,
-		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
-		join(home, ".openclaw", "node_modules", "openclaw"),
-		join(home, ".local", "lib", "node_modules", "openclaw"),
-	]);
+	return context.resolveSdkExport("device-bootstrap", observation);
 }
 
 const OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE = `
@@ -2130,16 +2044,16 @@ process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : 
 
 function openClawSupportsOwnerBrowserBootstrap(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 ): boolean {
-	const sdkPath = openClawDeviceBootstrapSdkPath(observation, home);
+	const sdkPath = openClawDeviceBootstrapSdkPath(observation, context);
 	if (!sdkPath) return false;
-	ensureRuntimeUserHome(home);
+	ensureRuntimeUserHome(context.home);
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
-		home,
-		home,
+		context.home,
+		context.home,
 	);
 	if (result.status !== 0) {
 		throw new Error(
@@ -2157,7 +2071,7 @@ function openClawSupportsOwnerBrowserBootstrap(
 const OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE = `
 import { pathToFileURL } from "node:url";
 const sdk = await import(pathToFileURL(process.argv[1]).href);
-if (typeof sdk.ensureAuthProfileStoreForLocalUpdate !== "function" || typeof sdk.updateAuthProfileStoreWithLock !== "function") {
+if (${openClawSdkFunctionGuard("sdk", OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS)}) {
   throw new Error("required public provider-auth exports are missing");
 }
 `;
@@ -2168,12 +2082,9 @@ const providerAuth = await import(pathToFileURL(process.argv[1]).href);
 const configMutation = await import(pathToFileURL(process.argv[2]).href);
 const providerEnvVars = await import(pathToFileURL(process.argv[3]).href);
 if (
-  typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
-  typeof providerAuth.listProfilesForProvider !== "function" ||
-  typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
-  typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
-  typeof configMutation.mutateConfigFile !== "function" ||
-  typeof providerEnvVars.listKnownProviderAuthEnvVarNames !== "function"
+  ${openClawSdkFunctionGuard("providerAuth", OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS)} ||
+  ${openClawSdkFunctionGuard("configMutation", OPENCLAW_CONFIG_MUTATION_EXPORTS)} ||
+  ${openClawSdkFunctionGuard("providerEnvVars", OPENCLAW_PROVIDER_ENV_VARS_EXPORTS)}
 ) {
   throw new Error("required public OpenClaw auth cleanup exports are missing");
 }
@@ -2181,15 +2092,15 @@ if (
 
 function requireOpenClawProviderAuthCapability(
 	observation: RuntimeInstallObservation | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 ): void {
-	const sdkPath = openClawProviderAuthSdkPath(observation, home);
-	ensureRuntimeUserHome(home);
+	const sdkPath = openClawProviderAuthSdkPath(observation, context);
+	ensureRuntimeUserHome(context.home);
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE, sdkPath],
-		home,
-		home,
+		context.home,
+		context.home,
 	);
 	if (result.status !== 0) {
 		throw new Error(
@@ -2202,14 +2113,14 @@ function requireOpenClawProviderAuthCapability(
 
 function requireOpenClawManagedProviderAuthCleanupCapability(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 ): void {
-	const providerAuthSdkPath = openClawProviderAuthSdkPath(observation, home);
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	const providerAuthSdkPath = openClawProviderAuthSdkPath(observation, context);
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
-	ensureRuntimeUserHome(home);
+	ensureRuntimeUserHome(context.home);
 	const result = spawnRuntimeUserCommand(
 		"node",
 		[
@@ -2219,13 +2130,13 @@ function requireOpenClawManagedProviderAuthCleanupCapability(
 			providerAuthSdkPath,
 			configMutationSdkPath,
 			openClawProviderEnvVarsSdkPath({
-				home,
+				context,
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 			}),
 		],
-		home,
-		home,
+		context.home,
+		context.home,
 	);
 	if (result.status !== 0) {
 		throw new Error(
@@ -2240,10 +2151,10 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 	manifest: RuntimeManifest;
 	secretValues: Record<string, string> | undefined;
 	observation: RuntimeInstallObservation;
-	home: string;
+	context: OpenClawHostedContext;
 }): RuntimeInstallObservation {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, "openclaw", input.secretValues);
-	const cleanupManagedProvider = hasManagedClawdiOpenClawApiKeyProjection(input.manifest);
+	const cleanupManagedProvider = input.context.managedApiKeyProjection;
 	if (desired.length === 0 && !cleanupManagedProvider) return input.observation;
 	const requirement =
 		desired.length > 0 && cleanupManagedProvider
@@ -2252,9 +2163,9 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 				? "OpenClaw managed API-key cleanup"
 				: "OpenClaw OAuth";
 	const requireCapabilities = (observation: RuntimeInstallObservation): void => {
-		if (desired.length > 0) requireOpenClawProviderAuthCapability(observation, input.home);
+		if (desired.length > 0) requireOpenClawProviderAuthCapability(observation, input.context);
 		if (cleanupManagedProvider) {
-			requireOpenClawManagedProviderAuthCleanupCapability(observation, input.home);
+			requireOpenClawManagedProviderAuthCleanupCapability(observation, input.context);
 		}
 	};
 	try {
@@ -2272,7 +2183,7 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 
 function runOpenClawProviderAuthCommand(
 	observation: RuntimeInstallObservation | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	action: OpenClawProviderAuthAction,
 	profileId: string,
@@ -2299,15 +2210,15 @@ function runOpenClawProviderAuthCommand(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_PROVIDER_AUTH_HELPER,
-			openClawProviderAuthSdkPath(observation, home),
-			openClawAgentDir(home),
+			openClawProviderAuthSdkPath(observation, context),
+			context.agentDirs.main,
 			action,
 			profileId,
 			ownership?.nativeProfileId ?? "",
 			credentialRevision,
 			expectedFingerprint ?? "",
 		],
-		home,
+		context.home,
 		workspaceRoot,
 		{ input: credential || "null" },
 	);
@@ -2322,7 +2233,7 @@ function runOpenClawProviderAuthCommand(
 
 function observeOpenClawProviderAuth(
 	observation: RuntimeInstallObservation | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	profileId: string,
 	credentialRevision: string,
@@ -2331,7 +2242,7 @@ function observeOpenClawProviderAuth(
 	return nativeOAuthObservation(
 		runOpenClawProviderAuthCommand(
 			observation,
-			home,
+			context,
 			workspaceRoot,
 			"inspect",
 			profileId,
@@ -2344,7 +2255,7 @@ function observeOpenClawProviderAuth(
 
 function runOpenClawProviderAuth(
 	observation: RuntimeInstallObservation | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	action: Exclude<OpenClawProviderAuthAction, "inspect">,
 	profileId: string,
@@ -2356,7 +2267,7 @@ function runOpenClawProviderAuth(
 	return nativeOAuthMutationResult(
 		runOpenClawProviderAuthCommand(
 			observation,
-			home,
+			context,
 			workspaceRoot,
 			action,
 			profileId,
@@ -2370,11 +2281,10 @@ function runOpenClawProviderAuth(
 
 function removeOpenClawManagedProviderAuthProfiles(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
-	agentDirs: readonly string[],
 ): void {
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
@@ -2384,13 +2294,13 @@ function removeOpenClawManagedProviderAuthProfiles(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
-			openClawProviderAuthSdkPath(observation, home),
+			openClawProviderAuthSdkPath(observation, context),
 			configMutationSdkPath,
-			home,
+			context.home,
 			"cleanup",
-			JSON.stringify(agentDirs),
+			JSON.stringify(context.agentDirs.managed),
 		],
-		home,
+		context.home,
 		workspaceRoot,
 	);
 	if (result.status !== 0) {
@@ -2404,9 +2314,9 @@ function removeOpenClawManagedProviderAuthProfiles(
 
 function discoverOpenClawManagedProviderAuthAgentDirs(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 ): string[] {
-	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, home);
+	const configMutationSdkPath = openClawConfigMutationSdkPath(observation, context);
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
@@ -2416,13 +2326,13 @@ function discoverOpenClawManagedProviderAuthAgentDirs(
 			"--input-type=module",
 			"--eval",
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_HELPER,
-			openClawProviderAuthSdkPath(observation, home),
+			openClawProviderAuthSdkPath(observation, context),
 			configMutationSdkPath,
-			home,
+			context.home,
 			"discover",
 		],
-		home,
-		home,
+		context.home,
+		context.home,
 	);
 	if (result.status !== 0) {
 		throw new Error(
@@ -2470,6 +2380,7 @@ function observeHostedRuntimeOAuthCredential(input: {
 	runtime: "hermes" | "openclaw";
 	observation?: RuntimeInstallObservation;
 	home: string;
+	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
 	nativeProfileId: string;
 	credentialRevision: string;
@@ -2486,7 +2397,7 @@ function observeHostedRuntimeOAuthCredential(input: {
 	}
 	return observeOpenClawProviderAuth(
 		input.observation,
-		input.home,
+		input.openClawContext,
 		input.workspaceRoot,
 		input.nativeProfileId,
 		input.credentialRevision,
@@ -2499,6 +2410,7 @@ function executeHostedRuntimeOAuthAction(input: {
 	runtime: "hermes" | "openclaw";
 	observation?: RuntimeInstallObservation;
 	home: string;
+	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
 	nativeProfileId: string;
 	credentialRevision: string;
@@ -2533,7 +2445,7 @@ function executeHostedRuntimeOAuthAction(input: {
 	} else {
 		result = runOpenClawProviderAuth(
 			input.observation,
-			input.home,
+			input.openClawContext,
 			input.workspaceRoot,
 			adapterAction,
 			input.nativeProfileId,
@@ -2555,6 +2467,7 @@ function removeHostedRuntimeOAuthCredential(input: {
 	runtime: "hermes" | "openclaw";
 	observation?: RuntimeInstallObservation;
 	home: string;
+	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
 	nativeProfileId: string;
 	credentialRevision: string;
@@ -2576,7 +2489,7 @@ function removeHostedRuntimeOAuthCredential(input: {
 	} else {
 		result = runOpenClawProviderAuth(
 			input.observation,
-			input.home,
+			input.openClawContext,
 			input.workspaceRoot,
 			"remove",
 			input.nativeProfileId,
@@ -2642,6 +2555,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 	secretValues: Record<string, string> | undefined;
 	paths: RuntimePaths;
 	home: string;
+	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, input.runtime, input.secretValues);
@@ -2660,6 +2574,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 				runtime: input.runtime,
 				observation: input.observation,
 				home: input.home,
+				openClawContext: input.openClawContext,
 				workspaceRoot: input.workspaceRoot,
 				nativeProfileId: ledger.nativeProfileId,
 				credentialRevision: ledger.credentialRevision,
@@ -2694,6 +2609,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 					runtime: input.runtime,
 					observation: input.observation,
 					home: input.home,
+					openClawContext: input.openClawContext,
 					workspaceRoot: input.workspaceRoot,
 					nativeProfileId: ledger.nativeProfileId,
 					credentialRevision: ledger.credentialRevision,
@@ -2718,6 +2634,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			runtime: input.runtime,
 			observation: input.observation,
 			home: input.home,
+			openClawContext: input.openClawContext,
 			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
 			credentialRevision: credential.credentialRevision,
@@ -2743,6 +2660,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			runtime: input.runtime,
 			observation: input.observation,
 			home: input.home,
+			openClawContext: input.openClawContext,
 			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
 			credentialRevision: credential.credentialRevision,
@@ -2758,10 +2676,10 @@ function applyHostedAiProviderProjection(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	home: string,
+	openClawContext: OpenClawHostedContext,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
 	openClawOwnerBrowserBootstrapSupported: boolean,
-	openClawManagedAuthAgentDirs: readonly string[],
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -2774,7 +2692,7 @@ function applyHostedAiProviderProjection(
 				observation.commandPath,
 				manifest,
 				secretValues,
-				home,
+				openClawContext,
 				workspaceRoot,
 				openClawOwnerBrowserBootstrapSupported,
 			);
@@ -2791,9 +2709,9 @@ function applyHostedAiProviderProjection(
 		);
 	}
 	if (name === "openclaw") {
-		if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
+		if (openClawContext.managedApiKeyProjection) {
 			ensureManagedOpenClawProviderPlugin({
-				home,
+				context: openClawContext,
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 			});
@@ -2802,26 +2720,21 @@ function applyHostedAiProviderProjection(
 			observation.commandPath,
 			manifest,
 			secretValues,
-			home,
+			openClawContext,
 			workspaceRoot,
 			openClawOwnerBrowserBootstrapSupported,
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			applyOpenClawHostedProviderPatch(observation, providerPatch, home, workspaceRoot);
+			applyOpenClawHostedProviderPatch(observation, providerPatch, openClawContext, workspaceRoot);
 		}
-		if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
-			if (openClawManagedAuthAgentDirs.length === 0) {
+		if (openClawContext.managedApiKeyProjection) {
+			if (openClawContext.agentDirs.managed.length === 0) {
 				throw new Error(
 					"OpenClaw managed provider-auth stores were not transactionally discovered",
 				);
 			}
-			removeOpenClawManagedProviderAuthProfiles(
-				observation,
-				home,
-				workspaceRoot,
-				openClawManagedAuthAgentDirs,
-			);
+			removeOpenClawManagedProviderAuthProfiles(observation, openClawContext, workspaceRoot);
 		}
 		return {
 			path: observation.commandPath,
@@ -3249,41 +3162,34 @@ await sdk.mutateConfigFile({
 
 function openClawConfigMutationSdkPath(
 	observation: RuntimeInstallObservation,
-	home: string,
+	context: OpenClawHostedContext,
 ): string | null {
-	const commandPath = observation.commandPath;
-	return resolveOpenClawConfigMutationSdkExport(home, [
-		commandPath,
-		observation.appRoot,
-		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
-		join(home, ".openclaw", "node_modules", "openclaw"),
-		join(home, ".local", "lib", "node_modules", "openclaw"),
-	]);
+	return context.resolveSdkExport("config-mutation", observation);
 }
 
 function applyOpenClawHostedProviderPatch(
 	observation: RuntimeInstallObservation,
 	patch: OpenClawHostedProviderPatch,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
-	const sdkPath = openClawConfigMutationSdkPath(observation, home);
+	const sdkPath = openClawConfigMutationSdkPath(observation, context);
 	if (!sdkPath) {
 		runRuntimeUserCommand(
 			observation.commandPath ?? "openclaw",
 			["config", "patch", "--stdin", ...patch.args],
 			patch.content,
-			home,
+			context.home,
 			workspaceRoot,
 		);
 		return;
 	}
-	ensureRuntimeUserHome(home);
+	ensureRuntimeUserHome(context.home);
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
 		patch.content,
-		home,
+		context.home,
 		workspaceRoot,
 	);
 }
@@ -3611,11 +3517,11 @@ function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
 }
 
 function openClawGatewayHostedPatchIsApplied(
-	home: string,
+	context: OpenClawHostedContext,
 	patch: Record<string, unknown>,
 ): boolean {
 	try {
-		const current = JSON.parse(readFileSync(managedOpenClawConfigPath(home), "utf-8")) as unknown;
+		const current = JSON.parse(readFileSync(context.configPath, "utf-8")) as unknown;
 		return jsonMergePatchIsApplied(current, patch);
 	} catch {
 		return false;
@@ -3634,17 +3540,17 @@ function applyOpenClawGatewayHostedProjection(
 	command: string,
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
-	home: string,
+	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	ownerBrowserBootstrapSupported: boolean,
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
-	if (!patch || openClawGatewayHostedPatchIsApplied(home, patch)) return;
+	if (!patch || openClawGatewayHostedPatchIsApplied(context, patch)) return;
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],
 		`${JSON.stringify(patch, null, 2)}\n`,
-		home,
+		context.home,
 		workspaceRoot,
 	);
 }
@@ -5709,13 +5615,11 @@ function excludeRuntimeSnapshotCoverage(
 }
 
 function managedOpenClawMarkerBootstrapMutationPlan(
-	manifest: RuntimeManifest,
+	context: OpenClawHostedContext,
 	paths: RuntimePaths,
 ): RuntimeManagedMutationPlan | null {
-	if (!hasManagedClawdiOpenClawApiKeyProjection(manifest)) return null;
-	const target = managedOpenClawProviderPluginInstallDir(
-		hostedRuntimeProjectionHome(manifest, paths),
-	);
+	if (!context.managedApiKeyProjection) return null;
+	const target = context.providerPlugin.installDir;
 	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
 	return {
 		rootTargets: [],
@@ -5765,8 +5669,12 @@ export function runtimeUserMutationTargets(
 	paths: RuntimePaths,
 	openClawWorkspaceRoot: string | null,
 	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
+	openClawContext: OpenClawHostedContext = createOpenClawHostedContext(
+		manifest,
+		hostedRuntimeProjectionHome(manifest, paths),
+	),
 ): string[] {
-	const home = hostedRuntimeProjectionHome(manifest, paths);
+	const home = openClawContext.home;
 	const installerTargets = runtimeInstallerMutationTargets(manifest, home, observations);
 	const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
 	const channels = hostedChannelProjection(manifest);
@@ -5776,20 +5684,20 @@ export function runtimeUserMutationTargets(
 				.map((channel) => join(home, ".openclaw", "extensions", channel))
 		: [];
 	const targets = new Set<string>([
-		managedOpenClawConfigPath(home),
+		openClawContext.configPath,
 		join(home, ".hermes", "config.yaml"),
 		join(home, ".hermes", "SOUL.md"),
 		hermesAuthPath(home),
 		join(dirname(hermesAuthPath(home)), "auth.lock"),
-		openClawAgentDir(home),
+		openClawContext.agentDirs.main,
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 		legacyHermesModelProviderPluginDir(home),
 		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,
 	]);
-	if (hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
-		for (const target of managedOpenClawProviderPluginMutationTargets(home)) targets.add(target);
+	if (openClawContext.managedApiKeyProjection) {
+		for (const target of openClawContext.providerPlugin.mutationTargets) targets.add(target);
 	}
 	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
 	for (const name of HOSTED_RUNTIME_TARGETS) {
@@ -5902,6 +5810,7 @@ function runtimeManagedMutationPlan(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 	openClawWorkspaceRoot: string | null;
+	openClawContext: OpenClawHostedContext;
 	programs: RuntimeSystemdUserProgram[];
 	observations: ReadonlyMap<string, RuntimeInstallObservation>;
 }): {
@@ -5938,6 +5847,7 @@ function runtimeManagedMutationPlan(input: {
 				input.paths,
 				input.openClawWorkspaceRoot,
 				input.observations,
+				input.openClawContext,
 			),
 			...systemd.targets,
 		]),
@@ -6074,9 +5984,10 @@ export function convergeRuntimeManifest(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
+	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	// Runtime-user state ownership is a platform invariant, not a manifest
 	// mutation: repair it before snapshots so rollback cannot restore drift.
-	ensureHostedOpenClawStateDirectories(manifest, projectionHome);
+	ensureHostedOpenClawStateDirectories(openClawContext);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
@@ -6134,7 +6045,6 @@ export function convergeRuntimeManifest(
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
 	let openClawOwnerBrowserBootstrapSupported = false;
-	let openClawManagedAuthAgentDirs: string[] = [];
 
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
@@ -6193,7 +6103,7 @@ export function convergeRuntimeManifest(
 	const coldInstallSnapshot = coldInstallPlan
 		? captureRuntimeLiveSnapshot(coldInstallPlan.snapshot)
 		: null;
-	const markerBootstrapPlan = managedOpenClawMarkerBootstrapMutationPlan(manifest, paths);
+	const markerBootstrapPlan = managedOpenClawMarkerBootstrapMutationPlan(openClawContext, paths);
 	let markerBootstrapSnapshot: RuntimeLiveSnapshot | null = null;
 	try {
 		if (coldInstallPlan) {
@@ -6207,7 +6117,7 @@ export function convergeRuntimeManifest(
 			if (name === "openclaw" && observation.enabled && observation.commandPath) {
 				openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
 					observation,
-					projectionHome,
+					openClawContext,
 				);
 			}
 		}
@@ -6223,7 +6133,7 @@ export function convergeRuntimeManifest(
 				throw new Error("OpenClaw managed provider marker requires an installed runtime");
 			}
 			stageManagedOpenClawProviderMarker({
-				home: projectionHome,
+				context: openClawContext,
 				commandPath: observation.commandPath,
 				appRoot: observation.appRoot,
 			});
@@ -6309,6 +6219,7 @@ export function convergeRuntimeManifest(
 			manifest,
 			paths,
 			openClawWorkspaceRoot,
+			openClawContext,
 			programs: plannedRuntimePrograms,
 			observations,
 		});
@@ -6397,13 +6308,13 @@ export function convergeRuntimeManifest(
 					manifest,
 					secretValues,
 					observation: openClawObservation,
-					home: projectionHome,
+					context: openClawContext,
 				});
 				observations.set("openclaw", capableObservation);
 				if (capableObservation !== openClawObservation) {
 					openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
 						capableObservation,
-						projectionHome,
+						openClawContext,
 					);
 				}
 			} catch (error) {
@@ -6416,12 +6327,12 @@ export function convergeRuntimeManifest(
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 		const managedOpenClawObservation = observations.get("openclaw");
-		if (managedOpenClawObservation && hasManagedClawdiOpenClawApiKeyProjection(manifest)) {
-			openClawManagedAuthAgentDirs = discoverOpenClawManagedProviderAuthAgentDirs(
+		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
+			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
 				managedOpenClawObservation,
-				projectionHome,
+				openClawContext,
 			);
-			const supplementalTargets = openClawManagedAuthAgentDirs.filter(
+			const supplementalTargets = openClawContext.agentDirs.managed.filter(
 				(path) => !liveSnapshot.entries.has(path),
 			);
 			if (supplementalTargets.length > 0) {
@@ -6837,6 +6748,7 @@ export function convergeRuntimeManifest(
 					secretValues,
 					paths,
 					home: projectionHome,
+					openClawContext,
 					workspaceRoot,
 				});
 			} catch (error) {
@@ -6897,6 +6809,7 @@ export function convergeRuntimeManifest(
 						secretValues,
 						paths,
 						home: projectionHome,
+						openClawContext,
 						workspaceRoot,
 					});
 				} catch (error) {
@@ -6931,10 +6844,10 @@ export function convergeRuntimeManifest(
 					manifest,
 					secretValues,
 					projectionHome,
+					openClawContext,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
 					openClawOwnerBrowserBootstrapSupported,
-					openClawManagedAuthAgentDirs,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {

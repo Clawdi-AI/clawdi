@@ -83,16 +83,7 @@ function resolveOpenClawSdkExport(
 	exportPath: `openclaw/plugin-sdk/${string}`,
 ): string | null {
 	const packageRoots = new Set<string>();
-	const officialInstallerPackageRoot = join(
-		home,
-		".local",
-		"tools",
-		"node",
-		"lib",
-		"node_modules",
-		"openclaw",
-	);
-	for (const startPath of [...startPaths, officialInstallerPackageRoot]) {
+	for (const startPath of openClawSdkStartPaths(home, startPaths)) {
 		if (!startPath || !existsSync(startPath)) continue;
 		let current = realpathSync(startPath);
 		if (!existsSync(join(current, "package.json"))) current = dirname(current);
@@ -127,6 +118,39 @@ function resolveOpenClawSdkExport(
 		}
 	}
 	return null;
+}
+
+export function openClawSdkStartPaths(
+	home: string,
+	runtimePaths: ReadonlyArray<string | null | undefined>,
+): ReadonlyArray<string | null | undefined> {
+	const stateRoot = join(home, ".openclaw");
+	return [
+		...runtimePaths,
+		join(stateRoot, "lib", "node_modules", "openclaw"),
+		join(stateRoot, "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+		join(home, ".local", "tools", "node", "lib", "node_modules", "openclaw"),
+	];
+}
+
+export const OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS = [
+	"ensureAuthProfileStoreForLocalUpdate",
+	"updateAuthProfileStoreWithLock",
+] as const;
+export const OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS = [
+	"ensureAuthProfileStoreForLocalUpdate",
+	"listProfilesForProvider",
+	"removeProviderAuthProfilesWithLock",
+] as const;
+export const OPENCLAW_CONFIG_MUTATION_EXPORTS = [
+	"readConfigFileSnapshotForWrite",
+	"mutateConfigFile",
+] as const;
+export const OPENCLAW_PROVIDER_ENV_VARS_EXPORTS = ["listKnownProviderAuthEnvVarNames"] as const;
+
+export function openClawSdkFunctionGuard(namespace: string, exports: readonly string[]): string {
+	return exports.map((name) => `typeof ${namespace}.${name} !== "function"`).join(" ||\n  ");
 }
 
 export function resolveOpenClawProviderAuthSdkExport(
@@ -389,11 +413,8 @@ const [providerAuthSdkPath, configMutationSdkPath, home, action, expectedAgentDi
 const providerAuth = await import(pathToFileURL(providerAuthSdkPath).href);
 const configMutation = await import(pathToFileURL(configMutationSdkPath).href);
 if (
-  typeof providerAuth.ensureAuthProfileStoreForLocalUpdate !== "function" ||
-  typeof providerAuth.listProfilesForProvider !== "function" ||
-  typeof providerAuth.removeProviderAuthProfilesWithLock !== "function" ||
-  typeof configMutation.readConfigFileSnapshotForWrite !== "function" ||
-  typeof configMutation.mutateConfigFile !== "function"
+  ${openClawSdkFunctionGuard("providerAuth", OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS)} ||
+  ${openClawSdkFunctionGuard("configMutation", OPENCLAW_CONFIG_MUTATION_EXPORTS)}
 ) {
   throw new Error("required public OpenClaw auth cleanup exports are missing");
 }
@@ -407,7 +428,7 @@ const normalizePath = (value) => {
   if (trimmed.startsWith("~/")) return join(home, trimmed.slice(2));
   return resolve(trimmed);
 };
-const stateDir = normalizePath(process.env.OPENCLAW_STATE_DIR?.trim() || join(home, ".openclaw"));
+const stateDir = join(home, ".openclaw");
 const defaultAgentDir = join(stateDir, "agents", "main", "agent");
 const agentDirs = new Set([defaultAgentDir]);
 if (process.env.OPENCLAW_AGENT_DIR?.trim()) {

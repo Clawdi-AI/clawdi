@@ -289,6 +289,8 @@ function runtimeUserCommandEnv(
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: home,
+		OPENCLAW_STATE_DIR: join(home, ".openclaw"),
+		OPENCLAW_CONFIG_PATH: join(home, ".openclaw", "openclaw.json"),
 		PATH:
 			runtimeUid === null
 				? [...tenantBinPaths, process.env.PATH].filter(Boolean).join(":")
