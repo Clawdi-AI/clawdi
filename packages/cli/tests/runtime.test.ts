@@ -15298,6 +15298,9 @@ exit 64
 			expect(convergence.outputs.workspaceRoot).toBe(workspace);
 			expect(existsSync(workspace)).toBe(true);
 			expect(hermesRunConfig.cwd).toBe(workspace);
+			expect(expectRecord(readHermesConfigYaml(home).terminal, "Hermes terminal config").cwd).toBe(
+				workspace,
+			);
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(readSystemdSystemUnit(getRuntimePaths(), "clawdi-runtime-watch")).toContain(
 				`WorkingDirectory=${workspace}`,
@@ -16851,7 +16854,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		converge(manifestFor("en", "UTC"));
 		const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
-		expect(readSystemdEnvFile(paths, "openclaw-gateway")).toContain('TZ="UTC"');
 
 		converge(manifestFor("fr", "Europe/Paris"));
 		const soul = readFileSync(soulPath, "utf-8");
@@ -16861,7 +16863,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(soul).toContain("`Europe/Paris`");
 		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
 		const updatedEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-		expect(updatedEnv).toContain('TZ="Europe/Paris"');
 		expect(systemdEnvRevision(updatedEnv)).not.toBe(initialRevision);
 		converge(manifestFor("fr", "Europe/Paris"));
 		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
@@ -16920,7 +16921,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const config = readHermesConfigYaml(home);
 		expect(config.custom_setting).toBe("keep");
 		expect(config.timezone).toBe("Asia/Taipei");
-		expect(readSystemdEnvFile(paths, "hermes-gateway")).toContain('TZ="Asia/Taipei"');
 	});
 
 	it("runtime program revisions ignore unrelated control-plane and sibling runtime changes", () => {

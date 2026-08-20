@@ -5082,8 +5082,19 @@ echo spawned > '${installerLog}'
 		const installerPath = join(fixtureRoot, "install-openclaw.sh");
 		const installerResultPath = join(fixtureRoot, "installer-result");
 		const installerLog = join(fixtureRoot, "installer.log");
+		const installerEnvironmentLog = join(fixtureRoot, "installer-environment.log");
 		const desiredVersion = HOSTED_V2_OPENCLAW_VERSION;
 		const configWriterVersion = "2026.8.1.beta.1";
+		const openClawInstallerOverrides = [
+			"OPENCLAW_HOME",
+			"OPENCLAW_STATE_DIR",
+			"OPENCLAW_CONFIG_PATH",
+			"OPENCLAW_PREFIX",
+			"OPENCLAW_VERSION",
+			"OPENCLAW_INSTALL_METHOD",
+			"OPENCLAW_GIT_DIR",
+			"OPENCLAW_GIT_UPDATE",
+		] as const;
 		const config = {
 			meta: {
 				lastTouchedVersion: configWriterVersion,
@@ -5113,10 +5124,24 @@ esac
 			`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$#" "$@" >> '${installerLog}'
+printf '%s\n' "$HOME" > '${installerEnvironmentLog}'
+for name in ${openClawInstallerOverrides.join(" ")}; do
+  if [ "\${!name+x}" = x ]; then printf '%s\n' "$name" >> '${installerEnvironmentLog}'; fi
+done
 cp '${installerResultPath}' '${installedVersionPath}'
 `,
 		);
 		chmodSync(installerPath, 0o700);
+		Object.assign(process.env, {
+			OPENCLAW_HOME: "stale-openclaw-home",
+			OPENCLAW_STATE_DIR: dirname(configPath),
+			OPENCLAW_CONFIG_PATH: configPath,
+			OPENCLAW_PREFIX: "stale-openclaw-prefix",
+			OPENCLAW_VERSION: "stale-openclaw-version",
+			OPENCLAW_INSTALL_METHOD: "stale-openclaw-install-method",
+			OPENCLAW_GIT_DIR: "stale-openclaw-git-dir",
+			OPENCLAW_GIT_UPDATE: "stale-openclaw-git-update",
+		});
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = `file://${installerPath}`;
 
@@ -5157,6 +5182,7 @@ cp '${installerResultPath}' '${installedVersionPath}'
 			`OpenClaw ${desiredVersion}`,
 		);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(config);
+		expect(readFileSync(installerEnvironmentLog, "utf8").trim().split("\n")).toEqual([home]);
 		const expectedArgs = [
 			...officialInstallArgs("openclaw", home, desiredVersion),
 			"--compatible-with",

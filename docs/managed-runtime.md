@@ -1190,8 +1190,13 @@ URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
 official Basic password/session environment secret references. Hosted derives
 the password and an independent session-signing secret from the gateway token
 and durable Runtime UI access revision. The CLI projects non-secret settings to
-`dashboard.basic_auth` and secrets to the official
-`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables.
+the official `dashboard.basic_auth` and `dashboard.public_url` config keys, and
+projects only the password and session-signing secret through the official
+`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables. Hosted also writes its
+workspace to the official `terminal.cwd` key; it does not replace the gateway
+unit's upstream-owned working directory. Runtime processes keep the system UTC
+timezone, while the agent's business timezone uses the official OpenClaw
+`agents.defaults.userTimezone` or Hermes `timezone` config key.
 
 The dashboard consumes generated discriminated deployment metadata; it does not
 infer auth from the runtime name or fall back to legacy `native_url` fields.
@@ -1207,11 +1212,12 @@ rotates the existing encrypted gateway credential and advances the durable
 access revision through the ordinary generation, manifest, reconcile, and LRO
 completion path; restart and ordinary updates do not rotate it.
 
-The Hermes contract was verified against NousResearch/hermes-agent commit
-[`8208fc52701332f213e6c51ebc0b610be00300de`](https://github.com/NousResearch/hermes-agent/tree/8208fc52701332f213e6c51ebc0b610be00300de),
-specifically `cli-config.yaml.example`,
-`plugins/dashboard_auth/self_hosted/__init__.py`,
-`hermes_cli/dashboard_auth/public_paths.py`, and `hermes_cli/web_server.py`.
+The Hermes contract was verified against Hermes Agent 0.20.4 commit
+[`a72c9ca248a051b8c7e8a69ff422c7be5066cdc4`](https://github.com/NousResearch/hermes-agent/tree/a72c9ca248a051b8c7e8a69ff422c7be5066cdc4),
+specifically `hermes_cli/subcommands/dashboard.py`,
+`plugins/dashboard_auth/basic/__init__.py`,
+`hermes_cli/dashboard_auth/prefix.py`, `hermes_cli/web_server.py`, and
+`hermes_cli/gateway.py`.
 
 ### Official OpenClaw evidence
 

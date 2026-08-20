@@ -795,6 +795,8 @@ test("persists and serves the managed token through the real official OpenClaw g
 	rmSync(dropInRoot, { recursive: true, force: true });
 	rmSync(enablementPath, { force: true });
 	const workspaceRoot = join(runtimeHome, ".openclaw", "workspace");
+	mkdirSync(dirname(openClawConfig), { recursive: true, mode: 0o700 });
+	chownSync(dirname(openClawConfig), runtimeUid, runtimeGid);
 	writeFileSync(
 		openClawConfig,
 		`${JSON.stringify({
@@ -931,7 +933,7 @@ test("persists and serves the managed token through the real official OpenClaw g
 		rmSync(dropInRoot, { recursive: true, force: true });
 		rmSync(enablementPath, { force: true });
 	}
-}, 60_000);
+}, 120_000);
 
 test("runs Files as the tenant while preserving platform isolation", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;

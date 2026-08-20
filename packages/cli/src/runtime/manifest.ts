@@ -1109,6 +1109,7 @@ const liveSyncEnvironmentIndexSchema = z
 	.strict();
 
 function runtimeInstallerExecution(
+	runtime: string,
 	install: RuntimeInstall,
 	installerPath: string,
 	extraArgs: string[] = [],
@@ -1119,7 +1120,7 @@ function runtimeInstallerExecution(
 	executionUser: string | null;
 } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const env = runtimeInstallerEnv(install);
+	const env = runtimeInstallerEnv(runtime, install);
 	if (!runtimeUser || runtimeUser === "root") {
 		return {
 			command: "bash",
@@ -1142,13 +1143,27 @@ function runtimeInstallerExecution(
 	};
 }
 
-function runtimeInstallerEnv(install: RuntimeInstall): NodeJS.ProcessEnv {
+function runtimeInstallerEnv(runtime: string, install: RuntimeInstall): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: install.home,
 		PATH: [join(install.home, ".local", "bin"), process.env.PATH].filter(Boolean).join(":"),
 	};
 	clearTenantToolLocationOverrides(env);
+	if (runtime === "openclaw") {
+		for (const key of [
+			"OPENCLAW_HOME",
+			"OPENCLAW_STATE_DIR",
+			"OPENCLAW_CONFIG_PATH",
+			"OPENCLAW_PREFIX",
+			"OPENCLAW_VERSION",
+			"OPENCLAW_INSTALL_METHOD",
+			"OPENCLAW_GIT_DIR",
+			"OPENCLAW_GIT_UPDATE",
+		] as const) {
+			delete env[key];
+		}
+	}
 	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
 	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
 	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
@@ -1336,6 +1351,7 @@ function runOfficialInstaller(
 		const configWriterVersion =
 			expectedVersion === undefined ? null : openClawConfigWriterVersion(install.home);
 		const execution = runtimeInstallerExecution(
+			name,
 			install,
 			materialized.path,
 			configWriterVersion === null ? [] : ["--compatible-with", configWriterVersion],
@@ -1607,6 +1623,7 @@ function applyHermesDashboardConfig(
 		username: auth.username,
 		session_ttl_seconds: auth.sessionTtlSeconds,
 	});
+	reconcileHermesConfigValue(context, "dashboard.public_url", auth.publicUrl);
 	const currentDisabled = getHermesRawConfigValue(context, "plugins.disabled");
 	if (
 		currentDisabled.exists &&
@@ -1625,7 +1642,7 @@ function applyHermesDashboardConfig(
 	reconcileHermesConfigValue(context, "plugins.disabled", [...disabled].sort());
 }
 
-function applyHostedLocaleProjection(
+function applyHostedRuntimeConfigProjection(
 	runtime: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
@@ -1643,9 +1660,12 @@ function applyHostedLocaleProjection(
 	}
 	if (runtime === "hermes") {
 		const auth = manifest.hermesDashboardAuth;
-		if (!auth && !locale) return null;
+		const managesWorkspace =
+			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+		if (!auth && !locale && !managesWorkspace) return null;
 		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
+		if (managesWorkspace) reconcileHermesConfigValue(context, "terminal.cwd", workspaceRoot);
 		if (auth) applyHermesDashboardConfig(context, auth);
 		if (locale) reconcileHermesConfigValue(context, "timezone", locale.timezone);
 		return locale
@@ -5530,9 +5550,7 @@ function validateRuntimeManifestPlan(
 			runtime.run,
 			providerPlaceholderEnv,
 		);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
-			: {};
+		if (runtime.enabled) mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv);
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
 			const settings = resolvedRuntimeServiceSettings(
@@ -5542,7 +5560,7 @@ function validateRuntimeManifestPlan(
 				serviceSettings,
 				providerPlaceholderEnv,
 			);
-			if (runtime.enabled) mergeRuntimeServiceSecretEnv(name, service, settings, secretEnv);
+			if (runtime.enabled) mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
 		}
 		if (!runtime.enabled || !manifest.locale) continue;
 		const block = managedLocaleBlock(manifest.locale);
@@ -5622,12 +5640,7 @@ function withHermesDashboardAuthEnvironment(
 	return {
 		...(settings ?? {}),
 		prependPath: settings?.prependPath ?? [],
-		env: {
-			...(settings?.env ?? {}),
-			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: auth.username,
-			HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS: String(auth.sessionTtlSeconds),
-			HERMES_DASHBOARD_PUBLIC_URL: auth.publicUrl,
-		},
+		env: settings?.env ?? {},
 		secretEnv: {
 			...(settings?.secretEnv ?? {}),
 			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: auth.passwordSecretRef,
@@ -5707,7 +5720,7 @@ function resolveRuntimeRunConfigs(input: {
 				settings,
 				secretFilePath: null,
 				secretEnv: input.runtime.enabled
-					? mergeRuntimeServiceSecretEnv(input.name, service, settings, secretEnv)
+					? mergeRuntimeServiceSecretEnv(input.name, service, settings, providerSecretEnv)
 					: {},
 			});
 		});
@@ -5835,7 +5848,7 @@ function validateRuntimeProjectionPlan(input: {
 				serviceSettings,
 				providerPlaceholderEnv,
 			);
-			mergeRuntimeServiceSecretEnv(name, service, settings, secretEnv);
+			mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
 		}
 
 		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
@@ -7234,7 +7247,7 @@ export function convergeRuntimeManifest(
 			}
 			try {
 				const localeFile = withRuntimeUserFileAccess(() =>
-					applyHostedLocaleProjection(
+					applyHostedRuntimeConfigProjection(
 						name,
 						observation,
 						manifest,
@@ -7246,7 +7259,7 @@ export function convergeRuntimeManifest(
 				if (localeFile) managedLocaleFiles.push(localeFile);
 			} catch (error) {
 				installErrors.push(
-					`runtime ${name} locale projection failed: ${
+					`runtime ${name} config projection failed: ${
 						error instanceof Error ? error.message : String(error)
 					}`,
 				);

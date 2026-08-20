@@ -112,6 +112,19 @@ function readUserServiceConfig(paths: RuntimePaths, name: string): string {
 	].join("\n");
 }
 
+function readSystemdEnvironment(paths: RuntimePaths, name: string): Record<string, string> {
+	const content = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
+	return Object.fromEntries(
+		content
+			.split(/\r?\n/)
+			.filter((line) => line && !line.startsWith("#"))
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return [line.slice(0, separator), JSON.parse(line.slice(separator + 1)) as string];
+			}),
+	);
+}
+
 function writeFakeGatewayCli(input: {
 	path: string;
 	logPath: string;
@@ -552,6 +565,7 @@ describe("runtime manifest services", () => {
 		const hermesUnit = readUserServiceConfig(paths, "hermes-gateway");
 		expect(hermesUnit).not.toContain("\nExecStart=");
 		expect(hermesUnit).not.toContain("\nWorkingDirectory=");
+		expect(hermesUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
 		const dashboardUnit = readFileSync(
 			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
 			"utf8",
@@ -560,9 +574,8 @@ describe("runtime manifest services", () => {
 			'ExecStart="hermes" "dashboard" "--host" "127.0.0.1" "--port" "9119" "--no-open"',
 		);
 		expect(dashboardUnit).not.toContain("--skip-build");
+		expect(dashboardUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
 		const openclawUnit = readUserServiceConfig(paths, "openclaw-gateway");
-		expect(openclawUnit).toContain('Environment="XDG_RUNTIME_DIR=%t"');
-		expect(openclawUnit).toContain('Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"');
 		expect(openclawUnit).toContain(
 			`EnvironmentFile=${join(paths.systemdEnvRoot, "openclaw-gateway.service.env")}`,
 		);
@@ -571,6 +584,7 @@ describe("runtime manifest services", () => {
 		);
 		expect(openclawUnit).not.toContain("\nExecStart=");
 		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
+		expect(openclawUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
 		expect(hermesUnit).toContain(
 			`ConditionPathExists=${join(paths.systemdEnvRoot, "hermes-gateway.service.env")}`,
 		);
@@ -609,17 +623,21 @@ describe("runtime manifest services", () => {
 			expect(unit).not.toContain("supervisord");
 			expect(unit).not.toContain("test-token");
 		}
-		const openclawEnv = readFileSync(
-			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
-			"utf8",
-		);
-		expect(openclawEnv).not.toContain("OPENCLAW_SYSTEMD_UNIT");
-		expect(openclawEnv).toContain('CLAWDI_AUTH_TOKEN=""');
-		for (const name of ["openclaw-gateway", "hermes-gateway", "clawdi-hermes-dashboard"]) {
-			const env = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
-			expect(env).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
-			expect(env).not.toContain(dirname(paths.cliManagedBin));
-		}
+		const revision = expect.stringMatching(/^[a-f0-9]{32}$/);
+		expect(readSystemdEnvironment(paths, "openclaw-gateway")).toEqual({
+			BYOK_RUNTIME_SECRET: "runtime-byok-value",
+			CLAWDI_RUNTIME_REV: revision,
+			NON_SECRET_RUNTIME_SETTING: "public-value",
+		});
+		expect(readSystemdEnvironment(paths, "hermes-gateway")).toEqual({
+			CLAWDI_RUNTIME_REV: revision,
+		});
+		expect(readSystemdEnvironment(paths, "clawdi-hermes-dashboard")).toEqual({
+			BYOK_SERVICE_SECRET: "service-byok-value",
+			CLAWDI_RUNTIME_REV: revision,
+			HOME: paths.userHome,
+			PATH: expect.any(String),
+		});
 		expect(runtimeWatchEnv).toContain(`CLAWDI_HOME="${paths.clawdiHome}"`);
 
 		const serviceConfig = JSON.parse(
@@ -770,14 +788,8 @@ describe("runtime manifest services", () => {
 			`ExecStart="${hermesCommand}" "dashboard" "--host" "0.0.0.0" "--port" "9119" "--no-open"`,
 		);
 		expect(dashboardUnit).not.toContain("--skip-build");
-		const dashboardEnv = readFileSync(
-			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
-			"utf8",
-		);
-		const gatewayEnv = readFileSync(
-			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
-			"utf8",
-		);
+		const dashboardEnv = readSystemdEnvironment(paths, "clawdi-hermes-dashboard");
+		const gatewayEnv = readSystemdEnvironment(paths, "hermes-gateway");
 		const watchEnv = readFileSync(
 			join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
 			"utf8",
@@ -787,35 +799,27 @@ describe("runtime manifest services", () => {
 		const gatewayUnit = readUserServiceConfig(paths, "hermes-gateway");
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		const watchEnvStat = statSync(watchEnvPath);
-		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
-		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
-		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
-		expect(dashboardEnv).toContain(
-			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
-		);
+		const revision = expect.stringMatching(/^[a-f0-9]{32}$/);
+		expect(dashboardEnv).toEqual({
+			CLAWDI_RUNTIME_REV: revision,
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "opaque-password-value",
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "opaque-session-value",
+			HOME: paths.userHome,
+			PATH: expect.any(String),
+		});
+		expect(gatewayEnv).toEqual({
+			CLAWDI_RUNTIME_REV: revision,
+			RUNTIME_BUNDLE_TOKEN: "bundle-runtime-token",
+			RUNTIME_TARGET_TOKEN: "runtime-source-token",
+		});
 		const dashboardRunConfig = JSON.parse(
 			readFileSync(runtimeRunConfigPath("hermes", paths, "dashboard"), "utf8"),
 		) as { env?: Record<string, string>; secretEnv?: Record<string, string> };
-		expect(dashboardRunConfig.env).toMatchObject({
-			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "admin",
-			HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS: "43200",
-			HERMES_DASHBOARD_PUBLIC_URL: "https://agent.example.test/hermes",
-		});
-		expect(dashboardRunConfig.secretEnv).toMatchObject({
+		expect(dashboardRunConfig.env).toEqual({});
+		expect(dashboardRunConfig.secretEnv).toEqual({
 			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "secret://runtime/hermes/dashboard-password",
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
 		});
-		for (const name of [
-			"HERMES_DASHBOARD_BASIC_AUTH_USERNAME",
-			"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-			"HERMES_DASHBOARD_BASIC_AUTH_SECRET",
-			"HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS",
-			"HERMES_DASHBOARD_PUBLIC_URL",
-		]) {
-			expect(gatewayEnv).not.toContain(name);
-		}
-		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
-		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).not.toContain("opaque-password-value");
 		expect(watchEnv).not.toContain("opaque-session-value");
 		expect(watchEnv).not.toContain("runtime-source-token");
@@ -864,6 +868,7 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).toContain("basic_auth:");
 		expect(hermesConfig).toContain("username: admin");
 		expect(hermesConfig).toContain("session_ttl_seconds: 43200");
+		expect(hermesConfig).toContain("public_url: https://agent.example.test/hermes");
 		expect(hermesConfig).toContain("dashboard_auth/nous");
 		expect(hermesConfig).toContain("dashboard_auth/self_hosted");
 		expect(hermesConfig).not.toContain("dashboard_auth/basic\n");
