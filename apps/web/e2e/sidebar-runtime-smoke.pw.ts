@@ -213,6 +213,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 type DashboardApiStubOptions = {
 	accountResourceRequests?: string[];
+	agentDetailRequests?: string[];
 	projectResourceRequests?: string[];
 	sessionsPage?: unknown;
 	sessionRequests?: string[];
@@ -295,11 +296,13 @@ async function stubDashboardApi(
 		}
 		const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)$/);
 		if (agentMatch) {
+			options.agentDetailRequests?.push(route.request().url());
 			const agent = agents.find((candidate) => candidate.id === decodeURIComponent(agentMatch[1]));
 			await fulfillJson(route, agent ?? { detail: "Agent not found" }, agent ? 200 : 404);
 			return;
 		}
-		if (url.pathname === "/v1/agents/11111111-1111-4111-8111-111111111111/project-bindings") {
+		const projectBindingsMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)\/project-bindings$/);
+		if (projectBindingsMatch) {
 			options.projectBindingRequests?.push(route.request().url());
 			await options.projectBindingsGate;
 			if (options.projectBindingsError) {
@@ -310,7 +313,12 @@ async function stubDashboardApi(
 				);
 				return;
 			}
-			await fulfillJson(route, options.projectBindings ?? projectBindings);
+			const agentId = decodeURIComponent(projectBindingsMatch[1] ?? "");
+			await fulfillJson(
+				route,
+				options.projectBindings ??
+					projectBindings.map((binding) => ({ ...binding, agent_id: agentId })),
+			);
 			return;
 		}
 		if (
@@ -1643,9 +1651,10 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 	}
 });
 
-test("agent rail uses each whole tile for Space keyboard sorting", async ({ page }) => {
+test("agent rail preserves keyboard sorting and primes agent switches", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
-	await stubDashboardApi(page, agentOrderRequests);
+	const agentDetailRequests: string[] = [];
+	await stubDashboardApi(page, agentOrderRequests, { agentDetailRequests });
 	await page.goto("/");
 
 	const tiles = page.getByTestId("app-sidebar-agent-tile");
@@ -1693,4 +1702,6 @@ test("agent rail uses each whole tile for Space keyboard sorting", async ({ page
 	const postDragTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("button");
 	await postDragTarget.click();
 	await expect(page).toHaveURL("/agents/22222222-2222-4222-8222-222222222222");
+	await expect(page.getByRole("heading", { name: "Smoke Hermes", level: 1 })).toBeVisible();
+	expect(agentDetailRequests).toEqual([]);
 });
