@@ -197,7 +197,6 @@ export function applyRuntimeCliDesiredState(
 	opts: {
 		deferInstall?: boolean;
 		deferReason?: string;
-		rollbackEligible?: boolean;
 		runningVersion?: string;
 	} = {},
 ): RuntimeCliUpdateResult {
@@ -298,7 +297,6 @@ export function applyRuntimeCliDesiredState(
 			version: installed.version,
 		},
 		previousIdentity,
-		rollbackEligible: opts.rollbackEligible === true && previousIdentity !== null,
 	});
 	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
 	writeCliBootstrapStatus(
@@ -517,7 +515,6 @@ function lastGoodCliIdentity(
 	if (
 		transaction?.phase !== "activated" ||
 		transaction.rollback ||
-		!transaction.rollbackEligible ||
 		!transaction.previousIdentity ||
 		transaction.newIdentity.activeTarget !== activeIdentity.activeTarget
 	) {
@@ -913,13 +910,13 @@ export function rollbackPendingRuntimeCliUpgrade(
 			previousActiveTarget: null,
 		};
 	}
-	if (!transaction.rollbackEligible || !transaction.previousIdentity) {
+	if (!transaction.previousIdentity) {
 		return {
 			status: "not_pending",
 			version: transaction.newIdentity.version,
-			previousVersion: transaction.previousIdentity?.version ?? null,
+			previousVersion: null,
 			activeTarget: transaction.newIdentity.activeTarget,
-			previousActiveTarget: transaction.previousIdentity?.activeTarget ?? null,
+			previousActiveTarget: null,
 		};
 	}
 	if (!verifyStoredCliIdentity(paths, transaction.previousIdentity)) {
@@ -997,7 +994,6 @@ function prepareCliUpgradeTransaction(
 	input: {
 		newIdentity: RuntimeCliInstallIdentity;
 		previousIdentity: RuntimeCliInstallIdentity | null;
-		rollbackEligible: boolean;
 	},
 ): void {
 	const state = normalizeCliUpgradeState(readCliUpgradeState(paths));
@@ -1005,7 +1001,7 @@ function prepareCliUpgradeTransaction(
 		phase: "prepared",
 		previousIdentity: input.previousIdentity,
 		newIdentity: input.newIdentity,
-		rollbackEligible: input.rollbackEligible,
+		rollbackEligible: input.previousIdentity !== null,
 		installedAt: new Date().toISOString(),
 		rollback: null,
 	};

@@ -12584,25 +12584,28 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("rolls back a CLI upgrade when first converge fails for an already-applied manifest", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const bin = join(root, "bin");
-		const npmLog = join(root, "npm.log");
-		const openclawInstaller = join(root, "install-openclaw.sh");
-		const previousExitCode = process.exitCode;
-		const previousLog = console.log;
-		const previousPath = process.env.PATH;
-		const currentVersion = getCliVersion();
-		setRuntimeApplyGeneration(18);
-		const logs: string[] = [];
-		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(bin, { recursive: true });
-		mkdirSync(home, { recursive: true });
-		writeFileSync(
-			join(bin, "npm"),
-			`#!/usr/bin/env bash
+	it.each(["runtime watch", "runtime init"] as const)(
+		"%s rolls back a forward CLI upgrade on first converge failure",
+		async (command) => {
+			const home = join(root, "home", "clawdi");
+			const state = join(root, "var", "lib", "clawdi");
+			const run = join(root, "run", "clawdi");
+			const bin = join(root, "bin");
+			const npmLog = join(root, "npm.log");
+			const openclawInstaller = join(root, "install-openclaw.sh");
+			const previousExitCode = process.exitCode;
+			const previousLog = console.log;
+			const previousPath = process.env.PATH;
+			const currentVersion = getCliVersion();
+			const previousVersion = "0.13.107";
+			setRuntimeApplyGeneration(18);
+			const logs: string[] = [];
+			mkdirSync(join(run, "secrets"), { recursive: true });
+			mkdirSync(bin, { recursive: true });
+			mkdirSync(home, { recursive: true });
+			writeFileSync(
+				join(bin, "npm"),
+				`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> '${npmLog}'
 if [ "\${1:-}" = "view" ]; then
@@ -12633,146 +12636,163 @@ echo "fake clawdi"
 SH
 chmod +x "$prefix/bin/clawdi"
 `,
-		);
-		chmodSync(join(bin, "npm"), 0o700);
-		writeFileSync(openclawInstaller, "#!/usr/bin/env bash\necho install failed >&2\nexit 73\n");
-		chmodSync(openclawInstaller, 0o700);
-		process.env.PATH = `${bin}:${previousPath ?? ""}`;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
-		process.exitCode = undefined;
-		console.log = (value?: unknown) => {
-			logs.push(String(value));
-		};
-		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		seedCurrentCliInstall(state, `clawdi@${currentVersion}`, currentVersion);
-		const paths = getRuntimePaths();
-		const oldTarget = readlinkSync(paths.cliManagedBin);
-		const manifest = {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			runtime: "openclaw",
-			deploymentId: "dep_cli_rollback",
-			environmentId: "env_cli_rollback",
-			...hostedRequiredState(),
-			instanceId: "iid_cli_rollback",
-			generation: 18,
-			issuedAt: "2026-06-06T00:00:00Z",
-			locale: TEST_HOSTED_LOCALE,
-			system: hostedSystemFixture(home),
-			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: `clawdi@${currentVersion}`,
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: {
-				openclaw: hostedOpenClawRuntime({}),
-			},
-		};
-		writeRuntimeAppliedState(
-			{
-				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				appliedAt: "2026-07-13T05:00:00.000Z",
-				instanceId: "iid_cli_rollback",
-				etag: testBundleEtag("etag-cli-rollback"),
-				sourceRevision: "a".repeat(64),
-				generation: 18,
-				contentIdentity: {
-					sourcePath: "https://runtime.test/v1/runtime/manifest",
-					sha256: "b".repeat(64),
-				},
-				providerIds: ["default"],
-				projectedProviderIds: {},
-			},
-			paths,
-		);
-		const { restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse(
-						{
-							manifest,
-							secretValues: {},
-						},
-						{ etag: testBundleEtag("etag-cli-rollback") },
-					),
-			},
-		]);
-
-		try {
-			await runtimeWatch({ once: true, json: true });
-
-			expect(process.exitCode).toBe(0);
-			const handoffEvent = JSON.parse(logs[0]);
-			expect(handoffEvent.status).toBe("cli_handoff");
-			expect(handoffEvent.cliUpdate.status).toBe("installed");
-			expect(handoffEvent.cliRollback).toBeUndefined();
-			expect(readlinkSync(paths.cliManagedBin)).not.toBe(oldTarget);
-			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
-				transaction: { phase: "activated", newIdentity: { version: currentVersion } },
-				badVersions: [],
-			});
-
-			logs.length = 0;
+			);
+			chmodSync(join(bin, "npm"), 0o700);
+			writeFileSync(openclawInstaller, "#!/usr/bin/env bash\necho install failed >&2\nexit 73\n");
+			chmodSync(openclawInstaller, 0o700);
+			process.env.PATH = `${bin}:${previousPath ?? ""}`;
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+			process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+			process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = openclawInstaller;
 			process.exitCode = undefined;
-			await runtimeWatch({ once: true, json: true });
-
-			expect(process.exitCode).toBe(1);
-			const event = JSON.parse(logs[0]);
-			expect(event.status).toBe("error");
-			expect(event.cliUpdate.status).toBe("current");
-			expect(event.cliRollback.status).toBe("rolled_back");
-			expect(event.cliRollback.version).toBe(currentVersion);
-			expect(event.selfReexec).toBe(true);
-			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
-			const upgradeState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
-			expect(upgradeState.transaction).toBeNull();
-			expect(upgradeState.badVersions).toContainEqual(
-				expect.objectContaining({
+			console.log = (value?: unknown) => {
+				logs.push(String(value));
+			};
+			writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+			seedCurrentCliInstall(state, `clawdi@${previousVersion}`, previousVersion);
+			const paths = getRuntimePaths();
+			const oldTarget = readlinkSync(paths.cliManagedBin);
+			const manifest = {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				runtime: "openclaw",
+				deploymentId: "dep_cli_rollback",
+				environmentId: "env_cli_rollback",
+				...hostedRequiredState(),
+				instanceId: "iid_cli_rollback",
+				generation: 18,
+				issuedAt: "2026-06-06T00:00:00Z",
+				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture(home),
+				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+				clawdiCli: {
+					source: "npm:clawdi",
 					packageSpec: `clawdi@${currentVersion}`,
-					version: currentVersion,
-				}),
-			);
-			const beforeRetryLog = readFileSync(npmLog, "utf-8");
-			expect(() =>
-				applyRuntimeCliDesiredState(
-					{
-						schemaVersion: "clawdi.runtimeDesiredState.v1",
-						deploymentId: "dep_cli_rollback",
-						environmentId: "env_cli_rollback",
-						instanceId: "iid_cli_rollback",
-						generation: 18,
-						issuedAt: "2026-06-06T00:00:00Z",
-						controlPlane: { apiUrl: "https://cloud-api.test" },
-						clawdiCli: {
-							source: "npm:clawdi",
-							packageSpec: `clawdi@${currentVersion}`,
-							registry: "https://registry.npmjs.org",
-						},
-						runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
-						recovery: {},
+					registry: "https://registry.npmjs.org",
+				},
+				runtimes: {
+					openclaw: hostedOpenClawRuntime({}),
+				},
+			};
+			writeRuntimeAppliedState(
+				{
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					appliedAt: "2026-07-13T05:00:00.000Z",
+					instanceId: "iid_cli_rollback",
+					etag: testBundleEtag("etag-cli-rollback-previous"),
+					sourceRevision: "a".repeat(64),
+					generation: 18,
+					contentIdentity: {
+						sourcePath: "https://runtime.test/v1/runtime/manifest",
+						sha256: "b".repeat(64),
 					},
-					paths,
-				),
-			).toThrow(/marked bad/);
-			const afterRetryLog = readFileSync(npmLog, "utf-8");
-			expect(afterRetryLog.split("\n").filter((line) => line.startsWith("install ")).length).toBe(
-				beforeRetryLog.split("\n").filter((line) => line.startsWith("install ")).length,
+					providerIds: ["default"],
+					projectedProviderIds: {},
+				},
+				paths,
 			);
-		} finally {
-			restore();
-			console.log = previousLog;
-			process.exitCode = previousExitCode;
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-		}
-	});
+			const { restore } = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							{
+								manifest,
+								secretValues: {},
+							},
+							{ etag: testBundleEtag("etag-cli-rollback") },
+						),
+				},
+			]);
+
+			try {
+				if (command === "runtime watch") {
+					await runtimeWatch({ once: true, json: true });
+				} else {
+					await runtimeInit({ nonInteractive: true, json: true });
+				}
+
+				expect(process.exitCode ?? 0).toBe(command === "runtime watch" ? 0 : 75);
+				const handoffEvent = JSON.parse(logs[0]);
+				expect(handoffEvent.status).toBe(command === "runtime watch" ? "cli_handoff" : "ok");
+				expect(handoffEvent.cliUpdate.status).toBe("installed");
+				expect(handoffEvent.cliRollback).toBeUndefined();
+				expect(readlinkSync(paths.cliManagedBin)).not.toBe(oldTarget);
+				expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toMatchObject({
+					transaction: {
+						phase: "activated",
+						previousIdentity: { version: previousVersion },
+						newIdentity: { version: currentVersion },
+						rollbackEligible: true,
+					},
+					badVersions: [],
+				});
+
+				logs.length = 0;
+				process.exitCode = undefined;
+				if (command === "runtime watch") {
+					await runtimeWatch({ once: true, json: true });
+				} else {
+					await runtimeInit({ nonInteractive: true, json: true });
+				}
+
+				expect(process.exitCode).toBe(command === "runtime watch" ? 1 : 23);
+				const event = JSON.parse(logs[0]);
+				expect(event.status).toBe("error");
+				if (command === "runtime watch") {
+					expect(event.cliUpdate.status).toBe("current");
+					expect(event.cliRollback.status).toBe("rolled_back");
+					expect(event.cliRollback.version).toBe(currentVersion);
+					expect(event.selfReexec).toBe(true);
+				}
+				expect(event.errors.join("\n")).toContain("rolled back clawdi CLI");
+				expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
+				const upgradeState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+				expect(upgradeState.transaction).toBeNull();
+				expect(upgradeState.badVersions).toContainEqual(
+					expect.objectContaining({
+						packageSpec: `clawdi@${currentVersion}`,
+						version: currentVersion,
+					}),
+				);
+				const beforeRetryLog = readFileSync(npmLog, "utf-8");
+				expect(() =>
+					applyRuntimeCliDesiredState(
+						{
+							schemaVersion: "clawdi.runtimeDesiredState.v1",
+							deploymentId: "dep_cli_rollback",
+							environmentId: "env_cli_rollback",
+							instanceId: "iid_cli_rollback",
+							generation: 18,
+							issuedAt: "2026-06-06T00:00:00Z",
+							controlPlane: { apiUrl: "https://cloud-api.test" },
+							clawdiCli: {
+								source: "npm:clawdi",
+								packageSpec: `clawdi@${currentVersion}`,
+								registry: "https://registry.npmjs.org",
+							},
+							runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+							recovery: {},
+						},
+						paths,
+					),
+				).toThrow(/marked bad/);
+				const afterRetryLog = readFileSync(npmLog, "utf-8");
+				expect(afterRetryLog.split("\n").filter((line) => line.startsWith("install ")).length).toBe(
+					beforeRetryLog.split("\n").filter((line) => line.startsWith("install ")).length,
+				);
+			} finally {
+				restore();
+				console.log = previousLog;
+				process.exitCode = previousExitCode;
+				if (previousPath === undefined) delete process.env.PATH;
+				else process.env.PATH = previousPath;
+			}
+		},
+	);
 
 	it("runtime watch keeps npm ETARGET retryable without converging or marking the version bad", async () => {
 		const home = join(root, "home", "clawdi");
@@ -13313,11 +13333,6 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
-		const manifestIdentity = {
-			generation: 1,
-			etag: testBundleEtag("etag-cli-rollback-lifecycle"),
-			previouslyApplied: true,
-		};
 		const manifestFor = (version: string): RuntimeManifest => ({
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_cli_rollback_lifecycle",
@@ -13332,9 +13347,7 @@ chmod +x "$prefix/bin/clawdi"
 		});
 
 		try {
-			const first = applyRuntimeCliDesiredState(manifestFor("1.2.20-test.1"), paths, {
-				rollbackEligible: manifestIdentity.previouslyApplied,
-			});
+			const first = applyRuntimeCliDesiredState(manifestFor("1.2.20-test.1"), paths);
 			if (!first.activeTarget) throw new Error("first CLI install has no active target");
 			const lastGoodTarget = first.activeTarget;
 			const lastGoodPrefix = first.npmPrefix;
@@ -13342,9 +13355,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(firstState.transaction.rollbackEligible).toBe(false);
 
 			rmSync(paths.cliBootstrapStatus, { force: true });
-			const failed = applyRuntimeCliDesiredState(manifestFor("1.2.20-test.2"), paths, {
-				rollbackEligible: manifestIdentity.previouslyApplied,
-			});
+			const failed = applyRuntimeCliDesiredState(manifestFor("1.2.20-test.2"), paths);
 			if (!failed.activeTarget) throw new Error("failed CLI install has no active target");
 			const failedTarget = failed.activeTarget;
 			const failedState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
@@ -13372,9 +13383,7 @@ chmod +x "$prefix/bin/clawdi"
 				version: "1.2.20-test.1",
 			});
 
-			applyRuntimeCliDesiredState(manifestFor("1.2.20-test.3"), paths, {
-				rollbackEligible: manifestIdentity.previouslyApplied,
-			});
+			applyRuntimeCliDesiredState(manifestFor("1.2.20-test.3"), paths);
 			const secondState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
 			expect(secondState.transaction.previousIdentity.activeTarget).toBe(lastGoodTarget);
 			expect(secondState.transaction.previousIdentity.activeTarget).not.toBe(failedTarget);
