@@ -1426,9 +1426,7 @@ function planRuntimeInstallObservation(
 		runtime: name,
 		enabled: true,
 		status:
-			commandPath && executableExists(commandPath) && !capabilityError
-				? "present"
-				: "configured",
+			commandPath && executableExists(commandPath) && !capabilityError ? "present" : "configured",
 		executionUser: null,
 		commandPath,
 		appRoot,

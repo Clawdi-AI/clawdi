@@ -84,9 +84,7 @@ const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 
 export function officialInstallArgs(runtime: string, home: string): string[] {
 	const args = [...(OFFICIAL_INSTALL_ARGS[runtime] ?? [])];
-	return runtime === "openclaw"
-		? [...args, "--prefix", join(home, ".local")]
-		: args;
+	return runtime === "openclaw" ? [...args, "--prefix", join(home, ".local")] : args;
 }
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
