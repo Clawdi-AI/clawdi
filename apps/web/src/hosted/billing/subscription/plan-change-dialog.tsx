@@ -378,7 +378,11 @@ export function PlanChangeDialog({
 				}
 			}}
 		>
-			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!blocksClose}>
+			<DialogContent
+				data-hosted="true"
+				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+				showCloseButton={!blocksClose}
+			>
 				<DialogHeader>
 					<DialogTitle>
 						{step === "pending"
