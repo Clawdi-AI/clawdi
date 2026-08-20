@@ -12,6 +12,7 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
+import type { RuntimeUserOwnershipRule } from "./runtime-user-command";
 
 export const CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID = "clawdi-managed-provider";
 
@@ -34,6 +35,7 @@ export interface OpenClawHostedContext {
 	stateRoot: string;
 	configPath: string;
 	tmpDir: string;
+	ownership: RuntimeUserOwnershipRule[];
 	agentDirs: {
 		root: string;
 		main: string;
@@ -63,6 +65,23 @@ export function createOpenClawHostedContext(
 		stateRoot,
 		configPath: join(stateRoot, "openclaw.json"),
 		tmpDir: join(stateRoot, "tmp"),
+		ownership: [
+			{ path: home, owner: "runtime-user", kind: "directory", recursive: false },
+			{
+				path: stateRoot,
+				owner: "runtime-user",
+				kind: "directory",
+				mode: 0o700,
+				recursive: false,
+			},
+			{
+				path: join(stateRoot, "tmp"),
+				owner: "runtime-user",
+				kind: "directory",
+				mode: 0o700,
+				recursive: false,
+			},
+		],
 		agentDirs: {
 			root: join(stateRoot, "agents"),
 			main: join(stateRoot, "agents", "main", "agent"),

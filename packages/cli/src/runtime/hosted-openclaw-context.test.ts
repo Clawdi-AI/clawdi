@@ -65,6 +65,23 @@ describe("hosted OpenClaw context", () => {
 
 		expect(context.stateRoot).toBe(join(home, ".openclaw"));
 		expect(context.configPath).toBe(join(home, ".openclaw", "openclaw.json"));
+		expect(context.ownership).toEqual([
+			{ path: home, owner: "runtime-user", kind: "directory", recursive: false },
+			{
+				path: join(home, ".openclaw"),
+				owner: "runtime-user",
+				kind: "directory",
+				mode: 0o700,
+				recursive: false,
+			},
+			{
+				path: join(home, ".openclaw", "tmp"),
+				owner: "runtime-user",
+				kind: "directory",
+				mode: 0o700,
+				recursive: false,
+			},
+		]);
 		expect(context.agentDirs).toEqual({
 			root: join(home, ".openclaw", "agents"),
 			main: join(home, ".openclaw", "agents", "main", "agent"),

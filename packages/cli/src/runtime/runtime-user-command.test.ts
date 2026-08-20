@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,11 +16,49 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
+	enforceRuntimeUserOwnership,
 	runRuntimeUserCommand,
+	runtimeUserDirectoryOwnership,
 	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
+
+test("enforces declarative runtime-user directory ownership rules", () => {
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-ownership-"));
+	try {
+		const home = join(root, "home");
+		const target = join(home, "state", "tmp");
+		const rules = runtimeUserDirectoryOwnership(target, {
+			mode: 0o700,
+			recursive: true,
+			ancestorsUnder: home,
+		});
+		expect(rules).toEqual([
+			{ path: home, owner: "runtime-user", kind: "directory", recursive: false },
+			{ path: join(home, "state"), owner: "runtime-user", kind: "directory", recursive: false },
+			{
+				path: target,
+				owner: "runtime-user",
+				kind: "directory",
+				mode: 0o700,
+				recursive: true,
+			},
+		]);
+		enforceRuntimeUserOwnership(rules);
+		expect(statSync(target).mode & 0o777).toBe(0o700);
+
+		const symlink = join(root, "symlink");
+		symlinkSync(target, symlink, "dir");
+		expect(() =>
+			enforceRuntimeUserOwnership([
+				{ path: symlink, owner: "runtime-user", kind: "directory", recursive: false },
+			]),
+		).toThrow("runtime-user ownership path must be a real directory");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 test("command existence follows shell resolution", () => {
 	expect(commandExists("command")).toBe(true);

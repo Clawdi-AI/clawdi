@@ -4,7 +4,6 @@ import {
 	chmodSync,
 	chownSync,
 	existsSync,
-	lchownSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -247,14 +246,16 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	commandResolvable,
+	enforceRuntimeUserOwnership,
 	executableExists,
 	makeRuntimeUserOwned,
+	type RuntimeUserOwnershipRule,
 	runningAsRoot,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
-	runtimeUserGid,
-	runtimeUserUid,
+	runtimeUserDirectoryOwnership,
+	runtimeUserExistingOwnership,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
@@ -657,7 +658,9 @@ function materializeManagedWhatsAppAuthDir(
 		}
 	}
 
-	makeRuntimeUserPrivateDir(credential.authDir, home);
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(credential.authDir, { mode: 0o700, ancestorsUnder: home }),
+	);
 	writePrivateFileAtomic(
 		join(credential.authDir, "creds.json"),
 		`${JSON.stringify(parsedCreds, null, 2)}\n`,
@@ -959,30 +962,6 @@ function makeEgressIdentityOwned(path: string): void {
 	chownSync(path, uid, gid);
 }
 
-function makeRuntimeUserPrivateDir(path: string, home: string): void {
-	mkdirSync(path, { recursive: true });
-	makeRuntimeUserOwnedAncestors(path, home);
-	makeRuntimeUserOwned(path);
-	try {
-		chmodSync(path, 0o700);
-	} catch {
-		// Best effort for non-POSIX local development environments.
-	}
-}
-
-function ensureHostedOpenClawStateDirectories(context: OpenClawHostedContext): void {
-	if (!context.hostedV2 || !context.enabled) return;
-	for (const path of [context.stateRoot, context.tmpDir]) {
-		if (existsSync(path)) {
-			const node = lstatSync(path);
-			if (!node.isDirectory() || node.isSymbolicLink()) {
-				throw new Error(`hosted OpenClaw state path must be a real directory: ${path}`);
-			}
-		}
-		makeRuntimeUserPrivateDir(path, context.home);
-	}
-}
-
 function ensureRuntimeUserCliStateRoot(path: string, identity: { uid: number; gid: number }): void {
 	mkdirSync(path, { recursive: true });
 	let node = lstatSync(path);
@@ -1001,15 +980,6 @@ function ensureRuntimeUserCliStateRoot(path: string, identity: { uid: number; gi
 	}
 }
 
-function ensureRuntimeUserHome(path: string): void {
-	mkdirSync(path, { recursive: true });
-	const node = lstatSync(path);
-	if (node.isSymbolicLink() || !node.isDirectory()) {
-		throw new Error(`runtime user home must be a real directory: ${path}`);
-	}
-	makeRuntimeUserOwned(path);
-}
-
 function makeEgressIdentityPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeEgressIdentityOwned(path);
@@ -1017,16 +987,6 @@ function makeEgressIdentityPrivateDir(path: string): void {
 		chmodSync(path, 0o700);
 	} catch {
 		// Best effort for non-POSIX local development environments.
-	}
-}
-
-function makeRuntimeUserOwnedAncestors(path: string, home: string): void {
-	const resolvedHome = resolve(home);
-	let current = resolve(dirname(path));
-	while (current === resolvedHome || current.startsWith(`${resolvedHome}/`)) {
-		makeRuntimeUserOwned(current);
-		if (current === resolvedHome) return;
-		current = dirname(current);
 	}
 }
 
@@ -1267,7 +1227,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 		});
 	}
 
-	ensureRuntimeUserHome(install.home);
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home));
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
@@ -1930,7 +1890,9 @@ function runHermesCodexAuthCommand(
 	expectedFingerprint?: string,
 ): Record<string, unknown> {
 	const authPath = hermesAuthPath(home);
-	makeRuntimeUserPrivateDir(dirname(authPath), home);
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(dirname(authPath), { mode: 0o700, ancestorsUnder: home }),
+	);
 	const result = spawnRuntimeUserCommand(
 		"flock",
 		[
@@ -2048,7 +2010,7 @@ function openClawSupportsOwnerBrowserBootstrap(
 ): boolean {
 	const sdkPath = openClawDeviceBootstrapSdkPath(observation, context);
 	if (!sdkPath) return false;
-	ensureRuntimeUserHome(context.home);
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
@@ -2095,7 +2057,7 @@ function requireOpenClawProviderAuthCapability(
 	context: OpenClawHostedContext,
 ): void {
 	const sdkPath = openClawProviderAuthSdkPath(observation, context);
-	ensureRuntimeUserHome(context.home);
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE, sdkPath],
@@ -2120,7 +2082,7 @@ function requireOpenClawManagedProviderAuthCleanupCapability(
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
-	ensureRuntimeUserHome(context.home);
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		[
@@ -2832,12 +2794,16 @@ function applyHostedCodexManagedProviderProjection(
 	if (!provider) return { path: null, revision: null, providerIds: [] };
 
 	const codexHome = hostedCodexHome(home);
-	makeRuntimeUserPrivateDir(codexHome, home);
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(codexHome, { mode: 0o700, ancestorsUnder: home }),
+	);
 	const configPath = join(codexHome, CODEX_MANAGED_PROVIDER_CONFIG_FILE);
 	const configContent = hostedCodexManagedConfigToml(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
 	makeRuntimeUserOwned(configPath);
-	makeRuntimeUserPrivateDir(codexHome, home);
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(codexHome, { mode: 0o700, ancestorsUnder: home }),
+	);
 
 	return {
 		path: configPath,
@@ -3184,7 +3150,7 @@ function applyOpenClawHostedProviderPatch(
 		);
 		return;
 	}
-	ensureRuntimeUserHome(context.home);
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
@@ -5548,7 +5514,10 @@ function runtimeColdInstallMutationPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
-): { snapshot: RuntimeManagedMutationPlan; runtimeUserOwnershipTargets: string[] } | null {
+): {
+	snapshot: RuntimeManagedMutationPlan;
+	runtimeUserOwnership: RuntimeUserOwnershipRule[];
+} | null {
 	const pending = Object.entries(manifest.runtimes).some(([name, runtime]) => {
 		if (!runtime.enabled || !runtime.install) return false;
 		return observations.get(name)?.status !== "present";
@@ -5583,9 +5552,7 @@ function runtimeColdInstallMutationPlan(
 			runtimeUserSymlinkTargets: runtimeCommandTargets,
 			metadataTargets,
 		},
-		runtimeUserOwnershipTargets: [...new Set([...metadataTargets, ...runtimeUserTargets])].sort(
-			(left, right) => left.length - right.length || left.localeCompare(right),
-		),
+		runtimeUserOwnership: runtimeUserExistingOwnership([...metadataTargets, ...runtimeUserTargets]),
 	};
 }
 
@@ -5815,7 +5782,7 @@ function runtimeManagedMutationPlan(input: {
 	observations: ReadonlyMap<string, RuntimeInstallObservation>;
 }): {
 	snapshot: RuntimeManagedMutationPlan;
-	runtimeUserOwnershipTargets: string[];
+	runtimeUserOwnership: RuntimeUserOwnershipRule[];
 	staleOfficialUnits: string[];
 	systemdUserUnits: string[];
 	systemdDriftErrors: string[];
@@ -5868,9 +5835,11 @@ function runtimeManagedMutationPlan(input: {
 			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserBoundaries),
 		]),
 	].sort();
-	const runtimeUserOwnershipTargets = [
-		...new Set([...runtimeUserTargets, ...runtimeUserMetadataTargets, ...runtimeCommandTargets]),
-	].sort((left, right) => left.length - right.length || left.localeCompare(right));
+	const runtimeUserOwnership = runtimeUserExistingOwnership([
+		...runtimeUserTargets,
+		...runtimeUserMetadataTargets,
+		...runtimeCommandTargets,
+	]);
 	return {
 		snapshot: {
 			rootTargets: rootTargetsList,
@@ -5906,34 +5875,11 @@ function runtimeManagedMutationPlan(input: {
 				]),
 			].sort(),
 		},
-		runtimeUserOwnershipTargets,
+		runtimeUserOwnership,
 		staleOfficialUnits: systemd.staleOfficialUnits,
 		systemdUserUnits: systemd.unitNames,
 		systemdDriftErrors: systemd.driftErrors,
 	};
-}
-
-function ensureRuntimeUserOwnershipBoundaries(targets: readonly string[]): void {
-	if (!runningAsRoot()) return;
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (!runtimeUser || runtimeUser === "root" || runtimeUser === "0") return;
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
-	if (uid === 0 || gid === 0) {
-		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
-	}
-	for (const path of targets) {
-		let node: ReturnType<typeof lstatSync>;
-		try {
-			node = lstatSync(path);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-			throw error;
-		}
-		if (node.uid === uid && node.gid === gid) continue;
-		if (node.isSymbolicLink()) lchownSync(path, uid, gid);
-		else chownSync(path, uid, gid);
-	}
 }
 
 export function convergeRuntimeManifest(
@@ -5987,7 +5933,9 @@ export function convergeRuntimeManifest(
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	// Runtime-user state ownership is a platform invariant, not a manifest
 	// mutation: repair it before snapshots so rollback cannot restore drift.
-	ensureHostedOpenClawStateDirectories(openClawContext);
+	if (openClawContext.hostedV2 && openClawContext.enabled) {
+		enforceRuntimeUserOwnership(openClawContext.ownership);
+	}
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
@@ -6108,7 +6056,7 @@ export function convergeRuntimeManifest(
 	try {
 		if (coldInstallPlan) {
 			hostedRuntimeContract.assertPlatformRoots();
-			ensureRuntimeUserOwnershipBoundaries(coldInstallPlan.runtimeUserOwnershipTargets);
+			enforceRuntimeUserOwnership(coldInstallPlan.runtimeUserOwnership);
 		}
 		for (const [name, runtime] of runtimeEntries) {
 			const observation = observeRuntimeInstall(name, runtime, projectionHome);
@@ -6124,10 +6072,12 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 		if (markerBootstrapPlan) {
 			markerBootstrapSnapshot = captureRuntimeLiveSnapshot(markerBootstrapPlan);
-			ensureRuntimeUserOwnershipBoundaries([
-				...markerBootstrapPlan.metadataTargets,
-				...markerBootstrapPlan.runtimeUserTargets,
-			]);
+			enforceRuntimeUserOwnership(
+				runtimeUserExistingOwnership([
+					...markerBootstrapPlan.metadataTargets,
+					...markerBootstrapPlan.runtimeUserTargets,
+				]),
+			);
 			const observation = observations.get("openclaw");
 			if (!observation?.commandPath) {
 				throw new Error("OpenClaw managed provider marker requires an installed runtime");
@@ -6288,7 +6238,7 @@ export function convergeRuntimeManifest(
 		// exact pre-image snapshot. Establish their positive ownership boundary
 		// before any official installer or CLI command drops privilege. Modes are
 		// intentionally preserved, so private runtime state stays private.
-		ensureRuntimeUserOwnershipBoundaries(mutationPlan.runtimeUserOwnershipTargets);
+		enforceRuntimeUserOwnership(mutationPlan.runtimeUserOwnership);
 		const fileBrowserInstall = ensureFileBrowserCompanion(
 			manifest,
 			paths,
@@ -6347,7 +6297,7 @@ export function convergeRuntimeManifest(
 				for (const [path, node] of supplementalSnapshot.entries) {
 					if (!liveSnapshot.entries.has(path)) liveSnapshot.entries.set(path, node);
 				}
-				ensureRuntimeUserOwnershipBoundaries(supplementalTargets);
+				enforceRuntimeUserOwnership(runtimeUserExistingOwnership(supplementalTargets));
 			}
 		}
 		if (
@@ -6449,7 +6399,7 @@ export function convergeRuntimeManifest(
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
 
 		hostedRuntimeContract.assertPlatformRoots();
-		ensureRuntimeUserHome(paths.userHome);
+		enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(paths.userHome));
 		ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 		withRuntimeUserFileAccess(() => {
 			mkdirSync(workspaceRoot, { recursive: true });
@@ -6465,7 +6415,9 @@ export function convergeRuntimeManifest(
 		makeEgressIdentityPrivateDir(paths.egressCaDir);
 		ensureRuntimePlatformDirectory(paths, dirname(paths.egressSystemCaFile), { mode: 0o711 });
 		chmodSync(dirname(paths.egressSystemCaFile), 0o711);
-		makeRuntimeUserPrivateDir(paths.egressScratchRoot, paths.userHome);
+		enforceRuntimeUserOwnership(
+			runtimeUserDirectoryOwnership(paths.egressScratchRoot, { mode: 0o700 }),
+		);
 
 		let manifestLastGood: string | null = null;
 		writeJsonFile(
