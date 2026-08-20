@@ -46,6 +46,48 @@ test("tenant tools inherit HOME but not platform location overrides", () => {
 	});
 });
 
+test("runtime-user commands exclude platform credentials and tenant-writable PATH entries", () => {
+	const previousPath = process.env.PATH;
+	const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+	const previousDaemonToken = process.env.CLAWDI_DAEMON_RPC_TOKEN;
+	const previousEgressSecretFile = process.env.CLAWDI_EGRESS_SECRET_FILE;
+	const home = "/home/clawdi";
+	try {
+		process.env.PATH = `${join(home, ".local", "bin")}:${join(home, ".openclaw", "bin")}:/usr/local/bin:/usr/bin`;
+		process.env.CLAWDI_AUTH_TOKEN = "platform-auth-token";
+		process.env.CLAWDI_DAEMON_RPC_TOKEN = "platform-daemon-token";
+		process.env.CLAWDI_EGRESS_SECRET_FILE = "/run/clawdi/egress-secrets.json";
+
+		const result = spawnRuntimeUserCommand(
+			process.execPath,
+			["-e", "process.stdout.write(JSON.stringify(process.env))"],
+			home,
+			tmpdir(),
+			{
+				runtimeUser: "clawdi",
+				runtimeUid: 10_001,
+				resolver: { resolve: () => "none" },
+			},
+		);
+		const env = JSON.parse(String(result.stdout)) as NodeJS.ProcessEnv;
+
+		expect(result.status).toBe(0);
+		expect(env.CLAWDI_AUTH_TOKEN).toBeUndefined();
+		expect(env.CLAWDI_DAEMON_RPC_TOKEN).toBeUndefined();
+		expect(env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
+		expect(env.PATH).toBe("/usr/local/bin:/usr/bin");
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+		if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+		else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
+		if (previousDaemonToken === undefined) delete process.env.CLAWDI_DAEMON_RPC_TOKEN;
+		else process.env.CLAWDI_DAEMON_RPC_TOKEN = previousDaemonToken;
+		if (previousEgressSecretFile === undefined) delete process.env.CLAWDI_EGRESS_SECRET_FILE;
+		else process.env.CLAWDI_EGRESS_SECRET_FILE = previousEgressSecretFile;
+	}
+});
+
 test("isolated runtime commands override and clear native state locations", () => {
 	const root = mkdtempSync(join(tmpdir(), "runtime-user-isolation-"));
 	const output = join(root, "environment.json");

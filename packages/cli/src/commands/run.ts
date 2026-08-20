@@ -28,6 +28,7 @@ import {
 } from "../lib/vault-errors";
 import { applyEgressTransparentRuntimeEnv } from "../runtime/egress-env";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
+import { clearPlatformCredentialEnv } from "../runtime/platform-credential-env";
 import {
 	buildRuntimeRunInvocation,
 	type RuntimeRunConfigRead,
@@ -335,7 +336,7 @@ async function spawnRuntimeInvocation(
 	invocation: RuntimeRunInvocation,
 	spawnImpl: SpawnFn,
 ): Promise<void> {
-	delete invocation.env.CLAWDI_AUTH_TOKEN;
+	clearPlatformCredentialEnv(invocation.env);
 	let childSpawn: RuntimeChildSpawn;
 	try {
 		childSpawn = buildRuntimeChildSpawn(invocation);
@@ -388,8 +389,7 @@ function runtimeChildEnv(
 	runtimeUser: string | undefined,
 ): NodeJS.ProcessEnv {
 	const childEnv = { ...env };
-	delete childEnv.CLAWDI_AUTH_TOKEN;
-	delete childEnv.CLAWDI_EGRESS_SECRET_FILE;
+	clearPlatformCredentialEnv(childEnv);
 	if (runtimeUser && runtimeUser !== "root") {
 		childEnv.HOME ||= `/home/${runtimeUser}`;
 	}
