@@ -5065,7 +5065,7 @@ echo spawned > '${installerLog}'
 					["hermes", { status: "present" as const }],
 				]),
 			).sort(),
-		).toEqual([join(home, ".local", "bin", "openclaw"), join(home, ".local", "tools")].sort());
+		).toEqual([]);
 	});
 
 	test("runs the official latest OpenClaw installer with a sanitized environment", () => {

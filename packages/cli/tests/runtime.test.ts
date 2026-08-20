@@ -3601,13 +3601,12 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
-	it("repairs Hermes dashboard runtime drift once and rolls back an incompatible repair", () => {
+	it("does not reinstall Hermes for dashboard capability drift but preserves cold install", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const installer = join(root, "install-hermes.sh");
 		const installerCalls = join(root, "install-hermes.calls");
-		const incompatibleRepair = join(root, "incompatible-repair");
 		const appMarker = join(home, ".hermes", "hermes-agent", "repair-marker");
 		const skillMarker = join(home, ".hermes", "skills", "user-skill", "content.txt");
 		const command = writeHermesVersionBinary(home, "0.20.1");
@@ -3636,11 +3635,7 @@ SH
 chmod +x "$HOME/.local/bin/hermes"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/hermes-agent/repair-marker"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/skills/user-skill/content.txt"
-if [ -f '${incompatibleRepair}' ]; then
-  printf '%s\\n' '#!/usr/bin/env bash' 'exit 1' > "$HOME/.hermes/hermes-agent/venv/bin/python"
-else
-  printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.hermes/hermes-agent/venv/bin/python"
-fi
+printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.hermes/hermes-agent/venv/bin/python"
 chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 `,
 		);
@@ -3654,28 +3649,18 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const paths = getRuntimePaths();
 		const load = hostedHermesDashboardCapabilityLoad(home);
 
-		const repaired = convergeRuntimeManifest(load, paths);
-		expect(repaired.installErrors).toEqual([]);
-		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
-
-		const unchanged = convergeRuntimeManifest(load, paths);
-		expect(unchanged.installErrors).toEqual([]);
-		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
-
-		writeFileSync(appMarker, "stable-app\n");
-		writeFileSync(skillMarker, "stable-user-skill\n");
-		const stableCommand = readFileSync(command, "utf8");
-		writeHermesDashboardPython(home, false);
-		writeFileSync(incompatibleRepair, "1\n");
 		const rejected = convergeRuntimeManifest(load, paths);
-
 		expect(rejected.installErrors.join("\n")).toContain(
-			"uvicorn.Server.capture_signals is unavailable",
+			"Hermes dashboard runtime is incompatible: missing capture_signals",
 		);
-		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install", "install"]);
-		expect(readFileSync(appMarker, "utf8")).toBe("stable-app\n");
-		expect(readFileSync(skillMarker, "utf8")).toBe("stable-user-skill\n");
-		expect(readFileSync(command, "utf8")).toBe(stableCommand);
+		expect(existsSync(installerCalls)).toBe(false);
+		expect(readFileSync(appMarker, "utf8")).toBe("before-repair\n");
+		expect(readFileSync(skillMarker, "utf8")).toBe("user-skill-before-repair\n");
+
+		rmSync(command);
+		const installed = convergeRuntimeManifest(load, paths);
+		expect(installed.installErrors).toEqual([]);
+		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
 	});
 
 	it("keeps explicit OpenAI chat providers on direct provider projection", async () => {
@@ -6104,7 +6089,7 @@ exit 0
 		expect(calls).toContain("update ");
 	});
 
-	it("repairs an installed OpenClaw missing provider-auth capability before OAuth apply", () => {
+	it("does not reinstall an installed OpenClaw missing provider-auth capability", () => {
 		const testRoot = join(root, "oauth-openclaw-capability-repair");
 		const home = join(testRoot, "home", "clawdi");
 		const state = join(testRoot, "var", "lib", "clawdi");
@@ -6146,18 +6131,15 @@ cp '${sdkSource}' '${sdkTarget}'
 		});
 		const result = convergeRuntimeManifest(loaded, getRuntimePaths());
 
-		expect(result.installErrors).toEqual([]);
-		expect(readFileSync(installerLog, "utf8").trim()).toBe("--json --no-onboard");
-		expect(readFileSync(installerLog, "utf8")).not.toContain("--version");
-		const profileId = nativeOAuthProfileId("openclaw", "openai-codex");
+		expect(result.installErrors.join("\n")).toContain(
+			"OpenClaw OAuth requires the public OpenClaw SDK; automatic runtime reinstall is disabled",
+		);
+		expect(existsSync(installerLog)).toBe(false);
 		const storePath = join(home, ".openclaw", "agents", "main", "agent", "openclaw-agent.sqlite");
-		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[profileId]).toMatchObject({
-			access: "repair-access",
-			refresh: "repair-refresh",
-		});
+		expect(existsSync(storePath)).toBe(false);
 	});
 
-	it("fails closed before config or credential mutation when OpenClaw capability repair fails", () => {
+	it("fails closed before config or credential mutation when OpenClaw capability is unavailable", () => {
 		const testRoot = join(root, "oauth-openclaw-capability-repair-failure");
 		const home = join(testRoot, "home", "clawdi");
 		const state = join(testRoot, "var", "lib", "clawdi");
@@ -6197,9 +6179,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		const result = convergeRuntimeManifest(loaded, getRuntimePaths());
 
-		expect(result.installErrors.join("\n")).toContain(
-			"OpenClaw provider-auth capability repair failed",
-		);
+		expect(result.installErrors.join("\n")).toContain("automatic runtime reinstall is disabled");
 		expect(readFileSync(configPath, "utf8")).toBe(originalConfig);
 		expect(readFileSync(storePath, "utf8")).toBe(originalStore);
 		expect(existsSync(join(getRuntimePaths().oauthCredentialRoot, "openclaw"))).toBe(false);
