@@ -170,7 +170,7 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     )
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
-    truncated: Literal[False] | None = None
+    truncated: bool | None = None
     generation: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
     manifest_etag: str | None = Field(
         alias="manifestETag",
@@ -227,6 +227,12 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
             raise ValueError("predecessorBootSessionId must differ from bootSessionId")
         if self.successor_boot_session_id == self.boot_session_id:
             raise ValueError("successorBootSessionId must differ from bootSessionId")
+        if (
+            self.systemd is not None
+            and self.systemd.unit_count > len(self.systemd.units)
+            and self.truncated is not True
+        ):
+            raise ValueError("truncated must be true when systemd units are omitted")
         if self.agent_plugins is not None:
             self.agent_plugins.validate_applied_identity(self.applied)
         return self

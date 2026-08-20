@@ -52,8 +52,14 @@ class HostedRuntimeObservedSystemdUnitV1(_StrictObservedWireModel):
 
 class HostedRuntimeObservedSystemdV1(_StrictObservedWireModel):
     status: RuntimeObservedStatus
-    unit_count: int = Field(alias="unitCount", ge=0, le=30)
+    unit_count: int = Field(alias="unitCount", ge=0, le=9_007_199_254_740_991)
     units: list[HostedRuntimeObservedSystemdUnitV1] = Field(max_length=30)
+
+    @model_validator(mode="after")
+    def validate_unit_count(self) -> HostedRuntimeObservedSystemdV1:
+        if self.unit_count < len(self.units):
+            raise ValueError("unitCount must include every reported systemd unit")
+        return self
 
 
 class HostedRuntimeObservedSupervisorProgramV1(_StrictObservedWireModel):
