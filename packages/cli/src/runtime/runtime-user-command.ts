@@ -139,7 +139,7 @@ export function buildRuntimeUserCommand(
 	];
 	const runtimeUid = options.runtimeUid ?? runtimeUserUid(runtimeUser);
 	const mechanism = (options.resolver ?? privilegeDropResolver).resolve({
-		currentUid: options.currentUid ?? effectiveUid(),
+		currentUid: options.currentUid ?? privilegeSourceUid(),
 		targetUid: runtimeUid,
 		targetUser: runtimeUser,
 		targetKind: "named",
@@ -195,7 +195,7 @@ export function buildNumericUserCommand(
 		throw new Error(`cannot drop privileges to ${targetUser}: target identity must be non-root`);
 	}
 	const mechanism = (options.resolver ?? privilegeDropResolver).resolve({
-		currentUid: options.currentUid ?? effectiveUid(),
+		currentUid: options.currentUid ?? privilegeSourceUid(),
 		targetUid: uid,
 		targetUser,
 		targetKind: "numeric",
@@ -214,8 +214,15 @@ export function runningAsRoot(): boolean {
 	return typeof process.geteuid === "function" && process.geteuid() === 0;
 }
 
-function effectiveUid(): number | undefined {
-	return process.geteuid?.() ?? process.getuid?.();
+function privilegeSourceUid(): number | undefined {
+	const realUid = process.getuid?.();
+	const effectiveUid = process.geteuid?.();
+	// A shell child can restore a root real UID when only the effective UID was lowered.
+	if (realUid === 0 || effectiveUid === 0) return 0;
+	if (realUid !== undefined && effectiveUid !== undefined && realUid !== effectiveUid) {
+		return undefined;
+	}
+	return effectiveUid ?? realUid;
 }
 
 export function runtimeUserUid(runtimeUser: string): number {

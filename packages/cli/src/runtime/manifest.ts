@@ -1498,11 +1498,13 @@ function nextManagedLocaleFileContent(
 }
 
 function updateManagedLocaleFile(path: string, block: string): string {
-	const { existing, next } = nextManagedLocaleFileContent(path, block);
-	if (next === existing) return path;
-	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
-	makeRuntimeUserOwned(path);
-	return path;
+	return withRuntimeUserFileAccess(() => {
+		const { existing, next } = nextManagedLocaleFileContent(path, block);
+		if (next === existing) return path;
+		writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
+		makeRuntimeUserOwned(path);
+		return path;
+	});
 }
 
 function hermesConfigContext(
@@ -2781,14 +2783,12 @@ function applyHostedAiProviderProjection(
 		return { path: null, revision: null, providerIds: [...previousProviderIds] };
 	}
 	if (name === "hermes") {
-		return withRuntimeUserFileAccess(() =>
-			applyHostedHermesAiProviderProjection(
-				observation,
-				projectionInput,
-				previousProviderIds,
-				home,
-				workspaceRoot,
-			),
+		return applyHostedHermesAiProviderProjection(
+			observation,
+			projectionInput,
+			previousProviderIds,
+			home,
+			workspaceRoot,
 		);
 	}
 	if (name === "openclaw") {
@@ -3180,7 +3180,9 @@ function legacyHermesModelProviderPluginDir(home: string): string {
 }
 
 function removeLegacyHermesModelProviderPlugin(home: string): void {
-	rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true });
+	withRuntimeUserFileAccess(() =>
+		rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true }),
+	);
 }
 
 export interface OpenClawHostedProviderPatch {
@@ -7104,15 +7106,13 @@ export function convergeRuntimeManifest(
 				}
 			}
 			try {
-				const localeFile = withRuntimeUserFileAccess(() =>
-					applyHostedRuntimeConfigProjection(
-						name,
-						observation,
-						manifest,
-						projectionHome,
-						openClawWorkspaceRoot,
-						workspaceRoot,
-					),
+				const localeFile = applyHostedRuntimeConfigProjection(
+					name,
+					observation,
+					manifest,
+					projectionHome,
+					openClawWorkspaceRoot,
+					workspaceRoot,
 				);
 				if (localeFile) managedLocaleFiles.push(localeFile);
 			} catch (error) {
