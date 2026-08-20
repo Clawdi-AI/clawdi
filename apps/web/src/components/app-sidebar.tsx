@@ -87,11 +87,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
+import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
+import { agentsQueryKey } from "@/lib/agent-queries";
 import {
 	type AgentSectionId,
 	agentProjectResourceHref,
@@ -880,7 +882,13 @@ function SortableAgentRailItem({
 		onNavigate?.();
 		void router.navigate({ href: agent.href });
 	};
+	const preloadAgent = () => {
+		if (!agent.href) return;
+		void router.preloadRoute({ to: agent.href }).catch(() => undefined);
+		preloadHostedAgentHome();
+	};
 
+	// Touch preloading uses capture to coexist with dnd-kit's bubble-phase touch listener below.
 	return (
 		<RailTileButton
 			itemRef={setNodeRef}
@@ -893,6 +901,9 @@ function SortableAgentRailItem({
 					type="button"
 					disabled={!agent.href}
 					onClick={activateAgent}
+					onFocus={preloadAgent}
+					onMouseEnter={preloadAgent}
+					onTouchStartCapture={preloadAgent}
 					{...attributes}
 					aria-disabled={agent.href ? undefined : true}
 					aria-describedby={agent.env ? attributes["aria-describedby"] : undefined}
@@ -998,21 +1009,21 @@ function FocusRailContent({
 		}) => unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
 		onMutate: async ({ environmentIds, previousRail }) => {
 			await queryClient.cancelQueries({ queryKey: ["get", "/v1/agents"] });
-			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["get", "/v1/agents", {}]);
-			queryClient.setQueryData<SidebarEnvironment[]>(["get", "/v1/agents", {}], (current) =>
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(agentsQueryKey);
+			queryClient.setQueryData<SidebarEnvironment[]>(agentsQueryKey, (current) =>
 				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
 			);
 			return { previous, previousRail };
 		},
 		onError: (error, _variables, context) => {
 			if (context?.previous) {
-				queryClient.setQueryData(["get", "/v1/agents", {}], context.previous);
+				queryClient.setQueryData(agentsQueryKey, context.previous);
 			}
 			if (context?.previousRail) setRailAgentsOrder(context.previousRail);
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
-			queryClient.setQueryData(["get", "/v1/agents", {}], data);
+			queryClient.setQueryData(agentsQueryKey, data);
 		},
 	});
 	const onDragEnd = (event: DragEndEvent) => {

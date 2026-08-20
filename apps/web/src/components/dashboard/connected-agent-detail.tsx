@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -46,6 +46,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentSectionId,
 	agentProjectResourceLink,
@@ -76,6 +77,7 @@ export function ConnectedAgentDetail({
 }) {
 	const id = environmentId;
 	const $api = useOpenApi();
+	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
 	const { legacyDashboardUrl: projectedLegacyDashboardUrl } = useProductAccess();
 	const activeTab = parseAgentTab(section) ?? "overview";
@@ -85,9 +87,7 @@ export function ConnectedAgentDetail({
 		isLoading,
 		error,
 		refetch: refetchAgent,
-	} = $api.useQuery("get", "/v1/agents/{agent_id}", {
-		params: { path: { agent_id: id } },
-	});
+	} = useQuery(agentDetailQueryOptions($api, queryClient, id));
 
 	const overviewEnabled = activeTab === "overview" && Boolean(agent);
 	const overviewProjects = useAgentProjectBindings(id, { enabled: overviewEnabled });

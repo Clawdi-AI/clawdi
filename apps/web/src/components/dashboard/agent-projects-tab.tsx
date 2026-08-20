@@ -42,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
@@ -85,7 +86,7 @@ export function AgentProjectsTab({
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 			queryClient.invalidateQueries({
-				queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+				queryKey: agentDetailQueryKey(agentId),
 			}),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
 			queryClient.invalidateQueries({ queryKey: ["skills"] }),

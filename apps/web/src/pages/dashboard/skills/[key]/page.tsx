@@ -47,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
 	agentProjectDetailHref,
@@ -198,16 +199,10 @@ export function SkillDetailContent({
 		(!agentAccessError && !agentProjectUnavailable && skillQuery.isLoading);
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
-	const { data: skillAgent } = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: agentEnvironmentId ?? "" } },
-		},
-		{
-			enabled: !!agentEnvironmentId,
-		},
-	);
+	const { data: skillAgent } = useQuery({
+		...agentDetailQueryOptions($api, queryClient, agentEnvironmentId ?? ""),
+		enabled: !!agentEnvironmentId,
+	});
 	const skillAgentLabel = skillAgent
 		? agentDisplayName(skillAgent)
 		: skill?.machine_name

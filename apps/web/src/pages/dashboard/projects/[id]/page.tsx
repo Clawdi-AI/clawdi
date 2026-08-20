@@ -99,6 +99,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
+import { agentDetailQueryKey, agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	agentProjectDetailHref,
 	agentProjectResourceHref,
@@ -277,16 +278,10 @@ export default function ProjectDetailPage({
 			: safeAgentReturnHref
 				? { href: safeAgentReturnHref, label: "Agent Projects" }
 				: projectsTarget;
-	const workspaceAgent = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: scope.kind === "agent" ? scope.agentId : "" } },
-		},
-		{
-			enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
-		},
-	);
+	const workspaceAgent = useQuery({
+		...agentDetailQueryOptions($api, qc, scope.kind === "agent" ? scope.agentId : ""),
+		enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
+	});
 	useEffect(() => {
 		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
 	}, [searchParams]);
@@ -1645,7 +1640,7 @@ function ManageProjectAgentsDialog({
 				...changedAgentIds.flatMap((agentId) => [
 					qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) }),
 					qc.invalidateQueries({
-						queryKey: ["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: agentId } } }],
+						queryKey: agentDetailQueryKey(agentId),
 					}),
 				]),
 			]);
