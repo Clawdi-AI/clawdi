@@ -56,7 +56,6 @@ export interface RuntimeBootStatus {
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
-		instanceSemaphores: string[];
 		bootFinished: string;
 	};
 	error?: string;
