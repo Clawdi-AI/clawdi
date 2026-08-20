@@ -61,8 +61,8 @@ services:
         git -C /repo fetch --depth 50 origin "$$REF"
         git -C /repo reset --hard FETCH_HEAD
         # Stamp the source HEAD commit into a plain file the
-        # downstream web container reads — `oven/bun:1` (the
-        # web image) doesnt have git, so calling
+        # downstream web container reads. The Bun web image does not have git,
+        # so calling
         # `git rev-parse HEAD` from there would crash the
         # container under set -e on boot. Write it here from
         # the alpine/git clone step instead.
@@ -166,7 +166,7 @@ services:
       '
 
   web:
-    image: oven/bun:1
+    image: oven/bun:1.4.0
     working_dir: /app/apps/web
     depends_on:
       clone:
@@ -197,7 +197,7 @@ services:
         # Production build (no HMR, no dev-mode WS).
         # First boot: ~2 min build. Subsequent restarts: skip build if the
         # cached bundle was built from THIS commit. The clone step stamps
-        # `/app/.source-commit` (alpine/git has git; oven/bun:1 does NOT —
+        # `/app/.source-commit` (alpine/git has git; the Bun image does not,
         # calling git here would crash the container under set -e). We
         # mirror that stamp into `.output/.commit` and rebuild whenever it
         # differs from the current HEAD. This prevents a redeploy from serving

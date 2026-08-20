@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import type { EventEmitter } from "node:events";
 import {
 	accessSync,
 	closeSync,
@@ -442,7 +443,7 @@ function verifiedAbsoluteExecutables(candidates: string[]): string[] {
 }
 
 function bunGlobalRootDir(binDir: string): string {
-	// Bun 1.3.14 keeps global packages under the install root that owns
+	// Bun keeps global packages under the install root that owns
 	// the authoritative `bun pm bin -g` directory.
 	return normalizePath(join(dirname(binDir), "install", "global", "node_modules"));
 }
@@ -682,6 +683,7 @@ export async function runInstallerProcess(
 				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
+			const processEvents: EventEmitter = process;
 			let markClosed = () => {};
 			const closed = new Promise<void>((resolveClosed) => {
 				markClosed = resolveClosed;
@@ -693,8 +695,8 @@ export async function runInstallerProcess(
 				settled = true;
 				clearTimeout(timeout);
 				options.signal?.removeEventListener("abort", terminate);
-				process.removeListener("SIGINT", terminate);
-				process.removeListener("SIGTERM", terminate);
+				processEvents.removeListener("SIGINT", terminate);
+				processEvents.removeListener("SIGTERM", terminate);
 				resolve(result);
 			};
 			function terminate() {
@@ -706,8 +708,8 @@ export async function runInstallerProcess(
 			}
 			const timeout = setTimeout(terminate, timeoutMs);
 			options.signal?.addEventListener("abort", terminate, { once: true });
-			process.once("SIGINT", terminate);
-			process.once("SIGTERM", terminate);
+			processEvents.once("SIGINT", terminate);
+			processEvents.once("SIGTERM", terminate);
 			if (options.signal?.aborted) terminate();
 			child.on("error", () => {
 				markClosed();

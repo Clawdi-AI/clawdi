@@ -203,7 +203,7 @@ legacy paths.
 
 ## Toolchain
 
-- JavaScript and TypeScript commands use the declared `bun@1.3.14` toolchain.
+- JavaScript and TypeScript commands use the declared `bun@1.4.0` toolchain.
 - JavaScript and TypeScript formatting and linting use Biome.
 - Backend dependency management uses `uv`; operational commands use the PDM
   scripts in `backend/pyproject.toml`.

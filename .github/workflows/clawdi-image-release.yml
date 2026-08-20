@@ -81,7 +81,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.0"
 
       - name: Resolve last successful deployment authority
         id: deployment-authority
@@ -353,7 +353,7 @@ jobs:
 
       - uses: ./.github/actions/setup-bun-ci
         with:
-          bun-version: "1.3.14"
+          bun-version: "1.4.0"
 
       - name: Prepare runner for Ruby
         run: |

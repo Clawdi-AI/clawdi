@@ -2,13 +2,19 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import {
+	type Column,
 	type ColumnDef,
-	flexRender,
-	getCoreRowModel,
+	type ColumnVisibilityState,
+	columnSizingFeature,
+	columnVisibilityFeature,
 	type OnChangeFn,
+	type ReactTable,
+	type RowData,
+	rowPaginationFeature,
+	rowSortingFeature,
 	type SortingState,
-	useReactTable,
-	type VisibilityState,
+	tableFeatures,
+	useTable,
 } from "@tanstack/react-table";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,13 +30,34 @@ import { cn } from "@/lib/utils";
 
 const SKELETON_ROWS = Array.from({ length: 5 }, (_, i) => `row-${i}`);
 
+const dataTableFeatures = tableFeatures({
+	columnSizingFeature,
+	columnVisibilityFeature,
+	rowPaginationFeature,
+	rowSortingFeature,
+});
+
+export type DataTableColumnDef<TData extends RowData, TValue = unknown> = ColumnDef<
+	typeof dataTableFeatures,
+	TData,
+	TValue
+>;
+
+export type DataTableColumn<TData extends RowData, TValue = unknown> = Column<
+	typeof dataTableFeatures,
+	TData,
+	TValue
+>;
+
+type DataTableInstance<TData extends RowData> = ReactTable<typeof dataTableFeatures, TData>;
+
 interface PaginationState {
 	pageIndex: number; // 0-based for tanstack; translated to 1-based for API
 	pageSize: number;
 }
 
-interface DataTableProps<TData, TValue> {
-	columns: ColumnDef<TData, TValue>[];
+interface DataTableProps<TData extends RowData> {
+	columns: DataTableColumnDef<TData>[];
 	data: TData[];
 	isLoading?: boolean;
 	emptyMessage?: React.ReactNode;
@@ -55,7 +82,7 @@ interface DataTableProps<TData, TValue> {
 	onPaginationChange?: OnChangeFn<PaginationState>;
 	pageCount?: number;
 
-	toolbar?: React.ReactNode | ((table: ReturnType<typeof useReactTable<TData>>) => React.ReactNode);
+	toolbar?: React.ReactNode | ((table: DataTableInstance<TData>) => React.ReactNode);
 	footer?: React.ReactNode;
 	className?: string;
 	tableContainerClassName?: string;
@@ -71,7 +98,7 @@ interface DataTableProps<TData, TValue> {
 	getRowGroup?: (row: TData) => { key: string; label: string };
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
 	columns,
 	data,
 	isLoading,
@@ -89,12 +116,12 @@ export function DataTable<TData, TValue>({
 	className,
 	tableContainerClassName,
 	getRowGroup,
-}: DataTableProps<TData, TValue>) {
-	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-	const table = useReactTable({
+}: DataTableProps<TData>) {
+	const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
+	const table = useTable({
+		features: dataTableFeatures,
 		data,
 		columns,
-		getCoreRowModel: getCoreRowModel(),
 		manualSorting: true,
 		manualPagination: true,
 		pageCount: pageCount ?? -1,
@@ -124,9 +151,7 @@ export function DataTable<TData, TValue>({
 							<TableRow key={headerGroup.id} className="hover:bg-transparent">
 								{headerGroup.headers.map((header) => (
 									<TableHead key={header.id} style={{ width: header.getSize() }}>
-										{header.isPlaceholder
-											? null
-											: flexRender(header.column.columnDef.header, header.getContext())}
+										{header.isPlaceholder ? null : <table.FlexRender header={header} />}
 									</TableHead>
 								))}
 							</TableRow>
@@ -205,7 +230,7 @@ export function DataTable<TData, TValue>({
 															className="absolute inset-0"
 														/>
 													) : null}
-													{flexRender(cell.column.columnDef.cell, cell.getContext())}
+													<table.FlexRender cell={cell} />
 												</TableCell>
 											))}
 										</TableRow>,

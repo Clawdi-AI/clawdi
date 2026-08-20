@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Check, Copy, KeyRound, Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type DataTableColumnDef } from "@/components/ui/data-table";
 import {
 	Dialog,
 	DialogContent,
@@ -398,8 +397,8 @@ function apiKeyColumns({
 }: {
 	showExpiration: boolean;
 	onRevoke: (key: ApiKey) => void;
-}): ColumnDef<ApiKey>[] {
-	const columns: ColumnDef<ApiKey>[] = [
+}): DataTableColumnDef<ApiKey>[] {
+	const columns: DataTableColumnDef<ApiKey>[] = [
 		{
 			accessorKey: "label",
 			header: "Name",

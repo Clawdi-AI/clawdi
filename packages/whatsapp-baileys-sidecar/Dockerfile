@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM oven/bun:1.3.14-alpine AS dependencies
+FROM oven/bun:1.4.0-alpine AS dependencies
 
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -11,7 +11,7 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
 RUN bun install --frozen-lockfile --production --filter @clawdi/whatsapp-baileys-sidecar
 
-FROM oven/bun:1.3.14-alpine AS build
+FROM oven/bun:1.4.0-alpine AS build
 
 WORKDIR /app
 COPY package.json bun.lock tsconfig.base.json ./
