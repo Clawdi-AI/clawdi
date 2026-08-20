@@ -1575,12 +1575,8 @@ function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_EGRESS_ENGIN
 }
 
 type HostedRunFixture = {
-	command?: string;
 	args?: string[];
-	env?: Record<string, string>;
 	secretEnv?: Record<string, string>;
-	cwd?: string;
-	prependPath?: string[];
 };
 
 type HostedRuntimeFixtureEntry = {
@@ -1610,11 +1606,9 @@ function hostedOpenClawRuntime(
 		primary_model,
 		run: {
 			args: ["gateway", "run"],
-			env: {},
 			secretEnv: {
 				OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 			},
-			prependPath: [],
 		},
 		services: {},
 		...entryOverrides,
@@ -1637,14 +1631,10 @@ function hostedHermesRuntime(
 		primary_model,
 		run: {
 			args: ["gateway", "run"],
-			env: {},
-			prependPath: [],
 		},
 		services: {
 			dashboard: {
 				args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
-				env: {},
-				prependPath: [],
 			},
 		},
 		...entryOverrides,
@@ -7081,13 +7071,7 @@ exit 64
 					},
 					runtimes: {
 						openclaw: hostedOpenClawRuntime(),
-						hermes: {
-							enabled: false,
-							install: { source: "official" },
-							providerMode: "configured",
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-test" },
-						},
+						hermes: hostedHermesRuntime({ enabled: false }),
 					},
 				},
 				secretValues: {},

@@ -613,7 +613,7 @@ describe("runtime manifest services", () => {
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
-		expect(openclawEnv).toContain('OPENCLAW_SYSTEMD_UNIT="openclaw-gateway.service"');
+		expect(openclawEnv).not.toContain("OPENCLAW_SYSTEMD_UNIT");
 		expect(openclawEnv).toContain('CLAWDI_AUTH_TOKEN=""');
 		for (const name of ["openclaw-gateway", "hermes-gateway", "clawdi-hermes-dashboard"]) {
 			const env = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
@@ -805,9 +805,15 @@ describe("runtime manifest services", () => {
 			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "secret://runtime/hermes/dashboard-password",
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
 		});
-		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
-		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
-		expect(gatewayEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
+		for (const name of [
+			"HERMES_DASHBOARD_BASIC_AUTH_USERNAME",
+			"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+			"HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+			"HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS",
+			"HERMES_DASHBOARD_PUBLIC_URL",
+		]) {
+			expect(gatewayEnv).not.toContain(name);
+		}
 		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).not.toContain("opaque-password-value");
@@ -890,7 +896,7 @@ describe("runtime manifest services", () => {
 		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
 		expect(rotatedWatchEnv).toBe(watchEnv);
 		expect(rotatedDashboardUnit).not.toBe(dashboardUnit);
-		expect(rotatedGatewayUnit).not.toBe(gatewayUnit);
+		expect(rotatedGatewayUnit).toBe(gatewayUnit);
 		// The root watcher reloads the apply-context file on each tick, so neither
 		// its environment nor its unit needs secret bytes.
 		expect(rotatedWatchUnit).toBe(watchUnit);

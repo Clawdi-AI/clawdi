@@ -26,6 +26,7 @@ import {
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	isHostedGatewayRunArgs,
+	isHostedHermesDashboardArgs,
 	manifestSchema,
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
@@ -446,6 +447,7 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 
 type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
 	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPlugins">>;
+type HostedRuntimeRunSettings = NormalizableHostedRuntimeManifest["runtimes"][string]["run"];
 
 export function hostedManifestToRuntimeManifest(
 	hosted: NormalizableHostedRuntimeManifest,
@@ -527,25 +529,22 @@ function hostedRuntimeProviderBinding(
 
 function hostedRuntimeRunSettings(
 	runtime: NormalizableHostedRuntimeManifest["runtime"],
-	run: RuntimeRunSettings | undefined,
+	run: HostedRuntimeRunSettings,
 ): RuntimeRunSettings {
 	const settings = copyHostedRuntimeRunSettings(run);
-	if (isHostedGatewayRunArgs(runtime, run?.args)) {
+	if (isHostedGatewayRunArgs(runtime, run.args)) {
 		settings.args = ["gateway", "run"];
 	}
 	return settings;
 }
 
-function copyHostedRuntimeRunSettings(run: RuntimeRunSettings | undefined): RuntimeRunSettings {
-	const settings: RuntimeRunSettings = {
-		env: run?.env ?? {},
-		prependPath: run?.prependPath ?? [],
+function copyHostedRuntimeRunSettings(run: HostedRuntimeRunSettings): RuntimeRunSettings {
+	return {
+		args: [...run.args],
+		env: {},
+		prependPath: [],
+		...(run.secretEnv === undefined ? {} : { secretEnv: { ...run.secretEnv } }),
 	};
-	if (run?.command !== undefined) settings.command = run.command;
-	if (run?.args !== undefined) settings.args = run.args;
-	if (run?.secretEnv !== undefined) settings.secretEnv = run.secretEnv;
-	if (run?.cwd !== undefined) settings.cwd = run.cwd;
-	return settings;
 }
 
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
@@ -660,10 +659,10 @@ function validateManifestSemantics(
 			if (manifest.openclawGatewayAuth) {
 				errors.push("OpenClaw gateway auth is only valid for the OpenClaw runtime");
 			}
-			if (
-				JSON.stringify(manifest.runtimes.hermes?.services.dashboard?.args) !==
-				JSON.stringify(["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"])
-			) {
+			if (!isHostedGatewayRunArgs("hermes", manifest.runtimes.hermes?.run?.args)) {
+				errors.push("Hermes gateway must use the official gateway run command");
+			}
+			if (!isHostedHermesDashboardArgs(manifest.runtimes.hermes?.services.dashboard?.args)) {
 				errors.push("hermes dashboard must bind directly to 0.0.0.0:9119");
 			}
 		}

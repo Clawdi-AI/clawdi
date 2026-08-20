@@ -1674,13 +1674,11 @@ function resolvedRuntimeServiceSettings(
 }
 
 function resolvedRuntimeSettings(
-	manifest: RuntimeManifest,
 	runtime: string,
 	settings: RuntimeRunSettings | undefined,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings | undefined {
-	const merged = mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv);
-	return runtime === "hermes" ? withHermesDashboardAuthEnvironment(manifest, merged) : merged;
+	return mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv);
 }
 
 function mergeRuntimeSecretEnv(
@@ -5457,12 +5455,7 @@ function runtimeProgramRevisionForManifest(
 		? hostedProviderEnvironment(manifest, runtime)
 		: { placeholderEnv: {}, secretEnv: {} };
 	const runtimeSettings = desiredRuntime
-		? resolvedRuntimeSettings(
-				manifest,
-				runtime,
-				desiredRuntime.run,
-				providerEnvironment.placeholderEnv,
-			)
+		? resolvedRuntimeSettings(runtime, desiredRuntime.run, providerEnvironment.placeholderEnv)
 		: undefined;
 	const runtimeSecretRefs = desiredRuntime
 		? [
@@ -5533,7 +5526,6 @@ function validateRuntimeManifestPlan(
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
 		const runtimeSettings = resolvedRuntimeSettings(
-			manifest,
 			runtimeName,
 			runtime.run,
 			providerPlaceholderEnv,
@@ -5669,7 +5661,6 @@ function resolveRuntimeRunConfigs(input: {
 	const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 		providerEnvironment;
 	const runtimeRunSettings = resolvedRuntimeSettings(
-		input.manifest,
 		runtimeName,
 		input.runtime.run,
 		providerPlaceholderEnv,
@@ -5827,7 +5818,6 @@ function validateRuntimeProjectionPlan(input: {
 		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
 			providerEnvironment;
 		const runtimeSettings = resolvedRuntimeSettings(
-			manifest,
 			runtimeName,
 			runtime.run,
 			providerPlaceholderEnv,

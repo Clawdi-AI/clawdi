@@ -413,8 +413,6 @@ type OfficialRuntimeServiceDescriptor = {
 	// Manifest `services` key the official unit corresponds to; used for
 	// program naming even when such an entry is not official for the runtime.
 	service: string;
-	// Extra env projected into the unit's environment file.
-	unitEnv?: (unitName: string) => Record<string, string>;
 	// Which desired programs the official unit covers. Deliberately
 	// asymmetric: openclaw's default program is its gateway, while hermes may
 	// express the gateway as the default program or an explicit
@@ -431,7 +429,6 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		uninstallArgs: ["gateway", "uninstall"],
 		installSecretEnv: ["OPENCLAW_GATEWAY_TOKEN"],
 		service: "gateway",
-		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
 		matchesProgram: (program) => !program.service,
 	},
 	{
@@ -1439,7 +1436,6 @@ function writeRuntimeSystemdUserProgram(input: {
 }): string {
 	const { program } = input;
 	const name = runtimeSystemdProgramName(program);
-	const unitName = systemdUnitFileName(name);
 	const runtimeEnv = { ...program.env };
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	const installerOnlySecretEnv =
@@ -1451,7 +1447,7 @@ function writeRuntimeSystemdUserProgram(input: {
 	for (const envName of installerOnlySecretEnv) {
 		delete runtimeEnv[envName];
 	}
-	const env = {
+	const env: Record<string, string> = {
 		...input.commonEnvironment,
 		...runtimeEnv,
 		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
@@ -1464,8 +1460,16 @@ function writeRuntimeSystemdUserProgram(input: {
 			input.providerProjectionRevisions,
 			input.runtimeRevision,
 		),
-		...(descriptor?.unitEnv?.(unitName) ?? {}),
 	};
+	if (
+		descriptor &&
+		input.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2"
+	) {
+		// The official installer owns the gateway's process environment baseline
+		// along with ExecStart and WorkingDirectory.
+		delete env.HOME;
+		delete env.PATH;
+	}
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
 			paths: input.paths,

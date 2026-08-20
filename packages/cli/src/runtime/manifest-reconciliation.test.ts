@@ -553,7 +553,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 
 function hostedHermesManifestFixture(
 	overrides: Record<string, unknown> = {},
-	gatewayArgs?: string[],
+	gatewayArgs: string[] = ["gateway", "run"],
 ): Record<string, unknown> {
 	return hostedManifestFixture({
 		runtime: "hermes",
@@ -574,7 +574,7 @@ function hostedHermesManifestFixture(
 		},
 		runtimes: {
 			hermes: hostedRuntimeFixture({
-				run: gatewayArgs === undefined ? undefined : { args: gatewayArgs },
+				run: { args: gatewayArgs },
 				services: {
 					dashboard: {
 						args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
@@ -613,13 +613,10 @@ function hostedOpenClawV2ManifestFixture(
 		runtimes: {
 			openclaw: hostedRuntimeFixture({
 				run: {
-					command: "openclaw",
 					args: gatewayArgs,
-					env: {},
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 					},
-					prependPath: [],
 				},
 			}),
 		},
@@ -851,21 +848,50 @@ describe("runtime manifest reconciliation invariants", () => {
 			mismatchedOrigin.system as { openclawControlUiAllowedOrigins: string[] }
 		).openclawControlUiAllowedOrigins = ["https://other.example.test"];
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(mismatchedOrigin).success).toBe(true);
-
-		const serviceGatewayTokenEnvironment = structuredClone(valid);
-		(
-			serviceGatewayTokenEnvironment.runtimes as {
-				openclaw: { services: Record<string, unknown> };
-			}
-		).openclaw.services = {
-			helper: {
-				secretEnv: { OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token" },
-			},
-		};
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse(serviceGatewayTokenEnvironment).success,
-		).toBe(false);
 	});
+
+	test("keeps hosted runtime process ownership on the exact upstream commands", () => {
+		for (const manifest of [hostedOpenClawV2ManifestFixture(), hostedHermesManifestFixture()]) {
+			const runtime = manifest.runtime as "openclaw" | "hermes";
+			delete (manifest.runtimes as Record<string, { run?: unknown }>)[runtime].run;
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
+		}
+
+		for (const [field, value] of [
+			["command", "openclaw"],
+			["cwd", "/home/clawdi"],
+			["env", { EXTRA: "value" }],
+			["prependPath", ["/custom/bin"]],
+		] as const) {
+			const manifest = hostedOpenClawV2ManifestFixture();
+			const run = (manifest.runtimes as { openclaw: { run: Record<string, unknown> } }).openclaw
+				.run;
+			run[field] = value;
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
+		}
+
+		const openClawService = hostedOpenClawV2ManifestFixture();
+		(
+			openClawService.runtimes as { openclaw: { services: Record<string, unknown> } }
+		).openclaw.services = { helper: { args: ["helper"] } };
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(openClawService).success).toBe(false);
+
+		const hermesService = hostedHermesManifestFixture();
+		(
+			hermesService.runtimes as { hermes: { services: Record<string, unknown> } }
+		).hermes.services.helper = { args: ["helper"] };
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(hermesService).success).toBe(false);
+
+		const hermesDashboardEnv = hostedHermesManifestFixture();
+		const dashboard = (
+			hermesDashboardEnv.runtimes as {
+				hermes: { services: { dashboard: Record<string, unknown> } };
+			}
+		).hermes.services.dashboard;
+		dashboard.env = { EXTRA: "value" };
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(hermesDashboardEnv).success).toBe(false);
+	});
+
 	test("normalizes previous gateway args during the official-unit rollout", () => {
 		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
 		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
@@ -881,6 +907,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
 	});
+
 	test("requires official Basic auth and direct 9119 exposure for hosted Hermes v2", () => {
 		const valid = hostedHermesManifestFixture();
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
@@ -1589,46 +1616,6 @@ chmod 0755 '${commandPath}'
 				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(false);
-	});
-
-	test.each([
-		["run provider env", { run: { env: { OPENAI_API_KEY: "configured" } } }],
-		["run placeholder", { run: { env: { TOKEN: "clawdi-egress-placeholder" } } }],
-		[
-			"run provider secret ref",
-			{ run: { secretEnv: { OPENAI_API_KEY: "secret://provider.clawdi-managed-v2.apiKey" } } },
-		],
-		[
-			"service provider secret ref",
-			{ services: { helper: { secretEnv: { TOKEN: "secret://provider.runtime.apiKey" } } } },
-		],
-	])("rejects unmanaged runtime %s", (_name, overrides) => {
-		const runtime = hostedRuntimeFixture({
-			providerMode: "unmanaged",
-			provider_ids: [],
-			primary_model: undefined,
-			...overrides,
-		});
-		expect(
-			hostedRuntimeManifestSchema.safeParse(
-				hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } }),
-			).success,
-		).toBe(false);
-	});
-
-	test("allows an explicit user Vault-backed service secret ref in unmanaged mode", () => {
-		const runtime = hostedRuntimeFixture({
-			providerMode: "unmanaged",
-			provider_ids: [],
-			services: { helper: { secretEnv: { TOKEN: "secret://vault/default/key" } } },
-		});
-		delete runtime.primary_model;
-
-		expect(
-			hostedRuntimeManifestSchema.safeParse(
-				hostedManifestFixture({ providers: {}, runtimes: { openclaw: runtime } }),
-			).success,
-		).toBe(true);
 	});
 
 	test("rejects the terminal Codex env name for managed runtime providers", () => {
@@ -2393,13 +2380,10 @@ chmod 0755 '${commandPath}'
 						primary_model: { provider_id: "default", model: "gpt-test" },
 						install: { source: "official" },
 						run: {
-							command: "openclaw",
 							args: ["gateway", "run"],
-							env: { OPENCLAW_TEST: "1" },
 							secretEnv: {
 								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 							},
-							prependPath: [],
 						},
 					},
 				},
@@ -2645,7 +2629,13 @@ chmod 0755 '${commandPath}'
 						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						run: { command: "openclaw", args: ["gateway", "run"] },
+						run: {
+							args: ["gateway", "run"],
+							secretEnv: {
+								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+							},
+						},
+						services: {},
 					},
 					hermes: {
 						enabled: true,
@@ -2653,7 +2643,12 @@ chmod 0755 '${commandPath}'
 						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						run: { command: "hermes", args: ["gateway", "run"] },
+						run: { args: ["gateway", "run"] },
+						services: {
+							dashboard: {
+								args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+							},
+						},
 					},
 				},
 			}),

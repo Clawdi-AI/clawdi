@@ -16,8 +16,6 @@ import { normalizeHostedRuntimeBundleV2 } from "./manifest-source";
 import type { RuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
 
-const ROOT_MODE_TEST_SECRET_REF = "secret://runtime/root-modes/test-secret";
-
 const roots: string[] = [];
 
 function tempRoot(): string {
@@ -83,21 +81,12 @@ exit 0
 		delete openclawRuntime.primary_model;
 		manifest.providers = {};
 		manifest.skills = { entries: {} };
-		// A recoverable secret ensures writeLastGoodSecretValues persists the
-		// cache file directly inside the cache platform root.
-		const openclawRun = openclawRuntime.run as Record<string, unknown>;
-		openclawRuntime.run = {
-			...openclawRun,
-			secretEnv: {
-				...(openclawRun.secretEnv as Record<string, unknown>),
-				ROOT_MODE_TEST_SECRET: ROOT_MODE_TEST_SECRET_REF,
-			},
-		};
+		// The canonical Codex secret ensures writeLastGoodSecretValues persists
+		// the cache file directly inside the cache platform root.
 		fixture.secretValues = {
 			"secret://clawdi/auth-token": "runtime-auth-token-root-modes",
 			"secret://runtime/openclaw/gateway-token": "gateway-token-root-modes",
 			"secret://tool.codex.apiKey": "codex-provider-key-root-modes",
-			[ROOT_MODE_TEST_SECRET_REF]: "root-modes-secret-value",
 		};
 
 		const { getRuntimePaths } = await import("./paths");
