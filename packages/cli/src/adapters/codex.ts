@@ -221,7 +221,6 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 export class CodexAdapter implements AgentAdapter {
 	readonly agentType = "codex" as const;
 	private sessionPaths = new Map<string, string>();
-	private hasCompleteSessionPathInventory = false;
 
 	async detect(): Promise<boolean> {
 		// Bare `~/.codex/` could be a leftover. Require either the sessions
@@ -256,7 +255,6 @@ export class CodexAdapter implements AgentAdapter {
 			for (const [sessionId, path] of pathsById) this.sessionPaths.set(sessionId, path);
 		} else {
 			this.sessionPaths = pathsById;
-			this.hasCompleteSessionPathInventory = true;
 		}
 
 		// Codex stores long-conversation history via in-file `compacted`
@@ -272,7 +270,6 @@ export class CodexAdapter implements AgentAdapter {
 			if (current?.localSessionId === localSessionId) return current;
 			this.sessionPaths.delete(localSessionId);
 		}
-		if (this.hasCompleteSessionPathInventory) return null;
 		return (
 			(await this.collectSessions()).sessions.find(
 				(session) => session.localSessionId === localSessionId,
