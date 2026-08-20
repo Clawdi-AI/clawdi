@@ -36,7 +36,7 @@ const manifestContract = readFileSync(
 );
 const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
-) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
+) as { publishConfig?: { access?: string; tag?: unknown } };
 
 describe("CLI publish workflow contract", () => {
 	test("keeps current-run release decisions inside the protected publish topology", () => {
@@ -126,7 +126,8 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain(
 			'npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
-		expect(cliPackage.version).not.toContain("-");
+		expect(workflow).toContain("*-*) npm_tag=beta ;;");
+		expect(workflow).toContain("*) npm_tag=latest ;;");
 		expect(cliPackage.publishConfig).toEqual({ access: "public" });
 		expect(publishManifestChecker).toContain(
 			'Object.hasOwn(packageJson.publishConfig ?? {}, "tag")',
