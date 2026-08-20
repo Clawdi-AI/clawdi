@@ -208,7 +208,7 @@ jobs:
     services:
       postgres:
         # Workflow services require a literal; the parity contract guards it.
-        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67
+        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:db8d1af12ebac7fe10c57730502a31e9b34586ac1ed32852639007dd77eda449
         env:
           POSTGRES_DB: clawdi_test
           POSTGRES_USER: test

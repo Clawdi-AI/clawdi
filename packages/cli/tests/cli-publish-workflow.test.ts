@@ -87,8 +87,8 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain("environment: npm");
 		expect(workflow).toContain("id-token: write");
 		expect(publishJob).toContain('node-version: "24"');
-		expect(publishJob).toContain("npm install --global npm@11.5.1");
-		expect(publishJob).toContain('test "$(npm --version)" = "11.5.1"');
+		expect(publishJob).toContain("npm install --global npm@12.0.2");
+		expect(publishJob).toContain('test "$(npm --version)" = "12.0.2"');
 		expect(workflow.match(/test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/g)).toHaveLength(2);
 		expect(workflow).not.toContain("git checkout --detach");
 		expect(workflow).not.toContain("source_commit");

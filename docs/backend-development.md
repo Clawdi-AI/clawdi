@@ -136,9 +136,9 @@ The generated base stubs declare both public `boto3.client("s3")` and
 BasedPyright also sees unresolved return types in the same overload set for
 services whose generated packages are absent, so strict mode reports the
 member as partially Unknown. The official all-in-one bundle supplies those
-generated return types, including the same 1.43.67 `mypy_boto3_s3` module
-published by the standalone
-[S3 distribution](https://pypi.org/pypi/mypy-boto3-s3/1.43.67/json), while the
+generated return types, including its 1.43.67 `mypy_boto3_s3` module. The
+standalone [S3 distribution](https://pypi.org/pypi/mypy-boto3-s3/1.43.66/json)
+is published separately and currently ends at 1.43.66, while the
 application keeps boto3's public default-session construction path unchanged.
 The official botocore 1.43.67 and formerly pinned 1.43.62 S3 models have the
 same `PutObject`, `GetObject`, `HeadObject`, and `DeleteObject` operation

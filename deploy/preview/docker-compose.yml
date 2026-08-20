@@ -158,7 +158,7 @@ services:
         export WEB_ORIGIN="https://$$SERVICE_FQDN_WEB"
         export CORS_ORIGINS="[\"https://$$SERVICE_FQDN_WEB\"]"
         if ! command -v uv >/dev/null; then
-          pip install --quiet uv
+          pip install --quiet uv==0.12.5
         fi
         uv sync --frozen
         uv run alembic upgrade head
