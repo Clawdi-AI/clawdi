@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -9,6 +10,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
@@ -26,8 +28,10 @@ export function AgentResourceRouteGate({
 	projectAccess?: { projectId: string | null | undefined };
 	children: ReactNode;
 }) {
-	const agent = useOpenApi().useQuery("get", "/v1/agents/{agent_id}", {
-		params: { path: { agent_id: agentId } },
+	const $api = useOpenApi();
+	const queryClient = useQueryClient();
+	const agent = useQuery({
+		...agentDetailQueryOptions($api, queryClient, agentId),
 	});
 	const blockingError =
 		isApiNotFoundError(agent.error) || shouldBlockQueryError(agent.error, agent.data)

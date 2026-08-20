@@ -53,6 +53,7 @@ import {
 	agentProjectResourceHref,
 	agentSectionHref,
 } from "@/lib/agent-routes";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
@@ -198,16 +199,10 @@ export function SkillDetailContent({
 		(!agentAccessError && !agentProjectUnavailable && skillQuery.isLoading);
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
-	const { data: skillAgent } = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: agentEnvironmentId ?? "" } },
-		},
-		{
-			enabled: !!agentEnvironmentId,
-		},
-	);
+	const { data: skillAgent } = useQuery({
+		...agentDetailQueryOptions($api, queryClient, agentEnvironmentId ?? ""),
+		enabled: !!agentEnvironmentId,
+	});
 	const skillAgentLabel = skillAgent
 		? agentDisplayName(skillAgent)
 		: skill?.machine_name

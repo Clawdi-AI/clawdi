@@ -107,6 +107,7 @@ import {
 	agentSectionLink,
 	agentSkillDetailLink,
 } from "@/lib/agent-routes";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
@@ -277,16 +278,10 @@ export default function ProjectDetailPage({
 			: safeAgentReturnHref
 				? { href: safeAgentReturnHref, label: "Agent Projects" }
 				: projectsTarget;
-	const workspaceAgent = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: scope.kind === "agent" ? scope.agentId : "" } },
-		},
-		{
-			enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
-		},
-	);
+	const workspaceAgent = useQuery({
+		...agentDetailQueryOptions($api, qc, scope.kind === "agent" ? scope.agentId : ""),
+		enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
+	});
 	useEffect(() => {
 		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
 	}, [searchParams]);

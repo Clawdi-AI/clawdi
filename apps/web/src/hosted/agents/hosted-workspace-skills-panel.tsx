@@ -33,6 +33,7 @@ import { useBillingClient } from "@/hosted/billing/billing-client";
 import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
@@ -72,12 +73,10 @@ function HostedWorkspaceSkillsPanelContent({
 	const deploymentId = deployment?.resource.id ?? null;
 	const isConnectedAgent = deploymentResolution.membershipResolved && !deployment;
 	const statusKey = ["hosted", "deployments", deploymentId, "skills"] as const;
-	const connectedAgent = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{ params: { path: { agent_id: agentId } } },
-		{ enabled: isConnectedAgent },
-	);
+	const connectedAgent = useQuery({
+		...agentDetailQueryOptions($api, queryClient, agentId),
+		enabled: isConnectedAgent,
+	});
 	const connectedSkills = useQuery({
 		queryKey: ["skills", "connected-workspace", projectId],
 		queryFn: async () =>

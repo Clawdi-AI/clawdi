@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	ArrowDown,
@@ -34,6 +34,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentSectionHref } from "@/lib/agent-routes";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
@@ -127,16 +128,10 @@ export function SessionDetailContent({
 			gcTime: SESSION_DETAIL_GC_MS,
 		},
 	);
-	const { data: scopedAgent } = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: agentId ?? "" } },
-		},
-		{
-			enabled: !!agentId,
-		},
-	);
+	const { data: scopedAgent } = useQuery({
+		...agentDetailQueryOptions($api, queryClient, agentId ?? ""),
+		enabled: !!agentId,
+	});
 
 	// Direction toggle: "desc" (newest-first, default) is the most
 	// common review case for clawdi — users open a session to see
