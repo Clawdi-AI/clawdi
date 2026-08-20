@@ -30,9 +30,7 @@ export function AgentResourceRouteGate({
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const agent = useQuery({
-		...agentDetailQueryOptions($api, queryClient, agentId),
-	});
+	const agent = useQuery(agentDetailQueryOptions($api, queryClient, agentId));
 	const blockingError =
 		isApiNotFoundError(agent.error) || shouldBlockQueryError(agent.error, agent.data)
 			? agent.error

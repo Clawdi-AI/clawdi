@@ -888,6 +888,7 @@ function SortableAgentRailItem({
 		preloadHostedAgentHome();
 	};
 
+	// Touch preloading uses capture to coexist with dnd-kit's bubble-phase touch listener below.
 	return (
 		<RailTileButton
 			itemRef={setNodeRef}
