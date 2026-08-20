@@ -1289,84 +1289,88 @@ describe("runtime manifest services", () => {
 		}
 	});
 
-	test.each(
-		installGateHarnesses,
-	)("gates %s installs on a verified no-op and fails closed on drift", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeDefined();
+	test.each(installGateHarnesses)(
+		"gates %s installs on a verified no-op and fails closed on drift",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(harness.receipt()).toBeDefined();
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
 
-		harness.drift();
-		const receiptBeforeFailure = harness.receipt();
-		harness.failNextInstall();
-		expect(harness.converge().installErrors.join("\n")).toContain("install failed");
-		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toEqual(receiptBeforeFailure);
+			harness.drift();
+			const receiptBeforeFailure = harness.receipt();
+			harness.failNextInstall();
+			expect(harness.converge().installErrors.join("\n")).toContain("install failed");
+			expect(harness.installCount()).toBe(2);
+			expect(harness.receipt()).toEqual(receiptBeforeFailure);
 
-		harness.restoreInstaller();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(3);
-	});
+			harness.restoreInstaller();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(3);
+		},
+	);
 
-	test.each(
-		installGateHarnesses,
-	)("reconciles a real %s command revision change exactly once", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
+	test.each(installGateHarnesses)(
+		"reconciles a real %s command revision change exactly once",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
 
-		harness.revise();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-	});
+			harness.revise();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(2);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(2);
+		},
+	);
 
-	test.each(
-		installGateHarnesses,
-	)("rolls back the %s receipt when authority commit fails", (_name, createHarness) => {
-		const harness = createHarness();
-		const failed = harness.converge(() => {
-			throw new Error("authority commit rejected");
-		});
+	test.each(installGateHarnesses)(
+		"rolls back the %s receipt when authority commit fails",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			const failed = harness.converge(() => {
+				throw new Error("authority commit rejected");
+			});
 
-		expect(failed.installErrors.join("\n")).toContain("authority commit rejected");
-		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeUndefined();
+			expect(failed.installErrors.join("\n")).toContain("authority commit rejected");
+			expect(harness.installCount()).toBe(1);
+			expect(harness.receipt()).toBeUndefined();
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toBeDefined();
-	});
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(2);
+			expect(harness.receipt()).toBeDefined();
+		},
+	);
 
-	test.each(
-		installGateHarnesses,
-	)("restores the prior %s receipt when replacement authority fails", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge().installErrors).toEqual([]);
-		const previousReceipt = harness.receipt();
-		expect(previousReceipt).toBeDefined();
+	test.each(installGateHarnesses)(
+		"restores the prior %s receipt when replacement authority fails",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge().installErrors).toEqual([]);
+			const previousReceipt = harness.receipt();
+			expect(previousReceipt).toBeDefined();
 
-		harness.revise();
-		const failed = harness.converge(() => {
-			throw new Error("replacement authority rejected");
-		});
+			harness.revise();
+			const failed = harness.converge(() => {
+				throw new Error("replacement authority rejected");
+			});
 
-		expect(failed.installErrors.join("\n")).toContain("replacement authority rejected");
-		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toEqual(previousReceipt);
+			expect(failed.installErrors.join("\n")).toContain("replacement authority rejected");
+			expect(harness.installCount()).toBe(2);
+			expect(harness.receipt()).toEqual(previousReceipt);
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(3);
-		expect(harness.receipt()).not.toEqual(previousReceipt);
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(3);
-	});
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(3);
+			expect(harness.receipt()).not.toEqual(previousReceipt);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(3);
+		},
+	);
 
 	test.each(installGateHarnesses)("does not bless post-commit %s drift", (_name, createHarness) => {
 		const harness = createHarness();

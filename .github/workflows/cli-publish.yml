@@ -158,9 +158,9 @@ jobs:
 
       - name: Verify trusted publishing toolchain
         run: |
-          npm install --global npm@11.5.1
-          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(1)'
-          test "$(npm --version)" = "11.5.1"
+          npm install --global npm@12.0.2
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major !== 24 || minor < 15) process.exit(1)'
+          test "$(npm --version)" = "12.0.2"
 
       - name: Download immutable CLI release artifact
         uses: actions/download-artifact@v8

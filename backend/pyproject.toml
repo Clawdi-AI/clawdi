@@ -23,21 +23,21 @@ dependencies = [
     "pgvector>=0.2.5",
     "openai>=2.52.0",
     "fastembed>=0.3",
-    "sentry-sdk[fastapi]==2.66.1",
+    "sentry-sdk[fastapi]==2.68.0",
     # https://pypi.org/pypi/websockets/17.0.1/json
     "websockets==17.0.1",
     "pyyaml>=6.0",
-    # Keep the published pair exact: PyPI composio 0.18.1 metadata pins
-    # composio-client 1.43.0. https://pypi.org/pypi/composio/0.18.1/json
-    "composio==0.18.1",
+    # Keep the published pair exact: PyPI composio 0.20.0 metadata pins
+    # composio-client 1.43.0. https://pypi.org/pypi/composio/0.20.0/json
+    "composio==0.20.0",
     "composio-client==1.43.0",
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
     "mcp==2.0.0",
     "prometheus-client>=0.25.0",
     # Keep the runtime and generated typing distributions on their latest
-    # common public patch. https://pypi.org/pypi/boto3/1.43.14/json
-    "boto3==1.43.14",
-    "botocore==1.43.14",
+    # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
+    "boto3==1.43.67",
+    "botocore==1.43.67",
     "xeddsa==1.2.0",
     # ZoneInfo fallback for slim production images without system zoneinfo.
     "tzdata==2026.3",
@@ -52,11 +52,11 @@ dependencies = [
 # back to the builtin provider with a warning when the import
 # fails — so this extra controls whether mem0 is *available*,
 # not whether memories work at all.
-mem0 = ["mem0ai==2.0.14"]
+mem0 = ["mem0ai==2.0.18"]
 
 [dependency-groups]
 dev = [
-    "basedpyright==1.39.9",
+    "basedpyright==1.39.10",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
@@ -68,9 +68,9 @@ dev = [
     # Generated from boto3/botocore service models and pinned to the runtime
     # SDK line. The full bundle resolves every generated client overload for
     # strict Pyright consumers; the base stubs own boto3's public surface.
-    "boto3-stubs==1.43.14",
-    "boto3-stubs-full==1.43.14",
-    "botocore-stubs==1.43.14",
+    "boto3-stubs==1.43.67",
+    "boto3-stubs-full==1.43.67",
+    "botocore-stubs==1.43.67",
     # Public annotations for the pinned asyncpg 0.31 runtime contract.
     "asyncpg-stubs==0.31.3",
 ]

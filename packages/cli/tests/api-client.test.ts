@@ -250,29 +250,32 @@ describe("ApiClient error classification", () => {
 	it.each([
 		["ordinary", "60"],
 		["arbitrarily large", "9".repeat(1_000)],
-	])("keeps %s Retry-After outside the attempt timeout but abortable", async (_name, retryAfter) => {
-		const origFetch = globalThis.fetch;
-		let fetchCalls = 0;
-		globalThis.fetch = async () => {
-			fetchCalls += 1;
-			return new Response("rate limited", {
-				status: 429,
-				headers: { "retry-after": retryAfter },
-			});
-		};
-		const callerAbort = new AbortController();
-		const abortTimer = setTimeout(() => callerAbort.abort(), 20);
+	])(
+		"keeps %s Retry-After outside the attempt timeout but abortable",
+		async (_name, retryAfter) => {
+			const origFetch = globalThis.fetch;
+			let fetchCalls = 0;
+			globalThis.fetch = async () => {
+				fetchCalls += 1;
+				return new Response("rate limited", {
+					status: 429,
+					headers: { "retry-after": retryAfter },
+				});
+			};
+			const callerAbort = new AbortController();
+			const abortTimer = setTimeout(() => callerAbort.abort(), 20);
 
-		try {
-			await expect(
-				retryingFetch(new Request("http://127.0.0.1:0"), 1, callerAbort.signal),
-			).rejects.toMatchObject({ name: "ApiError", body: "aborted", isTimeout: false });
-			expect(fetchCalls).toBe(1);
-		} finally {
-			clearTimeout(abortTimer);
-			globalThis.fetch = origFetch;
-		}
-	});
+			try {
+				await expect(
+					retryingFetch(new Request("http://127.0.0.1:0"), 1, callerAbort.signal),
+				).rejects.toMatchObject({ name: "ApiError", body: "aborted", isTimeout: false });
+				expect(fetchCalls).toBe(1);
+			} finally {
+				clearTimeout(abortTimer);
+				globalThis.fetch = origFetch;
+			}
+		},
+	);
 
 	it("does not apply the five-minute SSE policy to REST Retry-After", async () => {
 		const origFetch = globalThis.fetch;

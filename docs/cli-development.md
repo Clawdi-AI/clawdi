@@ -315,8 +315,8 @@ and stable releases use `latest`. Package-level tag overrides are rejected.
 The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
-job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1. After a fresh `npm publish --provenance` succeeds, that command plus the exact registry
+job uses Node 24 and npm 12.0.2, satisfying npm 12's minimum Node 24.15
+requirement. After a fresh `npm publish --provenance` succeeds, that command plus the exact registry
 version and matching `dist.integrity` authorizes GitHub Release completion; the
 job does not wait for the eventually consistent registry attestation read API.
 If release work remains and the immutable npm version already exists, the

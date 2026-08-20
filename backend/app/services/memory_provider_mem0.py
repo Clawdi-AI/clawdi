@@ -1,6 +1,6 @@
 """Narrow adapter for the optional, untyped Mem0 client.
 
-``mem0ai`` 2.0.14 exports ``MemoryClient`` from ``mem0`` but does not publish
+``mem0ai`` 2.0.18 exports ``MemoryClient`` from ``mem0`` but does not publish
 ``py.typed``. Keep the official lazy import and every SDK call in this
 standard-mode adapter, then validate responses into first-party domain records.
 """

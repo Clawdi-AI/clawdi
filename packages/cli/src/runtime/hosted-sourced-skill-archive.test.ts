@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
-import { snapshotSkillArchive } from "../lib/tar";
+import { computeSkillArchiveHash, snapshotSkillArchive } from "../lib/tar";
 import { prepareHostedSourcedSkillArchives } from "./hosted-sourced-skill-archive";
 import type { RuntimeManifest } from "./manifest-contract";
 import { hostedSkillSourceSchema } from "./manifest-resources";
@@ -226,7 +226,9 @@ describe("hosted sourced Skill archives", () => {
 			},
 		);
 
-		expect(prepared.get("review-pr")?.tarBytes).toEqual(canonical.archive);
+		const preparedArchive = prepared.get("review-pr")?.tarBytes;
+		if (!preparedArchive) throw new Error("missing prepared legacy Project Skill archive");
+		expect(await computeSkillArchiveHash(preparedArchive, "review-pr")).toBe(canonical.hash);
 	});
 
 	test("fetches the exact commit and reuses only a digest-verified cache", async () => {

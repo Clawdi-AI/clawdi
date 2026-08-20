@@ -198,10 +198,10 @@ test "$(grep -Ec '^  whatsapp-egress-guard:$' "${rendered_config}")" -eq 0
 test "$(grep -Ec '^  whatsapp-tailscale:$' "${rendered_egress_config}")" -eq 1
 test "$(grep -Ec '^  whatsapp-netns:$' "${rendered_egress_config}")" -eq 1
 test "$(grep -Ec '^  whatsapp-egress-guard:$' "${rendered_egress_config}")" -eq 1
-grep -Fq 'image: registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
+grep -Fq 'image: registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4' \
 	"${rendered_egress_config}"
 grep -Fq 'service: clawdi-whatsapp-tailscale' "${rendered_egress_config}"
-grep -Fq 'image: tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0' \
+grep -Fq 'image: tailscale/tailscale:v1.102.2@sha256:321ce041508c19079b57a28b6666c8d81ab0b08accc0a2585b3ab663d557ac24' \
 	"${rendered_egress_config}"
 test "$(grep -Fc 'network: container:clawdi-whatsapp-netns' "${rendered_egress_config}")" -eq 3
 grep -Fq "TS_USERSPACE: 'false'" "${rendered_egress_config}"

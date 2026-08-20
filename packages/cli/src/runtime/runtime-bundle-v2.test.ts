@@ -47,7 +47,7 @@ const goldenPath = resolve(
 	"../../../../test-fixtures/runtime-bundle-v2.golden.json",
 );
 const EXPECTED_GOLDEN_SOURCE_REVISION =
-	"460de6a65cefc052d34bf10be72943e602cb7a19a5daef0b2467f2f7faafdb5b";
+	"b9a4035525dabac848b7d896ca2dd8f4936e7f49fd04c58fbbf801d854224b6f";
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
@@ -614,52 +614,45 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
-	test.each([
-		"latest",
-		"1",
-		true,
-		0,
-		-1,
-		1.5,
-		null,
-	])("rejects invalid hosted Skill version %p", (version) => {
-		const raw = z
-			.record(z.string(), z.unknown())
-			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
-		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({
-				...raw,
-				manifest: {
-					...manifest,
-					skills: { entries: { clawdi: { enabled: true, version } } },
-				},
-			}),
-		).toThrow();
-	});
-
-	test.each([
-		"variant",
-		"path",
-		"content",
-		"packageSpec",
-	])("rejects hosted Skill entry field %s", (field) => {
-		const raw = z
-			.record(z.string(), z.unknown())
-			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
-		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({
-				...raw,
-				manifest: {
-					...manifest,
-					skills: {
-						entries: { clawdi: { enabled: true, version: 1, [field]: "forbidden" } },
+	test.each(["latest", "1", true, 0, -1, 1.5, null])(
+		"rejects invalid hosted Skill version %p",
+		(version) => {
+			const raw = z
+				.record(z.string(), z.unknown())
+				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+			expect(() =>
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					manifest: {
+						...manifest,
+						skills: { entries: { clawdi: { enabled: true, version } } },
 					},
-				},
-			}),
-		).toThrow();
-	});
+				}),
+			).toThrow();
+		},
+	);
+
+	test.each(["variant", "path", "content", "packageSpec"])(
+		"rejects hosted Skill entry field %s",
+		(field) => {
+			const raw = z
+				.record(z.string(), z.unknown())
+				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+			expect(() =>
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					manifest: {
+						...manifest,
+						skills: {
+							entries: { clawdi: { enabled: true, version: 1, [field]: "forbidden" } },
+						},
+					},
+				}),
+			).toThrow();
+		},
+	);
 
 	test("uses distinct public placeholders for each remote MCP server and header", () => {
 		const profiles = hostedManifestEgressProfiles({

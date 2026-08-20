@@ -814,19 +814,22 @@ describe("runtime manifest reconciliation invariants", () => {
 	test.each([
 		["OpenClaw", hostedOpenClawV2ManifestFixture()],
 		["Hermes", hostedHermesManifestFixture()],
-	] as const)("rejects the removed bridge field in every hosted %s manifest schema", (_name, valid) => {
-		expect(hostedRuntimeManifestSchema.safeParse(valid).success).toBe(true);
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
-		const withBridge = { ...valid, bridge: {} };
-		expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
-		expect(
-			hostedRuntimeManifestResponseSchema.safeParse({
-				manifest: withBridge,
-				secretValues: {},
-			}).success,
-		).toBe(false);
-	});
+	] as const)(
+		"rejects the removed bridge field in every hosted %s manifest schema",
+		(_name, valid) => {
+			expect(hostedRuntimeManifestSchema.safeParse(valid).success).toBe(true);
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
+			const withBridge = { ...valid, bridge: {} };
+			expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
+			expect(
+				hostedRuntimeManifestResponseSchema.safeParse({
+					manifest: withBridge,
+					secretValues: {},
+				}).success,
+			).toBe(false);
+		},
+	);
 
 	test("requires typed native token auth for hosted OpenClaw v2", () => {
 		const valid = hostedOpenClawV2ManifestFixture();
@@ -1635,16 +1638,15 @@ chmod 0755 '${commandPath}'
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
-	test.each([
-		"openai_chat",
-		"anthropic_messages",
-		"google_generate_content",
-	])("rejects terminal Codex without the fixed responses API mode (%s)", (apiMode) => {
-		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
-		terminalTooling.codex.provider.apiMode = apiMode;
-		const manifest = hostedManifestFixture({ terminalTooling });
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
-	});
+	test.each(["openai_chat", "anthropic_messages", "google_generate_content"])(
+		"rejects terminal Codex without the fixed responses API mode (%s)",
+		(apiMode) => {
+			const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
+			terminalTooling.codex.provider.apiMode = apiMode;
+			const manifest = hostedManifestFixture({ terminalTooling });
+			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		},
+	);
 
 	test("rejects terminal Codex without an API mode", () => {
 		const { apiMode: _apiMode, ...provider } = TEST_HOSTED_CODEX_TOOLING.codex.provider;
@@ -1655,26 +1657,26 @@ chmod 0755 '${commandPath}'
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
-	test.each([
-		"secret://provider.stale.apiKey",
-		"secret://provider.stale.apiKey",
-	])("rejects provider secret value %s in unmanaged mode", (secretRef) => {
-		const runtime = hostedRuntimeFixture({
-			providerMode: "unmanaged",
-			provider_ids: [],
-		});
-		delete runtime.primary_model;
-		const manifest = hostedManifestFixture({
-			providers: {},
-			runtimes: { openclaw: runtime },
-		});
-		expect(
-			hostedRuntimeManifestResponseSchema.safeParse({
-				manifest,
-				secretValues: { [secretRef]: "secret" },
-			}).success,
-		).toBe(false);
-	});
+	test.each(["secret://provider.stale.apiKey", "secret://provider.stale.apiKey"])(
+		"rejects provider secret value %s in unmanaged mode",
+		(secretRef) => {
+			const runtime = hostedRuntimeFixture({
+				providerMode: "unmanaged",
+				provider_ids: [],
+			});
+			delete runtime.primary_model;
+			const manifest = hostedManifestFixture({
+				providers: {},
+				runtimes: { openclaw: runtime },
+			});
+			expect(
+				hostedRuntimeManifestResponseSchema.safeParse({
+					manifest,
+					secretValues: { [secretRef]: "secret" },
+				}).success,
+			).toBe(false);
+		},
+	);
 
 	test("accepts either Codex tool secret-ref alias in unmanaged mode", () => {
 		const runtime = hostedRuntimeFixture({ providerMode: "unmanaged", provider_ids: [] });
@@ -2267,23 +2269,22 @@ chmod 0755 '${commandPath}'
 		).toThrow();
 	});
 
-	test.each([
-		"clawdi@1.2.3-test",
-		"clawdi@1.2.3-rc-1.2",
-		"clawdi@1.2.3",
-	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
-		expect(
-			hostedRuntimeManifestSchema.safeParse(
-				hostedManifestFixture({
-					clawdiCli: {
-						source: "npm:clawdi",
-						packageSpec,
-						registry: "https://registry.npmjs.org",
-					},
-				}),
-			).success,
-		).toBe(true);
-	});
+	test.each(["clawdi@1.2.3-test", "clawdi@1.2.3-rc-1.2", "clawdi@1.2.3"])(
+		"accepts exact hosted CLI package spec %s",
+		(packageSpec) => {
+			expect(
+				hostedRuntimeManifestSchema.safeParse(
+					hostedManifestFixture({
+						clawdiCli: {
+							source: "npm:clawdi",
+							packageSpec,
+							registry: "https://registry.npmjs.org",
+						},
+					}),
+				).success,
+			).toBe(true);
+		},
+	);
 
 	test("enforces the Cloud package spec length limit for remote and fixture Hosted schemas", () => {
 		const atLimit = `clawdi@1.2.3-${"a".repeat(187)}`;
@@ -3049,39 +3050,39 @@ chmod 0755 '${commandPath}'
 		]);
 	});
 
-	test.each([
-		"openclaw",
-		"default",
-	])("does not infer strict hosted provider bindings from the %s provider key", (providerKey) => {
-		const paths = tempRuntimePaths();
-		const manifest = baseManifest(
-			paths,
-			{
-				openclaw: {
-					enabled: true,
-					run: runSettings("openclaw", ["gateway", "run"]),
-					provider_ids: ["default"],
-					services: {},
+	test.each(["openclaw", "default"])(
+		"does not infer strict hosted provider bindings from the %s provider key",
+		(providerKey) => {
+			const paths = tempRuntimePaths();
+			const manifest = baseManifest(
+				paths,
+				{
+					openclaw: {
+						enabled: true,
+						run: runSettings("openclaw", ["gateway", "run"]),
+						provider_ids: ["default"],
+						services: {},
+					},
 				},
-			},
-			{
-				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					providers: {
-						[providerKey]: {
-							type: "custom_openai_compatible",
-							baseUrl: "https://api.example.test/v1",
-							model: "gpt-inferred",
-							models: [{ id: "gpt-inferred" }],
-							apiMode: "openai_chat",
+				{
+					projection: {
+						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						providers: {
+							[providerKey]: {
+								type: "custom_openai_compatible",
+								baseUrl: "https://api.example.test/v1",
+								model: "gpt-inferred",
+								models: [{ id: "gpt-inferred" }],
+								apiMode: "openai_chat",
+							},
 						},
 					},
 				},
-			},
-		);
+			);
 
-		expect(hostedAiProviderCatalog(manifest, "openclaw")).toBeNull();
-	});
+			expect(hostedAiProviderCatalog(manifest, "openclaw")).toBeNull();
+		},
+	);
 
 	test("does not infer a strict hosted primary model from the first provider", () => {
 		const paths = tempRuntimePaths();

@@ -5,7 +5,7 @@ readonly sidecar_service="clawdi-whatsapp-baileys"
 readonly infra_service="clawdi-whatsapp-netns"
 readonly tailscale_service="clawdi-whatsapp-tailscale"
 readonly guard_service="clawdi-whatsapp-egress-guard"
-readonly tailscale_image="tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0"
+readonly tailscale_image="tailscale/tailscale:v1.102.2@sha256:321ce041508c19079b57a28b6666c8d81ab0b08accc0a2585b3ab663d557ac24"
 readonly whatsapp_host_root="/home/phala/clawdi-whatsapp"
 readonly sidecar_state_dir="${whatsapp_host_root}/state"
 readonly sidecar_run_dir="${whatsapp_host_root}/run"
@@ -21,7 +21,7 @@ validate_exit_node() {
 
 tailscale_config_revision() {
 	printf '%s\n' \
-		'registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c' \
+		'registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4' \
 		"${tailscale_image}" \
 		'kernel-netns-ipv4-underlay-uid-killswitch-container-shell-readiness-writable-dns' \
 		"$1" | sha256sum | cut -d ' ' -f 1

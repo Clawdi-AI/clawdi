@@ -95,12 +95,12 @@ The integration was checked against official sources matching the lockfile:
   <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/query-cancellation.md>,
   plus
   <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/reference/useQuery.md>.
-- React 19.2.7 is the component/runtime contract used by these surfaces:
-  <https://github.com/facebook/react/tree/v19.2.7/packages/react>.
-- Base UI 1.6.0 and shadcn 4.16.1 provide accessible progress and skeleton
+- React 19.2.8 is the component/runtime contract used by these surfaces:
+  <https://github.com/facebook/react/tree/v19.2.8/packages/react>.
+- Base UI 1.7.0 and shadcn 4.18.0 provide accessible progress and skeleton
   primitives; they do not redefine query lifecycle state. Their versioned
   sources reinforce using those primitives as explicit task/placeholder UI,
   while TanStack remains authoritative for data state:
-  <https://github.com/mui/base-ui/blob/v1.6.0/docs/src/app/%28docs%29/react/components/progress/page.mdx>
+  <https://github.com/mui/base-ui/blob/v1.7.0/docs/src/app/%28docs%29/react/components/progress/page.mdx>
   and
-  <https://github.com/shadcn-ui/ui/blob/shadcn%404.16.1/apps/v4/content/docs/components/base/skeleton.mdx>.
+  <https://github.com/shadcn-ui/ui/blob/shadcn%404.18.0/apps/v4/content/docs/components/base/skeleton.mdx>.

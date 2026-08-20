@@ -145,7 +145,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.14"
           enable-cache: true
@@ -208,7 +208,7 @@ jobs:
     services:
       postgres:
         # Workflow services require a literal; the parity contract guards it.
-        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67
+        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:db8d1af12ebac7fe10c57730502a31e9b34586ac1ed32852639007dd77eda449
         env:
           POSTGRES_DB: clawdi_test
           POSTGRES_USER: test
@@ -228,7 +228,7 @@ jobs:
       CORS_ORIGINS: '["http://localhost:3000"]'
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.14"
           enable-cache: true

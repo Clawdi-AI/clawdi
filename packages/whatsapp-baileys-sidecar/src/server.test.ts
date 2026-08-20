@@ -403,19 +403,19 @@ describe("sidecar HTTP contract", () => {
 		expect(runtime.providerInbox).toEqual([]);
 	});
 
-	it.each([
-		"-1",
-		"1.5",
-		"invalid",
-		"8001",
-	])("rejects invalid provider event wait %s", async (waitMs) => {
-		const { url } = await startTestServer(new FakeRuntime());
+	it.each(["-1", "1.5", "invalid", "8001"])(
+		"rejects invalid provider event wait %s",
+		async (waitMs) => {
+			const { url } = await startTestServer(new FakeRuntime());
 
-		const response = await authedFetch(`${url}${SESSION_PREFIX}/provider-events?waitMs=${waitMs}`);
+			const response = await authedFetch(
+				`${url}${SESSION_PREFIX}/provider-events?waitMs=${waitMs}`,
+			);
 
-		expect(response.status).toBe(400);
-		expect(await response.json()).toEqual({ error: "waitMs_must_be_0_to_8000" });
-	});
+			expect(response.status).toBe(400);
+			expect(await response.json()).toEqual({ error: "waitMs_must_be_0_to_8000" });
+		},
+	);
 });
 
 async function startTestServer(runtime: BaileysRuntime): Promise<{ url: string }> {

@@ -186,16 +186,7 @@ def _batch(
                 },
                 "install": {"source": "official"},
                 "run": {
-                    "args": [
-                        "gateway",
-                        "run",
-                        "--allow-unconfigured",
-                        "--port",
-                        "18789",
-                        "--bind",
-                        "lan",
-                        "--force",
-                    ],
+                    "args": ["gateway", "run"],
                     "secretEnv": {
                         "OPENCLAW_GATEWAY_TOKEN": "secret://runtime/openclaw/gateway-token"
                     },

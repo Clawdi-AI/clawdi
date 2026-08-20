@@ -261,31 +261,31 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 	});
 });
 
-it.each([
-	"openclaw",
-	"hermes",
-] as const)("patches and rolls back only the selected %s alias", (selectedRuntime) => {
-	const fixture = createArtifactFixture(selectedRuntime);
-	const otherRuntime = selectedRuntime === "openclaw" ? "hermes" : "openclaw";
-	const otherRoot = installArtifactAlias(fixture.home, otherRuntime);
-	const otherTargets = artifactTargetsAt(otherRoot);
-	const otherBefore = otherTargets.map(({ path }) => readFileSync(path));
+it.each(["openclaw", "hermes"] as const)(
+	"patches and rolls back only the selected %s alias",
+	(selectedRuntime) => {
+		const fixture = createArtifactFixture(selectedRuntime);
+		const otherRuntime = selectedRuntime === "openclaw" ? "hermes" : "openclaw";
+		const otherRoot = installArtifactAlias(fixture.home, otherRuntime);
+		const otherTargets = artifactTargetsAt(otherRoot);
+		const otherBefore = otherTargets.map(({ path }) => readFileSync(path));
 
-	expect(reconcile(fixture).status).toBe("applied");
-	assertTargetHunkState(fixture, "after");
-	otherTargets.forEach(({ target, path }, index) => {
-		expect(readFileSync(path)).toEqual(otherBefore[index]);
-		for (const hunk of target.hunks) {
-			expect(exactMatchCount(readFileSync(path, "utf8"), hunk.before)).toBe(1);
-		}
-	});
+		expect(reconcile(fixture).status).toBe("applied");
+		assertTargetHunkState(fixture, "after");
+		otherTargets.forEach(({ target, path }, index) => {
+			expect(readFileSync(path)).toEqual(otherBefore[index]);
+			for (const hunk of target.hunks) {
+				expect(exactMatchCount(readFileSync(path, "utf8"), hunk.before)).toBe(1);
+			}
+		});
 
-	expect(rollback(fixture).status).toBe("rolled-back");
-	assertTargetHunkState(fixture, "before");
-	otherTargets.forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(otherBefore[index]);
-	});
-});
+		expect(rollback(fixture).status).toBe("rolled-back");
+		assertTargetHunkState(fixture, "before");
+		otherTargets.forEach(({ path }, index) => {
+			expect(readFileSync(path)).toEqual(otherBefore[index]);
+		});
+	},
+);
 
 it("scopes snapshot targets to the desired and receipt-owned aliases only", () => {
 	const fixture = createArtifactFixture("openclaw");
@@ -426,27 +426,27 @@ it("rejects changed target semantics before mutating any target", () => {
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
-it.each([
-	"duplicate-before",
-	"both-forms",
-] as const)("rejects %s ambiguous hunk context with zero mutation", (mode) => {
-	const fixture = createArtifactFixture("openclaw");
-	const targets = artifactTargets(fixture);
-	const target = targets[0];
-	const hunk = target?.target.hunks[0];
-	if (!target || !hunk) throw new Error("missing ambiguous hunk fixture");
-	writeFileSync(
-		target.path,
-		`${mode === "duplicate-before" ? hunk.before : hunk.after}${readFileSync(target.path, "utf8")}`,
-	);
-	const unchanged = targets.map(({ path }) => readFileSync(path));
+it.each(["duplicate-before", "both-forms"] as const)(
+	"rejects %s ambiguous hunk context with zero mutation",
+	(mode) => {
+		const fixture = createArtifactFixture("openclaw");
+		const targets = artifactTargets(fixture);
+		const target = targets[0];
+		const hunk = target?.target.hunks[0];
+		if (!target || !hunk) throw new Error("missing ambiguous hunk fixture");
+		writeFileSync(
+			target.path,
+			`${mode === "duplicate-before" ? hunk.before : hunk.after}${readFileSync(target.path, "utf8")}`,
+		);
+		const unchanged = targets.map(({ path }) => readFileSync(path));
 
-	expect(() => reconcile(fixture)).toThrow("refused non-unique or changed openclaw hunks");
-	targets.forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(unchanged[index]);
-	});
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-});
+		expect(() => reconcile(fixture)).toThrow("refused non-unique or changed openclaw hunks");
+		targets.forEach(({ path }, index) => {
+			expect(readFileSync(path)).toEqual(unchanged[index]);
+		});
+		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	},
+);
 
 it("rejects recognized mixed before/after hunks without a receipt", () => {
 	const fixture = createArtifactFixture("openclaw");
@@ -528,19 +528,15 @@ it.each(["8.0.0", "6.9.9"])("rejects incompatible Baileys major %s", (version) =
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
-it.each([
-	"7.*",
-	"7.0",
-	"07.0.0",
-	"7.0.0-rc.01",
-	"v7.0.0",
-	"not-semver",
-])("rejects malformed Baileys version %s", (version) => {
-	const fixture = createArtifactFixture("hermes", version);
-	expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
-	assertTargetHunkState(fixture, "before");
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-});
+it.each(["7.*", "7.0", "07.0.0", "7.0.0-rc.01", "v7.0.0", "not-semver"])(
+	"rejects malformed Baileys version %s",
+	(version) => {
+		const fixture = createArtifactFixture("hermes", version);
+		expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
+		assertTargetHunkState(fixture, "before");
+		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	},
+);
 
 it("reapplies after a compatible 7.x installer replacement and updates receipt ownership", () => {
 	const fixture = createArtifactFixture("openclaw");

@@ -57,10 +57,10 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy.match(/^ {2}whatsapp-egress-guard:$/gm)).toHaveLength(1);
 		expect(deploy.match(/^ {2}whatsapp-tailscale:$/gm)).toHaveLength(1);
 		expect(deploy).toContain(
-			"registry.k8s.io/pause:3.10.1@sha256:278fb9dbcca9518083ad1e11276933a2e96f23de604a3a08cc3c80002767d24c",
+			"registry.k8s.io/pause:3.10.2@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
 		);
 		expect(deploy).toContain(
-			"tailscale/tailscale:v1.98.10@sha256:cdf5612ded5be1344f1a704b8c5e53496db97376bb533e5e15f141e48bf60cc0",
+			"tailscale/tailscale:v1.102.2@sha256:321ce041508c19079b57a28b6666c8d81ab0b08accc0a2585b3ab663d557ac24",
 		);
 		expect(deploy).toContain("TS_STATE_DIR: /var/lib/tailscale");
 		expect(deploy).toContain('TS_USERSPACE: "false"');
@@ -131,7 +131,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 	test("builds with the repository toolchain and runs on non-root Node", () => {
 		expect(dockerfile).toContain("FROM oven/bun:1.3.14-alpine");
 		expect(dockerfile).toContain("bun install --frozen-lockfile --production");
-		expect(dockerfile).toContain("FROM node:24.18.0-alpine AS runtime");
+		expect(dockerfile).toContain("FROM node:24.19.0-alpine AS runtime");
 		expect(dockerfile).toContain("USER node:node");
 		expect(dockerfile).toContain(
 			'CMD ["node", "/app/packages/whatsapp-baileys-sidecar/dist/index.js"]',
@@ -240,7 +240,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 				new Map([
 					[
 						"packages/whatsapp-baileys-sidecar/Dockerfile",
-						replaceOnce(dockerfile, "node:24.18.0-alpine", "node:24.18.1-alpine"),
+						replaceOnce(dockerfile, "node:24.19.0-alpine", "node:24.19.1-alpine"),
 					],
 				]),
 			],
