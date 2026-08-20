@@ -5,16 +5,16 @@ import {
 	ConnectedAgentDetail,
 	ConnectedAgentDetailSkeleton,
 } from "@/components/dashboard/connected-agent-detail";
+import { loadHostedAgentHome } from "@/lib/agent-home-loader";
 import type { AgentRouteSearch, AgentSectionId } from "@/lib/agent-routes";
-
-const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
 // Hosted builds route through `AgentHome`, which renders hosted agent detail
 // for agents backed by a hosted deployment and falls back to the connected
 // detail otherwise. OSS builds render the connected detail directly —
 // the hosted chunk (and the deploy-API client it carries) never ships.
-const AgentHome = IS_HOSTED_BUILD
-	? lazy(() => import("@/hosted/agents/agent-home").then((m) => ({ default: m.AgentHome })))
+const agentHomeLoader = loadHostedAgentHome;
+const AgentHome = agentHomeLoader
+	? lazy(() => agentHomeLoader().then((module) => ({ default: module.AgentHome })))
 	: null;
 
 export function AgentDetailClient({

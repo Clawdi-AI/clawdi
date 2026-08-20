@@ -87,12 +87,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
+import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { agentsQueryKey, syncAgentDetailCacheFromList } from "@/lib/agent-queries";
+import { agentsQueryKey } from "@/lib/agent-queries";
 import {
 	type AgentSectionId,
 	agentProjectResourceHref,
@@ -884,6 +885,7 @@ function SortableAgentRailItem({
 	const preloadAgent = () => {
 		if (!agent.href) return;
 		void router.preloadRoute({ to: agent.href }).catch(() => undefined);
+		preloadHostedAgentHome();
 	};
 
 	return (
@@ -1634,7 +1636,6 @@ export function AppSidebar({
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
 	const $api = useOpenApi();
-	const queryClient = useQueryClient();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
@@ -1651,7 +1652,7 @@ export function AppSidebar({
 	const showCloudFeatures = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
-	const { data: environments, dataUpdatedAt: environmentsUpdatedAt } = $api.useQuery(
+	const { data: environments } = $api.useQuery(
 		"get",
 		"/v1/agents",
 		{},
@@ -1660,10 +1661,6 @@ export function AppSidebar({
 			refetchIntervalInBackground: false,
 		},
 	);
-	useEffect(() => {
-		if (!environments) return;
-		syncAgentDetailCacheFromList(queryClient, environments, environmentsUpdatedAt);
-	}, [environments, environmentsUpdatedAt, queryClient]);
 	const hydratedEnvironments = hydrated ? environments : undefined;
 	const selfManagedTiles = useMemo(
 		() => selfManagedAgentTiles(hydratedEnvironments),

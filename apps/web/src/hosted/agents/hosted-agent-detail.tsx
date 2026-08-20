@@ -287,6 +287,7 @@ import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-li
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
+import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
@@ -452,6 +453,7 @@ export function HostedAgentDetail({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const $api = useOpenApi();
+	const queryClient = useQueryClient();
 	const { canUseAgentPluginsUI } = useProductAccess();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
@@ -459,23 +461,17 @@ export function HostedAgentDetail({
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudAgentId = isAgentRouteId(environmentId);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
-	const agentQuery = $api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}",
-		{
-			params: { path: { agent_id: environmentId } },
-		},
-		{
-			enabled: cloudAgentId && deploymentProjectionQueryable,
-			refetchInterval: (query) =>
-				missingProjectionRefetchInterval(
-					query.state.error,
-					deploymentStatus,
-					query.state.fetchFailureCount,
-				),
-			refetchIntervalInBackground: false,
-		},
-	);
+	const agentQuery = useQuery({
+		...agentDetailQueryOptions($api, queryClient, environmentId),
+		enabled: cloudAgentId && deploymentProjectionQueryable,
+		refetchInterval: (query) =>
+			missingProjectionRefetchInterval(
+				query.state.error,
+				deploymentStatus,
+				query.state.fetchFailureCount,
+			),
+		refetchIntervalInBackground: false,
+	});
 	const projection = resolveHostedAgentProjection({
 		enabled: cloudAgentId && deploymentProjectionQueryable,
 		data: agentQuery.data,

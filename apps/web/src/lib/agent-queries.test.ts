@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { QueryClient } from "@tanstack/react-query";
-import { agentDetailQueryKey, syncAgentDetailCacheFromList } from "@/lib/agent-queries";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import {
+	agentDetailInitialDataOptions,
+	agentDetailQueryKey,
+	agentsQueryKey,
+} from "@/lib/agent-queries";
 
 type Agent = components["schemas"]["AgentResponse"];
 
@@ -25,22 +29,38 @@ function agent(id: string, displayName: string): Agent {
 }
 
 describe("agent query cache", () => {
-	test("projects list results into detail keys without replacing newer detail data", () => {
+	test("initializes an empty detail from the list without replacing detail data", () => {
 		const queryClient = new QueryClient();
 		const listed = agent("agent-a", "Listed Agent");
 		const detailKey = agentDetailQueryKey(listed.id);
+		queryClient.setQueryData(agentsQueryKey, [listed], { updatedAt: 100 });
 
-		syncAgentDetailCacheFromList(queryClient, [listed], 100);
-		expect(queryClient.getQueryData<Agent>(detailKey)).toEqual(listed);
+		const observer = new QueryObserver(queryClient, {
+			queryKey: detailKey,
+			queryFn: async () => listed,
+			staleTime: Number.POSITIVE_INFINITY,
+			...agentDetailInitialDataOptions(queryClient, listed.id),
+		});
+		expect(observer.getCurrentResult().data).toEqual(listed);
 		expect(queryClient.getQueryState(detailKey)?.dataUpdatedAt).toBe(100);
-		syncAgentDetailCacheFromList(queryClient, [listed], 150);
-		expect(queryClient.getQueryState(detailKey)?.dataUpdatedAt).toBe(150);
 
 		const newerDetail = { ...listed, display_name: "Newer Detail" };
 		queryClient.setQueryData(detailKey, newerDetail, { updatedAt: 200 });
-		syncAgentDetailCacheFromList(queryClient, [{ ...listed, display_name: "Stale List" }], 175);
+		observer.setOptions({
+			queryKey: detailKey,
+			queryFn: async () => listed,
+			staleTime: Number.POSITIVE_INFINITY,
+			...agentDetailInitialDataOptions(queryClient, listed.id),
+		});
 
-		expect(queryClient.getQueryData<Agent>(detailKey)).toEqual(newerDetail);
+		expect(observer.getCurrentResult().data).toEqual(newerDetail);
 		expect(queryClient.getQueryState(detailKey)?.dataUpdatedAt).toBe(200);
+
+		const directObserver = new QueryObserver(queryClient, {
+			queryKey: agentDetailQueryKey("agent-b"),
+			queryFn: async () => agent("agent-b", "Direct Agent"),
+			...agentDetailInitialDataOptions(queryClient, "agent-b"),
+		});
+		expect(directObserver.getCurrentResult().status).toBe("pending");
 	});
 });
