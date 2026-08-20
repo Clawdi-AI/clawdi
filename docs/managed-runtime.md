@@ -577,7 +577,7 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; Hosted cannot select a version, channel, commit, digest, or custom installer. The selected Clawdi release owns the official installer contract and the audited exact Hosted-v2 OpenClaw package. |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; Hosted cannot select a version, channel, commit, digest, or custom installer. Both supported runtimes use the official installer's default latest release. |
 | `runtimes.<name>.run` | Exact official gateway argv; only OpenClaw may carry its single gateway-token secret reference. Hosted rejects custom commands, cwd, env, and PATH projection. |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires exactly one provider; unmanaged mode requires an exact empty list. Selection is replacement-only, with no fallback or secondary pool. |
@@ -595,14 +595,11 @@ Normalization maps hosted fields into the internal shape:
 | `egressProfiles` | Explicit generic local sidecar profiles; Agent Plugin packages, Store metadata, and public installation APIs cannot declare them |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
 
-The outer Hosted selector remains unchanged for reader-first CLI upgrades. A
-new Clawdi release normalizes Hosted-v2 OpenClaw to its internal exact install
-version, currently `openclaw@2026.8.1-beta.2`; Hermes and generic manifests keep
-their existing installer behavior. OpenClaw convergence probes the installed
-CLI, reruns the official installer on drift, passes `meta.lastTouchedVersion`
-through upstream `--compatible-with`, and accepts the result only when the
-installed version exactly matches. It does not compare versions independently
-or rewrite OpenClaw config fields.
+The outer Hosted selector remains unchanged for reader-first CLI upgrades.
+Hosted v2 normalizes both OpenClaw and Hermes to their official installers
+without a version or channel argument. Convergence runs the installer when the
+runtime executable is absent; it does not resolve, compare, or rewrite upstream
+versions independently.
 
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model
@@ -1228,19 +1225,13 @@ The stable release tag
 [`v2026.7.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1),
 resolves to release commit
 [`2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`](https://github.com/openclaw/openclaw/commit/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4).
-Exact package metadata and official installer argument support were revalidated
-on 2026-08-19.
-The Hosted-v2 install target is `openclaw@2026.8.1-beta.2` with npm integrity
-`sha512-k4cwlyFOuXN5wN6NOH/gqxupGuvMkOr5OV2Eh7MJmmGFh86wvWSTrGBkL4XkNTg/kszWzGbotI8wKlZ468EjsQ==`.
-The exact spec resolves through the official installer `--version
-2026.8.1-beta.2` contract. Its npm manifest does not publish `gitHead`, so the
-package spec and registry integrity remain the auditable artifact identity;
-the same-version official source tag resolves to commit
-[`8f382a202ff1e15833394b481615dcdda99b04d7`](https://github.com/openclaw/openclaw/commit/8f382a202ff1e15833394b481615dcdda99b04d7)
-and corroborates the CLI and service contracts below without being treated as
-a cryptographic identity for the npm tarball.
+Official installer behavior was revalidated on 2026-08-20. Hosted v2 passes no
+`--version`; the installer defaults `OPENCLAW_VERSION` to npm's `latest`
+dist-tag. At verification time `latest` resolved to stable
+`openclaw@2026.7.1-2`, while beta remained a separate dist-tag. That resolved
+package is observed runtime state, not desired state owned by a Clawdi release.
 
-The separately retained `2026.7.1-2` service-integration audit remains anchored
+The `2026.7.1-2` service-integration audit is anchored
 to source commit `0790d9f`; it verifies the gateway transaction used by Clawdi,
 not the current Hosted package identity:
 

@@ -11,7 +11,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifest";
-import { HOSTED_V2_OPENCLAW_VERSION } from "./manifest-contract";
 import { normalizeHostedRuntimeBundleV2 } from "./manifest-source";
 import type { RuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
@@ -48,7 +47,7 @@ test("never chmods the four platform roots that child writes touch", async () =>
 if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
 elif [ "\${1:-}" = "--version" ]; then
-  printf '%s\\n' '${HOSTED_V2_OPENCLAW_VERSION}'
+  printf '%s\\n' 'OpenClaw test-version'
 fi
 exit 0
 `,

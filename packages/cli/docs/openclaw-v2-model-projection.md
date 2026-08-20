@@ -67,10 +67,9 @@ Clawdi-owned OpenClaw plugin whose setup metadata declares:
 Convergence verifies the effective marker through the public provider-env-vars
 SDK and fails closed before projection or cleanup if it is absent. Explicit
 `auth: "api-key"` controls execution precedence but does not replace this
-doctor prevention. The Clawdi release pins Hosted-v2 OpenClaw to the audited
-exact package `openclaw@2026.8.1-beta.2`; the unchanged outer Hosted installer
-selector carries no version. No legacy Hosted plugin participates in this
-contract.
+doctor prevention. Hosted v2 uses OpenClaw's official installer without a
+version argument; audited packages remain compatibility evidence rather than
+install pins. No legacy Hosted plugin participates in this contract.
 
 During every proven managed v2 `clawdi` env projection, convergence uses the
 public config-mutation SDK to remove normalized `clawdi` entries from

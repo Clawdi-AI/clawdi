@@ -63,7 +63,6 @@ import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
-	HOSTED_V2_OPENCLAW_VERSION,
 	hostedRuntimeBundleV2ManifestSchema,
 	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
@@ -639,7 +638,7 @@ function writeFakeGatewayCli(input: {
 set -euo pipefail
 case "$*" in
 	"--version")
-		printf '%s\\n' '${input.runtime === "openclaw" ? `OpenClaw ${HOSTED_V2_OPENCLAW_VERSION}` : "Hermes test-version"}'
+		printf '%s\\n' '${input.runtime === "openclaw" ? "OpenClaw test-version" : "Hermes test-version"}'
 		;;
 	"config patch --stdin"*)
 		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
@@ -1117,7 +1116,7 @@ if [[ "$plugin_enabled" == true ]]; then plugin_status=loaded; fi
 
 case "\${1:-}" in
   --version)
-    printf '%s\\n' 'OpenClaw ${HOSTED_V2_OPENCLAW_VERSION}'
+    printf '%s\\n' 'OpenClaw test-version'
     ;;
   agents)
     [[ "\${2:-}" == list && "\${3:-}" == --json ]] || exit 2
@@ -1753,7 +1752,7 @@ chmod 0755 '${commandPath}'
 		});
 
 		expect(parsed.runtimes.custom.install?.args).toEqual([]);
-		expect(parsed.runtimes.custom.install?.version).toBeUndefined();
+		expect("version" in (parsed.runtimes.custom.install ?? {})).toBe(false);
 		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
 		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
 	});
@@ -1989,7 +1988,7 @@ chmod 0755 '${commandPath}'
 			[
 				"#!/bin/sh",
 				'if [ "$1" = "--version" ]; then',
-				`  printf '%s\\n' 'OpenClaw ${HOSTED_V2_OPENCLAW_VERSION}'`,
+				`  printf '%s\\n' 'OpenClaw test-version'`,
 				"  exit 0",
 				"fi",
 				'if [ "$1 $2 $3" = "agents list --json" ]; then',
@@ -2073,7 +2072,7 @@ chmod 0755 '${commandPath}'
 			[
 				"#!/bin/sh",
 				'if [ "$1" = "--version" ]; then',
-				`  printf '%s\\n' 'OpenClaw ${HOSTED_V2_OPENCLAW_VERSION}'`,
+				`  printf '%s\\n' 'OpenClaw test-version'`,
 				"  exit 0",
 				"fi",
 				'if [ "$1 $2 $3" = "agents list --json" ]; then',
@@ -2450,12 +2449,9 @@ chmod 0755 '${commandPath}'
 		expect(normalized.manifest.runtimes.openclaw.enabled).toBe(true);
 		expect(normalized.manifest.runtimes.openclaw.updateChannel).toBeUndefined();
 		const install = normalized.manifest.runtimes.openclaw.install;
-		const expectedOpenClawVersion = HOSTED_V2_OPENCLAW_VERSION;
 		expect(install?.url).toBe(OFFICIAL_INSTALL_URLS.openclaw);
-		expect(install?.version).toBe(expectedOpenClawVersion);
-		expect(install?.args).toEqual(
-			officialInstallArgs("openclaw", install?.home ?? "", expectedOpenClawVersion),
-		);
+		expect(install?.args).toEqual(officialInstallArgs("openclaw", install?.home ?? ""));
+		expect(install?.args).not.toContain("--version");
 		expect(normalized.manifest.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
@@ -5072,18 +5068,19 @@ echo spawned > '${installerLog}'
 		).toEqual([join(home, ".local", "bin", "openclaw"), join(home, ".local", "tools")].sort());
 	});
 
-	test("passes historical config writer versions unchanged to the exact OpenClaw installer", () => {
+	test("runs the official latest OpenClaw installer with a sanitized environment", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
 		const commandPath = join(home, ".local", "bin", "openclaw");
 		const configPath = join(home, ".openclaw", "openclaw.json");
 		const installedVersionPath = join(home, ".openclaw", "installed-version");
 		const fixtureRoot = dirname(paths.serviceStateRoot);
+		const commandFixturePath = join(fixtureRoot, "openclaw");
 		const installerPath = join(fixtureRoot, "install-openclaw.sh");
 		const installerResultPath = join(fixtureRoot, "installer-result");
 		const installerLog = join(fixtureRoot, "installer.log");
 		const installerEnvironmentLog = join(fixtureRoot, "installer-environment.log");
-		const desiredVersion = HOSTED_V2_OPENCLAW_VERSION;
+		const installedVersion = "2026.7.1-2";
 		const configWriterVersion = "2026.8.1.beta.1";
 		const openClawInstallerOverrides = [
 			"OPENCLAW_HOME",
@@ -5105,10 +5102,10 @@ echo spawned > '${installerLog}'
 
 		mkdirSync(dirname(commandPath), { recursive: true });
 		mkdirSync(dirname(configPath), { recursive: true });
-		writeFileSync(installedVersionPath, "2026.7.1-2\n");
+		writeFileSync(installedVersionPath, `${installedVersion}\n`);
 		writeFileSync(configPath, `${JSON.stringify(config)}\n`);
 		writeFileSync(
-			commandPath,
+			commandFixturePath,
 			`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
@@ -5118,7 +5115,7 @@ case "$*" in
 esac
 `,
 		);
-		chmodSync(commandPath, 0o700);
+		chmodSync(commandFixturePath, 0o700);
 		writeFileSync(
 			installerPath,
 			`#!/usr/bin/env bash
@@ -5129,6 +5126,7 @@ for name in ${openClawInstallerOverrides.join(" ")}; do
   if [ "\${!name+x}" = x ]; then printf '%s\n' "$name" >> '${installerEnvironmentLog}'; fi
 done
 cp '${installerResultPath}' '${installedVersionPath}'
+cp '${commandFixturePath}' '${commandPath}'
 `,
 		);
 		chmodSync(installerPath, 0o700);
@@ -5150,8 +5148,7 @@ cp '${installerResultPath}' '${installedVersionPath}'
 			method: "official-installer" as const,
 			url: OFFICIAL_INSTALL_URLS.openclaw,
 			home,
-			args: officialInstallArgs("openclaw", home, desiredVersion),
-			version: desiredVersion,
+			args: officialInstallArgs("openclaw", home),
 		};
 		const load = manifestLoad(
 			baseManifest(paths, {
@@ -5162,38 +5159,25 @@ cp '${installerResultPath}' '${installedVersionPath}'
 					services: {},
 				},
 			}),
-			"hosted-v2-openclaw-exact-version",
+			"hosted-v2-openclaw-official-latest",
 		);
 
-		writeFileSync(installerResultPath, "2026.8.1-beta.1\n");
-		const mismatched = convergeRuntimeManifest(load, paths, {
-			executeOfficialServiceInstallers: false,
-		});
-		expect(mismatched.installErrors).toContain(
-			`runtime openclaw installer did not produce exact version ${desiredVersion}`,
-		);
-
-		writeFileSync(installerResultPath, `${desiredVersion}\n`);
+		writeFileSync(installerResultPath, `${installedVersion}\n`);
 		const converged = convergeRuntimeManifest(load, paths, {
 			executeOfficialServiceInstallers: false,
 		});
 		expect(converged.installErrors).toEqual([]);
 		expect(execFileSync(commandPath, ["--version"], { encoding: "utf8" }).trim()).toBe(
-			`OpenClaw ${desiredVersion}`,
+			`OpenClaw ${installedVersion}`,
 		);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(config);
 		expect(readFileSync(installerEnvironmentLog, "utf8").trim().split("\n")).toEqual([home]);
-		const expectedArgs = [
-			...officialInstallArgs("openclaw", home, desiredVersion),
-			"--compatible-with",
-			configWriterVersion,
-		];
+		const expectedArgs = officialInstallArgs("openclaw", home);
 		expect(readFileSync(installerLog, "utf8").trim().split("\n")).toEqual([
 			String(expectedArgs.length),
 			...expectedArgs,
-			String(expectedArgs.length),
-			...expectedArgs,
 		]);
+		expect(expectedArgs).not.toContain("--version");
 	});
 
 	test("accepts an installed runtime command symlink as an exact transaction target", () => {

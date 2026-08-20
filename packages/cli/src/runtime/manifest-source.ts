@@ -19,7 +19,6 @@ import {
 } from "./hosted-egress-profiles";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
-	HOSTED_V2_OPENCLAW_VERSION,
 	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
 	hasUnsupportedAgentPluginInstallations,
@@ -456,7 +455,6 @@ export function hostedManifestToRuntimeManifest(
 	const paths = getRuntimePaths({ mode: "hosted" });
 	const selectedRuntime = hosted.runtime;
 	const runtime = hosted.runtimes[selectedRuntime];
-	const installVersion = selectedRuntime === "openclaw" ? HOSTED_V2_OPENCLAW_VERSION : undefined;
 	return {
 		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 		deploymentId: hosted.deploymentId,
@@ -483,8 +481,7 @@ export function hostedManifestToRuntimeManifest(
 					method: "official-installer" as const,
 					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
 					home: paths.userHome,
-					args: officialInstallArgs(selectedRuntime, paths.userHome, installVersion),
-					...(installVersion === undefined ? {} : { version: installVersion }),
+					args: officialInstallArgs(selectedRuntime, paths.userHome),
 				},
 				run: hostedRuntimeRunSettings(selectedRuntime, runtime.run),
 				services: Object.fromEntries(
@@ -668,12 +665,6 @@ function validateManifestSemantics(
 		}
 	}
 	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
-		if (
-			runtime.install?.version !== undefined &&
-			(!isHostedV2 || name !== "openclaw" || runtime.install.version !== HOSTED_V2_OPENCLAW_VERSION)
-		) {
-			errors.push(`runtime ${name} exact install version is reserved for Hosted-v2 OpenClaw`);
-		}
 		if (!runtime.enabled) continue;
 		const runCommand = runtime.run?.command?.trim();
 		if (!isSupportedRuntimeName(name)) {
@@ -707,20 +698,17 @@ function validateManifestSemantics(
 		if (runtime.install.args.includes("--dir")) {
 			errors.push(`runtime ${name} install args must not include --dir`);
 		}
-		if (runtime.install.version !== undefined) {
-			const expectedArgs = officialInstallArgs(name, runtime.install.home, runtime.install.version);
-			if (
-				runtime.install.args.length !== expectedArgs.length ||
-				runtime.install.args.some((arg, index) => arg !== expectedArgs[index])
-			) {
-				errors.push(`runtime ${name} exact install version must use canonical official args`);
-			}
+		const expectedArgs = officialInstallArgs(name, runtime.install.home);
+		if (
+			runtime.install.args.length !== expectedArgs.length ||
+			runtime.install.args.some((arg, index) => arg !== expectedArgs[index])
+		) {
+			errors.push(`runtime ${name} install must use canonical official args`);
 		}
 		const prefixIndexes = runtime.install.args.flatMap((arg, index) =>
 			arg === "--prefix" ? [index] : [],
 		);
 		if (prefixIndexes.length > 0) {
-			const expectedArgs = officialInstallArgs(name, runtime.install.home);
 			const expectedPrefixIndex = expectedArgs.indexOf("--prefix");
 			const expectedPrefix =
 				expectedPrefixIndex >= 0 ? expectedArgs[expectedPrefixIndex + 1] : undefined;

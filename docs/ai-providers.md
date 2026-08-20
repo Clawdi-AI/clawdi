@@ -235,8 +235,8 @@ patch --stdin`.
 The repository regression-audits these public SDK and projection mechanics with
 `openclaw@2026.7.1-2`, official source commit
 [`0790d9f`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
-That artifact remains an API audit sample. The selected Clawdi release owns the
-Hosted-v2 runtime pin `openclaw@2026.8.1-beta.2`; convergence also
+That artifact remains an API audit sample, not a Hosted install pin. Hosted v2
+uses OpenClaw's official installer without a version argument; convergence
 capability-gates the APIs it uses.
 The discovery skip is implemented in
 [`models-config.plan.ts`](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/agents/models-config.plan.ts#L115-L120).
@@ -266,8 +266,7 @@ projection or cleanup. It then verifies `CLAWDI_AI_API_KEY` through the public
 `openclaw/plugin-sdk/provider-env-vars` export and fails closed if the marker is
 not registered. Explicit `auth: "api-key"` remains necessary for execution
 precedence but is not the doctor prevention mechanism. Commit `8f382a2` is
-source provenance for this contract; the Clawdi release owns the exact Hosted-v2
-artifact `openclaw@2026.8.1-beta.2`.
+source provenance for this contract, not a Hosted install pin.
 
 When the accepted Hosted v2 manifest proves that exact managed projection,
 root-owned convergence uses OpenClaw's public config-mutation and provider-auth

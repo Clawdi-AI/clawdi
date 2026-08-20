@@ -32,7 +32,6 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
 } from "./manifest";
-import { HOSTED_V2_OPENCLAW_VERSION } from "./manifest-contract";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest,
@@ -744,7 +743,7 @@ describe("hosted runtime bundle v2", () => {
 			[
 				"#!/usr/bin/env bash",
 				"set -euo pipefail",
-				`if [[ "$1" == "--version" ]]; then printf '%s\\n' '${HOSTED_V2_OPENCLAW_VERSION}'; exit 0; fi`,
+				`if [[ "$1" == "--version" ]]; then printf '%s\\n' 'OpenClaw test-version'; exit 0; fi`,
 				'if [[ "$1 $2 $3" == "agents list --json" ]]; then',
 				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
 				'elif [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
@@ -1548,7 +1547,7 @@ describe("hosted runtime bundle v2", () => {
 			openclawBin,
 			`#!/usr/bin/env sh
 if [ "$*" = "--version" ]; then
-  printf '%s\\n' '${HOSTED_V2_OPENCLAW_VERSION}'
+  printf '%s\\n' 'OpenClaw test-version'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
