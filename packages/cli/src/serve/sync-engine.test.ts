@@ -125,6 +125,7 @@ describe("Session deletion convergence", () => {
 			};
 			const adapter = adapterRegistry.hermes.create();
 			adapter.collectSessions = async () => ({ sessions: [session], dedupedCount: 0 });
+			adapter.collectSession = async () => session;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
 				const path = new URL(request.url).pathname;
@@ -198,6 +199,140 @@ describe("Session deletion convergence", () => {
 			await queue?.flushPersist();
 			globalThis.fetch = originalFetch;
 			process.stderr.write = originalWrite;
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it.each([
+		"exact",
+		"fallback",
+	] as const)("re-reads newer session content at drain via the %s collector", async (mode) => {
+		const root = mkdtempSync(join(tmpdir(), "session-current-drain-"));
+		const originalHome = process.env.HOME;
+		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalFetch = globalThis.fetch;
+		let queue: RetryQueue | undefined;
+		try {
+			process.env.HOME = root;
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			const enqueuedSession: RawSession = {
+				localSessionId: `current-session-${mode}`,
+				projectPath: "/project",
+				startedAt: new Date(0),
+				endedAt: new Date(1_000),
+				messageCount: 1,
+				inputTokens: 1,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: 1,
+				summary: "current content",
+				messages: [{ role: "user", content: "before enqueue" }],
+				rawFilePath: `/sessions/current-session-${mode}.jsonl`,
+			};
+			const currentSession: RawSession = {
+				...enqueuedSession,
+				messageCount: 2,
+				messages: [
+					...enqueuedSession.messages,
+					{ role: "assistant", content: "appended after enqueue" },
+				],
+			};
+			const queuedHash = createHash("sha256")
+				.update(JSON.stringify(enqueuedSession.messages))
+				.digest("hex");
+			const currentHash = createHash("sha256")
+				.update(JSON.stringify(currentSession.messages))
+				.digest("hex");
+			const adapter = adapterRegistry.hermes.create();
+			let collectionCalls = 0;
+			adapter.collectSessions = async () => {
+				collectionCalls += 1;
+				return { sessions: [currentSession], dedupedCount: 0 };
+			};
+			let exactCalls = 0;
+			if (mode === "exact") {
+				adapter.collectSession = async () => {
+					exactCalls += 1;
+					return currentSession;
+				};
+			} else {
+				Object.defineProperty(adapter, "collectSession", { value: undefined });
+			}
+			let sentMetadata: Record<string, unknown> | undefined;
+			let sentMessages: unknown;
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				const path = new URL(request.url).pathname;
+				if (path === "/v1/sessions/batch") {
+					const body = (await request.json()) as { sessions: Array<Record<string, unknown>> };
+					sentMetadata = body.sessions[0];
+					return new Response(
+						JSON.stringify({
+							created: 0,
+							updated: 1,
+							unchanged: 0,
+							needs_content: [currentSession.localSessionId],
+							rejected: [],
+							suppressed: [],
+						}),
+						{ headers: { "content-type": "application/json" } },
+					);
+				}
+				if (path === `/v1/sessions/${currentSession.localSessionId}/upload`) {
+					const file = (await request.formData()).get("file");
+					if (!(file instanceof Blob)) return new Response("missing file", { status: 400 });
+					sentMessages = JSON.parse(await file.text());
+					return new Response(JSON.stringify({ uploaded: true }), {
+						headers: { "content-type": "application/json" },
+					});
+				}
+				return new Response("unexpected request", { status: 404 });
+			}) as typeof fetch;
+
+			queue = new RetryQueue({ agentType: "hermes" });
+			queue.enqueue({
+				kind: "session_push",
+				local_session_id: enqueuedSession.localSessionId,
+				content_hash: queuedHash,
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			});
+			const item = queue.peek();
+			if (!item) throw new Error("expected queued session");
+			const abortController = new AbortController();
+			const outcome = await processQueueItem(
+				{
+					environmentId: "agent-1",
+					adapter,
+					abort: abortController.signal,
+					abortController,
+				},
+				new ApiClient({ requireAuth: false }),
+				queue,
+				item,
+				new Map(),
+				new Map(),
+				new Map([[enqueuedSession.localSessionId, queuedHash]]),
+				"project-1",
+			);
+
+			expect(outcome).toBe("applied");
+			expect(exactCalls).toBe(mode === "exact" ? 1 : 0);
+			expect(collectionCalls).toBe(mode === "fallback" ? 1 : 0);
+			expect(sentMetadata).toMatchObject({
+				content_hash: currentHash,
+				message_count: 2,
+			});
+			expect(sentMessages).toEqual(currentSession.messages);
+		} finally {
+			await queue?.flushPersist();
+			globalThis.fetch = originalFetch;
 			if (originalHome === undefined) delete process.env.HOME;
 			else process.env.HOME = originalHome;
 			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;

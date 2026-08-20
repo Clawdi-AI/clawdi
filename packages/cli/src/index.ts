@@ -1091,7 +1091,9 @@ skillCmd
 // ─────────────────────────────────────────────────────────────
 // session
 // ─────────────────────────────────────────────────────────────
-const sessionCmd = program.command("session").description("Inspect local agent sessions");
+const sessionCmd = program
+	.command("session")
+	.description("Inspect local and uploaded agent sessions");
 
 sessionCmd
 	.command("list")
@@ -1114,6 +1116,32 @@ Examples:
 	.action(async (opts) => {
 		const { sessionList } = await import("./commands/session.js");
 		await sessionList(opts);
+	});
+
+sessionCmd
+	.command("search <query>")
+	.description("Search uploaded session metadata (summary, project, and IDs; not message text)")
+	.option("--agent <type>", "Filter by agent type")
+	.option("--since <date>", "Only sessions active after this date")
+	.option("--limit <n>", "Cap results (1-200)", "25")
+	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		'\nExamples:\n  $ clawdi session search authentication\n  $ clawdi session search "workspace setup" --agent codex --limit 10',
+	)
+	.action(async (query, opts) => {
+		const { sessionSearch } = await import("./commands/session.js");
+		await sessionSearch(query, opts);
+	});
+
+sessionCmd
+	.command("read <session-id>")
+	.description("Read one uploaded session and its message content")
+	.option("--json", "Output metadata and messages as JSON")
+	.addHelpText("after", "\nUse the cloud session UUID printed by `clawdi session search`.")
+	.action(async (sessionId, opts) => {
+		const { sessionRead } = await import("./commands/session.js");
+		await sessionRead(sessionId, opts);
 	});
 
 sessionCmd

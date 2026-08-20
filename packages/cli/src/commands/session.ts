@@ -3,7 +3,9 @@ import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
+import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 import {
 	adapterForType,
 	listRegisteredAgentTypes,
@@ -164,6 +166,116 @@ function relativeTime(then: Date): string {
 	if (mon < 12) return `${mon}mo ago`;
 	const yr = Math.floor(mon / 12);
 	return `${yr}y ago`;
+}
+
+interface CloudSessionOpts {
+	agent?: string;
+	since?: string;
+	limit?: string;
+	json?: boolean;
+}
+
+function requireCloudSessionAuth(): boolean {
+	if (isLoggedIn()) return true;
+	console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+	process.exitCode = 1;
+	return false;
+}
+
+function cloudSessionLimit(value?: string): number {
+	const limit = value === undefined ? 25 : Number(value);
+	if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+		throw new Error("--limit must be an integer between 1 and 200.");
+	}
+	return limit;
+}
+
+function cloudSessionSince(value?: string): string | undefined {
+	if (!value) return undefined;
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid --since date: ${value}`);
+	return parsed.toISOString();
+}
+
+function printCloudSessionRows(sessions: SessionListItem[], total: number): void {
+	for (const session of sessions) {
+		const summary = sanitizeMetadata(session.summary ?? "(untitled)");
+		const project = session.project_path ? sanitizeMetadata(session.project_path) : "-";
+		const agent = sanitizeMetadata(session.agent_type ?? "unknown");
+		console.log(
+			`  ${chalk.dim(session.id)}  ${chalk.white(summary)}  ${chalk.gray(project)}  ${chalk.gray(agent)}  ${chalk.gray(relativeTime(new Date(session.last_activity_at)))}`,
+		);
+	}
+	console.log(
+		chalk.gray(`\n  ${sessions.length} of ${total} metadata match${total === 1 ? "" : "es"}`),
+	);
+}
+
+export async function sessionSearch(query: string, opts: CloudSessionOpts = {}): Promise<void> {
+	if (!requireCloudSessionAuth()) return;
+	const trimmedQuery = query.trim();
+	if (!trimmedQuery) throw new Error("Session metadata search query cannot be empty.");
+
+	const api = new ApiClient();
+	const page = unwrap(
+		await api.GET("/v1/sessions", {
+			params: {
+				query: {
+					q: trimmedQuery,
+					agent: opts.agent || undefined,
+					since: cloudSessionSince(opts.since),
+					page_size: cloudSessionLimit(opts.limit),
+					sort: "relevance",
+					order: "desc",
+				},
+			},
+		}),
+	);
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(page.items, null, 2));
+		return;
+	}
+	if (page.items.length === 0) {
+		console.log(chalk.gray(`No uploaded session metadata matching "${sanitizeMetadata(query)}".`));
+		return;
+	}
+	printCloudSessionRows(page.items, page.total);
+}
+
+export async function sessionRead(sessionId: string, opts: { json?: boolean } = {}): Promise<void> {
+	if (!requireCloudSessionAuth()) return;
+	const api = new ApiClient();
+	const detail: SessionDetail = unwrap(
+		await api.GET("/v1/sessions/{session_id}", {
+			params: { path: { session_id: sessionId } },
+		}),
+	);
+	const messages: SessionMessage[] = detail.has_content
+		? unwrap(
+				await api.GET("/v1/sessions/{session_id}/content", {
+					params: { path: { session_id: sessionId } },
+				}),
+			)
+		: [];
+
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify({ session: detail, messages }, null, 2));
+		return;
+	}
+
+	console.log(chalk.bold(sanitizeMetadata(detail.summary ?? detail.local_session_id)));
+	console.log(
+		chalk.gray(
+			`${sanitizeMetadata(detail.agent_type ?? "unknown")} | ${sanitizeMetadata(detail.project_path ?? "no project")} | ${messages.length} messages`,
+		),
+	);
+	console.log();
+	for (const message of messages) {
+		const role = message.role === "user" ? chalk.cyan("user") : chalk.green("assistant");
+		console.log(`${role}: ${stripTerminalEscapes(message.content)}`);
+		console.log();
+	}
 }
 
 interface SessionExtractOpts {

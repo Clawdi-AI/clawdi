@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HermesAdapter } from "../adapters/hermes";
@@ -10,6 +10,7 @@ import {
 	SESSION_IDLE_POLL_INTERVAL_MS,
 	SESSION_STABLE_AFTER_MS,
 	sessionPathSignature,
+	sessionPathSnapshot,
 	sleepForSessionPoll,
 	watchSessions,
 } from "./sessions-watcher";
@@ -69,6 +70,77 @@ describe("pollSessionPaths", () => {
 
 		expect(delays).toEqual([SESSION_IDLE_POLL_INTERVAL_MS, SESSION_STABLE_AFTER_MS]);
 		expect(stableAt).toEqual([SESSION_IDLE_POLL_INTERVAL_MS + SESSION_STABLE_AFTER_MS]);
+	});
+
+	test("reports concrete changed files from production-style poll snapshots", async () => {
+		const abort = new AbortController();
+		let now = 0;
+		const sessionPath = "/sessions/changed.jsonl";
+		const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+
+		await pollSessionPaths(
+			{
+				paths: ["/sessions"],
+				abort: abort.signal,
+				onPathStable: (change) => {
+					changes.push(change);
+					abort.abort();
+				},
+			},
+			{
+				now: () => now,
+				pathSignature: async () => {
+					throw new Error("pathSnapshot should provide the production poll state");
+				},
+				pathSnapshot: async () => ({
+					signature: now === 0 ? "initial" : "changed",
+					entries: new Map([[sessionPath, now === 0 ? "1:10" : "2:20"]]),
+				}),
+				sleep: async (delayMs) => {
+					now += delayMs;
+				},
+			},
+		);
+
+		expect(changes).toEqual([{ paths: [sessionPath], requiresFullScan: false }]);
+	});
+
+	test("bounds tracked entries and requests a full scan when the cap is exceeded", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-session-snapshot-cap-"));
+		const abort = new AbortController();
+		let now = 0;
+		let sleepCalls = 0;
+		const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+		try {
+			writeFileSync(join(root, "first.jsonl"), "first");
+			writeFileSync(join(root, "second.jsonl"), "second");
+			expect((await sessionPathSnapshot(root, 1)).entries).toBeNull();
+
+			await pollSessionPaths(
+				{
+					paths: [root],
+					abort: abort.signal,
+					onPathStable: (change) => {
+						changes.push(change);
+						abort.abort();
+					},
+				},
+				{
+					now: () => now,
+					pathSignature: async () => "unused",
+					pathSnapshot: (path) => sessionPathSnapshot(path, 1),
+					sleep: async (delayMs) => {
+						now += delayMs;
+						sleepCalls += 1;
+						if (sleepCalls === 1) writeFileSync(join(root, "first.jsonl"), "changed");
+					},
+				},
+			);
+
+			expect(changes).toEqual([{ paths: [], requiresFullScan: true }]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	test("uses the injected monotonic clock rather than wall-clock time", async () => {
@@ -301,6 +373,59 @@ test("watchSessions returns immediately for a pre-aborted real fs watch", async 
 	}
 }, 1_000);
 
+test("debounces rapid fs events into one concrete changed-path batch", async () => {
+	class InjectedWatcher extends EventEmitter {
+		close(): void {}
+	}
+
+	const root = mkdtempSync(join(tmpdir(), "clawdi-session-path-batch-"));
+	const abort = new AbortController();
+	let onChange: (eventType?: string, filename?: string | Buffer | null) => void = () => {};
+	let fireStable = () => {};
+	const changes: Array<{ paths: string[]; requiresFullScan: boolean }> = [];
+	try {
+		const running = watchSessions(
+			{
+				paths: [root],
+				abort: abort.signal,
+				onPathStable: (change) => changes.push(change),
+			},
+			{
+				createWatcher: (_path, _options, callback) => {
+					onChange = callback;
+					return new InjectedWatcher();
+				},
+				poll: async () => {},
+				stableTimer: {
+					schedule: (callback) => {
+						fireStable = callback;
+						return () => {};
+					},
+				},
+			},
+		);
+
+		onChange("change", "first.jsonl");
+		onChange("rename", Buffer.from("archived/second.jsonl"));
+		onChange("change", "first.jsonl");
+		fireStable();
+		onChange("rename", null);
+		fireStable();
+
+		expect(changes).toEqual([
+			{
+				paths: [join(root, "first.jsonl"), join(root, "archived/second.jsonl")],
+				requiresFullScan: false,
+			},
+			{ paths: [], requiresFullScan: true },
+		]);
+		abort.abort();
+		await running;
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("falls back once when an attached fs watcher emits an asynchronous error", async () => {
 	class InjectedWatcher extends EventEmitter {
 		closeCalls = 0;
@@ -316,7 +441,7 @@ test("falls back once when an attached fs watcher emits an asynchronous error", 
 	];
 	const abort = new AbortController();
 	const watchers: InjectedWatcher[] = [];
-	let onChange = () => {};
+	let onChange: (eventType?: string, filename?: string | Buffer | null) => void = () => {};
 	let scheduledStableCallback = () => {};
 	let pendingStableTimers = 0;
 	let stableCalls = 0;

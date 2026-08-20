@@ -39,7 +39,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
-import type { AgentAdapter, CollectSessionsResult } from "../adapters/base";
+import type { AgentAdapter, CollectSessionsResult, RawSession } from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
@@ -63,7 +63,7 @@ import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { reconcileConnectedProjectSkills } from "./project-skill-reconcile";
 import { type QueueItem, RetryQueue } from "./queue";
-import { watchSessions } from "./sessions-watcher";
+import { type SessionWatchChange, watchSessions } from "./sessions-watcher";
 import {
 	consumeSse,
 	type ServerEvent,
@@ -249,6 +249,10 @@ interface StableSessionEnqueueOptions {
 	onPresentSessions?: (resources: ReadonlySet<string>) => void;
 }
 
+function sessionContentHash(session: RawSession): string {
+	return createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+}
+
 export async function enqueueChangedSessionsAfterStability(
 	opts: StableSessionEnqueueOptions,
 ): Promise<number> {
@@ -259,7 +263,7 @@ export async function enqueueChangedSessionsAfterStability(
 	let enqueued = 0;
 	for (const session of sessions) {
 		if (opts.abort.aborted) return enqueued;
-		const hash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+		const hash = sessionContentHash(session);
 		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
 		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
 		if (opts.abort.aborted) return enqueued;
@@ -778,23 +782,37 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 	};
 
-	// Triggered by the sessions watcher after a path has been
-	// quiet for the session watcher's stable window. Re-enumerates the adapter's
-	// sessions, hashes each, and enqueues a `session_push` for any
-	// whose content_hash has changed since we last pushed. The
-	// watcher itself doesn't know which session changed; this
-	// function is the source-of-truth diff against the in-memory
-	// + persisted lock.
-	const onSessionsStable = async () => {
+	// Prefer an adapter's bounded path collector for concrete watcher events.
+	// Ambiguous events and the periodic safety scan retain the complete scan.
+	const onSessionsStable = async (change?: SessionWatchChange) => {
 		if (opts.abort.aborted) return;
 		try {
+			let completeInventory = true;
+			const collectSessions = async (): Promise<CollectSessionsResult> => {
+				if (
+					change &&
+					!change.requiresFullScan &&
+					change.paths.length > 0 &&
+					opts.adapter.collectSessionsForPaths
+				) {
+					const targeted = await opts.adapter.collectSessionsForPaths(change.paths);
+					if (targeted !== null) {
+						completeInventory = false;
+						return targeted;
+					}
+				}
+				const complete = await opts.adapter.collectSessions();
+				return complete;
+			};
 			const enqueued = await enqueueChangedSessionsAfterStability({
 				abort: opts.abort,
-				collectSessions: () => opts.adapter.collectSessions(),
+				collectSessions,
 				queue,
 				lastPushedHash: lastPushedSessionHash,
 				inFlightHash: inFlightSessionHash,
-				onPresentSessions: (resources) => syncHealth.clearAbsent("push", "session:", resources),
+				onPresentSessions: (resources) => {
+					if (completeInventory) syncHealth.clearAbsent("push", "session:", resources);
+				},
 			});
 			if (opts.abort.aborted) return;
 			syncHealth.clear("push", "session_scan");
@@ -842,13 +860,13 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		watchSessions({
 			paths: opts.adapter.getSessionsWatchPaths(),
 			abort: opts.abort,
-			onPathStable: () => {
+			onPathStable: (change) => {
 				if (opts.abort.aborted) return;
 				// Fire-and-forget — onPathStable is a sync callback
 				// from the watcher, but the enumeration can be slow
 				// (hundreds of JSONLs). Catch errors here so a
 				// transient FS error never breaks the watcher loop.
-				void onSessionsStable();
+				void onSessionsStable(change);
 			},
 			forcePoll: opts.forcePollWatcher,
 		}),
@@ -1540,6 +1558,15 @@ export async function processQueueItem(
 	return "not_applied";
 }
 
+async function resolveQueuedSession(
+	adapter: AgentAdapter,
+	localSessionId: string,
+): Promise<RawSession | null> {
+	if (adapter.collectSession) return adapter.collectSession(localSessionId);
+	const { sessions } = await adapter.collectSessions();
+	return sessions.find((session) => session.localSessionId === localSessionId) ?? null;
+}
+
 /** Upload a single session via the same two-step `clawdi push`
  * uses: POST /api/sessions/batch (metadata) → POST
  * /api/sessions/{id}/upload (content) when the server says it
@@ -1558,12 +1585,7 @@ async function uploadSessionFromQueue(
 ): Promise<
 	{ outcome: "applied"; actualHash: string } | { outcome: "absent" } | { outcome: "not_applied" }
 > {
-	// Re-enumerate via the adapter so we always upload current
-	// content. Filter to the single local_session_id we were asked
-	// to push; if the user deleted the session between enqueue and
-	// drain, we just no-op.
-	const { sessions } = await opts.adapter.collectSessions();
-	const session = sessions.find((s) => s.localSessionId === item.local_session_id);
+	const session = await resolveQueuedSession(opts.adapter, item.local_session_id);
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
 		return { outcome: "absent" };
@@ -1585,7 +1607,7 @@ async function uploadSessionFromQueue(
 	// short-circuits on the cached hash and never re-uploads. The
 	// skill_push path already follows this pattern (recompute at
 	// upload time); align session_push.
-	const actualHash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+	const actualHash = sessionContentHash(session);
 
 	const result = unwrap(
 		await api.POST("/v1/sessions/batch", {

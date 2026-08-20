@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { extractTarGz } from "../lib/tar";
@@ -91,6 +91,11 @@ function listAgentDirs(): string[] {
 	}
 }
 
+function isWithin(path: string, root: string): boolean {
+	const fromRoot = relative(root, path);
+	return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
+}
+
 interface SessionEntry {
 	// Real openclaw indexes key entries by composite strings like
 	// `agent:main:main` or `agent:main:telegram:group:-100…:topic:1`, with
@@ -164,8 +169,52 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	async collectSessions(opts: CollectSessionsOptions = {}): Promise<CollectSessionsResult> {
+		return (await this.collectSessionsMatching(opts)).result;
+	}
+
+	async collectSession(localSessionId: string): Promise<RawSession | null> {
+		return (
+			(await this.collectSessionsMatching({}, undefined, localSessionId)).result.sessions[0] ?? null
+		);
+	}
+
+	async collectSessionsForPaths(
+		paths: readonly string[],
+		opts: CollectSessionsOptions = {},
+	): Promise<CollectSessionsResult | null> {
+		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
+		const transcriptPaths = new Set<string>();
+		for (const path of paths) {
+			const normalized = resolve(path);
+			if (!sessionRoots.some((root) => isWithin(normalized, root))) return null;
+			if (basename(normalized) === "sessions.json") return null;
+			if (!normalized.endsWith(".jsonl")) return null;
+			transcriptPaths.add(normalized);
+		}
+		if (transcriptPaths.size === 0) return null;
+
+		const collection = await this.collectSessionsMatching(opts, transcriptPaths);
+		for (const path of transcriptPaths) {
+			if (existsSync(path) && !collection.matchedTranscriptPaths.has(path)) return null;
+		}
+		return collection.result;
+	}
+
+	private async collectSessionsMatching(
+		opts: CollectSessionsOptions,
+		transcriptPaths?: ReadonlySet<string>,
+		localSessionId?: string,
+	): Promise<{
+		result: CollectSessionsResult;
+		matchedTranscriptPaths: Set<string>;
+	}> {
 		const agentDirs = listAgentDirs();
-		if (agentDirs.length === 0) return { sessions: [], dedupedCount: 0 };
+		if (agentDirs.length === 0) {
+			return {
+				result: { sessions: [], dedupedCount: 0 },
+				matchedTranscriptPaths: new Set(),
+			};
+		}
 
 		const { projectFilter } = opts;
 		let absFilter: string | null = null;
@@ -175,6 +224,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 
 		const sessions: RawSession[] = [];
+		const matchedTranscriptPaths = new Set<string>();
 
 		for (const agentRoot of agentDirs) {
 			const sessionsDirForAgent = join(agentRoot, "sessions");
@@ -193,6 +243,7 @@ export class OpenClawAdapter implements AgentAdapter {
 				// the index key only for legacy fixtures that use the UUID as
 				// the key directly.
 				const sessionId = entry.sessionId ?? indexKey;
+				if (localSessionId !== undefined && sessionId !== localSessionId) continue;
 				const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 				if (!updatedAt) continue;
 
@@ -207,6 +258,9 @@ export class OpenClawAdapter implements AgentAdapter {
 						? entry.sessionFile
 						: join(sessionsDirForAgent, entry.sessionFile)
 					: join(sessionsDirForAgent, `${sessionId}.jsonl`);
+				const normalizedTranscriptPath = resolve(transcriptPath);
+				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
+				if (transcriptPaths) matchedTranscriptPaths.add(normalizedTranscriptPath);
 
 				const messages: SessionMessage[] = [];
 				let startedAt: Date | null = null;
@@ -307,7 +361,10 @@ export class OpenClawAdapter implements AgentAdapter {
 
 		// OpenClaw stores one session per ACP transcript with stable sessionIds
 		// — no resume-chain duplication to dedupe.
-		return { sessions, dedupedCount: 0 };
+		return {
+			result: { sessions, dedupedCount: 0 },
+			matchedTranscriptPaths,
+		};
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
@@ -417,11 +474,10 @@ export class OpenClawAdapter implements AgentAdapter {
 	}
 
 	getSessionsWatchPaths(): string[] {
-		// OpenClaw dumps per-agent sessions under
-		// `~/.openclaw/agents/<id>/sessions/`. The root dir holds the
-		// `sessions.json` index plus per-session `.jsonl` files; one
-		// recursive watcher catches both.
-		return [sessionsDir()];
+		const paths = listAgentDirs()
+			.map((dir) => join(dir, "sessions"))
+			.filter((path) => existsSync(path));
+		return paths.length > 0 ? paths : [sessionsDir()];
 	}
 
 	async removeLocalSkill(key: string): Promise<void> {

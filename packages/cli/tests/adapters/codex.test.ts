@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -40,6 +40,12 @@ describe("CodexAdapter.detect", () => {
 });
 
 describe("CodexAdapter.collectSessions", () => {
+	it("keeps fs watching on active sessions when archived_sessions is absent", () => {
+		const adapter = new CodexAdapter();
+		expect(existsSync(join(tmpHome, ".codex", "archived_sessions"))).toBe(false);
+		expect(adapter.getSessionsWatchPaths()).toEqual([join(tmpHome, ".codex", "sessions")]);
+	});
+
 	it("parses the fixture session with session_meta + turn_context + messages + token_count", async () => {
 		const a = new CodexAdapter();
 		const { sessions } = await a.collectSessions();
@@ -85,6 +91,59 @@ describe("CodexAdapter.collectSessions", () => {
 		const s = (await a.collectSessions()).sessions[0]!;
 		// First non-environment_context user message is "hello"
 		expect(s.summary).toBe("hello");
+	});
+
+	it("discovers archived sessions and parses only concrete changed transcripts", async () => {
+		const activePath = join(
+			tmpHome,
+			".codex",
+			"sessions",
+			"2026",
+			"04",
+			"20",
+			"rollout-2026-04-20T10-00-00-019ae46c-52d9-7e51-9527-1b105eb42d1b.jsonl",
+		);
+		const archivedRoot = join(tmpHome, ".codex", "archived_sessions");
+		const archivedPath = join(archivedRoot, "rollout-archived.jsonl");
+		mkdirSync(archivedRoot, { recursive: true });
+		writeFileSync(
+			archivedPath,
+			readFileSync(activePath, "utf-8").replaceAll(
+				"019ae46c-52d9-7e51-9527-1b105eb42d1b",
+				"019ae46c-52d9-7e51-9527-1b105eb42d2c",
+			),
+		);
+
+		const adapter = new CodexAdapter();
+		expect(
+			(await adapter.collectSessions()).sessions.map((session) => session.localSessionId),
+		).toEqual(["019ae46c-52d9-7e51-9527-1b105eb42d1b", "019ae46c-52d9-7e51-9527-1b105eb42d2c"]);
+		expect(adapter.getSessionsWatchPaths()).toEqual([
+			join(tmpHome, ".codex", "sessions"),
+			archivedRoot,
+		]);
+		expect(
+			(await adapter.collectSessionsForPaths([archivedPath]))?.sessions.map(
+				(session) => session.localSessionId,
+			),
+		).toEqual(["019ae46c-52d9-7e51-9527-1b105eb42d2c"]);
+	});
+
+	it("finds a learned active session after Codex archives it", async () => {
+		const sessionId = "019ae46c-52d9-7e51-9527-1b105eb42d1b";
+		const archivedPath = join(tmpHome, ".codex", "archived_sessions", "rollout-archived.jsonl");
+		mkdirSync(join(tmpHome, ".codex", "archived_sessions"), { recursive: true });
+
+		const adapter = new CodexAdapter();
+		const learned = (await adapter.collectSessions()).sessions[0];
+		if (!learned) throw new Error("expected Codex session fixture");
+		expect(learned.localSessionId).toBe(sessionId);
+		renameSync(learned.rawFilePath, archivedPath);
+
+		expect(await adapter.collectSession(sessionId)).toMatchObject({
+			localSessionId: sessionId,
+			rawFilePath: archivedPath,
+		});
 	});
 });
 

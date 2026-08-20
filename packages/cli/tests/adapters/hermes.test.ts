@@ -63,6 +63,8 @@ describe("HermesAdapter.collectSessions", () => {
 		expect(plain?.messages[0]?.content).toBe("hello");
 		expect(plain?.messages[1]?.role).toBe("assistant");
 		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
+		expect((await a.collectSession("s-plain"))?.messages).toEqual(plain?.messages);
+		expect(await a.collectSession("missing-session")).toBeNull();
 	});
 
 	it("parses a JSON-blob model field via parseModelField", async () => {
