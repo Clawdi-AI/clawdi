@@ -880,6 +880,8 @@ describe("hosted runtime bundle v2", () => {
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf-8",
 		);
+		expect(gatewayEnv).not.toMatch(/^HOME=/m);
+		expect(gatewayEnv).not.toMatch(/^PATH=/m);
 		expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 		expect(gatewayEnv).not.toContain("openclaw-gateway-token-golden");
 		const persistentLastGood = [

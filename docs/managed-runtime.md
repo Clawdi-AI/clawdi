@@ -578,13 +578,13 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
 | `runtimes.<name>.install` | Required strict `{source: "official"}` selector; Hosted cannot select a version, channel, commit, digest, or custom installer. The selected Clawdi release owns the official installer contract and the audited exact Hosted-v2 OpenClaw package. |
-| `runtimes.<name>.run` | Command, args, cwd, env, and PATH projection |
+| `runtimes.<name>.run` | Exact official gateway argv; only OpenClaw may carry its single gateway-token secret reference. Hosted rejects custom commands, cwd, env, and PATH projection. |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires exactly one provider; unmanaged mode requires an exact empty list. Selection is replacement-only, with no fallback or secondary pool. |
 | `runtimes.<name>.primary_model.{provider_id,model}` | Required only in configured mode and its provider must belong to `provider_ids`; absent in unmanaged mode |
-| Hosted filesystem defaults | Derived locally from Hosted `RuntimePaths`: HOME, workspace, persistence root, installer home, and explicit process/service cwd use `userHome`; obsolete external `system`/runtime path fields are rejected |
+| Hosted filesystem defaults | Derived locally from Hosted `RuntimePaths`: HOME, workspace, persistence root, and installer home use `userHome`; Hosted rejects external path and cwd overrides. |
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
-| `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
+| `runtimes.<name>.services` | Empty for OpenClaw; exactly the fixed official `hermes dashboard` argv for Hermes. Hosted rejects every other runtime-owned process. |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with the selected model plus minimal Clawdi-managed endpoint/secret metadata; it has no provider model catalog and is independent of runtime providers |
 | `mcp.servers` | Required canonical map for generic named stdio or remote HTTP server declarations; invalid stored MCP state fails closed with `409` |
@@ -1124,10 +1124,12 @@ enabled.
 
 ## Runtime UI Authentication
 
-Strict-v2 OpenClaw binds the official gateway directly to the pod network with
-`gateway run --allow-unconfigured --port 18789 --bind lan --force`. Before the
-official service installer runs, Clawdi uses the official `openclaw config patch
---stdin` flow to persist the managed token at `gateway.auth.token`, and passes
+Strict-v2 OpenClaw does not render a gateway `ExecStart`. The manifest's
+canonical `["gateway", "run"]` argv identifies the official gateway service;
+the official installer resolves the configured port and writes its own Node
+entrypoint argv. Before that installer runs, Clawdi uses the official
+`openclaw config patch --stdin` flow to persist the managed token at
+`gateway.auth.token`, and passes
 that same value to the installer through its `OPENCLAW_GATEWAY_TOKEN`
 environment. The token never appears in installer argv. OpenClaw's installer
 resolves configured tokens before its environment fallback and only persists a
@@ -1188,8 +1190,13 @@ URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
 official Basic password/session environment secret references. Hosted derives
 the password and an independent session-signing secret from the gateway token
 and durable Runtime UI access revision. The CLI projects non-secret settings to
-`dashboard.basic_auth` and secrets to the official
-`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables.
+the official `dashboard.basic_auth` and `dashboard.public_url` config keys, and
+projects only the password and session-signing secret through the official
+`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables. Hosted also writes its
+workspace to the official `terminal.cwd` key; it does not replace the gateway
+unit's upstream-owned working directory. Runtime processes keep the system UTC
+timezone, while the agent's business timezone uses the official OpenClaw
+`agents.defaults.userTimezone` or Hermes `timezone` config key.
 
 The dashboard consumes generated discriminated deployment metadata; it does not
 infer auth from the runtime name or fall back to legacy `native_url` fields.
@@ -1205,17 +1212,18 @@ rotates the existing encrypted gateway credential and advances the durable
 access revision through the ordinary generation, manifest, reconcile, and LRO
 completion path; restart and ordinary updates do not rotate it.
 
-The Hermes contract was verified against NousResearch/hermes-agent commit
-[`8208fc52701332f213e6c51ebc0b610be00300de`](https://github.com/NousResearch/hermes-agent/tree/8208fc52701332f213e6c51ebc0b610be00300de),
-specifically `cli-config.yaml.example`,
-`plugins/dashboard_auth/self_hosted/__init__.py`,
-`hermes_cli/dashboard_auth/public_paths.py`, and `hermes_cli/web_server.py`.
+The Hermes contract was verified against Hermes Agent 0.20.4 commit
+[`a72c9ca248a051b8c7e8a69ff422c7be5066cdc4`](https://github.com/NousResearch/hermes-agent/tree/a72c9ca248a051b8c7e8a69ff422c7be5066cdc4),
+specifically `hermes_cli/subcommands/dashboard.py`,
+`plugins/dashboard_auth/basic/__init__.py`,
+`hermes_cli/dashboard_auth/prefix.py`, `hermes_cli/web_server.py`, and
+`hermes_cli/gateway.py`.
 
 ### Official OpenClaw evidence
 
-Gateway/source research was refreshed on 2026-08-02. The official `main`
+Gateway/source research was refreshed on 2026-08-20. The official `main`
 commit at that time was
-[`1e9a620a28d6d8f8a0ba165f2004718a79030460`](https://github.com/openclaw/openclaw/commit/1e9a620a28d6d8f8a0ba165f2004718a79030460).
+[`916eef4e996008d387207c53044afd8cf02dcc30`](https://github.com/openclaw/openclaw/commit/916eef4e996008d387207c53044afd8cf02dcc30).
 The stable release tag
 [`v2026.7.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1),
 resolves to release commit
@@ -1226,8 +1234,11 @@ The Hosted-v2 install target is `openclaw@2026.8.1-beta.2` with npm integrity
 `sha512-k4cwlyFOuXN5wN6NOH/gqxupGuvMkOr5OV2Eh7MJmmGFh86wvWSTrGBkL4XkNTg/kszWzGbotI8wKlZ468EjsQ==`.
 The exact spec resolves through the official installer `--version
 2026.8.1-beta.2` contract. Its npm manifest does not publish `gitHead`, so the
-package spec and registry integrity, rather than an inferred source commit, are
-the auditable artifact identity.
+package spec and registry integrity remain the auditable artifact identity;
+the same-version official source tag resolves to commit
+[`8f382a202ff1e15833394b481615dcdda99b04d7`](https://github.com/openclaw/openclaw/commit/8f382a202ff1e15833394b481615dcdda99b04d7)
+and corroborates the CLI and service contracts below without being treated as
+a cryptographic identity for the npm tarball.
 
 The separately retained `2026.7.1-2` service-integration audit remains anchored
 to source commit `0790d9f`; it verifies the gateway transaction used by Clawdi,
@@ -1251,20 +1262,20 @@ inventing a success path:
 scripts/test-runtime-official-installer-systemd.sh
 ```
 
-Done: the command exits 0 and reports `1 pass`.
+Done: the command exits 0 and reports `4 pass`.
 
-The Runtime UI behavior evidence below was refreshed against exact official
-commit
-[`f7a86382823d2b30dca8af578f717a4fa87670f5`](https://github.com/openclaw/openclaw/commit/f7a86382823d2b30dca8af578f717a4fa87670f5).
+The Runtime UI behavior evidence below was refreshed against the same-version
+official source commit
+[`8f382a202ff1e15833394b481615dcdda99b04d7`](https://github.com/openclaw/openclaw/commit/8f382a202ff1e15833394b481615dcdda99b04d7).
 
 | Requirement | Official line evidence | Contract consequence |
 | --- | --- | --- |
-| Gateway bind, port, auth, and token | [`docs/cli/gateway.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/gateway.md), [`configuration-reference.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/configuration-reference.md) | Use native `18789`, container-reachable `lan`, required token auth, and explicit public `allowedOrigins`. |
-| Browser handoff command | [`docs/cli/dashboard.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/dashboard.md), [`src/commands/dashboard.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/commands/dashboard.ts) | `dashboard --json` is the official machine-readable integration surface. Against a running gateway it returns `browserUrl` plus its expiry without opening a browser. |
-| Owner bootstrap contract | [`control-ui-handoff.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/commands/control-ui-handoff.ts), [`control-ui-contract.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/gateway/control-ui-contract.ts), [`device-bootstrap-profile.ts`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/src/shared/device-bootstrap-profile.ts) | The fragment contains a single-use `bootstrapToken` and the closed `bootstrapProfile=owner` hint; the host-issued profile grants the browser owner credential through OpenClaw's native device flow. |
-| Gateway health surfaces | [`docs/gateway/embedding.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/embedding.md), [`docs/gateway/index.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/gateway/index.md) | The CLI commit proof is the required systemd units reaching active/enabled. The workload platform separately gates Service exposure with loopback startup/readiness probes against the official `/healthz` and `/readyz` surfaces. Hermes additionally requires readiness metadata asserting `auth_required` with provider `basic`. |
-| Base path/prefix | [`docs/web/control-ui.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/web/control-ui.md) | Configure official `gateway.controlUi.basePath`; rebind only the verified origin while preserving the official path and fragment. |
-| Service lifecycle | [`docs/cli/daemon.md`](https://github.com/openclaw/openclaw/blob/f7a86382823d2b30dca8af578f717a4fa87670f5/docs/cli/daemon.md) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
+| Gateway bind, port, auth, and token | [`docs/cli/gateway.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/cli/gateway.md), [`configuration-reference.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/gateway/configuration-reference.md) | Use native `18789`, container-reachable `lan`, required token auth, and explicit public `allowedOrigins`. |
+| Browser handoff command | [`docs/cli/dashboard.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/cli/dashboard.md), [`src/commands/dashboard.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/commands/dashboard.ts) | `dashboard --json` is the official machine-readable integration surface. Against a running gateway it returns `browserUrl` plus its expiry without opening a browser. |
+| Owner bootstrap contract | [`control-ui-handoff.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/commands/control-ui-handoff.ts), [`control-ui-contract.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/gateway/control-ui-contract.ts), [`device-bootstrap-profile.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/shared/device-bootstrap-profile.ts) | The fragment contains a single-use `bootstrapToken` and the closed `bootstrapProfile=owner` hint; the host-issued profile grants the browser owner credential through OpenClaw's native device flow. |
+| Gateway health surfaces | [`docs/gateway/embedding.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/gateway/embedding.md), [`docs/gateway/index.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/gateway/index.md) | The CLI commit proof is the required systemd units reaching active/enabled. The workload platform separately gates Service exposure with loopback startup/readiness probes against the official `/healthz` and `/readyz` surfaces. Hermes additionally requires readiness metadata asserting `auth_required` with provider `basic`. |
+| Base path/prefix | [`docs/web/control-ui.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/web/control-ui.md) | Configure official `gateway.controlUi.basePath`; rebind only the verified origin while preserving the official path and fragment. |
+| Service lifecycle | [`docs/cli/daemon.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/cli/daemon.md) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
 
 ## Desired State Boundary
 
@@ -1428,6 +1439,11 @@ without ledger ownership fails closed. Native absence already satisfies a
 managed deletion. The convergence transaction snapshots both complete native
 configs and the ledger, preserves unrelated entries, writes the ledger last,
 and restores the exact previous files and metadata if any later mutation fails.
+Hermes' `mcp add` and `mcp remove` flows are interactive and perform live
+discovery, while `mcp list` has no machine-readable output and does not expose
+the complete native map. Hosted therefore resolves the official config path
+with `hermes config path` and atomically reconciles only `mcp_servers`; it does
+not scrape CLI output or inject answers into interactive prompts.
 These paths and transports are pinned to official fixed-commit sources:
 OpenClaw's
 [`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),
@@ -1494,16 +1510,18 @@ OpenClaw gateway token is not part of that environment:
 ConditionPathExists=/run/clawdi/systemd/env/openclaw-gateway.service.env
 
 [Service]
-Environment="XDG_RUNTIME_DIR=%t"
-Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
+UnsetEnvironment=CLAWDI_AUTH_TOKEN
 EnvironmentFile=/run/clawdi/systemd/env/openclaw-gateway.service.env
 ```
 
 `ExecStart` and `WorkingDirectory` remain solely in the official base unit and
 are deliberately absent from the Clawdi-owned drop-in.
 
-The generated environment file includes
-`CLAWDI_HOME=/var/lib/clawdi-user`; it never points into the tenant home.
+The gateway environment file contains only desired runtime/provider
+environment, any required CA trust variables, and `CLAWDI_RUNTIME_REV`. It does
+not add `HOME`, `PATH`, `TZ`, `CLAWDI_HOME`, or `CLAWDI_AUTH_TOKEN`; the
+OpenClaw gateway token is also absent because the official config and installer
+own it.
 
 When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
 interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
@@ -1537,12 +1555,19 @@ official dashboard installer or claim the compatibility unit is upstream-owned.
 Strict-v2 OpenClaw uses the official gateway directly on native port `18789`.
 Clawdi patches `gateway.port=18789`, `gateway.bind=lan`, and
 `gateway.auth.mode=token` with the managed token. The service receives no token
-environment entry, and the launch command does not pass a conflicting `--auth`
-override:
+environment entry, and the launch command carries no Hosted-owned network or
+authentication overrides. The manifest identity is:
 
-```bash
-openclaw gateway run --allow-unconfigured --port 18789 --bind lan --force
+```json
+{"args": ["gateway", "run"]}
 ```
+
+The reader still accepts the previous producer argv containing
+`--allow-unconfigured --port 18789 --bind lan --force` long enough for an old
+CLI to self-upgrade, then normalizes it before matching the official service.
+The exact pinned OpenClaw installer currently writes an absolute Node/CLI
+entrypoint with `gateway --port 18789`; that upstream argv is deliberately not
+duplicated or overridden by Clawdi.
 
 The strict manifest references the token only as
 `secret://runtime/openclaw/gateway-token`; its value comes only from the fetched
@@ -1564,8 +1589,8 @@ boots a real `systemd --user` manager for the runtime user:
 - `openclaw`, `hermes`, and their update subcommands are not shadowed by
   Clawdi wrappers or PATH shims;
 - `clawdi run` is used only when explicitly requested by a caller;
-- OpenClaw receives `OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service` and can use
-  `systemd-run --user --scope --collect` for managed update handoff;
+- OpenClaw's official base unit provides
+  `OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service` for managed update handoff;
 - after an updater replaces files, the process manager restarts the relevant
   official programs, or autorestart picks them up when they exit.
 

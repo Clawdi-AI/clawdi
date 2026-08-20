@@ -44,6 +44,14 @@ const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
 	"--force",
 ] as const;
 const LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS = ["gateway", "run", "--replace"] as const;
+const HOSTED_HERMES_DASHBOARD_ARGS = [
+	"dashboard",
+	"--host",
+	"0.0.0.0",
+	"--port",
+	"9119",
+	"--no-open",
+] as const;
 
 function exactStringArray(value: unknown, expected: readonly string[]): boolean {
 	return (
@@ -65,6 +73,10 @@ export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: un
 				: LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS,
 		)
 	);
+}
+
+export function isHostedHermesDashboardArgs(value: unknown): boolean {
+	return exactStringArray(value, HOSTED_HERMES_DASHBOARD_ARGS);
 }
 
 const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
@@ -473,51 +485,23 @@ const hostedControlPlaneSchema = z
 	})
 	.strict();
 
-const hostedRuntimeRunSettingsSchema = runtimeRunSettingsSchema.strict();
-type HostedRuntimeRunSettings = z.infer<typeof hostedRuntimeRunSettingsSchema>;
+const hostedGatewayRunSettingsSchema = z
+	.object({
+		args: z.array(z.string()),
+		secretEnv: z
+			.object({
+				OPENCLAW_GATEWAY_TOKEN: z.literal("secret://runtime/openclaw/gateway-token"),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
 
-function validateUnmanagedRunSettings(
-	location: string,
-	settings: HostedRuntimeRunSettings | undefined,
-	ctx: z.RefinementCtx,
-): void {
-	if (!settings) return;
-	const env = settings.env ?? {};
-	const secretEnv = settings.secretEnv ?? {};
-	for (const envName of ["CLAWDI_AI_API_KEY", "OPENAI_API_KEY"]) {
-		if (envName in env || envName in secretEnv) {
-			ctx.addIssue({
-				code: "custom",
-				message: `unmanaged ${location} must not include provider env`,
-				path: [location, envName in env ? "env" : "secretEnv", envName],
-			});
-		}
-	}
-	for (const [envName, value] of Object.entries(env)) {
-		if (value === "clawdi-egress-placeholder") {
-			ctx.addIssue({
-				code: "custom",
-				message: `unmanaged ${location} must not include provider placeholder env`,
-				path: [location, "env", envName],
-			});
-		}
-	}
-	for (const [source, values] of [
-		["env", env],
-		["secretEnv", secretEnv],
-	] as const) {
-		for (const [envName, value] of Object.entries(values)) {
-			const secretRef = canonicalSecretRefName(value);
-			if (secretRef?.startsWith("provider.")) {
-				ctx.addIssue({
-					code: "custom",
-					message: `unmanaged ${location} must not include provider secret refs`,
-					path: [location, source, envName],
-				});
-			}
-		}
-	}
-}
+const hostedServiceRunSettingsSchema = z
+	.object({
+		args: z.array(z.string()),
+	})
+	.strict();
 
 const urlOriginSchema = z.string().refine((value) => {
 	try {
@@ -546,8 +530,8 @@ const hostedProviderIdsSchema = z.array(z.string().min(1)).min(1).max(1);
 const hostedRuntimeEntryBaseShape = {
 	enabled: z.boolean(),
 	install: hostedRuntimeInstallSchema,
-	run: hostedRuntimeRunSettingsSchema.optional(),
-	services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
+	run: hostedGatewayRunSettingsSchema,
+	services: z.record(runtimeServiceNameSchema, hostedServiceRunSettingsSchema).default({}),
 };
 
 const hostedConfiguredRuntimeEntrySchema = z
@@ -577,13 +561,7 @@ const hostedUnmanagedRuntimeEntrySchema = z
 		providerMode: z.literal("unmanaged"),
 		provider_ids: z.array(z.string()).length(0),
 	})
-	.strict()
-	.superRefine((runtime, ctx) => {
-		validateUnmanagedRunSettings("run", runtime.run, ctx);
-		for (const [name, service] of Object.entries(runtime.services)) {
-			validateUnmanagedRunSettings(`services.${name}`, service, ctx);
-		}
-	});
+	.strict();
 
 const hostedRuntimeEntrySchema = z.discriminatedUnion("providerMode", [
 	hostedConfiguredRuntimeEntrySchema,
@@ -882,6 +860,7 @@ function validateHostedRuntimeManifest(
 		}
 	}
 	if (manifest.runtime === "hermes") {
+		const runtime = manifest.runtimes.hermes;
 		if (!manifest.system.hermesDashboardAuth) {
 			ctx.addIssue({
 				code: "custom",
@@ -896,11 +875,29 @@ function validateHostedRuntimeManifest(
 				path: ["system", "hermesDashboardAuth", "activation", "enabled"],
 			});
 		}
-		const dashboardArgs = manifest.runtimes.hermes?.services.dashboard?.args;
-		if (
-			JSON.stringify(dashboardArgs) !==
-			JSON.stringify(["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"])
-		) {
+		if (runtime && !isHostedGatewayRunArgs("hermes", runtime.run.args)) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Hermes gateway must use the official gateway run command",
+				path: ["runtimes", "hermes", "run", "args"],
+			});
+		}
+		if (runtime?.run.secretEnv) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Hermes gateway must not declare OpenClaw gateway credentials",
+				path: ["runtimes", "hermes", "run", "secretEnv"],
+			});
+		}
+		const serviceNames = Object.keys(runtime?.services ?? {});
+		if (serviceNames.length !== 1 || serviceNames[0] !== "dashboard") {
+			ctx.addIssue({
+				code: "custom",
+				message: "Hermes must declare only its official dashboard command",
+				path: ["runtimes", "hermes", "services"],
+			});
+		}
+		if (!isHostedHermesDashboardArgs(runtime?.services.dashboard?.args)) {
 			ctx.addIssue({
 				code: "custom",
 				message: "hermes dashboard must bind directly to 0.0.0.0:9119",
@@ -968,25 +965,12 @@ function validateHostedRuntimeManifestV2(
 			path: ["runtimes", "openclaw", "run", "secretEnv", "OPENCLAW_GATEWAY_TOKEN"],
 		});
 	}
-	if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
+	if (Object.keys(manifest.runtimes.openclaw?.services ?? {}).length > 0) {
 		ctx.addIssue({
 			code: "custom",
-			message: "OpenClaw v2 gateway token must not be embedded in manifest env",
-			path: ["runtimes", "openclaw", "run", "env", "OPENCLAW_GATEWAY_TOKEN"],
+			message: "OpenClaw hosted runtime must not declare auxiliary services",
+			path: ["runtimes", "openclaw", "services"],
 		});
-	}
-	for (const [serviceName, service] of Object.entries(manifest.runtimes.openclaw?.services ?? {})) {
-		for (const source of ["env", "secretEnv"] as const) {
-			for (const envName of Object.keys(service[source] ?? {})) {
-				if (envName === "OPENCLAW_GATEWAY_TOKEN") {
-					ctx.addIssue({
-						code: "custom",
-						message: "OpenClaw v2 gateway token must be scoped to the gateway run secretEnv",
-						path: ["runtimes", "openclaw", "services", serviceName, source, envName],
-					});
-				}
-			}
-		}
 	}
 	for (const [providerId, provider] of Object.entries(manifest.providers)) {
 		const envName = provider.runtimeEnvName;

@@ -413,8 +413,6 @@ type OfficialRuntimeServiceDescriptor = {
 	// Manifest `services` key the official unit corresponds to; used for
 	// program naming even when such an entry is not official for the runtime.
 	service: string;
-	// Extra env projected into the unit's environment file.
-	unitEnv?: (unitName: string) => Record<string, string>;
 	// Which desired programs the official unit covers. Deliberately
 	// asymmetric: openclaw's default program is its gateway, while hermes may
 	// express the gateway as the default program or an explicit
@@ -431,7 +429,6 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		uninstallArgs: ["gateway", "uninstall"],
 		installSecretEnv: ["OPENCLAW_GATEWAY_TOKEN"],
 		service: "gateway",
-		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
 		matchesProgram: (program) => !program.service,
 	},
 	{
@@ -766,6 +763,7 @@ function writeSystemdUnit(input: {
 	directoryKind?: "platform" | "file-browser";
 	extraUnitLines?: string[];
 	extraServiceLines?: string[];
+	unsetEnvironment?: readonly string[];
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
@@ -813,6 +811,9 @@ function writeSystemdUnit(input: {
 					]
 				: []),
 		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
+		...(input.unsetEnvironment?.length
+			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
+			: []),
 		...(input.extraServiceLines ?? []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		`ExecStart=${input.execStart ?? systemdExec(input.command, input.args)}`,
@@ -860,11 +861,6 @@ function writeSystemdUserUnit(
 		...input,
 		root: input.paths.systemdUserRoot,
 		owner: "runtime-user",
-		extraServiceLines: [
-			'Environment="XDG_RUNTIME_DIR=%t"',
-			'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"',
-			...(input.extraServiceLines ?? []),
-		],
 		wantedBy: "default.target",
 	});
 }
@@ -873,6 +869,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	paths: RuntimePaths;
 	name: string;
 	env: Record<string, string>;
+	unsetEnvironment?: readonly string[];
 }): string {
 	const unitName = systemdUnitFileName(input.name);
 	const { envFile, envRevision } = writeSystemdProgramEnvironment({
@@ -892,8 +889,9 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		"",
 		"[Service]",
 		`# ClawdiEnvironmentRevision=${envRevision}`,
-		'Environment="XDG_RUNTIME_DIR=%t"',
-		'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"',
+		...(input.unsetEnvironment?.length
+			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
+			: []),
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		"",
 	];
@@ -1037,6 +1035,14 @@ function installOfficialRuntimeUserService(
 		);
 		const result = spawnRuntimeUserCommand(program.command, args, paths.userHome, program.cwd, {
 			environment,
+			environmentOverrides:
+				descriptor.runtime === "openclaw"
+					? {
+							OPENCLAW_HOME: undefined,
+							OPENCLAW_STATE_DIR: undefined,
+							OPENCLAW_CONFIG_PATH: undefined,
+						}
+					: undefined,
 			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
 			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 		});
@@ -1439,9 +1445,9 @@ function writeRuntimeSystemdUserProgram(input: {
 }): string {
 	const { program } = input;
 	const name = runtimeSystemdProgramName(program);
-	const unitName = systemdUnitFileName(name);
 	const runtimeEnv = { ...program.env };
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
+	const isHermesDashboard = program.runtime === "hermes" && program.service === "dashboard";
 	const installerOnlySecretEnv =
 		descriptor?.runtime === "openclaw" &&
 		input.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
@@ -1451,26 +1457,35 @@ function writeRuntimeSystemdUserProgram(input: {
 	for (const envName of installerOnlySecretEnv) {
 		delete runtimeEnv[envName];
 	}
-	const env = {
-		...input.commonEnvironment,
-		...runtimeEnv,
-		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
-		CLAWDI_AUTH_TOKEN: "",
-		CLAWDI_HOME: input.paths.clawdiHome,
-		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
-			input.manifest,
-			program,
-			input.secretValues,
-			input.providerProjectionRevisions,
-			input.runtimeRevision,
-		),
-		...(descriptor?.unitEnv?.(unitName) ?? {}),
-	};
+	if (descriptor) delete runtimeEnv.PATH;
+	if (descriptor || isHermesDashboard) delete runtimeEnv.CLAWDI_AUTH_TOKEN;
+	const revision = runtimeSystemdProgramRevision(
+		input.manifest,
+		program,
+		input.secretValues,
+		input.providerProjectionRevisions,
+		input.runtimeRevision,
+	);
+	const isNativeRuntimeService = descriptor !== null || isHermesDashboard;
+	const env: Record<string, string> = isNativeRuntimeService
+		? {
+				...(isHermesDashboard ? { HOME: input.paths.userHome } : {}),
+				...runtimeEnv,
+				CLAWDI_RUNTIME_REV: revision,
+			}
+		: {
+				...input.commonEnvironment,
+				...runtimeEnv,
+				CLAWDI_AUTH_TOKEN: "",
+				CLAWDI_HOME: input.paths.clawdiHome,
+				CLAWDI_RUNTIME_REV: revision,
+			};
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
 			paths: input.paths,
 			name,
 			env,
+			unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
 		});
 	}
 	return writeSystemdUserUnit({
@@ -1481,6 +1496,7 @@ function writeRuntimeSystemdUserProgram(input: {
 		args: program.args,
 		cwd: program.cwd,
 		env,
+		unsetEnvironment: isHermesDashboard ? ["CLAWDI_AUTH_TOKEN"] : undefined,
 	});
 }
 
