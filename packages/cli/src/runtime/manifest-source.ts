@@ -680,10 +680,6 @@ function validateManifestSemantics(
 			}
 			continue;
 		}
-		if (!runtime.install && !runCommand && !isSupportedRuntimeName(name)) {
-			errors.push(`runtime ${name} is enabled but missing install metadata`);
-			continue;
-		}
 		if (!runtime.install) continue;
 		const expectedUrl = OFFICIAL_INSTALL_URLS[name];
 		if (runtime.install.url !== expectedUrl) {

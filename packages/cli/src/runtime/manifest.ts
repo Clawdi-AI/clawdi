@@ -318,7 +318,6 @@ export interface RuntimeConvergenceResult {
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
-		instanceSemaphores: string[];
 		bootFinished: string;
 	};
 }
@@ -5462,7 +5461,6 @@ function runtimeConvergenceWithoutApply(input: {
 			egressAddon: null,
 			liveSyncEnvironments: [],
 			daemonAuthTokenFile: null,
-			instanceSemaphores: [],
 			bootFinished: join(instanceRoot, "boot-finished"),
 		},
 	};
@@ -6117,8 +6115,6 @@ export function convergeRuntimeManifest(
 		? paths.egressProfileBundle
 		: null;
 	const instanceRoot = join(paths.instanceRoot, manifest.instanceId);
-	const semRoot = join(instanceRoot, "sem");
-	const instanceSemaphores: string[] = [];
 	const installInventory: string[] = [];
 	const projections: string[] = [];
 	const managedLocaleFiles: string[] = [];
@@ -6548,7 +6544,7 @@ export function convergeRuntimeManifest(
 			mkdirSync(workspaceRoot, { recursive: true });
 			makeRuntimeUserOwned(workspaceRoot);
 		});
-		for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot, semRoot]) {
+		for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot]) {
 			ensureRuntimePlatformDirectory(paths, directory, { mode: 0o755 });
 		}
 		ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);
@@ -6989,12 +6985,6 @@ export function convergeRuntimeManifest(
 					runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
 				);
 			}
-
-			const semaphorePath = join(semRoot, `${name}.enabled`);
-			if (runtime.enabled) {
-				writeRuntimePrivateFileAtomic(paths, semaphorePath, `${generatedAt}\n`);
-				instanceSemaphores.push(semaphorePath);
-			}
 		}
 
 		const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
@@ -7214,7 +7204,6 @@ export function convergeRuntimeManifest(
 				egressAddon: egressAddon?.path ?? null,
 				liveSyncEnvironments,
 				daemonAuthTokenFile,
-				instanceSemaphores,
 				bootFinished,
 			},
 		};

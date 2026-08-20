@@ -225,9 +225,6 @@ export function buildRuntimeRunInvocation(
 		...baseEnv,
 		...read.config.env,
 		...runtimeSecretEnv(read.config.secretFilePath, read.config.secretEnv),
-		...(read.config.secretFilePath && read.config.egressProfileBundlePath
-			? { CLAWDI_EGRESS_SECRET_FILE: read.config.secretFilePath }
-			: {}),
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
 	if (read.config.egressProfileBundlePath) {
