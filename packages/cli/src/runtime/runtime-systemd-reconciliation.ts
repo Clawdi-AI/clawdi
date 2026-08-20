@@ -57,6 +57,12 @@ import {
 } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import {
+	isGeneratedRuntimeSystemdPath,
+	managedRuntimeSystemdUnitEntries,
+	RUNTIME_SYSTEMD_DROP_IN_FILE,
+	systemctlPath,
+} from "./systemd";
+import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
@@ -337,7 +343,6 @@ export function planRuntimeMutationSystemdUserUnits(input: {
 	return { quiesceUserUnits, restartUserUnits };
 }
 
-const RUNTIME_SYSTEMD_DROP_IN_FILE = "10-clawdi-hosted.conf";
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
@@ -913,7 +918,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 
 function removeGeneratedRuntimeBaseUnit(paths: RuntimePaths, unitName: string): void {
 	const path = join(paths.systemdUserRoot, unitName);
-	if (!isGeneratedSystemdFile(path)) return;
+	if (!isGeneratedRuntimeSystemdPath(path)) return;
 	rmSync(path, { force: true });
 }
 
@@ -1082,7 +1087,7 @@ export function installOfficialRuntimeService(
 function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: string): void {
 	try {
 		runRuntimeUserCommand(
-			process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
+			systemctlPath(),
 			["--user", "reset-failed", systemdUnitFileName(name)],
 			"",
 			paths.userHome,
@@ -1096,14 +1101,9 @@ function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: s
 
 function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
 	try {
-		runRuntimeUserCommand(
-			process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
-			["--user", "daemon-reload"],
-			"",
-			paths.userHome,
-			cwd,
-			{ timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS },
-		);
+		runRuntimeUserCommand(systemctlPath(), ["--user", "daemon-reload"], "", paths.userHome, cwd, {
+			timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS,
+		});
 	} catch {
 		// Best-effort: environments without a reachable user manager (unit tests,
 		// non-hosted hosts) must not fail convergence, and official installers
@@ -1189,9 +1189,9 @@ function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: str
 		if (writtenNames.has(unitName)) continue;
 		if (!officialRuntimeServiceDescriptorForUnit(unitName)) continue;
 		const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
-		if (!isGeneratedSystemdFile(dropInPath)) continue;
+		if (!isGeneratedRuntimeSystemdPath(dropInPath)) continue;
 		const baseUnitPath = join(paths.systemdUserRoot, unitName);
-		if (!existsSync(baseUnitPath) || isGeneratedSystemdFile(baseUnitPath)) continue;
+		if (!existsSync(baseUnitPath) || isGeneratedRuntimeSystemdPath(baseUnitPath)) continue;
 		stale.push(unitName);
 	}
 	return stale.sort();
@@ -1259,40 +1259,23 @@ export function planRuntimeSystemdUserMutations(
 		})
 		.filter((path): path is string => path !== null);
 
-	if (existsSync(paths.systemdUserRoot)) {
-		const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-		for (const entry of readdirSync(paths.systemdUserRoot)) {
-			if (entry.endsWith(".service")) {
-				const path = join(paths.systemdUserRoot, entry);
-				if (
-					(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path)) &&
-					!writtenNames.has(entry)
-				) {
-					targets.add(path);
-					const enablementPath = join(paths.systemdUserRoot, "default.target.wants", entry);
-					targets.add(enablementPath);
-					symlinkTargets.add(enablementPath);
-					unitNames.add(entry);
-				}
-				continue;
-			}
-			if (!entry.endsWith(".service.d")) continue;
-			const unitName = entry.slice(0, -".d".length);
-			const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
-			if (!isGeneratedSystemdFile(dropInPath) || writtenNames.has(unitName)) continue;
-			targets.add(dropInPath);
-			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-			targets.add(enablementPath);
-			symlinkTargets.add(enablementPath);
-			metadataTargets.add(dirname(dropInPath));
-			unitNames.add(unitName);
+	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
+	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
+		if (writtenNames.has(entry.unitName)) continue;
+		targets.add(entry.path);
+		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", entry.unitName);
+		targets.add(enablementPath);
+		symlinkTargets.add(enablementPath);
+		unitNames.add(entry.unitName);
+		if (entry.kind === "hosted-drop-in") {
+			metadataTargets.add(dirname(entry.path));
 		}
 	}
 	if (existsSync(paths.systemdEnvRoot)) {
 		for (const entry of readdirSync(paths.systemdEnvRoot)) {
 			if (!entry.endsWith(".service.env")) continue;
 			const path = join(paths.systemdEnvRoot, entry);
-			if (entry.startsWith("clawdi-") || isGeneratedSystemdFile(path)) {
+			if (entry.startsWith("clawdi-") || isGeneratedRuntimeSystemdPath(path)) {
 				environmentTargets.add(path);
 			}
 		}
@@ -1308,14 +1291,6 @@ export function planRuntimeSystemdUserMutations(
 		staleOfficialUnits,
 		driftErrors: officialRuntimeSystemdUserDropInDriftErrors(programs, paths),
 	};
-}
-
-function isGeneratedSystemdFile(path: string): boolean {
-	try {
-		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
-	} catch {
-		return false;
-	}
 }
 
 function planStaleRuntimeSystemdFiles(
@@ -1341,25 +1316,11 @@ function planStaleRuntimeSystemdFiles(
 			systemUnits.add(entry);
 		}
 	}
-	if (existsSync(paths.systemdUserRoot)) {
-		for (const entry of readdirSync(paths.systemdUserRoot)) {
-			if (entry.endsWith(".service")) {
-				const path = join(paths.systemdUserRoot, entry);
-				if (desiredUser.has(entry)) continue;
-				if (!entry.startsWith("clawdi-") && !isGeneratedSystemdFile(path)) continue;
-				files.add(path);
-				files.add(join(paths.systemdUserRoot, "default.target.wants", entry));
-				userUnits.add(entry);
-				continue;
-			}
-			if (!entry.endsWith(".service.d")) continue;
-			const unitName = entry.slice(0, -".d".length);
-			const dropIn = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
-			if (desiredUser.has(unitName) || !isGeneratedSystemdFile(dropIn)) continue;
-			files.add(dropIn);
-			files.add(join(paths.systemdUserRoot, "default.target.wants", unitName));
-			userUnits.add(unitName);
-		}
+	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
+		if (desiredUser.has(entry.unitName)) continue;
+		files.add(entry.path);
+		files.add(join(paths.systemdUserRoot, "default.target.wants", entry.unitName));
+		userUnits.add(entry.unitName);
 	}
 	const desiredEnvironmentFiles = new Set(
 		[...desiredSystem, ...desiredUser].map((unit) => `${unit}.env`),
@@ -1368,7 +1329,7 @@ function planStaleRuntimeSystemdFiles(
 		for (const entry of readdirSync(paths.systemdEnvRoot)) {
 			if (!entry.endsWith(".service.env") || desiredEnvironmentFiles.has(entry)) continue;
 			const path = join(paths.systemdEnvRoot, entry);
-			if (!entry.startsWith("clawdi-") && !isGeneratedSystemdFile(path)) continue;
+			if (!entry.startsWith("clawdi-") && !isGeneratedRuntimeSystemdPath(path)) continue;
 			files.add(path);
 		}
 	}
@@ -1394,7 +1355,7 @@ export function removeStaleRuntimeSystemdFiles(
 			errors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
-	const systemctl = process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
+	const systemctl = systemctlPath();
 	if (plan.systemUnits.length > 0) {
 		const result = spawnSync(systemctl, ["daemon-reload"], { encoding: "utf8" });
 		if (result.status !== 0) errors.push("system systemd daemon-reload failed after stale file GC");

@@ -3,7 +3,11 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { log, toErrorMessage } from "../serve/log";
 import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
-import { type RuntimeApplyIdentity, readRuntimeApplyIdentity } from "./apply-identity";
+import {
+	type RuntimeApplyIdentity,
+	readRuntimeApplyIdentity,
+	runtimeApplyIdentitiesEqual,
+} from "./apply-identity";
 import {
 	HostedRuntimeHeartbeatSession,
 	type HostedRuntimeObservedEvent,
@@ -100,7 +104,7 @@ export class HostedRuntimeObservationProducer {
 
 			buffered = this.session.nextEvent();
 			if (!buffered) return { outcome: "idle" };
-			if (!eventMatchesApplyIdentity(buffered.event, expectedApplyIdentity)) {
+			if (!runtimeApplyIdentitiesEqual(buffered.event, expectedApplyIdentity)) {
 				return { outcome: "idle" };
 			}
 			const result = await this.submit(environmentId, buffered.event);
@@ -138,7 +142,7 @@ export class HostedRuntimeObservationProducer {
 		const expectedApplyIdentity = readRuntimeApplyIdentity(this.contextPath);
 		const appliedState = readRuntimeAppliedState(this.paths);
 		const appliedIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
-		if (!appliedIdentity || !sameApplyIdentity(appliedIdentity, expectedApplyIdentity)) {
+		if (!runtimeApplyIdentitiesEqual(appliedIdentity, expectedApplyIdentity)) {
 			return null;
 		}
 		const environmentId = readRuntimeObservationEnvironmentId(this.paths);
@@ -226,27 +230,6 @@ export function readRuntimeObservationEnvironmentId(paths: RuntimePaths): string
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function sameApplyIdentity(left: RuntimeApplyIdentity, right: RuntimeApplyIdentity): boolean {
-	return (
-		left.generation === right.generation &&
-		left.manifestETag === right.manifestETag &&
-		left.applyReceiptId === right.applyReceiptId &&
-		left.bootNonce === right.bootNonce
-	);
-}
-
-function eventMatchesApplyIdentity(
-	event: HostedRuntimeObservedEvent,
-	identity: RuntimeApplyIdentity,
-): boolean {
-	return (
-		event.generation === identity.generation &&
-		event.manifestETag === identity.manifestETag &&
-		event.applyReceiptId === identity.applyReceiptId &&
-		event.bootNonce === identity.bootNonce
-	);
 }
 
 export function isSafelyTerminalRuntimeObservationFailure(result: {
