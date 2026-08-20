@@ -15,7 +15,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { convergeRuntimeManifest } from "../src/runtime/manifest";
-import { HOSTED_V2_OPENCLAW_VERSION } from "../src/runtime/manifest-contract";
 import { normalizeHostedRuntimeBundleV2 } from "../src/runtime/manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../src/runtime/state";
@@ -181,7 +180,7 @@ function convergeHostedEgressFixture(): { paths: RuntimePaths; root: string } {
 		openclaw,
 		`#!/bin/sh
 case "$*" in
-  "--version") printf '%s\\n' '${HOSTED_V2_OPENCLAW_VERSION}' ;;
+  "--version") printf '%s\\n' 'OpenClaw test-version' ;;
   "agents list --json") printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace" ;;
 esac
 `,

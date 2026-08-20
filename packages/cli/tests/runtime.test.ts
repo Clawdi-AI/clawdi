@@ -72,7 +72,6 @@ import {
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
 import {
-	HOSTED_V2_OPENCLAW_VERSION,
 	hostedRuntimeManifestResponseSchema,
 	manifestSchema,
 	officialInstallArgs,
@@ -1268,7 +1267,7 @@ function seedOpenClawBinary(home: string): void {
 		openclawBin,
 		`#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\n'
+  printf 'openclaw test-version\n'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
@@ -1311,7 +1310,7 @@ function writeOpenClawConfigMutationFixture(
 		`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> '${commandLog}'
-if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf 'openclaw test-version\n'; exit 0; fi
 if [ "$*" = "agents list --json" ]; then
   if grep -q 'legacyInvalidConfig' '${configPath}' 2>/dev/null; then exit 1; fi
   printf '[{"id":"main","workspace":"${home}/.openclaw/workspace"}]\n'
@@ -1439,7 +1438,7 @@ function seedOfficialOpenClawServiceInstaller(home: string): void {
 		`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\\n'
+  printf 'openclaw test-version\\n'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
@@ -3327,7 +3326,7 @@ describe("runtime manifest datasource", () => {
 			);
 			expect(loaded.manifest.runtimes.openclaw.install?.home).toBe(home);
 			expect(loaded.manifest.runtimes.openclaw.install?.args).toEqual(
-				officialInstallArgs("openclaw", home, HOSTED_V2_OPENCLAW_VERSION),
+				officialInstallArgs("openclaw", home),
 			);
 			expectProviderEgressProfileUsesSecretRef(
 				loaded.manifest.egressProfiles?.profiles,
@@ -8225,7 +8224,7 @@ exit 64
 			`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\\n'
+  printf 'openclaw test-version\\n'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
@@ -9036,7 +9035,7 @@ fi
 			`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\\n'
+  printf 'openclaw test-version\\n'
   exit 0
 fi
 ${fakeManagedOpenClawProviderPluginCommands()}
@@ -10663,7 +10662,7 @@ chmod +x "$prefix/bin/clawdi"
 set -euo pipefail
 printf '%s\n' "$*" >> '${installerLog}'
 if [ "$*" = "--version" ]; then
-  printf '%s\n' '${runtime === "openclaw" ? HOSTED_V2_OPENCLAW_VERSION : `${runtime}-test-version`}'
+  printf '%s\n' '${runtime}-test-version'
 elif [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\n'
 elif [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ]; then
@@ -13631,7 +13630,7 @@ chmod +x "$prefix/bin/clawdi"
 			`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw ${HOSTED_V2_OPENCLAW_VERSION}\\n'
+  printf 'openclaw test-version\\n'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then

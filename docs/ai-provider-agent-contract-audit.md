@@ -152,9 +152,9 @@ Clawdi-owned metadata plugin declaring
 provider projection and cleanup. Convergence verifies the effective marker via
 the public provider-env-vars SDK and fails closed if OpenClaw did not register
 it. This contract does not depend on a legacy plugin. The audited `8f382a2`
-source is provenance evidence, while the selected Clawdi release owns the
-Hosted-v2 exact package pin `openclaw@2026.8.1-beta.2` behind the unchanged
-official-installer selector.
+source is provenance evidence. Hosted v2 uses OpenClaw's official installer
+without a version argument, while convergence capability-gates the public SDK
+surface it consumes.
 
 Hosted v2 convergence:
 

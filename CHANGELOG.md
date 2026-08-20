@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.104
+
+Package: `clawdi@0.13.104`
+
+### Fixed
+
+- Hosted v2 OpenClaw deployments no longer inherit an exact OpenClaw version
+  from the Clawdi CLI. OpenClaw and Hermes now both use their official
+  installers' default latest release without a version argument.
+
 ## Clawdi CLI v0.13.103
 
 Package: `clawdi@0.13.103`

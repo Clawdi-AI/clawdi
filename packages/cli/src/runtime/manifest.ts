@@ -1228,58 +1228,6 @@ function materializeInstaller(
 	return { path, cleanup: dir };
 }
 
-function reportedRuntimeVersion(output: string): string | null {
-	for (const match of output.matchAll(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g)) {
-		if (isValidSemver(match[0])) return match[0];
-	}
-	return null;
-}
-
-function installedOpenClawVersion(command: string, home: string): string | null {
-	try {
-		const result = spawnRuntimeUserCommand(command, ["--version"], home, home, {
-			timeoutMs: 10_000,
-			maxBufferBytes: 64 * 1024,
-		});
-		if (result.status !== 0) return null;
-		return reportedRuntimeVersion(`${String(result.stdout)}\n${String(result.stderr)}`);
-	} catch {
-		return null;
-	}
-}
-
-function openClawConfigWriterVersion(home: string): string | null {
-	const path = managedOpenClawConfigPath(home);
-	if (!existsSync(path)) return null;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(path, "utf-8"));
-	} catch {
-		throw new Error("OpenClaw config is invalid before exact-version installation");
-	}
-	if (!isPlainRecord(parsed)) {
-		throw new Error("OpenClaw config must be an object before exact-version installation");
-	}
-	const meta = parsed.meta;
-	if (meta === undefined) return null;
-	if (!isPlainRecord(meta)) {
-		throw new Error("OpenClaw config meta must be an object before exact-version installation");
-	}
-	const version = meta.lastTouchedVersion;
-	if (version === undefined) return null;
-	if (
-		typeof version !== "string" ||
-		version.length === 0 ||
-		version.length > 128 ||
-		version.trim() !== version
-	) {
-		throw new Error(
-			"OpenClaw config meta.lastTouchedVersion must be a non-empty trimmed string of at most 128 characters",
-		);
-	}
-	return version;
-}
-
 function runOfficialInstaller(
 	name: string,
 	install: RuntimeInstall,
@@ -1317,16 +1265,7 @@ function runOfficialInstaller(
 			error: `unsupported runtime ${name}`,
 		});
 	}
-	const expectedVersion = name === "openclaw" ? install.version : undefined;
-	const observedVersion =
-		expectedVersion === undefined || !executableExists(commandPath)
-			? null
-			: installedOpenClawVersion(commandPath, install.home);
-	if (
-		executableExists(commandPath) &&
-		!options.force &&
-		(expectedVersion === undefined || observedVersion === expectedVersion)
-	) {
+	if (executableExists(commandPath) && !options.force) {
 		return finish({
 			runtime: name,
 			enabled: true,
@@ -1348,14 +1287,7 @@ function runOfficialInstaller(
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url);
 	try {
-		const configWriterVersion =
-			expectedVersion === undefined ? null : openClawConfigWriterVersion(install.home);
-		const execution = runtimeInstallerExecution(
-			name,
-			install,
-			materialized.path,
-			configWriterVersion === null ? [] : ["--compatible-with", configWriterVersion],
-		);
+		const execution = runtimeInstallerExecution(name, install, materialized.path);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
@@ -1363,14 +1295,7 @@ function runOfficialInstaller(
 			timeout: Number.parseInt(process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT ?? "1800000", 10),
 		});
 		const exitCode = result.status ?? 1;
-		const installedVersion =
-			exitCode === 0 && expectedVersion !== undefined && executableExists(commandPath)
-				? installedOpenClawVersion(commandPath, install.home)
-				: null;
-		const installed =
-			exitCode === 0 &&
-			executableExists(commandPath) &&
-			(expectedVersion === undefined || installedVersion === expectedVersion);
+		const installed = exitCode === 0 && executableExists(commandPath);
 		return finish({
 			runtime: name,
 			enabled: true,
@@ -1386,9 +1311,7 @@ function runOfficialInstaller(
 			stderrTail: tail(result.stderr),
 			error: installed
 				? null
-				: expectedVersion !== undefined && exitCode === 0
-					? `runtime ${name} installer did not produce exact version ${expectedVersion}`
-					: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+				: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
 		});
 	} catch (error) {
 		return finish({
@@ -1499,16 +1422,11 @@ function planRuntimeInstallObservation(
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
 	const capabilityError = hermesDashboardCapabilityError(name, runtime);
-	const exactVersionPresent =
-		name !== "openclaw" ||
-		runtime.install.version === undefined ||
-		(commandPath !== null &&
-			installedOpenClawVersion(commandPath, runtime.install.home) === runtime.install.version);
 	return {
 		runtime: name,
 		enabled: true,
 		status:
-			commandPath && executableExists(commandPath) && !capabilityError && exactVersionPresent
+			commandPath && executableExists(commandPath) && !capabilityError
 				? "present"
 				: "configured",
 		executionUser: null,
