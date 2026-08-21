@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { tarSkillDir } from "../../src/lib/tar";
+import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
 import {
 	type AgentHomeOverrideSnapshot,
 	restoreAgentHomeOverrides,
@@ -178,6 +179,28 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		const extracted = join(tmpHome, ".hermes", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
 		expect(readFileSync(extracted, "utf-8")).toContain("description: A nested demo skill");
+	});
+
+	it("refuses to write shared content through a managed shared namespace", async () => {
+		const skillsRoot = join(tmpHome, ".hermes", "skills");
+		const sharedRoot = join(skillsRoot, "shared");
+		mkdirSync(sharedRoot, { recursive: true });
+		writeFileSync(join(sharedRoot, "SKILL.md"), "# Managed shared namespace\n");
+		reserveManagedSkill({
+			targetDir: sharedRoot,
+			id: "shared",
+			version: 1,
+			digest: "a".repeat(64),
+			manager: "local-setup",
+		});
+		const tarBytes = await tarSkillDir(join(skillsRoot, "core", "demo"));
+
+		const adapter = new HermesAdapter();
+		await expect(adapter.writeSharedSkillArchive("demo", "owner", tarBytes)).rejects.toThrow(
+			"Skill shared is reserved by a managed Skill owner",
+		);
+		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
+		expect(existsSync(join(sharedRoot, "demo__owner"))).toBe(false);
 	});
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {

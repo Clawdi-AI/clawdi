@@ -1,8 +1,9 @@
-import { lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { runHermesAgentPluginCanary } from "./hermes-agent-plugin-canary-client";
 import {
 	type HostedAgentPluginReceipt,
@@ -22,6 +23,7 @@ import {
 	commandResolvable,
 	makeRuntimeUserOwned,
 	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -102,6 +104,15 @@ class OpenClawAgentPluginNotObservedError extends Error {}
 const OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR =
 	"OpenClaw installed the package but did not report it as an Agent Plugins 1.0.0 bundle; standards-native installation is unsupported";
 const AGENT_PLUGIN_CAPABILITY_CANARY_NAME = "clawdi-capability-canary";
+const HERMES_PLUGIN_SCAN_POLICY_KEY = "plugins.scan_on_install";
+const HERMES_PLUGIN_SCAN_GUARD_SCHEMA = "clawdi.hermesPluginScanGuard.v1";
+const HERMES_PLUGIN_SCAN_GUARD_FILE = ".clawdi-plugin-scan-guard.json";
+const hermesPluginScanGuardSchema = z
+	.object({
+		schemaVersion: z.literal(HERMES_PLUGIN_SCAN_GUARD_SCHEMA),
+		previousValue: z.boolean(),
+	})
+	.strict();
 
 export type HermesRemoteCapabilityProbe = (input: {
 	command: string;
@@ -438,6 +449,131 @@ function initializeLocalGitTransport(
 	}
 }
 
+function hermesPluginScanGuardPath(home: string): string {
+	return join(home, ".hermes", HERMES_PLUGIN_SCAN_GUARD_FILE);
+}
+
+function readHermesPluginScanGuard(
+	home: string,
+): z.infer<typeof hermesPluginScanGuardSchema> | null {
+	const path = hermesPluginScanGuardPath(home);
+	try {
+		return withRuntimeUserFileAccess(() => {
+			const stat = lstatSync(path);
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024) {
+				throw new Error("Hermes Agent Plugin scan guard receipt is unsafe");
+			}
+			if ((stat.mode & 0o777) !== PRIVATE_FILE_MODE) {
+				throw new Error("Hermes Agent Plugin scan guard receipt is not private");
+			}
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+			return hermesPluginScanGuardSchema.parse(parsed);
+		});
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		if (error instanceof Error && error.message.startsWith("Hermes Agent Plugin scan guard")) {
+			throw error;
+		}
+		throw new Error("Hermes Agent Plugin scan guard receipt is invalid");
+	}
+}
+
+function writeHermesPluginScanGuard(home: string, previousValue: boolean): void {
+	const path = hermesPluginScanGuardPath(home);
+	withRuntimeUserFileAccess(() =>
+		writePrivateFileAtomic(
+			path,
+			`${JSON.stringify({
+				schemaVersion: HERMES_PLUGIN_SCAN_GUARD_SCHEMA,
+				previousValue,
+			})}\n`,
+			{ mode: PRIVATE_FILE_MODE, dirMode: PRIVATE_DIR_MODE },
+		),
+	);
+}
+
+function clearHermesPluginScanGuard(home: string): void {
+	withRuntimeUserFileAccess(() => rmSync(hermesPluginScanGuardPath(home), { force: true }));
+}
+
+type HermesNativeCommand = (args: string[]) => AgentPluginCommandResult;
+
+function readHermesPluginScanPolicy(run: HermesNativeCommand): boolean {
+	const result = run(["config", "get", HERMES_PLUGIN_SCAN_POLICY_KEY, "--json"]);
+	if (result.status !== 0) {
+		throw nativeCommandFailure("Hermes Agent Plugin scan policy read failed", result);
+	}
+	try {
+		return z.boolean().parse(JSON.parse(result.stdout));
+	} catch {
+		throw new Error("Hermes Agent Plugin scan policy is not a boolean");
+	}
+}
+
+function setHermesPluginScanPolicy(
+	run: HermesNativeCommand,
+	value: boolean,
+	operation: "update" | "restoration",
+): void {
+	const result = run(["config", "set", "--force", HERMES_PLUGIN_SCAN_POLICY_KEY, String(value)]);
+	if (result.status !== 0) {
+		throw nativeCommandFailure(`Hermes Agent Plugin scan policy ${operation} failed`, result);
+	}
+}
+
+function restoreHermesPluginScanPolicy(home: string, run: HermesNativeCommand): void {
+	const guard = readHermesPluginScanGuard(home);
+	if (!guard) return;
+	if (readHermesPluginScanPolicy(run) !== guard.previousValue) {
+		setHermesPluginScanPolicy(run, guard.previousValue, "restoration");
+	}
+	clearHermesPluginScanGuard(home);
+}
+
+function withHermesPluginScanDisabled<T>(
+	home: string,
+	run: HermesNativeCommand,
+	install: () => T,
+): T {
+	const previousValue = readHermesPluginScanPolicy(run);
+	if (!previousValue) return install();
+
+	// Temporary until NousResearch/hermes-agent#89704 ships in the supported
+	// Hermes release; then use its immutable-ref --no-scan install exemption.
+	writeHermesPluginScanGuard(home, previousValue);
+	let installOutcome: { ok: true; value: T } | { ok: false; error: unknown };
+	try {
+		setHermesPluginScanPolicy(run, false, "update");
+		installOutcome = { ok: true, value: install() };
+	} catch (error) {
+		installOutcome = { ok: false, error };
+	}
+	let restoreOutcome: { ok: true } | { ok: false; error: unknown };
+	try {
+		restoreHermesPluginScanPolicy(home, run);
+		restoreOutcome = { ok: true };
+	} catch (error) {
+		restoreOutcome = { ok: false, error };
+	}
+	if (!restoreOutcome.ok) {
+		if (installOutcome.ok) throw restoreOutcome.error;
+		const installMessage =
+			installOutcome.error instanceof Error
+				? installOutcome.error.message
+				: String(installOutcome.error);
+		const restoreMessage =
+			restoreOutcome.error instanceof Error
+				? restoreOutcome.error.message
+				: String(restoreOutcome.error);
+		throw new Error(
+			`Hermes Agent Plugin install failed: ${installMessage}; scan policy restoration failed: ${restoreMessage}`,
+			{ cause: installOutcome.error },
+		);
+	}
+	if (!installOutcome.ok) throw installOutcome.error;
+	return installOutcome.value;
+}
+
 function createHermesDriver(input: {
 	command: string;
 	home: string;
@@ -486,25 +622,26 @@ function createHermesDriver(input: {
 	return {
 		runtime: "hermes",
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "hermes", nativeId),
-		mutationStateTargets: () => [join(input.home, ".hermes", "config.yaml")],
+		mutationStateTargets: () => [
+			join(input.home, ".hermes", "config.yaml"),
+			hermesPluginScanGuardPath(input.home),
+		],
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				const scanPolicy = run(["config", "set", "--force", "plugins.scan_on_install", "false"]);
-				if (scanPolicy.status !== 0) {
-					throw nativeCommandFailure("Hermes Agent Plugin scan policy update failed", scanPolicy);
-				}
 				initializeLocalGitTransport(input.runner, "hermes", input.home, sourceDir);
-				const result = run([
-					"plugins",
-					"install",
-					pathToFileURL(sourceDir).href,
-					"--force",
-					"--no-enable",
-				]);
-				if (result.status !== 0) {
-					throw nativeCommandFailure("Hermes native Agent Plugin install failed", result);
-				}
+				withHermesPluginScanDisabled(input.home, run, () => {
+					const result = run([
+						"plugins",
+						"install",
+						pathToFileURL(sourceDir).href,
+						"--force",
+						"--no-enable",
+					]);
+					if (result.status !== 0) {
+						throw nativeCommandFailure("Hermes native Agent Plugin install failed", result);
+					}
+				});
 			});
 			const installed = observe(prepared.name);
 			if (!installed) throw new Error("Hermes did not report the installed Agent Plugin");
@@ -954,6 +1091,15 @@ export function prepareHostedAgentPluginTransaction(input: {
 		runner,
 		proof: input.capabilityProof,
 	});
+	restoreHermesPluginScanPolicy(input.home, (args) =>
+		runNative(runner, {
+			runtime: "hermes",
+			command: input.commands.hermes,
+			args,
+			home: input.home,
+			cwd: input.home,
+		}),
+	);
 	const drivers = new Map<HostedAgentPluginRuntime, NativeAgentPluginDriver>();
 	const driverFor = (runtime: HostedAgentPluginRuntime): NativeAgentPluginDriver => {
 		const existing = drivers.get(runtime);

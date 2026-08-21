@@ -337,11 +337,15 @@ export class HermesAdapter implements AgentAdapter {
 		ownerHandle: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
+		const root = this.getSkillsRootDir();
+		const sharedRoot = join(root, "shared");
 		await replaceSkillArchiveTarGz(
 			key,
-			this.getSkillsRootDir(),
+			root,
 			this.getSharedSkillPath(key, ownerHandle),
 			tarGzBytes,
+			undefined,
+			(mutation) => mutateUserSkillTarget(sharedRoot, "shared", mutation),
 		);
 	}
 }

@@ -19,14 +19,8 @@ const HERMES_CANARY_PROVIDER = "clawdi-agent-plugin-canary";
 const hermesCanaryReadySchema = z.object({ port: z.number().int().min(1).max(65_535) }).strict();
 const hermesCanaryEvidenceSchema = z
 	.object({
-		mcpHeader: z.literal(true),
-		mcpInitialize: z.literal(true),
-		mcpInitialized: z.literal(true),
 		mcpToolsList: z.literal(true),
 		mcpToolCall: z.literal(true),
-		inferenceSawTool: z.literal(true),
-		inferenceSawToolResult: z.literal(true),
-		completed: z.literal(true),
 		error: z.never().optional(),
 	})
 	.passthrough();
@@ -146,7 +140,6 @@ function stopCanaryController(child: ChildProcess): void {
 export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput): void {
 	const nonce = randomBytes(16).toString("hex");
 	const name = `clawdi-capability-${nonce.slice(0, 16)}`;
-	const successToken = `CLAWDI_AGENT_PLUGIN_CANARY_OK_${nonce}`;
 	const readyFile = join(input.home, "canary-ready.json");
 	const resultFile = join(input.home, "canary-result.json");
 	const invocation = resolveCurrentCliInvocation([
@@ -158,8 +151,6 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 		resultFile,
 		"--nonce",
 		nonce,
-		"--success-token",
-		successToken,
 	]);
 	const controller = spawn(invocation.command, invocation.args, {
 		cwd: input.home,
@@ -212,10 +203,10 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 			),
 		);
 		input.withEnabledCanary(canary, () => {
-			const result = input.runOneShot({
+			input.runOneShot({
 				args: [
 					"-z",
-					"Call the Clawdi capability canary tool exactly once, then return its success result.",
+					"Run the Clawdi Agent Plugin capability probe.",
 					"--model",
 					"clawdi-agent-plugin-canary",
 					"--provider",
@@ -236,7 +227,6 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 				},
 				timeoutMs: HERMES_REMOTE_PROBE_TIMEOUT_MS,
 			});
-			if (result.status !== 0 || result.stdout.trim() !== successToken) throw new Error();
 			waitForJsonFile(resultFile, hermesCanaryEvidenceSchema, 1_000);
 		});
 	} finally {

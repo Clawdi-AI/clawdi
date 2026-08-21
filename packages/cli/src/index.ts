@@ -762,20 +762,12 @@ runtimeCmd
 	.requiredOption("--ready-file <path>")
 	.requiredOption("--result-file <path>")
 	.requiredOption("--nonce <nonce>")
-	.requiredOption("--success-token <token>")
-	.action(
-		async (opts: {
-			readyFile: string;
-			resultFile: string;
-			nonce: string;
-			successToken: string;
-		}) => {
-			const { runHermesAgentPluginCanaryController } = await import(
-				"./runtime/hermes-agent-plugin-canary-controller.js"
-			);
-			await runHermesAgentPluginCanaryController(opts);
-		},
-	);
+	.action(async (opts: { readyFile: string; resultFile: string; nonce: string }) => {
+		const { runHermesAgentPluginCanaryController } = await import(
+			"./runtime/hermes-agent-plugin-canary-controller.js"
+		);
+		await runHermesAgentPluginCanaryController(opts);
+	});
 
 runtimeCmd
 	.command("status", { hidden: true })
