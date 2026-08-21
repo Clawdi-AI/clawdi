@@ -103,10 +103,22 @@ exit 0
 			chmodSync(entry.path, entry.mode);
 		}
 
+		const load = normalizeHostedRuntimeBundleV2(fixture);
+		const egressEngine = load.manifest.egressEngine;
+		if (!egressEngine) throw new Error("runtime bundle fixture must pin an egress engine");
+		const mitmdump = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256.toLowerCase(),
+			"mitmdump",
+		);
+		mkdirSync(dirname(mitmdump), { recursive: true });
+		writeFileSync(mitmdump, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(mitmdump, 0o755);
+
 		ensureRuntimeStateDirs(paths);
 		const before = new Map(layout.map((entry) => [entry.path, statSummary(entry.path)]));
 
-		const load = normalizeHostedRuntimeBundleV2(fixture);
 		load.applyContext = {
 			kind: "context-file",
 			backend: "incus",
