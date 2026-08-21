@@ -99,80 +99,28 @@ function runHermesUninstall(input: { home: string; appRoot: string }, skillId: s
 	return runHermes(input, ["skills", "uninstall", skillId], "y\n");
 }
 
-const HERMES_SUPPORT_DIRS = new Set(["references", "templates", "scripts", "assets", "examples"]);
-const HERMES_SUPPORT_REFERENCE =
-	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
-
-/** Mirrors Hermes UrlSource at NousResearch/hermes-agent@a77ee88ce29c4f1d89f8d60e5b662322645072d8. */
-function expectedHermesNativeTree(sourceDir: string) {
-	const catalogTree = collectManagedSkillTree(sourceDir);
-	const skillMd = catalogTree?.get("SKILL.md");
-	if (!catalogTree || !skillMd) return null;
-	const text = skillMd.toString("utf8").replaceAll("\\", "/");
-	if (
-		/(?:references|templates|scripts|assets|examples)\/(?:[^\s)`"'<>]*\/)?\.\.(?:\/|$)/m.test(text)
-	)
-		return null;
-	// UrlSource fetches SKILL.md as HTTP text and quarantine_bundle writes that
-	// text as UTF-8. Support files stay byte-for-byte HTTP payloads.
-	const expected = new Map<string, Buffer>([
-		["SKILL.md", Buffer.from(skillMd.toString("utf8"), "utf8")],
-	]);
-	for (const match of text.matchAll(HERMES_SUPPORT_REFERENCE)) {
-		let relative: string;
-		try {
-			relative = decodeURIComponent(
-				(match[1] ?? "").replace(/[.,;:]+$/, "").split(/[?#]/, 1)[0] ?? "",
-			);
-		} catch {
-			return null;
-		}
-		const segments = relative.split("/");
-		if (
-			!HERMES_SUPPORT_DIRS.has(segments[0] ?? "") ||
-			segments.some((segment) => !segment || segment === "." || segment === "..")
-		)
-			return null;
-		const bytes = catalogTree.get(relative);
-		if (!bytes) return null;
-		expected.set(relative, bytes);
-	}
-	return expected;
-}
-
-function nativeResultMatches(
-	skill: PreparedHostedSourcedSkill,
-	sourceDir: string,
-	target: string,
-): boolean {
+function bundledResultMatches(sourceDir: string, target: string): boolean {
 	return managedSkillTreesEqual(
-		skill.source.type === "bundled"
-			? collectManagedSkillTree(sourceDir)
-			: expectedHermesNativeTree(sourceDir),
+		collectManagedSkillTree(sourceDir),
 		collectManagedSkillTree(target),
 	);
 }
 
 export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDriver = {
 	install(input) {
+		const target = targetDir(input.home, input.skill.skillId);
+		const receipt = receiptInput(input.home, input.skill.skillId, input.skill.sourceIdentity);
+		if (existsSync(target) && !input.previouslyReserved)
+			throw new Error("Hermes Skill target is not paired with a manifest reservation");
+		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
 		return withStagedManagedSkill(input.skill, (sourceDir) => {
-			const target = targetDir(input.home, input.skill.skillId);
-			const receipt = receiptInput(input.home, input.skill.skillId, input.skill.sourceIdentity);
-			const hadTarget = existsSync(target);
-			if (hadTarget && !input.previouslyReserved)
-				throw new Error("Hermes Skill target is not paired with a manifest reservation");
-			if (
-				nativeResultMatches(input.skill, sourceDir, target) &&
-				managedSkillReceiptMatchesIdentity(receipt)
-			)
-				return "unchanged";
 			return withManagedTargetRollback({
 				target,
 				receipt: receipt.path,
 				operation: () => {
 					if (input.skill.source.type === "bundled") {
 						withRuntimeUserFileAccess(() => replaceManagedSkillDirectoryAtomic(sourceDir, target));
-						if (!nativeResultMatches(input.skill, sourceDir, target)) {
+						if (!bundledResultMatches(sourceDir, target)) {
 							throw new Error("Hermes bundled Skill activation changed exact source bytes");
 						}
 						writeManagedSkillReceipt(receipt);
@@ -192,18 +140,6 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 						throw new Error(
 							`Hermes official Skill install failed: ${String(result.stderr || result.stdout).trim() || "unknown error"}`,
 						);
-					if (!nativeResultMatches(input.skill, sourceDir, target)) {
-						if (!hadTarget && existsSync(target)) {
-							const rollback = runHermesUninstall(input, input.skill.skillId);
-							if (rollback.status !== 0 || existsSync(target))
-								throw new Error(
-									`Hermes official install produced invalid Skill bytes and native rollback failed: ${String(rollback.stderr || rollback.stdout).trim() || (existsSync(target) ? "Skill target still exists" : "unknown error")}`,
-								);
-						}
-						throw new Error(
-							"Hermes official install did not preserve the exact native catalog projection",
-						);
-					}
 					writeManagedSkillReceipt(receipt);
 					return "installed" as const;
 				},
@@ -211,13 +147,8 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		});
 	},
 	verifyOwned(input) {
-		return withStagedManagedSkill(
-			input.skill,
-			(sourceDir) =>
-				nativeResultMatches(input.skill, sourceDir, targetDir(input.home, input.skill.skillId)) &&
-				managedSkillReceiptMatchesIdentity(
-					receiptInput(input.home, input.skill.skillId, input.skill.sourceIdentity),
-				),
+		return managedSkillReceiptMatchesIdentity(
+			receiptInput(input.home, input.skill.skillId, input.skill.sourceIdentity),
 		);
 	},
 	hasOwnershipReceipt(input) {

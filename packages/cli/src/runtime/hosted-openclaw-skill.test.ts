@@ -203,6 +203,7 @@ rm -rf '${workspaceRoot}/skills/'"$skill_id"
 cp -R "$source_dir" '${workspaceRoot}/skills/'"$skill_id"
 mkdir -p '${workspaceRoot}/skills/'"$skill_id"'/.openclaw'
 printf '{}\n' > '${workspaceRoot}/skills/'"$skill_id"'/.openclaw/source-origin.json'
+printf '{"installed":true}\n' > '${workspaceRoot}/skills/'"$skill_id"'/.openclaw-native.json'
 if test "\${FAKE_OPENCLAW_FAIL_AFTER_WRITE:-}" = "1"; then exit 45; fi
 if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDriftMarker}'; fi
 `,
@@ -234,6 +235,8 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(readFileSync(installLog, "utf8")).toMatch(
 		/^skills install .* --agent main --as review-pr --force\n$/,
 	);
+	expect(hostedOpenClawSkillDriver.install({ home, workspaceRoot, skill })).toBe("unchanged");
+	expect(readFileSync(installLog, "utf8").trim().split("\n")).toHaveLength(1);
 	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
 	const target = join(workspaceRoot, "skills", "review-pr");
 	const receipt = join(workspaceRoot, "skills", ".clawdi-manifest-receipts", "review-pr.json");

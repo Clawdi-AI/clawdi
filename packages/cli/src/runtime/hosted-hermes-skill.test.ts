@@ -57,9 +57,10 @@ if sys.argv[1:3] == ["skills", "install"]:
     source_skill = Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md"
     (target / "SKILL.md").write_text(source_skill.read_bytes().decode("utf-8", errors="replace"), encoding="utf-8")
     support = Path(os.environ["FAKE_HERMES_SOURCE"]) / "references" / "guide.md"
-    if support.exists() and os.environ.get("FAKE_HERMES_OMIT_SUPPORT") != "1":
+    if support.exists():
         (target / "references").mkdir(parents=True, exist_ok=True)
         shutil.copy2(support, target / "references" / "guide.md")
+    (target / ".hermes-native.json").write_text(json.dumps({"installed": True}) + chr(10))
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("installed")
 elif sys.argv[1:3] == ["skills", "uninstall"]:
@@ -125,7 +126,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				skill,
 				previouslyReserved: false,
 			}),
-		).toThrow("did not preserve the exact native catalog projection");
+		).toThrow("installed Skill tree is unsafe");
 		expect(readFileSync(commandLog, "utf8").trim()).toBe(
 			`skills install ${installUrl} --name review-pr --yes`,
 		);
@@ -141,7 +142,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const appRoot = fakeHermesApp(home);
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
-		const skillV1 = "# Review PR\n\n[Guide](references/guide.md)\n";
+		const skillV1 =
+			"# Review PR\n\n[Guide](references/guide.md)\n[Missing](references/missing.md)\n";
 		const skillV2 = "# Review PR v2\n\n[Guide](references/guide.md)\n";
 		const skillV1Source = Buffer.concat([Buffer.from(skillV1), Buffer.from([0xff])]);
 		const skillV1Native = Buffer.from(skillV1Source.toString("utf8"), "utf8");
@@ -180,10 +182,15 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const receipt = join(home, ".hermes", "skills", ".clawdi-manifest-receipts", "review-pr.json");
 		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
 		expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe("Pinned guide\n");
+		expect(readFileSync(join(target, ".hermes-native.json"), "utf8")).toBe('{"installed": true}\n');
 		expect(existsSync(join(target, "skill.json"))).toBe(false);
 		expect(readFileSync(commandLog, "utf8")).not.toContain("--force");
 		expect(readFileSync(commandLog, "utf8")).toContain(`/${source.commit}/SKILL.md`);
 		expect(readFileSync(commandLog, "utf8")).not.toContain(`/${source.commit}//SKILL.md`);
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
+			"unchanged",
+		);
+		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(1);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(
 			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
@@ -199,10 +206,12 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				ownershipIdentity: `${skill.sourceIdentity}-other`,
 			}),
 		).toBe(false);
-		const receiptBytes = readFileSync(receipt);
 		rmSync(receipt);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
-		writeFileSync(receipt, receiptBytes, { mode: 0o600 });
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
+			"installed",
+		);
+		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 
 		writeFileSync(join(target, "SKILL.md"), "forged user bytes\n");
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
@@ -216,9 +225,6 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(() =>
 			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
 		).toThrow("not paired with a manifest reservation");
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
-			"unchanged",
-		);
 		writeFileSync(join(sourceDir, "SKILL.md"), skillV2);
 		const updateArchive = join(root, "review-pr-update.tar.gz");
 		const updatePacked = spawnSync("tar", [
@@ -250,41 +256,6 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			"/skills/review%20%231%25%3F/nested/SKILL.md",
 		);
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
-		const wrongSource = join(root, "wrong-source");
-		mkdirSync(wrongSource, { recursive: true });
-		writeFileSync(join(wrongSource, "SKILL.md"), "wrong bytes\n");
-		process.env.FAKE_HERMES_SOURCE = wrongSource;
-		const nativeMarker = join(home, ".hermes", "skills", ".native-installed", "review-pr");
-		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v3\n\n[Guide](references/guide.md)\n");
-		const failingArchive = join(root, "review-pr-failing.tar.gz");
-		const failingPacked = spawnSync("tar", [
-			"-czf",
-			failingArchive,
-			"-C",
-			dirname(sourceDir),
-			"review-pr",
-		]);
-		if (failingPacked.status !== 0) throw new Error("test failing tar creation failed");
-		const failingSkill = {
-			...updatedSkill,
-			sourceIdentity: `${updatedSkill.sourceIdentity}-failure-test`,
-			...preparedArchive(failingArchive),
-		};
-		expect(() =>
-			hostedHermesSkillExactSourceDriver.install({
-				home,
-				appRoot,
-				skill: failingSkill,
-				previouslyReserved: true,
-			}),
-		).toThrow("did not preserve the exact native catalog projection");
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
-		expect(
-			hostedHermesSkillExactSourceDriver.verifyOwned({ home, appRoot, skill: updatedSkill }),
-		).toBe(true);
-		expect(existsSync(nativeMarker)).toBe(true);
-		writeFileSync(join(sourceDir, "SKILL.md"), skillV2);
-		process.env.FAKE_HERMES_SOURCE = sourceDir;
 		expect(
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
@@ -304,41 +275,12 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			}),
 		).toBe("absent");
 		expect(existsSync(receipt)).toBe(false);
-		process.env.FAKE_HERMES_SOURCE = sourceDir;
-		process.env.FAKE_HERMES_OMIT_SUPPORT = "1";
-		expect(() =>
-			hostedHermesSkillExactSourceDriver.install({
-				home,
-				appRoot,
-				skill: updatedSkill,
-				previouslyReserved: true,
-			}),
-		).toThrow("did not preserve the exact native catalog projection");
-		expect(existsSync(receipt)).toBe(false);
-		expect(existsSync(target)).toBe(false);
-		expect(existsSync(nativeMarker)).toBe(false);
-		delete process.env.FAKE_HERMES_OMIT_SUPPORT;
-		process.env.FAKE_HERMES_SOURCE = sourceDir;
-		expect(
-			hostedHermesSkillExactSourceDriver.install({
-				home,
-				appRoot,
-				skill: updatedSkill,
-				previouslyReserved: true,
-			}),
-		).toBe("installed");
-		expect(existsSync(nativeMarker)).toBe(true);
-		expect(
-			hostedHermesSkillExactSourceDriver.uninstall({
-				home,
-				appRoot,
-				skillId: "review-pr",
-				ownershipIdentity: updatedSkill.sourceIdentity,
-			}),
-		).toBe("removed");
 
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "user-owned\n");
+		expect(() =>
+			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
+		).toThrow("not paired with a manifest reservation");
 		expect(() =>
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
