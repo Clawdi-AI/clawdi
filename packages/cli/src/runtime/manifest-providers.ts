@@ -578,6 +578,7 @@ function quoteTomlString(value: string): string {
 export function legacyHermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
+// SUNSET: Remove after every fleet host has migrated to native Hermes provider projection.
 function removeLegacyHermesModelProviderPlugin(home: string): void {
 	withRuntimeUserFileAccess(() =>
 		rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true }),
