@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.8
+
+Package: `clawdi@0.14.8`
+
+### Fixed
+
+- The loopback skill source now serves the staged archive's actual contents
+  and lets Hermes's official semantics decide about missing referenced files;
+  a skill with broken content fails alone, attributed by name, without
+  blocking the remaining skills.
+
 ## Clawdi CLI v0.14.7
 
 Package: `clawdi@0.14.7`
