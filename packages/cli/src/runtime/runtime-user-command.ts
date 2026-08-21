@@ -417,9 +417,7 @@ export function runtimeUserDirectoryOwnership(
 	const platformEnclaves = normalizedPlatformEnclaves(target, options);
 	return platformEnclaves.length === 0
 		? rules
-		: rules.map((rule) =>
-				rule.path === target ? { ...rule, platformEnclaves } : rule,
-			);
+		: rules.map((rule) => (rule.path === target ? { ...rule, platformEnclaves } : rule));
 }
 
 function normalizedPlatformEnclaves(
@@ -440,7 +438,9 @@ function normalizedPlatformEnclaves(
 			relativeEnclave.startsWith("../") ||
 			isAbsolute(relativeEnclave)
 		) {
-			throw new Error(`runtime-user platform enclave is outside its ownership boundary: ${enclave}`);
+			throw new Error(
+				`runtime-user platform enclave is outside its ownership boundary: ${enclave}`,
+			);
 		}
 	}
 	return enclaves;

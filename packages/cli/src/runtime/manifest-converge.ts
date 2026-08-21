@@ -124,7 +124,7 @@ import {
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
-import { runtimeSystemdPlatformEnclaves, type RuntimePaths } from "./paths";
+import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
 import { daemonProgramRevision } from "./runtime-impact-revision";
@@ -274,7 +274,9 @@ function initializeRuntimeConvergence(
 		managedResourceRoot: paths.managedResourceRoot,
 	});
 	const platformEnclaves =
-		resolve(projectionHome) === resolve(paths.userHome) ? runtimeSystemdPlatformEnclaves(paths) : [];
+		resolve(projectionHome) === resolve(paths.userHome)
+			? runtimeSystemdPlatformEnclaves(paths)
+			: [];
 	enforceRuntimeUserOwnership([
 		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
 		// Official user-service installers need the unit root itself writable. Its
