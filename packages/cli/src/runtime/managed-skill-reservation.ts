@@ -14,7 +14,9 @@ import { getClawdiDir } from "../lib/config";
 import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { withRuntimeConvergeLock } from "./converge-lock";
+import { withManagedTargetRollback } from "./managed-skill-delivery";
 import { getRuntimePaths } from "./paths";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 const LEDGER_FILE = "managed-skills.json";
@@ -405,66 +407,52 @@ export function replaceManagedSkillDirectoryAtomic(
 	options: ManagedSkillDirectoryActivationOptions = {},
 ): void {
 	const parent = dirname(targetDir);
-	mkdirSync(parent, { recursive: true });
-	const stagingRoot = mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
+	const stagingRoot = withRuntimeUserFileAccess(() => {
+		mkdirSync(parent, { recursive: true });
+		return mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
+	});
 	const stagedTarget = join(stagingRoot, basename(targetDir));
 	const previousTarget = join(
 		parent,
 		`.${basename(targetDir)}-previous-${process.pid}-${randomUUID()}`,
 	);
 	try {
-		cpSync(sourceDir, stagedTarget, { recursive: true });
-		activateManagedSkillDirectory({ stagedTarget, targetDir, previousTarget, options });
+		withRuntimeUserFileAccess(() => cpSync(sourceDir, stagedTarget, { recursive: true }));
+		withManagedTargetRollback({
+			target: targetDir,
+			receipt: options.receipt,
+			targetBackup: previousTarget,
+			beforeRestore: options.beforeRestore,
+			beforeCleanup: options.beforeCleanup,
+			restoreFailure: (activationError, restoreError) => {
+				const activationMessage =
+					activationError instanceof Error ? activationError.message : String(activationError);
+				const restoreMessage =
+					restoreError instanceof Error ? restoreError.message : String(restoreError);
+				return new Error(
+					`Skill activation failed: ${activationMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained as a recovery artifact`,
+					{ cause: activationError },
+				);
+			},
+			operation: () => {
+				withRuntimeUserFileAccess(() => {
+					options.beforeActivate?.();
+					renameSync(stagedTarget, targetDir);
+				});
+				options.afterActivate?.();
+			},
+		});
 	} finally {
-		rmSync(stagingRoot, { recursive: true, force: true });
+		withRuntimeUserFileAccess(() => rmSync(stagingRoot, { recursive: true, force: true }));
 	}
 }
 
 export interface ManagedSkillDirectoryActivationOptions {
+	receipt?: string;
 	beforeActivate?: () => void;
+	afterActivate?: () => void;
 	beforeRestore?: () => void;
 	beforeCleanup?: () => void;
-}
-
-export function activateManagedSkillDirectory(input: {
-	stagedTarget: string;
-	targetDir: string;
-	previousTarget: string;
-	options?: ManagedSkillDirectoryActivationOptions;
-}): void {
-	const hadPrevious = existsSync(input.targetDir);
-	if (hadPrevious) renameSync(input.targetDir, input.previousTarget);
-	try {
-		input.options?.beforeActivate?.();
-		renameSync(input.stagedTarget, input.targetDir);
-	} catch (activationError) {
-		if (!hadPrevious) throw activationError;
-		try {
-			input.options?.beforeRestore?.();
-			renameSync(input.previousTarget, input.targetDir);
-		} catch (restoreError) {
-			const activationMessage =
-				activationError instanceof Error ? activationError.message : String(activationError);
-			const restoreMessage =
-				restoreError instanceof Error ? restoreError.message : String(restoreError);
-			throw new Error(
-				`Skill activation failed: ${activationMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained as a recovery artifact`,
-				{ cause: activationError },
-			);
-		}
-		throw activationError;
-	}
-
-	// Renaming the staged target is the commit point. Cleanup is GC only and
-	// must never make callers roll back ownership after the new target is live.
-	if (hadPrevious) {
-		try {
-			input.options?.beforeCleanup?.();
-			rmSync(input.previousTarget, { recursive: true, force: true });
-		} catch {
-			// Best effort. The uniquely named sibling is safe to collect later.
-		}
-	}
 }
 
 export function releaseManagedSkill(input: {

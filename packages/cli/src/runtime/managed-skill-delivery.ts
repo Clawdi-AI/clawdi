@@ -328,16 +328,6 @@ export function managedSkillMarkerMatchesIdentity(input: {
 	return readManagedSkillMarker(input)?.ownershipIdentity === input.ownershipIdentity;
 }
 
-export function managedSkillReceiptOwnsTarget(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): boolean {
-	return readManagedSkillReceipt(input) !== null;
-}
-
 export function managedSkillReceiptMatchesIdentity(input: {
 	path: string;
 	schemaVersion: string;
@@ -391,16 +381,19 @@ export function withManagedTargetRollback<T>(input: {
 	target: string;
 	receipt?: string;
 	operation: () => T;
+	targetBackup?: string;
+	beforeRestore?: () => void;
+	beforeCleanup?: () => void;
+	restoreFailure?: (operationError: unknown, restoreError: unknown) => Error;
 	rename?: typeof renameSync;
 	remove?: typeof rmSync;
 }): T {
 	const rename = input.rename ?? renameSync;
 	const remove = input.remove ?? rmSync;
 	const suffix = randomBytes(8).toString("hex");
-	const targetBackup = join(
-		dirname(input.target),
-		`.${basename(input.target)}-clawdi-rollback-${suffix}`,
-	);
+	const targetBackup =
+		input.targetBackup ??
+		join(dirname(input.target), `.${basename(input.target)}-clawdi-rollback-${suffix}`);
 	const receiptBackup = input.receipt
 		? join(dirname(input.receipt), `.${basename(input.receipt)}-clawdi-rollback-${suffix}`)
 		: undefined;
@@ -428,13 +421,22 @@ export function withManagedTargetRollback<T>(input: {
 	} catch (error) {
 		withRuntimeUserFileAccess(() => remove(input.target, { recursive: true, force: true }));
 		if (input.receipt) remove(input.receipt, { force: true });
-		if (hadTarget) withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
-		if (hadReceipt && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
+		try {
+			if (hadTarget) {
+				input.beforeRestore?.();
+				withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
+			}
+			if (hadReceipt && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
+		} catch (restoreError) {
+			if (input.restoreFailure) throw input.restoreFailure(error, restoreError);
+			throw restoreError;
+		}
 		throw error;
 	}
 	// The operation returning is the commit point. Backup cleanup is GC and
 	// must never roll back a live target or its ownership receipt.
 	try {
+		if (hadTarget) input.beforeCleanup?.();
 		withRuntimeUserFileAccess(() => remove(targetBackup, { recursive: true, force: true }));
 		if (receiptBackup) remove(receiptBackup, { force: true });
 	} catch {}

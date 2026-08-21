@@ -145,21 +145,25 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		if (withRuntimeUserFileAccess(() => existsSync(target)) && !input.previouslyReserved)
 			throw new Error("Hermes Skill target is not paired with a manifest reservation");
 		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
-		return withStagedManagedSkill(input.skill, (sourceDir) =>
-			withManagedTargetRollback({
-				target,
-				receipt: receipt.path,
-				operation: () => {
-					if (input.skill.source.type === "bundled") {
-						withRuntimeUserFileAccess(() => replaceManagedSkillDirectoryAtomic(sourceDir, target));
+		return withStagedManagedSkill(input.skill, (sourceDir) => {
+			if (input.skill.source.type === "bundled") {
+				replaceManagedSkillDirectoryAtomic(sourceDir, target, {
+					receipt: receipt.path,
+					afterActivate: () => {
 						if (!bundledResultMatches(sourceDir, target)) {
 							throw new ManagedSkillResourceError(
 								"Hermes bundled Skill activation changed exact source bytes",
 							);
 						}
 						writeManagedSkillReceipt(receipt);
-						return "installed" as const;
-					}
+					},
+				});
+				return "installed" as const;
+			}
+			return withManagedTargetRollback({
+				target,
+				receipt: receipt.path,
+				operation: () => {
 					const args = [
 						"skills",
 						"install",
@@ -177,8 +181,8 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 					writeManagedSkillReceipt(receipt);
 					return "installed" as const;
 				},
-			}),
-		);
+			});
+		});
 	},
 	anchorOwnership(input) {
 		writeManagedSkillReceipt(
