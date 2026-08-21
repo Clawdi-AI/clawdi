@@ -200,7 +200,7 @@ export function claimLegacyHostedBundledSkill(input: {
 			throw new Error("legacy hosted Skill identity changed during ownership claim");
 		}
 		rmSync(join(input.targetDir, LEGACY_MARKER));
-		input.anchorOwnership(`content-sha256\0${catalogEntry.digest}`);
 	});
+	input.anchorOwnership(`content-sha256\0${catalogEntry.digest}`);
 	return true;
 }
