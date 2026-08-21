@@ -583,10 +583,15 @@ export function runtimeCommandCurrentRevisionCached(
 	return revision;
 }
 
-function officialServiceCurrentRevision(
+interface OfficialServiceCurrentRevisions {
+	canonical: string;
+	legacyMetadataAware: string;
+}
+
+function officialServiceCurrentRevisions(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
-): string | null {
+): OfficialServiceCurrentRevisions | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
 	const unitName = systemdUnitFileName(descriptor.programName);
@@ -602,15 +607,21 @@ function officialServiceCurrentRevision(
 			paths.userHome,
 		);
 		if (!commandRevision) return null;
-		return runtimeContentSha256({
+		const contentIdentity = {
 			commandRevision,
 			programName: descriptor.programName,
 			unitName,
 			unitSha256: createHash("sha256").update(contents).digest("hex"),
-			unitMode: unitStat.mode & 0o7777,
-			unitUid: unitStat.uid,
-			unitGid: unitStat.gid,
-		});
+		};
+		return {
+			canonical: runtimeContentSha256(contentIdentity),
+			legacyMetadataAware: runtimeContentSha256({
+				...contentIdentity,
+				unitMode: unitStat.mode & 0o7777,
+				unitUid: unitStat.uid,
+				unitGid: unitStat.gid,
+			}),
+		};
 	} catch (error) {
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
@@ -632,11 +643,17 @@ function officialServiceDesiredRevision(program: RuntimeSystemdUserProgram): str
 function verifiedReceiptCurrentRevision(
 	receipt: RuntimeInstallReceiptEntry | undefined,
 	desiredRevision: string,
-	currentRevision: () => string | null,
+	currentRevisions: () => OfficialServiceCurrentRevisions | null,
 ): string | null {
 	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
-	const current = currentRevision();
-	return current === receipt.currentRevision ? current : null;
+	const current = currentRevisions();
+	if (!current) return null;
+	// Pre-content-only receipts included unit ownership and mode. Accept them
+	// once, then commit the canonical content revision without reinstalling.
+	return receipt.currentRevision === current.canonical ||
+		receipt.currentRevision === current.legacyMetadataAware
+		? current.canonical
+		: null;
 }
 
 export function planOfficialRuntimeServices(
@@ -651,11 +668,12 @@ export function planOfficialRuntimeServices(
 	for (const program of officialRuntimeSystemdPrograms(programs)) {
 		const key = systemdUnitFileName(runtimeSystemdProgramName(program));
 		const desiredRevision = officialServiceDesiredRevision(program);
-		const currentRevision = () => officialServiceCurrentRevision(program, paths);
+		const currentRevisions = () => officialServiceCurrentRevisions(program, paths);
+		const currentRevision = () => currentRevisions()?.canonical ?? null;
 		const expectedCurrentRevision = verifiedReceiptCurrentRevision(
 			receipts?.officialServices[key],
 			desiredRevision,
-			currentRevision,
+			currentRevisions,
 		);
 		const target = { desiredRevision, currentRevision, expectedCurrentRevision };
 		targets.set(key, target);
