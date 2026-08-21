@@ -400,6 +400,25 @@ interface RuntimeInstallObservation {
 	error: string | null;
 }
 
+function runtimeInstallObservation(
+	observation: Pick<RuntimeInstallObservation, "runtime" | "enabled" | "status"> &
+		Partial<Omit<RuntimeInstallObservation, "runtime" | "enabled" | "status">>,
+): RuntimeInstallObservation {
+	return {
+		executionUser: null,
+		commandPath: null,
+		appRoot: null,
+		install: null,
+		installerUrl: null,
+		executedInstallerUrl: null,
+		exitCode: null,
+		stdoutTail: null,
+		stderrTail: null,
+		error: null,
+		...observation,
+	};
+}
+
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
 
 interface RuntimeOAuthMaterial {
@@ -1175,12 +1194,7 @@ function materializeInstaller(
 function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
 	const installStartedAt = new Date().toISOString();
 	const installStartedMs = Date.now();
-	const finish = (
-		observation: Omit<
-			RuntimeInstallObservation,
-			"installStartedAt" | "installFinishedAt" | "installDurationMs"
-		>,
-	): RuntimeInstallObservation => ({
+	const finish = (observation: RuntimeInstallObservation): RuntimeInstallObservation => ({
 		...observation,
 		installStartedAt,
 		installFinishedAt: new Date().toISOString(),
@@ -1189,38 +1203,31 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	const commandPath = runtimeCommandPath(name, install.home);
 	const appRoot = runtimeAppRoot(name, install.home);
 	if (!commandPath || !appRoot) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "install_failed",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: `unsupported runtime ${name}`,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				error: `unsupported runtime ${name}`,
+			}),
+		);
 	}
 	if (executableExists(commandPath)) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "present",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: null,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "present",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+			}),
+		);
 	}
 
 	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home));
@@ -1236,39 +1243,39 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 		});
 		const exitCode = result.status ?? 1;
 		const installed = exitCode === 0 && executableExists(commandPath);
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: installed ? "installed" : "install_failed",
-			executionUser: execution.executionUser,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: url === install.url ? install.url : url,
-			exitCode,
-			stdoutTail: tail(result.stdout),
-			stderrTail: tail(result.stderr),
-			error: installed
-				? null
-				: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: installed ? "installed" : "install_failed",
+				executionUser: execution.executionUser,
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url === install.url ? install.url : url,
+				exitCode,
+				stdoutTail: tail(result.stdout),
+				stderrTail: tail(result.stderr),
+				error: installed
+					? null
+					: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+			}),
+		);
 	} catch (error) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "install_failed",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: url,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: error instanceof Error ? error.message : String(error),
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url,
+				error: error instanceof Error ? error.message : String(error),
+			}),
+		);
 	} finally {
 		if (materialized.cleanup) rmSync(materialized.cleanup, { recursive: true, force: true });
 	}
@@ -1280,21 +1287,13 @@ function observeRuntimeInstall(
 	home: string,
 ) {
 	if (!runtime.enabled) {
-		return {
+		return runtimeInstallObservation({
 			runtime: name,
 			enabled: false,
 			status: "disabled",
-			executionUser: null,
-			commandPath: null,
-			appRoot: null,
 			install: runtime.install ?? null,
 			installerUrl: runtime.install?.url ?? null,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: null,
-		} satisfies RuntimeInstallObservation;
+		});
 	}
 	if (!runtime.install) {
 		if (runtime.run?.command?.trim() || isSupportedRuntimeName(name)) {
@@ -1303,37 +1302,20 @@ function observeRuntimeInstall(
 				isSupportedRuntimeName(name) && configuredCommand && commandResolvable(configuredCommand)
 					? configuredCommand
 					: null;
-			return {
+			return runtimeInstallObservation({
 				runtime: name,
 				enabled: true,
 				status: "configured",
-				executionUser: null,
 				commandPath,
 				appRoot: commandPath ? runtimeAppRoot(name, home) : null,
-				install: null,
-				installerUrl: null,
-				executedInstallerUrl: null,
-				exitCode: null,
-				stdoutTail: null,
-				stderrTail: null,
-				error: null,
-			} satisfies RuntimeInstallObservation;
+			});
 		}
-		return {
+		return runtimeInstallObservation({
 			runtime: name,
 			enabled: true,
 			status: "install_failed",
-			executionUser: null,
-			commandPath: null,
-			appRoot: null,
-			install: null,
-			installerUrl: null,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
 			error: `runtime ${name} is enabled but missing install metadata`,
-		} satisfies RuntimeInstallObservation;
+		});
 	}
 	const observation = runOfficialInstaller(name, runtime.install);
 	if (observation.error) return observation;
@@ -1352,21 +1334,16 @@ function planRuntimeInstallObservation(
 	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
-	return {
+	return runtimeInstallObservation({
 		runtime: name,
 		enabled: true,
 		status: commandPath && executableExists(commandPath) ? "present" : "configured",
-		executionUser: null,
 		commandPath,
 		appRoot,
 		install: runtime.install,
 		installerUrl: runtime.install.url,
-		executedInstallerUrl: null,
-		exitCode: null,
-		stdoutTail: null,
-		stderrTail: null,
 		error: commandPath && appRoot ? null : `unsupported runtime ${name}`,
-	};
+	});
 }
 
 function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
