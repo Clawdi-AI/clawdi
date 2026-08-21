@@ -130,7 +130,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				skill,
 				previouslyReserved: false,
 			}),
-		).toThrow("installed Skill tree is unsafe");
+		).toThrow("installed Skill tree is absent");
 		expect(readFileSync(commandLog, "utf8").trim()).toBe(
 			`skills install ${installUrl} --name review-pr --yes`,
 		);

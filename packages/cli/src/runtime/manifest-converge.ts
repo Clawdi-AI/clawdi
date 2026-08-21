@@ -146,6 +146,7 @@ import {
 	enforceRuntimeUserOwnership,
 	executableExists,
 	makeRuntimeUserOwned,
+	runtimePlatformEnclaveOwnership,
 	runtimeUserDirectoryOwnership,
 	runtimeUserExistingOwnership,
 	withRuntimeUserFileAccess,
@@ -165,6 +166,7 @@ interface RuntimeConvergenceContext {
 	applyContext: NonNullable<RuntimeManifestLoad["applyContext"]>;
 	hostedRuntimeContract: ReturnType<typeof assertHostedRuntimeContract>;
 	projectionHome: string;
+	platformEnclaves: ReturnType<typeof runtimeSystemdPlatformEnclaves>;
 	openClawContext: ReturnType<typeof createOpenClawHostedContext>;
 	hermesWhatsAppAuthDir: string | null;
 	workspaceRoot: string;
@@ -280,8 +282,8 @@ function initializeRuntimeConvergence(
 	enforceRuntimeUserOwnership([
 		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
 		// Official user-service installers need the unit root itself writable. Its
-		// enclave contents retain their existing ownership and are not traversed.
-		...(platformEnclaves.includes(paths.systemdUserRoot)
+		// enclave contents remain root-owned until their exact mutation targets are staged.
+		...(platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)
 			? runtimeUserDirectoryOwnership(paths.systemdUserRoot)
 			: []),
 		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
@@ -380,6 +382,7 @@ function initializeRuntimeConvergence(
 			applyContext,
 			hostedRuntimeContract,
 			projectionHome,
+			platformEnclaves,
 			openClawContext,
 			hermesWhatsAppAuthDir,
 			workspaceRoot,
@@ -1497,7 +1500,16 @@ function activateRuntimeServices(
 	plan: RuntimeConvergencePlan,
 	activationPlan: RuntimeActivationPlan,
 ): RuntimeActivationOutputs {
-	const { load, manifest, paths, opts, hostedRuntimeContract, instanceRoot, generatedAt } = context;
+	const {
+		load,
+		manifest,
+		paths,
+		opts,
+		hostedRuntimeContract,
+		instanceRoot,
+		generatedAt,
+		platformEnclaves,
+	} = context;
 	const { officialServicePlan, systemdUnits } = activationPlan;
 	if (
 		officialServicePlan.pending.length > 0 &&
@@ -1527,6 +1539,14 @@ function activateRuntimeServices(
 			? opts.systemdApply.installOfficialService(item.unitName, install)
 			: install();
 		if (error) throw new Error(error);
+	}
+	enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
+	for (const item of officialServicePlan.pending) {
+		const currentRevision = item.target.currentRevision();
+		if (!currentRevision) {
+			throw new Error(`official ${item.unitName} service install could not be verified`);
+		}
+		item.target.expectedCurrentRevision = currentRevision;
 	}
 	hostedRuntimeContract.assertPlatformRoots();
 	const bootFinished = join(instanceRoot, "boot-finished");

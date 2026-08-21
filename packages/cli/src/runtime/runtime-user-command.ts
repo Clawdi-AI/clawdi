@@ -23,14 +23,18 @@ export interface RuntimeUserIdentity {
 	gid: number;
 }
 
+export interface RuntimeOwnershipEnclave {
+	path: string;
+	owner: "root";
+}
+
 export interface RuntimeUserOwnershipRule {
 	path: string;
-	owner: "runtime-user";
+	owner: "runtime-user" | "root";
 	kind: "directory" | "existing";
 	mode?: number;
 	recursive: boolean;
-	// Recursive ownership stops at these platform-owned subtree roots.
-	platformEnclaves?: readonly string[];
+	platformEnclaves?: readonly RuntimeOwnershipEnclave[];
 }
 
 export type RuntimeUserIdentityResolver = (runtimeUser: string) => RuntimeUserIdentity;
@@ -397,7 +401,7 @@ export function runtimeUserDirectoryOwnership(
 		mode?: number;
 		ancestorsUnder?: string;
 		recursive?: boolean;
-		platformEnclaves?: readonly string[];
+		platformEnclaves?: readonly RuntimeOwnershipEnclave[];
 	} = {},
 ): RuntimeUserOwnershipRule[] {
 	const target = resolve(path);
@@ -422,16 +426,14 @@ export function runtimeUserDirectoryOwnership(
 
 function normalizedPlatformEnclaves(
 	target: string,
-	options: { recursive?: boolean; platformEnclaves?: readonly string[] },
-): string[] {
-	const enclaves = [...new Set((options.platformEnclaves ?? []).map((path) => resolve(path)))].sort(
-		(left, right) => left.length - right.length || left.localeCompare(right),
-	);
+	options: { recursive?: boolean; platformEnclaves?: readonly RuntimeOwnershipEnclave[] },
+): RuntimeOwnershipEnclave[] {
+	const enclaves = normalizeOwnershipEnclaves(options.platformEnclaves ?? []);
 	if (enclaves.length > 0 && options.recursive !== true) {
 		throw new Error("runtime-user platform enclaves require recursive ownership");
 	}
 	for (const enclave of enclaves) {
-		const relativeEnclave = relative(target, enclave);
+		const relativeEnclave = relative(target, enclave.path);
 		if (
 			!relativeEnclave ||
 			relativeEnclave === ".." ||
@@ -439,17 +441,41 @@ function normalizedPlatformEnclaves(
 			isAbsolute(relativeEnclave)
 		) {
 			throw new Error(
-				`runtime-user platform enclave is outside its ownership boundary: ${enclave}`,
+				`runtime-user platform enclave is outside its ownership boundary: ${enclave.path}`,
 			);
 		}
 	}
 	return enclaves;
 }
 
+function normalizeOwnershipEnclaves(
+	enclaves: readonly RuntimeOwnershipEnclave[],
+): RuntimeOwnershipEnclave[] {
+	const normalized = new Map<string, RuntimeOwnershipEnclave>();
+	for (const enclave of enclaves) {
+		const path = resolve(enclave.path);
+		normalized.set(path, { path, owner: enclave.owner });
+	}
+	return [...normalized.values()].sort(
+		(left, right) => left.path.length - right.path.length || left.path.localeCompare(right.path),
+	);
+}
+
 export const runtimeUserExistingOwnership = (
 	paths: readonly string[],
 	options: { recursive?: boolean } = {},
 ) => runtimeUserOwnershipRules(paths, "existing", options);
+
+export function runtimePlatformEnclaveOwnership(
+	enclaves: readonly RuntimeOwnershipEnclave[],
+): RuntimeUserOwnershipRule[] {
+	return normalizeOwnershipEnclaves(enclaves).map((enclave) => ({
+		path: enclave.path,
+		owner: enclave.owner,
+		kind: "existing",
+		recursive: true,
+	}));
+}
 
 function runtimeUserOwnershipRules(
 	paths: readonly string[],
@@ -473,7 +499,8 @@ function runtimeUserOwnershipRules(
 
 export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnershipRule[]): void {
 	if (rules.length === 0) return;
-	const identity = runtimeFilesystemIdentity();
+	const runtimeIdentity = runtimeFilesystemIdentity();
+	const rootIdentity = runningAsRoot() ? { uid: 0, gid: 0 } : null;
 	for (const rule of rules) {
 		if (rule.kind === "directory") mkdirSync(rule.path, { recursive: true });
 		let node: NonNullable<ReturnType<typeof lstatSync>>;
@@ -489,9 +516,11 @@ export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnership
 		enforceRuntimeUserNodeOwnership(
 			rule.path,
 			node,
-			identity,
+			runtimeIdentity,
+			rootIdentity,
+			rule.owner,
 			rule.recursive,
-			new Set(rule.platformEnclaves ?? []),
+			new Map(rule.platformEnclaves?.map((enclave) => [enclave.path, enclave.owner]) ?? []),
 		);
 		if (rule.mode !== undefined) chmodSync(rule.path, rule.mode);
 	}
@@ -511,19 +540,30 @@ function runtimeFilesystemIdentity(): RuntimeUserIdentity | null {
 function enforceRuntimeUserNodeOwnership(
 	path: string,
 	node: NonNullable<ReturnType<typeof lstatSync>>,
-	identity: RuntimeUserIdentity | null,
+	runtimeIdentity: RuntimeUserIdentity | null,
+	rootIdentity: RuntimeUserIdentity | null,
+	owner: RuntimeUserOwnershipRule["owner"],
 	recursive: boolean,
-	platformEnclaves: ReadonlySet<string>,
+	platformEnclaves: ReadonlyMap<string, RuntimeOwnershipEnclave["owner"]>,
 ): void {
-	if (platformEnclaves.has(path)) return;
+	const effectiveOwner = platformEnclaves.get(path) ?? owner;
+	const identity = effectiveOwner === "root" ? rootIdentity : runtimeIdentity;
 	if (identity && (node.uid !== identity.uid || node.gid !== identity.gid)) {
-		if (node.isSymbolicLink()) lchownSync(path, identity.uid, identity.gid);
-		else chownSync(path, identity.uid, identity.gid);
+		// lchown is non-dereferencing even if the path is swapped after lstat.
+		lchownSync(path, identity.uid, identity.gid);
 	}
 	if (!recursive || !node.isDirectory() || node.isSymbolicLink()) return;
 	for (const entry of readdirSync(path)) {
 		const child = join(path, entry);
-		enforceRuntimeUserNodeOwnership(child, lstatSync(child), identity, true, platformEnclaves);
+		enforceRuntimeUserNodeOwnership(
+			child,
+			lstatSync(child),
+			runtimeIdentity,
+			rootIdentity,
+			effectiveOwner,
+			true,
+			platformEnclaves,
+		);
 	}
 }
 

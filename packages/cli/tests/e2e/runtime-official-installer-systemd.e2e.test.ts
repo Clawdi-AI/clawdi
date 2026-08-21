@@ -947,6 +947,8 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	const tenantExisting = join(runtimeHome, "files-tenant-existing.txt");
 	writeFileSync(tenantExisting, "tenant-existing\n", { mode: 0o600 });
 	chownSync(tenantExisting, runtimeUid, runtimeGid);
+	const tenantOwnershipDrift = join(runtimeHome, "files-root-owned-drift.txt");
+	writeFileSync(tenantOwnershipDrift, "repair-to-tenant\n", { mode: 0o600 });
 	const hermesConfig = join(runtimeHome, ".hermes", "config.yaml");
 	mkdirSync(dirname(hermesConfig), { recursive: true, mode: 0o700 });
 	chownSync(dirname(hermesConfig), runtimeUid, runtimeGid);
@@ -983,6 +985,22 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	ensureRuntimeStateDirs(paths);
 	const rootOwnedControl = join(paths.systemdUserRoot, "files-root-owned-control");
 	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
+	const platformDriftUnit = join(paths.systemdUserRoot, "legacy-platform-control.service");
+	const platformDriftDropIn = join(`${platformDriftUnit}.d`, "10-legacy.conf");
+	const platformDriftEnvironment = join(openClawStateDir, "gateway.systemd.env");
+	mkdirSync(dirname(platformDriftDropIn), { recursive: true });
+	writeFileSync(platformDriftUnit, "[Service]\nExecStart=/bin/true\n");
+	writeFileSync(platformDriftDropIn, "[Service]\nEnvironment=LEGACY=1\n");
+	writeFileSync(platformDriftEnvironment, "LEGACY_PLATFORM_ENV=1\n", { mode: 0o600 });
+	for (const path of [
+		paths.systemdUserRoot,
+		platformDriftUnit,
+		dirname(platformDriftDropIn),
+		platformDriftDropIn,
+		platformDriftEnvironment,
+	]) {
+		chownSync(path, runtimeUid, runtimeGid);
+	}
 	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
 	mkdirSync(legacyEnvironmentRoot, { recursive: true });
 	writeFileSync(
@@ -1226,6 +1244,19 @@ http.createServer((request, response) => {
 	expect(statSync(paths.clawdiHome).uid).toBe(runtimeUid);
 	expect(statSync(paths.clawdiHome).gid).toBe(runtimeGid);
 	expect(statSync(paths.clawdiHome).mode & 0o777).toBe(0o750);
+	expect([statSync(tenantOwnershipDrift).uid, statSync(tenantOwnershipDrift).gid]).toEqual([
+		runtimeUid,
+		runtimeGid,
+	]);
+	for (const path of [
+		paths.systemdUserRoot,
+		platformDriftUnit,
+		dirname(platformDriftDropIn),
+		platformDriftDropIn,
+		platformDriftEnvironment,
+	]) {
+		expect([statSync(path).uid, statSync(path).gid]).toEqual([0, 0]);
+	}
 	const tenantClawdiAfterConverge = tenantClawdi();
 	expect(tenantClawdiAfterConverge.status).not.toBe(0);
 	expect(tenantClawdiAfterConverge.stdout).toBe("");

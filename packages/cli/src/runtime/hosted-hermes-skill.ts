@@ -7,6 +7,7 @@ import {
 	HERMES_MANAGED_SKILL_RECEIPT_SCHEMA,
 	ManagedSkillResourceError,
 	managedSkillMarkerMatchesIdentity,
+	managedSkillReceiptIdentityState,
 	managedSkillReceiptMatchesIdentity,
 	managedSkillReceiptPath,
 	managedSkillTreesEqual,
@@ -128,11 +129,22 @@ function runHermesUninstall(input: { home: string; appRoot: string }, skillId: s
 	return runHermes(input, ["skills", "uninstall", skillId], "y\n");
 }
 
-function bundledResultMatches(sourceDir: string, target: string): boolean {
-	return managedSkillTreesEqual(
-		collectManagedSkillTree(sourceDir),
-		collectRuntimeUserManagedSkillTree(target),
-	);
+function assertBundledResultMatches(sourceDir: string, target: string): void {
+	const source = collectManagedSkillTree(sourceDir);
+	const installed = collectRuntimeUserManagedSkillTree(target);
+	if (source.status !== "collected") {
+		throw new Error(`prepared Hermes bundled Skill tree is ${source.status}`);
+	}
+	if (installed.status !== "collected") {
+		throw new ManagedSkillResourceError(
+			`installed Hermes bundled Skill tree is ${installed.status}`,
+		);
+	}
+	if (!managedSkillTreesEqual(source.tree, installed.tree)) {
+		throw new ManagedSkillResourceError(
+			"Hermes bundled Skill activation changed exact source bytes",
+		);
+	}
 }
 
 export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDriver = {
@@ -152,11 +164,7 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 				replaceManagedSkillDirectoryAtomic(sourceDir, target, {
 					receipt: receipt.path,
 					afterActivate: () => {
-						if (!bundledResultMatches(sourceDir, target)) {
-							throw new ManagedSkillResourceError(
-								"Hermes bundled Skill activation changed exact source bytes",
-							);
-						}
+						assertBundledResultMatches(sourceDir, target);
 						writeManagedSkillReceipt(receipt);
 					},
 				});
@@ -214,11 +222,13 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 			input.skillId,
 			input.ownershipIdentity,
 		);
-		if (!withRuntimeUserFileAccess(() => existsSync(target))) {
+		const receiptState = managedSkillReceiptIdentityState(receipt);
+		if (receiptState === "absent") {
 			rmSync(receipt.path, { force: true });
 			return "absent";
 		}
-		if (!managedSkillReceiptMatchesIdentity(receipt))
+		if (receiptState === "unsafe") throw new Error("Hermes Skill tree is unsafe");
+		if (receiptState !== "matched")
 			throw new Error("Hermes Skill bytes no longer match the manifest ownership receipt");
 		const result = runHermesUninstall(input, input.skillId);
 		if (result.status !== 0)
@@ -240,11 +250,13 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 			input.skillId,
 			input.ownershipIdentity,
 		);
-		if (!withRuntimeUserFileAccess(() => existsSync(target))) {
+		const receiptState = managedSkillReceiptIdentityState(receipt);
+		if (receiptState === "absent") {
 			rmSync(receipt.path, { force: true });
 			return "absent";
 		}
-		if (!managedSkillReceiptMatchesIdentity(receipt)) {
+		if (receiptState === "unsafe") throw new Error("Hermes Skill tree is unsafe");
+		if (receiptState !== "matched") {
 			throw new Error("Hermes Skill bytes no longer match the manifest ownership receipt");
 		}
 		withRuntimeUserFileAccess(() => {
