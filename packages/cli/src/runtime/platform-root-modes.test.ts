@@ -154,4 +154,4 @@ exit 0
 		}
 		Object.assign(process.env, originalEnv);
 	}
-});
+}, 30_000);

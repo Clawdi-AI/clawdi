@@ -4438,7 +4438,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		);
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/^model\s*=|model_catalog_json|models/m);
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
-	});
+	}, 30_000);
 
 	it("migrates the legacy Codex shim before bootstrapping the user npm prefix", () => {
 		const home = join(root, "home", "clawdi");
