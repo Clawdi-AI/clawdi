@@ -15,6 +15,7 @@ import {
 import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-values";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
+export const HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2";
 
 // Temporary v1 read compatibility. Runtime providers and generated config stay canonical-only.
 export const LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV = "OPENAI_API_KEY";
@@ -392,7 +393,7 @@ const liveSyncSchema = z.object({
 
 const runtimeProjectionSchema = z.object({
 	sourceSchemaVersion: z.string().min(1).optional(),
-	sourceBundleVersion: z.literal("clawdi.hosted-runtime.bundle.v2").optional(),
+	sourceBundleVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION).optional(),
 	system: z.unknown().nullable().optional(),
 	providers: z.record(z.string().min(1), z.unknown()).optional(),
 	channels: z.record(z.string().min(1), z.unknown()).optional(),

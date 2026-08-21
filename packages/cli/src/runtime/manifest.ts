@@ -160,6 +160,7 @@ import {
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 	hasUnsupportedAgentPluginInstallations,
 	isHostedCodexManagedRuntimeEnv,
 	type LiveSyncAgent,
@@ -1517,7 +1518,7 @@ function applyHostedRuntimeConfigProjection(
 	if (runtime === "hermes") {
 		const auth = manifest.hermesDashboardAuth;
 		const managesWorkspace =
-			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+			manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 		if (!auth && !locale && !managesWorkspace) return null;
 		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
@@ -3154,7 +3155,8 @@ function openClawGatewayHostedPatch(
 	const gatewayToken = manifest.openclawGatewayAuth
 		? runtimeSecretValue(secretValues ?? {}, manifest.openclawGatewayAuth.tokenRef)
 		: null;
-	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	const isHostedV2 =
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
 	if (isHostedV2 && nativeAuth?.activation.enabled !== true) {
 		throw new Error("OpenClaw native auth capability is unavailable");
@@ -4455,7 +4457,7 @@ function requireV2EgressEngineReady(
 	engine: RuntimeMitmproxyEnsureResult | null,
 ): void {
 	if (
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		profileBundlePath &&
 		engine?.status !== "ready"
 	) {
@@ -5637,7 +5639,7 @@ export function convergeRuntimeManifest(
 	const { manifest } = load;
 	if (
 		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
-		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2"
+		manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION
 	) {
 		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	}
@@ -5667,7 +5669,7 @@ export function convergeRuntimeManifest(
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
-		if (manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2") {
+		if (manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION) {
 			throw new Error("Files companion requires a hosted v2 bundle");
 		}
 		if (!opts.systemdApply) {
@@ -5834,7 +5836,7 @@ export function convergeRuntimeManifest(
 			? openClawSkillDriver.resolveWorkspace({
 					home: projectionHome,
 					repairInvalidConfig:
-						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
+						manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 				})
 			: null;
 		validateRuntimeProjectionPlan({

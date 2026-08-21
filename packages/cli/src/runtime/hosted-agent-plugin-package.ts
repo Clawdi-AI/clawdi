@@ -24,7 +24,11 @@ import {
 	parseCanonicalGithubRepositoryUrl,
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
-import { AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR, type RuntimeManifest } from "./manifest-contract";
+import {
+	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
+	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
+	type RuntimeManifest,
+} from "./manifest-contract";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
 	agentPluginNameSchema,
@@ -1144,7 +1148,8 @@ export async function prepareHostedAgentPluginPackages(
 	options: { fetcher?: GithubArchiveFetcher; offline?: boolean } = {},
 ): Promise<PreparedHostedAgentPlugins | null> {
 	const desiredInstallations = manifest.projection?.agentPlugins?.installations ?? {};
-	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	const isHostedV2 =
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 	if (!isHostedV2) {
 		if (Object.keys(desiredInstallations).length > 0) {
 			throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);

@@ -19,6 +19,7 @@ import {
 } from "./hosted-egress-profiles";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 	type HostedRuntimeBundleV2Manifest,
 	type HostedRuntimeManifest,
 	hasUnsupportedAgentPluginInstallations,
@@ -111,7 +112,7 @@ export type RuntimeBundleChannelBinding = z.infer<typeof runtimeBundleChannelBin
 
 const hostedRuntimeBundleV2Schema = z
 	.object({
-		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
+		schemaVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
 		manifest: hostedRuntimeBundleV2ManifestSchema,
 		applyGeneration: z.number().int().positive().safe().optional(),
@@ -141,7 +142,7 @@ function markHostedRuntimeBundleV2(manifest: RuntimeManifest): RuntimeManifest {
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
-			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceBundleVersion: HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 		},
 	};
 }
@@ -469,7 +470,7 @@ export function hostedManifestToRuntimeManifest(
 		hermesDashboardAuth: hosted.system.hermesDashboardAuth,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
-			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceBundleVersion: HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 			system: hosted.system,
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
@@ -545,7 +546,7 @@ function validateManifestSemantics(
 	const errors: string[] = [];
 	const isHostedV2 =
 		trustDomain === "hosted" &&
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 	const expiryError = manifestExpiryError(manifest);
 	if (expiryError) errors.push(expiryError);
 	if (!isAbsolute(paths.userHome)) errors.push(`runtime HOME must be absolute: ${paths.userHome}`);
@@ -729,7 +730,7 @@ function loadLastGoodManifest(
 		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		const strictV2Cache =
-			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+			manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 		if (
 			opts.requireOfflineBoot &&
 			(strictV2Cache || cachedApplyIdentity !== null) &&

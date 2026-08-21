@@ -20,7 +20,7 @@ import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
-import type { RuntimeManifest } from "./manifest-contract";
+import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
 	DEFAULT_RUN_ROOT,
@@ -1411,7 +1411,7 @@ function writeRuntimeSystemdUserProgram(input: {
 	const isHermesDashboard = program.runtime === "hermes" && program.service === "dashboard";
 	const installerOnlySecretEnv =
 		descriptor?.runtime === "openclaw" &&
-		input.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		input.manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		input.manifest.openclawGatewayAuth?.activation.enabled === true
 			? (descriptor.installSecretEnv ?? [])
 			: [];
