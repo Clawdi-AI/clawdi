@@ -213,6 +213,7 @@ strict = [
     "app/schemas/platform.py",
     "app/schemas/platform_oauth.py",
     "app/schemas/plugin_catalog.py",
+    "app/schemas/problem.py",
     "app/schemas/runtime.py",
     "app/schemas/runtime_observation.py",
     "app/schemas/runtime_observed.py",
