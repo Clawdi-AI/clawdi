@@ -2793,12 +2793,12 @@ function applyHostedHermesAiProviderProjection(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 	if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-	const activeProviderIds = [...hermesProviderIdsFromPatch(file.content)].sort();
+	const activeProviderIds = [...providerIdsFromPatch("hermes", file.content)].sort();
 	const deletedProviderIds = staleProviderIds(
 		new Set(previousProviderIds),
 		new Set(activeProviderIds),
 	);
-	const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
+	const patchContent = mergeProviderDeletes("hermes", file.content, deletedProviderIds);
 	if (apply) {
 		const patch = parseYaml(file.content) as unknown;
 		const root = recordValue(patch);
@@ -2943,23 +2943,39 @@ export function buildOpenClawHostedProviderPatch(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	const providerIds = [...openClawProviderIdsFromPatch(file.content)].sort();
+	const providerIds = [...providerIdsFromPatch("openclaw", file.content)].sort();
 	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
 	const providerPatchContent =
 		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
 	return {
 		apply: true,
 		args: openClawProviderReplacementArgs(file.content),
-		content: mergeOpenClawProviderDeletes(providerPatchContent, deletedProviderIds),
+		content: mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
 		providerIds,
 	};
 }
 
-function openClawProviderIdsFromPatch(content: string): Set<string> {
-	const parsed = JSON.parse(content) as unknown;
-	const root = recordValue(parsed);
-	const models = root ? recordValue(root.models) : null;
-	const providers = models ? recordValue(models.providers) : null;
+type ProviderPatchRuntime = "hermes" | "openclaw";
+
+function providerPatchRoot(
+	runtime: ProviderPatchRuntime,
+	content: string,
+): Record<string, unknown> | null {
+	if (runtime === "hermes" && !content.trim()) return null;
+	return recordValue(runtime === "openclaw" ? JSON.parse(content) : parseYaml(content));
+}
+
+function providerPatchProviders(
+	runtime: ProviderPatchRuntime,
+	root: Record<string, unknown>,
+): Record<string, unknown> | null {
+	const container = runtime === "openclaw" ? recordValue(root.models) : root;
+	return container ? recordValue(container.providers) : null;
+}
+
+function providerIdsFromPatch(runtime: ProviderPatchRuntime, content: string): Set<string> {
+	const root = providerPatchRoot(runtime, content);
+	const providers = root ? providerPatchProviders(runtime, root) : null;
 	if (!providers) return new Set();
 	return new Set(
 		Object.entries(providers)
@@ -2990,30 +3006,6 @@ function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace
 	patch.models = models;
 	return `${JSON.stringify(patch, null, 2)}\n`;
 }
-
-function mergeOpenClawProviderDeletes(
-	patchContent: string,
-	deletedProviderIds: readonly string[],
-): string {
-	if (deletedProviderIds.length === 0) return patchContent;
-	const parsed = JSON.parse(patchContent) as unknown;
-	const root = recordValue(parsed);
-	if (!root) return patchContent;
-	const patch = { ...root };
-	const existingModels = recordValue(patch.models);
-	const models: Record<string, unknown> = existingModels
-		? { ...existingModels }
-		: { mode: "merge" };
-	const existingProviders = recordValue(models.providers);
-	const providers = existingProviders ? { ...existingProviders } : {};
-	for (const providerId of deletedProviderIds) {
-		providers[providerId] = null;
-	}
-	models.providers = providers;
-	patch.models = models;
-	return `${JSON.stringify(patch, null, 2)}\n`;
-}
-
 function openClawProviderDeletePatch(
 	deletedProviderIds: readonly string[],
 ): Record<string, unknown> {
@@ -3023,19 +3015,6 @@ function openClawProviderDeletePatch(
 			providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
 		},
 	};
-}
-
-function hermesProviderIdsFromPatch(content: string): Set<string> {
-	if (!content.trim()) return new Set();
-	const parsed = parseYaml(content) as unknown;
-	const root = recordValue(parsed);
-	const providers = root ? recordValue(root.providers) : null;
-	if (!providers) return new Set();
-	return new Set(
-		Object.entries(providers)
-			.filter(([, value]) => value !== null)
-			.map(([providerId]) => providerId),
-	);
 }
 
 const HERMES_DIRECT_MODEL_FIELDS = [
@@ -3147,22 +3126,27 @@ function applyHermesProviderConfig(
 	);
 }
 
-function mergeHermesProviderDeletes(
+function mergeProviderDeletes(
+	runtime: ProviderPatchRuntime,
 	patchContent: string,
 	deletedProviderIds: readonly string[],
 ): string {
 	if (deletedProviderIds.length === 0) return patchContent;
-	const parsed = parseYaml(patchContent) as unknown;
-	const root = recordValue(parsed);
+	const root = providerPatchRoot(runtime, patchContent);
 	if (!root) return patchContent;
 	const patch = { ...root };
-	const existingProviders = recordValue(patch.providers);
+	const container =
+		runtime === "openclaw" ? { ...(recordValue(patch.models) ?? { mode: "merge" }) } : patch;
+	const existingProviders = recordValue(container.providers);
 	const providers = existingProviders ? { ...existingProviders } : {};
 	for (const providerId of deletedProviderIds) {
 		providers[providerId] = null;
 	}
-	patch.providers = providers;
-	return `${stringifyYaml(patch).trimEnd()}\n`;
+	container.providers = providers;
+	if (runtime === "openclaw") patch.models = container;
+	return runtime === "openclaw"
+		? `${JSON.stringify(patch, null, 2)}\n`
+		: `${stringifyYaml(patch).trimEnd()}\n`;
 }
 
 function staleProviderIds(
