@@ -22,6 +22,13 @@ import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./st
 const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
 const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const SOURCED_MANAGED_SKILL_TARGET_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const RESERVED_SOURCED_MANAGED_SKILL_TARGETS = new Set([
+	"skill",
+	"readme",
+	"index",
+	"unnamed-skill",
+]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 // Exact local bundled Skill trees shipped by published CLI releases before the
 // ownership ledger. Pre-ledger installs had no marker, so content is the only
@@ -91,6 +98,27 @@ function emptyLedger(): ManagedSkillReservationLedger {
 	return { schemaVersion: LEDGER_SCHEMA, reservations: {}, localSetupMigrations: {} };
 }
 
+function validSourcedManagedSkillTarget(value: string): boolean {
+	const candidate = value.toLowerCase();
+	return (
+		SOURCED_MANAGED_SKILL_TARGET_PATTERN.test(candidate) &&
+		!RESERVED_SOURCED_MANAGED_SKILL_TARGETS.has(candidate)
+	);
+}
+
+function reservationTargetMatchesIdentity(
+	target: string,
+	value: { id?: unknown; sourceIdentity?: unknown; manager?: unknown },
+): boolean {
+	const targetName = basename(target);
+	return (
+		targetName === value.id ||
+		(value.manager === "hosted-manifest" &&
+			typeof value.sourceIdentity === "string" &&
+			validSourcedManagedSkillTarget(targetName))
+	);
+}
+
 function readLedger(path: string): ManagedSkillReservationLedger {
 	const legacyPath = legacyHostedLedgerPath(path);
 	const sourcePath = existsSync(path)
@@ -122,7 +150,7 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			raw.target !== target ||
 			resolve(target) !== target ||
 			typeof raw.id !== "string" ||
-			basename(target) !== raw.id ||
+			!reservationTargetMatchesIdentity(target, raw) ||
 			!MANAGED_SKILL_ID_PATTERN.test(raw.id) ||
 			(raw.version !== undefined &&
 				(typeof raw.version !== "number" ||
@@ -230,11 +258,15 @@ function reservationIdentityIsValid(value: {
 }
 
 export function shouldIgnoreUserSkill(targetDir: string, skillId = basename(targetDir)): boolean {
-	const state = managedSkillReservationState(targetDir, skillId);
-	if (state === "indeterminate") {
+	let reservation: ManagedSkillReservation | undefined;
+	try {
+		reservation = readLedger(ledgerPath()).reservations[resolve(targetDir)];
+	} catch {
 		throw new Error("managed Skill ownership state is invalid");
 	}
-	return state === "reserved";
+	if (!reservation) return false;
+	if (reservation.id !== skillId && basename(resolve(targetDir)) === reservation.id) return false;
+	return true;
 }
 
 export function assertUserSkillTargetMutable(
@@ -327,7 +359,7 @@ export function reserveManagedSkill(input: {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
 	if (
-		basename(target) !== input.id ||
+		!reservationTargetMatchesIdentity(target, input) ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
 		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
 		!reservationIdentityIsValid(input)
@@ -338,7 +370,7 @@ export function reserveManagedSkill(input: {
 		const ledger = readLedger(path);
 		const previous = ledger.reservations[target];
 		const manager = input.manager;
-		if (previous && previous.manager !== manager) {
+		if (previous && (previous.manager !== manager || previous.id !== input.id)) {
 			throw new Error(`managed Skill ${input.id} is owned by a different manager`);
 		}
 		ledger.reservations[target] = {
@@ -357,6 +389,7 @@ export function reserveManagedSkill(input: {
 export function installReservedManagedSkill<T>(
 	input: {
 		targetDir: string;
+		previousTargetDir?: string;
 		id: string;
 		version?: number;
 		digest?: string;
@@ -367,8 +400,9 @@ export function installReservedManagedSkill<T>(
 ): T {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
+	const previousTarget = input.previousTargetDir ? resolve(input.previousTargetDir) : target;
 	if (
-		basename(target) !== input.id ||
+		!reservationTargetMatchesIdentity(target, input) ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
 		(input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version <= 0)) ||
 		!reservationIdentityIsValid(input)
@@ -378,8 +412,15 @@ export function installReservedManagedSkill<T>(
 	return withLedgerWriteLock(input.manager, () => {
 		const ledger = readLedger(path);
 		const previous = ledger.reservations[target];
-		if (previous && previous.manager !== input.manager) {
+		const replaced = previousTarget === target ? previous : ledger.reservations[previousTarget];
+		if (previous && (previous.manager !== input.manager || previous.id !== input.id)) {
 			throw new Error(`managed Skill ${input.id} is owned by a different manager`);
+		}
+		if (
+			previousTarget !== target &&
+			(!replaced || replaced.manager !== input.manager || replaced.id !== input.id)
+		) {
+			throw new Error(`managed Skill ${input.id} replacement reservation is invalid`);
 		}
 		ledger.reservations[target] = {
 			target,
@@ -391,10 +432,18 @@ export function installReservedManagedSkill<T>(
 		};
 		writeLedger(path, ledger);
 		try {
-			return install();
+			const result = install();
+			if (previousTarget !== target) {
+				delete ledger.reservations[previousTarget];
+				writeLedger(path, ledger);
+			}
+			return result;
 		} catch (error) {
 			if (previous) ledger.reservations[target] = previous;
 			else delete ledger.reservations[target];
+			if (previousTarget !== target && replaced) {
+				ledger.reservations[previousTarget] = replaced;
+			}
 			writeLedger(path, ledger);
 			throw error;
 		}

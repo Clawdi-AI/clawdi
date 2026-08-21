@@ -172,6 +172,67 @@ describe("managed Skill reservations", () => {
 		expect(managedSkillReservationState(path, "example")).toBe("reserved");
 	});
 
+	it("moves a sourced reservation to the official native target", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		mkdirSync(join(root, "state"));
+		const previousTarget = join(root, "skills", "project-skill");
+		const nativeTarget = join(root, "skills", "frontmatter-name");
+		const sourceIdentity = [
+			"project",
+			"project-skill",
+			"22222222-2222-4222-8222-222222222222",
+			"a".repeat(64),
+		].join("\0");
+		reserveManagedSkill({
+			targetDir: previousTarget,
+			id: "project-skill",
+			manager: "hosted-manifest",
+			sourceIdentity,
+		});
+
+		installReservedManagedSkill(
+			{
+				targetDir: nativeTarget,
+				previousTargetDir: previousTarget,
+				id: "project-skill",
+				manager: "hosted-manifest",
+				sourceIdentity,
+			},
+			() => {
+				expect(shouldIgnoreUserSkill(previousTarget, "project-skill")).toBe(true);
+				expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(true);
+			},
+		);
+
+		expect(managedSkillReservationState(previousTarget, "project-skill")).toBe("unreserved");
+		expect(managedSkillReservationState(nativeTarget, "project-skill")).toBe("reserved");
+		expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(true);
+	});
+
+	it("rejects unsafe native targets for sourced reservations", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		mkdirSync(join(root, "state"));
+		const sourceIdentity = [
+			"project",
+			"project-skill",
+			"22222222-2222-4222-8222-222222222222",
+			"a".repeat(64),
+		].join("\0");
+
+		expect(() =>
+			reserveManagedSkill({
+				targetDir: join(root, "skills", ".hub"),
+				id: "project-skill",
+				manager: "hosted-manifest",
+				sourceIdentity,
+			}),
+		).toThrow("managed Skill reservation identity is invalid");
+	});
+
 	it("reports malformed ownership state instead of silently hiding Skills", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;

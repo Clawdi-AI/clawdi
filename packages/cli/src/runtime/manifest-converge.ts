@@ -1109,6 +1109,8 @@ function applyRuntimeResourceProjections(
 				projectionHome,
 				plan.openClawWorkspaceRoot,
 				paths.managedResourceRoot,
+				preparedHostedSourcedSkills,
+				hermesSkillNativeReconciler,
 			);
 			skillProjectionScope = state.rollbackSnapshots.captureScoped(
 				"runtime Skill filesystem rollback failed",
