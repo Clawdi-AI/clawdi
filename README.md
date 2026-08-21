@@ -44,7 +44,7 @@ clawdi doctor
 ```
 
 On Windows, or when you prefer a package-manager-owned installation, use npm
-with Node.js ≥ 22.5:
+with Node.js 24+:
 
 ```bash
 npm i -g clawdi
@@ -65,7 +65,7 @@ Native installations update from checksum-verified exact GitHub Release assets.
 npm/Bun installations update through their current package manager. Hosted CLI
 transactions remain separate and select an exact npm version.
 
-With Node.js ≥ 22.5, you can also try without installing:
+With Node.js 24+, you can also try without installing:
 
 ```bash
 npx clawdi --help
@@ -243,7 +243,7 @@ local API key minting, health checks, `clawdi doctor`, and cleanup.
 
 Local self-hosting currently expects:
 
-- Node.js 22.5+ and Bun 1.3+
+- Node.js 24.x and Bun 1.4+
 - Python 3.12, uv for dependency sync, and PDM for backend scripts
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth

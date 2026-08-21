@@ -21,7 +21,7 @@ clawdi setup
 clawdi doctor
 ```
 
-Windows and package-manager installations require Node.js ≥ 22.5:
+Windows and package-manager installations require Node.js 24+:
 
 ```bash
 npm i -g clawdi

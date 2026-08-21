@@ -93,7 +93,7 @@ describe("connected-agent setup paths", () => {
 	});
 
 	test("states the Node requirement and keeps Bun as a secondary alternative", () => {
-		expect(setupSource).toContain("Node.js 22.5+ is required.");
+		expect(setupSource).toContain("Node.js 24+ is required.");
 		expect(setupSource).toContain("Prefer Bun? Use: bun add -g clawdi@latest");
 	});
 });

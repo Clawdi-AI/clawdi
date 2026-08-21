@@ -6,7 +6,7 @@
 
 ## Context
 
-The published CLI runs on Node.js 22.5 or newer, and Bun builds its distribution
+The published CLI runs on Node.js 24 or newer, and Bun builds its distribution
 with `--target node`. Its test suite, however, runs on the pinned Bun 1.3.14
 runtime. We evaluated whether moving the suite to a Node-native runner would
 make tests faster or more faithful to the published package without weakening
