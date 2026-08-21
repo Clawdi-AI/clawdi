@@ -10,6 +10,19 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.4
+
+Package: `clawdi@0.14.4`
+
+### Fixed
+
+- Stale skill reservations whose target directory no longer exists are now
+  released idempotently instead of failing convergence with a misleading
+  "tree is unsafe" error.
+- Platform-owned systemd artifacts inside the tenant home that had drifted to
+  tenant ownership are repaired back to root; the ownership enforcer is now
+  bidirectional across declared platform enclaves.
+
 ## Clawdi CLI v0.14.3
 
 Package: `clawdi@0.14.3`
