@@ -1651,6 +1651,10 @@ esac
 		);
 		expect(initialPid).toBeGreaterThan(1);
 		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+		}
 
 		chmodSync(unitPath, 0o600);
 		chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
@@ -1661,7 +1665,7 @@ esac
 
 		const repaired = converge();
 		expect(repaired.installErrors).toEqual([]);
-		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install", "install"]);
+		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
 		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);

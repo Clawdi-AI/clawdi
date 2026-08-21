@@ -753,6 +753,7 @@ function writeSystemdProgramEnvironment(input: {
 function writeSystemdUnit(input: {
 	root: string;
 	owner: "root" | "runtime-user";
+	unitOwner?: "root" | "runtime-user";
 	paths: RuntimePaths;
 	name: string;
 	description: string;
@@ -772,6 +773,7 @@ function writeSystemdUnit(input: {
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
+	const unitOwner = input.unitOwner ?? input.owner;
 	const { envFile, envRevision } = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
@@ -832,20 +834,18 @@ function writeSystemdUnit(input: {
 	];
 	const writeUnitFile = (): string => {
 		ensureDirectoryWithinTrustedRoot(input.root, input.root);
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
+		if (unitOwner === "runtime-user") makeRuntimeUserOwned(input.root);
 		writeSystemdManagedFile({
 			path,
 			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.root,
-			owner: input.owner,
+			owner: unitOwner,
 		});
 		return path;
 	};
-	return input.owner === "runtime-user"
-		? withRuntimeUserFileAccess(writeUnitFile)
-		: writeUnitFile();
+	return unitOwner === "runtime-user" ? withRuntimeUserFileAccess(writeUnitFile) : writeUnitFile();
 }
 
 function writeSystemdSystemUnit(
@@ -866,6 +866,7 @@ function writeSystemdUserUnit(
 		...input,
 		root: input.paths.systemdUserRoot,
 		owner: "runtime-user",
+		unitOwner: "root",
 		wantedBy: "default.target",
 	});
 }
@@ -900,20 +901,17 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		"",
 	];
-	return withRuntimeUserFileAccess(() => {
-		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
-		makeRuntimeUserOwned(dirname(path));
-		writeSystemdManagedFile({
-			path,
-			content: lines.join("\n"),
-			mode: 0o644,
-			dirMode: 0o755,
-			trustedRoot: input.paths.systemdUserRoot,
-			owner: "runtime-user",
-		});
-		return join(input.paths.systemdUserRoot, unitName);
+	removeGeneratedRuntimeBaseUnit(input.paths, unitName);
+	ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
+	writeSystemdManagedFile({
+		path,
+		content: lines.join("\n"),
+		mode: 0o644,
+		dirMode: 0o755,
+		trustedRoot: input.paths.systemdUserRoot,
+		owner: "root",
 	});
+	return join(input.paths.systemdUserRoot, unitName);
 }
 
 function removeGeneratedRuntimeBaseUnit(paths: RuntimePaths, unitName: string): void {

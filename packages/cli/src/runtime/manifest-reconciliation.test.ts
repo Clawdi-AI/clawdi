@@ -6,6 +6,8 @@ import {
 	chownSync,
 	cpSync,
 	existsSync,
+	lchownSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -5795,7 +5797,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("repairs root bootstrap ownership for the UID 10001 official OpenClaw service path", () => {
+	test("keeps the systemd enclave root-owned outside the UID 10001 installer boundary", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -5808,16 +5810,29 @@ exit 0
 		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		const unitBackupPath = `${unitPath}.bak`;
+		const dropInPath = join(
+			paths.systemdUserRoot,
+			"openclaw-gateway.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
+		const enablementPath = join(wantsRoot, "openclaw-gateway.service");
 		const runtimeOwnedPaths = [
 			appRoot,
 			binDir,
 			commandPath,
 			dirname(dirname(paths.systemdUserRoot)),
 			dirname(paths.systemdUserRoot),
+		];
+		const platformOwnedPaths = [
 			paths.systemdUserRoot,
 			unitPath,
 			unitBackupPath,
 			gatewayEnvironment,
+			dirname(dropInPath),
+			dropInPath,
+			wantsRoot,
+			enablementPath,
 		];
 
 		chmodSync(fixtureRoot, 0o755);
@@ -5829,7 +5844,8 @@ exit 0
 		chmodSync(paths.clawdiHome, 0o700);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(appRoot, { recursive: true });
-		mkdirSync(dirname(unitPath), { recursive: true });
+		mkdirSync(dirname(dropInPath), { recursive: true });
+		mkdirSync(wantsRoot, { recursive: true });
 		writeFileSync(
 			commandPath,
 			`#!/usr/bin/env bash
@@ -5850,17 +5866,22 @@ printf '{"ok":true}\\n'
 		);
 		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
 		writeFileSync(unitBackupPath, "previous official backup\n");
+		writeFileSync(dropInPath, "[Service]\nEnvironment=PREVIOUS=1\n");
+		symlinkSync("../openclaw-gateway.service", enablementPath);
 		writeFileSync(gatewayEnvironment, "PREVIOUS_OFFICIAL_STATE=1\n");
 		for (const path of [appRoot, binDir]) {
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
-		for (const path of [commandPath, unitPath, unitBackupPath, gatewayEnvironment]) {
+		for (const path of [commandPath, ...platformOwnedPaths]) {
+			if (lstatSync(path).isSymbolicLink()) continue;
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
+		for (const path of [enablementPath]) lchownSync(path, 0, 0);
 		chmodSync(unitPath, 0o600);
 		chmodSync(unitBackupPath, 0o600);
+		chmodSync(dropInPath, 0o600);
 		chmodSync(gatewayEnvironment, 0o600);
 
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
@@ -5875,24 +5896,37 @@ printf '{"ok":true}\\n'
 			},
 			resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
 		};
+		let skillProjectionObserved = false;
 		const openClawSkillDriver = {
 			...hostedOpenClawSkillDriver,
 			resolveWorkspace: () => join(appRoot, "workspace"),
-		};
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				install: {
-					authority: "official",
-					method: "official-installer",
-					url: OFFICIAL_INSTALL_URLS.openclaw,
-					home: paths.userHome,
-					args: officialInstallArgs("openclaw", paths.userHome),
-				},
-				run: runSettings(commandPath, ["gateway", "run"]),
-				services: {},
+			install: () => {
+				skillProjectionObserved = true;
+				for (const path of platformOwnedPaths) {
+					const node = lstatSync(path);
+					expect([node.uid, node.gid]).toEqual([0, 0]);
+				}
+				throw new ManagedSkillResourceError("injected Skill projection stop");
 			},
-		});
+		};
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: OFFICIAL_INSTALL_URLS.openclaw,
+						home: paths.userHome,
+						args: officialInstallArgs("openclaw", paths.userHome),
+					},
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "root-openclaw-ownership"),
@@ -5904,9 +5938,15 @@ printf '{"ok":true}\\n'
 			},
 		);
 		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors.join("\n")).toContain("injected Skill projection stop");
+		expect(skillProjectionObserved).toBe(true);
 		for (const path of runtimeOwnedPaths) {
-			const node = statSync(path);
+			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+		}
+		for (const path of platformOwnedPaths) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
 		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
 		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
@@ -5916,32 +5956,51 @@ printf '{"ok":true}\\n'
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 
-		const installed = execFileSync(
-			numericPrivilegeToolPath,
-			[
-				`--reuid=${runtimeUid}`,
-				`--regid=${runtimeGid}`,
-				"--clear-groups",
-				"env",
-				`HOME=${paths.userHome}`,
-				"OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service",
-				commandPath,
-				"gateway",
-				"install",
-				"--force",
-				"--json",
-			],
-			{ cwd: paths.userHome, encoding: "utf8" },
+		let installerBoundaryObserved = false;
+		const installed = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
+			paths,
+			{
+				hostedRuntimeContract,
+				hostedOpenClawSkillDriver: openClawSkillDriver,
+				systemdApply: {
+					quiesce: () => {},
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					installOfficialService: (_unitName, install) => {
+						installerBoundaryObserved = true;
+						for (const path of [
+							paths.systemdUserRoot,
+							unitPath,
+							unitBackupPath,
+							gatewayEnvironment,
+							wantsRoot,
+							enablementPath,
+						]) {
+							const node = lstatSync(path);
+							expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+						}
+						for (const path of [dirname(dropInPath), dropInPath]) {
+							const node = lstatSync(path);
+							expect([node.uid, node.gid]).toEqual([0, 0]);
+						}
+						return install();
+					},
+					activate: successfulPrerequisiteActivation,
+					rollback: () => {},
+				},
+			},
 		);
-		expect(JSON.parse(installed)).toEqual({ ok: true });
-		expect(statSync(unitPath).uid).toBe(runtimeUid);
-		expect(statSync(unitBackupPath).uid).toBe(runtimeUid);
-		expect(statSync(gatewayEnvironment).uid).toBe(runtimeUid);
+		expect(installed.installErrors).toEqual([]);
+		expect(installerBoundaryObserved).toBe(true);
+		for (const path of platformOwnedPaths) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+		}
 		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 
 		for (const path of runtimeOwnedPaths) chownSync(path, 0, 0);
 		const beforeRollback = new Map(
-			runtimeOwnedPaths.map(
+			[...runtimeOwnedPaths, ...platformOwnedPaths].map(
 				(path) =>
 					[
 						path,
@@ -5953,7 +6012,7 @@ printf '{"ok":true}\\n'
 			),
 		);
 		const failed = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-ownership-rollback"),
+			manifestLoad({ ...manifest, generation: 3 }, "root-openclaw-ownership-rollback"),
 			paths,
 			{
 				cacheLastGood: false,
@@ -5967,8 +6026,9 @@ printf '{"ok":true}\\n'
 		);
 		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");
 		for (const [path, previous] of beforeRollback) {
-			const node = statSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+			const node = lstatSync(path);
+			const expectedOwner = platformOwnedPaths.includes(path) ? [0, 0] : [runtimeUid, runtimeGid];
+			expect([node.uid, node.gid]).toEqual(expectedOwner);
 			expect(node.mode & 0o777).toBe(previous.mode);
 			if (previous.content) expect(readFileSync(path)).toEqual(previous.content);
 		}
