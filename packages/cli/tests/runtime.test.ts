@@ -4459,7 +4459,9 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				},
 			},
 		};
-		const convergence = convergeRuntimeManifest(legacyWireLoad, getRuntimePaths());
+		const paths = getRuntimePaths();
+		seedMitmproxyCache(paths);
+		const convergence = convergeRuntimeManifest(legacyWireLoad, paths);
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(statSync(codexHome).mode & 0o777).toBe(0o700);
