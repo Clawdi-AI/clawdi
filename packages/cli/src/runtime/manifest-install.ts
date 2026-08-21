@@ -1,0 +1,596 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+	chmodSync,
+	lstatSync,
+	mkdtempSync,
+	readFileSync,
+	readlinkSync,
+	rmSync,
+	statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runtimeContentSha256 } from "./applied-state";
+import { SYSTEM_CA_BUNDLE } from "./egress-env";
+import {
+	emptyRuntimeInstallReceipts,
+	type RuntimeInstallReceiptEntry,
+	writeRuntimeInstallReceipts,
+} from "./install-receipts";
+import type { RuntimeManagedMutationPlan } from "./live-state-snapshot";
+import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
+import { mutationAncestorMetadataTargets } from "./manifest-shared";
+import type { RuntimePaths } from "./paths";
+import { hostedRuntimeProjectionHome } from "./projection-home";
+import { isSupportedRuntimeName } from "./run-config";
+import {
+	buildRuntimeUserCommand,
+	clearTenantToolLocationOverrides,
+	commandResolvable,
+	enforceRuntimeUserOwnership,
+	executableExists,
+	type RuntimeUserOwnershipRule,
+	runtimeUserDirectoryOwnership,
+	runtimeUserExistingOwnership,
+	spawnRuntimeUserCommand,
+} from "./runtime-user-command";
+
+export interface RuntimeInstallObservation {
+	runtime: string;
+	enabled: boolean;
+	status: "disabled" | "present" | "installed" | "configured" | "install_failed";
+	executionUser: string | null;
+	commandPath: string | null;
+	appRoot: string | null;
+	install: RuntimeInstall | null;
+	installerUrl: string | null;
+	executedInstallerUrl: string | null;
+	exitCode: number | null;
+	installStartedAt?: string;
+	installFinishedAt?: string;
+	installDurationMs?: number;
+	stdoutTail: string | null;
+	stderrTail: string | null;
+	error: string | null;
+}
+function runtimeInstallObservation(
+	observation: Pick<RuntimeInstallObservation, "runtime" | "enabled" | "status"> &
+		Partial<Omit<RuntimeInstallObservation, "runtime" | "enabled" | "status">>,
+): RuntimeInstallObservation {
+	return {
+		executionUser: null,
+		commandPath: null,
+		appRoot: null,
+		install: null,
+		installerUrl: null,
+		executedInstallerUrl: null,
+		exitCode: null,
+		stdoutTail: null,
+		stderrTail: null,
+		error: null,
+		...observation,
+	};
+}
+export interface RuntimeInstallReceiptTarget {
+	desiredRevision: string;
+	currentRevision: () => string | null;
+	expectedCurrentRevision: string | null;
+}
+export interface RuntimeInstallReceiptTargets {
+	officialServices: Map<string, RuntimeInstallReceiptTarget>;
+	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
+	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
+}
+export function runtimeCommandPath(name: string, home: string): string | null {
+	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
+	if (name === "hermes") return join(home, ".local", "bin", "hermes");
+	return null;
+}
+export function runtimeAppRoot(name: string, home: string): string | null {
+	if (name === "openclaw") return join(home, ".openclaw");
+	if (name === "hermes") return join(home, ".hermes", "hermes-agent");
+	return null;
+}
+const HERMES_DASHBOARD_CAPABILITY_PROBE =
+	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+function runtimeInstallTimeoutMs(): number {
+	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
+	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+	const timeout = Number(raw);
+	if (Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 0x7fffffff) return timeout;
+	console.warn(
+		`CLAWDI_RUNTIME_INSTALL_TIMEOUT must be a valid positive integer; using ${DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS}ms`,
+	);
+	return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+}
+function hermesDashboardCapabilityError(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+): string | null {
+	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
+		return null;
+	const python = join(runtime.install.home, ".hermes", "hermes-agent", "venv", "bin", "python");
+	if (!executableExists(python)) {
+		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
+	}
+	let result: ReturnType<typeof spawnRuntimeUserCommand>;
+	try {
+		result = spawnRuntimeUserCommand(
+			python,
+			["-c", HERMES_DASHBOARD_CAPABILITY_PROBE],
+			runtime.install.home,
+			runtime.install.home,
+			{ timeoutMs: 30_000 },
+		);
+	} catch (error) {
+		return `Hermes dashboard runtime capability probe failed: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
+	}
+	if (result.status === 0) return null;
+	return `Hermes dashboard runtime is incompatible: ${
+		tail(String(result.stderr ?? "")) ??
+		(result.error instanceof Error
+			? result.error.message
+			: "uvicorn.Server.capture_signals is unavailable")
+	}`;
+}
+function runtimeInstallerExecution(
+	runtime: string,
+	install: RuntimeInstall,
+	installerPath: string,
+	extraArgs: string[] = [],
+): {
+	command: string;
+	args: string[];
+	env: NodeJS.ProcessEnv;
+	executionUser: string | null;
+} {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const env = runtimeInstallerEnv(runtime, install);
+	if (!runtimeUser || runtimeUser === "root") {
+		return {
+			command: "bash",
+			args: [installerPath, ...install.args, ...extraArgs],
+			env,
+			executionUser: null,
+		};
+	}
+
+	const child = buildRuntimeUserCommand(runtimeUser, install.home, "bash", [
+		installerPath,
+		...install.args,
+		...extraArgs,
+	]);
+	return {
+		command: child.command,
+		args: child.args,
+		env: { ...env, ...child.env },
+		executionUser: runtimeUser,
+	};
+}
+function runtimeInstallerEnv(runtime: string, install: RuntimeInstall): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {
+		...process.env,
+		HOME: install.home,
+		PATH: [join(install.home, ".local", "bin"), process.env.PATH].filter(Boolean).join(":"),
+	};
+	clearTenantToolLocationOverrides(env);
+	if (runtime === "openclaw") {
+		for (const key of [
+			"OPENCLAW_HOME",
+			"OPENCLAW_STATE_DIR",
+			"OPENCLAW_CONFIG_PATH",
+			"OPENCLAW_PREFIX",
+			"OPENCLAW_VERSION",
+			"OPENCLAW_INSTALL_METHOD",
+			"OPENCLAW_GIT_DIR",
+			"OPENCLAW_GIT_UPDATE",
+		] as const) {
+			delete env[key];
+		}
+	}
+	env.SSL_CERT_FILE = SYSTEM_CA_BUNDLE;
+	env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE;
+	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.CURL_CA_BUNDLE = SYSTEM_CA_BUNDLE;
+	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
+	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
+	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
+	return env;
+}
+export function tail(value: string | null | undefined): string | null {
+	if (!value) return null;
+	return value.slice(-4000);
+}
+function testInstallerEnvName(name: string): string | null {
+	if (name === "openclaw") return "CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER";
+	if (name === "hermes") return "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER";
+	return null;
+}
+function executionInstallerUrl(name: string, officialUrl: string): string {
+	const envName = testInstallerEnvName(name);
+	const override = envName ? process.env[envName]?.trim() : undefined;
+	if (override) {
+		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
+			throw new Error(`${envName} requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`);
+		}
+		return override;
+	}
+	return officialUrl;
+}
+function materializeInstaller(
+	name: string,
+	installerUrl: string,
+): { path: string; cleanup?: string } {
+	if (installerUrl.startsWith("file://")) {
+		return { path: fileURLToPath(installerUrl) };
+	}
+	if (installerUrl.startsWith("/")) {
+		return { path: installerUrl };
+	}
+	if (!installerUrl.startsWith("https://")) {
+		throw new Error(`runtime ${name} installer must use https:// or a test file URL`);
+	}
+	const dir = mkdtempSync(join(tmpdir(), `clawdi-${name}-installer-`));
+	chmodSync(dir, 0o755);
+	const path = join(dir, "install.sh");
+	const curl = spawnSync(
+		"curl",
+		["-fsSL", "--proto", "=https", "--tlsv1.2", "--retry", "3", "-o", path, installerUrl],
+		{ encoding: "utf8" },
+	);
+	if (curl.status !== 0) {
+		rmSync(dir, { recursive: true, force: true });
+		throw new Error(
+			`could not download ${name} official installer: ${tail(curl.stderr) ?? "curl failed"}`,
+		);
+	}
+	chmodSync(path, 0o755);
+	return { path, cleanup: dir };
+}
+function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
+	const installStartedAt = new Date().toISOString();
+	const installStartedMs = Date.now();
+	const finish = (observation: RuntimeInstallObservation): RuntimeInstallObservation => ({
+		...observation,
+		installStartedAt,
+		installFinishedAt: new Date().toISOString(),
+		installDurationMs: Math.max(0, Date.now() - installStartedMs),
+	});
+	const commandPath = runtimeCommandPath(name, install.home);
+	const appRoot = runtimeAppRoot(name, install.home);
+	if (!commandPath || !appRoot) {
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				error: `unsupported runtime ${name}`,
+			}),
+		);
+	}
+	if (executableExists(commandPath)) {
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "present",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+			}),
+		);
+	}
+
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home));
+	const url = executionInstallerUrl(name, install.url);
+	const materialized = materializeInstaller(name, url);
+	try {
+		const execution = runtimeInstallerExecution(name, install, materialized.path);
+		const result = spawnSync(execution.command, execution.args, {
+			cwd: install.home,
+			env: execution.env,
+			encoding: "utf8",
+			timeout: runtimeInstallTimeoutMs(),
+		});
+		const exitCode = result.status ?? 1;
+		const installed = exitCode === 0 && executableExists(commandPath);
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: installed ? "installed" : "install_failed",
+				executionUser: execution.executionUser,
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url === install.url ? install.url : url,
+				exitCode,
+				stdoutTail: tail(result.stdout),
+				stderrTail: tail(result.stderr),
+				error: installed
+					? null
+					: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+			}),
+		);
+	} catch (error) {
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url,
+				error: error instanceof Error ? error.message : String(error),
+			}),
+		);
+	} finally {
+		if (materialized.cleanup) rmSync(materialized.cleanup, { recursive: true, force: true });
+	}
+}
+export function observeRuntimeInstall(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+	home: string,
+) {
+	if (!runtime.enabled) {
+		return runtimeInstallObservation({
+			runtime: name,
+			enabled: false,
+			status: "disabled",
+			install: runtime.install ?? null,
+			installerUrl: runtime.install?.url ?? null,
+		});
+	}
+	if (!runtime.install) {
+		if (runtime.run?.command?.trim() || isSupportedRuntimeName(name)) {
+			const configuredCommand = runtime.run?.command?.trim() || null;
+			const commandPath =
+				isSupportedRuntimeName(name) && configuredCommand && commandResolvable(configuredCommand)
+					? configuredCommand
+					: null;
+			return runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "configured",
+				commandPath,
+				appRoot: commandPath ? runtimeAppRoot(name, home) : null,
+			});
+		}
+		return runtimeInstallObservation({
+			runtime: name,
+			enabled: true,
+			status: "install_failed",
+			error: `runtime ${name} is enabled but missing install metadata`,
+		});
+	}
+	const observation = runOfficialInstaller(name, runtime.install);
+	if (observation.error) return observation;
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
+	return capabilityError
+		? { ...observation, status: "install_failed" as const, error: capabilityError }
+		: observation;
+}
+export function planRuntimeInstallObservation(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+	home: string,
+): RuntimeInstallObservation {
+	if (!runtime.install) return observeRuntimeInstall(name, runtime, home);
+	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
+	const commandPath = runtimeCommandPath(name, runtime.install.home);
+	const appRoot = runtimeAppRoot(name, runtime.install.home);
+	return runtimeInstallObservation({
+		runtime: name,
+		enabled: true,
+		status: commandPath && executableExists(commandPath) ? "present" : "configured",
+		commandPath,
+		appRoot,
+		install: runtime.install,
+		installerUrl: runtime.install.url,
+		error: commandPath && appRoot ? null : `unsupported runtime ${name}`,
+	});
+}
+export function runtimeFileCurrentRevision(path: string): string | null {
+	if (!isAbsolute(path)) return null;
+	try {
+		const linkStat = lstatSync(path);
+		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
+		const fileStat = linkStat.isSymbolicLink() ? statSync(path) : linkStat;
+		if (!fileStat.isFile()) return null;
+		const contents = readFileSync(path);
+		return runtimeContentSha256({
+			path,
+			contentsSha256: createHash("sha256").update(contents).digest("hex"),
+			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
+			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
+			linkUid: linkStat.uid,
+			linkGid: linkStat.gid,
+			fileMode: fileStat.mode & 0o7777,
+			fileUid: fileStat.uid,
+			fileGid: fileStat.gid,
+		});
+	} catch {
+		return null;
+	}
+}
+export function runtimeCommandCurrentRevision(
+	command: string,
+	home: string,
+	cwd: string,
+): string | null {
+	const executableRevision = runtimeFileCurrentRevision(command);
+	if (!executableRevision) return null;
+	try {
+		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
+		if (versionResult.status !== 0) return null;
+		const stdout = Buffer.isBuffer(versionResult.stdout)
+			? versionResult.stdout.toString("utf8")
+			: versionResult.stdout;
+		const stderr = Buffer.isBuffer(versionResult.stderr)
+			? versionResult.stderr.toString("utf8")
+			: versionResult.stderr;
+		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
+		if (!version) return null;
+		return runtimeContentSha256({
+			executableRevision,
+			version,
+		});
+	} catch {
+		return null;
+	}
+}
+export function verifiedReceiptCurrentRevision(
+	receipt: RuntimeInstallReceiptEntry | undefined,
+	desiredRevision: string,
+	currentRevision: () => string | null,
+): string | null {
+	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
+	const current = currentRevision();
+	return current === receipt.currentRevision ? current : null;
+}
+export function commitRuntimeInstallReceipts(
+	targets: RuntimeInstallReceiptTargets,
+	paths: RuntimePaths,
+): void {
+	const receipts = emptyRuntimeInstallReceipts();
+	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
+	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
+	const filebrowser = targets.companions.get("filebrowser");
+	if (filebrowser) {
+		receipts.companions.filebrowser = verifiedRuntimeInstallReceipt("filebrowser", filebrowser);
+	}
+	writeRuntimeInstallReceipts(receipts, paths);
+}
+function verifiedRuntimeInstallReceipt(
+	key: string,
+	target: RuntimeInstallReceiptTarget,
+): RuntimeInstallReceiptEntry {
+	if (!target.expectedCurrentRevision) {
+		throw new Error(`runtime install receipt target ${key} was not verified`);
+	}
+	const currentRevision = target.currentRevision();
+	if (currentRevision !== target.expectedCurrentRevision) {
+		throw new Error(`runtime install receipt target ${key} changed before commit`);
+	}
+	return { desiredRevision: target.desiredRevision, currentRevision };
+}
+function commitRuntimeInstallReceiptGroup(
+	receipts: Record<string, RuntimeInstallReceiptEntry>,
+	targets: Map<string, RuntimeInstallReceiptTarget>,
+): void {
+	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
+		receipts[key] = verifiedRuntimeInstallReceipt(key, target);
+	}
+}
+export function runtimeInstallerMutationTargets(
+	manifest: RuntimeManifest,
+	home: string,
+	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
+): string[] {
+	const targets = new Set<string>();
+	const openclawObservation = observations.get("openclaw");
+	if (
+		manifest.runtimes.openclaw?.enabled &&
+		manifest.runtimes.openclaw.install &&
+		openclawObservation?.status !== "present"
+	) {
+		targets.add(join(home, ".local", "bin", "openclaw"));
+		targets.add(join(home, ".local", "tools"));
+	}
+	const hermesObservation = observations.get("hermes");
+	if (
+		manifest.runtimes.hermes?.enabled &&
+		manifest.runtimes.hermes.install &&
+		hermesObservation?.status !== "present"
+	) {
+		for (const target of [
+			join(home, ".hermes", "hermes-agent"),
+			join(home, ".hermes", "bin"),
+			join(home, ".hermes", "node"),
+			join(home, ".hermes", "uv"),
+			join(home, ".hermes", ".env"),
+			join(home, ".hermes", ".no-bundled-skills"),
+			join(home, ".hermes", "config.yaml"),
+			join(home, ".hermes", "SOUL.md"),
+			join(home, ".hermes", "skills"),
+			join(home, ".local", "bin", "hermes"),
+			join(home, ".local", "bin", "hermes-agent"),
+			join(home, ".local", "bin", "hermes-acp"),
+			join(home, ".local", "bin", "node"),
+			join(home, ".local", "bin", "npm"),
+			join(home, ".local", "bin", "npx"),
+		]) {
+			targets.add(target);
+		}
+	}
+	return [...targets];
+}
+const HERMES_INSTALLER_DATA_DIRECTORIES = [
+	"cron",
+	"sessions",
+	"logs",
+	"pairing",
+	"hooks",
+	"image_cache",
+	"audio_cache",
+	"memories",
+] as const;
+export function runtimeColdInstallMutationPlan(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+): {
+	snapshot: RuntimeManagedMutationPlan;
+	runtimeUserOwnership: RuntimeUserOwnershipRule[];
+} | null {
+	const pending = Object.entries(manifest.runtimes).some(([name, runtime]) => {
+		if (!runtime.enabled || !runtime.install) return false;
+		return observations.get(name)?.status !== "present";
+	});
+	if (!pending) return null;
+	const home = hostedRuntimeProjectionHome(manifest, paths);
+	const runtimeUserTargets = runtimeInstallerMutationTargets(manifest, home, observations).sort();
+	if (runtimeUserTargets.length === 0) return null;
+	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
+	const metadataTargets = [
+		...new Set([
+			paths.userHome,
+			paths.clawdiHome,
+			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserTrustedRoots),
+			...(manifest.runtimes.hermes?.enabled &&
+			manifest.runtimes.hermes.install &&
+			observations.get("hermes")?.status !== "present"
+				? HERMES_INSTALLER_DATA_DIRECTORIES.map((directory) => join(home, ".hermes", directory))
+				: []),
+		]),
+	].sort();
+	const runtimeCommandTargets = Object.keys(manifest.runtimes).flatMap((name) => {
+		const command = runtimeCommandPath(name, home);
+		return command && runtimeUserTargets.includes(command) ? [command] : [];
+	});
+	return {
+		snapshot: {
+			rootTargets: [],
+			trustedRootDirectories: [],
+			runtimeUserTargets,
+			runtimeUserTrustedRoots,
+			runtimeUserSymlinkTargets: runtimeCommandTargets,
+			metadataTargets,
+		},
+		runtimeUserOwnership: runtimeUserExistingOwnership([...metadataTargets, ...runtimeUserTargets]),
+	};
+}
