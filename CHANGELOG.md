@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.5
+
+Package: `clawdi@0.14.5`
+
+### Fixed
+
+- Repairing drifted ownership of systemd artifacts now also restores the
+  read/traverse permissions the tenant's systemd user manager needs, so the
+  repair no longer makes running units unresolvable. A bounded daemon-reload
+  retry guards enable calls when the manager's unit view is stale.
+
 ## Clawdi CLI v0.14.4
 
 Package: `clawdi@0.14.4`
