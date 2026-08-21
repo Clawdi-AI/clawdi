@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.1
+
+Package: `clawdi@0.14.1`
+
+### Fixed
+
+- Hermes plugin installs no longer fail when `plugins.scan_on_install` has
+  never been set: the managed install-scanner policy is now a simple idempotent
+  persistent setting instead of a transient toggle that read the current value
+  first.
+
 ## Clawdi CLI v0.14.0
 
 Package: `clawdi@0.14.0`
