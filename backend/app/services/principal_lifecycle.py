@@ -31,6 +31,7 @@ from app.models.device_authorization import DeviceAuthorization
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.principal_lifecycle import (
     ClerkPrincipalAuthority,
+    ClerkPrincipalSuspension,
     ClerkWebhookEventReceipt,
     PrincipalLifecycle,
 )
@@ -55,6 +56,10 @@ from app.services.runtime_observation import retire_runtime_environment
 
 
 class PrincipalTerminatedError(RuntimeError):
+    pass
+
+
+class PrincipalSuspendedError(PrincipalTerminatedError):
     pass
 
 
@@ -106,6 +111,14 @@ class ClaimedPrincipalCleanup:
     lifecycle_id: UUID
     claim_id: str
     attempt_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PrincipalSuspensionResult:
+    user_id: UUID | None
+    suspended: bool
+    suspended_at: datetime | None
+    changed: bool
 
 
 def configured_clerk_issuer() -> str:
@@ -171,7 +184,7 @@ async def assert_clerk_principal_active(
         # compatibility path, but a configuration change must never hide a
         # fence that was already persisted under a previously configured
         # issuer.
-        lifecycle = (
+        lifecycle_issuer = (
             await db.execute(
                 select(PrincipalLifecycle.issuer)
                 .where(
@@ -181,14 +194,30 @@ async def assert_clerk_principal_active(
                 .limit(1)
             )
         ).scalar_one_or_none()
-        if lifecycle is not None:
+        if lifecycle_issuer is not None:
             if lock:
                 await lock_clerk_principal_shared(
                     db,
-                    issuer=lifecycle,
+                    issuer=lifecycle_issuer,
                     subject=subject,
                 )
             raise PrincipalTerminatedError("principal has been terminated")
+        suspension_issuer = (
+            await db.execute(
+                select(ClerkPrincipalSuspension.issuer)
+                .where(ClerkPrincipalSuspension.subject == subject)
+                .order_by(ClerkPrincipalSuspension.issuer)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if suspension_issuer is not None:
+            if lock:
+                await lock_clerk_principal_shared(
+                    db,
+                    issuer=suspension_issuer,
+                    subject=subject,
+                )
+            raise PrincipalSuspendedError("principal is suspended")
         return None
     if lock:
         await lock_clerk_principal_shared(db, issuer=resolved_issuer, subject=subject)
@@ -200,6 +229,14 @@ async def assert_clerk_principal_active(
     )
     if lifecycle_id is not None:
         raise PrincipalTerminatedError("principal has been terminated")
+    suspended = await db.scalar(
+        select(ClerkPrincipalSuspension.subject).where(
+            ClerkPrincipalSuspension.issuer == resolved_issuer,
+            ClerkPrincipalSuspension.subject == subject,
+        )
+    )
+    if suspended is not None:
+        raise PrincipalSuspendedError("principal is suspended")
     banned = await db.scalar(
         select(ClerkPrincipalAuthority.banned).where(
             ClerkPrincipalAuthority.issuer == resolved_issuer,
@@ -207,7 +244,7 @@ async def assert_clerk_principal_active(
         )
     )
     if banned is True:
-        raise PrincipalTerminatedError("principal is suspended")
+        raise PrincipalSuspendedError("principal is suspended")
     return resolved_issuer
 
 
@@ -276,9 +313,36 @@ async def assert_user_authority_active(
                 ClerkPrincipalAuthority.banned.is_(True),
             )
             .exists(),
+            ~select(ClerkPrincipalSuspension.subject)
+            .where(
+                or_(
+                    ClerkPrincipalSuspension.user_id == User.id,
+                    and_(
+                        ClerkPrincipalSuspension.issuer == User.clerk_issuer,
+                        ClerkPrincipalSuspension.subject == User.clerk_id,
+                    ),
+                )
+            )
+            .exists(),
         )
     )
     if active_id is None:
+        suspended = await db.scalar(
+            select(ClerkPrincipalSuspension.subject)
+            .join(
+                User,
+                or_(
+                    ClerkPrincipalSuspension.user_id == User.id,
+                    and_(
+                        ClerkPrincipalSuspension.issuer == User.clerk_issuer,
+                        ClerkPrincipalSuspension.subject == User.clerk_id,
+                    ),
+                ),
+            )
+            .where(User.id == user_id)
+        )
+        if suspended is not None:
+            raise PrincipalSuspendedError("user authority is suspended")
         raise PrincipalTerminatedError("user authority is disabled")
 
 
@@ -386,6 +450,124 @@ async def load_clerk_user_for_issuer(
     if bind_legacy and user.clerk_issuer is None:
         user.clerk_issuer = issuer
     return user
+
+
+def _validate_suspension_reason(reason: str) -> None:
+    if not reason or len(reason) > 191 or reason != reason.strip() or not reason.isprintable():
+        raise ValueError("suspension reason must be a printable canonical value")
+
+
+async def set_clerk_principal_suspension(
+    db: AsyncSession,
+    *,
+    issuer: str,
+    subject: str,
+    suspended: bool,
+    reason: str,
+    now: datetime | None = None,
+) -> PrincipalSuspensionResult:
+    """Set the independent platform fence without provisioning or cleanup."""
+
+    if issuer != configured_clerk_issuer():
+        raise PrincipalIdentityConflictError("principal issuer is not accepted")
+    _validate_suspension_reason(reason)
+    current_time = now or datetime.now(UTC)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        raise ValueError("suspension timestamp must be timezone-aware")
+
+    await lock_clerk_principal(db, issuer=issuer, subject=subject)
+    terminated = await db.scalar(
+        select(PrincipalLifecycle.id).where(
+            PrincipalLifecycle.issuer == issuer,
+            PrincipalLifecycle.subject == subject,
+        )
+    )
+    if terminated is not None and suspended:
+        raise PrincipalTerminatedError("principal has been terminated")
+
+    record = (
+        await db.execute(
+            select(ClerkPrincipalSuspension)
+            .where(
+                ClerkPrincipalSuspension.issuer == issuer,
+                ClerkPrincipalSuspension.subject == subject,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if not suspended:
+        if record is None:
+            return PrincipalSuspensionResult(
+                user_id=None,
+                suspended=False,
+                suspended_at=None,
+                changed=False,
+            )
+        user_id = record.user_id
+        if user_id is None:
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=subject,
+                bind_legacy=False,
+                allow_issuer_mismatch=True,
+            )
+            user_id = user.id if user is not None else None
+        if user_id is not None:
+            await lock_user_authority(db, user_id)
+        await db.delete(record)
+        await db.flush()
+        return PrincipalSuspensionResult(
+            user_id=user_id,
+            suspended=False,
+            suspended_at=None,
+            changed=True,
+        )
+
+    user = await load_clerk_user_for_issuer(
+        db,
+        issuer=issuer,
+        subject=subject,
+        bind_legacy=False,
+        allow_issuer_mismatch=True,
+    )
+    user_id = user.id if user is not None else None
+    authority_user_ids: set[UUID] = set()
+    if record is not None and record.user_id is not None:
+        authority_user_ids.add(record.user_id)
+    if user_id is not None:
+        authority_user_ids.add(user_id)
+    for authority_user_id in sorted(authority_user_ids, key=str):
+        await lock_user_authority(db, authority_user_id)
+    if record is None:
+        record = ClerkPrincipalSuspension(
+            issuer=issuer,
+            subject=subject,
+            user_id=user_id,
+            suspended_at=current_time,
+            reason=reason,
+        )
+        db.add(record)
+        await db.flush()
+        return PrincipalSuspensionResult(
+            user_id=user_id,
+            suspended=True,
+            suspended_at=current_time,
+            changed=True,
+        )
+
+    changed = record.reason != reason or record.user_id != user_id
+    record.reason = reason
+    record.user_id = user_id
+    if changed:
+        await db.flush()
+    return PrincipalSuspensionResult(
+        user_id=user_id,
+        suspended=True,
+        suspended_at=record.suspended_at,
+        changed=changed,
+    )
 
 
 async def fence_clerk_user_deleted(
@@ -943,6 +1125,8 @@ __all__ = [
     "PrincipalDeletionReceipt",
     "PrincipalIdentityConflictError",
     "PrincipalLifecycleConfigurationError",
+    "PrincipalSuspendedError",
+    "PrincipalSuspensionResult",
     "PrincipalTerminatedError",
     "PrincipalWebhookConflictError",
     "assert_clerk_principal_active",
@@ -957,4 +1141,5 @@ __all__ = [
     "project_clerk_user_authority",
     "resolve_clerk_owner_issuer",
     "record_principal_cleanup_failure",
+    "set_clerk_principal_suspension",
 ]

@@ -133,6 +133,30 @@ class AdminApiKeyCreate(BaseModel):
     managed: bool = False
 
 
+class AdminPrincipalSuspensionUpdate(BaseModel):
+    """Set or clear the platform-owned Clerk principal fence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId
+    suspended: bool
+    reason: str = Field(min_length=1, max_length=191)
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str) -> str:
+        if value != value.strip() or not value.isprintable():
+            raise ValueError("reason must be a printable canonical value")
+        return value
+
+
+class AdminPrincipalSuspensionResponse(BaseModel):
+    target_clerk_id: AdminClerkId
+    suspended: bool
+    suspended_at: datetime | None
+    changed: bool
+
+
 class AdminRuntimeStateUpsert(BaseModel):
     """Hosted runtime desired state written by the SaaS deploy orchestrator.
 

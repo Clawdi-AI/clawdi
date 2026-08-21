@@ -13,6 +13,12 @@ and reversibly gates all Clawdi authentication, including API keys;
 `user.deleted` remains an irreversible tombstone followed by cleanup. Session,
 organization, messaging, and billing webhooks are intentionally unsupported.
 
+The platform-owned `PUT /v1/admin/auth/suspensions` fence is independent of
+that Clerk `banned` projection. It accepts a Clerk subject before first login,
+preserves all account resources and credentials, and clearing it only removes
+the platform fence; it neither changes Clerk authority nor recreates a deleted
+principal.
+
 Set `CLERK_WEBHOOK_SIGNING_SECRET`, `CLERK_SECRET_KEY`, and
 `CLERK_JWT_ISSUER`. Backend API calls use the pinned Clerk API version
 `2026-05-12`.

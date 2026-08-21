@@ -39,7 +39,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
+from app.core.auth import (
+    invalidate_api_key_auth_cache,
+    invalidate_user_api_key_auth_cache,
+    require_admin_api_key,
+)
 from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
@@ -86,6 +90,8 @@ from app.schemas.admin import (
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
     AdminPlatformWhatsAppPairingSessionCreate,
+    AdminPrincipalSuspensionResponse,
+    AdminPrincipalSuspensionUpdate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
@@ -192,6 +198,7 @@ from app.services.principal_lifecycle import (
     configured_clerk_issuer,
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
+    set_clerk_principal_suspension,
 )
 from app.services.project_runtime_skills import (
     assert_agent_workspace_skill_write_compatible,
@@ -266,6 +273,68 @@ def _setting_enabled(value: JsonValue | None) -> bool | None:
         if isinstance(enabled, bool):
             return enabled
     return None
+
+
+@router.put(
+    "/auth/suspensions",
+    response_model=AdminPrincipalSuspensionResponse,
+)
+async def admin_set_principal_suspension(
+    body: AdminPrincipalSuspensionUpdate,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminPrincipalSuspensionResponse:
+    """Idempotently set or clear the platform-owned authentication fence."""
+
+    _no_store(response)
+    try:
+        issuer = configured_clerk_issuer()
+        result = await set_clerk_principal_suspension(
+            db,
+            issuer=issuer,
+            subject=body.target_clerk_id,
+            suspended=body.suspended,
+            reason=body.reason,
+        )
+    except PrincipalLifecycleConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk principal issuer is not configured",
+        ) from None
+    except PrincipalTerminatedError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Principal has been terminated",
+        ) from None
+
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=("principal.suspend" if body.suspended else "principal.unsuspend"),
+        resource_type="clerk_principal",
+        resource_id=body.target_clerk_id,
+        target_user_id=result.user_id,
+        source="api.admin",
+        details={
+            "issuer": issuer,
+            "reason": body.reason,
+            "changed": result.changed,
+        },
+    )
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    if result.user_id is not None:
+        invalidate_user_api_key_auth_cache(result.user_id)
+    return AdminPrincipalSuspensionResponse(
+        target_clerk_id=body.target_clerk_id,
+        suspended=result.suspended,
+        suspended_at=result.suspended_at,
+        changed=result.changed,
+    )
 
 
 @router.get("/settings", response_model=AdminAppSettingListResponse)

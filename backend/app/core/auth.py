@@ -29,6 +29,7 @@ from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
+    PrincipalSuspendedError,
     PrincipalTerminatedError,
     assert_clerk_principal_active,
     assert_user_authority_active,
@@ -221,6 +222,9 @@ def invalidate_user_api_key_auth_cache(user_id: UUID) -> None:
 async def _assert_active_user_or_401(db: AsyncSession, user_id: UUID) -> None:
     try:
         await assert_user_authority_active(db, user_id)
+    except PrincipalSuspendedError:
+        invalidate_user_api_key_auth_cache(user_id)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
     except PrincipalTerminatedError:
         invalidate_user_api_key_auth_cache(user_id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
@@ -366,6 +370,8 @@ async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | No
     clerk_id = settings.dev_auth_clerk_id
     try:
         issuer = await assert_clerk_principal_active(db, subject=clerk_id)
+    except PrincipalSuspendedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     if issuer is None:
@@ -679,6 +685,8 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                     )
                 )
             ).scalar_one_or_none()
+    except PrincipalSuspendedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     except PrincipalIdentityConflictError:
@@ -901,6 +909,8 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             subject=clerk_id,
             issuer=issuer or None,
         )
+    except PrincipalSuspendedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     await _assert_active_user_or_401(db, user.id)

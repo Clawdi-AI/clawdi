@@ -126,3 +126,25 @@ class ClerkPrincipalAuthority(Base, TimestampMixin):
     authority_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     message_id: Mapped[str] = mapped_column(String(191), nullable=False)
     payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ClerkPrincipalSuspension(Base, TimestampMixin):
+    """Reversible platform suspension independent of Clerk plan features."""
+
+    __tablename__ = "clerk_principal_suspensions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            name="uq_clerk_principal_suspensions_user_id",
+        ),
+    )
+
+    issuer: Mapped[str] = mapped_column(String(255), primary_key=True)
+    subject: Mapped[str] = mapped_column(String(200), primary_key=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    suspended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(String(191), nullable=False)
