@@ -4223,6 +4223,88 @@ echo spawned > '${installerLog}'
 		expect(existsSync(join(paths.userHome, ".local", "bin", "openclaw"))).toBe(false);
 	});
 
+	test("migrates the real legacy Hermes bundle once and then stays receipt-anchored", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
+		chmodSync(hermesCommand, 0o755);
+		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
+		const target = join(paths.userHome, ".hermes", "skills", "clawdi");
+		const skillPath = join(target, "SKILL.md");
+		const sourceSkill = readFileSync(join(source, "SKILL.md"));
+		const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
+		cpSync(source, target, { recursive: true });
+		chmodSync(target, 0o755);
+		chmodSync(skillPath, 0o644);
+		writeFileSync(
+			join(target, ".clawdi-managed.json"),
+			`${JSON.stringify({
+				schema: "clawdi.hostedBundledSkillMarker.v1",
+				owner: "clawdi runtime init",
+				id: "clawdi",
+				version: 1,
+				digest: catalogEntry.digest,
+			})}\n`,
+		);
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+		const receipt = join(
+			paths.userHome,
+			".hermes",
+			"skills",
+			".clawdi-manifest-receipts",
+			"clawdi.json",
+		);
+		const converge = (generation: number) => {
+			const result = convergeRuntimeManifest(
+				manifestLoad({ ...manifest, generation }, `legacy-hermes-bundle-${generation}`),
+				paths,
+			);
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		};
+		const snapshot = () => ({
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			receipt: readFileSync(receipt),
+		});
+
+		converge(1);
+		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
+		expect(readFileSync(skillPath)).toEqual(sourceSkill);
+		expect(sourceSkill).toHaveLength(6002);
+		expect(createHash("sha256").update(sourceSkill).digest("hex")).toBe(
+			"89b3820af2f694a84526c06990ab6398fef2aa5b25d7812dd7a04ed1d46bdd61",
+		);
+		expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({
+			ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
+			treeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
+
+		let stable = snapshot();
+		for (const generation of [2, 3]) {
+			converge(generation);
+			expect(snapshot()).toEqual(stable);
+		}
+
+		writeFileSync(skillPath, "tampered\n");
+		converge(4);
+		expect(readFileSync(skillPath)).toEqual(sourceSkill);
+		stable = snapshot();
+		converge(5);
+		expect(snapshot()).toEqual(stable);
+	});
+
 	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
 		if (process.geteuid?.() !== 0) return;
 		const paths = tempRuntimePaths();

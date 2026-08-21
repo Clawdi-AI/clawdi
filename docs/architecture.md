@@ -395,30 +395,18 @@ native runtime contracts: Hermes receives the signed `SKILL.md` URL through
 `openclaw skills install`. Unlink, archive, access loss, deletion, or hash change
 invalidates the signed file lookup.
 
-Hermes URL delivery follows the upstream native adapter verified at
-[`NousResearch/hermes-agent@a77ee88ce29c4f1d89f8d60e5b662322645072d8`](https://github.com/NousResearch/hermes-agent/blob/a77ee88ce29c4f1d89f8d60e5b662322645072d8/tools/skills_hub.py#L1428-L1564):
-it installs `SKILL.md` plus explicitly referenced files from the supported
-Skill directories and runs Hermes' normal quarantine and security scan. The
-URL adapter decodes `SKILL.md` as HTTP text and writes it as UTF-8 while support
-files remain byte payloads, so the CLI compares against that same native
-projection. An older Hermes that only installs one file fails closed and rolls
-back instead of silently accepting incomplete Skill bytes.
+Native Skill delivery treats the official installer output as authoritative.
+After the verified source is installed, the CLI fingerprints the actual Skill
+tree and writes that fingerprint to a private receipt bound to the immutable
+source identity. Later convergence compares the current tree only with that
+receipt. An identity change or fingerprint mismatch requires the reservation
+ledger to prove ownership before a forced reinstall records a new fingerprint.
+The official installer is already inside the execution trust boundary; Clawdi
+does not maintain a version-specific prediction of its output.
 
-OpenClaw directory delivery follows the upstream native CLI verified at
-[`openclaw/openclaw@74014c286d36a4fd8ec16d451333a17e8776fcfe`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/cli/skills-cli.ts#L615-L695).
-The command resolves an explicit `--agent` Workspace and sends local-directory
-sources through
-[`installSkillFromSource`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/source-install.ts#L360-L415),
-whose native archive path validates `SKILL.md`, runs the normal install policy
-and security scan, and copies the full directory into the resolved Workspace
-[`skills/<slug>` target](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/skills/lifecycle/archive-install.ts#L137-L238).
-Clawdi also checks the configured Workspace against the exact `workspace`
-field built into OpenClaw's
-[`AgentSummary`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.config.ts#L22-L113)
-and returned by
-[`openclaw agents list --json`](https://github.com/openclaw/openclaw/blob/74014c286d36a4fd8ec16d451333a17e8776fcfe/src/commands/agents.commands.list.ts#L137-L140)
-before and after installation. Any target or byte mismatch rolls back instead
-of creating a second writer.
+OpenClaw directory delivery also checks the configured Workspace against the
+official `openclaw agents list --json` roster before and after installation.
+A Workspace mismatch fails closed instead of creating a second writer.
 
 Hosted manifests render linked Project Skills for every `HostedRuntimeState`;
 Connected inventory returns them after Connected identity and authorization

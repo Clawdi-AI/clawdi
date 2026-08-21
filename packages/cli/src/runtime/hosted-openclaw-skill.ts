@@ -6,11 +6,9 @@ import {
 } from "../adapters/openclaw-workspace";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
-	collectManagedSkillTree,
 	managedSkillMarkerMatchesIdentity,
 	managedSkillMarkerOwnsTarget,
 	managedSkillReceiptMatchesIdentity,
-	managedSkillTreesEqual,
 	withManagedTargetRollback,
 	withStagedManagedSkill,
 	writeManagedSkillReceipt,
@@ -161,13 +159,6 @@ function assertOfficialWorkspace(input: { home: string; workspaceRoot: string })
 		throw new Error("OpenClaw official agent workspace changed during Skill reconciliation");
 }
 
-function nativeResultMatches(sourceDir: string, target: string): boolean {
-	return managedSkillTreesEqual(
-		collectManagedSkillTree(sourceDir),
-		collectManagedSkillTree(target, { exclude: EXCLUDED_NATIVE_FILES }),
-	);
-}
-
 function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>): string {
 	const details: string[] = [];
 	if (result.error) details.push(`spawn error: ${result.error.message}`);
@@ -191,8 +182,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	installDirectory(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);
 		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
-		if (nativeResultMatches(input.sourceDir, target) && managedSkillReceiptMatchesIdentity(receipt))
-			return "unchanged";
+		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
 		if (existsSync(target) && !input.previouslyReserved && !managedSkillMarkerOwnsTarget(receipt))
 			throw new Error(
 				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
@@ -223,10 +213,6 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 					throw new Error(
 						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 					);
-				if (!nativeResultMatches(input.sourceDir, target))
-					throw new Error(
-						`OpenClaw installed Skill outside the configured agent workspace or changed exact source bytes: ${target}`,
-					);
 				assertOfficialWorkspace(input);
 				writeManagedSkillReceipt(receipt);
 				return "installed" as const;
@@ -234,6 +220,12 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 		});
 	},
 	install(input) {
+		if (
+			managedSkillReceiptMatchesIdentity(
+				receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
+			)
+		)
+			return "unchanged";
 		return withStagedManagedSkill(input.skill, (sourceDir) =>
 			this.installDirectory({
 				home: input.home,
@@ -251,13 +243,8 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 		);
 	},
 	verifyOwned(input) {
-		return withStagedManagedSkill(
-			input.skill,
-			(sourceDir) =>
-				nativeResultMatches(sourceDir, targetDir(input.workspaceRoot, input.skill.skillId)) &&
-				managedSkillMarkerMatchesIdentity(
-					receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
-				),
+		return managedSkillReceiptMatchesIdentity(
+			receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
 		);
 	},
 	cleanupManifestOwned(input) {
