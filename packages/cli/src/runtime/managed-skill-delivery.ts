@@ -377,7 +377,7 @@ export function withStagedManagedSkill<T>(
 	operation: (sourceDir: string) => T,
 ): T {
 	if (createHash("sha256").update(skill.tarBytes).digest("hex") !== skill.archiveSha256) {
-		throw new Error("prepared Skill archive digest mismatch");
+		throw new ManagedSkillResourceError("prepared Skill archive digest mismatch");
 	}
 	const root = mkdtempSync(join(tmpdir(), "clawdi-managed-skill-"));
 	try {
@@ -386,11 +386,13 @@ export function withStagedManagedSkill<T>(
 			stdio: ["pipe", "pipe", "pipe"],
 			maxBuffer: 1024 * 1024,
 		});
-		if (extracted.status !== 0) throw new Error("prepared Skill archive could not be staged");
+		if (extracted.status !== 0) {
+			throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
+		}
 		const sourceDir = join(root, skill.skillId);
 		const sourceTree = collectManagedSkillTree(sourceDir);
 		if (!existsSync(join(sourceDir, "SKILL.md")) || sourceTree.status !== "collected") {
-			throw new Error(`prepared Skill archive is ${sourceTree.status}`);
+			throw new ManagedSkillResourceError(`prepared Skill archive is ${sourceTree.status}`);
 		}
 		const makeReadable = (path: string): void => {
 			const node = lstatSync(path);
@@ -404,7 +406,7 @@ export function withStagedManagedSkill<T>(
 			skill.source.type === "bundled" &&
 			managedSkillDirectoryDigest(sourceDir) !== skill.source.digest
 		) {
-			throw new Error("prepared bundled Skill tree digest mismatch");
+			throw new ManagedSkillResourceError("prepared bundled Skill tree digest mismatch");
 		}
 		return operation(sourceDir);
 	} finally {

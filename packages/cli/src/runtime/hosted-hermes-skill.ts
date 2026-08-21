@@ -328,6 +328,17 @@ function assertBundledResultMatches(sourceDir: string, target: string): void {
 	}
 }
 
+function installedProjectionMatchesSource(
+	source: ReadonlyMap<string, Buffer>,
+	installed: ReadonlyMap<string, Buffer>,
+): boolean {
+	if (!installed.has("SKILL.md")) return false;
+	for (const [path, bytes] of installed) {
+		if (!source.get(path)?.equals(bytes)) return false;
+	}
+	return true;
+}
+
 export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDriver = {
 	target(input) {
 		return withStagedManagedSkill(input.skill, (sourceDir) => {
@@ -400,7 +411,7 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 						const installed = collectRuntimeUserManagedSkillTree(installedTarget);
 						if (
 							installed.status !== "collected" ||
-							!managedSkillTreesEqual(files, installed.tree)
+							!installedProjectionMatchesSource(files, installed.tree)
 						) {
 							throw new ManagedSkillResourceError(
 								"Hermes official Skill install changed the verified source bytes",

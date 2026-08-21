@@ -1,22 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { Worker } from "node:worker_threads";
-import { collectManagedSkillTree, type ManagedSkillTree } from "./managed-skill-delivery";
+import {
+	collectManagedSkillTree,
+	ManagedSkillResourceError,
+	type ManagedSkillTree,
+} from "./managed-skill-delivery";
 
 const READY_TIMEOUT_MS = 5_000;
 const STOP_TIMEOUT_MS = 2_000;
 const SOURCE_LIFETIME_MS = 120_000;
-const ALLOWED_SUPPORT_DIRECTORIES = new Set([
-	"references",
-	"templates",
-	"scripts",
-	"assets",
-	"examples",
-]);
-const LOCAL_LINK_PATTERN =
-	/(?:\]\(|`|(?:^|[\s"']))((?:references|templates|scripts|assets|examples)\/[^\s)`"'<>]+)/gm;
-const SUSPICIOUS_LOCAL_REFERENCE_PATTERN =
-	/(?:references|templates|scripts|assets|examples)\/(?:[^\s)`"'<>]*\/)?\.\.(?:\/|$)/;
-
 enum SourceState {
 	Starting,
 	Ready,
@@ -33,54 +25,24 @@ interface LoopbackWorkerData {
 	lifetimeMs: number;
 }
 
-function normalizeReferencedPath(value: string): string | null {
-	const path = value.replace(/[.,;:]+$/, "").split(/[?#]/, 1)[0];
-	if (!path) return null;
-	let decoded: string;
-	try {
-		decoded = decodeURIComponent(path).replaceAll("\\", "/");
-	} catch {
-		return null;
-	}
-	if (decoded.startsWith("/")) return null;
-	const parts = decoded.split("/").filter((part) => part && part !== ".");
-	if (parts.length === 0 || parts.some((part) => part === ".." || part.includes(":"))) {
-		return null;
-	}
-	return parts.join("/");
-}
-
 export function hermesUrlSourceFiles(sourceDir: string): ManagedSkillTree {
 	const collected = collectManagedSkillTree(sourceDir);
 	if (collected.status !== "collected") {
-		throw new Error(`prepared Hermes Skill tree is ${collected.status}`);
+		throw new ManagedSkillResourceError(`prepared Hermes Skill tree is ${collected.status}`);
 	}
-	const skillBytes = collected.tree.get("SKILL.md");
-	if (!skillBytes) throw new Error("prepared Hermes Skill is missing SKILL.md");
-	let skillText: string;
-	try {
-		skillText = new TextDecoder("utf-8", { fatal: true }).decode(skillBytes);
-	} catch {
-		throw new Error("prepared Hermes SKILL.md is not valid UTF-8");
+	if (!collected.tree.has("SKILL.md")) {
+		throw new ManagedSkillResourceError("prepared Hermes Skill is missing SKILL.md");
 	}
-	const normalized = skillText.replaceAll("\\", "/");
-	if (SUSPICIOUS_LOCAL_REFERENCE_PATTERN.test(normalized)) {
-		throw new Error("prepared Hermes SKILL.md contains an unsafe support file reference");
-	}
-	const paths = new Set(["SKILL.md"]);
-	for (const match of normalized.matchAll(LOCAL_LINK_PATTERN)) {
-		const referenced = normalizeReferencedPath(match[1] ?? "");
-		if (!referenced || !ALLOWED_SUPPORT_DIRECTORIES.has(referenced.split("/", 1)[0] ?? "")) {
-			throw new Error("prepared Hermes SKILL.md contains an unsafe support file reference");
+	for (const path of collected.tree.keys()) {
+		const parts = path.split("/");
+		if (
+			path.includes("\\") ||
+			parts.some((part) => !part || part === "." || part === ".." || part.includes(":"))
+		) {
+			throw new ManagedSkillResourceError(`prepared Hermes Skill path is unsafe: ${path}`);
 		}
-		if (!collected.tree.has(referenced)) {
-			throw new Error(`prepared Hermes Skill support file is missing: ${referenced}`);
-		}
-		paths.add(referenced);
 	}
-	return new Map(
-		[...paths].sort().map((path) => [path, collected.tree.get(path) ?? Buffer.alloc(0)]),
-	);
+	return new Map([...collected.tree].sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function runLoopbackWorker(): void {
@@ -195,22 +157,32 @@ export function withHermesSkillLoopbackSource<T>(
 	const token = `0${randomBytes(32).toString("hex")}`;
 	const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
 	const state = new Int32Array(shared);
-	const worker = new Worker(`(${runLoopbackWorker.toString()})()`, {
-		eval: true,
-		workerData: {
-			state: shared,
-			token,
-			files: [...files],
-			lifetimeMs: SOURCE_LIFETIME_MS,
-		} satisfies LoopbackWorkerData,
-	});
+	let worker: Worker;
+	try {
+		worker = new Worker(`(${runLoopbackWorker.toString()})()`, {
+			eval: true,
+			workerData: {
+				state: shared,
+				token,
+				files: [...files],
+				lifetimeMs: SOURCE_LIFETIME_MS,
+			} satisfies LoopbackWorkerData,
+		});
+	} catch (error) {
+		throw new ManagedSkillResourceError("Hermes Skill loopback source did not start", {
+			cause: error,
+		});
+	}
 	worker.unref();
 	try {
 		const ready = waitForState(state, SourceState.Starting, READY_TIMEOUT_MS);
-		if (ready !== SourceState.Ready) throw new Error("Hermes Skill loopback source did not start");
+		if (ready !== SourceState.Ready) {
+			throw new ManagedSkillResourceError("Hermes Skill loopback source did not start");
+		}
 		const port = Atomics.load(state, 1);
-		if (port < 1 || port > 65_535)
-			throw new Error("Hermes Skill loopback source returned an invalid port");
+		if (port < 1 || port > 65_535) {
+			throw new ManagedSkillResourceError("Hermes Skill loopback source returned an invalid port");
+		}
 		return operation({ url: `http://127.0.0.1:${port}/${token}/SKILL.md`, files });
 	} finally {
 		if (Atomics.load(state, 0) === SourceState.Ready) {
