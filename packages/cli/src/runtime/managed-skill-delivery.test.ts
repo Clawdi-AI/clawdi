@@ -10,7 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { managedSkillReceiptOwnsTarget, withManagedTargetRollback } from "./managed-skill-delivery";
+import {
+	managedSkillReceiptMatchesIdentity,
+	withManagedTargetRollback,
+} from "./managed-skill-delivery";
 
 test("restores an already-backed-up target when receipt backup establishment fails", () => {
 	const root = mkdtempSync(join(tmpdir(), "managed-skill-rollback-"));
@@ -58,10 +61,11 @@ test("never treats a null fingerprint as ownership of an absent target", () => {
 			}),
 		);
 		expect(
-			managedSkillReceiptOwnsTarget({
+			managedSkillReceiptMatchesIdentity({
 				path: receipt,
 				schemaVersion: "test.receipt.v2",
 				skillId: "review-pr",
+				ownershipIdentity: "github\0review-pr",
 				target: join(root, "absent-target"),
 			}),
 		).toBe(false);

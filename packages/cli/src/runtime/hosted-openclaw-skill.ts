@@ -25,6 +25,8 @@ import {
 const OPENCLAW_AGENT_ID = "main";
 const SOURCE_RECEIPT = ".openclaw/source-origin.json";
 const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
+const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
+const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
 
 export interface HostedOpenClawSkillDriver {
 	resolveWorkspace(input: { home: string; repairInvalidConfig?: boolean }): string;
@@ -148,7 +150,7 @@ function repairInvalidConfig(command: string, home: string): boolean {
 		["config", "validate", "--json"],
 		home,
 		home,
-		{ timeoutMs: 15_000, maxBufferBytes: 1024 * 1024 },
+		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
 	);
 	if (!invalidConfigValidation(validation)) return false;
 	const repair = spawnRuntimeUserCommand(
@@ -156,7 +158,7 @@ function repairInvalidConfig(command: string, home: string): boolean {
 		["doctor", "--fix", "--non-interactive"],
 		home,
 		home,
-		{ timeoutMs: 120_000, maxBufferBytes: 4 * 1024 * 1024 },
+		{ timeoutMs: OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS, maxBufferBytes: 4 * 1024 * 1024 },
 	);
 	if (repair.status !== 0) throw new Error("OpenClaw official config repair failed");
 	return true;
@@ -165,12 +167,12 @@ function repairInvalidConfig(command: string, home: string): boolean {
 function resolveOfficialWorkspace(home: string, repairInvalidConfigOnFailure = false): string {
 	const command = commandPath(home);
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
-		timeoutMs: 15_000,
+		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
 	});
 	if (result.status !== 0 && repairInvalidConfigOnFailure && repairInvalidConfig(command, home)) {
 		result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
-			timeoutMs: 15_000,
+			timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 			maxBufferBytes: 1024 * 1024,
 		});
 	}

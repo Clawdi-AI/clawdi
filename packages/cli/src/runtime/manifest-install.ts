@@ -95,6 +95,7 @@ export function runtimeAppRoot(name: string, home: string): string | null {
 }
 const HERMES_DASHBOARD_CAPABILITY_PROBE =
 	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+const HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS = 30_000;
 const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 function runtimeInstallTimeoutMs(): number {
 	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
@@ -123,7 +124,7 @@ function hermesDashboardCapabilityError(
 			["-c", HERMES_DASHBOARD_CAPABILITY_PROBE],
 			runtime.install.home,
 			runtime.install.home,
-			{ timeoutMs: 30_000 },
+			{ timeoutMs: HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS },
 		);
 	} catch (error) {
 		return `Hermes dashboard runtime capability probe failed: ${

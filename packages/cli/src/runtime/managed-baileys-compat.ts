@@ -26,6 +26,7 @@ export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v3";
 const BAILEYS_COMPATIBLE_MAJOR = 7;
 const RECEIPT_FILE = "managed-baileys-compat.json";
 const RECEIPT_SCHEMA = "clawdi.managedBaileysPatchReceipt.v4";
+const HERMES_BAILEYS_DEPENDENCY_INSTALL_TIMEOUT_MS = 300_000;
 
 export type ManagedBaileysRuntime = "openclaw" | "hermes";
 
@@ -426,7 +427,7 @@ function ensureHermesManagedBaileysDependencies(home: string, appRoot: string): 
 		["ci", "--ignore-scripts", "--silent"],
 		home,
 		bridgeRoot,
-		{ timeoutMs: 300_000 },
+		{ timeoutMs: HERMES_BAILEYS_DEPENDENCY_INSTALL_TIMEOUT_MS },
 	);
 	if (result.status !== 0) {
 		const detail = String(result.stderr || result.stdout || "npm ci failed")

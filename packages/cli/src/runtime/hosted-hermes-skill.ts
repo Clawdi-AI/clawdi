@@ -21,6 +21,8 @@ import {
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
+const HERMES_SKILL_COMMAND_TIMEOUT_MS = 120_000;
+
 export interface HostedHermesSkillExactSourceDriver {
 	install(input: {
 		home: string;
@@ -115,7 +117,7 @@ function runHermes(input: { home: string; appRoot: string }, args: string[], std
 		input.appRoot,
 		{
 			input: stdin,
-			timeoutMs: 120_000,
+			timeoutMs: HERMES_SKILL_COMMAND_TIMEOUT_MS,
 			maxBufferBytes: 1024 * 1024,
 		},
 	);
@@ -145,21 +147,25 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		if (withRuntimeUserFileAccess(() => existsSync(target)) && !input.previouslyReserved)
 			throw new Error("Hermes Skill target is not paired with a manifest reservation");
 		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
-		return withStagedManagedSkill(input.skill, (sourceDir) =>
-			withManagedTargetRollback({
-				target,
-				receipt: receipt.path,
-				operation: () => {
-					if (input.skill.source.type === "bundled") {
-						withRuntimeUserFileAccess(() => replaceManagedSkillDirectoryAtomic(sourceDir, target));
+		return withStagedManagedSkill(input.skill, (sourceDir) => {
+			if (input.skill.source.type === "bundled") {
+				replaceManagedSkillDirectoryAtomic(sourceDir, target, {
+					receipt: receipt.path,
+					afterActivate: () => {
 						if (!bundledResultMatches(sourceDir, target)) {
 							throw new ManagedSkillResourceError(
 								"Hermes bundled Skill activation changed exact source bytes",
 							);
 						}
 						writeManagedSkillReceipt(receipt);
-						return "installed" as const;
-					}
+					},
+				});
+				return "installed" as const;
+			}
+			return withManagedTargetRollback({
+				target,
+				receipt: receipt.path,
+				operation: () => {
 					const args = [
 						"skills",
 						"install",
@@ -177,8 +183,8 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 					writeManagedSkillReceipt(receipt);
 					return "installed" as const;
 				},
-			}),
-		);
+			});
+		});
 	},
 	anchorOwnership(input) {
 		writeManagedSkillReceipt(

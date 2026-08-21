@@ -49,6 +49,8 @@ import {
 } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
+const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
+
 export function writeProviderHealthStatus(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
@@ -481,7 +483,7 @@ function installHostedCodexBootstrap(
 		],
 		paths.userHome,
 		paths.userHome,
-		{ timeoutMs: 600_000 },
+		{ timeoutMs: CODEX_BOOTSTRAP_TIMEOUT_MS },
 	);
 	if (result.status !== 0) {
 		throw new Error(
