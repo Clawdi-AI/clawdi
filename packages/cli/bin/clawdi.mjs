@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Thin wrapper that forwards to the bundled CLI. On Node 22+ enable the
+// Thin wrapper that forwards to the bundled CLI. On supported Node 24+ enable the
 // compile cache for faster startup; elsewhere this is a no-op.
 import module from "node:module";
 

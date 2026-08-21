@@ -130,7 +130,7 @@ export function AddAgentSetup() {
 				<TabsContent value="commands" className="mt-2 space-y-4">
 					<div>
 						<p className="text-sm font-medium">Run these commands in order on the machine</p>
-						<p className="mt-1 text-xs text-muted-foreground">Node.js 22.5+ is required.</p>
+						<p className="mt-1 text-xs text-muted-foreground">Node.js 24+ is required.</p>
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							Prefer Bun? Use: bun add -g clawdi@latest
 						</p>

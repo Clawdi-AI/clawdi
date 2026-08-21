@@ -46,7 +46,7 @@ case "$os" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    fail 'Windows native installation is not supported; install an exact version with npm: npm i -g clawdi@<version> (Node >=22.5)'
+    fail 'Windows native installation is not supported; install an exact version with npm: npm i -g clawdi@<version> (Node >=24)'
     ;;
   *) fail "unsupported operating system: $os" ;;
 esac

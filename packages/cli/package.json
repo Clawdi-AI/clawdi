@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.13.109",
+	"version": "0.13.110",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
@@ -17,7 +17,7 @@
 		"README.md"
 	],
 	"engines": {
-		"node": ">=22.5"
+		"node": ">=24"
 	},
 	"publishConfig": {
 		"access": "public"
@@ -65,10 +65,10 @@
 		"@clawdi/shared": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.30.0",
 		"@types/bun": "^1.4.0",
-		"@types/node": "^22.20.1",
+		"@types/node": "^24.13.3",
 		"chalk": "^6.0.0",
 		"commander": "^15.0.0",
-		"eventsource-parser": "^3.1.1",
+		"eventsource-parser": "^4.1.0",
 		"openapi-fetch": "^0.17.0",
 		"tar": "^7.5.22",
 		"typescript": "catalog:",

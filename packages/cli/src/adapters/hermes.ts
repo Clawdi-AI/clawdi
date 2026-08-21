@@ -55,12 +55,11 @@ interface MessageRow {
 /**
  * Open a Hermes SQLite db using the runtime's built-in binding:
  * - Under Bun: `bun:sqlite` (built-in, the dev/test default).
- * - Under Node 22.5+: `node:sqlite` (built-in; Node 22.x still emits an
- *   ExperimentalWarning at first import, harmless and one-shot).
+ * - Under the supported Node 24+ runtime: `node:sqlite` (built-in).
  *
  * Neither cross-loads — Bun has no `node:sqlite` (oven-sh/bun#15561) and
  * Node has no `bun:sqlite`. Importing lazily means users who never touch
- * Hermes don't pay the load cost or hear the experimental warning.
+ * Hermes don't pay the load cost.
  *
  * Both expose a `prepare(sql).all(args)` surface, so call sites stay
  * runtime-agnostic.

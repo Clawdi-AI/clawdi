@@ -20,9 +20,11 @@ import {
 import { classifySseReconnect, consumeSse, parseRecord } from "./sse-client";
 
 const originalFetch = globalThis.fetch;
+const originalStderrWrite = process.stderr.write;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
+	process.stderr.write = originalStderrWrite;
 });
 
 function responseFromChunks(chunks: string[]): Response {
@@ -140,14 +142,21 @@ describe("consumeSse reconnect metadata", () => {
 		]);
 	});
 
-	it("ignores comments and malformed records while continuing the stream", async () => {
-		const body =
-			': ping\nmalformed-field\n\nevent: skill_changed\ndata: not-json\n\nevent: skill_deleted\ndata: {"type":"skill_deleted","skill_key":"valid","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}\n\n';
-		globalThis.fetch = Object.assign(async () => new Response(body), {
+	it("logs complete unknown fields, discards fragmented ones, and continues", async () => {
+		const chunks = [
+			": ping\ncomplete-unknown-field\n\npartial-unknown",
+			'field\n\nevent: skill_changed\ndata: not-json\n\nevent: skill_deleted\ndata: {"type":"skill_deleted","skill_key":"valid","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}\n\n',
+		];
+		globalThis.fetch = Object.assign(async () => responseFromChunks(chunks), {
 			preconnect: originalFetch.preconnect,
 		});
 		const abort = new AbortController();
 		const events: unknown[] = [];
+		const logs: string[] = [];
+		process.stderr.write = ((chunk: string | Uint8Array) => {
+			logs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+			return true;
+		}) as typeof process.stderr.write;
 		await consumeSse({
 			apiUrl: "https://cloud.example",
 			apiKey: "test-key",
@@ -158,6 +167,9 @@ describe("consumeSse reconnect metadata", () => {
 			onDisconnect: () => abort.abort(),
 		});
 		expect(events).toEqual([expect.objectContaining({ skill_key: "valid" })]);
+		const logEvents = logs.map((line) => JSON.parse(line) as { event?: string });
+		expect(logEvents.filter((entry) => entry.event === "sse.framing_invalid")).toHaveLength(1);
+		expect(logEvents.filter((entry) => entry.event === "sse.parse_failed")).toHaveLength(1);
 	});
 
 	it("declares the Agent-authoritative protocol on every stream", async () => {

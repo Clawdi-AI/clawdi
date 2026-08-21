@@ -343,7 +343,7 @@ backend-to-backend secret is required; the user's Clerk JWT is the conduit.
 
 | Agent | What you need to set |
 |---|---|
-| Hermes | `HERMES_HOME=<hermes-state-dir>` when the runtime does not use Hermes' default HOME path. The adapter reads SQLite via `node:sqlite` (Node 22.5+) or `bun:sqlite` — both are built-in, no native bindings to ship. |
+| Hermes | `HERMES_HOME=<hermes-state-dir>` when the runtime does not use Hermes' default HOME path. The adapter reads SQLite via `node:sqlite` on the supported Node 24+ runtime, or via `bun:sqlite` under Bun; both are built in, with no native bindings to ship. |
 | OpenClaw | `OPENCLAW_STATE_DIR=<openclaw-state-dir>` when the runtime does not use OpenClaw's default HOME path. `OPENCLAW_AGENT_ID=<id>` if the runtime runs a single agent personality; omit to sync every agent under `agents/`. |
 
 ### What NOT to do
