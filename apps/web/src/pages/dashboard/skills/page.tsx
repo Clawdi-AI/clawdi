@@ -245,6 +245,7 @@ function SkillsPageInner() {
 						<Button
 							variant="outline"
 							size="sm"
+							nativeButton={false}
 							render={<Link to="/agents/$id/skills" params={{ id: legacyTarget }} />}
 						>
 							Open workspace
@@ -384,7 +385,7 @@ function ProjectSelection({ projects, loading }: { projects: ProjectRow[]; loadi
 				icon={FolderKanban}
 				description="Create a Project to bundle Skills and Vault access for Agents."
 				action={
-					<Button render={<Link to="/projects" />}>
+					<Button nativeButton={false} render={<Link to="/projects" />}>
 						<Plus />
 						Create project
 					</Button>
