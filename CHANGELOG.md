@@ -10,6 +10,22 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.9
+
+Package: `clawdi@0.14.9`
+
+### Fixed
+
+- Hosted Hermes skills now install by placing the verified bytes directly into
+  Hermes's official local skills directory — the same mechanism the bundled
+  skill has always used — instead of driving `hermes skills install` over a
+  loopback URL. This removes the installer's scanner, naming, and
+  reference-fetch failure modes entirely.
+- Repairing drifted ownership no longer re-runs official service installers:
+  install receipts are bound to content only, not ownership metadata.
+- Platform enclaves stay root-owned at all times outside installer critical
+  sections, and skill reservations are recorded only after a verified install.
+
 ## Clawdi CLI v0.14.8
 
 Package: `clawdi@0.14.8`
