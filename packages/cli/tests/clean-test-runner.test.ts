@@ -155,7 +155,7 @@ describe("clean runner suite contract", () => {
 		});
 		expect(cliScripts).toMatchObject({
 			test: "../../scripts/test.sh cli",
-			"test:internal": "bun test --isolate --max-concurrency=1",
+			"test:internal": "bun test --isolate --max-concurrency=1 --timeout=30000",
 			"test:e2e": "../../scripts/test.sh cli tests/e2e",
 			"test:watch:local": "bun test --watch",
 		});
