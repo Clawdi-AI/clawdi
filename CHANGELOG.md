@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.6
+
+Package: `clawdi@0.14.6`
+
+### Fixed
+
+- Hosted project skills now install correctly on Hermes 0.20: the installed
+  location is resolved from Hermes's own install lock instead of assuming the
+  manifest ID names the directory, and installs that print errors but exit
+  zero are no longer treated as success.
+
 ## Clawdi CLI v0.14.5
 
 Package: `clawdi@0.14.5`
