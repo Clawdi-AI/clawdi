@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import {
 	installReservedManagedSkill,
+	managedSkillReservationLedgerPath,
 	managedSkillReservationState,
 	migrateLegacyLocalSetupSkill,
 	mutateUserSkillTarget,
@@ -28,6 +29,11 @@ const originalHome = process.env.HOME;
 const originalMode = process.env.CLAWDI_RUNTIME_MODE;
 const originalState = process.env.CLAWDI_SERVICE_STATE_DIR;
 let root = "";
+
+const verifiedInstall = {
+	verify: () => true,
+	discard: () => undefined,
+};
 
 function target(parent = "one"): string {
 	const path = join(root, parent, "skills", "example");
@@ -202,8 +208,9 @@ describe("managed Skill reservations", () => {
 			},
 			() => {
 				expect(shouldIgnoreUserSkill(previousTarget, "project-skill")).toBe(true);
-				expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(true);
+				expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(false);
 			},
+			verifiedInstall,
 		);
 
 		expect(managedSkillReservationState(previousTarget, "project-skill")).toBe("unreserved");
@@ -347,6 +354,7 @@ describe("managed Skill reservations", () => {
 		writeFileSync(join(source, "SKILL.md"), "# Updated\n");
 		writeFileSync(join(path, "removed.txt"), "stale\n");
 
+		const ledgerPath = managedSkillReservationLedgerPath();
 		installReservedManagedSkill(
 			{
 				targetDir: path,
@@ -355,12 +363,44 @@ describe("managed Skill reservations", () => {
 				digest: "e".repeat(64),
 				manager: "local-setup",
 			},
-			() => replaceManagedSkillDirectoryAtomic(source, path),
+			() => {
+				expect(managedSkillReservationState(path, "example")).toBe("unreserved");
+				const pendingLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+				expect(pendingLedger.reservations[path]).toBeUndefined();
+				expect(pendingLedger.pendingReservations[path]).toMatchObject({
+					id: "example",
+					manager: "local-setup",
+				});
+				replaceManagedSkillDirectoryAtomic(source, path);
+			},
+			{
+				verify: () => readFileSync(join(path, "SKILL.md"), "utf8") === "# Updated\n",
+				discard: () => rmSync(path, { recursive: true, force: true }),
+			},
 		);
 
 		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Updated\n");
 		expect(existsSync(join(path, "removed.txt"))).toBe(false);
 		expect(managedSkillReservationState(path, "example")).toBe("reserved");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).pendingReservations).toEqual({});
+		const committedLedger = readFileSync(ledgerPath, "utf8");
+		expect(
+			installReservedManagedSkill(
+				{
+					targetDir: path,
+					id: "example",
+					version: 2,
+					digest: "e".repeat(64),
+					manager: "local-setup",
+				},
+				() => "unchanged" as const,
+				{
+					verify: () => readFileSync(join(path, "SKILL.md"), "utf8") === "# Updated\n",
+					discard: () => rmSync(path, { recursive: true, force: true }),
+				},
+			),
+		).toBe("unchanged");
+		expect(readFileSync(ledgerPath, "utf8")).toBe(committedLedger);
 	});
 
 	it("restores target and ownership when activation fails", () => {
@@ -370,6 +410,13 @@ describe("managed Skill reservations", () => {
 		const path = target();
 		mkdirSync(source, { recursive: true });
 		writeFileSync(join(source, "SKILL.md"), "# Updated\n");
+		reserveManagedSkill({
+			targetDir: path,
+			id: "example",
+			version: 1,
+			digest: "e".repeat(64),
+			manager: "local-setup",
+		});
 
 		expect(() =>
 			installReservedManagedSkill(
@@ -386,10 +433,44 @@ describe("managed Skill reservations", () => {
 							throw new Error("injected activation failure");
 						},
 					}),
+				verifiedInstall,
 			),
 		).toThrow("injected activation failure");
 
 		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Example\n");
+		expect(managedSkillReservationState(path, "example")).toBe("reserved");
+	});
+
+	it("removes stale committed ownership when an installed replacement cannot be verified", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const path = target();
+		reserveManagedSkill({
+			targetDir: path,
+			id: "example",
+			version: 1,
+			digest: "e".repeat(64),
+			manager: "local-setup",
+		});
+
+		expect(() =>
+			installReservedManagedSkill(
+				{
+					targetDir: path,
+					id: "example",
+					version: 2,
+					digest: "f".repeat(64),
+					manager: "local-setup",
+				},
+				() => writeFileSync(join(path, "SKILL.md"), "# Unverified\n"),
+				{
+					verify: () => false,
+					discard: () => rmSync(path, { recursive: true, force: true }),
+				},
+			),
+		).toThrow("installation could not be verified");
+
+		expect(existsSync(path)).toBe(false);
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
 	});
 
@@ -419,6 +500,7 @@ describe("managed Skill reservations", () => {
 							throw new Error("restore failed");
 						},
 					}),
+				verifiedInstall,
 			),
 		).toThrow(
 			/activation failed.*restore failed.*previous version retained as a recovery artifact/,
@@ -456,6 +538,7 @@ describe("managed Skill reservations", () => {
 						throw new Error("cleanup failed");
 					},
 				}),
+			verifiedInstall,
 		);
 
 		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Updated\n");
@@ -492,9 +575,9 @@ try {
 		manager: "local-setup",
 	})}, () => {
     writeFileSync(${JSON.stringify(ready)}, "ready");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
-    throw new Error("rollback");
-  });
+	    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+	    throw new Error("rollback");
+	  }, { verify: () => true, discard: () => {} });
 } catch (error) {
   if (!(error instanceof Error) || error.message !== "rollback") throw error;
 }`,
@@ -550,9 +633,9 @@ installReservedManagedSkill(${JSON.stringify({
 				})}, () => {
   mkdirSync(${JSON.stringify(path)}, { recursive: true });
   writeFileSync(${JSON.stringify(join(path, "SKILL.md"))}, "# Managed\\n");
-  writeFileSync(${JSON.stringify(ready)}, "ready");
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
-});`,
+	  writeFileSync(${JSON.stringify(ready)}, "ready");
+	  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+	}, { verify: () => true, discard: () => {} });`,
 			],
 			{
 				env: {

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
 	claimLegacyHostedBundledSkill,
@@ -13,6 +13,7 @@ import {
 } from "./hosted-sourced-skill-archive";
 import {
 	ManagedSkillResourceError,
+	managedSkillReceiptPath,
 	migrateLegacyManagedSkillReceiptDirectory,
 } from "./managed-skill-delivery";
 import {
@@ -20,6 +21,9 @@ import {
 	type ManagedSkillReservationSnapshot,
 	managedSkillReservationOwner,
 	managedSkillReservations,
+	type PendingManagedSkillReservationSnapshot,
+	pendingManagedSkillReservations,
+	recoverPendingManagedSkillInstallation,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
@@ -46,7 +50,7 @@ interface HostedSkillProjectionDriver {
 		previouslyReserved: boolean,
 	): "installed" | "unchanged";
 	anchorOwnership(skillId: string, ownershipIdentity: string, targetDir: string): void;
-	hasOwnershipReceipt(skill: PreparedHostedSourcedSkill, targetDir: string): boolean;
+	verifyOwned(skill: PreparedHostedSourcedSkill, targetDir: string): boolean;
 	remove(reservation: ManagedSkillReservationSnapshot): void;
 }
 function preparedSkillMatchesDesired(
@@ -132,12 +136,12 @@ function hostedSkillProjectionDrivers(input: {
 					ownershipIdentity,
 					targetDir,
 				}),
-			hasOwnershipReceipt: (skill, targetDir) =>
-				input.hermesDriver.hasOwnershipReceipt({
+			verifyOwned: (skill, targetDir) =>
+				input.hermesDriver.verifyOwned({
 					home: input.home,
+					appRoot,
 					managedResourceRoot: input.managedResourceRoot,
-					skillId: skill.skillId,
-					ownershipIdentity: skill.sourceIdentity,
+					skill,
 					targetDir,
 				}),
 			remove: (reservation) => {
@@ -196,13 +200,12 @@ function hostedSkillProjectionDrivers(input: {
 					ownershipIdentity,
 				});
 			},
-			hasOwnershipReceipt: (skill, _targetDir) => {
+			verifyOwned: (skill, _targetDir) => {
 				if (!input.openClawWorkspaceRoot) return false;
-				return input.openClawDriver.hasOwnershipReceipt({
+				return input.openClawDriver.verifyOwned({
 					workspaceRoot: input.openClawWorkspaceRoot,
 					managedResourceRoot: input.managedResourceRoot,
-					skillId: skill.skillId,
-					ownershipIdentity: skill.sourceIdentity,
+					skill,
 				});
 			},
 			remove: (reservation) => {
@@ -258,6 +261,67 @@ export function migrateLegacyHostedSkillReceipts(input: {
 		});
 	}
 }
+
+function pendingReservationMatchesPrepared(
+	reservation: PendingManagedSkillReservationSnapshot,
+	skill: PreparedHostedSourcedSkill,
+): boolean {
+	const identity = preparedReservationIdentity(skill);
+	return (
+		reservation.id === skill.skillId &&
+		reservation.version === identity.version &&
+		reservation.digest === identity.digest &&
+		reservation.sourceIdentity === identity.sourceIdentity
+	);
+}
+
+function discardPendingHostedSkill(
+	driver: HostedSkillProjectionDriver,
+	managedResourceRoot: string,
+	skillId: string,
+	targetDir: string,
+): void {
+	withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true }));
+	rmSync(managedSkillReceiptPath(managedResourceRoot, driver.name, skillId), { force: true });
+}
+
+function recoverPendingHostedSkillInstallations(
+	driver: HostedSkillProjectionDriver,
+	manifest: RuntimeManifest,
+	managedResourceRoot: string,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+): void {
+	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return;
+	const desiredEntries = manifest.projection?.skills?.entries ?? {};
+	const pendingReservations = pendingManagedSkillReservations("hosted-manifest").filter(
+		(reservation) => dirname(reservation.targetDir) === driver.skillsRoot,
+	);
+	for (const reservation of pendingReservations) {
+		const desired = desiredEntries[reservation.id];
+		const prepared = preparedSkills.get(reservation.id);
+		const promotable =
+			driver.enabled &&
+			desired?.enabled === true &&
+			preparedSkillMatchesDesired(prepared, desired, reservation.id) &&
+			pendingReservationMatchesPrepared(reservation, prepared)
+				? prepared
+				: null;
+		recoverPendingManagedSkillInstallation({
+			targetDir: reservation.targetDir,
+			id: reservation.id,
+			manager: "hosted-manifest",
+			verify: () => promotable !== null && driver.verifyOwned(promotable, reservation.targetDir),
+			discard: () =>
+				discardPendingHostedSkill(
+					driver,
+					managedResourceRoot,
+					reservation.id,
+					reservation.targetDir,
+				),
+		});
+	}
+}
+
 function recoverHostedSkillReservations(
 	driver: HostedSkillProjectionDriver,
 	manifest: RuntimeManifest,
@@ -305,7 +369,7 @@ function recoverHostedSkillReservations(
 		if (
 			!withRuntimeUserFileAccess(() => existsSync(targetDir)) ||
 			managedSkillReservationOwner(targetDir, skillId) !== "unreserved" ||
-			!driver.hasOwnershipReceipt(prepared, targetDir)
+			!driver.verifyOwned(prepared, targetDir)
 		) {
 			continue;
 		}
@@ -355,6 +419,7 @@ function applyHostedSkills(
 	driver: HostedSkillProjectionDriver,
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
+	managedResourceRoot: string,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): string[] {
 	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return [];
@@ -424,6 +489,10 @@ function applyHostedSkills(
 				() => {
 					return driver.install(prepared, targetDir, reservation !== undefined);
 				},
+				{
+					verify: () => driver.verifyOwned(prepared, targetDir),
+					discard: () => discardPendingHostedSkill(driver, managedResourceRoot, skillId, targetDir),
+				},
 			);
 		} catch (error) {
 			if (!(error instanceof ManagedSkillResourceError)) throw error;
@@ -472,6 +541,7 @@ export function reconcileHostedSkillProjection(input: {
 	});
 	runHostedSkillProjectionStep("runtime Skill projection planning failed", () => {
 		for (const driver of drivers) {
+			recoverPendingHostedSkillInstallations(driver, manifest, managedResourceRoot, preparedSkills);
 			recoverHostedSkillReservations(driver, manifest, preparedSkills);
 			validateHostedSkillsPlan(driver, manifest, preparedSkills);
 		}
@@ -480,7 +550,14 @@ export function reconcileHostedSkillProjection(input: {
 	for (const driver of drivers) {
 		const driverFailures = runHostedSkillProjectionStep(
 			`runtime ${driver.name} Skill projection failed`,
-			() => applyHostedSkills(driver, observations.get(driver.name), manifest, preparedSkills),
+			() =>
+				applyHostedSkills(
+					driver,
+					observations.get(driver.name),
+					manifest,
+					managedResourceRoot,
+					preparedSkills,
+				),
 		);
 		failures.push(
 			...driverFailures.map(

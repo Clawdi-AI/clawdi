@@ -4691,15 +4691,15 @@ echo spawned > '${installerLog}'
 				return "unchanged" as const;
 			},
 			anchorOwnership: () => undefined,
-			hasOwnershipReceipt: (input: { ownershipIdentity: string }) => {
+			hasOwnershipReceipt: () => false,
+			verifyOwned: (input: { skill: PreparedHostedSourcedSkill }) => {
 				verifyCalls += 1;
 				return (
-					input.ownershipIdentity === prepared.sourceIdentity &&
+					input.skill.sourceIdentity === prepared.sourceIdentity &&
 					existsSync(join(skillDir, "SKILL.md")) &&
 					readFileSync(join(skillDir, "SKILL.md"), "utf8") === "manifest-owned\n"
 				);
 			},
-			verifyOwned: () => false,
 			uninstall: () => {
 				uninstalls += 1;
 				rmSync(skillDir, { recursive: true, force: true });
@@ -4748,7 +4748,7 @@ echo spawned > '${installerLog}'
 		);
 		expect(installed.installErrors).toEqual([]);
 		expect(installs).toEqual([false, true]);
-		expect(verifyCalls).toBe(2);
+		expect(verifyCalls).toBe(3);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(true);
 		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("manifest-owned\n");
 
@@ -4776,6 +4776,120 @@ echo spawned > '${installerLog}'
 		expect(existsSync(skillDir)).toBe(false);
 		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("recovers a killed hosted Skill install before retrying convergence", async () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const skillId = "crash-recovery";
+		const source = {
+			type: "github" as const,
+			url: "https://github.com/Clawdi-AI/store",
+			path: `skills/${skillId}`,
+			commit: "a".repeat(40),
+		};
+		const sourceIdentity = `github\0${skillId}\0${source.url}\0${source.path}\0${source.commit}`;
+		const prepared: PreparedHostedSourcedSkill = {
+			skillId,
+			source,
+			sourceIdentity,
+			archiveSha256: "b".repeat(64),
+			tarBytes: Buffer.from("crash recovery archive"),
+		};
+		const target = join(paths.userHome, ".hermes", "skills", skillId);
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", skillId);
+		const ready = join(dirname(paths.serviceStateRoot), "skill-installer-ready");
+		const moduleUrl = new URL("./managed-skill-reservation.ts", import.meta.url).href;
+		const child = Bun.spawn(
+			[
+				process.execPath,
+				"-e",
+				`import { writeFileSync } from "node:fs";
+const { installReservedManagedSkill } = await import(${JSON.stringify(moduleUrl)});
+installReservedManagedSkill(${JSON.stringify({
+					targetDir: target,
+					id: skillId,
+					sourceIdentity,
+					manager: "hosted-manifest",
+				})}, () => {
+  writeFileSync(${JSON.stringify(ready)}, "ready");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+}, { verify: () => true, discard: () => {} });`,
+			],
+			{ env: process.env, stdout: "pipe", stderr: "pipe" },
+		);
+		for (let attempt = 0; attempt < 200 && !existsSync(ready); attempt += 1) {
+			await Bun.sleep(10);
+		}
+		expect(existsSync(ready)).toBe(true);
+		child.kill("SIGKILL");
+		expect(await child.exited).not.toBe(0);
+
+		const ledgerPath = managedSkillReservationLedgerPath();
+		const interruptedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		expect(interruptedLedger.reservations[target]).toBeUndefined();
+		expect(interruptedLedger.pendingReservations[target]).toBeDefined();
+		expect(existsSync(target)).toBe(false);
+		expect(existsSync(receipt)).toBe(false);
+		expect(() =>
+			reserveManagedSkill({
+				targetDir: target,
+				id: skillId,
+				sourceIdentity,
+				manager: "hosted-manifest",
+			}),
+		).toThrow("pending installation that requires recovery");
+
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const manifest = baseManifest(
+			paths,
+			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: { [skillId]: { enabled: true, source } } } } },
+		);
+		let installs = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "recover-killed-skill-installer"),
+			paths,
+			{
+				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
+				hostedHermesSkillExactSourceDriver: {
+					install: () => {
+						installs += 1;
+						const installingLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+						expect(installingLedger.reservations[target]).toBeUndefined();
+						expect(installingLedger.pendingReservations[target]).toBeDefined();
+						mkdirSync(target, { recursive: true });
+						writeFileSync(join(target, "SKILL.md"), "verified tree\n");
+						writeManagedSkillReceipt({
+							path: receipt,
+							managedResourceRoot: paths.managedResourceRoot,
+							schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",
+							skillId,
+							ownershipIdentity: sourceIdentity,
+							target,
+						});
+						return "installed";
+					},
+					anchorOwnership: () => undefined,
+					hasOwnershipReceipt: () => existsSync(receipt),
+					verifyOwned: () =>
+						existsSync(receipt) &&
+						existsSync(join(target, "SKILL.md")) &&
+						readFileSync(join(target, "SKILL.md"), "utf8") === "verified tree\n",
+					uninstall: () => "removed",
+					cleanupManifestOwned: () => "removed",
+				},
+			},
+		);
+
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		expect(installs).toBe(1);
+		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
+		const committedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		expect(committedLedger.reservations[target]).toBeDefined();
+		expect(committedLedger.pendingReservations).toEqual({});
 	});
 
 	test("releases a stale hosted reservation after its Skill tree disappears", () => {
@@ -4884,7 +4998,7 @@ echo spawned > '${installerLog}'
 					},
 					anchorOwnership: () => undefined,
 					hasOwnershipReceipt: () => false,
-					verifyOwned: () => false,
+					verifyOwned: () => true,
 					uninstall: () => "removed",
 					cleanupManifestOwned: () => "removed",
 				},
@@ -4952,7 +5066,7 @@ echo spawned > '${installerLog}'
 				},
 				anchorOwnership: () => undefined,
 				hasOwnershipReceipt: () => false,
-				verifyOwned: () => false,
+				verifyOwned: () => true,
 				uninstall: () => "removed",
 				cleanupManifestOwned: () => "removed",
 			},
@@ -5104,10 +5218,11 @@ echo spawned > '${installerLog}'
 			paths,
 		);
 		expect(reconverged.installErrors).toEqual([]);
-		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
-			readFileSync(join(packageSource, "SKILL.md")),
+		expect(reconverged.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged clawdi skill at ${target}`,
 		);
-		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("tenant mutation\n");
+		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(false);
 	});
 
 	test("claims legacy OpenClaw Skills before receipt-guarded removal", () => {

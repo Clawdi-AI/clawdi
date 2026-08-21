@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
@@ -284,6 +284,11 @@ async function installBuiltinSkill(agentType: AgentType) {
 				manager: "local-setup",
 			},
 			() => replaceManagedSkillDirectoryAtomic(sourceDir, targetDir),
+			{
+				verify: () =>
+					existsSync(targetDir) && managedSkillDirectoryDigest(targetDir) === sourceDigest,
+				discard: () => rmSync(targetDir, { recursive: true, force: true }),
+			},
 		);
 		console.log(
 			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
