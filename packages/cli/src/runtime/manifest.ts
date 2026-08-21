@@ -1050,6 +1050,18 @@ function runtimeAppRoot(name: string, home: string): string | null {
 
 const HERMES_DASHBOARD_CAPABILITY_PROBE =
 	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+
+function runtimeInstallTimeoutMs(): number {
+	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
+	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+	const timeout = Number(raw);
+	if (Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 0x7fffffff) return timeout;
+	console.warn(
+		`CLAWDI_RUNTIME_INSTALL_TIMEOUT must be a valid positive integer; using ${DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS}ms`,
+	);
+	return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+}
 
 function hermesDashboardCapabilityError(
 	name: string,
@@ -1259,7 +1271,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 			cwd: install.home,
 			env: execution.env,
 			encoding: "utf8",
-			timeout: Number.parseInt(process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT ?? "1800000", 10),
+			timeout: runtimeInstallTimeoutMs(),
 		});
 		const exitCode = result.status ?? 1;
 		const installed = exitCode === 0 && executableExists(commandPath);
