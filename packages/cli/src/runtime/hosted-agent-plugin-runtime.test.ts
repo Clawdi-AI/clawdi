@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	chownSync,
+	cpSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +27,12 @@ import {
 	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
+import {
+	enforceRuntimeUserOwnership,
+	runtimeUserExistingOwnership,
+	runtimeUserGid,
+	runtimeUserUid,
+} from "./runtime-user-command";
 
 type CommandInput = Parameters<HostedAgentPluginCommandRunner["run"]>[0];
 
@@ -438,6 +454,77 @@ function desiredState(
 const commands = { openclaw: "/runtime/openclaw", hermes: "/runtime/hermes" };
 
 describe("Hosted Agent Plugin native reconciliation", () => {
+	test("observes installed plugin bytes only through the repaired runtime-user identity", () => {
+		if (process.geteuid?.() !== 0) return;
+		const runner = new FakeNativeRunner();
+		const desired = plugin("acme.tools", "1.2.3", "8".repeat(64));
+		runner.seed(
+			"openclaw",
+			{
+				name: desired.name,
+				nativeId: "acme-tools",
+				version: desired.installation.version,
+				enabled: true,
+				compatible: true,
+			},
+			desired,
+		);
+		const prepared = desiredState("openclaw", desired, {
+			runtime: "openclaw",
+			plugin: desired,
+		});
+		const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
+		const stateRoot = join(runner.liveHome, ".openclaw");
+		const installRoot = join(stateRoot, "extensions", "acme-tools");
+		const runtimeUid = runtimeUserUid("nobody");
+		const runtimeGid = runtimeUserGid("nobody");
+		const previousRootMode = statSync(runtimeTestRoot).mode & 0o777;
+		const previousRuntimeUser = process.env.CLAWDI_RUNTIME_USER;
+		const previousRuntimeUid = process.env.CLAWDI_RUNTIME_UID;
+		const previousRuntimeGid = process.env.CLAWDI_RUNTIME_GID;
+		try {
+			chmodSync(runtimeTestRoot, 0o755);
+			for (const path of [runner.liveHome, stateRoot, join(stateRoot, "extensions")]) {
+				chownSync(path, runtimeUid, runtimeGid);
+			}
+			chownSync(installRoot, 0, 0);
+			chmodSync(installRoot, 0o700);
+			process.env.CLAWDI_RUNTIME_USER = "nobody";
+			process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+			process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+
+			expect(() =>
+				prepareHostedAgentPluginTransaction({
+					prepared,
+					home: runner.liveHome,
+					commands,
+					capabilityProof,
+					runner,
+				}),
+			).toThrow();
+
+			enforceRuntimeUserOwnership(runtimeUserExistingOwnership([stateRoot], { recursive: true }));
+			expect(() =>
+				prepareHostedAgentPluginTransaction({
+					prepared,
+					home: runner.liveHome,
+					commands,
+					capabilityProof,
+					runner,
+				}),
+			).not.toThrow();
+			expect(statSync(installRoot).uid).toBe(runtimeUid);
+		} finally {
+			chmodSync(runtimeTestRoot, previousRootMode);
+			if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
+			else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
+			if (previousRuntimeUid === undefined) delete process.env.CLAWDI_RUNTIME_UID;
+			else process.env.CLAWDI_RUNTIME_UID = previousRuntimeUid;
+			if (previousRuntimeGid === undefined) delete process.env.CLAWDI_RUNTIME_GID;
+			else process.env.CLAWDI_RUNTIME_GID = previousRuntimeGid;
+		}
+	});
+
 	test("uses OpenClaw native lifecycle and repeats as a live no-op", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "a".repeat(64));

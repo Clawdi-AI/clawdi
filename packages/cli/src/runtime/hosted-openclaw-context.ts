@@ -10,7 +10,7 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
-import { runtimeUserDirectoryOwnership } from "./runtime-user-command";
+import { runtimeUserDirectoryOwnership, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 export const CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID = "clawdi-managed-provider";
 
@@ -31,13 +31,24 @@ function resolveSdkExports(
 		}
 		return value || null;
 	};
-	return {
+	return withRuntimeUserFileAccess(() => ({
 		configMutation: resolve(OPENCLAW_SDK_EXPORT_PATHS.configMutation),
 		deviceBootstrap: resolve(OPENCLAW_SDK_EXPORT_PATHS.deviceBootstrap),
 		providerAuth: testOverride("PROVIDER_AUTH") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerAuth),
 		providerEnvVars:
 			testOverride("PROVIDER_ENV_VARS") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerEnvVars),
-	};
+	}));
+}
+
+export function hostedOpenClawRuntimeUserOwnership(manifest: RuntimeManifest, home: string) {
+	const stateRoot = join(home, ".openclaw");
+	return manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
+		manifest.runtimes.openclaw?.enabled === true
+		? [
+				...runtimeUserDirectoryOwnership(stateRoot, { mode: 0o700 }),
+				...runtimeUserDirectoryOwnership(join(stateRoot, "tmp"), { mode: 0o700 }),
+			]
+		: [];
 }
 
 export function createOpenClawHostedContext(manifest: RuntimeManifest, home: string) {
@@ -48,15 +59,7 @@ export function createOpenClawHostedContext(manifest: RuntimeManifest, home: str
 	const sourceDir = statePath("managed-sources", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const installDir = statePath("extensions", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const sdk = resolveSdkExports(home);
-	const ownership =
-		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
-		manifest.runtimes.openclaw?.enabled === true
-			? [
-					...runtimeUserDirectoryOwnership(home),
-					...runtimeUserDirectoryOwnership(stateRoot, { mode: 0o700 }),
-					...runtimeUserDirectoryOwnership(statePath("tmp"), { mode: 0o700 }),
-				]
-			: [];
+	const ownership = hostedOpenClawRuntimeUserOwnership(manifest, home);
 	return {
 		home,
 		managedApiKeyProjection: hasManagedApiKeyProjection(manifest),

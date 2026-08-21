@@ -18,7 +18,10 @@ import {
 	hostedAgentPluginCommands,
 } from "./hosted-agent-plugin-runtime";
 import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
-import { createOpenClawHostedContext } from "./hosted-openclaw-context";
+import {
+	createOpenClawHostedContext,
+	hostedOpenClawRuntimeUserOwnership,
+} from "./hosted-openclaw-context";
 import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
@@ -180,10 +183,13 @@ export function convergeRuntimeManifest(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	// Runtime-user state ownership is a platform invariant, not a manifest
 	// mutation: repair it before snapshots so rollback cannot restore drift.
-	enforceRuntimeUserOwnership(openClawContext.ownership);
+	enforceRuntimeUserOwnership([
+		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true }),
+		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
+	]);
+	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
@@ -416,7 +422,7 @@ export function convergeRuntimeManifest(
 			projectedProviderIds: retainPreviousProjectedProviderIds(),
 		});
 	}
-	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
+	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(() => existsSync(workspaceRoot));
 	let liveSnapshot: ReturnType<typeof captureRuntimeLiveSnapshot>;
 	try {
 		let snapshotPlan = mutationPlan.snapshot;
@@ -1419,7 +1425,7 @@ export function convergeRuntimeManifest(
 			filesystemRollbackSucceeded &&
 			!workspaceExistedBeforeApply &&
 			resolve(workspaceRoot) !== resolve(paths.userHome) &&
-			existsSync(workspaceRoot)
+			withRuntimeUserFileAccess(() => existsSync(workspaceRoot))
 		) {
 			try {
 				withRuntimeUserFileAccess(() => {

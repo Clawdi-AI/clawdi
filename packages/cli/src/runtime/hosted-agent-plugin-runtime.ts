@@ -23,6 +23,7 @@ import {
 	commandResolvable,
 	makeRuntimeUserOwned,
 	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -112,7 +113,7 @@ export type HermesRemoteCapabilityProbe = (input: {
 }) => void;
 
 const defaultCommandRunner: HostedAgentPluginCommandRunner = {
-	available: commandResolvable,
+	available: (command) => withRuntimeUserFileAccess(() => commandResolvable(command)),
 	run(input) {
 		const result = spawnRuntimeUserCommand(input.command, input.args, input.home, input.cwd, {
 			environmentOverrides: input.environmentOverrides,
@@ -261,13 +262,15 @@ function nativeInstallTarget(
 }
 
 function nativeInstallTargetExists(path: string): boolean {
-	try {
-		lstatSync(path);
-		return true;
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-		throw error;
-	}
+	return withRuntimeUserFileAccess(() => {
+		try {
+			lstatSync(path);
+			return true;
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+			throw error;
+		}
+	});
 }
 
 function assertTrustedInstalledDirectory(
@@ -298,6 +301,29 @@ function assertTrustedInstalledDirectory(
 		}
 	}
 	return expected;
+}
+
+function inspectInstalledPluginDirectory(input: {
+	home: string;
+	runtime: HostedAgentPluginRuntime;
+	nativeId: string;
+	reportedPath?: string;
+	ignoreTopLevelGitMetadata?: boolean;
+}): { installPath: string; contentDigest: string } {
+	return withRuntimeUserFileAccess(() => {
+		const installPath = assertTrustedInstalledDirectory(
+			input.home,
+			input.runtime,
+			input.nativeId,
+			input.reportedPath,
+		);
+		return {
+			installPath,
+			contentDigest: hostedAgentPluginDirectoryDigest(installPath, {
+				ignoreTopLevelGitMetadata: input.ignoreTopLevelGitMetadata,
+			}),
+		};
+	});
 }
 
 function createOpenClawDriver(input: {
@@ -340,13 +366,12 @@ function createOpenClawDriver(input: {
 			if (!inspect.install.installPath) {
 				throw new Error("OpenClaw did not report a controlled Agent Plugin install path");
 			}
-			installPath = assertTrustedInstalledDirectory(
-				input.home,
-				"openclaw",
-				inspect.plugin.id,
-				inspect.install.installPath,
-			);
-			contentDigest = hostedAgentPluginDirectoryDigest(installPath);
+			({ installPath, contentDigest } = inspectInstalledPluginDirectory({
+				home: input.home,
+				runtime: "openclaw",
+				nativeId: inspect.plugin.id,
+				reportedPath: inspect.install.installPath,
+			}));
 		}
 		return {
 			runtime: "openclaw",
@@ -444,7 +469,9 @@ type HermesNativeCommand = (args: string[]) => AgentPluginCommandResult;
 
 function ensureHermesPluginScanDisabled(home: string, run: HermesNativeCommand): void {
 	const configPath = join(home, ".hermes", "config.yaml");
-	const current = getHermesRawConfigFileValue(configPath, HERMES_PLUGIN_SCAN_POLICY_KEY);
+	const current = withRuntimeUserFileAccess(() =>
+		getHermesRawConfigFileValue(configPath, HERMES_PLUGIN_SCAN_POLICY_KEY),
+	);
 	if (current.exists && current.value === false) return;
 
 	// Remove this persistent policy when NousResearch/hermes-agent#89704 ships
@@ -480,10 +507,12 @@ function createHermesDriver(input: {
 		let installPath: string | null = null;
 		let contentDigest: string | null = null;
 		if (compatible) {
-			installPath = assertTrustedInstalledDirectory(input.home, "hermes", plugin.name);
-			contentDigest = hostedAgentPluginDirectoryDigest(installPath, {
+			({ installPath, contentDigest } = inspectInstalledPluginDirectory({
+				home: input.home,
+				runtime: "hermes",
+				nativeId: plugin.name,
 				ignoreTopLevelGitMetadata: true,
-			});
+			}));
 		}
 		return {
 			runtime: "hermes",

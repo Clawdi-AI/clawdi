@@ -15,6 +15,7 @@ import { basename, dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const MAX_ENTRIES = 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -56,6 +57,13 @@ export function collectManagedSkillTree(
 	}
 }
 
+export function collectRuntimeUserManagedSkillTree(
+	root: string,
+	options: { exclude?: ReadonlySet<string> } = {},
+): ManagedSkillTree | null {
+	return withRuntimeUserFileAccess(() => collectManagedSkillTree(root, options));
+}
+
 export function managedSkillTreeFingerprint(tree: ManagedSkillTree | null): string | null {
 	if (!tree) return null;
 	const hash = createHash("sha256");
@@ -88,23 +96,25 @@ export function writeManagedSkillReceipt(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): void {
-	const treeFingerprint = managedSkillTreeFingerprint(
-		collectManagedSkillTree(input.target, { exclude: input.exclude }),
-	);
-	if (!treeFingerprint) throw new Error("installed Skill tree is unsafe");
-	const receipt: ManagedSkillReceipt = {
-		schemaVersion: input.schemaVersion,
-		skillId: input.skillId,
-		ownershipIdentity: input.ownershipIdentity,
-		treeFingerprint,
-	};
-	writePrivateFileAtomic(input.path, `${JSON.stringify(receipt)}\n`, {
-		mode: 0o600,
-		dirMode: 0o700,
+	withRuntimeUserFileAccess(() => {
+		const treeFingerprint = managedSkillTreeFingerprint(
+			collectManagedSkillTree(input.target, { exclude: input.exclude }),
+		);
+		if (!treeFingerprint) throw new Error("installed Skill tree is unsafe");
+		const receipt: ManagedSkillReceipt = {
+			schemaVersion: input.schemaVersion,
+			skillId: input.skillId,
+			ownershipIdentity: input.ownershipIdentity,
+			treeFingerprint,
+		};
+		writePrivateFileAtomic(input.path, `${JSON.stringify(receipt)}\n`, {
+			mode: 0o600,
+			dirMode: 0o700,
+		});
 	});
 }
 
-function readManagedSkillMarker(input: {
+function readManagedSkillMarkerRaw(input: {
 	path: string;
 	schemaVersion: string;
 	skillId: string;
@@ -140,6 +150,16 @@ function readManagedSkillMarker(input: {
 	}
 }
 
+function readManagedSkillMarker(input: {
+	path: string;
+	schemaVersion: string;
+	skillId: string;
+	target: string;
+	exclude?: ReadonlySet<string>;
+}): ManagedSkillReceipt | null {
+	return withRuntimeUserFileAccess(() => readManagedSkillMarkerRaw(input));
+}
+
 function readManagedSkillReceipt(input: {
 	path: string;
 	schemaVersion: string;
@@ -147,11 +167,14 @@ function readManagedSkillReceipt(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
-	const marker = readManagedSkillMarker(input);
-	return marker?.treeFingerprint ===
-		managedSkillTreeFingerprint(collectManagedSkillTree(input.target, { exclude: input.exclude }))
-		? marker
-		: null;
+	return withRuntimeUserFileAccess(() => {
+		const marker = readManagedSkillMarkerRaw(input);
+		if (!marker) return null;
+		return marker.treeFingerprint ===
+			managedSkillTreeFingerprint(collectManagedSkillTree(input.target, { exclude: input.exclude }))
+			? marker
+			: null;
+	});
 }
 
 export function managedSkillMarkerOwnsTarget(input: {

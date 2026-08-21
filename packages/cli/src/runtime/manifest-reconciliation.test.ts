@@ -44,6 +44,7 @@ import {
 	assertHostedBundledSkillCatalogDigest,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
+import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import { readRuntimeInstallReceipts } from "./install-receipts";
@@ -87,6 +88,7 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { planRuntimeMutationSystemdUserUnits } from "./runtime-systemd-reconciliation";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -4223,7 +4225,7 @@ echo spawned > '${installerLog}'
 		expect(existsSync(join(paths.userHome, ".local", "bin", "openclaw"))).toBe(false);
 	});
 
-	test("migrates the real legacy Hermes bundle once and then stays receipt-anchored", () => {
+	test("migrates a runtime-owned legacy Hermes bundle once and then stays receipt-anchored", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
@@ -4303,6 +4305,126 @@ echo spawned > '${installerLog}'
 		stable = snapshot();
 		converge(5);
 		expect(snapshot()).toEqual(stable);
+	});
+
+	test("repairs and claims a root-owned unreadable legacy Hermes marker", () => {
+		if (process.geteuid?.() !== 0) return;
+		const paths = tempRuntimePaths();
+		const fixtureRoot = dirname(paths.serviceStateRoot);
+		const runtimeUid = Number.parseInt(
+			execFileSync("id", ["-u", "nobody"], { encoding: "utf8" }).trim(),
+			10,
+		);
+		const runtimeGid = Number.parseInt(
+			execFileSync("id", ["-g", "nobody"], { encoding: "utf8" }).trim(),
+			10,
+		);
+		process.env.CLAWDI_RUNTIME_USER = "nobody";
+		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+		process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
+		const target = join(paths.userHome, ".hermes", "skills", "clawdi");
+		const skillPath = join(target, "SKILL.md");
+		const marker = join(target, ".clawdi-managed.json");
+		const receipt = join(
+			paths.userHome,
+			".hermes",
+			"skills",
+			".clawdi-manifest-receipts",
+			"clawdi.json",
+		);
+		const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
+
+		chmodSync(fixtureRoot, 0o755);
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		cpSync(source, target, { recursive: true });
+		chmodSync(target, 0o755);
+		chmodSync(skillPath, 0o644);
+		writeFileSync(
+			marker,
+			`${JSON.stringify({
+				schema: "clawdi.hostedBundledSkillMarker.v1",
+				owner: "clawdi runtime init",
+				id: "clawdi",
+				version: 1,
+				digest: catalogEntry.digest,
+			})}\n`,
+			{ mode: 0o600 },
+		);
+		for (const path of [
+			paths.userHome,
+			join(paths.userHome, ".local"),
+			dirname(hermesCommand),
+			hermesCommand,
+			join(paths.userHome, ".hermes"),
+			join(paths.userHome, ".hermes", "skills"),
+			target,
+			skillPath,
+		]) {
+			chownSync(path, runtimeUid, runtimeGid);
+		}
+		chownSync(marker, 0, 0);
+		expect(() => withRuntimeUserFileAccess(() => readFileSync(marker))).toThrow();
+
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+		const converge = (generation: number) => {
+			const result = convergeRuntimeManifest(
+				manifestLoad({ ...manifest, generation }, `root-legacy-hermes-${generation}`),
+				paths,
+				{
+					hostedRuntimeContract: {
+						expectedIdentity: {
+							home: paths.userHome,
+							user: "nobody",
+							uid: runtimeUid,
+							gid: runtimeGid,
+						},
+						resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
+					},
+				},
+			);
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		};
+
+		converge(1);
+		expect(existsSync(marker)).toBe(false);
+		expect([statSync(target).uid, statSync(skillPath).uid, statSync(receipt).uid]).toEqual([
+			runtimeUid,
+			runtimeUid,
+			runtimeUid,
+		]);
+		expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({
+			ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
+		});
+		const stable = {
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			receipt: statSync(receipt).ino,
+			content: readFileSync(receipt),
+		};
+		for (const generation of [2, 3]) {
+			converge(generation);
+			expect({
+				target: statSync(target).ino,
+				skill: statSync(skillPath).ino,
+				receipt: statSync(receipt).ino,
+				content: readFileSync(receipt),
+			}).toEqual(stable);
+		}
 	});
 
 	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
@@ -4477,6 +4599,7 @@ echo spawned > '${installerLog}'
 				preparedHostedSourcedSkills: new Map([[prepared.skillId, prepared]]),
 				hostedHermesSkillExactSourceDriver: {
 					install: () => "installed",
+					anchorOwnership: () => undefined,
 					hasOwnershipReceipt: () => false,
 					verifyOwned: () => false,
 					uninstall: () => "removed",
@@ -4504,6 +4627,7 @@ echo spawned > '${installerLog}'
 				if (installs.length === 1) throw new Error("lost native install response");
 				return "unchanged" as const;
 			},
+			anchorOwnership: () => undefined,
 			hasOwnershipReceipt: (input: { ownershipIdentity: string }) => {
 				verifyCalls += 1;
 				return (
@@ -4655,7 +4779,7 @@ echo spawned > '${installerLog}'
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 	});
 
-	test("removes only strictly identified legacy bundled OpenClaw Skills without requiring a new receipt", () => {
+	test("claims legacy OpenClaw Skills before receipt-guarded removal", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
@@ -4680,6 +4804,7 @@ echo spawned > '${installerLog}'
 			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
 			{ projection: { skills: { entries: {} } } },
 		);
+		let ownershipAnchors = 0;
 		let guardedCleanupCalls = 0;
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "legacy-openclaw-remove"),
@@ -4689,17 +4814,22 @@ echo spawned > '${installerLog}'
 					resolveWorkspace: () => openClawWorkspaceRoot,
 					installDirectory: () => "installed",
 					install: () => "installed",
+					anchorOwnership: () => {
+						ownershipAnchors += 1;
+					},
 					hasOwnershipReceipt: () => false,
 					verifyOwned: () => false,
 					cleanupManifestOwned: () => {
 						guardedCleanupCalls += 1;
+						rmSync(target, { recursive: true, force: true });
 						return "removed";
 					},
 				},
 			},
 		);
 		expect(result.installErrors).toEqual([]);
-		expect(guardedCleanupCalls).toBe(0);
+		expect(ownershipAnchors).toBe(1);
+		expect(guardedCleanupCalls).toBe(1);
 		expect(existsSync(target)).toBe(false);
 	});
 
@@ -5369,6 +5499,7 @@ exit 0
 		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
 		chmodSync(paths.clawdiHome, 0o700);
 		mkdirSync(binDir, { recursive: true });
+		mkdirSync(appRoot, { recursive: true });
 		mkdirSync(dirname(unitPath), { recursive: true });
 		writeFileSync(
 			commandPath,
@@ -5406,6 +5537,19 @@ printf '{"ok":true}\\n'
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
 		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
 		process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+		const hostedRuntimeContract = {
+			expectedIdentity: {
+				home: paths.userHome,
+				user: "clawdi",
+				uid: runtimeUid,
+				gid: runtimeGid,
+			},
+			resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
+		};
+		const openClawSkillDriver = {
+			...hostedOpenClawSkillDriver,
+			resolveWorkspace: () => join(appRoot, "workspace"),
+		};
 		const manifest = baseManifest(paths, {
 			openclaw: {
 				enabled: true,
@@ -5426,6 +5570,8 @@ printf '{"ok":true}\\n'
 			paths,
 			{
 				executeOfficialServiceInstallers: false,
+				hostedRuntimeContract,
+				hostedOpenClawSkillDriver: openClawSkillDriver,
 			},
 		);
 		expect(result.installErrors).toEqual([]);
@@ -5486,12 +5632,14 @@ printf '{"ok":true}\\n'
 					throw new Error("injected ownership commit failure");
 				},
 				executeOfficialServiceInstallers: false,
+				hostedRuntimeContract,
+				hostedOpenClawSkillDriver: openClawSkillDriver,
 			},
 		);
 		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");
 		for (const [path, previous] of beforeRollback) {
 			const node = statSync(path);
-			expect([node.uid, node.gid]).toEqual([0, 0]);
+			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 			expect(node.mode & 0o777).toBe(previous.mode);
 			if (previous.content) expect(readFileSync(path)).toEqual(previous.content);
 		}

@@ -4103,7 +4103,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 
 		const context = createOpenClawHostedContext(loaded.manifest, home);
 		expect(context.ownership.map(({ path, mode, recursive }) => [path, mode, recursive])).toEqual([
-			[home, undefined, false],
 			[join(home, ".openclaw"), 0o700, false],
 			[join(home, ".openclaw", "tmp"), 0o700, false],
 		]);

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	chownSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +17,10 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
+	enforceRuntimeUserOwnership,
 	runRuntimeUserCommand,
+	runtimeUserExistingOwnership,
+	runtimeUserGid,
 	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
@@ -367,6 +379,53 @@ test("fully drops root identity when spawned during runtime-user file access", (
 		expect(result.status).toBe(0);
 		expect(readFileSync(output, "utf8").trim()).toBe(String(runtimeUserUid("nobody")));
 		expect(statSync(output).uid).toBe(runtimeUserUid("nobody"));
+	} finally {
+		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
+		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("recursively restores runtime ownership only inside declared state roots", () => {
+	if (process.geteuid?.() !== 0) return;
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-ownership-boundary-"));
+	const managedRoot = join(root, "home");
+	const nestedDirectory = join(managedRoot, ".hermes", "skills", "clawdi");
+	const nestedFile = join(nestedDirectory, ".clawdi-managed.json");
+	const outside = join(root, "platform-state");
+	const previousRuntimeUser = process.env.CLAWDI_RUNTIME_USER;
+	try {
+		mkdirSync(nestedDirectory, { recursive: true });
+		writeFileSync(nestedFile, "legacy\n", { mode: 0o600 });
+		writeFileSync(outside, "preserve\n", { mode: 0o600 });
+		for (const path of [
+			managedRoot,
+			join(managedRoot, ".hermes"),
+			join(managedRoot, ".hermes", "skills"),
+			nestedDirectory,
+			nestedFile,
+			outside,
+		]) {
+			chownSync(path, 0, 0);
+		}
+		process.env.CLAWDI_RUNTIME_USER = "nobody";
+
+		enforceRuntimeUserOwnership(runtimeUserExistingOwnership([managedRoot], { recursive: true }));
+
+		const expected = [runtimeUserUid("nobody"), runtimeUserGid("nobody")];
+		for (const path of [
+			managedRoot,
+			join(managedRoot, ".hermes"),
+			join(managedRoot, ".hermes", "skills"),
+			nestedDirectory,
+			nestedFile,
+		]) {
+			const node = statSync(path);
+			expect([node.uid, node.gid]).toEqual(expected);
+		}
+		expect(statSync(nestedFile).mode & 0o777).toBe(0o600);
+		expect([statSync(outside).uid, statSync(outside).gid]).toEqual([0, 0]);
+		expect(readFileSync(outside, "utf8")).toBe("preserve\n");
 	} finally {
 		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
 		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;

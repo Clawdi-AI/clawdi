@@ -13,7 +13,11 @@ import {
 	withStagedManagedSkill,
 	writeManagedSkillReceipt,
 } from "./managed-skill-delivery";
-import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	executableExists,
+	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
 
 const OPENCLAW_AGENT_ID = "main";
 const SOURCE_RECEIPT = ".openclaw/source-origin.json";
@@ -36,6 +40,11 @@ export interface HostedOpenClawSkillDriver {
 		skill: PreparedHostedSourcedSkill;
 		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
+	anchorOwnership(input: {
+		workspaceRoot: string;
+		skillId: string;
+		ownershipIdentity: string;
+	}): void;
 	hasOwnershipReceipt(input: {
 		workspaceRoot: string;
 		skillId: string;
@@ -50,12 +59,14 @@ export interface HostedOpenClawSkillDriver {
 }
 
 function installedCommandPath(home: string): string | null {
-	for (const candidate of [
-		join(home, ".local", "bin", "openclaw"),
-		join(home, ".openclaw", "bin", "openclaw"),
-	])
-		if (executableExists(candidate)) return candidate;
-	return null;
+	return withRuntimeUserFileAccess(() => {
+		for (const candidate of [
+			join(home, ".local", "bin", "openclaw"),
+			join(home, ".openclaw", "bin", "openclaw"),
+		])
+			if (executableExists(candidate)) return candidate;
+		return null;
+	});
 }
 
 function commandPath(home: string): string {
@@ -177,46 +188,50 @@ function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>
 
 export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	resolveWorkspace(input) {
-		return resolveOfficialWorkspace(input.home, input.repairInvalidConfig);
+		return withRuntimeUserFileAccess(() =>
+			resolveOfficialWorkspace(input.home, input.repairInvalidConfig),
+		);
 	},
 	installDirectory(input) {
-		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
-		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
-		if (existsSync(target) && !input.previouslyReserved && !managedSkillMarkerOwnsTarget(receipt))
-			throw new Error(
-				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
-			);
-		assertOfficialWorkspace(input);
-		return withManagedTargetRollback({
-			target,
-			receipt: receipt.path,
-			operation: () => {
-				// The roster may reference a workspace OpenClaw has not created yet on first run.
-				const result = spawnRuntimeUserCommand(
-					commandPath(input.home),
-					[
-						"skills",
-						"install",
-						input.sourceDir,
-						"--agent",
-						OPENCLAW_AGENT_ID,
-						"--as",
-						input.skillId,
-						"--force",
-					],
-					input.home,
-					input.home,
-					{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
+		return withRuntimeUserFileAccess(() => {
+			const target = targetDir(input.workspaceRoot, input.skillId);
+			const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
+			if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
+			if (existsSync(target) && !input.previouslyReserved && !managedSkillMarkerOwnsTarget(receipt))
+				throw new Error(
+					"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
 				);
-				if (result.status !== 0)
-					throw new Error(
-						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
+			assertOfficialWorkspace(input);
+			return withManagedTargetRollback({
+				target,
+				receipt: receipt.path,
+				operation: () => {
+					// The roster may reference a workspace OpenClaw has not created yet on first run.
+					const result = spawnRuntimeUserCommand(
+						commandPath(input.home),
+						[
+							"skills",
+							"install",
+							input.sourceDir,
+							"--agent",
+							OPENCLAW_AGENT_ID,
+							"--as",
+							input.skillId,
+							"--force",
+						],
+						input.home,
+						input.home,
+						{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
 					);
-				assertOfficialWorkspace(input);
-				writeManagedSkillReceipt(receipt);
-				return "installed" as const;
-			},
+					if (result.status !== 0)
+						throw new Error(
+							`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
+						);
+					assertOfficialWorkspace(input);
+					writeManagedSkillReceipt(receipt);
+					return "installed" as const;
+				},
+			});
 		});
 	},
 	install(input) {
@@ -237,6 +252,11 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			}),
 		);
 	},
+	anchorOwnership(input) {
+		writeManagedSkillReceipt(
+			receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity),
+		);
+	},
 	hasOwnershipReceipt(input) {
 		return managedSkillMarkerMatchesIdentity(
 			receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity),
@@ -248,18 +268,20 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 		);
 	},
 	cleanupManifestOwned(input) {
-		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
-		if (!existsSync(target)) {
+		return withRuntimeUserFileAccess(() => {
+			const target = targetDir(input.workspaceRoot, input.skillId);
+			const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
+			if (!existsSync(target)) {
+				rmSync(receipt.path, { force: true });
+				return "absent";
+			}
+			if (!managedSkillReceiptMatchesIdentity(receipt))
+				throw new Error(
+					"refusing manifest cleanup because OpenClaw Skill bytes no longer match the ownership receipt",
+				);
+			rmSync(target, { recursive: true });
 			rmSync(receipt.path, { force: true });
-			return "absent";
-		}
-		if (!managedSkillReceiptMatchesIdentity(receipt))
-			throw new Error(
-				"refusing manifest cleanup because OpenClaw Skill bytes no longer match the ownership receipt",
-			);
-		rmSync(target, { recursive: true });
-		rmSync(receipt.path, { force: true });
-		return "removed";
+			return "removed";
+		});
 	},
 };
