@@ -539,7 +539,13 @@ export class OpenClawAdapter implements AgentAdapter {
 						const installedTree = collectManagedSkillTree(targetDir, {
 							exclude: new Set([".openclaw/source-origin.json"]),
 						});
-						if (!managedSkillTreesEqual(sourceTree, installedTree)) {
+						if (sourceTree.status !== "collected") {
+							throw new Error(`OpenClaw Skill source tree is ${sourceTree.status}`);
+						}
+						if (installedTree.status !== "collected") {
+							throw new Error(`OpenClaw installed Skill tree is ${installedTree.status}`);
+						}
+						if (!managedSkillTreesEqual(sourceTree.tree, installedTree.tree)) {
 							throw new Error(`OpenClaw installed an unexpected Skill tree in ${workspace}`);
 						}
 					},

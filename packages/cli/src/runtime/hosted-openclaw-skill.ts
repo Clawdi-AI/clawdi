@@ -9,6 +9,7 @@ import {
 	ManagedSkillResourceError,
 	managedSkillMarkerMatchesIdentity,
 	managedSkillMarkerOwnsTarget,
+	managedSkillReceiptIdentityState,
 	managedSkillReceiptMatchesIdentity,
 	managedSkillReceiptPath,
 	OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA,
@@ -320,11 +321,15 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			input.skillId,
 			input.ownershipIdentity,
 		);
-		if (!withRuntimeUserFileAccess(() => existsSync(target))) {
+		const receiptState = managedSkillReceiptIdentityState(receipt);
+		if (receiptState === "absent") {
 			rmSync(receipt.path, { force: true });
 			return "absent";
 		}
-		if (!managedSkillReceiptMatchesIdentity(receipt))
+		if (receiptState === "unsafe") {
+			throw new Error("refusing manifest cleanup because the OpenClaw Skill tree is unsafe");
+		}
+		if (receiptState !== "matched")
 			throw new Error(
 				"refusing manifest cleanup because OpenClaw Skill bytes no longer match the ownership receipt",
 			);

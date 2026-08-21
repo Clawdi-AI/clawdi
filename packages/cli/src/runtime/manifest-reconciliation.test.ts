@@ -60,9 +60,12 @@ import {
 	ManagedSkillResourceError,
 	managedSkillReceiptPath,
 	managedSkillTreeFingerprint,
+	writeManagedSkillReceipt,
 } from "./managed-skill-delivery";
 import {
 	managedSkillReservationLedgerPath,
+	managedSkillReservationState,
+	reserveManagedSkill,
 	shouldIgnoreUserSkill,
 } from "./managed-skill-reservation";
 import {
@@ -4451,10 +4454,11 @@ echo spawned > '${installerLog}'
 
 		expect(() => withRuntimeUserFileAccess(() => writeFileSync(receipt, "{}\n"))).toThrow();
 		withRuntimeUserFileAccess(() => writeFileSync(skillPath, "tenant mutation\n"));
-		const forgedFingerprint = managedSkillTreeFingerprint(
-			collectRuntimeUserManagedSkillTree(target),
-		);
-		if (!forgedFingerprint) throw new Error("counterfeit receipt fixture tree is unsafe");
+		const collectedTarget = collectRuntimeUserManagedSkillTree(target);
+		if (collectedTarget.status !== "collected") {
+			throw new Error(`counterfeit receipt fixture tree is ${collectedTarget.status}`);
+		}
+		const forgedFingerprint = managedSkillTreeFingerprint(collectedTarget.tree);
 		writeFileSync(
 			receipt,
 			`${JSON.stringify({
@@ -4770,6 +4774,51 @@ echo spawned > '${installerLog}'
 		expect(existsSync(skillDir)).toBe(false);
 		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("releases a stale hosted reservation after its Skill tree disappears", () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		mkdirSync(paths.managedResourceRoot, { recursive: true });
+		const skillId = "attio-composio-client-updates";
+		const sourceIdentity = `github\0${skillId}\0https://github.com/Clawdi-AI/store\0skills/${skillId}\0${"a".repeat(40)}`;
+		const target = join(paths.userHome, ".hermes", "skills", skillId);
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", skillId);
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "historical test Skill\n");
+		writeManagedSkillReceipt({
+			path: receipt,
+			managedResourceRoot: paths.managedResourceRoot,
+			schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",
+			skillId,
+			ownershipIdentity: sourceIdentity,
+			target,
+		});
+		reserveManagedSkill({
+			targetDir: target,
+			id: skillId,
+			manager: "hosted-manifest",
+			sourceIdentity,
+		});
+		rmSync(target, { recursive: true });
+
+		const manifest = baseManifest(
+			paths,
+			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: {} } } },
+		);
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "stale-absent-hermes-skill"),
+			paths,
+		);
+
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		expect(managedSkillReservationState(target, skillId)).toBe("unreserved");
+		expect(existsSync(receipt)).toBe(false);
+		expect(existsSync(target)).toBe(false);
 	});
 
 	test("isolates per-Skill resource failures without starving later Skills", () => {

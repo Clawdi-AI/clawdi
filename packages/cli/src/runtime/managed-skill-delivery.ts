@@ -56,13 +56,26 @@ export function legacyManagedSkillReceiptPath(skillsRoot: string, skillId: strin
 
 export type ManagedSkillTree = ReadonlyMap<string, Buffer>;
 
+export type ManagedSkillTreeCollection =
+	| { status: "collected"; tree: ManagedSkillTree }
+	| { status: "absent" }
+	| { status: "unsafe" };
+
+function isMissingPathError(error: unknown): boolean {
+	return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
 export function collectManagedSkillTree(
 	root: string,
 	options: { exclude?: ReadonlySet<string> } = {},
-): ManagedSkillTree | null {
-	if (!existsSync(root)) return null;
-	const rootStat = lstatSync(root);
-	if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return null;
+): ManagedSkillTreeCollection {
+	let rootStat: ReturnType<typeof lstatSync>;
+	try {
+		rootStat = lstatSync(root);
+	} catch (error) {
+		return { status: isMissingPathError(error) ? "absent" : "unsafe" };
+	}
+	if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return { status: "unsafe" };
 	const files = new Map<string, Buffer>();
 	let entries = 0;
 	let totalBytes = 0;
@@ -84,32 +97,35 @@ export function collectManagedSkillTree(
 	};
 	try {
 		visit(root);
-		return files;
-	} catch {
-		return null;
+		return { status: "collected", tree: files };
+	} catch (error) {
+		if (isMissingPathError(error)) {
+			try {
+				lstatSync(root);
+			} catch (rootError) {
+				if (isMissingPathError(rootError)) return { status: "absent" };
+			}
+		}
+		return { status: "unsafe" };
 	}
 }
 
 export function collectRuntimeUserManagedSkillTree(
 	root: string,
 	options: { exclude?: ReadonlySet<string> } = {},
-): ManagedSkillTree | null {
+): ManagedSkillTreeCollection {
 	return withRuntimeUserFileAccess(() => collectManagedSkillTree(root, options));
 }
 
-export function managedSkillTreeFingerprint(tree: ManagedSkillTree | null): string | null {
-	if (!tree) return null;
+export function managedSkillTreeFingerprint(tree: ManagedSkillTree): string {
 	const hash = createHash("sha256");
 	for (const [name, bytes] of [...tree].sort(([left], [right]) => left.localeCompare(right)))
 		hash.update(name).update("\0").update(bytes).update("\0");
 	return hash.digest("hex");
 }
 
-export function managedSkillTreesEqual(
-	left: ManagedSkillTree | null,
-	right: ManagedSkillTree | null,
-): boolean {
-	if (!left || !right || left.size !== right.size) return false;
+export function managedSkillTreesEqual(left: ManagedSkillTree, right: ManagedSkillTree): boolean {
+	if (left.size !== right.size) return false;
 	for (const [name, bytes] of left) if (!right.get(name)?.equals(bytes)) return false;
 	return true;
 }
@@ -130,10 +146,11 @@ export function writeManagedSkillReceipt(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): void {
-	const treeFingerprint = managedSkillTreeFingerprint(
-		collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude }),
-	);
-	if (!treeFingerprint) throw new ManagedSkillResourceError("installed Skill tree is unsafe");
+	const collection = collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude });
+	if (collection.status !== "collected") {
+		throw new ManagedSkillResourceError(`installed Skill tree is ${collection.status}`);
+	}
+	const treeFingerprint = managedSkillTreeFingerprint(collection.tree);
 	writeManagedSkillReceiptRecord(input.managedResourceRoot, input.path, {
 		schemaVersion: input.schemaVersion,
 		skillId: input.skillId,
@@ -174,7 +191,6 @@ function readManagedSkillMarkerRaw(input: {
 }): ManagedSkillReceipt | null {
 	let descriptor: number | null = null;
 	try {
-		if (!runtimeUserTargetIsDirectory(input.target)) return null;
 		descriptor = openSync(input.path, constants.O_RDONLY | constants.O_NOFOLLOW);
 		const receiptStat = fstatSync(descriptor);
 		const effectiveUid = process.geteuid?.();
@@ -210,6 +226,7 @@ function readManagedSkillMarker(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
+	if (!runtimeUserTargetIsDirectory(input.target)) return null;
 	return readManagedSkillMarkerRaw(input);
 }
 
@@ -219,15 +236,18 @@ function readManagedSkillReceipt(input: {
 	skillId: string;
 	target: string;
 	exclude?: ReadonlySet<string>;
-}): ManagedSkillReceipt | null {
+}):
+	| { status: "matched"; receipt: ManagedSkillReceipt }
+	| { status: "absent" | "unsafe" | "mismatch" } {
+	const collection = collectRuntimeUserManagedSkillTree(input.target, {
+		exclude: input.exclude,
+	});
+	if (collection.status !== "collected") return collection;
 	const marker = readManagedSkillMarkerRaw(input);
-	if (!marker) return null;
-	return marker.treeFingerprint ===
-		managedSkillTreeFingerprint(
-			collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude }),
-		)
-		? marker
-		: null;
+	if (!marker || marker.treeFingerprint !== managedSkillTreeFingerprint(collection.tree)) {
+		return { status: "mismatch" };
+	}
+	return { status: "matched", receipt: marker };
 }
 
 function realDirectoryWithin(root: string, path: string): boolean {
@@ -296,10 +316,10 @@ export function migrateLegacyManagedSkillReceiptDirectory(input: {
 				? { exclude: new Set([".openclaw/source-origin.json"]) }
 				: {}),
 		});
-		if (!receipt) continue;
+		if (receipt.status !== "matched") continue;
 		const destination = managedSkillReceiptPath(input.managedResourceRoot, input.runtime, skillId);
 		if (!existsSync(destination)) {
-			writeManagedSkillReceiptRecord(input.managedResourceRoot, destination, receipt);
+			writeManagedSkillReceiptRecord(input.managedResourceRoot, destination, receipt.receipt);
 		}
 	}
 	// This directory was always Clawdi metadata. Invalid or unknown entries are
@@ -336,7 +356,20 @@ export function managedSkillReceiptMatchesIdentity(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): boolean {
-	return readManagedSkillReceipt(input)?.ownershipIdentity === input.ownershipIdentity;
+	return managedSkillReceiptIdentityState(input) === "matched";
+}
+
+export function managedSkillReceiptIdentityState(input: {
+	path: string;
+	schemaVersion: string;
+	skillId: string;
+	ownershipIdentity: string;
+	target: string;
+	exclude?: ReadonlySet<string>;
+}): "matched" | "absent" | "unsafe" | "mismatch" {
+	const result = readManagedSkillReceipt(input);
+	if (result.status !== "matched") return result.status;
+	return result.receipt.ownershipIdentity === input.ownershipIdentity ? "matched" : "mismatch";
 }
 
 export function withStagedManagedSkill<T>(
@@ -355,8 +388,10 @@ export function withStagedManagedSkill<T>(
 		});
 		if (extracted.status !== 0) throw new Error("prepared Skill archive could not be staged");
 		const sourceDir = join(root, skill.skillId);
-		if (!existsSync(join(sourceDir, "SKILL.md")) || !collectManagedSkillTree(sourceDir))
-			throw new Error("prepared Skill archive is invalid");
+		const sourceTree = collectManagedSkillTree(sourceDir);
+		if (!existsSync(join(sourceDir, "SKILL.md")) || sourceTree.status !== "collected") {
+			throw new Error(`prepared Skill archive is ${sourceTree.status}`);
+		}
 		const makeReadable = (path: string): void => {
 			const node = lstatSync(path);
 			if (node.isDirectory()) {

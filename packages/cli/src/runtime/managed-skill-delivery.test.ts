@@ -6,14 +6,30 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	collectManagedSkillTree,
 	managedSkillReceiptMatchesIdentity,
 	withManagedTargetRollback,
 } from "./managed-skill-delivery";
+
+test("distinguishes an absent Skill tree from an unsafe tree", () => {
+	const root = mkdtempSync(join(tmpdir(), "managed-skill-collection-"));
+	try {
+		const absent = join(root, "absent");
+		const unsafe = join(root, "unsafe");
+		symlinkSync(absent, unsafe);
+
+		expect(collectManagedSkillTree(absent)).toEqual({ status: "absent" });
+		expect(collectManagedSkillTree(unsafe)).toEqual({ status: "unsafe" });
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 test("restores an already-backed-up target when receipt backup establishment fails", () => {
 	const root = mkdtempSync(join(tmpdir(), "managed-skill-rollback-"));
