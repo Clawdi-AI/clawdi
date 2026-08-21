@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.7
+
+Package: `clawdi@0.14.7`
+
+### Fixed
+
+- Hosted project skills install from locally verified bytes served over a
+  transient loopback source, removing the network fetch (and its rate limits)
+  from Hermes skill installs entirely while keeping the official installer
+  path.
+
 ## Clawdi CLI v0.14.6
 
 Package: `clawdi@0.14.6`
