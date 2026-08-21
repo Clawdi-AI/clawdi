@@ -59,7 +59,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeState
-from app.models.principal_lifecycle import PrincipalLifecycle
+from app.models.principal_lifecycle import ClerkPrincipalSuspension, PrincipalLifecycle
 from app.models.session import AgentEnvironment
 from app.models.user import (
     PRINCIPAL_KIND_CLERK,
@@ -694,7 +694,7 @@ async def _find_deployment_managed_provider_cleanup_owner(
     provider_id: str,
     action: str,
 ) -> tuple[User, datetime | None]:
-    """Resolve active authority or an exact completed Clerk cleanup fence."""
+    """Resolve retained ownership or an exact completed Clerk cleanup fence."""
 
     try:
         return await _find_admin_owner(db, owner), None
@@ -712,6 +712,27 @@ async def _find_deployment_managed_provider_cleanup_owner(
             raise
 
         issuer = configured_clerk_issuer()
+        suspended_target = await db.scalar(
+            select(User)
+            .join(
+                ClerkPrincipalSuspension,
+                ClerkPrincipalSuspension.user_id == User.id,
+            )
+            .where(
+                User.principal_kind == PRINCIPAL_KIND_CLERK,
+                User.clerk_id == owner.ref,
+                ClerkPrincipalSuspension.issuer == issuer,
+                ClerkPrincipalSuspension.subject == owner.ref,
+                ~select(PrincipalLifecycle.id)
+                .where(
+                    PrincipalLifecycle.issuer == issuer,
+                    PrincipalLifecycle.subject == owner.ref,
+                )
+                .exists(),
+            )
+        )
+        if suspended_target is not None:
+            return suspended_target, None
         row = (
             await db.execute(
                 select(User, PrincipalLifecycle.cleanup_completed_at)

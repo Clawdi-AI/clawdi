@@ -1465,6 +1465,87 @@ async def test_admin_cleanup_deployment_managed_provider_archives_exact_identity
 
 
 @pytest.mark.asyncio
+async def test_admin_cleanup_deployment_managed_provider_allows_suspended_owner_only(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}5903"
+    marker = "e" * 64
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    created = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-cleanup-suspended",
+            "capabilities": {MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker},
+        },
+    )
+    assert created.status_code == 200, created.text
+    provider_uuid = created.json()["id"]
+
+    suspended = await admin_client.put(
+        "/v1/admin/auth/suspensions",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "suspended": True,
+            "reason": "hosted_abuse_cleanup",
+        },
+    )
+    assert suspended.status_code == 200, suspended.text
+
+    ordinary_read = await admin_client.get(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=owner,
+    )
+    assert ordinary_read.status_code == 403, ordinary_read.text
+    ordinary_metadata_write = await _replace_managed_provider_runtime_metadata(
+        admin_client,
+        provider_id,
+        {
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "models": [{"id": "forbidden-model"}],
+        },
+    )
+    assert ordinary_metadata_write.status_code == 403, ordinary_metadata_write.text
+
+    archived = await admin_client.post(
+        f"/v1/admin/ai-providers/{provider_id}/cleanup",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "expected_provider_uuid": provider_uuid,
+            "provisioning_discovery_key": marker,
+        },
+    )
+    assert archived.status_code == 200, archived.text
+    receipt = archived.json()
+    assert receipt["status"] == "archived"
+    assert receipt["authority"] == "active_owner"
+    assert receipt["principal_cleanup_completed_at"] is None
+
+    provider = await db_session.get(AiProvider, UUID(provider_uuid))
+    assert provider is not None and provider.archived_at is not None
+    assert provider.models is None
+    payload = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == provider_id,
+        )
+    )
+    assert payload is not None and payload.archived_at is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.committed_db
 async def test_admin_provider_archive_is_idempotent_and_fences_recreated_incarnation(
     admin_client,
@@ -1745,6 +1826,16 @@ async def test_admin_cleanup_deployment_managed_provider_rejects_mismatch_and_pe
         )
         assert rejected.status_code == 409, rejected.text
 
+    suspended = await admin_client.put(
+        "/v1/admin/auth/suspensions",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "suspended": True,
+            "reason": "pending_termination_cleanup",
+        },
+    )
+    assert suspended.status_code == 200, suspended.text
     now = datetime.now(UTC)
     seed_user.clerk_issuer = _CLERK_ISSUER
     lifecycle = PrincipalLifecycle(
