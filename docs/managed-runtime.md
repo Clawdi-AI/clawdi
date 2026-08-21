@@ -358,14 +358,16 @@ previous exact pre-image. There is no separate active/previous link state or
 hand-built chroot.
 
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
-native read/write access to the complete tenant home, including `0600` files,
-`0700` directories, and dotfiles. Reconciliation does not rewrite ownership,
-modes, or ACLs across the home. Candidate directories and binaries remain
-root-owned. The root-authored JWT configuration is a `root:<runtime group>`
-`0440` file below a root-only `0700` directory, so other tenant processes
-cannot traverse to it; systemd publishes that file and the verified binary only
-inside the Files mount namespace through `BindReadOnlyPaths=`. Install receipts
-remain root-only `0600`.
+native read/write access to tenant-owned home content, including `0600` files,
+`0700` directories, and dotfiles. Before snapshots, reconciliation repairs
+tenant-home ownership recursively except for declared platform enclaves:
+`$HOME/.config/systemd/user` and OpenClaw's
+`$HOME/.openclaw/gateway.systemd.env`. It does not rewrite modes or ACLs.
+Candidate directories and binaries remain root-owned. The root-authored JWT
+configuration is a `root:<runtime group>` `0440` file below a root-only `0700`
+directory, so other tenant processes cannot traverse to it; systemd publishes
+that file and the verified binary only inside the Files mount namespace through
+`BindReadOnlyPaths=`. Install receipts remain root-only `0600`.
 
 DB/cache state lives in the tenant-owned `0700`
 `StateDirectory=clawdi-files`. The tenant can therefore inspect or alter its
@@ -398,8 +400,9 @@ reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
 The unavoidable workspace boundary is content-level: the tenant owns its home
-and can edit or delete its contents and Files state. This does not grant the
-tenant control over the root-owned binary, configuration secret source,
+outside the declared platform enclaves and can edit or delete its contents and
+Files state. This does not grant the tenant control over the root-owned binary,
+configuration secret source,
 receipts, unit, or listener authority. Port 9120 has normal socket exclusivity
 rather than a separate tenant-slice reservation: the tenant cannot displace the
 running service, but can bind 9120 while it is not listening and thereby cause

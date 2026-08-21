@@ -947,8 +947,6 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	const tenantExisting = join(runtimeHome, "files-tenant-existing.txt");
 	writeFileSync(tenantExisting, "tenant-existing\n", { mode: 0o600 });
 	chownSync(tenantExisting, runtimeUid, runtimeGid);
-	const rootOwnedControl = join(runtimeHome, "files-root-owned-control.txt");
-	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
 	const hermesConfig = join(runtimeHome, ".hermes", "config.yaml");
 	mkdirSync(dirname(hermesConfig), { recursive: true, mode: 0o700 });
 	chownSync(dirname(hermesConfig), runtimeUid, runtimeGid);
@@ -983,6 +981,8 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
+	const rootOwnedControl = join(paths.systemdUserRoot, "files-root-owned-control");
+	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
 	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
 	mkdirSync(legacyEnvironmentRoot, { recursive: true });
 	writeFileSync(
