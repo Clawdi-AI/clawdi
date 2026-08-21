@@ -526,6 +526,50 @@ export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnership
 	}
 }
 
+export function enforceRuntimeUserSystemdManagerAccess(systemdUserRoot: string): void {
+	if (!runningAsRoot()) return;
+	let root: NonNullable<ReturnType<typeof lstatSync>>;
+	try {
+		root = lstatSync(systemdUserRoot);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!root.isDirectory() || root.isSymbolicLink()) {
+		throw new Error(`runtime-user systemd root must be a real directory: ${systemdUserRoot}`);
+	}
+	ensureRuntimeUserManagerMode(systemdUserRoot, root, 0o555);
+	for (const entry of readdirSync(systemdUserRoot, { withFileTypes: true })) {
+		const path = join(systemdUserRoot, entry.name);
+		if (entry.isFile() && entry.name.endsWith(".service")) {
+			ensureRuntimeUserManagerMode(path, lstatSync(path), 0o444);
+			continue;
+		}
+		if (!entry.isDirectory()) continue;
+		if (entry.name === "default.target.wants") {
+			ensureRuntimeUserManagerMode(path, lstatSync(path), 0o555);
+			continue;
+		}
+		if (!entry.name.endsWith(".service.d")) continue;
+		ensureRuntimeUserManagerMode(path, lstatSync(path), 0o555);
+		for (const dropIn of readdirSync(path, { withFileTypes: true })) {
+			if (!dropIn.isFile() || !dropIn.name.endsWith(".conf")) continue;
+			const dropInPath = join(path, dropIn.name);
+			ensureRuntimeUserManagerMode(dropInPath, lstatSync(dropInPath), 0o444);
+		}
+	}
+}
+
+function ensureRuntimeUserManagerMode(
+	path: string,
+	node: NonNullable<ReturnType<typeof lstatSync>>,
+	requiredMode: number,
+): void {
+	const currentMode = Number(node.mode) & 0o7777;
+	const nextMode = currentMode | requiredMode;
+	if (nextMode !== currentMode) chmodSync(path, nextMode);
+}
+
 function runtimeFilesystemIdentity(): RuntimeUserIdentity | null {
 	if (!runningAsRoot()) return null;
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();

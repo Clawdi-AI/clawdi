@@ -503,19 +503,16 @@ export function applySystemdRuntimeUpdate(
 		);
 	}
 	if (enableAndStartUserUnits.length > 0) {
-		runJournaledSystemdMutation(
+		runJournaledRuntimeUserEnable(
+			paths,
 			transaction,
 			stage,
-			"user",
 			"enable-and-start",
 			enableAndStartUserUnits,
-			() => runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]),
 		);
 	}
 	if (enableUserUnits.length > 0) {
-		runJournaledSystemdMutation(transaction, stage, "user", "enable", enableUserUnits, () =>
-			runtimeUserSystemctl(paths, ["enable", ...enableUserUnits]),
-		);
+		runJournaledRuntimeUserEnable(paths, transaction, stage, "enable", enableUserUnits);
 	}
 	if (startUserUnits.length > 0) {
 		runJournaledSystemdMutation(transaction, stage, "user", "start", startUserUnits, () =>
@@ -659,9 +656,13 @@ function rollbackSystemdRuntimeTransaction(
 		const currentlyEnabled = systemdUnitEnabled(systemdUnitManagerState(paths, "user", unit));
 		if (initiallyEnabled !== currentlyEnabled) {
 			const action = initiallyEnabled ? "enable" : "disable";
-			runJournaledSystemdMutation(transaction, "rollback", "user", action, [unit], () =>
-				runtimeUserSystemctl(paths, [action, unit]),
-			);
+			if (action === "enable") {
+				runJournaledRuntimeUserEnable(paths, transaction, "rollback", action, [unit]);
+			} else {
+				runJournaledSystemdMutation(transaction, "rollback", "user", action, [unit], () =>
+					runtimeUserSystemctl(paths, [action, unit]),
+				);
+			}
 		}
 		if (initial.activeState !== "active") continue;
 		restoreActiveSystemdUnit(paths, transaction, "user", unit);
@@ -787,6 +788,44 @@ function runJournaledSystemdMutation<T>(
 	} catch (error) {
 		entry.outcome = "failed";
 		throw error;
+	}
+}
+
+function runJournaledRuntimeUserEnable(
+	paths: ReturnType<typeof getRuntimePaths>,
+	transaction: SystemdRuntimeTransaction,
+	stage: SystemdRuntimeMutationStage,
+	action: Extract<SystemdRuntimeMutationAction, "enable" | "enable-and-start">,
+	units: readonly string[],
+): string {
+	const args = action === "enable-and-start" ? ["enable", "--now", ...units] : ["enable", ...units];
+	const enable = () =>
+		runJournaledSystemdMutation(transaction, stage, "user", action, units, () =>
+			runtimeUserSystemctl(paths, args),
+		);
+	try {
+		return enable();
+	} catch (error) {
+		if (!missingRuntimeUserUnitExists(paths, units, error)) throw error;
+		runJournaledSystemdMutation(transaction, stage, "user", "daemon-reload", [], () =>
+			runtimeUserSystemctl(paths, ["daemon-reload"]),
+		);
+		return enable();
+	}
+}
+
+function missingRuntimeUserUnitExists(
+	paths: ReturnType<typeof getRuntimePaths>,
+	units: readonly string[],
+	error: unknown,
+): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	const unit = message.match(/\bUnit\s+([^\s:]+)\s+does not exist\b/i)?.[1];
+	if (!unit || !units.includes(unit)) return false;
+	try {
+		return statSync(join(paths.systemdUserRoot, unit)).isFile();
+	} catch {
+		return false;
 	}
 }
 
