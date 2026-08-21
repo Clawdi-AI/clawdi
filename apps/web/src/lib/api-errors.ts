@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { ACCOUNT_SUSPENDED_CODE } from "@/lib/account-suspension";
 
 /**
  * Cloud-api (`useApi` / openapi-fetch) error model + normalization.
@@ -15,6 +16,7 @@ export class ApiError extends Error {
 	constructor(
 		public status: number,
 		public detail: string,
+		public code: string | null = null,
 	) {
 		super(`API ${status}: ${detail}`);
 		this.name = "ApiError";
@@ -48,6 +50,16 @@ export function parseApiDetail(detail: string): unknown {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+export function apiErrorCode(value: unknown): string | null {
+	if (!isRecord(value)) return null;
+	if (typeof value.code === "string") return value.code;
+	return isRecord(value.detail) && typeof value.detail.code === "string" ? value.detail.code : null;
+}
+
 export function formatApiError(detail: string): string {
 	const parsed = parseApiDetail(detail);
 	if (typeof parsed === "string") return parsed;
@@ -61,6 +73,10 @@ export function formatApiError(detail: string): string {
 /** Auth expired / invalid token mid-session (401). Needs re-auth, not a retry. */
 export function isApiAuthError(error: unknown): boolean {
 	return error instanceof ApiError && error.status === 401;
+}
+
+export function isAccountSuspendedError(error: unknown): boolean {
+	return error instanceof ApiError && error.status === 401 && error.code === ACCOUNT_SUSPENDED_CODE;
 }
 
 /** True not-found from the API. Transport failures must not collapse to 404 UI. */
@@ -91,6 +107,9 @@ export function normalizeApiError(error: unknown): string {
 			: "We couldn't reach the service. Check your connection and try again.";
 	}
 	if (error instanceof ApiError) {
+		if (isAccountSuspendedError(error)) {
+			return "Your account has been deactivated and can no longer access Clawdi.";
+		}
 		if (error.status === 401) {
 			return "Your session has expired. Please sign in again to continue.";
 		}
@@ -113,5 +132,8 @@ export function normalizeApiError(error: unknown): string {
  * the normalized, internal-free error copy as the description.
  */
 export function toastApiError(title: string) {
-	return (error: unknown) => toast.error(title, { description: normalizeApiError(error) });
+	return (error: unknown) => {
+		if (isAccountSuspendedError(error)) return;
+		toast.error(title, { description: normalizeApiError(error) });
+	};
 }

@@ -4,7 +4,8 @@ import { type components, extractApiDetail, type paths } from "@clawdi/shared/ap
 import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import { useCallback, useMemo } from "react";
-import { ApiError, ApiNetworkError } from "@/lib/api-errors";
+import { observeAccountSuspensionResponse } from "@/lib/account-suspension";
+import { ApiError, ApiNetworkError, apiErrorCode } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 
@@ -66,6 +67,10 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		controller.abort();
 	}, REQUEST_TIMEOUT_MS);
 	return fetch(request, { ...init, signal: controller.signal })
+		.then(async (response) => {
+			await observeAccountSuspensionResponse(response);
+			return response;
+		})
 		.catch((cause: unknown) => {
 			if (timedOut) throw new ApiNetworkError("timeout", { cause });
 			if (caller?.aborted) throw cause;
@@ -99,7 +104,7 @@ function useConfiguredApi(throwOnError: boolean) {
 			client.use({
 				async onResponse({ response }) {
 					if (!response.ok) {
-						throw new ApiError(response.status, await apiErrorDetail(response.clone()));
+						throw await apiErrorFromResponse(response.clone());
 					}
 					return response;
 				},
@@ -133,7 +138,11 @@ export type OpenApiClient = ReturnType<typeof useOpenApi>;
  */
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
 	if (result.error !== undefined) {
-		throw new ApiError(result.response.status, extractApiDetail(result.error));
+		throw new ApiError(
+			result.response.status,
+			extractApiDetail(result.error),
+			apiErrorCode(result.error),
+		);
 	}
 	return result.data as T;
 }
@@ -143,15 +152,19 @@ export function ensureBlob(value: unknown): Blob {
 	throw new Error("Expected a binary API response");
 }
 
-async function apiErrorDetail(response: Response): Promise<string> {
+async function apiErrorFromResponse(response: Response): Promise<ApiError> {
 	try {
 		if ((response.headers.get("content-type") ?? "").includes("application/json")) {
 			const body: unknown = await response.json();
-			return extractApiDetail(body);
+			return new ApiError(response.status, extractApiDetail(body), apiErrorCode(body));
 		}
-		return (await response.text()) || response.statusText;
+		if ((response.headers.get("content-type") ?? "").includes("+json")) {
+			const body: unknown = await response.json();
+			return new ApiError(response.status, extractApiDetail(body), apiErrorCode(body));
+		}
+		return new ApiError(response.status, (await response.text()) || response.statusText);
 	} catch {
-		return response.statusText;
+		return new ApiError(response.status, response.statusText);
 	}
 }
 
@@ -187,7 +200,7 @@ export function useSkillArchiveUploader() {
 				}),
 			);
 			if (!response.ok) {
-				throw new ApiError(response.status, await apiErrorDetail(response));
+				throw await apiErrorFromResponse(response);
 			}
 			return readJson<SkillUploadResponse>(response);
 		},
@@ -213,7 +226,7 @@ export function useAgentAvatarUploader() {
 					body: form,
 				}),
 			);
-			if (!response.ok) throw new ApiError(response.status, await apiErrorDetail(response));
+			if (!response.ok) throw await apiErrorFromResponse(response);
 			return readJson<EnvironmentResponse>(response);
 		},
 		[getToken],

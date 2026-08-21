@@ -14,6 +14,7 @@ from app.schemas.api_key import (
     ApiKeyResponse,
     ApiKeyRevokeResponse,
 )
+from app.schemas.problem import AccountSuspendedProblem
 from app.schemas.user import CurrentUserResponse
 from app.services.api_key import mint_api_key
 
@@ -140,7 +141,20 @@ async def revoke_api_key(
     return ApiKeyRevokeResponse(status="revoked")
 
 
-@router.get("/me")
+@router.get(
+    "/me",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "model": AccountSuspendedProblem,
+            "description": "The authenticated account is suspended",
+            "content": {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/AccountSuspendedProblem"}
+                }
+            },
+        }
+    },
+)
 async def get_me(auth: AuthContext = Depends(get_auth)) -> CurrentUserResponse:
     return CurrentUserResponse(
         id=str(auth.user.id),

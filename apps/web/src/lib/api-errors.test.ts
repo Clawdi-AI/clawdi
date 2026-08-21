@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	ApiError,
 	ApiNetworkError,
+	apiErrorCode,
 	formatApiError,
+	isAccountSuspendedError,
 	isApiAuthError,
 	isApiNetworkError,
 	isApiNotFoundError,
@@ -46,6 +48,13 @@ describe("API error details", () => {
 	test("keeps plain text API errors readable", () => {
 		expect(formatApiError("project not found")).toBe("project not found");
 	});
+
+	test("extracts stable codes from Problem Details and structured FastAPI details", () => {
+		expect(apiErrorCode({ code: "account_suspended", detail: "Account is suspended" })).toBe(
+			"account_suspended",
+		);
+		expect(apiErrorCode({ detail: { code: "already_member" } })).toBe("already_member");
+	});
 });
 
 describe("cloud-api error classification", () => {
@@ -55,6 +64,13 @@ describe("cloud-api error classification", () => {
 		expect(isApiNotFoundError(e)).toBe(false);
 		expect(isApiServerError(e)).toBe(false);
 		expect(isApiNetworkError(e)).toBe(false);
+	});
+
+	test("suspension is distinguishable from an ordinary 401", () => {
+		expect(
+			isAccountSuspendedError(new ApiError(401, "Account is suspended", "account_suspended")),
+		).toBe(true);
+		expect(isAccountSuspendedError(new ApiError(401, "token expired"))).toBe(false);
 	});
 
 	test("404 is a not-found error, not transport", () => {
@@ -103,6 +119,14 @@ describe("normalizeApiError", () => {
 
 	test("401 → session expired prompt", () => {
 		expect(normalizeApiError(new ApiError(401, "jwt expired"))).toMatch(/session has expired/i);
+	});
+
+	test("suspension 401 uses deactivation copy without exposing detail", () => {
+		const message = normalizeApiError(
+			new ApiError(401, "internal suspension detail", "account_suspended"),
+		);
+		expect(message).toMatch(/account has been deactivated/i);
+		expect(message).not.toContain("internal suspension detail");
 	});
 
 	test("5xx → transient message, not the raw detail", () => {

@@ -23,6 +23,7 @@ from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import PRINCIPAL_KIND_CLERK, User
+from app.schemas.problem import ACCOUNT_SUSPENDED_DETAIL, AccountSuspendedProblem
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
@@ -55,6 +56,21 @@ _CLERK_JWKS_TIMEOUT_SECONDS = 5
 
 type _JwtClaims = dict[str, JsonValue]
 _JWT_CLAIMS_ADAPTER: TypeAdapter[_JwtClaims] = TypeAdapter(dict[str, JsonValue])
+
+
+class AccountSuspendedHTTPException(HTTPException):
+    """401 with a stable public Problem Details body for every auth mode."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ACCOUNT_SUSPENDED_DETAIL,
+            headers={
+                "WWW-Authenticate": "Bearer",
+                "Cache-Control": "no-store, private",
+            },
+        )
+        self.problem = AccountSuspendedProblem()
 
 
 class ClerkEmailVerification(BaseModel):
@@ -224,7 +240,7 @@ async def _assert_active_user_or_401(db: AsyncSession, user_id: UUID) -> None:
         await assert_user_authority_active(db, user_id)
     except PrincipalSuspendedError:
         invalidate_user_api_key_auth_cache(user_id)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
+        raise AccountSuspendedHTTPException() from None
     except PrincipalTerminatedError:
         invalidate_user_api_key_auth_cache(user_id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
@@ -371,7 +387,7 @@ async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | No
     try:
         issuer = await assert_clerk_principal_active(db, subject=clerk_id)
     except PrincipalSuspendedError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
+        raise AccountSuspendedHTTPException() from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     if issuer is None:
@@ -686,7 +702,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 )
             ).scalar_one_or_none()
     except PrincipalSuspendedError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
+        raise AccountSuspendedHTTPException() from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     except PrincipalIdentityConflictError:
@@ -910,7 +926,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             issuer=issuer or None,
         )
     except PrincipalSuspendedError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is suspended") from None
+        raise AccountSuspendedHTTPException() from None
     except PrincipalTerminatedError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     await _assert_active_user_or_401(db, user.id)

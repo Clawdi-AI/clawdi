@@ -104,6 +104,37 @@ describe("ApiClient error classification", () => {
 		}
 	});
 
+	it("keeps a suspension Problem recognizable to existing CLI callers", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const origFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					type: "urn:clawdi:problem:account-suspended",
+					title: "Account suspended",
+					status: 401,
+					detail: "Account is suspended",
+					code: "account_suspended",
+				}),
+				{ status: 401, headers: { "content-type": "application/problem+json" } },
+			);
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			const api = new ApiClient();
+			let caught: unknown;
+			try {
+				unwrap(await api.GET("/v1/auth/me"));
+			} catch (error) {
+				caught = error;
+			}
+			expect(caught).toBeInstanceOf(ApiError);
+			expect((caught as ApiError).status).toBe(401);
+			expect((caught as ApiError).body).toBe("Account is suspended");
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
 	it("retries 5xx on GET up to the configured max", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { clearAccountSuspension } from "@/lib/account-suspension";
 import { useCurrentUser } from "@/lib/auth-client";
 import { createAppQueryClient } from "@/lib/query-client";
 
@@ -38,6 +39,7 @@ function QueryCacheAuthBoundary({
 
 	useEffect(() => {
 		if (!isLoaded) return;
+		if (!isSignedIn) clearAccountSuspension();
 
 		const authKey = isSignedIn ? (user?.id ?? "signed-in") : "signed-out";
 		if (lastAuthKey.current === null) {
@@ -46,6 +48,7 @@ function QueryCacheAuthBoundary({
 		}
 		if (lastAuthKey.current !== authKey) {
 			queryClient.clear();
+			clearAccountSuspension();
 			lastAuthKey.current = authKey;
 		}
 	}, [isLoaded, isSignedIn, queryClient, user?.id]);
