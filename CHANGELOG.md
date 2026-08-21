@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.2
+
+Package: `clawdi@0.14.2`
+
+### Fixed
+
+- Managed skill installs are now anchored to the receipt of what the official
+  installer actually wrote, instead of predicting the installer's byte
+  transformation. This removes the "did not preserve the exact native catalog
+  projection" failure class entirely and decouples skill convergence from the
+  installed Hermes version.
+
 ## Clawdi CLI v0.14.1
 
 Package: `clawdi@0.14.1`
