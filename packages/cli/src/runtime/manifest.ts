@@ -1549,48 +1549,23 @@ function mergeRuntimeSecretEnv(
 	runtimeName: string,
 	settings: RuntimeRunSettings | undefined,
 	providerSecretEnv: Record<string, string>,
+	serviceName?: string,
 ): Record<string, string> {
+	const scope = `runtime ${runtimeName}${serviceName ? ` service ${serviceName}` : ""}`;
 	const merged = { ...providerSecretEnv };
 	const runtimeSecretEnv = settings?.secretEnv ?? {};
 	for (const [envName, ref] of Object.entries(runtimeSecretEnv)) {
 		const existing = merged[envName];
 		if (existing !== undefined && existing !== ref) {
 			throw new Error(
-				`runtime ${runtimeName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
+				`${scope} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
 			);
 		}
 		merged[envName] = ref;
 	}
 	for (const envName of Object.keys(settings?.env ?? {})) {
 		if (merged[envName] !== undefined) {
-			throw new Error(`runtime ${runtimeName} defines ${envName} in both env and secretEnv`);
-		}
-	}
-	return merged;
-}
-
-function mergeRuntimeServiceSecretEnv(
-	runtimeName: string,
-	serviceName: string,
-	serviceSettings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
-	providerSecretEnv: Record<string, string>,
-): Record<string, string> {
-	const merged = { ...providerSecretEnv };
-	const serviceSecretEnv = serviceSettings.secretEnv ?? {};
-	for (const [envName, ref] of Object.entries(serviceSecretEnv)) {
-		const existing = merged[envName];
-		if (existing !== undefined && existing !== ref) {
-			throw new Error(
-				`runtime ${runtimeName} service ${serviceName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
-			);
-		}
-		merged[envName] = ref;
-	}
-	for (const envName of Object.keys(serviceSettings.env ?? {})) {
-		if (merged[envName] !== undefined) {
-			throw new Error(
-				`runtime ${runtimeName} service ${serviceName} defines ${envName} in both env and secretEnv`,
-			);
+			throw new Error(`${scope} defines ${envName} in both env and secretEnv`);
 		}
 	}
 	return merged;
@@ -4868,7 +4843,7 @@ function validateRuntimeManifestPlan(
 				serviceSettings,
 				providerPlaceholderEnv,
 			);
-			if (runtime.enabled) mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
+			if (runtime.enabled) mergeRuntimeSecretEnv(name, settings, providerSecretEnv, service);
 		}
 		if (!runtime.enabled || !manifest.locale) continue;
 		const block = managedLocaleBlock(manifest.locale);
@@ -5028,7 +5003,7 @@ function resolveRuntimeRunConfigs(input: {
 				settings,
 				secretFilePath: null,
 				secretEnv: input.runtime.enabled
-					? mergeRuntimeServiceSecretEnv(input.name, service, settings, providerSecretEnv)
+					? mergeRuntimeSecretEnv(input.name, settings, providerSecretEnv, service)
 					: {},
 			});
 		});
@@ -5155,7 +5130,7 @@ function validateRuntimeProjectionPlan(input: {
 				serviceSettings,
 				providerPlaceholderEnv,
 			);
-			mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
+			mergeRuntimeSecretEnv(name, settings, providerSecretEnv, service);
 		}
 
 		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
