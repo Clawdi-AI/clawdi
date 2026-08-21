@@ -24,6 +24,7 @@ import {
 	resolveOpenClawSdkExport as resolveSdk,
 	OPENCLAW_SDK_EXPORT_PATHS as SDK_EXPORTS,
 } from "../../src/lib/codex-oauth-native-store";
+import { hostedOpenClawSkillDriver } from "../../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -285,6 +286,12 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	const result = convergeRuntimeManifest(load, paths, {
 		executeOfficialServiceInstallers: true,
 		cacheLastGood: false,
+		// This case exercises installer rollback; live roster behavior is covered
+		// by the full OpenClaw projection cases below.
+		hostedOpenClawSkillDriver: {
+			...hostedOpenClawSkillDriver,
+			resolveWorkspace: () => openClawWorkspaceRoot,
+		},
 		commitAuthority: () => {
 			authorityCommits += 1;
 		},
