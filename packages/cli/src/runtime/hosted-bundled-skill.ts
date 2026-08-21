@@ -1,10 +1,11 @@
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
 	canonicalManagedBundleFileMode,
 	computeManagedBundleHash,
 	type ManagedBundleHashEntry,
 } from "./managed-bundle-hash";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const LEGACY_MARKER = ".clawdi-managed.json";
 const LEGACY_MARKER_SCHEMA = "clawdi.hostedBundledSkillMarker.v1";
@@ -147,7 +148,7 @@ function readLegacyMarker(targetDir: string): Record<string, unknown> | null {
  * supported hosted CLI versions have written reservation-backed receipts and
  * the oldest pre-ledger runtime image is outside the supported upgrade window.
  */
-export function adoptableLegacyHostedBundledSkill(
+function adoptableLegacyHostedBundledSkill(
 	targetDir: string,
 	skillId: string,
 ): HostedBundledSkillCatalogEntry | null {
@@ -180,4 +181,26 @@ export function adoptableLegacyHostedBundledSkill(
 	} catch {
 		return null;
 	}
+}
+
+export function claimLegacyHostedBundledSkill(input: {
+	targetDir: string;
+	skillId: string;
+	reserve(catalogEntry: HostedBundledSkillCatalogEntry): void;
+	anchorOwnership(ownershipIdentity: string): void;
+}): boolean {
+	const catalogEntry = withRuntimeUserFileAccess(() =>
+		adoptableLegacyHostedBundledSkill(input.targetDir, input.skillId),
+	);
+	if (!catalogEntry) return false;
+
+	input.reserve(catalogEntry);
+	withRuntimeUserFileAccess(() => {
+		if (adoptableLegacyHostedBundledSkill(input.targetDir, input.skillId) !== catalogEntry) {
+			throw new Error("legacy hosted Skill identity changed during ownership claim");
+		}
+		rmSync(join(input.targetDir, LEGACY_MARKER));
+	});
+	input.anchorOwnership(`content-sha256\0${catalogEntry.digest}`);
+	return true;
 }

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
+import { managedSkillReceiptPath } from "./managed-skill-delivery";
 
 let root = "";
 afterEach(() => {
@@ -171,6 +172,8 @@ test("runs official install from home before its first workspace exists and guar
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-driver-"));
 	const home = join(root, "home");
 	const workspaceRoot = join(home, "agent-workspace");
+	const managedResourceRoot = join(root, "managed-resources");
+	mkdirSync(managedResourceRoot, { recursive: true });
 	const command = join(home, ".local", "bin", "openclaw");
 	const installLog = join(root, "install.log");
 	const installCwdLog = join(root, "install-cwd.log");
@@ -230,22 +233,30 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	};
 
 	expect(existsSync(workspaceRoot)).toBe(false);
-	expect(hostedOpenClawSkillDriver.install({ home, workspaceRoot, skill })).toBe("installed");
+	expect(
+		hostedOpenClawSkillDriver.install({ home, workspaceRoot, managedResourceRoot, skill }),
+	).toBe("installed");
 	expect(readFileSync(installCwdLog, "utf8")).toBe(`${home}\n`);
 	expect(readFileSync(installLog, "utf8")).toMatch(
 		/^skills install .* --agent main --as review-pr --force\n$/,
 	);
-	expect(hostedOpenClawSkillDriver.install({ home, workspaceRoot, skill })).toBe("unchanged");
+	expect(
+		hostedOpenClawSkillDriver.install({ home, workspaceRoot, managedResourceRoot, skill }),
+	).toBe("unchanged");
 	expect(readFileSync(installLog, "utf8").trim().split("\n")).toHaveLength(1);
-	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, managedResourceRoot, skill })).toBe(
+		true,
+	);
 	const target = join(workspaceRoot, "skills", "review-pr");
-	const receipt = join(workspaceRoot, "skills", ".clawdi-manifest-receipts", "review-pr.json");
+	const receipt = managedSkillReceiptPath(managedResourceRoot, "openclaw", "review-pr");
 	const receiptBytes = readFileSync(receipt);
 	const receiptStat = statSync(receipt);
 	expect(receiptStat.mode & 0o777).toBe(0o600);
 	if (process.geteuid) expect(receiptStat.uid).toBe(process.geteuid());
 	rmSync(receipt);
-	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(false);
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, managedResourceRoot, skill })).toBe(
+		false,
+	);
 	writeFileSync(receipt, receiptBytes);
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	writeFileSync(join(target, "SKILL.md"), "tenant mutation\n");
@@ -253,6 +264,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(
 		hostedOpenClawSkillDriver.hasOwnershipReceipt({
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			ownershipIdentity: skill.sourceIdentity,
 		}),
@@ -261,6 +273,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(
 		hostedOpenClawSkillDriver.hasOwnershipReceipt({
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			ownershipIdentity: skill.sourceIdentity,
 		}),
@@ -269,6 +282,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 		hostedOpenClawSkillDriver.installDirectory({
 			home,
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			sourceDir,
 			ownershipIdentity: skill.sourceIdentity,
@@ -281,26 +295,32 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 		hostedOpenClawSkillDriver.installDirectory({
 			home,
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			sourceDir,
 			ownershipIdentity: `${skill.sourceIdentity}-v2`,
 		}),
 	).toThrow("official Skill install failed: exit code 45 without output");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, managedResourceRoot, skill })).toBe(
+		true,
+	);
 	delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
 	process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE = "1";
 	expect(() =>
 		hostedOpenClawSkillDriver.installDirectory({
 			home,
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			sourceDir,
 			ownershipIdentity: `${skill.sourceIdentity}-v2`,
 		}),
 	).toThrow("changed during Skill reconciliation");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, skill })).toBe(true);
+	expect(hostedOpenClawSkillDriver.verifyOwned({ workspaceRoot, managedResourceRoot, skill })).toBe(
+		true,
+	);
 	delete process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE;
 	rmSync(workspaceDriftMarker);
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
@@ -308,6 +328,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(() =>
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			ownershipIdentity: skill.sourceIdentity,
 		}),
@@ -317,6 +338,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			ownershipIdentity: skill.sourceIdentity,
 		}),
@@ -326,6 +348,7 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(
 		hostedOpenClawSkillDriver.cleanupManifestOwned({
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			ownershipIdentity: skill.sourceIdentity,
 		}),
@@ -337,6 +360,8 @@ test("fails before official install when the OpenClaw workspace changes during r
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-workspace-mismatch-"));
 	const home = join(root, "home");
 	const workspaceRoot = join(home, "desired-workspace");
+	const managedResourceRoot = join(root, "managed-resources");
+	mkdirSync(managedResourceRoot, { recursive: true });
 	const command = join(home, ".local", "bin", "openclaw");
 	const installMarker = join(root, "install-called");
 	mkdirSync(dirname(command), { recursive: true });
@@ -360,6 +385,7 @@ exit 0
 		hostedOpenClawSkillDriver.installDirectory({
 			home,
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			sourceDir,
 			ownershipIdentity:
@@ -375,6 +401,8 @@ test("reports a spawn error when the official install process cannot start", () 
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-spawn-error-"));
 	const home = join(root, "home");
 	const workspaceRoot = join(home, "agent-workspace");
+	const managedResourceRoot = join(root, "managed-resources");
+	mkdirSync(managedResourceRoot, { recursive: true });
 	const command = join(home, ".local", "bin", "openclaw");
 	mkdirSync(dirname(command), { recursive: true });
 	writeFileSync(
@@ -397,6 +425,7 @@ exit 64
 		hostedOpenClawSkillDriver.installDirectory({
 			home,
 			workspaceRoot,
+			managedResourceRoot,
 			skillId: "review-pr",
 			sourceDir,
 			ownershipIdentity:

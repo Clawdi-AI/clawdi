@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chownSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -19,6 +20,15 @@ test("records MCP list and call evidence without inference assertions", async ()
 	const readyFile = join(root, "ready.json");
 	const resultFile = join(root, "result.json");
 	const nonce = "a".repeat(32);
+	const runtimeIdentity =
+		process.geteuid?.() === 0
+			? {
+					user: "nobody",
+					uid: Number(execFileSync("id", ["-u", "nobody"], { encoding: "utf8" })),
+					gid: Number(execFileSync("id", ["-g", "nobody"], { encoding: "utf8" })),
+				}
+			: null;
+	if (runtimeIdentity) chownSync(root, runtimeIdentity.uid, runtimeIdentity.gid);
 	const child = Bun.spawn(
 		[
 			"bun",
@@ -34,7 +44,18 @@ test("records MCP list and call evidence without inference assertions", async ()
 		],
 		{
 			cwd: root,
-			env: { ...process.env, CLAWDI_NO_UPDATE_CHECK: "1", CLAWDI_NO_AUTO_UPDATE: "1" },
+			env: {
+				...process.env,
+				CLAWDI_NO_UPDATE_CHECK: "1",
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				...(runtimeIdentity
+					? {
+							CLAWDI_RUNTIME_USER: runtimeIdentity.user,
+							CLAWDI_RUNTIME_UID: String(runtimeIdentity.uid),
+							CLAWDI_RUNTIME_GID: String(runtimeIdentity.gid),
+						}
+					: {}),
+			},
 			stdout: "ignore",
 			stderr: "pipe",
 		},
@@ -55,6 +76,12 @@ test("records MCP list and call evidence without inference assertions", async ()
 			mcpToolsList: true,
 			mcpToolCall: true,
 		});
+		if (runtimeIdentity) {
+			expect([statSync(readyFile).uid, statSync(resultFile).uid]).toEqual([
+				runtimeIdentity.uid,
+				runtimeIdentity.uid,
+			]);
+		}
 	} finally {
 		await client?.close();
 		child.kill("SIGTERM");

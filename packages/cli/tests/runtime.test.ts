@@ -61,6 +61,7 @@ import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-cont
 import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
+import { managedSkillReceiptPath } from "../src/runtime/managed-skill-delivery";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -70,6 +71,10 @@ import {
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
+import {
+	managedWhatsAppAuthReceiptPath,
+	readManagedWhatsAppAuthMarker,
+} from "../src/runtime/manifest-channels";
 import {
 	hostedRuntimeManifestSchema,
 	manifestSchema,
@@ -4103,7 +4108,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 
 		const context = createOpenClawHostedContext(loaded.manifest, home);
 		expect(context.ownership.map(({ path, mode, recursive }) => [path, mode, recursive])).toEqual([
-			[home, undefined, false],
 			[join(home, ".openclaw"), 0o700, false],
 			[join(home, ".openclaw", "tmp"), 0o700, false],
 		]);
@@ -14690,13 +14694,14 @@ exit 64
 		);
 
 		writeFileSync(baileysSocket, patchedSocket);
-		const sessionMarker = join(sessionDir, ".clawdi-managed-whatsapp-auth.json");
-		const committedMarker = readFileSync(sessionMarker, "utf8");
-		writeFileSync(sessionMarker, '{"schemaVersion":"invalid"}\n');
+		const sessionReceipt = managedWhatsAppAuthReceiptPath(sessionDir);
+		const committedReceipt = readFileSync(sessionReceipt, "utf8");
+		writeFileSync(sessionReceipt, '{"schemaVersion":"invalid"}\n');
 		const invalidMarkerRemoval = convergeRuntimeManifest(removed, paths);
 		expect(invalidMarkerRemoval.installErrors).toEqual([]);
 		expect(existsSync(sessionDir)).toBe(true);
-		writeFileSync(sessionMarker, committedMarker);
+		writeFileSync(sessionReceipt, committedReceipt);
+		expect(readManagedWhatsAppAuthMarker(sessionDir)?.target).toBe("hermes");
 
 		const removedConvergence = convergeRuntimeManifest(removed, paths);
 		expect(removedConvergence.installErrors).toEqual([]);
@@ -14964,11 +14969,15 @@ exit 0
 
 	it("materializes, rotates, and removes OpenClaw managed WhatsApp auth", () => {
 		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
 		const workspace = join(home, "clawdi");
 		const accountKey = "clawdi_whatsapp_runtime";
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const authDir = join(home, ".openclaw", "credentials", "whatsapp", accountKey);
 		mkdirSync(workspace, { recursive: true });
+		mkdirSync(state, { recursive: true });
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		const managedMetadata = {
 			schemaVersion: "clawdi.managedWhatsAppSocket.v1",
 			capability: `clawdi_${"a".repeat(32)}`,
@@ -15102,9 +15111,10 @@ exit 0
 		const rotatedFile = readFileSync(join(authDir, "creds.json"), "utf8");
 		expect(rotatedFile).toContain("wa-rotated-secret");
 		expect(rotatedFile).not.toContain("wa-materialized-secret");
-		expect(readFileSync(join(authDir, ".clawdi-managed-whatsapp-auth.json"), "utf8")).toContain(
-			"credential-whatsapp-2",
-		);
+		expect(readdirSync(authDir)).toEqual(["creds.json"]);
+		const receipt = managedWhatsAppAuthReceiptPath(authDir);
+		expect(readFileSync(receipt, "utf8")).toContain("credential-whatsapp-2");
+		expect(statSync(receipt).mode & 0o777).toBe(0o600);
 
 		materializeHostedChannelCredentials(
 			unlinkedManifest.manifest,
@@ -15112,6 +15122,7 @@ exit 0
 			home,
 		);
 		expect(existsSync(authDir)).toBe(false);
+		expect(existsSync(receipt)).toBe(false);
 	});
 
 	it("preserves the last good OpenClaw WhatsApp auth when the next secret is missing", () => {
@@ -15916,7 +15927,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			runtimes: { openclaw: ["clawdi", "search.proxy"] },
 		});
 		expect(
-			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
+			existsSync(managedSkillReceiptPath(paths.managedResourceRoot, "openclaw", "clawdi")),
 		).toBe(true);
 
 		writeFileSync(join(openclawSkill, "SKILL.md"), "tenant mutation before restart\n");
@@ -15967,7 +15978,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		const hermesSkillReceipt = JSON.parse(
-			readFileSync(join(dirname(hermesSkill), ".clawdi-manifest-receipts", "clawdi.json"), "utf-8"),
+			readFileSync(managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi"), "utf-8"),
 		);
 		expect(hermesSkillReceipt).toEqual({
 			schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import { managedSkillReceiptPath } from "./managed-skill-delivery";
 
 const originalEnv = { ...process.env };
 let root = "";
@@ -87,6 +88,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-project-skill-"));
 		delete process.env.CLAWDI_RUNTIME_USER;
 		const home = join(root, "home");
+		const managedResourceRoot = join(root, "managed-resources");
+		mkdirSync(managedResourceRoot, { recursive: true });
 		const appRoot = fakeHermesApp(home);
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
@@ -123,6 +126,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.install({
 				home,
 				appRoot,
+				managedResourceRoot,
 				skill,
 				previouslyReserved: false,
 			}),
@@ -139,6 +143,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		delete process.env.CLAWDI_RUNTIME_USER;
 		process.env.HERMES_HOME = join(root, "wrong-profile");
 		const home = join(root, "home");
+		const managedResourceRoot = join(root, "managed-resources");
+		mkdirSync(managedResourceRoot, { recursive: true });
 		const appRoot = fakeHermesApp(home);
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
@@ -172,6 +178,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const input = {
 			home,
 			appRoot,
+			managedResourceRoot,
 			skill,
 		};
 
@@ -179,7 +186,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
 		).toBe("installed");
 		const target = join(home, ".hermes", "skills", "review-pr");
-		const receipt = join(home, ".hermes", "skills", ".clawdi-manifest-receipts", "review-pr.json");
+		const receipt = managedSkillReceiptPath(managedResourceRoot, "hermes", "review-pr");
 		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
 		expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe("Pinned guide\n");
 		expect(readFileSync(join(target, ".hermes-native.json"), "utf8")).toBe('{"installed": true}\n');
@@ -195,6 +202,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(
 			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
 				home,
+				managedResourceRoot,
 				skillId: "review-pr",
 				ownershipIdentity: skill.sourceIdentity,
 			}),
@@ -202,6 +210,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(
 			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
 				home,
+				managedResourceRoot,
 				skillId: "review-pr",
 				ownershipIdentity: `${skill.sourceIdentity}-other`,
 			}),
@@ -247,6 +256,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.install({
 				home,
 				appRoot,
+				managedResourceRoot,
 				skill: updatedSkill,
 				previouslyReserved: true,
 			}),
@@ -260,6 +270,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
+				managedResourceRoot,
 				skillId: "review-pr",
 				ownershipIdentity: updatedSkill.sourceIdentity,
 			}),
@@ -270,6 +281,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
+				managedResourceRoot,
 				skillId: "review-pr",
 				ownershipIdentity: updatedSkill.sourceIdentity,
 			}),
@@ -285,6 +297,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
 				appRoot,
+				managedResourceRoot,
 				skillId: "review-pr",
 				ownershipIdentity: skill.sourceIdentity,
 			}),
