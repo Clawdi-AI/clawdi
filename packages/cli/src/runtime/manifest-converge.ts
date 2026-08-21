@@ -25,11 +25,7 @@ import {
 import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
-import {
-	captureRuntimeLiveSnapshot,
-	type RuntimeLiveSnapshot,
-	restoreRuntimeLiveSnapshot,
-} from "./live-state-snapshot";
+import { captureRuntimeLiveSnapshot } from "./live-state-snapshot";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
 import { managedSkillReservationLedgerPath } from "./managed-skill-reservation";
@@ -212,8 +208,6 @@ export function convergeRuntimeManifest(
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	let agentPluginTransaction: HostedAgentPluginTransaction | null = null;
 	const agentPluginFailedNames = new Set<string>();
-	let agentPluginSnapshot: RuntimeLiveSnapshot | null = null;
-	let skillProjectionSnapshot: RuntimeLiveSnapshot | null = null;
 	let agentPluginQuiesceAttempted = false;
 	let agentPluginUnitsQuiesced = false;
 	let agentPluginMutationAttempted = false;
@@ -444,6 +438,9 @@ export function convergeRuntimeManifest(
 	} catch (error) {
 		throw rollbackSnapshots.failure(error);
 	}
+	// Resource snapshots live below tenant-owned roots and restore before the
+	// platform-root assertion that guards every earlier snapshot.
+	const resourceRollbackScope = rollbackSnapshots.scope();
 	let systemdActivationApplied = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
@@ -855,6 +852,7 @@ export function convergeRuntimeManifest(
 			throw new Error(installErrors.join("; "));
 		}
 		if (sourcedSkillsPrepared) {
+			let skillProjectionScope: ReturnType<typeof rollbackSnapshots.captureScoped> | null = null;
 			try {
 				const skillMutationTargets = hostedSkillMutationTargets(
 					manifest,
@@ -862,20 +860,23 @@ export function convergeRuntimeManifest(
 					openClawWorkspaceRoot,
 					paths.managedResourceRoot,
 				);
-				skillProjectionSnapshot = captureRuntimeLiveSnapshot({
-					rootTargets: [
-						managedSkillReservationLedgerPath(),
-						...skillMutationTargets.platformTargets,
-					],
-					trustedRootDirectories: [paths.managedResourceRoot],
-					runtimeUserTargets: skillMutationTargets.runtimeUserTargets,
-					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
-					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(
-						skillMutationTargets.runtimeUserTargets,
-						[paths.userHome, paths.clawdiHome],
-					),
-				});
+				skillProjectionScope = rollbackSnapshots.captureScoped(
+					"runtime Skill filesystem rollback failed",
+					{
+						rootTargets: [
+							managedSkillReservationLedgerPath(),
+							...skillMutationTargets.platformTargets,
+						],
+						trustedRootDirectories: [paths.managedResourceRoot],
+						runtimeUserTargets: skillMutationTargets.runtimeUserTargets,
+						runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
+						runtimeUserSymlinkTargets: [],
+						metadataTargets: mutationAncestorMetadataTargets(
+							skillMutationTargets.runtimeUserTargets,
+							[paths.userHome, paths.clawdiHome],
+						),
+					},
+				);
 				resourceProjectionErrors.push(
 					...reconcileHostedSkillProjection({
 						manifest,
@@ -890,16 +891,16 @@ export function convergeRuntimeManifest(
 				);
 			} catch (error) {
 				const projectionError = error instanceof Error ? error.message : String(error);
-				try {
-					if (skillProjectionSnapshot) restoreRuntimeLiveSnapshot(skillProjectionSnapshot);
-				} catch (rollbackError) {
+				const rollbackErrors = skillProjectionScope
+					? rollbackSnapshots.restore(skillProjectionScope, (_failure, rollbackError) =>
+							rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+						)
+					: [];
+				if (rollbackErrors.length > 0) {
 					throw new Error(
-						`runtime Skill projection failed and could not be rolled back: ${projectionError}; ${
-							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-						}`,
+						`runtime Skill projection failed and could not be rolled back: ${projectionError}; ${rollbackErrors.join("; ")}`,
 					);
 				}
-				skillProjectionSnapshot = null;
 				resourceProjectionErrors.push(projectionError);
 			}
 		}
@@ -1144,19 +1145,23 @@ export function convergeRuntimeManifest(
 			agentPluginMutationAttempted = true;
 		}
 		let agentPluginApplyCompleted = false;
+		let agentPluginSnapshotScope: ReturnType<typeof rollbackSnapshots.captureScoped> | null = null;
 		try {
 			if (appliedAgentPluginTransaction) {
-				agentPluginSnapshot = captureRuntimeLiveSnapshot({
-					rootTargets: [hostedAgentPluginReceiptsPath(paths)],
-					trustedRootDirectories: [paths.statusRoot],
-					runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
-					runtimeUserTrustedRoots: [projectionHome],
-					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(
-						appliedAgentPluginTransaction.snapshotTargets,
-						[projectionHome],
-					),
-				});
+				agentPluginSnapshotScope = rollbackSnapshots.captureScoped(
+					"runtime Agent Plugin filesystem rollback failed",
+					{
+						rootTargets: [hostedAgentPluginReceiptsPath(paths)],
+						trustedRootDirectories: [paths.statusRoot],
+						runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
+						runtimeUserTrustedRoots: [projectionHome],
+						runtimeUserSymlinkTargets: [],
+						metadataTargets: mutationAncestorMetadataTargets(
+							appliedAgentPluginTransaction.snapshotTargets,
+							[projectionHome],
+						),
+					},
+				);
 			}
 			appliedAgentPluginTransaction?.apply();
 			agentPluginApplyCompleted = true;
@@ -1171,13 +1176,15 @@ export function convergeRuntimeManifest(
 				agentPluginFailedNames.add(name);
 			}
 			const rollbackErrors = appliedAgentPluginTransaction?.rollback() ?? [];
-			try {
-				if (agentPluginSnapshot) restoreRuntimeLiveSnapshot(agentPluginSnapshot);
-			} catch (rollbackError) {
+			if (agentPluginSnapshotScope) {
 				rollbackErrors.push(
-					`runtime Agent Plugin snapshot rollback failed: ${
-						rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-					}`,
+					...rollbackSnapshots.restore(
+						agentPluginSnapshotScope,
+						(_failure, rollbackError) =>
+							`runtime Agent Plugin snapshot rollback failed: ${
+								rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+							}`,
+					),
 				);
 			}
 			if (rollbackErrors.length > 0) {
@@ -1194,7 +1201,6 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 			agentPluginTransaction = null;
-			agentPluginSnapshot = null;
 			agentPluginMutationAttempted = false;
 		}
 		if (
@@ -1353,6 +1359,7 @@ export function convergeRuntimeManifest(
 				console.warn(`post-commit official runtime service cleanup deferred: ${cleanupError}`);
 			}
 		}
+		rollbackSnapshots.pop();
 		return convergence;
 	} catch (error) {
 		if (agentPluginMutationAttempted) {
@@ -1380,31 +1387,8 @@ export function convergeRuntimeManifest(
 		let filesystemRollbackSucceeded = false;
 		if (candidateQuiesced) {
 			if (agentPluginTransaction) installErrors.push(...agentPluginTransaction.rollback());
-			let resourceFilesystemRollbackSucceeded = true;
-			if (agentPluginSnapshot) {
-				try {
-					restoreRuntimeLiveSnapshot(agentPluginSnapshot);
-				} catch (rollbackError) {
-					resourceFilesystemRollbackSucceeded = false;
-					installErrors.push(
-						`runtime Agent Plugin filesystem rollback failed: ${
-							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-						}`,
-					);
-				}
-			}
-			if (skillProjectionSnapshot) {
-				try {
-					restoreRuntimeLiveSnapshot(skillProjectionSnapshot);
-				} catch (rollbackError) {
-					resourceFilesystemRollbackSucceeded = false;
-					installErrors.push(
-						`runtime Skill filesystem rollback failed: ${
-							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-						}`,
-					);
-				}
-			}
+			const resourceSnapshotRollbackErrors = rollbackSnapshots.restore(resourceRollbackScope);
+			installErrors.push(...resourceSnapshotRollbackErrors);
 			try {
 				hostedRuntimeContract.assertPlatformRoots();
 				const snapshotRollbackErrors = rollbackSnapshots.restore();
@@ -1423,7 +1407,7 @@ export function convergeRuntimeManifest(
 					rmSync(egressSecretFilePath(paths), { force: true });
 				}
 				filesystemRollbackSucceeded =
-					resourceFilesystemRollbackSucceeded && snapshotRollbackErrors.length === 0;
+					resourceSnapshotRollbackErrors.length === 0 && snapshotRollbackErrors.length === 0;
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime filesystem rollback failed: ${

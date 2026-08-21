@@ -503,22 +503,47 @@ export function managedOpenClawPluginBootstrapMutationPlan(
 		metadataTargets: mutationAncestorMetadataTargets(targets, runtimeUserTrustedRoots),
 	};
 }
+export interface RuntimeSnapshotRollbackScope {
+	readonly start: number;
+}
+
+export interface RuntimeSnapshotCaptureScope extends RuntimeSnapshotRollbackScope {
+	readonly snapshot: RuntimeLiveSnapshot;
+}
+
 export class RuntimeSnapshotRollbackStack {
 	readonly #snapshots: Array<{ failure: string; snapshot: RuntimeLiveSnapshot }> = [];
 
 	capture(failure: string, plan: RuntimeManagedMutationPlan): RuntimeLiveSnapshot {
-		const snapshot = captureRuntimeLiveSnapshot(plan);
-		this.#snapshots.push({ failure, snapshot });
-		return snapshot;
+		return this.captureScoped(failure, plan).snapshot;
 	}
 
-	restore(): string[] {
+	scope(): RuntimeSnapshotRollbackScope {
+		return { start: this.#snapshots.length };
+	}
+
+	captureScoped(failure: string, plan: RuntimeManagedMutationPlan): RuntimeSnapshotCaptureScope {
+		const start = this.#snapshots.length;
+		const snapshot = captureRuntimeLiveSnapshot(plan);
+		this.#snapshots.push({ failure, snapshot });
+		return { start, snapshot };
+	}
+
+	pop(scope?: RuntimeSnapshotRollbackScope): void {
+		this.#snapshots.splice(scope?.start ?? 0);
+	}
+
+	restore(
+		scope?: RuntimeSnapshotRollbackScope,
+		formatFailure: (failure: string, error: unknown) => string = (failure, error) =>
+			`${failure}: ${error instanceof Error ? error.message : String(error)}`,
+	): string[] {
 		const errors: string[] = [];
-		for (const { failure, snapshot } of this.#snapshots.splice(0).reverse()) {
+		for (const { failure, snapshot } of this.#snapshots.splice(scope?.start ?? 0).reverse()) {
 			try {
 				restoreRuntimeLiveSnapshot(snapshot);
 			} catch (error) {
-				errors.push(`${failure}: ${error instanceof Error ? error.message : String(error)}`);
+				errors.push(formatFailure(failure, error));
 			}
 		}
 		return errors;
