@@ -391,7 +391,7 @@ function positiveLinuxIdEnv(key: string, fallback: number): number {
 
 export function runtimeUserDirectoryOwnership(
 	path: string,
-	options: { mode?: number; ancestorsUnder?: string } = {},
+	options: { mode?: number; ancestorsUnder?: string; recursive?: boolean } = {},
 ): RuntimeUserOwnershipRule[] {
 	const target = resolve(path);
 	const paths = [target];
@@ -409,13 +409,15 @@ export function runtimeUserDirectoryOwnership(
 	return runtimeUserOwnershipRules(paths, "directory", options, target);
 }
 
-export const runtimeUserExistingOwnership = (paths: readonly string[]) =>
-	runtimeUserOwnershipRules(paths, "existing", {});
+export const runtimeUserExistingOwnership = (
+	paths: readonly string[],
+	options: { recursive?: boolean } = {},
+) => runtimeUserOwnershipRules(paths, "existing", options);
 
 function runtimeUserOwnershipRules(
 	paths: readonly string[],
 	kind: RuntimeUserOwnershipRule["kind"],
-	options: { mode?: number },
+	options: { mode?: number; recursive?: boolean },
 	target?: string,
 ): RuntimeUserOwnershipRule[] {
 	return [...new Set(paths.map((path) => resolve(path)))]
@@ -425,7 +427,10 @@ function runtimeUserOwnershipRules(
 			owner: "runtime-user",
 			kind,
 			...(path === target && options.mode !== undefined ? { mode: options.mode } : {}),
-			recursive: false,
+			recursive:
+				target === undefined
+					? options.recursive === true
+					: path === target && options.recursive === true,
 		}));
 }
 
@@ -502,24 +507,22 @@ export function withRuntimeUserFileAccess<T>(
 	return withEffectiveFilesystemIdentity({ uid, gid }, operation);
 }
 
-export function spawnRuntimeUserCommand(
+interface RuntimeUserCommandOptions {
+	egressSystemCaFile?: string;
+	environmentOverrides?: Readonly<Record<string, string | undefined>>;
+	environment?: Record<string, string>;
+	runtimeUser?: string;
+	runtimeUid?: number;
+	runtimeGid?: number;
+	resolver?: PrivilegeDropResolver;
+}
+
+function runtimeUserCommand(
 	command: string,
 	args: string[],
 	home: string,
-	cwd: string,
-	options: {
-		egressSystemCaFile?: string;
-		environmentOverrides?: Readonly<Record<string, string | undefined>>;
-		environment?: Record<string, string>;
-		input?: string;
-		maxBufferBytes?: number;
-		timeoutMs?: number;
-		runtimeUser?: string;
-		runtimeUid?: number;
-		runtimeGid?: number;
-		resolver?: PrivilegeDropResolver;
-	} = {},
-): ReturnType<typeof spawnSync> {
+	options: RuntimeUserCommandOptions,
+) {
 	const runtimeUser = options.runtimeUser ?? process.env.CLAWDI_RUNTIME_USER?.trim();
 	const dropsToRuntimeUser = Boolean(runtimeUser && runtimeUser !== "root");
 	const runtimeUid = dropsToRuntimeUser
@@ -538,8 +541,23 @@ export function spawnRuntimeUserCommand(
 		...options.environment,
 	};
 	clearPlatformCredentialEnv(env);
+	return { command: child.command, args: child.args, env };
+}
+
+export function spawnRuntimeUserCommand(
+	command: string,
+	args: string[],
+	home: string,
+	cwd: string,
+	options: RuntimeUserCommandOptions & {
+		input?: string;
+		maxBufferBytes?: number;
+		timeoutMs?: number;
+	} = {},
+): ReturnType<typeof spawnSync> {
+	const child = runtimeUserCommand(command, args, home, options);
 	return spawnSync(child.command, child.args, {
-		env,
+		env: child.env,
 		cwd,
 		encoding: "utf8",
 		input: options.input,
@@ -554,31 +572,15 @@ export function runRuntimeUserCommand(
 	stdin: string,
 	home: string,
 	cwd: string,
-	options: {
-		egressSystemCaFile?: string;
+	options: RuntimeUserCommandOptions & {
 		timeoutMs?: number;
-		runtimeUser?: string;
-		runtimeUid?: number;
-		runtimeGid?: number;
-		resolver?: PrivilegeDropResolver;
 	} = {},
 ): void {
-	const runtimeUser = options.runtimeUser ?? process.env.CLAWDI_RUNTIME_USER?.trim();
-	const dropsToRuntimeUser = Boolean(runtimeUser && runtimeUser !== "root");
-	const runtimeUid = dropsToRuntimeUser
-		? (options.runtimeUid ?? runtimeUserUid(runtimeUser ?? ""))
-		: null;
-	const child = dropsToRuntimeUser
-		? buildRuntimeUserCommand(runtimeUser ?? "", home, command, args, {
-				runtimeUid: runtimeUid ?? undefined,
-				runtimeGid: options.runtimeGid,
-				resolver: options.resolver,
-			})
-		: { command, args, env: {} };
+	const child = runtimeUserCommand(command, args, home, options);
 	try {
 		execFileSync(child.command, child.args, {
 			input: stdin,
-			env: { ...runtimeUserCommandEnv(home, runtimeUid, options), ...child.env },
+			env: child.env,
 			cwd,
 			stdio: "pipe",
 			timeout: options.timeoutMs,

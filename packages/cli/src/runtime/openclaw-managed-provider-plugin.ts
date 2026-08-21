@@ -91,15 +91,15 @@ function pluginDirectoryIsCurrent(directory: string): boolean {
 }
 
 function materializePluginDirectory(directory: string): string {
-	if (pluginDirectoryIsCurrent(directory)) return directory;
-	withRuntimeUserFileAccess(() => {
+	return withRuntimeUserFileAccess(() => {
+		if (pluginDirectoryIsCurrent(directory)) return directory;
 		rmSync(directory, { recursive: true, force: true });
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
 		for (const [name, content] of pluginFiles) {
 			writeFileSync(join(directory, name), content, { mode: 0o600 });
 		}
+		return directory;
 	});
-	return directory;
 }
 
 function materializePluginSource(context: OpenClawHostedContext): string {

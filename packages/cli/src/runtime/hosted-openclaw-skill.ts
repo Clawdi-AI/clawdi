@@ -6,25 +6,32 @@ import {
 } from "../adapters/openclaw-workspace";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
+	ManagedSkillResourceError,
 	managedSkillMarkerMatchesIdentity,
 	managedSkillMarkerOwnsTarget,
 	managedSkillReceiptMatchesIdentity,
+	managedSkillReceiptPath,
+	OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA,
 	withManagedTargetRollback,
 	withStagedManagedSkill,
 	writeManagedSkillReceipt,
 } from "./managed-skill-delivery";
-import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	executableExists,
+	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
 
 const OPENCLAW_AGENT_ID = "main";
 const SOURCE_RECEIPT = ".openclaw/source-origin.json";
 const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
-const RECEIPT_SCHEMA = "clawdi.openclawManifestSkillReceipt.v2";
 
 export interface HostedOpenClawSkillDriver {
 	resolveWorkspace(input: { home: string; repairInvalidConfig?: boolean }): string;
 	installDirectory(input: {
 		home: string;
 		workspaceRoot: string;
+		managedResourceRoot: string;
 		skillId: string;
 		sourceDir: string;
 		ownershipIdentity: string;
@@ -33,29 +40,44 @@ export interface HostedOpenClawSkillDriver {
 	install(input: {
 		home: string;
 		workspaceRoot: string;
+		managedResourceRoot: string;
 		skill: PreparedHostedSourcedSkill;
 		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
+	anchorOwnership(input: {
+		workspaceRoot: string;
+		managedResourceRoot: string;
+		skillId: string;
+		ownershipIdentity: string;
+	}): void;
 	hasOwnershipReceipt(input: {
 		workspaceRoot: string;
+		managedResourceRoot: string;
 		skillId: string;
 		ownershipIdentity: string;
 	}): boolean;
-	verifyOwned(input: { workspaceRoot: string; skill: PreparedHostedSourcedSkill }): boolean;
+	verifyOwned(input: {
+		workspaceRoot: string;
+		managedResourceRoot: string;
+		skill: PreparedHostedSourcedSkill;
+	}): boolean;
 	cleanupManifestOwned(input: {
 		workspaceRoot: string;
+		managedResourceRoot: string;
 		skillId: string;
 		ownershipIdentity: string;
 	}): "absent" | "removed";
 }
 
 function installedCommandPath(home: string): string | null {
-	for (const candidate of [
-		join(home, ".local", "bin", "openclaw"),
-		join(home, ".openclaw", "bin", "openclaw"),
-	])
-		if (executableExists(candidate)) return candidate;
-	return null;
+	return withRuntimeUserFileAccess(() => {
+		for (const candidate of [
+			join(home, ".local", "bin", "openclaw"),
+			join(home, ".openclaw", "bin", "openclaw"),
+		])
+			if (executableExists(candidate)) return candidate;
+		return null;
+	});
 }
 
 function commandPath(home: string): string {
@@ -65,12 +87,16 @@ function commandPath(home: string): string {
 }
 const targetDir = (workspaceRoot: string, skillId: string) =>
 	join(workspaceRoot, "skills", skillId);
-const receiptPath = (workspaceRoot: string, skillId: string) =>
-	join(workspaceRoot, "skills", ".clawdi-manifest-receipts", `${skillId}.json`);
-function receiptInput(workspaceRoot: string, skillId: string, ownershipIdentity: string) {
+function receiptInput(
+	managedResourceRoot: string,
+	workspaceRoot: string,
+	skillId: string,
+	ownershipIdentity: string,
+) {
 	return {
-		path: receiptPath(workspaceRoot, skillId),
-		schemaVersion: RECEIPT_SCHEMA,
+		path: managedSkillReceiptPath(managedResourceRoot, "openclaw", skillId),
+		managedResourceRoot,
+		schemaVersion: OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA,
 		skillId,
 		ownershipIdentity,
 		target: targetDir(workspaceRoot, skillId),
@@ -177,13 +203,24 @@ function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>
 
 export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	resolveWorkspace(input) {
-		return resolveOfficialWorkspace(input.home, input.repairInvalidConfig);
+		return withRuntimeUserFileAccess(() =>
+			resolveOfficialWorkspace(input.home, input.repairInvalidConfig),
+		);
 	},
 	installDirectory(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
+		const receipt = receiptInput(
+			input.managedResourceRoot,
+			input.workspaceRoot,
+			input.skillId,
+			input.ownershipIdentity,
+		);
 		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
-		if (existsSync(target) && !input.previouslyReserved && !managedSkillMarkerOwnsTarget(receipt))
+		if (
+			withRuntimeUserFileAccess(() => existsSync(target)) &&
+			!input.previouslyReserved &&
+			!managedSkillMarkerOwnsTarget(receipt)
+		)
 			throw new Error(
 				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
 			);
@@ -210,7 +247,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 					{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
 				);
 				if (result.status !== 0)
-					throw new Error(
+					throw new ManagedSkillResourceError(
 						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 					);
 				assertOfficialWorkspace(input);
@@ -222,7 +259,12 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	install(input) {
 		if (
 			managedSkillReceiptMatchesIdentity(
-				receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
+				receiptInput(
+					input.managedResourceRoot,
+					input.workspaceRoot,
+					input.skill.skillId,
+					input.skill.sourceIdentity,
+				),
 			)
 		)
 			return "unchanged";
@@ -230,6 +272,7 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			this.installDirectory({
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
+				managedResourceRoot: input.managedResourceRoot,
 				skillId: input.skill.skillId,
 				sourceDir,
 				ownershipIdentity: input.skill.sourceIdentity,
@@ -237,20 +280,45 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			}),
 		);
 	},
+	anchorOwnership(input) {
+		writeManagedSkillReceipt(
+			receiptInput(
+				input.managedResourceRoot,
+				input.workspaceRoot,
+				input.skillId,
+				input.ownershipIdentity,
+			),
+		);
+	},
 	hasOwnershipReceipt(input) {
 		return managedSkillMarkerMatchesIdentity(
-			receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity),
+			receiptInput(
+				input.managedResourceRoot,
+				input.workspaceRoot,
+				input.skillId,
+				input.ownershipIdentity,
+			),
 		);
 	},
 	verifyOwned(input) {
 		return managedSkillReceiptMatchesIdentity(
-			receiptInput(input.workspaceRoot, input.skill.skillId, input.skill.sourceIdentity),
+			receiptInput(
+				input.managedResourceRoot,
+				input.workspaceRoot,
+				input.skill.skillId,
+				input.skill.sourceIdentity,
+			),
 		);
 	},
 	cleanupManifestOwned(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(input.workspaceRoot, input.skillId, input.ownershipIdentity);
-		if (!existsSync(target)) {
+		const receipt = receiptInput(
+			input.managedResourceRoot,
+			input.workspaceRoot,
+			input.skillId,
+			input.ownershipIdentity,
+		);
+		if (!withRuntimeUserFileAccess(() => existsSync(target))) {
 			rmSync(receipt.path, { force: true });
 			return "absent";
 		}
@@ -258,7 +326,9 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 			throw new Error(
 				"refusing manifest cleanup because OpenClaw Skill bytes no longer match the ownership receipt",
 			);
-		rmSync(target, { recursive: true });
+		withRuntimeUserFileAccess(() => {
+			rmSync(target, { recursive: true });
+		});
 		rmSync(receipt.path, { force: true });
 		return "removed";
 	},

@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const CONTROLLER_LIFETIME_MS = 45_000;
@@ -22,13 +23,15 @@ interface CanaryEvidence {
 }
 
 function writeJsonAtomic(path: string, value: unknown, nonce: string): void {
-	const temporary = `${path}.${process.pid}.${nonce}.tmp`;
-	try {
-		writeFileSync(temporary, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 });
-		renameSync(temporary, path);
-	} finally {
-		rmSync(temporary, { force: true });
-	}
+	withRuntimeUserFileAccess(() => {
+		const temporary = `${path}.${process.pid}.${nonce}.tmp`;
+		try {
+			writeFileSync(temporary, `${JSON.stringify(value)}\n`, { flag: "wx", mode: 0o600 });
+			renameSync(temporary, path);
+		} finally {
+			rmSync(temporary, { force: true });
+		}
+	});
 }
 
 function parseJsonObject(bytes: Buffer): Record<string, unknown> {

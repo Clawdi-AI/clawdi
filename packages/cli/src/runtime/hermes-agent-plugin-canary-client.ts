@@ -8,7 +8,7 @@ import {
 	hostedAgentPluginTreeDigest,
 	type PreparedHostedAgentPlugin,
 } from "./hosted-agent-plugin-package";
-import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const HERMES_REMOTE_PROBE_TIMEOUT_MS = 30_000;
 const HERMES_CONTROLLER_READY_TIMEOUT_MS = 5_000;
@@ -47,12 +47,15 @@ function waitForJsonFile<T>(path: string, schema: z.ZodType<T>, timeoutMs: numbe
 	let sawInvalidEvidence = false;
 	while (Date.now() < deadline) {
 		try {
-			const stat = lstatSync(path);
-			if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) {
-				throw new Error("Hermes Agent Plugin canary returned unsafe evidence");
-			}
+			const evidence = withRuntimeUserFileAccess(() => {
+				const stat = lstatSync(path);
+				if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) {
+					throw new Error("Hermes Agent Plugin canary returned unsafe evidence");
+				}
+				return readFileSync(path, "utf8");
+			});
 			try {
-				const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+				const parsed: unknown = JSON.parse(evidence);
 				return schema.parse(parsed);
 			} catch {
 				sawInvalidEvidence = true;
@@ -173,11 +176,9 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 		const hermesRoot = join(input.home, ".hermes");
 		// Hermes exposes this packaged-install override independently of HERMES_HOME/plugins.
 		const bundledPluginRoot = join(input.home, ".clawdi-hermes-canary-bundled-plugins");
-		mkdirSync(hermesRoot, { recursive: true, mode: 0o700 });
-		mkdirSync(bundledPluginRoot, { recursive: true, mode: 0o700 });
-		makeRuntimeUserOwned(hermesRoot);
-		makeRuntimeUserOwned(bundledPluginRoot);
-		withRuntimeUserFileAccess(() =>
+		withRuntimeUserFileAccess(() => {
+			mkdirSync(hermesRoot, { recursive: true, mode: 0o700 });
+			mkdirSync(bundledPluginRoot, { recursive: true, mode: 0o700 });
 			writeFileSync(
 				join(hermesRoot, "config.yaml"),
 				[
@@ -200,8 +201,8 @@ export function runHermesAgentPluginCanary(input: HermesAgentPluginCanaryInput):
 					"",
 				].join("\n"),
 				{ mode: 0o600 },
-			),
-		);
+			);
+		});
 		input.withEnabledCanary(canary, () => {
 			input.runOneShot({
 				args: [

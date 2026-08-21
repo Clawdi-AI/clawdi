@@ -14,8 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
-	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
+	claimLegacyHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import { prepareHostedBundledSkillArchive } from "./hosted-sourced-skill-archive";
@@ -83,7 +83,7 @@ describe("hosted bundled Skill preparation", () => {
 		);
 	});
 
-	test("adopts legacy tree markers only while identity and bytes match exactly", () => {
+	test("claims every legacy marker schema through one receipt-anchored transaction", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-bundled-legacy-"));
 		const target = join(root, "skills", "clawdi");
 		mkdirSync(dirname(target), { recursive: true });
@@ -91,11 +91,35 @@ describe("hosted bundled Skill preparation", () => {
 		chmodSync(target, 0o755);
 		chmodSync(join(target, "SKILL.md"), 0o644);
 		const marker = join(target, ".clawdi-managed.json");
-		writeFileSync(
-			marker,
-			`${JSON.stringify({ managedBy: "clawdi runtime init", skillName: "clawdi" })}\n`,
-		);
-		expect(adoptableLegacyHostedBundledSkill(target, "clawdi")).toEqual(catalogEntry);
+		const receipt = join(root, "receipts", "clawdi.json");
+		for (const markerValue of [
+			{ managedBy: "clawdi runtime init", skillName: "clawdi" },
+			{
+				schema: "clawdi.hostedBundledSkillMarker.v1",
+				owner: "clawdi runtime init",
+				id: "clawdi",
+				version: 1,
+				digest: catalogEntry.digest,
+			},
+		]) {
+			const operations: string[] = [];
+			writeFileSync(marker, `${JSON.stringify(markerValue)}\n`);
+			expect(
+				claimLegacyHostedBundledSkill({
+					targetDir: target,
+					skillId: "clawdi",
+					reserve: (entry) => operations.push(`reserve:${entry.version}`),
+					anchorOwnership: (identity) => {
+						operations.push(`anchor:${identity}`);
+						mkdirSync(dirname(receipt), { recursive: true });
+						writeFileSync(receipt, identity);
+					},
+				}),
+			).toBe(true);
+			expect(operations).toEqual(["reserve:1", `anchor:content-sha256\0${catalogEntry.digest}`]);
+			expect(existsSync(marker)).toBe(false);
+			expect(readFileSync(receipt, "utf8")).toBe(`content-sha256\0${catalogEntry.digest}`);
+		}
 
 		writeFileSync(
 			marker,
@@ -107,8 +131,19 @@ describe("hosted bundled Skill preparation", () => {
 				digest: catalogEntry.digest,
 			})}\n`,
 		);
-		expect(adoptableLegacyHostedBundledSkill(target, "clawdi")).toEqual(catalogEntry);
 		writeFileSync(join(target, "SKILL.md"), "tenant bytes\n");
-		expect(adoptableLegacyHostedBundledSkill(target, "clawdi")).toBeNull();
+		expect(
+			claimLegacyHostedBundledSkill({
+				targetDir: target,
+				skillId: "clawdi",
+				reserve: () => {
+					throw new Error("must not reserve");
+				},
+				anchorOwnership: () => {
+					throw new Error("must not anchor");
+				},
+			}),
+		).toBe(false);
+		expect(existsSync(marker)).toBe(true);
 	});
 });
