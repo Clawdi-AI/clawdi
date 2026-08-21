@@ -5,6 +5,7 @@ import {
 	chmodSync,
 	chownSync,
 	existsSync,
+	lchownSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -115,6 +116,15 @@ function directoryFileDigests(root: string, relative = ""): Record<string, strin
 		}
 	}
 	return digests;
+}
+
+function chownTreeWithoutFollowingLinks(path: string, uid: number, gid: number): void {
+	const node = lstatSync(path);
+	lchownSync(path, uid, gid);
+	if (!node.isDirectory() || node.isSymbolicLink()) return;
+	for (const entry of readdirSync(path)) {
+		chownTreeWithoutFollowingLinks(join(path, entry), uid, gid);
+	}
 }
 
 test("propagates the real official OpenClaw installer failure and rolls back as UID 10001", () => {
@@ -1446,4 +1456,238 @@ http.createServer((request, response) => {
 	});
 	expect(tenantRead.status).toBe(0);
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
+}, 120_000);
+
+test("repairs a live Hermes user-service ownership enclave without losing the unit", () => {
+	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
+
+	expect(process.geteuid?.()).toBe(0);
+	const runtimeHome = "/home/clawdi";
+	const runtimeUid = 10_001;
+	const runtimeGid = 10_001;
+	const root = mkdtempSync(join(tmpdir(), "clawdi-live-hermes-enclave-"));
+	chmodSync(root, 0o755);
+	const hermesCommand = join(runtimeHome, ".local", "bin", "hermes");
+	const installLog = join(root, "hermes-installer.log");
+	writeFileSync(installLog, "");
+	chownSync(installLog, runtimeUid, runtimeGid);
+	const unitName = "hermes-gateway.service";
+	const unitPath = join(runtimeHome, ".config", "systemd", "user", unitName);
+	const dropInRoot = `${unitPath}.d`;
+	const enablementPath = join(
+		runtimeHome,
+		".config",
+		"systemd",
+		"user",
+		"default.target.wants",
+		unitName,
+	);
+	const runUserSystemctl = (...args: string[]) =>
+		spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
+				`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
+				"systemctl",
+				"--user",
+				...args,
+			],
+			{ encoding: "utf8" },
+		);
+
+	for (const staleUnit of ["openclaw-gateway.service", unitName]) {
+		runUserSystemctl("disable", "--now", staleUnit);
+	}
+	rmSync(dirname(unitPath), { recursive: true, force: true });
+	mkdirSync(dirname(unitPath), { recursive: true });
+	const initialReload = runUserSystemctl("daemon-reload");
+	expect(initialReload.status, initialReload.stderr).toBe(0);
+	mkdirSync(dirname(hermesCommand), { recursive: true });
+	writeFileSync(
+		hermesCommand,
+		`#!/bin/sh
+set -eu
+case "$*" in
+  "--version")
+    printf '%s\\n' 'Hermes Agent v0.19.1'
+    ;;
+  "gateway install --force")
+    printf '%s\\n' install >> ${JSON.stringify(installLog)}
+    mkdir -p "$HOME/.config/systemd/user"
+    cat > "$HOME/.config/systemd/user/${unitName}" <<'EOF'
+[Unit]
+Description=Hermes Gateway
+
+[Service]
+Type=simple
+ExecStart=${hermesCommand} gateway run
+Restart=always
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable ${unitName}
+    ;;
+  "gateway uninstall")
+    systemctl --user disable --now ${unitName} || true
+    rm -f "$HOME/.config/systemd/user/${unitName}"
+    systemctl --user daemon-reload
+    ;;
+  "gateway run")
+    exec /bin/sleep infinity
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`,
+		{ mode: 0o755 },
+	);
+	chownSync(hermesCommand, runtimeUid, runtimeGid);
+
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_USER = "clawdi";
+	process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+	process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+	process.env.CLAWDI_RUNTIME_HOME = runtimeHome;
+	process.env.CLAWDI_HOME = join(root, "clawdi-home");
+	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+	process.env.CLAWDI_RUN_DIR = join(root, "run");
+	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
+	process.env.CLAWDI_AUTH_TOKEN = "live-hermes-enclave-test-auth-token";
+	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "hdep_live_hermes_enclave",
+		environmentId: "env_live_hermes_enclave",
+		instanceId: "hri_live_hermes_enclave",
+		generation: 1,
+		issuedAt: "2026-08-21T00:00:00.000Z",
+		workspaceRoot: join(runtimeHome, "clawdi-live-hermes-workspace"),
+		controlPlane: { apiUrl: "https://cloud-api.example.test" },
+		runtimes: {
+			hermes: {
+				enabled: true,
+				run: {
+					command: hermesCommand,
+					args: ["gateway", "run"],
+					env: {},
+					prependPath: [],
+				},
+				services: {},
+			},
+		},
+		recovery: {},
+	};
+	const load: RuntimeManifestLoad = {
+		manifest,
+		source: "remote-datasource",
+		sourcePath: "live-hermes-enclave-fixture",
+		offline: false,
+		applyContext: {
+			kind: "context-file",
+			backend: "incus",
+			identity: {
+				generation: manifest.generation,
+				manifestETag: '"live-hermes-enclave-test"',
+				applyReceiptId: "live-hermes-enclave-test-receipt",
+				bootNonce: "live-hermes-enclave-test-boot",
+			},
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_live_hermes_enclave",
+				auth: { type: "bearer", token: "live-hermes-enclave-test-auth-token" },
+			},
+		},
+	};
+	const converge = () => {
+		const before = readSystemdUnitSnapshot(paths);
+		const transaction = new SystemdRuntimeTransaction();
+		return convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			systemdApply: {
+				transactionState: () => transaction.state,
+				installOfficialService: (unit, install) =>
+					transaction.installOfficialService(paths, unit, install),
+				quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
+				activateEgressPrerequisite: () => ({
+					applied: true,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				}),
+				activate: () =>
+					applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
+						transaction,
+						stage: "final-activation",
+					}),
+				rollback: () => transaction.rollback(paths),
+			},
+		});
+	};
+
+	try {
+		expect(converge().installErrors).toEqual([]);
+		const initialState = runUserSystemctl(
+			"show",
+			unitName,
+			"--property=LoadState",
+			"--property=ActiveState",
+			"--property=MainPID",
+		);
+		expect(initialState.status, initialState.stderr).toBe(0);
+		expect(initialState.stdout).toContain("LoadState=loaded");
+		expect(initialState.stdout).toContain("ActiveState=active");
+		const initialPid = Number.parseInt(
+			initialState.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0",
+			10,
+		);
+		expect(initialPid).toBeGreaterThan(1);
+		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
+
+		chmodSync(unitPath, 0o600);
+		chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+		}
+
+		const repaired = converge();
+		expect(repaired.installErrors).toEqual([]);
+		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install", "install"]);
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+		}
+		const repairedState = runUserSystemctl(
+			"show",
+			unitName,
+			"--property=LoadState",
+			"--property=ActiveState",
+			"--property=MainPID",
+		);
+		expect(repairedState.status, repairedState.stderr).toBe(0);
+		expect(repairedState.stdout).toContain("LoadState=loaded");
+		expect(repairedState.stdout).toContain("ActiveState=active");
+		const repairedPid = Number.parseInt(
+			repairedState.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0",
+			10,
+		);
+		expect(repairedPid).toBe(initialPid);
+		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
+		expect(runUserSystemctl("enable", unitName).status).toBe(0);
+	} finally {
+		runUserSystemctl("disable", "--now", unitName);
+		rmSync(unitPath, { force: true });
+		rmSync(dropInRoot, { recursive: true, force: true });
+		rmSync(enablementPath, { force: true });
+		rmSync(root, { recursive: true, force: true });
+	}
 }, 120_000);

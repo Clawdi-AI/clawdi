@@ -425,6 +425,7 @@ function writeFakeSystemdManager(input: {
 	environmentRoot: string;
 	failNextGatewayRestart?: string;
 	failNextSidecarRestart?: string;
+	failFirstMissingUserEnableUnit?: string;
 	sidecarReadyPath?: string;
 }): void {
 	fakeSystemdStateRoots.add(input.stateRoot);
@@ -526,11 +527,16 @@ case "$command" in
       rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)" "$(state_path "$unit" pid)"
     done
     ;;
-  enable)
-    start_now=0
-    if [ "\${1:-}" = "--now" ]; then start_now=1; shift; fi
-    for unit in "$@"; do
-      touch "$(state_path "$unit" enabled)"
+	  enable)
+	    start_now=0
+	    if [ "\${1:-}" = "--now" ]; then start_now=1; shift; fi
+	    for unit in "$@"; do
+	      if [ "$scope" = user ] && [ "$unit" = '${input.failFirstMissingUserEnableUnit ?? ""}' ] && [ ! -f "$(state_path "$unit" enable-retried)" ]; then
+	        touch "$(state_path "$unit" enable-retried)"
+	        printf 'Failed to enable unit: Unit %s does not exist\n' "$unit" >&2
+	        exit 1
+	      fi
+	      touch "$(state_path "$unit" enabled)"
       if [ "$start_now" = "1" ]; then rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; start_process "$unit"; fi
     done
     ;;
@@ -10086,6 +10092,87 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		expect(driftRepairCalls).not.toContain("daemon-reload");
 		expect(driftRepairCalls).toContain("--user restart hermes-gateway.service");
 		expect(driftRepairCalls).not.toContain("restart clawdi-runtime-watch.service");
+	});
+
+	it("reloads once before retrying an enable for an existing user unit", () => {
+		const home = join(root, "missing-enable", "home", "clawdi");
+		const run = join(root, "missing-enable", "run", "clawdi");
+		const systemctlPath = join(root, "missing-enable", "bin", "systemctl");
+		const systemctlLog = join(root, "missing-enable", "systemctl.log");
+		const systemctlStateRoot = join(root, "missing-enable", "systemctl-state");
+		const unit = "hermes-gateway.service";
+		writeFakeSystemdManager({
+			path: systemctlPath,
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			environmentRoot: join(run, "systemd", "env"),
+			failFirstMissingUserEnableUnit: unit,
+		});
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		const paths = getRuntimePaths();
+		const revision = "a".repeat(32);
+		const units = {
+			system: new Map<string, string>(),
+			user: new Map([[unit, "hermes"]]),
+		};
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		writeFileSync(join(paths.systemdUserRoot, unit), "[Service]\nExecStart=/bin/true\n");
+		mkdirSync(paths.systemdEnvRoot, { recursive: true });
+		writeFileSync(join(paths.systemdEnvRoot, `${unit}.env`), `CLAWDI_RUNTIME_REV="${revision}"\n`);
+		seedFakeSystemdProcess(systemctlStateRoot, "user", unit, revision);
+		writeFileSync(systemctlLog, "");
+		const transaction = new SystemdRuntimeTransaction();
+
+		expect(
+			applySystemdRuntimeUpdate(paths, units, units, {
+				transaction,
+				stage: "final-activation",
+			}),
+		).toEqual({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [unit],
+		});
+		expect(transaction.journal).toEqual([
+			{
+				sequence: 1,
+				stage: "final-activation",
+				scope: "user",
+				action: "enable",
+				units: [unit],
+				outcome: "failed",
+			},
+			{
+				sequence: 2,
+				stage: "final-activation",
+				scope: "user",
+				action: "daemon-reload",
+				units: [],
+				outcome: "succeeded",
+			},
+			{
+				sequence: 3,
+				stage: "final-activation",
+				scope: "user",
+				action: "enable",
+				units: [unit],
+				outcome: "succeeded",
+			},
+		]);
+		const mutations = readFileSync(systemctlLog, "utf8")
+			.trim()
+			.split("\n")
+			.filter((call) => /(?:^|\s)(?:daemon-reload|enable)(?:\s|$)/.test(call));
+		expect(mutations).toEqual([
+			`--user enable ${unit}`,
+			"--user daemon-reload",
+			`--user enable ${unit}`,
+		]);
 	});
 
 	it("adopts a cross-version user revision only until its desired program changes", () => {

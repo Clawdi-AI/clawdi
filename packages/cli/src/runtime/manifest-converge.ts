@@ -144,6 +144,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 import {
 	enforceRuntimeUserOwnership,
+	enforceRuntimeUserSystemdManagerAccess,
 	executableExists,
 	makeRuntimeUserOwned,
 	runtimePlatformEnclaveOwnership,
@@ -279,6 +280,9 @@ function initializeRuntimeConvergence(
 		resolve(projectionHome) === resolve(paths.userHome)
 			? runtimeSystemdPlatformEnclaves(paths)
 			: [];
+	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
+		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
+	}
 	enforceRuntimeUserOwnership([
 		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
 		// Official user-service installers need the unit root itself writable. Its
@@ -1539,6 +1543,9 @@ function activateRuntimeServices(
 			? opts.systemdApply.installOfficialService(item.unitName, install)
 			: install();
 		if (error) throw new Error(error);
+	}
+	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
+		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
 	enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
 	for (const item of officialServicePlan.pending) {

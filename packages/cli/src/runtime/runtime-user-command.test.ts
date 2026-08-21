@@ -22,6 +22,7 @@ import {
 	commandExists,
 	createPrivilegeDropResolver,
 	enforceRuntimeUserOwnership,
+	enforceRuntimeUserSystemdManagerAccess,
 	runRuntimeUserCommand,
 	runtimeUserDirectoryOwnership,
 	runtimeUserExistingOwnership,
@@ -497,12 +498,15 @@ test("enforces root ownership inside platform enclaves and runtime ownership out
 		lchownSync(enablement, expectedRuntimeOwner[0], expectedRuntimeOwner[1]);
 		lchownSync(enclaveLink, expectedRuntimeOwner[0], expectedRuntimeOwner[1]);
 		chownSync(outsideTarget, expectedRuntimeOwner[0], expectedRuntimeOwner[1]);
+		for (const path of [systemdUserRoot, dirname(dropIn), wants]) chmodSync(path, 0o700);
+		for (const path of [unit, dropIn]) chmodSync(path, 0o600);
 		const platformEnclaves = runtimeSystemdPlatformEnclaves({ userHome: home, systemdUserRoot });
 		expect(platformEnclaves).toEqual([
 			{ path: systemdUserRoot, owner: "root" },
 			{ path: gatewayEnvironment, owner: "root" },
 		]);
 
+		enforceRuntimeUserSystemdManagerAccess(systemdUserRoot);
 		enforceRuntimeUserOwnership(
 			runtimeUserDirectoryOwnership(home, { recursive: true, platformEnclaves }),
 		);
@@ -534,6 +538,13 @@ test("enforces root ownership inside platform enclaves and runtime ownership out
 		expect([statSync(outsideTarget).uid, statSync(outsideTarget).gid]).toEqual(
 			expectedRuntimeOwner,
 		);
+		for (const path of [systemdUserRoot, dirname(dropIn), wants]) {
+			expect(statSync(path).mode & 0o777).toBe(0o755);
+		}
+		for (const path of [unit, dropIn]) {
+			expect(statSync(path).mode & 0o777).toBe(0o644);
+		}
+		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	} finally {
 		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
 		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
