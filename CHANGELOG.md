@@ -10,6 +10,23 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.3
+
+Package: `clawdi@0.14.3`
+
+### Fixed
+
+- Legacy root-owned skill metadata left by older CLI versions no longer breaks
+  convergence: tenant-home ownership is repaired as a platform invariant before
+  every converge, legacy markers are claimed through a single adoption path,
+  and one skill failing to install no longer blocks the remaining skills.
+
+### Improved
+
+- All platform metadata (skill receipts, WhatsApp auth ownership) now lives in
+  platform state outside the tenant home; tenant directories contain only
+  tenant-owned content, read and written strictly as the runtime user.
+
 ## Clawdi CLI v0.14.2
 
 Package: `clawdi@0.14.2`
