@@ -17,7 +17,8 @@ import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-value
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 export const HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2";
 
-// Temporary v1 read compatibility. Runtime providers and generated config stay canonical-only.
+// SUNSET(#1148): remove v1 reads after every supported hosted manifest producer
+// emits MANAGED_AI_PROVIDER_RUNTIME_ENV. Runtime providers and generated config stay canonical-only.
 export const LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV = "OPENAI_API_KEY";
 
 export function isHostedCodexManagedRuntimeEnv(value: string | null | undefined): boolean {

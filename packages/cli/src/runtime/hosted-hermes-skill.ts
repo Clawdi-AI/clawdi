@@ -21,6 +21,8 @@ import {
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
+const HERMES_SKILL_COMMAND_TIMEOUT_MS = 120_000;
+
 export interface HostedHermesSkillExactSourceDriver {
 	install(input: {
 		home: string;
@@ -115,7 +117,7 @@ function runHermes(input: { home: string; appRoot: string }, args: string[], std
 		input.appRoot,
 		{
 			input: stdin,
-			timeoutMs: 120_000,
+			timeoutMs: HERMES_SKILL_COMMAND_TIMEOUT_MS,
 			maxBufferBytes: 1024 * 1024,
 		},
 	);
