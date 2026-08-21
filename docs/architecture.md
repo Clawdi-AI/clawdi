@@ -385,24 +385,21 @@ Cloud API is the single desired-state composer for Skills. It merges Hosted V2
 Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
 Project rows remain the only content writer; runtime observations never become
 another catalog. Each Project Skill entry uses the runtime-neutral `project`
-source discriminator and carries immutable content identity plus authenticated
-archive and signed file endpoints. The CLI verifies
-the canonical archive tree hash before cache or install. Historical Skills that
+source discriminator and carries immutable content identity plus an authenticated
+archive endpoint. The CLI verifies
+the canonical archive tree hash before cache or activation. Historical Skills that
 were stored as one `.md` file retain their file-content SHA compatibility only
 when the delivered archive contains exactly one `SKILL.md`. It then preserves
-native runtime contracts: Hermes receives the signed `SKILL.md` URL through
-`hermes skills install`, while OpenClaw receives a verified staged directory through
-`openclaw skills install`. Unlink, archive, access loss, deletion, or hash change
-invalidates the signed file lookup.
+native runtime contracts: Hermes receives the verified staged directory through
+its profile-local `~/.hermes/skills` discovery surface, while OpenClaw receives it
+through `openclaw skills install`. Unlink, archive, access loss, deletion, or hash
+change invalidates the signed archive lookup.
 
-Native Skill delivery treats the official installer output as authoritative.
-After the verified source is installed, the CLI fingerprints the actual Skill
-tree and writes that fingerprint to a private receipt bound to the immutable
-source identity. Later convergence compares the current tree only with that
-receipt. An identity change or fingerprint mismatch requires the reservation
-ledger to prove ownership before a forced reinstall records a new fingerprint.
-The official installer is already inside the execution trust boundary; Clawdi
-does not maintain a version-specific prediction of its output.
+Native Skill delivery fingerprints the activated Skill tree and writes that
+fingerprint to a private receipt bound to the immutable source identity. Later
+convergence compares the current tree only with that receipt. An identity change
+or fingerprint mismatch requires the reservation ledger to prove ownership
+before replacement records a new fingerprint.
 
 OpenClaw directory delivery also checks the configured Workspace against the
 official `openclaw agents list --json` roster before and after installation.
