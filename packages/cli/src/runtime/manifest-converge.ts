@@ -124,7 +124,7 @@ import {
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
-import type { RuntimePaths } from "./paths";
+import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
 import { daemonProgramRevision } from "./runtime-impact-revision";
@@ -266,15 +266,24 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// Platform metadata must leave tenant HOME before the recursive ownership
-	// invariant is repaired. Both operations precede snapshots by design.
+	// Tenant HOME belongs to the runtime user except for declared platform
+	// enclaves. Metadata migration and ownership repair precede snapshots by design.
 	migrateLegacyHostedSkillReceipts({
 		manifest,
 		home: projectionHome,
 		managedResourceRoot: paths.managedResourceRoot,
 	});
+	const platformEnclaves =
+		resolve(projectionHome) === resolve(paths.userHome)
+			? runtimeSystemdPlatformEnclaves(paths)
+			: [];
 	enforceRuntimeUserOwnership([
-		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true }),
+		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
+		// Official user-service installers need the unit root itself writable. Its
+		// enclave contents retain their existing ownership and are not traversed.
+		...(platformEnclaves.includes(paths.systemdUserRoot)
+			? runtimeUserDirectoryOwnership(paths.systemdUserRoot)
+			: []),
 		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
 	]);
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);

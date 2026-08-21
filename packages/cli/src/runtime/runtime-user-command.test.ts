@@ -2,15 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
 	chmodSync,
 	chownSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { runtimeSystemdPlatformEnclaves } from "./paths";
 import {
 	buildNumericUserCommand,
 	buildRuntimeUserCommand,
@@ -19,6 +22,7 @@ import {
 	createPrivilegeDropResolver,
 	enforceRuntimeUserOwnership,
 	runRuntimeUserCommand,
+	runtimeUserDirectoryOwnership,
 	runtimeUserExistingOwnership,
 	runtimeUserGid,
 	runtimeUserUid,
@@ -431,4 +435,95 @@ test("recursively restores runtime ownership only inside declared state roots", 
 		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("preserves declared platform enclaves while repairing the rest of runtime HOME", () => {
+	if (process.geteuid?.() !== 0) return;
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-platform-enclaves-"));
+	const home = join(root, "home");
+	const systemdUserRoot = join(home, ".config", "systemd", "user");
+	const unit = join(systemdUserRoot, "openclaw-gateway.service");
+	const dropIn = join(`${unit}.d`, "10-clawdi-hosted.conf");
+	const wants = join(systemdUserRoot, "default.target.wants");
+	const enablement = join(wants, "openclaw-gateway.service");
+	const gatewayEnvironment = join(home, ".openclaw", "gateway.systemd.env");
+	const tenantFile = join(home, ".hermes", "config.yaml");
+	const previousRuntimeUser = process.env.CLAWDI_RUNTIME_USER;
+	try {
+		mkdirSync(dirname(dropIn), { recursive: true });
+		mkdirSync(wants, { recursive: true });
+		mkdirSync(dirname(gatewayEnvironment), { recursive: true });
+		mkdirSync(dirname(tenantFile), { recursive: true });
+		writeFileSync(unit, "unit\n");
+		writeFileSync(dropIn, "drop-in\n");
+		symlinkSync("../openclaw-gateway.service", enablement);
+		writeFileSync(gatewayEnvironment, "TOKEN=platform\n", { mode: 0o600 });
+		writeFileSync(tenantFile, "model: tenant\n", { mode: 0o600 });
+		for (const path of [
+			root,
+			home,
+			join(home, ".config"),
+			join(home, ".config", "systemd"),
+			systemdUserRoot,
+			unit,
+			dirname(dropIn),
+			dropIn,
+			wants,
+			gatewayEnvironment,
+			dirname(gatewayEnvironment),
+			dirname(tenantFile),
+			tenantFile,
+		]) {
+			chownSync(path, 0, 0);
+		}
+		process.env.CLAWDI_RUNTIME_USER = "nobody";
+		const platformEnclaves = runtimeSystemdPlatformEnclaves({ userHome: home, systemdUserRoot });
+		expect(platformEnclaves).toEqual([systemdUserRoot, gatewayEnvironment]);
+
+		enforceRuntimeUserOwnership(
+			runtimeUserDirectoryOwnership(home, { recursive: true, platformEnclaves }),
+		);
+
+		for (const path of [
+			systemdUserRoot,
+			unit,
+			dirname(dropIn),
+			dropIn,
+			wants,
+			enablement,
+			gatewayEnvironment,
+		]) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+		}
+		const expectedRuntimeOwner = [runtimeUserUid("nobody"), runtimeUserGid("nobody")];
+		for (const path of [
+			home,
+			join(home, ".config"),
+			join(home, ".config", "systemd"),
+			dirname(gatewayEnvironment),
+			dirname(tenantFile),
+			tenantFile,
+		]) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual(expectedRuntimeOwner);
+		}
+	} finally {
+		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
+		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects platform enclaves without a recursive in-bound ownership root", () => {
+	const home = join(tmpdir(), "runtime-user-platform-enclave-boundary");
+	expect(() =>
+		runtimeUserDirectoryOwnership(home, { platformEnclaves: [join(home, "platform")] }),
+	).toThrow("runtime-user platform enclaves require recursive ownership");
+	expect(() =>
+		runtimeUserDirectoryOwnership(home, {
+			recursive: true,
+			platformEnclaves: [join(home, "..", "platform")],
+		}),
+	).toThrow("runtime-user platform enclave is outside its ownership boundary");
 });
