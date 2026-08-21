@@ -554,6 +554,7 @@ function omitSecretRefs(
 }
 
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
+// SUNSET: Remove after every fleet host has converged past the retired Hermes WhatsApp receipt writer.
 const RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT = "hermes-whatsapp.json";
 
 export function materializeHostedChannelCredentials(
@@ -2815,6 +2816,7 @@ function legacyHermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
 
+// SUNSET: Remove after every fleet host has migrated to native Hermes provider projection.
 function removeLegacyHermesModelProviderPlugin(home: string): void {
 	withRuntimeUserFileAccess(() =>
 		rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true }),
@@ -3554,6 +3556,7 @@ interface HostedMcpIntent {
 }
 
 const HOSTED_RUNTIME_TARGETS = ["openclaw", "hermes"] as const satisfies readonly RuntimeName[];
+// SUNSET: Remove v1 parsing and the projection-root fallback after every fleet host has written the v2 managed-resource ledger.
 const HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
 const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v2";
 const HOSTED_MCP_LEDGER_FILE = "managed-mcp-servers.json";
@@ -4652,6 +4655,7 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	return written;
 }
 
+// SUNSET: Remove after every fleet host has migrated to the dedicated hosted CLAWDI_HOME.
 function removeLegacyTenantClawdiState(paths: RuntimePaths): void {
 	const legacyRoot = join(paths.userHome, ".clawdi");
 	if (resolve(legacyRoot) === resolve(paths.clawdiHome)) return;
