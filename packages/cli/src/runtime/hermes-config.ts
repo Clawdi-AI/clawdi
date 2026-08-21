@@ -81,12 +81,11 @@ function isConfigRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readHermesConfigDocument(context: HermesConfigCommandContext): {
+function readHermesConfigDocumentAtPath(path: string): {
 	path: string;
 	document: ReturnType<typeof parseDocument>;
 	root: Record<string, unknown>;
 } {
-	const path = hermesConfigPath(context);
 	let content = "";
 	try {
 		content = withRuntimeUserFileAccess(() => readFileSync(path, "utf8"));
@@ -107,16 +106,29 @@ function readHermesConfigDocument(context: HermesConfigCommandContext): {
 	return { path, document, root: parsed };
 }
 
-export function getHermesRawConfigValue(
-	context: HermesConfigCommandContext,
-	key: string,
-): HermesConfigValue {
-	let current: unknown = readHermesConfigDocument(context).root;
+function readHermesConfigDocument(context: HermesConfigCommandContext) {
+	return readHermesConfigDocumentAtPath(hermesConfigPath(context));
+}
+
+function rawConfigValue(root: Record<string, unknown>, key: string): HermesConfigValue {
+	let current: unknown = root;
 	for (const part of key.split(".")) {
 		if (!isConfigRecord(current) || !Object.hasOwn(current, part)) return { exists: false };
 		current = current[part];
 	}
 	return { exists: true, value: current };
+}
+
+export function getHermesRawConfigValue(
+	context: HermesConfigCommandContext,
+	key: string,
+): HermesConfigValue {
+	return rawConfigValue(readHermesConfigDocument(context).root, key);
+}
+
+export function getHermesRawConfigFileValue(path: string, key: string): HermesConfigValue {
+	if (!isAbsolute(path)) throw new Error("Hermes config path must be absolute");
+	return rawConfigValue(readHermesConfigDocumentAtPath(path).root, key);
 }
 
 function configValueAtPath(
