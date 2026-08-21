@@ -7,6 +7,7 @@ import {
 	hermesUrlSourceFiles,
 	withHermesSkillLoopbackSource,
 } from "./hermes-skill-loopback-source";
+import { ManagedSkillResourceError } from "./managed-skill-delivery";
 
 let root = "";
 
@@ -22,6 +23,7 @@ const requests = [
   fetch(base),
   fetch(new URL("references/guide.md", base)),
   fetch(new URL("unreferenced.txt", base)),
+  fetch(new URL("scripts/missing.py", base)),
   fetch(base, { method: "POST" }),
   new Promise((resolve, reject) => {
     const target = new URL(base);
@@ -52,21 +54,32 @@ process.stdout.write(JSON.stringify(await Promise.all(responses.map(async respon
 	return JSON.parse(result.stdout) as Array<{ status: number; body: string }>;
 }
 
-test("serves only the nonce-scoped Hermes URL projection and closes synchronously", () => {
+test("serves every safe archive file and leaves missing references to Hermes", () => {
 	root = mkdtempSync(join(tmpdir(), "hermes-skill-loopback-source-"));
 	mkdirSync(join(root, "references"));
-	writeFileSync(join(root, "SKILL.md"), "# Test\n\n[Guide](references/guide.md)\n");
+	writeFileSync(
+		join(root, "SKILL.md"),
+		"# Test\n\n[Guide](references/guide.md)\n[Missing](scripts/missing.py)\n",
+	);
 	writeFileSync(join(root, "references", "guide.md"), "verified guide\n");
-	writeFileSync(join(root, "unreferenced.txt"), "not served\n");
+	writeFileSync(join(root, "unreferenced.txt"), "archive content\n");
 	let url = "";
 
 	withHermesSkillLoopbackSource(root, (source) => {
 		url = source.url;
 		expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/0[a-f0-9]{64}\/SKILL\.md$/);
-		expect([...source.files.keys()]).toEqual(["SKILL.md", "references/guide.md"]);
+		expect([...source.files.keys()]).toEqual([
+			"references/guide.md",
+			"SKILL.md",
+			"unreferenced.txt",
+		]);
 		expect(fetchProbe(url)).toEqual([
-			{ status: 200, body: "# Test\n\n[Guide](references/guide.md)\n" },
+			{
+				status: 200,
+				body: "# Test\n\n[Guide](references/guide.md)\n[Missing](scripts/missing.py)\n",
+			},
 			{ status: 200, body: "verified guide\n" },
+			{ status: 200, body: "archive content\n" },
 			{ status: 404, body: "" },
 			{ status: 405, body: "" },
 			{ status: 400, body: "" },
@@ -86,14 +99,15 @@ test("serves only the nonce-scoped Hermes URL projection and closes synchronousl
 	expect(closed.stdout).toBe("closed");
 });
 
-test("rejects source bytes that Hermes URL installation cannot preserve safely", () => {
+test("validates only the staged archive tree and URL path safety", () => {
 	root = mkdtempSync(join(tmpdir(), "hermes-skill-loopback-validation-"));
-	writeFileSync(join(root, "SKILL.md"), "[Missing](references/missing.md)\n");
-	expect(() => hermesUrlSourceFiles(root)).toThrow(
-		"prepared Hermes Skill support file is missing: references/missing.md",
-	);
-	writeFileSync(join(root, "SKILL.md"), "[Escape](references/%2e%2e/secret.md)\n");
-	expect(() => hermesUrlSourceFiles(root)).toThrow("unsafe support file reference");
+	expect(() => hermesUrlSourceFiles(root)).toThrow(ManagedSkillResourceError);
+	expect(() => hermesUrlSourceFiles(root)).toThrow("prepared Hermes Skill is missing SKILL.md");
 	writeFileSync(join(root, "SKILL.md"), Buffer.from([0xff]));
-	expect(() => hermesUrlSourceFiles(root)).toThrow("SKILL.md is not valid UTF-8");
+	expect(hermesUrlSourceFiles(root).get("SKILL.md")).toEqual(Buffer.from([0xff]));
+	writeFileSync(join(root, "bad:name"), "unsafe URL path\n");
+	expect(() => hermesUrlSourceFiles(root)).toThrow(ManagedSkillResourceError);
+	expect(() => hermesUrlSourceFiles(root)).toThrow(
+		"prepared Hermes Skill path is unsafe: bad:name",
+	);
 });

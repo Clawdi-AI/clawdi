@@ -41,7 +41,7 @@ import {
 	managedBaileysCompatSnapshotRuntimes,
 } from "./managed-baileys-compat";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
-import { managedSkillReceiptPath } from "./managed-skill-delivery";
+import { ManagedSkillResourceError, managedSkillReceiptPath } from "./managed-skill-delivery";
 import { managedSkillReservations } from "./managed-skill-reservation";
 import {
 	hostedChannelCredentialsDeclared,
@@ -693,7 +693,12 @@ export function hostedSkillMutationTargets(
 			managesHermesSourcedSkill = true;
 			const prepared = preparedSourcedSkills.get(skillId);
 			if (prepared?.skillId === skillId) {
-				const target = hermesDriver.target?.({ home, skill: prepared });
+				let target: string | undefined;
+				try {
+					target = hermesDriver.target?.({ home, skill: prepared });
+				} catch (error) {
+					if (!(error instanceof ManagedSkillResourceError)) throw error;
+				}
 				if (target) runtimeUserTargets.add(target);
 			}
 		}

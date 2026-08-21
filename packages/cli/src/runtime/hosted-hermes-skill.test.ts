@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
-import { managedSkillReceiptPath } from "./managed-skill-delivery";
+import { ManagedSkillResourceError, managedSkillReceiptPath } from "./managed-skill-delivery";
 
 const originalEnv = { ...process.env };
 let root = "";
@@ -229,6 +229,57 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				targetDir: nativeTarget,
 			}),
 		).toBe(true);
+	});
+
+	test("lets official Hermes reject a support reference missing from the archive", () => {
+		root = mkdtempSync(join(tmpdir(), "hosted-hermes-missing-support-"));
+		delete process.env.CLAWDI_RUNTIME_USER;
+		const home = join(root, "home");
+		const managedResourceRoot = join(root, "managed-resources");
+		mkdirSync(managedResourceRoot, { recursive: true });
+		const appRoot = fakeHermesApp(home);
+		const sourceDir = join(root, "source", "missing-support");
+		mkdirSync(sourceDir, { recursive: true });
+		writeFileSync(
+			join(sourceDir, "SKILL.md"),
+			"---\nname: missing-support\n---\n# Missing support\n\n[Sync](scripts/hermes-direct-slack-sync.py)\n",
+		);
+		writeFileSync(join(sourceDir, "archive-only.txt"), "served but not requested\n");
+		const archive = join(root, "missing-support.tar.gz");
+		const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "missing-support"]);
+		if (packed.status !== 0) throw new Error("test tar creation failed");
+		process.env.FAKE_HERMES_LOG = join(root, "hermes.log");
+		const skill: PreparedHostedSourcedSkill = {
+			skillId: "missing-support",
+			source: {
+				type: "github",
+				url: "https://github.com/Clawdi-AI/store",
+				path: "skills/missing-support",
+				commit: "a".repeat(40),
+			},
+			sourceIdentity: `github\0missing-support\0https://github.com/Clawdi-AI/store\0skills/missing-support\0${"a".repeat(40)}`,
+			...preparedArchive(archive),
+		};
+		let failure: unknown;
+
+		try {
+			hostedHermesSkillExactSourceDriver.install({
+				home,
+				appRoot,
+				managedResourceRoot,
+				skill,
+				previouslyReserved: false,
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).toBeInstanceOf(ManagedSkillResourceError);
+		expect(failure).toHaveProperty(
+			"message",
+			"Hermes official Skill install did not record an installed target: Error: Could not fetch source Skill",
+		);
+		expect(existsSync(join(home, ".hermes", "skills", "missing-support"))).toBe(false);
 	});
 
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {

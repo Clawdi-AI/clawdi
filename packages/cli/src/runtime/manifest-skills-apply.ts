@@ -295,7 +295,13 @@ function recoverHostedSkillReservations(
 		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
 			continue;
 		}
-		const targetDir = driver.target(prepared);
+		let targetDir: string;
+		try {
+			targetDir = driver.target(prepared);
+		} catch (error) {
+			if (error instanceof ManagedSkillResourceError) continue;
+			throw error;
+		}
 		if (
 			!withRuntimeUserFileAccess(() => existsSync(targetDir)) ||
 			managedSkillReservationOwner(targetDir, skillId) !== "unreserved" ||
@@ -330,7 +336,13 @@ function validateHostedSkillsPlan(
 		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
 			throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 		}
-		const targetDir = driver.target(prepared);
+		let targetDir: string;
+		try {
+			targetDir = driver.target(prepared);
+		} catch (error) {
+			if (error instanceof ManagedSkillResourceError) continue;
+			throw error;
+		}
 		if (
 			withRuntimeUserFileAccess(() => existsSync(targetDir)) &&
 			managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
@@ -386,7 +398,14 @@ function applyHostedSkills(
 		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
 			throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 		}
-		const targetDir = driver.target(prepared);
+		let targetDir: string;
+		try {
+			targetDir = driver.target(prepared);
+		} catch (error) {
+			if (!(error instanceof ManagedSkillResourceError)) throw error;
+			failures.push(`${skillId}: ${error.message}`);
+			continue;
+		}
 		const owner = managedSkillReservationOwner(targetDir, skillId);
 		if (withRuntimeUserFileAccess(() => existsSync(targetDir)) && owner !== "hosted-manifest") {
 			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);

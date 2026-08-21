@@ -4935,11 +4935,14 @@ echo spawned > '${installerLog}'
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "skill-item-isolation"), paths, {
 			preparedHostedSourcedSkills: preparedSkills,
 			hostedHermesSkillExactSourceDriver: {
+				target: ({ skill }) => {
+					if (skill.skillId === "a-fail") {
+						throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
+					}
+					return join(paths.userHome, ".hermes", "skills", skill.skillId);
+				},
 				install: ({ skill }) => {
 					attempted.push(skill.skillId);
-					if (skill.skillId === "a-fail") {
-						throw new ManagedSkillResourceError("deterministic native install failure");
-					}
 					const target = join(paths.userHome, ".hermes", "skills", skill.skillId);
 					mkdirSync(target, { recursive: true });
 					writeFileSync(join(target, "SKILL.md"), `${skill.skillId}\n`);
@@ -4955,9 +4958,9 @@ echo spawned > '${installerLog}'
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.resourceProjectionErrors).toEqual([
-			"runtime hermes Skill projection failed: a-fail: deterministic native install failure",
+			"runtime hermes Skill projection failed: a-fail: prepared Skill archive could not be staged",
 		]);
-		expect(attempted).toEqual(skillIds);
+		expect(attempted).toEqual(["b-ready", "c-ready"]);
 		expect(existsSync(join(paths.userHome, ".hermes", "skills", "a-fail"))).toBe(false);
 		for (const skillId of ["b-ready", "c-ready"]) {
 			expect(
