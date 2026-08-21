@@ -1,14 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import {
-	cpSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,8 +120,8 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		writeFileSync(join(stateRoot, "config.yaml"), `plugins:\n  scan_on_install: ${value}\n`);
 	}
 
-	hermesScanPolicy(): boolean {
-		return this.hermesScanPolicies.get(this.liveHome) ?? true;
+	hermesScanPolicy(): boolean | "unset" {
+		return this.hermesScanPolicies.get(this.liveHome) ?? "unset";
 	}
 
 	private pluginFromSource(path: string): {
@@ -178,30 +170,15 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 		const args = input.args;
 		if (
 			runtime === "hermes" &&
-			args.join("\0") === ["config", "get", "plugins.scan_on_install", "--json"].join("\0")
+			args.join("\0") ===
+				["config", "set", "--force", "plugins.scan_on_install", "false"].join("\0")
 		) {
-			return {
-				status: 0,
-				stdout: JSON.stringify(this.hermesScanPolicies.get(input.home) ?? true),
-				stderr: "",
-			};
-		}
-		if (
-			runtime === "hermes" &&
-			args.slice(0, 4).join("\0") ===
-				["config", "set", "--force", "plugins.scan_on_install"].join("\0") &&
-			(args[4] === "true" || args[4] === "false")
-		) {
-			if (input.home === this.liveHome && args[4] === "false" && this.failLiveHermesScanPolicy) {
+			if (input.home === this.liveHome && this.failLiveHermesScanPolicy) {
 				return { status: 44, stdout: "", stderr: "scan policy failure" };
 			}
-			const value = args[4] === "true";
-			this.hermesScanPolicies.set(input.home, value);
+			this.hermesScanPolicies.set(input.home, false);
 			mkdirSync(expectedStateRoot, { recursive: true });
-			writeFileSync(
-				join(expectedStateRoot, "config.yaml"),
-				`plugins:\n  scan_on_install: ${value}\n`,
-			);
+			writeFileSync(join(expectedStateRoot, "config.yaml"), "plugins:\n  scan_on_install: false\n");
 			return { status: 0, stdout: "", stderr: "" };
 		}
 		if (args[0] !== "plugins") return { status: 2, stdout: "", stderr: "" };
@@ -642,42 +619,40 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		});
 	});
 
-	test("installs the Hermes stdio-capable package from a local file Git transport", () => {
+	test("persistently disables an unset Hermes install scan before managed installation", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "b".repeat(64));
 		const transaction = prepareTransaction(desiredState("hermes", desired), runner);
 		expect(transaction.snapshotTargets).toContain(join(runner.liveHome, ".hermes", "config.yaml"));
+
 		transaction.apply();
+
 		const installIndex = runner.calls.findIndex(
 			(call) => call.home === runner.liveHome && call.args[1] === "install",
 		);
-		const liveConfigCalls = runner.calls.filter(
+		const scanPolicyIndex = runner.calls.findIndex(
 			(call) => call.home === runner.liveHome && call.args[0] === "config",
 		);
-		const disableIndex = runner.calls.findIndex(
-			(call) => call.home === runner.liveHome && call.args.at(-1) === "false",
-		);
-		const restoreIndex = runner.calls.findIndex(
-			(call) => call.home === runner.liveHome && call.args.at(-1) === "true",
-		);
 		const install = runner.calls[installIndex];
-		expect(liveConfigCalls.map((call) => call.args)).toEqual([
-			["config", "get", "plugins.scan_on_install", "--json"],
-			["config", "set", "--force", "plugins.scan_on_install", "false"],
-			["config", "get", "plugins.scan_on_install", "--json"],
-			["config", "set", "--force", "plugins.scan_on_install", "true"],
+		const scanPolicy = runner.calls[scanPolicyIndex];
+		expect(scanPolicy?.args).toEqual([
+			"config",
+			"set",
+			"--force",
+			"plugins.scan_on_install",
+			"false",
 		]);
-		expect(disableIndex).toBeGreaterThanOrEqual(0);
-		expect(disableIndex).toBeLessThan(installIndex);
-		expect(restoreIndex).toBeGreaterThan(installIndex);
+		expect(scanPolicyIndex).toBeGreaterThanOrEqual(0);
+		expect(scanPolicyIndex).toBeLessThan(installIndex);
+		expect(scanPolicy?.home).toBe(runner.liveHome);
+		expect(scanPolicy?.cwd).toBe(runner.liveHome);
+		expect(scanPolicy?.environmentOverrides).toEqual(install?.environmentOverrides);
 		expect(install?.args[2]?.startsWith("file://")).toBe(true);
 		expect(install?.args.join(" ")).not.toContain("github.com");
 		expect(readFileSync(join(runner.liveHome, ".hermes", "config.yaml"), "utf-8")).toContain(
-			"scan_on_install: true",
+			"scan_on_install: false",
 		);
-		expect(existsSync(join(runner.liveHome, ".hermes", ".clawdi-plugin-scan-guard.json"))).toBe(
-			false,
-		);
+		expect(runner.hermesScanPolicy()).toBe(false);
 		expect(install?.environmentOverrides).toEqual({
 			OPENCLAW_HOME: undefined,
 			OPENCLAW_PROFILE: undefined,
@@ -729,7 +704,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		).toBe(false);
 	});
 
-	test("preserves a tenant-disabled Hermes install scan without writing a guard", () => {
+	test("does not rewrite an already-disabled Hermes install scan", () => {
 		const runner = new FakeNativeRunner();
 		runner.setHermesScanPolicy(false);
 		const desired = plugin("acme.tools", "1.2.3", "9".repeat(64));
@@ -740,45 +715,9 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const liveConfigCalls = runner.calls.filter(
 			(call) => call.home === runner.liveHome && call.args[0] === "config",
 		);
-		expect(liveConfigCalls.map((call) => call.args)).toEqual([
-			["config", "get", "plugins.scan_on_install", "--json"],
-		]);
+		expect(liveConfigCalls).toEqual([]);
 		expect(runner.hermesScanPolicy()).toBe(false);
-		expect(existsSync(join(runner.liveHome, ".hermes", ".clawdi-plugin-scan-guard.json"))).toBe(
-			false,
-		);
-	});
-
-	test("restores the Hermes install scan after install failure and after an interrupted guard", () => {
-		const runner = new FakeNativeRunner();
-		const desired = plugin("acme.tools", "1.2.3", "8".repeat(64));
-		const prepared = desiredState("hermes", desired);
-		const capabilityProof = proveHostedAgentPluginCapabilities({ prepared, commands, runner });
-		const guardPath = join(runner.liveHome, ".hermes", ".clawdi-plugin-scan-guard.json");
-		runner.setHermesScanPolicy(false);
-		writeFileSync(
-			guardPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.hermesPluginScanGuard.v1",
-				previousValue: true,
-			})}\n`,
-			{ mode: 0o600 },
-		);
-
-		const transaction = prepareHostedAgentPluginTransaction({
-			prepared,
-			home: runner.liveHome,
-			commands,
-			capabilityProof,
-			runner,
-		});
-		expect(runner.hermesScanPolicy()).toBe(true);
-		expect(existsSync(guardPath)).toBe(false);
-
-		runner.failLiveInstallVersion = desired.installation.version;
-		expect(() => transaction.apply()).toThrow("Hermes native Agent Plugin install failed");
-		expect(runner.hermesScanPolicy()).toBe(true);
-		expect(existsSync(guardPath)).toBe(false);
+		expect(runner.get("hermes", desired.name)?.enabled).toBe(true);
 	});
 
 	test("requires the Hermes one-shot remote behavior proof before live mutation", () => {
