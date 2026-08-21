@@ -583,10 +583,15 @@ export function runtimeCommandCurrentRevisionCached(
 	return revision;
 }
 
-function officialServiceCurrentRevision(
+interface OfficialServiceCurrentRevisions {
+	canonical: string;
+	legacyMetadataAware: string;
+}
+
+function officialServiceCurrentRevisions(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
-): string | null {
+): OfficialServiceCurrentRevisions | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
 	const unitName = systemdUnitFileName(descriptor.programName);
@@ -602,15 +607,21 @@ function officialServiceCurrentRevision(
 			paths.userHome,
 		);
 		if (!commandRevision) return null;
-		return runtimeContentSha256({
+		const contentIdentity = {
 			commandRevision,
 			programName: descriptor.programName,
 			unitName,
 			unitSha256: createHash("sha256").update(contents).digest("hex"),
-			unitMode: unitStat.mode & 0o7777,
-			unitUid: unitStat.uid,
-			unitGid: unitStat.gid,
-		});
+		};
+		return {
+			canonical: runtimeContentSha256(contentIdentity),
+			legacyMetadataAware: runtimeContentSha256({
+				...contentIdentity,
+				unitMode: unitStat.mode & 0o7777,
+				unitUid: unitStat.uid,
+				unitGid: unitStat.gid,
+			}),
+		};
 	} catch (error) {
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
@@ -632,11 +643,17 @@ function officialServiceDesiredRevision(program: RuntimeSystemdUserProgram): str
 function verifiedReceiptCurrentRevision(
 	receipt: RuntimeInstallReceiptEntry | undefined,
 	desiredRevision: string,
-	currentRevision: () => string | null,
+	currentRevisions: () => OfficialServiceCurrentRevisions | null,
 ): string | null {
 	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
-	const current = currentRevision();
-	return current === receipt.currentRevision ? current : null;
+	const current = currentRevisions();
+	if (!current) return null;
+	// Pre-content-only receipts included unit ownership and mode. Accept them
+	// once, then commit the canonical content revision without reinstalling.
+	return receipt.currentRevision === current.canonical ||
+		receipt.currentRevision === current.legacyMetadataAware
+		? current.canonical
+		: null;
 }
 
 export function planOfficialRuntimeServices(
@@ -651,11 +668,12 @@ export function planOfficialRuntimeServices(
 	for (const program of officialRuntimeSystemdPrograms(programs)) {
 		const key = systemdUnitFileName(runtimeSystemdProgramName(program));
 		const desiredRevision = officialServiceDesiredRevision(program);
-		const currentRevision = () => officialServiceCurrentRevision(program, paths);
+		const currentRevisions = () => officialServiceCurrentRevisions(program, paths);
+		const currentRevision = () => currentRevisions()?.canonical ?? null;
 		const expectedCurrentRevision = verifiedReceiptCurrentRevision(
 			receipts?.officialServices[key],
 			desiredRevision,
-			currentRevision,
+			currentRevisions,
 		);
 		const target = { desiredRevision, currentRevision, expectedCurrentRevision };
 		targets.set(key, target);
@@ -753,6 +771,7 @@ function writeSystemdProgramEnvironment(input: {
 function writeSystemdUnit(input: {
 	root: string;
 	owner: "root" | "runtime-user";
+	unitOwner?: "root" | "runtime-user";
 	paths: RuntimePaths;
 	name: string;
 	description: string;
@@ -772,6 +791,7 @@ function writeSystemdUnit(input: {
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
+	const unitOwner = input.unitOwner ?? input.owner;
 	const { envFile, envRevision } = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
@@ -832,20 +852,18 @@ function writeSystemdUnit(input: {
 	];
 	const writeUnitFile = (): string => {
 		ensureDirectoryWithinTrustedRoot(input.root, input.root);
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
+		if (unitOwner === "runtime-user") makeRuntimeUserOwned(input.root);
 		writeSystemdManagedFile({
 			path,
 			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.root,
-			owner: input.owner,
+			owner: unitOwner,
 		});
 		return path;
 	};
-	return input.owner === "runtime-user"
-		? withRuntimeUserFileAccess(writeUnitFile)
-		: writeUnitFile();
+	return unitOwner === "runtime-user" ? withRuntimeUserFileAccess(writeUnitFile) : writeUnitFile();
 }
 
 function writeSystemdSystemUnit(
@@ -866,6 +884,7 @@ function writeSystemdUserUnit(
 		...input,
 		root: input.paths.systemdUserRoot,
 		owner: "runtime-user",
+		unitOwner: "root",
 		wantedBy: "default.target",
 	});
 }
@@ -900,20 +919,17 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		"",
 	];
-	return withRuntimeUserFileAccess(() => {
-		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
-		makeRuntimeUserOwned(dirname(path));
-		writeSystemdManagedFile({
-			path,
-			content: lines.join("\n"),
-			mode: 0o644,
-			dirMode: 0o755,
-			trustedRoot: input.paths.systemdUserRoot,
-			owner: "runtime-user",
-		});
-		return join(input.paths.systemdUserRoot, unitName);
+	removeGeneratedRuntimeBaseUnit(input.paths, unitName);
+	ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
+	writeSystemdManagedFile({
+		path,
+		content: lines.join("\n"),
+		mode: 0o644,
+		dirMode: 0o755,
+		trustedRoot: input.paths.systemdUserRoot,
+		owner: "root",
 	});
+	return join(input.paths.systemdUserRoot, unitName);
 }
 
 function removeGeneratedRuntimeBaseUnit(paths: RuntimePaths, unitName: string): void {

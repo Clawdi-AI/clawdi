@@ -6,7 +6,9 @@ type SystemdApplyHooks = NonNullable<ConvergeOptions["systemdApply"]>;
 export type TestSystemdApplyHooks = Omit<
 	SystemdApplyHooks,
 	"installOfficialService" | "transactionState"
->;
+> & {
+	installOfficialService?: SystemdApplyHooks["installOfficialService"];
+};
 
 export type TestConvergeOptions = Omit<ConvergeOptions, "systemdApply"> & {
 	systemdApply?: TestSystemdApplyHooks;
@@ -17,9 +19,9 @@ export function withTestSystemdTransaction(hooks: TestSystemdApplyHooks): System
 	return {
 		...hooks,
 		transactionState: () => (mutated ? "mutated" : "pristine"),
-		installOfficialService: (_unit, install) => {
+		installOfficialService: (unit, install) => {
 			mutated = true;
-			return install();
+			return hooks.installOfficialService ? hooks.installOfficialService(unit, install) : install();
 		},
 		activateEgressPrerequisite: (signal) => {
 			mutated = true;

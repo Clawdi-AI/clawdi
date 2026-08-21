@@ -90,7 +90,7 @@ import {
 } from "./manifest-shared";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { EnsureRuntimeMitmproxyOptions } from "./mitmproxy-fetch";
-import type { RuntimePaths } from "./paths";
+import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	buildRuntimeRunConfig,
@@ -786,11 +786,19 @@ export function runtimeManagedMutationPlan(input: {
 			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserBoundaries),
 		]),
 	].sort();
+	const platformEnclaveRoots = runtimeSystemdPlatformEnclaves(input.paths).map((enclave) =>
+		resolve(enclave.path),
+	);
 	const runtimeUserOwnership = runtimeUserExistingOwnership([
 		...runtimeUserTargets,
 		...runtimeUserMetadataTargets,
 		...runtimeCommandTargets,
-	]);
+	]).filter((rule) =>
+		platformEnclaveRoots.every((root) => {
+			const candidate = relative(root, rule.path);
+			return candidate.startsWith("..") || isAbsolute(candidate);
+		}),
+	);
 	return {
 		snapshot: {
 			rootTargets: rootTargetsList,

@@ -285,11 +285,6 @@ function initializeRuntimeConvergence(
 	}
 	enforceRuntimeUserOwnership([
 		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
-		// Official user-service installers need the unit root itself writable. Its
-		// enclave contents remain root-owned until their exact mutation targets are staged.
-		...(platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)
-			? runtimeUserDirectoryOwnership(paths.systemdUserRoot)
-			: []),
 		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
 	]);
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
@@ -1540,10 +1535,30 @@ function activateRuntimeServices(
 	if (officialServicePlan.pending.length > 0) state.agentPluginUnitsQuiesced = false;
 	for (const item of officialServicePlan.pending) {
 		hostedRuntimeContract.assertPlatformRoots();
-		const install = () => installOfficialRuntimeService(item, paths);
-		const error = opts.systemdApply
-			? opts.systemdApply.installOfficialService(item.unitName, install)
-			: install();
+		const unitPath = join(paths.systemdUserRoot, item.unitName);
+		const installerOwnership = [
+			...runtimeUserDirectoryOwnership(paths.systemdUserRoot),
+			...runtimeUserDirectoryOwnership(join(paths.systemdUserRoot, "default.target.wants")),
+			...runtimeUserExistingOwnership([
+				unitPath,
+				`${unitPath}.bak`,
+				join(paths.systemdUserRoot, "default.target.wants", item.unitName),
+				...(item.program.runtime === "openclaw"
+					? [join(paths.userHome, ".openclaw", "gateway.systemd.env")]
+					: []),
+			]),
+		];
+		let error: string | null;
+		try {
+			enforceRuntimeUserOwnership(installerOwnership);
+			const install = () => installOfficialRuntimeService(item, paths);
+			error = opts.systemdApply
+				? opts.systemdApply.installOfficialService(item.unitName, install)
+				: install();
+		} finally {
+			enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
+			enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
+		}
 		if (error) throw new Error(error);
 	}
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {

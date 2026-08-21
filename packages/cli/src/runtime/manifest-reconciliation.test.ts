@@ -6,6 +6,8 @@ import {
 	chownSync,
 	cpSync,
 	existsSync,
+	lchownSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -4689,15 +4691,15 @@ echo spawned > '${installerLog}'
 				return "unchanged" as const;
 			},
 			anchorOwnership: () => undefined,
-			hasOwnershipReceipt: (input: { ownershipIdentity: string }) => {
+			hasOwnershipReceipt: () => false,
+			verifyOwned: (input: { skill: PreparedHostedSourcedSkill }) => {
 				verifyCalls += 1;
 				return (
-					input.ownershipIdentity === prepared.sourceIdentity &&
+					input.skill.sourceIdentity === prepared.sourceIdentity &&
 					existsSync(join(skillDir, "SKILL.md")) &&
 					readFileSync(join(skillDir, "SKILL.md"), "utf8") === "manifest-owned\n"
 				);
 			},
-			verifyOwned: () => false,
 			uninstall: () => {
 				uninstalls += 1;
 				rmSync(skillDir, { recursive: true, force: true });
@@ -4746,7 +4748,7 @@ echo spawned > '${installerLog}'
 		);
 		expect(installed.installErrors).toEqual([]);
 		expect(installs).toEqual([false, true]);
-		expect(verifyCalls).toBe(2);
+		expect(verifyCalls).toBe(3);
 		expect(shouldIgnoreUserSkill(skillDir, "review-pr")).toBe(true);
 		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("manifest-owned\n");
 
@@ -4774,6 +4776,120 @@ echo spawned > '${installerLog}'
 		expect(existsSync(skillDir)).toBe(false);
 		expect(readFileSync(join(userOwnedSibling, "SKILL.md"), "utf8")).toBe("keep me\n");
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
+	});
+
+	test("recovers a killed hosted Skill install before retrying convergence", async () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const skillId = "crash-recovery";
+		const source = {
+			type: "github" as const,
+			url: "https://github.com/Clawdi-AI/store",
+			path: `skills/${skillId}`,
+			commit: "a".repeat(40),
+		};
+		const sourceIdentity = `github\0${skillId}\0${source.url}\0${source.path}\0${source.commit}`;
+		const prepared: PreparedHostedSourcedSkill = {
+			skillId,
+			source,
+			sourceIdentity,
+			archiveSha256: "b".repeat(64),
+			tarBytes: Buffer.from("crash recovery archive"),
+		};
+		const target = join(paths.userHome, ".hermes", "skills", skillId);
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", skillId);
+		const ready = join(dirname(paths.serviceStateRoot), "skill-installer-ready");
+		const moduleUrl = new URL("./managed-skill-reservation.ts", import.meta.url).href;
+		const child = Bun.spawn(
+			[
+				process.execPath,
+				"-e",
+				`import { writeFileSync } from "node:fs";
+const { installReservedManagedSkill } = await import(${JSON.stringify(moduleUrl)});
+installReservedManagedSkill(${JSON.stringify({
+					targetDir: target,
+					id: skillId,
+					sourceIdentity,
+					manager: "hosted-manifest",
+				})}, () => {
+  writeFileSync(${JSON.stringify(ready)}, "ready");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+}, { verify: () => true, discard: () => {} });`,
+			],
+			{ env: process.env, stdout: "pipe", stderr: "pipe" },
+		);
+		for (let attempt = 0; attempt < 200 && !existsSync(ready); attempt += 1) {
+			await Bun.sleep(10);
+		}
+		expect(existsSync(ready)).toBe(true);
+		child.kill("SIGKILL");
+		expect(await child.exited).not.toBe(0);
+
+		const ledgerPath = managedSkillReservationLedgerPath();
+		const interruptedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		expect(interruptedLedger.reservations[target]).toBeUndefined();
+		expect(interruptedLedger.pendingReservations[target]).toBeDefined();
+		expect(existsSync(target)).toBe(false);
+		expect(existsSync(receipt)).toBe(false);
+		expect(() =>
+			reserveManagedSkill({
+				targetDir: target,
+				id: skillId,
+				sourceIdentity,
+				manager: "hosted-manifest",
+			}),
+		).toThrow("pending installation that requires recovery");
+
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const manifest = baseManifest(
+			paths,
+			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
+			{ projection: { skills: { entries: { [skillId]: { enabled: true, source } } } } },
+		);
+		let installs = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "recover-killed-skill-installer"),
+			paths,
+			{
+				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
+				hostedHermesSkillExactSourceDriver: {
+					install: () => {
+						installs += 1;
+						const installingLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+						expect(installingLedger.reservations[target]).toBeUndefined();
+						expect(installingLedger.pendingReservations[target]).toBeDefined();
+						mkdirSync(target, { recursive: true });
+						writeFileSync(join(target, "SKILL.md"), "verified tree\n");
+						writeManagedSkillReceipt({
+							path: receipt,
+							managedResourceRoot: paths.managedResourceRoot,
+							schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",
+							skillId,
+							ownershipIdentity: sourceIdentity,
+							target,
+						});
+						return "installed";
+					},
+					anchorOwnership: () => undefined,
+					hasOwnershipReceipt: () => existsSync(receipt),
+					verifyOwned: () =>
+						existsSync(receipt) &&
+						existsSync(join(target, "SKILL.md")) &&
+						readFileSync(join(target, "SKILL.md"), "utf8") === "verified tree\n",
+					uninstall: () => "removed",
+					cleanupManifestOwned: () => "removed",
+				},
+			},
+		);
+
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		expect(installs).toBe(1);
+		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
+		const committedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		expect(committedLedger.reservations[target]).toBeDefined();
+		expect(committedLedger.pendingReservations).toEqual({});
 	});
 
 	test("releases a stale hosted reservation after its Skill tree disappears", () => {
@@ -4882,7 +4998,7 @@ echo spawned > '${installerLog}'
 					},
 					anchorOwnership: () => undefined,
 					hasOwnershipReceipt: () => false,
-					verifyOwned: () => false,
+					verifyOwned: () => true,
 					uninstall: () => "removed",
 					cleanupManifestOwned: () => "removed",
 				},
@@ -4950,7 +5066,7 @@ echo spawned > '${installerLog}'
 				},
 				anchorOwnership: () => undefined,
 				hasOwnershipReceipt: () => false,
-				verifyOwned: () => false,
+				verifyOwned: () => true,
 				uninstall: () => "removed",
 				cleanupManifestOwned: () => "removed",
 			},
@@ -5102,10 +5218,11 @@ echo spawned > '${installerLog}'
 			paths,
 		);
 		expect(reconverged.installErrors).toEqual([]);
-		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
-			readFileSync(join(packageSource, "SKILL.md")),
+		expect(reconverged.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged clawdi skill at ${target}`,
 		);
-		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("tenant mutation\n");
+		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(false);
 	});
 
 	test("claims legacy OpenClaw Skills before receipt-guarded removal", () => {
@@ -5795,7 +5912,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("repairs root bootstrap ownership for the UID 10001 official OpenClaw service path", () => {
+	test("keeps the systemd enclave root-owned outside the UID 10001 installer boundary", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -5808,16 +5925,29 @@ exit 0
 		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		const unitBackupPath = `${unitPath}.bak`;
+		const dropInPath = join(
+			paths.systemdUserRoot,
+			"openclaw-gateway.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
+		const enablementPath = join(wantsRoot, "openclaw-gateway.service");
 		const runtimeOwnedPaths = [
 			appRoot,
 			binDir,
 			commandPath,
 			dirname(dirname(paths.systemdUserRoot)),
 			dirname(paths.systemdUserRoot),
+		];
+		const platformOwnedPaths = [
 			paths.systemdUserRoot,
 			unitPath,
 			unitBackupPath,
 			gatewayEnvironment,
+			dirname(dropInPath),
+			dropInPath,
+			wantsRoot,
+			enablementPath,
 		];
 
 		chmodSync(fixtureRoot, 0o755);
@@ -5829,7 +5959,8 @@ exit 0
 		chmodSync(paths.clawdiHome, 0o700);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(appRoot, { recursive: true });
-		mkdirSync(dirname(unitPath), { recursive: true });
+		mkdirSync(dirname(dropInPath), { recursive: true });
+		mkdirSync(wantsRoot, { recursive: true });
 		writeFileSync(
 			commandPath,
 			`#!/usr/bin/env bash
@@ -5850,17 +5981,22 @@ printf '{"ok":true}\\n'
 		);
 		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
 		writeFileSync(unitBackupPath, "previous official backup\n");
+		writeFileSync(dropInPath, "[Service]\nEnvironment=PREVIOUS=1\n");
+		symlinkSync("../openclaw-gateway.service", enablementPath);
 		writeFileSync(gatewayEnvironment, "PREVIOUS_OFFICIAL_STATE=1\n");
 		for (const path of [appRoot, binDir]) {
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
-		for (const path of [commandPath, unitPath, unitBackupPath, gatewayEnvironment]) {
+		for (const path of [commandPath, ...platformOwnedPaths]) {
+			if (lstatSync(path).isSymbolicLink()) continue;
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
+		for (const path of [enablementPath]) lchownSync(path, 0, 0);
 		chmodSync(unitPath, 0o600);
 		chmodSync(unitBackupPath, 0o600);
+		chmodSync(dropInPath, 0o600);
 		chmodSync(gatewayEnvironment, 0o600);
 
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
@@ -5875,24 +6011,37 @@ printf '{"ok":true}\\n'
 			},
 			resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
 		};
+		let skillProjectionObserved = false;
 		const openClawSkillDriver = {
 			...hostedOpenClawSkillDriver,
 			resolveWorkspace: () => join(appRoot, "workspace"),
-		};
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				install: {
-					authority: "official",
-					method: "official-installer",
-					url: OFFICIAL_INSTALL_URLS.openclaw,
-					home: paths.userHome,
-					args: officialInstallArgs("openclaw", paths.userHome),
-				},
-				run: runSettings(commandPath, ["gateway", "run"]),
-				services: {},
+			install: () => {
+				skillProjectionObserved = true;
+				for (const path of platformOwnedPaths) {
+					const node = lstatSync(path);
+					expect([node.uid, node.gid]).toEqual([0, 0]);
+				}
+				throw new ManagedSkillResourceError("injected Skill projection stop");
 			},
-		});
+		};
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					install: {
+						authority: "official",
+						method: "official-installer",
+						url: OFFICIAL_INSTALL_URLS.openclaw,
+						home: paths.userHome,
+						args: officialInstallArgs("openclaw", paths.userHome),
+					},
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "root-openclaw-ownership"),
@@ -5904,9 +6053,15 @@ printf '{"ok":true}\\n'
 			},
 		);
 		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors.join("\n")).toContain("injected Skill projection stop");
+		expect(skillProjectionObserved).toBe(true);
 		for (const path of runtimeOwnedPaths) {
-			const node = statSync(path);
+			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+		}
+		for (const path of platformOwnedPaths) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
 		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
 		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
@@ -5916,32 +6071,51 @@ printf '{"ok":true}\\n'
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 
-		const installed = execFileSync(
-			numericPrivilegeToolPath,
-			[
-				`--reuid=${runtimeUid}`,
-				`--regid=${runtimeGid}`,
-				"--clear-groups",
-				"env",
-				`HOME=${paths.userHome}`,
-				"OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service",
-				commandPath,
-				"gateway",
-				"install",
-				"--force",
-				"--json",
-			],
-			{ cwd: paths.userHome, encoding: "utf8" },
+		let installerBoundaryObserved = false;
+		const installed = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
+			paths,
+			{
+				hostedRuntimeContract,
+				hostedOpenClawSkillDriver: openClawSkillDriver,
+				systemdApply: {
+					quiesce: () => {},
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					installOfficialService: (_unitName, install) => {
+						installerBoundaryObserved = true;
+						for (const path of [
+							paths.systemdUserRoot,
+							unitPath,
+							unitBackupPath,
+							gatewayEnvironment,
+							wantsRoot,
+							enablementPath,
+						]) {
+							const node = lstatSync(path);
+							expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+						}
+						for (const path of [dirname(dropInPath), dropInPath]) {
+							const node = lstatSync(path);
+							expect([node.uid, node.gid]).toEqual([0, 0]);
+						}
+						return install();
+					},
+					activate: successfulPrerequisiteActivation,
+					rollback: () => {},
+				},
+			},
 		);
-		expect(JSON.parse(installed)).toEqual({ ok: true });
-		expect(statSync(unitPath).uid).toBe(runtimeUid);
-		expect(statSync(unitBackupPath).uid).toBe(runtimeUid);
-		expect(statSync(gatewayEnvironment).uid).toBe(runtimeUid);
+		expect(installed.installErrors).toEqual([]);
+		expect(installerBoundaryObserved).toBe(true);
+		for (const path of platformOwnedPaths) {
+			const node = lstatSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+		}
 		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 
 		for (const path of runtimeOwnedPaths) chownSync(path, 0, 0);
 		const beforeRollback = new Map(
-			runtimeOwnedPaths.map(
+			[...runtimeOwnedPaths, ...platformOwnedPaths].map(
 				(path) =>
 					[
 						path,
@@ -5953,7 +6127,7 @@ printf '{"ok":true}\\n'
 			),
 		);
 		const failed = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-ownership-rollback"),
+			manifestLoad({ ...manifest, generation: 3 }, "root-openclaw-ownership-rollback"),
 			paths,
 			{
 				cacheLastGood: false,
@@ -5967,8 +6141,9 @@ printf '{"ok":true}\\n'
 		);
 		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");
 		for (const [path, previous] of beforeRollback) {
-			const node = statSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+			const node = lstatSync(path);
+			const expectedOwner = platformOwnedPaths.includes(path) ? [0, 0] : [runtimeUid, runtimeGid];
+			expect([node.uid, node.gid]).toEqual(expectedOwner);
 			expect(node.mode & 0o777).toBe(previous.mode);
 			if (previous.content) expect(readFileSync(path)).toEqual(previous.content);
 		}

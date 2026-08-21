@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -17,8 +19,9 @@ import {
 	type TestConvergeOptions,
 	withTestSystemdTransaction,
 } from "../test-support/systemd-apply";
+import { runtimeContentSha256 } from "./applied-state";
 import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
-import { readRuntimeInstallReceipts } from "./install-receipts";
+import { readRuntimeInstallReceipts, writeRuntimeInstallReceipts } from "./install-receipts";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	type RuntimeManifest,
@@ -26,6 +29,7 @@ import {
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { runtimeCommandCurrentRevision } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
 
 const originalEnv = { ...process.env };
@@ -298,7 +302,9 @@ interface InstallGateHarness {
 
 interface OfficialServiceInstallHarness extends InstallGateHarness {
 	addForeignDropIn: () => string;
+	driftMetadata: () => void;
 	hangVersionProbe: () => void;
+	stageLegacyReceipt: () => unknown;
 }
 
 function officialServiceHarness(
@@ -311,6 +317,7 @@ function officialServiceHarness(
 			? join(paths.userHome, ".local", "bin", "openclaw")
 			: join(paths.userHome, ".local", "bin", "hermes");
 	const unitPath = join(paths.systemdUserRoot, `${runtime}-gateway.service`);
+	const unitName = `${runtime}-gateway.service`;
 	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 	writeFakeSystemctl({ path: systemctlCommand, logPath });
@@ -338,7 +345,7 @@ function officialServiceHarness(
 				...(commitAuthority ? { commitAuthority } : {}),
 				executeOfficialServiceInstallers: true,
 			}),
-		drift: () => chmodSync(unitPath, 0o600),
+		drift: () => writeFileSync(unitPath, `${readFileSync(unitPath, "utf8")}# drift\n`),
 		revise: () =>
 			writeCli(false, runtime === "hermes" ? "Hermes Agent v0.18.1" : "OpenClaw 2026.7.30"),
 		failNextInstall: () => writeCli(true),
@@ -346,8 +353,7 @@ function officialServiceHarness(
 		installCount: () =>
 			readFileSync(logPath, "utf8").match(new RegExp(`${runtime} gateway install`, "g"))?.length ??
 			0,
-		receipt: () =>
-			readRuntimeInstallReceipts(paths)?.officialServices[`${runtime}-gateway.service`],
+		receipt: () => readRuntimeInstallReceipts(paths)?.officialServices[unitName],
 		addForeignDropIn: () => {
 			const path = join(
 				paths.systemdUserRoot,
@@ -358,8 +364,34 @@ function officialServiceHarness(
 			writeFileSync(path, "[Service]\nExecStart=\nExecStart=/usr/bin/false\n");
 			return path;
 		},
+		driftMetadata: () => chmodSync(unitPath, 0o600),
 		hangVersionProbe: () =>
 			writeFakeGatewayCli({ path: command, logPath, runtime, unitPath, hangVersion: true }),
+		stageLegacyReceipt: () => {
+			const receipts = readRuntimeInstallReceipts(paths);
+			const receipt = receipts?.officialServices[unitName];
+			if (!receipts || !receipt) throw new Error("official service receipt is unavailable");
+			const canonicalReceipt = structuredClone(receipt);
+			const commandRevision = runtimeCommandCurrentRevision(
+				command,
+				paths.userHome,
+				paths.userHome,
+			);
+			if (!commandRevision) throw new Error("official service command revision is unavailable");
+			const unit = readFileSync(unitPath);
+			const unitStat = lstatSync(unitPath);
+			receipt.currentRevision = runtimeContentSha256({
+				commandRevision,
+				programName: `${runtime}-gateway`,
+				unitName,
+				unitSha256: createHash("sha256").update(unit).digest("hex"),
+				unitMode: unitStat.mode & 0o7777,
+				unitUid: unitStat.uid,
+				unitGid: unitStat.gid,
+			});
+			writeRuntimeInstallReceipts(receipts, paths);
+			return canonicalReceipt;
+		},
 	};
 }
 
@@ -1409,6 +1441,37 @@ esac
 			expect(harness.installCount()).toBe(2);
 		},
 	);
+
+	test.each([
+		["Hermes", "hermes"],
+		["OpenClaw", "openclaw"],
+	] as const)("does not reinstall %s for service metadata drift", (_name, runtime) => {
+		const harness = officialServiceHarness(runtime);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		const receipt = harness.receipt();
+
+		harness.driftMetadata();
+		expect(harness.converge().installErrors).toEqual([]);
+
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toEqual(receipt);
+	});
+
+	test.each([
+		["Hermes", "hermes"],
+		["OpenClaw", "openclaw"],
+	] as const)("migrates a legacy %s service receipt without reinstalling", (_name, runtime) => {
+		const harness = officialServiceHarness(runtime);
+		expect(harness.converge().installErrors).toEqual([]);
+		const canonicalReceipt = harness.stageLegacyReceipt();
+		expect(harness.receipt()).not.toEqual(canonicalReceipt);
+
+		expect(harness.converge().installErrors).toEqual([]);
+
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toEqual(canonicalReceipt);
+	});
 
 	test.each(installGateHarnesses)(
 		"rolls back the %s receipt when authority commit fails",
