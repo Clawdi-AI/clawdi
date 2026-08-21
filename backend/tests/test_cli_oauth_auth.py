@@ -30,6 +30,7 @@ from app.services.clerk_cli_oauth_settings import (
     CLERK_CLI_OAUTH_SETTING_ADAPTER,
     CLERK_CLI_OAUTH_SETTING_KEY,
 )
+from app.services.principal_lifecycle import set_clerk_principal_suspension
 
 _ISSUER = "https://clerk.example.test"
 _CLIENT_ID = "client_clawdi_cli"
@@ -182,6 +183,53 @@ async def test_oauth_access_and_session_tokens_are_classified_separately(
     assert oauth is not None
     assert oauth.oauth_cli is True
     assert oauth.is_cli is False
+
+
+@pytest.mark.asyncio
+async def test_suspended_browser_and_oauth_tokens_share_public_problem_contract(
+    raw_auth_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    clerk_oauth_signing_key: str,
+) -> None:
+    subject = f"user_suspended_{uuid.uuid4().hex}"
+    browser_token = _session_token(
+        clerk_oauth_signing_key,
+        subject,
+        {"iss": _ISSUER},
+    )
+    oauth_token = _oauth_access_token(clerk_oauth_signing_key, subject)
+
+    admitted = await raw_auth_client.get(
+        "/v1/auth/me",
+        headers={"Authorization": f"Bearer {browser_token}"},
+    )
+    assert admitted.status_code == 200, admitted.text
+
+    await set_clerk_principal_suspension(
+        db_session,
+        issuer=_ISSUER,
+        subject=subject,
+        suspended=True,
+        reason="operator_internal_case_42",
+    )
+    await db_session.commit()
+
+    expected = {
+        "type": "urn:clawdi:problem:account-suspended",
+        "title": "Account suspended",
+        "status": 401,
+        "detail": "Account is suspended",
+        "code": "account_suspended",
+    }
+    for token in (browser_token, oauth_token):
+        response = await raw_auth_client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 401, response.text
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json() == expected
+        assert "operator_internal_case_42" not in response.text
 
 
 @pytest.mark.asyncio

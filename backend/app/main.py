@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.auth import warm_clerk_jwks
+from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
 from app.core.config import settings
 from app.core.database import async_session_factory, get_session
 from app.core.logging_config import configure_application_logging
@@ -456,7 +456,15 @@ async def clawdi_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    response = await http_exception_handler(request, exc)
+    if isinstance(exc, AccountSuspendedHTTPException):
+        response = JSONResponse(
+            status_code=exc.status_code,
+            content=exc.problem.model_dump(mode="json"),
+            headers=exc.headers,
+            media_type="application/problem+json",
+        )
+    else:
+        response = await http_exception_handler(request, exc)
     return _apply_whatsapp_onboarding_cache_policy(
         request,
         _apply_public_session_export_cache_policy(request, response),

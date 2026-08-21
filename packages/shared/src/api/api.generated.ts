@@ -3182,6 +3182,42 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountSuspendedProblem
+         * @description Stable public auth rejection for a suspended account.
+         */
+        AccountSuspendedProblem: {
+            /**
+             * Type
+             * @default urn:clawdi:problem:account-suspended
+             * @constant
+             */
+            type: "urn:clawdi:problem:account-suspended";
+            /**
+             * Title
+             * @default Account suspended
+             * @constant
+             */
+            title: "Account suspended";
+            /**
+             * Status
+             * @default 401
+             * @constant
+             */
+            status: 401;
+            /**
+             * Detail
+             * @default Account is suspended
+             * @constant
+             */
+            detail: "Account is suspended";
+            /**
+             * Code
+             * @default account_suspended
+             * @constant
+             */
+            code: "account_suspended";
+        };
         /** AgentMcpInventoryResponse */
         AgentMcpInventoryResponse: {
             /** Agent Id */
@@ -8344,6 +8380,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentUserResponse"];
+                };
+            };
+            /** @description The authenticated account is suspended */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["AccountSuspendedProblem"];
+                    "application/json": components["schemas"]["AccountSuspendedProblem"];
                 };
             };
         };

@@ -2,6 +2,7 @@ import { auth } from "@clerk/tanstack-react-start/server";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
+import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
 import { env } from "@/lib/env";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
@@ -21,5 +22,13 @@ export const Route = createFileRoute("/_protected")({
 			});
 		}
 	},
-	component: Outlet,
+	component: ProtectedLayout,
 });
+
+function ProtectedLayout() {
+	return (
+		<AccountSuspensionBoundary>
+			<Outlet />
+		</AccountSuspensionBoundary>
+	);
+}

@@ -115,7 +115,17 @@ async def test_api_keys_are_denied_and_recover_without_credential_mutation(
             headers={"Authorization": f"Bearer {key.raw_key}"},
         )
         assert response.status_code == 401, response.text
-        assert response.json() == {"detail": "Account is suspended"}
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["www-authenticate"] == "Bearer"
+        assert response.json() == {
+            "type": "urn:clawdi:problem:account-suspended",
+            "title": "Account suspended",
+            "status": 401,
+            "detail": "Account is suspended",
+            "code": "account_suspended",
+        }
+        assert "security_review" not in response.text
 
     persisted_keys = list(
         await db_session.scalars(select(ApiKey).where(ApiKey.user_id == seed_user.id))
