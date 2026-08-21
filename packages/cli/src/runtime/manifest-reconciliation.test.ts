@@ -5087,7 +5087,7 @@ echo spawned > '${installerLog}'
 		).toEqual([]);
 	});
 
-	test("runs the official latest OpenClaw installer with a sanitized environment", () => {
+	test("runs the official latest OpenClaw installer with a sanitized environment and timeout", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
 		const commandPath = join(home, ".local", "bin", "openclaw");
@@ -5161,6 +5161,7 @@ cp '${commandFixturePath}' '${commandPath}'
 		});
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = `file://${installerPath}`;
+		process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "invalid";
 
 		const install = {
 			authority: "official" as const,
@@ -5182,10 +5183,21 @@ cp '${commandFixturePath}' '${commandPath}'
 		);
 
 		writeFileSync(installerResultPath, `${installedVersion}\n`);
-		const converged = convergeRuntimeManifest(load, paths, {
-			executeOfficialServiceInstallers: false,
-		});
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		let converged: ReturnType<typeof convergeRuntimeManifest>;
+		try {
+			console.warn = (message) => warnings.push(String(message));
+			converged = convergeRuntimeManifest(load, paths, {
+				executeOfficialServiceInstallers: false,
+			});
+		} finally {
+			console.warn = originalWarn;
+		}
 		expect(converged.installErrors).toEqual([]);
+		expect(warnings).toEqual([
+			"CLAWDI_RUNTIME_INSTALL_TIMEOUT must be a valid positive integer; using 1800000ms",
+		]);
 		expect(execFileSync(commandPath, ["--version"], { encoding: "utf8" }).trim()).toBe(
 			`OpenClaw ${installedVersion}`,
 		);
@@ -5196,6 +5208,11 @@ cp '${commandFixturePath}' '${commandPath}'
 			String(expectedArgs.length),
 			...expectedArgs,
 		]);
+		const inventory = JSON.parse(
+			readFileSync(join(paths.installInventory, "openclaw.json"), "utf8"),
+		) as Record<string, unknown>;
+		expect(inventory.installerArgs).toEqual(expectedArgs);
+		expect(inventory).not.toHaveProperty("command");
 		expect(expectedArgs).not.toContain("--version");
 	});
 

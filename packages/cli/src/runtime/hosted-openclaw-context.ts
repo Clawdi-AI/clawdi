@@ -9,7 +9,7 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
-import type { RuntimeManifest } from "./manifest-contract";
+import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import { runtimeUserDirectoryOwnership } from "./runtime-user-command";
 
 export const CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID = "clawdi-managed-provider";
@@ -49,7 +49,7 @@ export function createOpenClawHostedContext(manifest: RuntimeManifest, home: str
 	const installDir = statePath("extensions", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const sdk = resolveSdkExports(home);
 	const ownership =
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		manifest.runtimes.openclaw?.enabled === true
 			? [
 					...runtimeUserDirectoryOwnership(home),
@@ -100,7 +100,7 @@ function hasManagedApiKeyProjection(manifest: RuntimeManifest): boolean {
 		(entry) => entry.id === CLAWDI_MANAGED_PROVIDER_ID,
 	);
 	return (
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		runtime?.enabled === true &&
 		runtime.providerMode === "configured" &&
 		sourceProvider?.managed_by === "clawdi" &&

@@ -1,12 +1,12 @@
 import { isAbsolute } from "node:path";
-import type { RuntimeManifest } from "./manifest-contract";
+import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
 export function hostedRuntimeProjectionHome(
 	manifest: Pick<RuntimeManifest, "projection">,
 	paths: Pick<RuntimePaths, "userHome">,
 ): string {
-	if (manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2") {
+	if (manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION) {
 		return paths.userHome;
 	}
 	const system = manifest.projection?.system;

@@ -29,7 +29,6 @@ import {
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
-	type HermesCodexAuthAction,
 	type NativeOAuthCredentialMutationResult,
 	nativeOAuthMutationResult,
 	nativeOAuthObservation,
@@ -41,7 +40,6 @@ import {
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS,
 	OPENCLAW_PROVIDER_ENV_VARS_EXPORTS,
-	type OpenClawProviderAuthAction,
 	oauthCredentialFingerprint,
 	openClawSdkFunctionGuard,
 } from "../lib/codex-oauth-native-store";
@@ -162,6 +160,7 @@ import {
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
+	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 	hasUnsupportedAgentPluginInstallations,
 	isHostedCodexManagedRuntimeEnv,
 	type LiveSyncAgent,
@@ -400,6 +399,25 @@ interface RuntimeInstallObservation {
 	error: string | null;
 }
 
+function runtimeInstallObservation(
+	observation: Pick<RuntimeInstallObservation, "runtime" | "enabled" | "status"> &
+		Partial<Omit<RuntimeInstallObservation, "runtime" | "enabled" | "status">>,
+): RuntimeInstallObservation {
+	return {
+		executionUser: null,
+		commandPath: null,
+		appRoot: null,
+		install: null,
+		installerUrl: null,
+		executedInstallerUrl: null,
+		exitCode: null,
+		stdoutTail: null,
+		stderrTail: null,
+		error: null,
+		...observation,
+	};
+}
+
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
 
 interface RuntimeOAuthMaterial {
@@ -416,6 +434,28 @@ interface HostedRuntimeOAuthCredential {
 	profile: string;
 	credentialRevision: string;
 	material: RuntimeOAuthMaterial;
+}
+
+type RuntimeOAuthCredentialAction = "inspect" | "seed-if-missing" | "upsert" | "remove";
+
+interface RuntimeOAuthCredentialCommand {
+	action: RuntimeOAuthCredentialAction;
+	nativeProfileId: string;
+	credentialRevision: string;
+	material?: RuntimeOAuthMaterial;
+	ownership?: OAuthCredentialOwnership;
+	expectedFingerprint?: string;
+}
+
+interface RuntimeOAuthCredentialDriver {
+	observe: (
+		input: Omit<RuntimeOAuthCredentialCommand, "action" | "material" | "expectedFingerprint">,
+	) => NativeOAuthCredentialObservation;
+	mutate: (
+		input: Omit<RuntimeOAuthCredentialCommand, "action"> & {
+			action: Exclude<RuntimeOAuthCredentialAction, "inspect">;
+		},
+	) => NativeOAuthCredentialMutationResult;
 }
 
 interface RuntimeInstallReceiptTarget {
@@ -514,6 +554,7 @@ function omitSecretRefs(
 }
 
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
+// SUNSET: Remove after every fleet host has converged past the retired Hermes WhatsApp receipt writer.
 const RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT = "hermes-whatsapp.json";
 
 export function materializeHostedChannelCredentials(
@@ -986,17 +1027,6 @@ function makeEgressIdentityPrivateDir(path: string): void {
 	}
 }
 
-function runtimeInstallerCommand(name: string, install: RuntimeInstall | undefined): string[] {
-	if (!install) return [];
-	if (name === "openclaw") {
-		return ["bash", "<downloaded-official-openclaw-installer>", ...install.args];
-	}
-	if (name === "hermes") {
-		return ["bash", "<downloaded-official-hermes-installer>", ...install.args];
-	}
-	return [];
-}
-
 function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
@@ -1011,6 +1041,18 @@ function runtimeAppRoot(name: string, home: string): string | null {
 
 const HERMES_DASHBOARD_CAPABILITY_PROBE =
 	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
+const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+
+function runtimeInstallTimeoutMs(): number {
+	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
+	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+	const timeout = Number(raw);
+	if (Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 0x7fffffff) return timeout;
+	console.warn(
+		`CLAWDI_RUNTIME_INSTALL_TIMEOUT must be a valid positive integer; using ${DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS}ms`,
+	);
+	return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
+}
 
 function hermesDashboardCapabilityError(
 	name: string,
@@ -1175,12 +1217,7 @@ function materializeInstaller(
 function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
 	const installStartedAt = new Date().toISOString();
 	const installStartedMs = Date.now();
-	const finish = (
-		observation: Omit<
-			RuntimeInstallObservation,
-			"installStartedAt" | "installFinishedAt" | "installDurationMs"
-		>,
-	): RuntimeInstallObservation => ({
+	const finish = (observation: RuntimeInstallObservation): RuntimeInstallObservation => ({
 		...observation,
 		installStartedAt,
 		installFinishedAt: new Date().toISOString(),
@@ -1189,38 +1226,31 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	const commandPath = runtimeCommandPath(name, install.home);
 	const appRoot = runtimeAppRoot(name, install.home);
 	if (!commandPath || !appRoot) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "install_failed",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: `unsupported runtime ${name}`,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				error: `unsupported runtime ${name}`,
+			}),
+		);
 	}
 	if (executableExists(commandPath)) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "present",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: null,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "present",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+			}),
+		);
 	}
 
 	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home));
@@ -1232,43 +1262,43 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 			cwd: install.home,
 			env: execution.env,
 			encoding: "utf8",
-			timeout: Number.parseInt(process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT ?? "1800000", 10),
+			timeout: runtimeInstallTimeoutMs(),
 		});
 		const exitCode = result.status ?? 1;
 		const installed = exitCode === 0 && executableExists(commandPath);
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: installed ? "installed" : "install_failed",
-			executionUser: execution.executionUser,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: url === install.url ? install.url : url,
-			exitCode,
-			stdoutTail: tail(result.stdout),
-			stderrTail: tail(result.stderr),
-			error: installed
-				? null
-				: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: installed ? "installed" : "install_failed",
+				executionUser: execution.executionUser,
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url === install.url ? install.url : url,
+				exitCode,
+				stdoutTail: tail(result.stdout),
+				stderrTail: tail(result.stderr),
+				error: installed
+					? null
+					: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+			}),
+		);
 	} catch (error) {
-		return finish({
-			runtime: name,
-			enabled: true,
-			status: "install_failed",
-			executionUser: null,
-			commandPath,
-			appRoot,
-			install,
-			installerUrl: install.url,
-			executedInstallerUrl: url,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: error instanceof Error ? error.message : String(error),
-		});
+		return finish(
+			runtimeInstallObservation({
+				runtime: name,
+				enabled: true,
+				status: "install_failed",
+				commandPath,
+				appRoot,
+				install,
+				installerUrl: install.url,
+				executedInstallerUrl: url,
+				error: error instanceof Error ? error.message : String(error),
+			}),
+		);
 	} finally {
 		if (materialized.cleanup) rmSync(materialized.cleanup, { recursive: true, force: true });
 	}
@@ -1280,21 +1310,13 @@ function observeRuntimeInstall(
 	home: string,
 ) {
 	if (!runtime.enabled) {
-		return {
+		return runtimeInstallObservation({
 			runtime: name,
 			enabled: false,
 			status: "disabled",
-			executionUser: null,
-			commandPath: null,
-			appRoot: null,
 			install: runtime.install ?? null,
 			installerUrl: runtime.install?.url ?? null,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
-			error: null,
-		} satisfies RuntimeInstallObservation;
+		});
 	}
 	if (!runtime.install) {
 		if (runtime.run?.command?.trim() || isSupportedRuntimeName(name)) {
@@ -1303,37 +1325,20 @@ function observeRuntimeInstall(
 				isSupportedRuntimeName(name) && configuredCommand && commandResolvable(configuredCommand)
 					? configuredCommand
 					: null;
-			return {
+			return runtimeInstallObservation({
 				runtime: name,
 				enabled: true,
 				status: "configured",
-				executionUser: null,
 				commandPath,
 				appRoot: commandPath ? runtimeAppRoot(name, home) : null,
-				install: null,
-				installerUrl: null,
-				executedInstallerUrl: null,
-				exitCode: null,
-				stdoutTail: null,
-				stderrTail: null,
-				error: null,
-			} satisfies RuntimeInstallObservation;
+			});
 		}
-		return {
+		return runtimeInstallObservation({
 			runtime: name,
 			enabled: true,
 			status: "install_failed",
-			executionUser: null,
-			commandPath: null,
-			appRoot: null,
-			install: null,
-			installerUrl: null,
-			executedInstallerUrl: null,
-			exitCode: null,
-			stdoutTail: null,
-			stderrTail: null,
 			error: `runtime ${name} is enabled but missing install metadata`,
-		} satisfies RuntimeInstallObservation;
+		});
 	}
 	const observation = runOfficialInstaller(name, runtime.install);
 	if (observation.error) return observation;
@@ -1352,21 +1357,16 @@ function planRuntimeInstallObservation(
 	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
-	return {
+	return runtimeInstallObservation({
 		runtime: name,
 		enabled: true,
 		status: commandPath && executableExists(commandPath) ? "present" : "configured",
-		executionUser: null,
 		commandPath,
 		appRoot,
 		install: runtime.install,
 		installerUrl: runtime.install.url,
-		executedInstallerUrl: null,
-		exitCode: null,
-		stdoutTail: null,
-		stderrTail: null,
 		error: commandPath && appRoot ? null : `unsupported runtime ${name}`,
-	};
+	});
 }
 
 function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
@@ -1508,7 +1508,7 @@ function applyHostedRuntimeConfigProjection(
 	if (runtime === "hermes") {
 		const auth = manifest.hermesDashboardAuth;
 		const managesWorkspace =
-			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+			manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 		if (!auth && !locale && !managesWorkspace) return null;
 		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
@@ -1552,48 +1552,23 @@ function mergeRuntimeSecretEnv(
 	runtimeName: string,
 	settings: RuntimeRunSettings | undefined,
 	providerSecretEnv: Record<string, string>,
+	serviceName?: string,
 ): Record<string, string> {
+	const scope = `runtime ${runtimeName}${serviceName ? ` service ${serviceName}` : ""}`;
 	const merged = { ...providerSecretEnv };
 	const runtimeSecretEnv = settings?.secretEnv ?? {};
 	for (const [envName, ref] of Object.entries(runtimeSecretEnv)) {
 		const existing = merged[envName];
 		if (existing !== undefined && existing !== ref) {
 			throw new Error(
-				`runtime ${runtimeName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
+				`${scope} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
 			);
 		}
 		merged[envName] = ref;
 	}
 	for (const envName of Object.keys(settings?.env ?? {})) {
 		if (merged[envName] !== undefined) {
-			throw new Error(`runtime ${runtimeName} defines ${envName} in both env and secretEnv`);
-		}
-	}
-	return merged;
-}
-
-function mergeRuntimeServiceSecretEnv(
-	runtimeName: string,
-	serviceName: string,
-	serviceSettings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
-	providerSecretEnv: Record<string, string>,
-): Record<string, string> {
-	const merged = { ...providerSecretEnv };
-	const serviceSecretEnv = serviceSettings.secretEnv ?? {};
-	for (const [envName, ref] of Object.entries(serviceSecretEnv)) {
-		const existing = merged[envName];
-		if (existing !== undefined && existing !== ref) {
-			throw new Error(
-				`runtime ${runtimeName} service ${serviceName} secretEnv.${envName} conflicts with provider secret ref ${existing}`,
-			);
-		}
-		merged[envName] = ref;
-	}
-	for (const envName of Object.keys(serviceSettings.env ?? {})) {
-		if (merged[envName] !== undefined) {
-			throw new Error(
-				`runtime ${runtimeName} service ${serviceName} defines ${envName} in both env and secretEnv`,
-			);
+			throw new Error(`${scope} defines ${envName} in both env and secretEnv`);
 		}
 	}
 	return merged;
@@ -1878,12 +1853,7 @@ function hermesAuthPath(home: string): string {
 function runHermesCodexAuthCommand(
 	home: string,
 	workspaceRoot: string,
-	action: HermesCodexAuthAction,
-	profileId: string,
-	credentialRevision: string,
-	material?: RuntimeOAuthMaterial,
-	ownership?: OAuthCredentialOwnership,
-	expectedFingerprint?: string,
+	input: RuntimeOAuthCredentialCommand,
 ): Record<string, unknown> {
 	const authPath = hermesAuthPath(home);
 	enforceRuntimeUserOwnership(
@@ -1900,67 +1870,23 @@ function runHermesCodexAuthCommand(
 			"--eval",
 			HERMES_CODEX_AUTH_HELPER,
 			authPath,
-			action,
-			profileId,
-			ownership?.nativeProfileId ?? "",
-			credentialRevision,
-			expectedFingerprint ?? "",
+			input.action,
+			input.nativeProfileId,
+			input.ownership?.nativeProfileId ?? "",
+			input.credentialRevision,
+			input.expectedFingerprint ?? "",
 		],
 		home,
 		workspaceRoot,
-		{ input: material ? JSON.stringify(material) : "null" },
+		{ input: input.material ? JSON.stringify(input.material) : "null" },
 	);
 	if (result.status !== 0) {
 		throw new Error(
-			`Hermes Codex auth ${action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
+			`Hermes Codex auth ${input.action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
 		);
 	}
 	const output = recordValue(JSON.parse(String(result.stdout || "{}")) as unknown);
 	return output ?? {};
-}
-
-function observeHermesCodexAuth(
-	home: string,
-	workspaceRoot: string,
-	profileId: string,
-	credentialRevision: string,
-	ownership?: OAuthCredentialOwnership,
-): NativeOAuthCredentialObservation {
-	return nativeOAuthObservation(
-		runHermesCodexAuthCommand(
-			home,
-			workspaceRoot,
-			"inspect",
-			profileId,
-			credentialRevision,
-			undefined,
-			ownership,
-		),
-	);
-}
-
-function runHermesCodexAuth(
-	home: string,
-	workspaceRoot: string,
-	action: Exclude<HermesCodexAuthAction, "inspect">,
-	profileId: string,
-	credentialRevision: string,
-	material?: RuntimeOAuthMaterial,
-	ownership?: OAuthCredentialOwnership,
-	expectedFingerprint?: string,
-): NativeOAuthCredentialMutationResult {
-	return nativeOAuthMutationResult(
-		runHermesCodexAuthCommand(
-			home,
-			workspaceRoot,
-			action,
-			profileId,
-			credentialRevision,
-			material,
-			ownership,
-			expectedFingerprint,
-		),
-	);
 }
 
 const OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE = `
@@ -2096,22 +2022,17 @@ function ensureHostedOpenClawProviderAuthCapability(input: {
 function runOpenClawProviderAuthCommand(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
-	action: OpenClawProviderAuthAction,
-	profileId: string,
-	credentialRevision: string,
-	material?: RuntimeOAuthMaterial,
-	ownership?: OAuthCredentialOwnership,
-	expectedFingerprint?: string,
+	input: RuntimeOAuthCredentialCommand,
 ): Record<string, unknown> {
-	const credential = material
+	const credential = input.material
 		? JSON.stringify({
 				type: "oauth",
 				provider: OPENCLAW_CODEX_PROVIDER_ID,
-				access: material.accessToken,
-				refresh: material.refreshToken,
-				expires: material.expires,
-				...(material.idToken ? { idToken: material.idToken } : {}),
-				...(material.accountId ? { accountId: material.accountId } : {}),
+				access: input.material.accessToken,
+				refresh: input.material.refreshToken,
+				expires: input.material.expires,
+				...(input.material.idToken ? { idToken: input.material.idToken } : {}),
+				...(input.material.accountId ? { accountId: input.material.accountId } : {}),
 				copyToAgents: false,
 			})
 		: "";
@@ -2123,11 +2044,11 @@ function runOpenClawProviderAuthCommand(
 			OPENCLAW_PROVIDER_AUTH_HELPER,
 			context.requireSdkExport("providerAuth"),
 			context.agentDirs.main,
-			action,
-			profileId,
-			ownership?.nativeProfileId ?? "",
-			credentialRevision,
-			expectedFingerprint ?? "",
+			input.action,
+			input.nativeProfileId,
+			input.ownership?.nativeProfileId ?? "",
+			input.credentialRevision,
+			input.expectedFingerprint ?? "",
 		],
 		context.home,
 		workspaceRoot,
@@ -2135,57 +2056,12 @@ function runOpenClawProviderAuthCommand(
 	);
 	if (result.status !== 0) {
 		throw new Error(
-			`OpenClaw provider-auth ${action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
+			`OpenClaw provider-auth ${input.action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
 		);
 	}
 	const output = recordValue(JSON.parse(String(result.stdout || "{}")) as unknown);
 	return output ?? {};
 }
-
-function observeOpenClawProviderAuth(
-	context: OpenClawHostedContext,
-	workspaceRoot: string,
-	profileId: string,
-	credentialRevision: string,
-	ownership?: OAuthCredentialOwnership,
-): NativeOAuthCredentialObservation {
-	return nativeOAuthObservation(
-		runOpenClawProviderAuthCommand(
-			context,
-			workspaceRoot,
-			"inspect",
-			profileId,
-			credentialRevision,
-			undefined,
-			ownership,
-		),
-	);
-}
-
-function runOpenClawProviderAuth(
-	context: OpenClawHostedContext,
-	workspaceRoot: string,
-	action: Exclude<OpenClawProviderAuthAction, "inspect">,
-	profileId: string,
-	credentialRevision: string,
-	material?: RuntimeOAuthMaterial,
-	ownership?: OAuthCredentialOwnership,
-	expectedFingerprint?: string,
-): NativeOAuthCredentialMutationResult {
-	return nativeOAuthMutationResult(
-		runOpenClawProviderAuthCommand(
-			context,
-			workspaceRoot,
-			action,
-			profileId,
-			credentialRevision,
-			material,
-			ownership,
-			expectedFingerprint,
-		),
-	);
-}
-
 function removeOpenClawManagedProviderAuthProfiles(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
@@ -2279,39 +2155,35 @@ function runtimeOAuthLedgerOwnership(
 	};
 }
 
-function observeHostedRuntimeOAuthCredential(input: {
+function runtimeOAuthCredentialDriver(
+	run: (input: RuntimeOAuthCredentialCommand) => Record<string, unknown>,
+): RuntimeOAuthCredentialDriver {
+	return {
+		observe: (input) => nativeOAuthObservation(run({ ...input, action: "inspect" })),
+		mutate: (input) => nativeOAuthMutationResult(run(input)),
+	};
+}
+
+function hostedRuntimeOAuthCredentialDriver(input: {
 	runtime: "hermes" | "openclaw";
 	home: string;
 	openClawContext: OpenClawHostedContext;
 	workspaceRoot: string;
-	nativeProfileId: string;
-	credentialRevision: string;
-	ownership?: OAuthCredentialOwnership;
-}): NativeOAuthCredentialObservation {
+}): RuntimeOAuthCredentialDriver {
 	if (input.runtime === "hermes") {
-		return observeHermesCodexAuth(
-			input.home,
-			input.workspaceRoot,
-			input.nativeProfileId,
-			input.credentialRevision,
-			input.ownership,
+		return runtimeOAuthCredentialDriver((command) =>
+			runHermesCodexAuthCommand(input.home, input.workspaceRoot, command),
 		);
 	}
-	return observeOpenClawProviderAuth(
-		input.openClawContext,
-		input.workspaceRoot,
-		input.nativeProfileId,
-		input.credentialRevision,
-		input.ownership,
+	return runtimeOAuthCredentialDriver((command) =>
+		runOpenClawProviderAuthCommand(input.openClawContext, input.workspaceRoot, command),
 	);
 }
 
 function executeHostedRuntimeOAuthAction(input: {
 	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>;
+	driver: RuntimeOAuthCredentialDriver;
 	runtime: "hermes" | "openclaw";
-	home: string;
-	openClawContext: OpenClawHostedContext;
-	workspaceRoot: string;
 	nativeProfileId: string;
 	credentialRevision: string;
 	material: RuntimeOAuthMaterial;
@@ -2330,30 +2202,13 @@ function executeHostedRuntimeOAuthAction(input: {
 		input.decision.targetCredentialFingerprint,
 		"target",
 	);
-	let result: NativeOAuthCredentialMutationResult;
-	if (input.runtime === "hermes") {
-		result = runHermesCodexAuth(
-			input.home,
-			input.workspaceRoot,
-			adapterAction,
-			input.nativeProfileId,
-			input.credentialRevision,
-			input.material,
-			undefined,
-			expectedFingerprint,
-		);
-	} else {
-		result = runOpenClawProviderAuth(
-			input.openClawContext,
-			input.workspaceRoot,
-			adapterAction,
-			input.nativeProfileId,
-			input.credentialRevision,
-			input.material,
-			undefined,
-			expectedFingerprint,
-		);
-	}
+	const result = input.driver.mutate({
+		action: adapterAction,
+		nativeProfileId: input.nativeProfileId,
+		credentialRevision: input.credentialRevision,
+		material: input.material,
+		expectedFingerprint,
+	});
 	assertRuntimeNativeMutationCompleted(
 		result,
 		expectedFingerprint,
@@ -2363,39 +2218,20 @@ function executeHostedRuntimeOAuthAction(input: {
 }
 
 function removeHostedRuntimeOAuthCredential(input: {
+	driver: RuntimeOAuthCredentialDriver;
 	runtime: "hermes" | "openclaw";
-	home: string;
-	openClawContext: OpenClawHostedContext;
-	workspaceRoot: string;
 	nativeProfileId: string;
 	credentialRevision: string;
 	ownership: OAuthCredentialOwnership;
 	expectedFingerprint: string;
 }): void {
-	let result: NativeOAuthCredentialMutationResult;
-	if (input.runtime === "hermes") {
-		result = runHermesCodexAuth(
-			input.home,
-			input.workspaceRoot,
-			"remove",
-			input.nativeProfileId,
-			input.credentialRevision,
-			undefined,
-			input.ownership,
-			input.expectedFingerprint,
-		);
-	} else {
-		result = runOpenClawProviderAuth(
-			input.openClawContext,
-			input.workspaceRoot,
-			"remove",
-			input.nativeProfileId,
-			input.credentialRevision,
-			undefined,
-			input.ownership,
-			input.expectedFingerprint,
-		);
-	}
+	const result = input.driver.mutate({
+		action: "remove",
+		nativeProfileId: input.nativeProfileId,
+		credentialRevision: input.credentialRevision,
+		ownership: input.ownership,
+		expectedFingerprint: input.expectedFingerprint,
+	});
 	assertRuntimeNativeRemovalCompleted(
 		result,
 		input.expectedFingerprint,
@@ -2455,6 +2291,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 	workspaceRoot: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, input.runtime, input.secretValues);
+	const driver = hostedRuntimeOAuthCredentialDriver(input);
 	const desiredProviderIds = new Set(desired.map((credential) => credential.providerId));
 	const ledgerDir = join(input.paths.oauthCredentialRoot, input.runtime);
 	if (existsSync(ledgerDir)) {
@@ -2466,11 +2303,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			}
 			const snapshot = oauthCredentialLedgerSnapshot(ledger);
 			const ownership = runtimeOAuthLedgerOwnership(ledger);
-			const native = observeHostedRuntimeOAuthCredential({
-				runtime: input.runtime,
-				home: input.home,
-				openClawContext: input.openClawContext,
-				workspaceRoot: input.workspaceRoot,
+			const native = driver.observe({
 				nativeProfileId: ledger.nativeProfileId,
 				credentialRevision: ledger.credentialRevision,
 				ownership,
@@ -2501,10 +2334,8 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 					credentialFingerprint: expectedFingerprint,
 				};
 				removeHostedRuntimeOAuthCredential({
+					driver,
 					runtime: input.runtime,
-					home: input.home,
-					openClawContext: input.openClawContext,
-					workspaceRoot: input.workspaceRoot,
 					nativeProfileId: ledger.nativeProfileId,
 					credentialRevision: ledger.credentialRevision,
 					ownership: removalOwnership,
@@ -2524,11 +2355,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			credential.material.accessToken,
 			credential.material.refreshToken,
 		);
-		const native = observeHostedRuntimeOAuthCredential({
-			runtime: input.runtime,
-			home: input.home,
-			openClawContext: input.openClawContext,
-			workspaceRoot: input.workspaceRoot,
+		const native = driver.observe({
 			nativeProfileId,
 			credentialRevision: credential.credentialRevision,
 			ownership: runtimeOAuthLedgerOwnership(ledger),
@@ -2550,10 +2377,8 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 		}
 		executeHostedRuntimeOAuthAction({
 			decision,
+			driver,
 			runtime: input.runtime,
-			home: input.home,
-			openClawContext: input.openClawContext,
-			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
 			credentialRevision: credential.credentialRevision,
 			material: credential.material,
@@ -2724,9 +2549,6 @@ function applyHostedCodexManagedProviderProjection(
 	const configContent = hostedCodexManagedConfigToml(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
 	makeRuntimeUserOwned(configPath);
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(codexHome, { mode: 0o700, ancestorsUnder: home }),
-	);
 
 	return {
 		path: configPath,
@@ -2946,12 +2768,12 @@ function applyHostedHermesAiProviderProjection(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 	if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-	const activeProviderIds = [...hermesProviderIdsFromPatch(file.content)].sort();
+	const activeProviderIds = [...providerIdsFromPatch("hermes", file.content)].sort();
 	const deletedProviderIds = staleProviderIds(
 		new Set(previousProviderIds),
 		new Set(activeProviderIds),
 	);
-	const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
+	const patchContent = mergeProviderDeletes("hermes", file.content, deletedProviderIds);
 	if (apply) {
 		const patch = parseYaml(file.content) as unknown;
 		const root = recordValue(patch);
@@ -2980,6 +2802,7 @@ function legacyHermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
 
+// SUNSET: Remove after every fleet host has migrated to native Hermes provider projection.
 function removeLegacyHermesModelProviderPlugin(home: string): void {
 	withRuntimeUserFileAccess(() =>
 		rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true }),
@@ -3096,23 +2919,39 @@ export function buildOpenClawHostedProviderPatch(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	const providerIds = [...openClawProviderIdsFromPatch(file.content)].sort();
+	const providerIds = [...providerIdsFromPatch("openclaw", file.content)].sort();
 	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
 	const providerPatchContent =
 		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
 	return {
 		apply: true,
 		args: openClawProviderReplacementArgs(file.content),
-		content: mergeOpenClawProviderDeletes(providerPatchContent, deletedProviderIds),
+		content: mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
 		providerIds,
 	};
 }
 
-function openClawProviderIdsFromPatch(content: string): Set<string> {
-	const parsed = JSON.parse(content) as unknown;
-	const root = recordValue(parsed);
-	const models = root ? recordValue(root.models) : null;
-	const providers = models ? recordValue(models.providers) : null;
+type ProviderPatchRuntime = "hermes" | "openclaw";
+
+function providerPatchRoot(
+	runtime: ProviderPatchRuntime,
+	content: string,
+): Record<string, unknown> | null {
+	if (runtime === "hermes" && !content.trim()) return null;
+	return recordValue(runtime === "openclaw" ? JSON.parse(content) : parseYaml(content));
+}
+
+function providerPatchProviders(
+	runtime: ProviderPatchRuntime,
+	root: Record<string, unknown>,
+): Record<string, unknown> | null {
+	const container = runtime === "openclaw" ? recordValue(root.models) : root;
+	return container ? recordValue(container.providers) : null;
+}
+
+function providerIdsFromPatch(runtime: ProviderPatchRuntime, content: string): Set<string> {
+	const root = providerPatchRoot(runtime, content);
+	const providers = root ? providerPatchProviders(runtime, root) : null;
 	if (!providers) return new Set();
 	return new Set(
 		Object.entries(providers)
@@ -3143,30 +2982,6 @@ function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace
 	patch.models = models;
 	return `${JSON.stringify(patch, null, 2)}\n`;
 }
-
-function mergeOpenClawProviderDeletes(
-	patchContent: string,
-	deletedProviderIds: readonly string[],
-): string {
-	if (deletedProviderIds.length === 0) return patchContent;
-	const parsed = JSON.parse(patchContent) as unknown;
-	const root = recordValue(parsed);
-	if (!root) return patchContent;
-	const patch = { ...root };
-	const existingModels = recordValue(patch.models);
-	const models: Record<string, unknown> = existingModels
-		? { ...existingModels }
-		: { mode: "merge" };
-	const existingProviders = recordValue(models.providers);
-	const providers = existingProviders ? { ...existingProviders } : {};
-	for (const providerId of deletedProviderIds) {
-		providers[providerId] = null;
-	}
-	models.providers = providers;
-	patch.models = models;
-	return `${JSON.stringify(patch, null, 2)}\n`;
-}
-
 function openClawProviderDeletePatch(
 	deletedProviderIds: readonly string[],
 ): Record<string, unknown> {
@@ -3176,19 +2991,6 @@ function openClawProviderDeletePatch(
 			providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
 		},
 	};
-}
-
-function hermesProviderIdsFromPatch(content: string): Set<string> {
-	if (!content.trim()) return new Set();
-	const parsed = parseYaml(content) as unknown;
-	const root = recordValue(parsed);
-	const providers = root ? recordValue(root.providers) : null;
-	if (!providers) return new Set();
-	return new Set(
-		Object.entries(providers)
-			.filter(([, value]) => value !== null)
-			.map(([providerId]) => providerId),
-	);
 }
 
 const HERMES_DIRECT_MODEL_FIELDS = [
@@ -3300,22 +3102,27 @@ function applyHermesProviderConfig(
 	);
 }
 
-function mergeHermesProviderDeletes(
+function mergeProviderDeletes(
+	runtime: ProviderPatchRuntime,
 	patchContent: string,
 	deletedProviderIds: readonly string[],
 ): string {
 	if (deletedProviderIds.length === 0) return patchContent;
-	const parsed = parseYaml(patchContent) as unknown;
-	const root = recordValue(parsed);
+	const root = providerPatchRoot(runtime, patchContent);
 	if (!root) return patchContent;
 	const patch = { ...root };
-	const existingProviders = recordValue(patch.providers);
+	const container =
+		runtime === "openclaw" ? { ...(recordValue(patch.models) ?? { mode: "merge" }) } : patch;
+	const existingProviders = recordValue(container.providers);
 	const providers = existingProviders ? { ...existingProviders } : {};
 	for (const providerId of deletedProviderIds) {
 		providers[providerId] = null;
 	}
-	patch.providers = providers;
-	return `${stringifyYaml(patch).trimEnd()}\n`;
+	container.providers = providers;
+	if (runtime === "openclaw") patch.models = container;
+	return runtime === "openclaw"
+		? `${JSON.stringify(patch, null, 2)}\n`
+		: `${stringifyYaml(patch).trimEnd()}\n`;
 }
 
 function staleProviderIds(
@@ -3336,7 +3143,8 @@ function openClawGatewayHostedPatch(
 	const gatewayToken = manifest.openclawGatewayAuth
 		? runtimeSecretValue(secretValues ?? {}, manifest.openclawGatewayAuth.tokenRef)
 		: null;
-	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	const isHostedV2 =
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
 	if (isHostedV2 && nativeAuth?.activation.enabled !== true) {
 		throw new Error("OpenClaw native auth capability is unavailable");
@@ -3394,11 +3202,15 @@ function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
 	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
 	if (!isPlainRecord(current)) return false;
 	return Object.entries(patch).every(([key, value]) =>
-		value === null ? !Object.hasOwn(current, key) : jsonMergePatchIsApplied(current[key], value),
+		value === undefined
+			? true
+			: value === null
+				? !Object.hasOwn(current, key)
+				: jsonMergePatchIsApplied(current[key], value),
 	);
 }
 
-function openClawGatewayHostedPatchIsApplied(
+function openClawConfigPatchIsApplied(
 	context: OpenClawHostedContext,
 	patch: Record<string, unknown>,
 ): boolean {
@@ -3427,7 +3239,7 @@ function applyOpenClawGatewayHostedProjection(
 	ownerBrowserBootstrapSupported: boolean,
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
-	if (!patch || openClawGatewayHostedPatchIsApplied(context, patch)) return;
+	if (!patch || openClawConfigPatchIsApplied(context, patch)) return;
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],
@@ -3530,6 +3342,7 @@ function applyHostedChannelProjection(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
+	openClawContext: OpenClawHostedContext,
 	workspaceRoot: string,
 	hermesWhatsAppAuthDir: string | null,
 ): boolean {
@@ -3546,14 +3359,16 @@ function applyHostedChannelProjection(
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 		);
 	}
+	const patch = openClawManagedChannelsPatch(channels);
+	if (openClawConfigPatchIsApplied(openClawContext, patch)) return false;
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin", ...openClawManagedAccountReplaceArgs(channels)],
-		`${JSON.stringify(openClawManagedChannelsPatch(channels), null, 2)}\n`,
+		`${JSON.stringify(patch, null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
-	return false;
+	return true;
 }
 
 function installHostedChannelProjectionDependencies(
@@ -3727,6 +3542,7 @@ interface HostedMcpIntent {
 }
 
 const HOSTED_RUNTIME_TARGETS = ["openclaw", "hermes"] as const satisfies readonly RuntimeName[];
+// SUNSET: Remove v1 parsing and the projection-root fallback after every fleet host has written the v2 managed-resource ledger.
 const HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
 const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v2";
 const HOSTED_MCP_LEDGER_FILE = "managed-mcp-servers.json";
@@ -4630,7 +4446,7 @@ function requireV2EgressEngineReady(
 	engine: RuntimeMitmproxyEnsureResult | null,
 ): void {
 	if (
-		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		profileBundlePath &&
 		engine?.status !== "ready"
 	) {
@@ -4825,6 +4641,7 @@ function writeLiveSyncEnvironmentFiles(manifest: RuntimeManifest, paths: Runtime
 	return written;
 }
 
+// SUNSET: Remove after every fleet host has migrated to the dedicated hosted CLAWDI_HOME.
 function removeLegacyTenantClawdiState(paths: RuntimePaths): void {
 	const legacyRoot = join(paths.userHome, ".clawdi");
 	if (resolve(legacyRoot) === resolve(paths.clawdiHome)) return;
@@ -5009,48 +4826,6 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 		: undefined;
 }
 
-function validateRuntimeManifestPlan(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	openClawWorkspaceRoot: string | null,
-): void {
-	const home = hostedRuntimeProjectionHome(manifest, paths);
-	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
-		const runtimeName = runtimeNameSchema.parse(name);
-		const providerEnvironment = runtime.enabled
-			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
-			: { placeholderEnv: {}, secretEnv: {} };
-		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
-			providerEnvironment;
-		const runtimeSettings = resolvedRuntimeSettings(
-			runtimeName,
-			runtime.run,
-			providerPlaceholderEnv,
-		);
-		if (runtime.enabled) mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv);
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const settings = resolvedRuntimeServiceSettings(
-				manifest,
-				runtimeName,
-				service,
-				serviceSettings,
-				providerPlaceholderEnv,
-			);
-			if (runtime.enabled) mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
-		}
-		if (!runtime.enabled || !manifest.locale) continue;
-		const block = managedLocaleBlock(manifest.locale);
-		if (runtimeName === "openclaw") {
-			if (!openClawWorkspaceRoot)
-				throw new Error("OpenClaw official agent workspace is unavailable");
-			nextManagedLocaleFileContent(join(openClawWorkspaceRoot, "SOUL.md"), block);
-		} else if (runtimeName === "hermes") {
-			nextManagedLocaleFileContent(join(home, ".hermes", "SOUL.md"), block);
-		}
-	}
-}
-
 function planRuntimeSystemdUserPrograms(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
@@ -5197,7 +4972,7 @@ function resolveRuntimeRunConfigs(input: {
 				settings,
 				secretFilePath: null,
 				secretEnv: input.runtime.enabled
-					? mergeRuntimeServiceSecretEnv(input.name, service, settings, providerSecretEnv)
+					? mergeRuntimeSecretEnv(input.name, settings, providerSecretEnv, service)
 					: {},
 			});
 		});
@@ -5324,7 +5099,7 @@ function validateRuntimeProjectionPlan(input: {
 				serviceSettings,
 				providerPlaceholderEnv,
 			);
-			mergeRuntimeServiceSecretEnv(name, service, settings, providerSecretEnv);
+			mergeRuntimeSecretEnv(name, settings, providerSecretEnv, service);
 		}
 
 		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
@@ -5854,7 +5629,7 @@ export function convergeRuntimeManifest(
 	const { manifest } = load;
 	if (
 		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
-		manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2"
+		manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION
 	) {
 		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	}
@@ -5884,7 +5659,7 @@ export function convergeRuntimeManifest(
 	removeHostedCliPathExposure(paths);
 	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
-		if (manifest.projection?.sourceBundleVersion !== "clawdi.hosted-runtime.bundle.v2") {
+		if (manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION) {
 			throw new Error("Files companion requires a hosted v2 bundle");
 		}
 		if (!opts.systemdApply) {
@@ -6051,10 +5826,9 @@ export function convergeRuntimeManifest(
 			? openClawSkillDriver.resolveWorkspace({
 					home: projectionHome,
 					repairInvalidConfig:
-						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
+						manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 				})
 			: null;
-		validateRuntimeManifestPlan(manifest, paths, openClawWorkspaceRoot);
 		validateRuntimeProjectionPlan({
 			manifest,
 			paths,
@@ -6631,7 +6405,7 @@ export function convergeRuntimeManifest(
 					status: observation.status,
 					executionUser: observation.executionUser,
 					install: observation.install,
-					command: runtimeInstallerCommand(name, runtime.install),
+					installerArgs: runtime.install?.args ?? [],
 					commandPath: observation.commandPath,
 					appRoot: observation.appRoot,
 					installerUrl: observation.installerUrl,
@@ -6713,6 +6487,7 @@ export function convergeRuntimeManifest(
 					observation,
 					manifest,
 					projectionHome,
+					openClawContext,
 					workspaceRoot,
 					hermesWhatsAppAuthDir,
 				);
