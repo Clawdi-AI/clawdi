@@ -4815,48 +4815,6 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 		: undefined;
 }
 
-function validateRuntimeManifestPlan(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	openClawWorkspaceRoot: string | null,
-): void {
-	const home = hostedRuntimeProjectionHome(manifest, paths);
-	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
-		const runtimeName = runtimeNameSchema.parse(name);
-		const providerEnvironment = runtime.enabled
-			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
-			: { placeholderEnv: {}, secretEnv: {} };
-		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
-			providerEnvironment;
-		const runtimeSettings = resolvedRuntimeSettings(
-			runtimeName,
-			runtime.run,
-			providerPlaceholderEnv,
-		);
-		if (runtime.enabled) mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv);
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const settings = resolvedRuntimeServiceSettings(
-				manifest,
-				runtimeName,
-				service,
-				serviceSettings,
-				providerPlaceholderEnv,
-			);
-			if (runtime.enabled) mergeRuntimeSecretEnv(name, settings, providerSecretEnv, service);
-		}
-		if (!runtime.enabled || !manifest.locale) continue;
-		const block = managedLocaleBlock(manifest.locale);
-		if (runtimeName === "openclaw") {
-			if (!openClawWorkspaceRoot)
-				throw new Error("OpenClaw official agent workspace is unavailable");
-			nextManagedLocaleFileContent(join(openClawWorkspaceRoot, "SOUL.md"), block);
-		} else if (runtimeName === "hermes") {
-			nextManagedLocaleFileContent(join(home, ".hermes", "SOUL.md"), block);
-		}
-	}
-}
-
 function planRuntimeSystemdUserPrograms(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
@@ -5860,7 +5818,6 @@ export function convergeRuntimeManifest(
 						manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2",
 				})
 			: null;
-		validateRuntimeManifestPlan(manifest, paths, openClawWorkspaceRoot);
 		validateRuntimeProjectionPlan({
 			manifest,
 			paths,
