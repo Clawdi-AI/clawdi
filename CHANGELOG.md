@@ -10,6 +10,43 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.0
+
+Package: `clawdi@0.14.0`
+
+This release consolidates a full review-and-hardening pass over the hosted
+runtime supervisor.
+
+### Security
+
+- Commands the supervisor runs as the runtime user no longer inherit platform
+  credentials, and tenant-writable directories are removed from their `PATH`,
+  closing a credential-exposure and command-shadowing window.
+
+### Fixed
+
+- Failed CLI self-upgrades now roll back automatically to the previous
+  verified version, with a one-hour cooldown before the same version is
+  retried, so a bad rollout can no longer strand a fleet.
+- Agent plugin failures during reconvergence are reported truthfully to the
+  control plane instead of being filtered as healthy.
+- Managed skills tampered with inside the runtime now self-heal on the next
+  convergence, and a cleanup failure can no longer roll back a committed
+  install.
+- OpenClaw configuration drift now restarts the runtime after repair, matching
+  Hermes behavior.
+- Corrupted supervisor state files (upgrade journal, heartbeat state) are
+  quarantined and rebuilt instead of permanently blocking convergence.
+- Hermes plugin installs disable the upstream install scanner only for the
+  duration of the managed install and restore the tenant's own setting
+  afterwards.
+
+### Improved
+
+- The hosted convergence engine was consolidated and split into
+  single-responsibility modules, removing duplicated validation, ownership,
+  and rollback logic across runtimes without behavior changes.
+
 ## Clawdi CLI v0.13.109
 
 Package: `clawdi@0.13.109`
