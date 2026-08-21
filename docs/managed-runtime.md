@@ -362,7 +362,9 @@ native read/write access to tenant-owned home content, including `0600` files,
 `0700` directories, and dotfiles. Before snapshots, reconciliation repairs
 tenant-home ownership recursively except for declared platform enclaves:
 `$HOME/.config/systemd/user` and OpenClaw's
-`$HOME/.openclaw/gateway.systemd.env`. It does not rewrite modes or ACLs.
+`$HOME/.openclaw/gateway.systemd.env`. The same ownership enforcer repairs
+non-root drift inside those enclaves back to root while repairing root drift
+outside them back to the tenant. It does not rewrite modes or ACLs.
 Candidate directories and binaries remain root-owned. The root-authored JWT
 configuration is a `root:<runtime group>` `0440` file below a root-only `0700`
 directory, so other tenant processes cannot traverse to it; systemd publishes
