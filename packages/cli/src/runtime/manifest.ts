@@ -53,11 +53,7 @@ import {
 } from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { isValidSemver } from "../lib/semver";
-import {
-	type RuntimeUserProcessRevisionAliases,
-	readRuntimeAppliedState,
-	runtimeContentSha256,
-} from "./applied-state";
+import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import type { RuntimeApplyContext } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -172,6 +168,18 @@ import {
 	type HostedSkillSource,
 	hostedMcpDesiredStateSchema,
 } from "./manifest-resources";
+import {
+	canonicalJsonEqual,
+	isPlainRecord,
+	mutationAncestorMetadataTargets,
+	type RuntimeConvergenceResult,
+	type RuntimePrivateAppliedAuthority,
+	type RuntimeSystemdApplyHooks,
+	recordValue,
+	stringValue,
+	writeJsonFile,
+	writeRuntimePrivateFileAtomic,
+} from "./manifest-shared";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -254,11 +262,7 @@ import {
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
-import {
-	ensureRuntimePlatformDirectory,
-	runtimePlatformRootForPath,
-	writeRuntimePlatformFileAtomic,
-} from "./state";
+import { ensureRuntimePlatformDirectory } from "./state";
 
 import {
 	TRANSPARENT_EGRESS_TABLE,
@@ -272,45 +276,6 @@ import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	parseManagedWhatsAppSocketMetadataJson,
 } from "./whatsapp-upstream-contract";
-
-export interface RuntimeConvergenceResult {
-	manifest: RuntimeManifest;
-	source: RuntimeManifestLoad["source"];
-	sourcePath: string;
-	offline: boolean;
-	mode: "normal" | "degraded-offline";
-	enabledRuntimes: string[];
-	installErrors: string[];
-	resourceProjectionErrors: string[];
-	projectedProviderIds: Record<string, string[]>;
-	agentPluginFailedNames: string[];
-	outputs: {
-		processManager: "systemd";
-		workspaceRoot: string;
-		managedConfig: string;
-		syncState: string;
-		instanceData: string;
-		sensitiveInstanceData: string;
-		manifestLastGood: string | null;
-		appliedState: string | null;
-		installInventory: string[];
-		projections: string[];
-		managedLocaleFiles: string[];
-		runConfigs: string[];
-		systemdSystemUnitRoot: string;
-		systemdSystemUnits: string[];
-		systemdUserUnitRoot: string;
-		systemdUserUnits: string[];
-		egressProfileBundle: string | null;
-		egressSecretFile: string | null;
-		egressEngine: RuntimeMitmproxyEnsureResult | null;
-		egressTransparentEnv: string | null;
-		egressAddon: string | null;
-		liveSyncEnvironments: string[];
-		daemonAuthTokenFile: string | null;
-		bootFinished: string;
-	};
-}
 
 export interface RuntimeResourcePreparationFailures {
 	agentPlugins?: {
@@ -342,42 +307,6 @@ export function planHostedAgentPluginConvergence(input: {
 			...(input.runner ? { runner: input.runner } : {}),
 		}),
 	};
-}
-
-type RuntimeSystemdApplyResult = {
-	applied: boolean;
-	systemUnitsChanged: string[];
-	userUnitsChanged: string[];
-};
-
-interface RuntimeSystemdApplySignal {
-	// Private, in-memory apply metadata. It must not enter convergence outputs,
-	// status, diagnostics, logs, or any generated public artifact.
-	restartDaemon: boolean;
-	restartEgressSidecar: boolean;
-	stopEgressSidecar: boolean;
-	reconcileUserUnits: string[];
-	restartUserUnits: string[];
-	staleSystemUnits: string[];
-	staleUserUnits: string[];
-}
-
-interface RuntimeSystemdApplyHooks {
-	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
-	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
-	transactionState: () => "pristine" | "mutated";
-	installOfficialService: (unit: string, install: () => string | null) => string | null;
-	quiesce: (affectedUserUnits: readonly string[]) => void;
-	rollback: (signal: RuntimeSystemdApplySignal) => void;
-}
-
-export interface RuntimePrivateAppliedAuthority {
-	// These private activation verifiers may only be persisted in the root-owned
-	// 0600 applied-state authority.
-	daemonAuthTokenRevision?: string;
-	daemonProgramRevision?: string;
-	egressSidecarSecretRevision?: string;
-	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
 }
 
 interface RuntimeInstallObservation {
@@ -468,23 +397,6 @@ interface RuntimeInstallReceiptTargets {
 	officialServices: Map<string, RuntimeInstallReceiptTarget>;
 	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
 	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
-}
-
-function writeRuntimePrivateFileAtomic(
-	paths: RuntimePaths,
-	path: string,
-	content: string | Uint8Array,
-	options: { mode?: number; dirMode?: number } = {},
-): void {
-	const trustedRoot = runtimePlatformRootForPath(paths, path);
-	if (trustedRoot) writeRuntimePlatformFileAtomic(paths, path, content, options);
-	else writePrivateFileAtomic(path, content, options);
-}
-
-function writeJsonFile(path: string, payload: unknown, paths?: RuntimePaths): void {
-	const content = `${JSON.stringify(payload, null, 2)}\n`;
-	if (paths) writeRuntimePrivateFileAtomic(paths, path, content);
-	else writePrivateFileAtomic(path, content);
 }
 
 function writeLastGoodManifest(
@@ -981,15 +893,6 @@ function providerHasModels(provider: Record<string, unknown>): boolean {
 
 function isOpenAiCompatibleMode(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-	return value as Record<string, unknown>;
-}
-
-function stringValue(value: unknown): string | null {
-	return typeof value === "string" ? value : null;
 }
 
 function makeEgressIdentityOwned(path: string): void {
@@ -4185,20 +4088,6 @@ function readHostedMcpNativeState(
 	return { servers };
 }
 
-function canonicalJsonEqual(left: unknown, right: unknown): boolean {
-	return JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
-}
-
-function canonicalJsonValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalJsonValue);
-	if (!isPlainRecord(value)) return value;
-	return Object.fromEntries(
-		Object.entries(value)
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([key, entry]) => [key, canonicalJsonValue(entry)]),
-	);
-}
-
 function hostedMcpNativeServerConfig(
 	serverName: string,
 	desired: HostedMcpServerDesiredState,
@@ -4226,10 +4115,6 @@ function validateHostedMcpProjectionPlan(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): void {
 	buildHostedMcpReconciliationPlan(manifest, paths, observations);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function runtimeFileCurrentRevision(path: string): string | null {
@@ -5467,33 +5352,6 @@ function hostedSkillMutationTargets(
 	return [...targets].sort();
 }
 
-function mutationAncestorMetadataTargets(
-	targets: readonly string[],
-	boundaries: readonly string[],
-): string[] {
-	const resolvedBoundaries = boundaries.map((boundary) => resolve(boundary));
-	const metadata = new Set<string>();
-	for (const target of targets) {
-		const resolvedTarget = resolve(target);
-		const resolvedBoundary = resolvedBoundaries.find((boundary) => {
-			const relativeTarget = relative(boundary, resolvedTarget);
-			return (
-				relativeTarget === "" || (!relativeTarget.startsWith("..") && !isAbsolute(relativeTarget))
-			);
-		});
-		if (!resolvedBoundary) {
-			throw new Error(`runtime mutation target is outside managed user roots: ${resolvedTarget}`);
-		}
-		if (resolvedTarget === resolvedBoundary) continue;
-		let parent = dirname(resolvedTarget);
-		while (parent !== resolvedBoundary) {
-			metadata.add(parent);
-			parent = dirname(parent);
-		}
-	}
-	return [...metadata];
-}
-
 function runtimeManagedMutationPlan(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
@@ -5602,6 +5460,8 @@ function runtimeManagedMutationPlan(input: {
 		systemdDriftErrors: systemd.driftErrors,
 	};
 }
+
+export type { RuntimeConvergenceResult, RuntimePrivateAppliedAuthority } from "./manifest-shared";
 
 export function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
