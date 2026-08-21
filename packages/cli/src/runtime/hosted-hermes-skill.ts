@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { withHermesSkillLoopbackSource } from "./hermes-skill-loopback-source";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
@@ -23,7 +24,7 @@ import {
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
-const HERMES_SKILL_COMMAND_TIMEOUT_MS = 120_000;
+const HERMES_SKILL_COMMAND_TIMEOUT_MS = 110_000;
 
 export interface HostedHermesSkillExactSourceDriver {
 	target?(input: { home: string; skill: PreparedHostedSourcedSkill }): string;
@@ -100,23 +101,6 @@ function receiptInput(
 	};
 }
 
-function rawSkillUrl(skill: PreparedHostedSourcedSkill): string {
-	if (skill.source.type === "project") return skill.source.installUrl;
-	if (skill.source.type === "bundled") {
-		throw new Error("bundled Hermes Skills do not have a remote install URL");
-	}
-	const repository = new URL(skill.source.url);
-	const [owner, repo] = repository.pathname.slice(1).split("/");
-	if (!owner || !repo)
-		throw new Error("Hermes exact-source URL requires a canonical GitHub repository");
-	const encodedPath = skill.source.path
-		.split("/")
-		.map((segment) => encodeURIComponent(segment))
-		.join("/");
-	const skillPath = encodedPath ? `${encodedPath}/SKILL.md` : "SKILL.md";
-	return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${skill.source.commit}/${skillPath}`;
-}
-
 const HERMES_URL_SKILL_NAME_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const HERMES_RESERVED_URL_SKILL_NAMES = new Set(["skill", "readme", "index", "unnamed-skill"]);
 
@@ -152,16 +136,6 @@ function frontmatterName(sourceDir: string): string | null {
 	return null;
 }
 
-function urlSkillName(url: string): string | null {
-	const parts = new URL(url).pathname.split("/").filter(Boolean);
-	if (parts.at(-1)?.toLowerCase() === "skill.md" && parts.length >= 2) {
-		const candidate = parts.at(-2);
-		if (validHermesUrlSkillName(candidate)) return candidate;
-	}
-	const candidate = parts.at(-1)?.replace(/\.md$/i, "");
-	return validHermesUrlSkillName(candidate) ? candidate : null;
-}
-
 function plannedNativeTarget(
 	home: string,
 	skill: PreparedHostedSourcedSkill,
@@ -170,8 +144,7 @@ function plannedNativeTarget(
 	if (skill.source.type === "bundled") {
 		return join(home, ".hermes", "skills", skill.skillId);
 	}
-	const nativeName =
-		frontmatterName(sourceDir) ?? urlSkillName(rawSkillUrl(skill)) ?? skill.skillId;
+	const nativeName = frontmatterName(sourceDir) ?? skill.skillId;
 	return join(home, ".hermes", "skills", nativeName);
 }
 
@@ -182,26 +155,53 @@ function hermesCommandOutput(result: ReturnType<typeof runHermes>): string {
 		.join("\n");
 }
 
+function readHermesInstalledLock(home: string): {
+	skillsRoot: string;
+	installed: Record<string, unknown>;
+} | null {
+	const skillsRoot = resolve(home, ".hermes", "skills");
+	const lockPath = join(skillsRoot, ".hub", "lock.json");
+	if (!existsSync(lockPath)) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(lockPath, "utf8"));
+	} catch {
+		throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
+	}
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
+	}
+	const lock = parsed as Record<string, unknown>;
+	if (
+		lock.version !== 1 ||
+		typeof lock.installed !== "object" ||
+		lock.installed === null ||
+		Array.isArray(lock.installed)
+	) {
+		throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
+	}
+	return { skillsRoot, installed: lock.installed as Record<string, unknown> };
+}
+
+function hermesLockTarget(skillsRoot: string, name: string, installPath: unknown): string {
+	if (
+		!validHermesUrlSkillName(name) ||
+		typeof installPath !== "string" ||
+		installPath !== name ||
+		dirname(resolve(skillsRoot, installPath)) !== skillsRoot ||
+		basename(resolve(skillsRoot, installPath)) !== name
+	) {
+		throw new ManagedSkillResourceError("Hermes Skill lock install path is unsafe");
+	}
+	return join(skillsRoot, installPath);
+}
+
 function installedTargetFromHermesLock(home: string, identifier: string): string | null {
 	return withRuntimeUserFileAccess(() => {
-		const skillsRoot = resolve(home, ".hermes", "skills");
-		const lockPath = join(skillsRoot, ".hub", "lock.json");
-		if (!existsSync(lockPath)) return null;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(readFileSync(lockPath, "utf8"));
-		} catch {
-			throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
-		}
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
-		}
-		const lock = parsed as Record<string, unknown>;
-		if (lock.version !== 1 || typeof lock.installed !== "object" || lock.installed === null) {
-			throw new ManagedSkillResourceError("Hermes Skill lock is invalid");
-		}
+		const lock = readHermesInstalledLock(home);
+		if (!lock) return null;
 		const matches: Array<{ name: string; installPath: string }> = [];
-		for (const [name, value] of Object.entries(lock.installed as Record<string, unknown>)) {
+		for (const [name, value] of Object.entries(lock.installed)) {
 			if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
 			const entry = value as Record<string, unknown>;
 			if (entry.identifier !== identifier) continue;
@@ -218,15 +218,58 @@ function installedTargetFromHermesLock(home: string, identifier: string): string
 			throw new ManagedSkillResourceError("Hermes Skill lock source identity is ambiguous");
 		}
 		const [{ name, installPath }] = matches;
-		if (
-			!validHermesUrlSkillName(name) ||
-			installPath !== name ||
-			dirname(resolve(skillsRoot, installPath)) !== skillsRoot ||
-			basename(resolve(skillsRoot, installPath)) !== name
-		) {
+		return hermesLockTarget(lock.skillsRoot, name, installPath);
+	});
+}
+
+function installedTargetFromHermesLoopbackLock(home: string, target: string): string | null {
+	const expected = resolve(target);
+	return withRuntimeUserFileAccess(() => {
+		const lock = readHermesInstalledLock(home);
+		if (!lock || dirname(expected) !== lock.skillsRoot) return null;
+		const name = basename(expected);
+		const entry = lock.installed[name];
+		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return null;
+		const record = entry as Record<string, unknown>;
+		if (record.source !== "url" || typeof record.identifier !== "string") {
+			throw new ManagedSkillResourceError("Hermes Skill lock source is invalid");
+		}
+		let source: URL;
+		try {
+			source = new URL(record.identifier);
+		} catch {
+			throw new ManagedSkillResourceError("Hermes Skill lock source is invalid");
+		}
+		if (hermesLockTarget(lock.skillsRoot, name, record.install_path) !== expected) {
 			throw new ManagedSkillResourceError("Hermes Skill lock install path is unsafe");
 		}
-		return join(skillsRoot, installPath);
+		if (source.protocol !== "http:" || source.hostname !== "127.0.0.1") return null;
+		if (
+			source.href !== record.identifier ||
+			!source.port ||
+			Number(source.port) < 1 ||
+			source.username ||
+			source.password ||
+			source.search ||
+			source.hash ||
+			!/^\/0[a-f0-9]{64}\/SKILL\.md$/.test(source.pathname)
+		) {
+			throw new ManagedSkillResourceError("Hermes Skill lock source is invalid");
+		}
+		let identityMatches = 0;
+		for (const value of Object.values(lock.installed)) {
+			if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+			const candidate = value as Record<string, unknown>;
+			if (candidate.identifier !== record.identifier) continue;
+			if (candidate.source !== "url") {
+				throw new ManagedSkillResourceError("Hermes Skill lock source is invalid");
+			}
+			identityMatches += 1;
+		}
+		if (identityMatches !== 1) {
+			throw new ManagedSkillResourceError("Hermes Skill lock source identity is ambiguous");
+		}
+		return expected;
 	});
 }
 
@@ -240,6 +283,24 @@ function runHermes(input: { home: string; appRoot: string }, args: string[], std
 			input: stdin,
 			timeoutMs: HERMES_SKILL_COMMAND_TIMEOUT_MS,
 			maxBufferBytes: 1024 * 1024,
+		},
+	);
+}
+
+function runHermesLoopbackInstall(input: { home: string; appRoot: string }, args: string[]) {
+	return spawnRuntimeUserCommand(
+		commandPath(input.home, input.appRoot),
+		args,
+		input.home,
+		input.appRoot,
+		{
+			timeoutMs: HERMES_SKILL_COMMAND_TIMEOUT_MS,
+			maxBufferBytes: 1024 * 1024,
+			environment: {
+				HERMES_ALLOW_PRIVATE_URLS: "true",
+				NO_PROXY: "127.0.0.1,localhost",
+				no_proxy: "127.0.0.1,localhost",
+			},
 		},
 	);
 }
@@ -269,22 +330,15 @@ function assertBundledResultMatches(sourceDir: string, target: string): void {
 
 export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDriver = {
 	target(input) {
-		if (input.skill.source.type !== "bundled") {
-			const installed = installedTargetFromHermesLock(input.home, rawSkillUrl(input.skill));
-			if (installed) return installed;
-		}
-		return withStagedManagedSkill(input.skill, (sourceDir) =>
-			plannedNativeTarget(input.home, input.skill, sourceDir),
-		);
+		return withStagedManagedSkill(input.skill, (sourceDir) => {
+			const planned = plannedNativeTarget(input.home, input.skill, sourceDir);
+			if (input.skill.source.type === "bundled") return planned;
+			return installedTargetFromHermesLoopbackLock(input.home, planned) ?? planned;
+		});
 	},
 	install(input) {
-		const installedBefore =
-			input.skill.source.type === "bundled"
-				? null
-				: installedTargetFromHermesLock(input.home, rawSkillUrl(input.skill));
 		const target = resolve(
 			input.targetDir ??
-				installedBefore ??
 				withStagedManagedSkill(input.skill, (sourceDir) =>
 					plannedNativeTarget(input.home, input.skill, sourceDir),
 				),
@@ -300,14 +354,13 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		if (managedSkillReceiptMatchesIdentity(receipt)) {
 			if (
 				input.skill.source.type === "bundled" ||
-				installedTargetFromHermesLock(input.home, rawSkillUrl(input.skill)) === target
+				installedTargetFromHermesLoopbackLock(input.home, target) === target
 			) {
 				return "unchanged";
 			}
 		}
 		return withStagedManagedSkill(input.skill, (sourceDir) => {
-			const plannedTarget =
-				installedBefore ?? plannedNativeTarget(input.home, input.skill, sourceDir);
+			const plannedTarget = plannedNativeTarget(input.home, input.skill, sourceDir);
 			if (resolve(plannedTarget) !== target) {
 				throw new Error("Hermes Skill planned target changed during installation");
 			}
@@ -324,45 +377,45 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 			return withManagedTargetRollback({
 				target,
 				receipt: receipt.path,
-				operation: () => {
-					const args = [
-						"skills",
-						"install",
-						rawSkillUrl(input.skill),
-						"--name",
-						input.skill.skillId,
-						"--yes",
-					];
-					if (input.previouslyReserved) args.push("--force");
-					const result = runHermes(input, args);
-					if (result.status !== 0)
-						throw new ManagedSkillResourceError(
-							`Hermes official Skill install failed: ${hermesCommandOutput(result) || result.error?.message || "unknown error"}`,
+				operation: () =>
+					withHermesSkillLoopbackSource(sourceDir, ({ url: installUrl, files }) => {
+						const args = ["skills", "install", installUrl, "--name", input.skill.skillId, "--yes"];
+						if (input.previouslyReserved) args.push("--force");
+						const result = runHermesLoopbackInstall(input, args);
+						if (result.status !== 0)
+							throw new ManagedSkillResourceError(
+								`Hermes official Skill install failed: ${hermesCommandOutput(result) || result.error?.message || "unknown error"}`,
+							);
+						const installedTarget = installedTargetFromHermesLock(input.home, installUrl);
+						if (!installedTarget) {
+							throw new ManagedSkillResourceError(
+								`Hermes official Skill install did not record an installed target: ${hermesCommandOutput(result) || "unknown error"}`,
+							);
+						}
+						if (installedTarget !== target) {
+							throw new ManagedSkillResourceError(
+								`Hermes official Skill install recorded an unexpected target: ${installedTarget}`,
+							);
+						}
+						const installed = collectRuntimeUserManagedSkillTree(installedTarget);
+						if (
+							installed.status !== "collected" ||
+							!managedSkillTreesEqual(files, installed.tree)
+						) {
+							throw new ManagedSkillResourceError(
+								"Hermes official Skill install changed the verified source bytes",
+							);
+						}
+						writeManagedSkillReceipt(
+							receiptInput(
+								input.managedResourceRoot,
+								input.skill.skillId,
+								input.skill.sourceIdentity,
+								installedTarget,
+							),
 						);
-					const installedTarget = installedTargetFromHermesLock(
-						input.home,
-						rawSkillUrl(input.skill),
-					);
-					if (!installedTarget) {
-						throw new ManagedSkillResourceError(
-							`Hermes official Skill install did not record an installed target: ${hermesCommandOutput(result) || "unknown error"}`,
-						);
-					}
-					if (installedTarget !== target) {
-						throw new ManagedSkillResourceError(
-							`Hermes official Skill install recorded an unexpected target: ${installedTarget}`,
-						);
-					}
-					writeManagedSkillReceipt(
-						receiptInput(
-							input.managedResourceRoot,
-							input.skill.skillId,
-							input.skill.sourceIdentity,
-							installedTarget,
-						),
-					);
-					return "installed" as const;
-				},
+						return "installed" as const;
+					}),
 			});
 		});
 	},

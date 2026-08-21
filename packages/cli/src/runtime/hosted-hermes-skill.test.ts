@@ -42,44 +42,82 @@ function fakeHermesApp(home: string): string {
 		`#!/usr/bin/python3
 import json, os, re, shutil, sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlsplit
+from urllib.request import urlopen
 root = Path(os.environ["HOME"]) / ".hermes" / "skills"
 with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
     log.write(" ".join(sys.argv[1:]) + chr(10))
 if sys.argv[1:3] == ["skills", "install"]:
     assert "--yes" in sys.argv and "--name" in sys.argv
+    assert os.environ.get("HERMES_ALLOW_PRIVATE_URLS") == "true"
+    assert "127.0.0.1" in os.environ.get("NO_PROXY", "")
+    assert "127.0.0.1" in os.environ.get("no_proxy", "")
     identifier = sys.argv[3]
     name_override = sys.argv[sys.argv.index("--name") + 1]
-    source_skill = Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md"
-    source_text = source_skill.read_bytes().decode("utf-8", errors="replace")
-    frontmatter = re.match(r"^---\\r?\\n(.*?)\\r?\\n---\\r?\\n", source_text, re.DOTALL)
-    native_name = None
-    if frontmatter:
-        name_line = re.search(r"""^name:\\s*['"]?([^'"\\r\\n]+)""", frontmatter.group(1), re.MULTILINE)
-        if name_line:
-            candidate = name_line.group(1).strip()
-            if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
-                native_name = candidate
-    if native_name is None:
-        parts = [part for part in urlparse(identifier).path.split("/") if part]
-        candidate = parts[-2] if len(parts) >= 2 and parts[-1].lower() == "skill.md" else re.sub(r"(?i)\\.md$", "", parts[-1])
-        if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
-            native_name = candidate
-    name = native_name or name_override
     if os.environ.get("FAKE_HERMES_INSTALL_NOOP") == "1":
         print("Error: Could not fetch source Skill")
         raise SystemExit(0)
+    try:
+        source_bytes = urlopen(identifier, timeout=5).read()
+        source_text = source_bytes.decode("utf-8")
+    except Exception:
+        print("Error: Could not fetch source Skill")
+        raise SystemExit(0)
+    native_name = None
+    if source_text.startswith("---"):
+        frontmatter_end = source_text.find(chr(10) + "---" + chr(10), 3)
+        if frontmatter_end >= 0:
+            for line in source_text[3:frontmatter_end].splitlines():
+                if line.startswith("name:"):
+                    candidate = line.split(":", 1)[1].strip().strip(chr(39) + chr(34))
+                    if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
+                        native_name = candidate
+                    break
+    if native_name is None:
+        parts = [part for part in urlparse(identifier).path.split("/") if part]
+        candidate = parts[-2] if len(parts) >= 2 and parts[-1].lower() == "skill.md" else parts[-1].removesuffix(".md")
+        if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
+            native_name = candidate
+    name = native_name or name_override
+    normalized = source_text.replace("\\\\", "/")
+    support_paths = set()
+    stop_characters = set(" ") | {chr(9), chr(10), chr(13), chr(34), chr(39), chr(41), chr(60), chr(62), chr(96)}
+    for directory in ("references", "templates", "scripts", "assets", "examples"):
+        marker = directory + "/"
+        start = 0
+        while True:
+            start = normalized.find(marker, start)
+            if start < 0:
+                break
+            end = start
+            while end < len(normalized) and normalized[end] not in stop_characters:
+                end += 1
+            raw = unquote(urlsplit(normalized[start:end].rstrip(".,;:")).path).replace("\\\\", "/")
+            parts = [part for part in raw.split("/") if part not in {"", "."}]
+            if raw.startswith("/") or not parts or ".." in parts or any(":" in part for part in parts):
+                print("Error: Could not fetch source Skill")
+                raise SystemExit(0)
+            preceded_by_link = normalized[max(0, start - 2):start] == "](" or start == 0 or normalized[start - 1] in stop_characters
+            if preceded_by_link:
+                support_paths.add("/".join(parts))
+            start = end
+    support_files = {}
+    for path in support_paths:
+        try:
+            support_files[path] = urlopen(urljoin(identifier, path), timeout=5).read()
+        except Exception:
+            print("Error: Could not fetch source Skill")
+            raise SystemExit(0)
     target = root / name
     marker = root / ".native-installed" / name
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
-    (target / "SKILL.md").write_text(source_text, encoding="utf-8")
-    support = Path(os.environ["FAKE_HERMES_SOURCE"]) / "references" / "guide.md"
-    if support.exists():
-        (target / "references").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(support, target / "references" / "guide.md")
-    (target / ".hermes-native.json").write_text(json.dumps({"installed": True}) + chr(10))
+    (target / "SKILL.md").write_bytes(source_bytes)
+    for path, content in support_files.items():
+        destination = target / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("installed")
     hub = root / ".hub"
@@ -127,7 +165,6 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			join(sourceDir, "SKILL.md"),
 			'---\nname: native-review-pr\ndescription: "A long Project Skill description that keeps the native frontmatter name even when --name supplies the manifest id."\n---\n# Review PR\n',
 		);
-		process.env.FAKE_HERMES_SOURCE = sourceDir;
 		const commandLog = join(root, "hermes.log");
 		process.env.FAKE_HERMES_LOG = commandLog;
 		const archive = join(root, "review-pr.tar.gz");
@@ -164,8 +201,8 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				previouslyReserved: false,
 			}),
 		).toThrow("did not record an installed target: Error: Could not fetch source Skill");
-		expect(readFileSync(commandLog, "utf8").trim()).toBe(
-			`skills install ${installUrl} --name review-pr --yes`,
+		expect(readFileSync(commandLog, "utf8").trim()).toMatch(
+			/^skills install http:\/\/127\.0\.0\.1:\d+\/0[a-f0-9]{64}\/SKILL\.md --name review-pr --yes$/,
 		);
 		expect(existsSync(join(home, ".hermes", "skills", "review-pr"))).toBe(false);
 		delete process.env.FAKE_HERMES_INSTALL_NOOP;
@@ -205,16 +242,13 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
 		const skillV1 =
-			"---\nname: review-pr\ndescription: Review pull requests\n---\n# Review PR\n\n[Guide](references/guide.md)\n[Missing](references/missing.md)\n";
+			"---\nname: review-pr\ndescription: Review pull requests\n---\n# Review PR\n\n[Guide](references/guide.md)\n";
 		const skillV2 =
 			"---\nname: review-pr\ndescription: Review pull requests\n---\n# Review PR v2\n\n[Guide](references/guide.md)\n";
-		const skillV1Source = Buffer.concat([Buffer.from(skillV1), Buffer.from([0xff])]);
-		const skillV1Native = Buffer.from(skillV1Source.toString("utf8"), "utf8");
-		writeFileSync(join(sourceDir, "SKILL.md"), skillV1Source);
+		writeFileSync(join(sourceDir, "SKILL.md"), skillV1);
 		mkdirSync(join(sourceDir, "references"), { recursive: true });
 		writeFileSync(join(sourceDir, "references", "guide.md"), "Pinned guide\n");
 		writeFileSync(join(sourceDir, "skill.json"), '{"catalog_only":true}\n');
-		process.env.FAKE_HERMES_SOURCE = sourceDir;
 		const commandLog = join(root, "hermes.log");
 		process.env.FAKE_HERMES_LOG = commandLog;
 		const archive = join(root, "review-pr.tar.gz");
@@ -244,17 +278,85 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		).toBe("installed");
 		const target = join(home, ".hermes", "skills", "review-pr");
 		const receipt = managedSkillReceiptPath(managedResourceRoot, "hermes", "review-pr");
-		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
 		expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe("Pinned guide\n");
-		expect(readFileSync(join(target, ".hermes-native.json"), "utf8")).toBe('{"installed": true}\n');
 		expect(existsSync(join(target, "skill.json"))).toBe(false);
 		expect(readFileSync(commandLog, "utf8")).not.toContain("--force");
-		expect(readFileSync(commandLog, "utf8")).toContain(`/${source.commit}/SKILL.md`);
-		expect(readFileSync(commandLog, "utf8")).not.toContain(`/${source.commit}//SKILL.md`);
+		const firstInstallCommand = readFileSync(commandLog, "utf8").trim();
+		expect(firstInstallCommand).toMatch(
+			/^skills install http:\/\/127\.0\.0\.1:\d+\/0[a-f0-9]{64}\/SKILL\.md --name review-pr --yes$/,
+		);
+		const firstInstallUrl = firstInstallCommand.split(" ")[2] ?? "";
+		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
+		const firstLock = JSON.parse(readFileSync(lockPath, "utf8")) as {
+			version: number;
+			installed: Record<string, Record<string, unknown>>;
+		};
+		expect(firstLock.installed["review-pr"]).toEqual({
+			source: "url",
+			identifier: firstInstallUrl,
+			install_path: "review-pr",
+		});
 		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
 			"unchanged",
 		);
 		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(1);
+		firstLock.installed["review-pr"] = {
+			source: "url",
+			identifier: `https://raw.githubusercontent.com/Clawdi-AI/store/${source.commit}/SKILL.md`,
+			install_path: "review-pr",
+		};
+		writeFileSync(lockPath, `${JSON.stringify(firstLock)}\n`);
+		expect(hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toBe(target);
+		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
+			"installed",
+		);
+		const migratedLock = JSON.parse(readFileSync(lockPath, "utf8")) as typeof firstLock;
+		const migratedIdentifier = migratedLock.installed["review-pr"]?.identifier;
+		expect(migratedIdentifier).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/0[a-f0-9]{64}\/SKILL\.md$/);
+		migratedLock.installed["review-pr"] = {
+			source: "url",
+			identifier: "http://127.0.0.1:1234/predictable/SKILL.md",
+			install_path: "review-pr",
+		};
+		writeFileSync(lockPath, `${JSON.stringify(migratedLock)}\n`);
+		expect(() => hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toThrow(
+			"Hermes Skill lock source is invalid",
+		);
+		migratedLock.installed["review-pr"] = {
+			source: "url",
+			identifier: String(migratedIdentifier).replace(/:\d+\//, ":0/"),
+			install_path: "review-pr",
+		};
+		writeFileSync(lockPath, `${JSON.stringify(migratedLock)}\n`);
+		expect(() => hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toThrow(
+			"Hermes Skill lock source is invalid",
+		);
+		migratedLock.installed["review-pr"] = {
+			source: "url",
+			identifier: String(migratedIdentifier).replace("http://127.0.0.1:", "HTTP://127.0.0.1:"),
+			install_path: "review-pr",
+		};
+		writeFileSync(lockPath, `${JSON.stringify(migratedLock)}\n`);
+		expect(() => hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toThrow(
+			"Hermes Skill lock source is invalid",
+		);
+		migratedLock.installed["review-pr"] = {
+			source: "url",
+			identifier: migratedIdentifier,
+			install_path: "review-pr",
+		};
+		migratedLock.installed["duplicate-review-pr"] = {
+			source: "url",
+			identifier: migratedIdentifier,
+			install_path: "duplicate-review-pr",
+		};
+		writeFileSync(lockPath, `${JSON.stringify(migratedLock)}\n`);
+		expect(() => hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toThrow(
+			"Hermes Skill lock source identity is ambiguous",
+		);
+		delete migratedLock.installed["duplicate-review-pr"];
+		writeFileSync(lockPath, `${JSON.stringify(migratedLock)}\n`);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(
 			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
@@ -284,7 +386,7 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
 			"installed",
 		);
-		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillV1Native);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
 		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(true);
 		expect(existsSync(join(root, "wrong-profile", "skills", "review-pr"))).toBe(false);
 
@@ -319,9 +421,11 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 			}),
 		).toBe("installed");
 		expect(readFileSync(commandLog, "utf8").trim().split("\n").at(-1)).toContain("--force");
-		expect(readFileSync(commandLog, "utf8").trim().split("\n").at(-1)).toContain(
-			"/skills/review%20%231%25%3F/nested/SKILL.md",
+		const updateInstallCommand = readFileSync(commandLog, "utf8").trim().split("\n").at(-1) ?? "";
+		expect(updateInstallCommand).toMatch(
+			/^skills install http:\/\/127\.0\.0\.1:\d+\/0[a-f0-9]{64}\/SKILL\.md --name review-pr --yes --force$/,
 		);
+		expect(updateInstallCommand).not.toBe(firstInstallCommand);
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
 		expect(
 			hostedHermesSkillExactSourceDriver.uninstall({
