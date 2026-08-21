@@ -3212,11 +3212,15 @@ function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
 	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
 	if (!isPlainRecord(current)) return false;
 	return Object.entries(patch).every(([key, value]) =>
-		value === null ? !Object.hasOwn(current, key) : jsonMergePatchIsApplied(current[key], value),
+		value === undefined
+			? true
+			: value === null
+				? !Object.hasOwn(current, key)
+				: jsonMergePatchIsApplied(current[key], value),
 	);
 }
 
-function openClawGatewayHostedPatchIsApplied(
+function openClawConfigPatchIsApplied(
 	context: OpenClawHostedContext,
 	patch: Record<string, unknown>,
 ): boolean {
@@ -3245,7 +3249,7 @@ function applyOpenClawGatewayHostedProjection(
 	ownerBrowserBootstrapSupported: boolean,
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
-	if (!patch || openClawGatewayHostedPatchIsApplied(context, patch)) return;
+	if (!patch || openClawConfigPatchIsApplied(context, patch)) return;
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],
@@ -3348,6 +3352,7 @@ function applyHostedChannelProjection(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
+	openClawContext: OpenClawHostedContext,
 	workspaceRoot: string,
 	hermesWhatsAppAuthDir: string | null,
 ): boolean {
@@ -3364,14 +3369,16 @@ function applyHostedChannelProjection(
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 		);
 	}
+	const patch = openClawManagedChannelsPatch(channels);
+	if (openClawConfigPatchIsApplied(openClawContext, patch)) return false;
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin", ...openClawManagedAccountReplaceArgs(channels)],
-		`${JSON.stringify(openClawManagedChannelsPatch(channels), null, 2)}\n`,
+		`${JSON.stringify(patch, null, 2)}\n`,
 		home,
 		workspaceRoot,
 	);
-	return false;
+	return true;
 }
 
 function installHostedChannelProjectionDependencies(
@@ -6488,6 +6495,7 @@ export function convergeRuntimeManifest(
 					observation,
 					manifest,
 					projectionHome,
+					openClawContext,
 					workspaceRoot,
 					hermesWhatsAppAuthDir,
 				);

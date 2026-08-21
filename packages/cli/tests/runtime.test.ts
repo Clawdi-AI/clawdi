@@ -1276,8 +1276,33 @@ fi
 `;
 }
 
+function fakeOpenClawConfigPatchCommand(configPath: string): string {
+	return `if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  patch="$(cat)"
+  CLAWDI_TEST_OPENCLAW_PATCH="$patch" '${process.execPath}' - <<'NODE'
+const fs = require("node:fs");
+const configPath = ${JSON.stringify(configPath)};
+const current = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, "utf8")) : {};
+const patch = JSON.parse(process.env.CLAWDI_TEST_OPENCLAW_PATCH);
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const merge = (currentValue, patchValue) => {
+  if (!isRecord(patchValue)) return patchValue;
+  const next = isRecord(currentValue) ? { ...currentValue } : {};
+  for (const [key, value] of Object.entries(patchValue)) {
+    if (value === null) delete next[key];
+    else next[key] = merge(next[key], value);
+  }
+  return next;
+};
+fs.writeFileSync(configPath, JSON.stringify(merge(current, patch)) + "\\n");
+NODE
+  exit 0
+fi`;
+}
+
 function seedOpenClawBinary(home: string): void {
 	const openclawBin = join(home, ".local", "bin", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 	const workspace = join(home, ".openclaw", "workspace");
 	mkdirSync(dirname(openclawBin), { recursive: true });
@@ -1300,9 +1325,7 @@ if [ "$*" = "gateway install --force --json" ]; then
   exit 0
 fi
 ${fakeManagedOpenClawProviderPluginCommands()}
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >/dev/null
-fi
+${fakeOpenClawConfigPatchCommand(configPath)}
 exit 0
 `,
 	);
@@ -1466,13 +1489,7 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${workspace}"}]\\n'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-	patch="$(cat)"
-	case "$patch" in
-	  *'"gateway"'*) printf '%s\n' "$patch" > '${openclawConfig}' ;;
-	esac
-	exit 0
-fi
+${fakeOpenClawConfigPatchCommand(openclawConfig)}
 if [ "$*" = "gateway install --force --json" ]; then
   mkdir -p '${dirname(unitPath)}'
   printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${unitPath}'

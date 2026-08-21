@@ -480,6 +480,87 @@ describe("runtime manifest services", () => {
 		}
 	});
 
+	test("restarts OpenClaw after repairing managed channel config drift", () => {
+		const paths = tempRuntimePaths();
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+		const patchPath = join(paths.runRoot, "openclaw-config-patch.json");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		mkdirSync(dirname(command), { recursive: true });
+		mkdirSync(dirname(configPath), { recursive: true });
+		writeFileSync(configPath, "{}\n");
+		writeFileSync(
+			command,
+			`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "--version") printf '%s\n' 'OpenClaw 2026.7.29' ;;
+  "config patch --stdin"*)
+    cat > '${patchPath}'
+    '${process.execPath}' - '${configPath}' '${patchPath}' <<'NODE'
+const fs = require("node:fs");
+const [configPath, patchPath] = process.argv.slice(2);
+const current = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const patch = JSON.parse(fs.readFileSync(patchPath, "utf8"));
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const merge = (currentValue, patchValue) => {
+  if (!isRecord(patchValue)) return patchValue;
+  const next = isRecord(currentValue) ? { ...currentValue } : {};
+  for (const [key, value] of Object.entries(patchValue)) {
+    if (value === null) delete next[key];
+    else next[key] = merge(next[key], value);
+  }
+  return next;
+};
+fs.writeFileSync(configPath, JSON.stringify(merge(current, patch)) + "\\n");
+NODE
+    ;;
+  "gateway install --force --json"|"gateway install --force"|"gateway install")
+    mkdir -p '${dirname(unitPath)}'
+    printf '%s\n' '[Service]' 'ExecStart=openclaw gateway run' > '${unitPath}'
+    ;;
+  *) exit 0 ;;
+esac
+`,
+		);
+		chmodSync(command, 0o700);
+		const manifest = installGateManifest(paths, "openclaw", command);
+		manifest.projection = { channels: { telegram: { enabled: true } } };
+		const load: RuntimeManifestLoad = {
+			manifest,
+			source: "remote-datasource",
+			sourcePath: "inline-openclaw-channel-drift",
+			offline: false,
+		};
+		const restartSignals: string[][] = [];
+		const converge = () =>
+			convergeRuntimeManifest(load, paths, {
+				systemdApply: {
+					activateEgressPrerequisite: () => ({
+						applied: true,
+						systemUnitsChanged: [],
+						userUnitsChanged: [],
+					}),
+					activate: (signal) => {
+						restartSignals.push(signal.restartUserUnits);
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					quiesce: () => undefined,
+					rollback: () => undefined,
+				},
+			});
+
+		expect(converge().installErrors).toEqual([]);
+		expect(converge().installErrors).toEqual([]);
+		expect(restartSignals.at(-1)).toEqual([]);
+		const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+		delete config.channels;
+		writeFileSync(configPath, `${JSON.stringify(config)}\n`);
+
+		expect(converge().installErrors).toEqual([]);
+		expect(restartSignals.at(-1)).toEqual(["openclaw-gateway.service"]);
+	});
+
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
 		process.env.PATH = `${dirname(paths.cliManagedBin)}:${process.env.PATH ?? ""}`;
