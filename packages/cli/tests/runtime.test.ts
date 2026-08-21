@@ -1330,10 +1330,12 @@ if [ "$*" = "config validate --json" ] && grep -q 'legacyInvalidConfig' '${confi
   exit 1
 fi
 if [ "$*" = "doctor --fix --non-interactive" ]; then
-	if [ -d "$HOME/.openclaw/tmp" ]; then test "$(stat -c %a "$HOME/.openclaw/tmp")" = 700; fi
-  grep -q 'CLAWDI_AI_API_KEY' "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json"
+  if [ -d "$HOME/.openclaw/tmp" ]; then test "$(stat -c %a "$HOME/.openclaw/tmp")" = 700; fi
   printf '{}\n' > '${configPath}'
   exit 0
+fi
+if [ "\${1:-}" = "plugins" ] && grep -q 'legacyInvalidConfig' '${configPath}' 2>/dev/null; then
+  exit 1
 fi
 ${fakeManagedOpenClawProviderPluginCommands()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then cat >/dev/null; fi
@@ -4013,7 +4015,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("pins OpenClaw context and installs the managed provider plugin before config repair", () => {
+	it("pins OpenClaw context and repairs config before installing the managed provider plugin", () => {
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
@@ -4050,7 +4052,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			(command) => command.startsWith("plugins install ") && command.endsWith(" --force"),
 		);
 		expect(installIndex, commands.join(" | ")).toBeGreaterThan(-1);
-		expect(doctorIndex).toBeGreaterThan(installIndex);
+		expect(doctorIndex).toBeLessThan(installIndex);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
 		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
 

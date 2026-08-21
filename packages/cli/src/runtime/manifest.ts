@@ -5933,6 +5933,13 @@ export function convergeRuntimeManifest(
 		companions: new Map(),
 	};
 	const previousProjectedProviderIds = appliedState?.projectedProviderIds ?? {};
+	const retainPreviousProjectedProviderIds = () =>
+		Object.fromEntries(
+			Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+				runtime,
+				[...providerIds],
+			]),
+		);
 	const projectedProviderIds: Record<string, string[]> = {};
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const observations = new Map<string, RuntimeInstallObservation>();
@@ -5964,12 +5971,7 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
-			projectedProviderIds: Object.fromEntries(
-				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
-					runtime,
-					[...providerIds],
-				]),
-			),
+			projectedProviderIds: retainPreviousProjectedProviderIds(),
 		});
 	}
 	try {
@@ -5982,12 +5984,7 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
-			projectedProviderIds: Object.fromEntries(
-				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
-					runtime,
-					[...providerIds],
-				]),
-			),
+			projectedProviderIds: retainPreviousProjectedProviderIds(),
 		});
 	}
 
@@ -5997,6 +5994,19 @@ export function convergeRuntimeManifest(
 		rollbackSnapshots.capture("runtime installer rollback failed", coldInstallPlan.snapshot);
 	}
 	const pluginBootstrapPlan = managedOpenClawPluginBootstrapMutationPlan(openClawContext, paths);
+	const rollbackInstallFailure = (error: unknown): RuntimeConvergenceResult => {
+		installErrors.push(...rollbackSnapshots.restore());
+		const message = error instanceof Error ? error.message : String(error);
+		if (!installErrors.includes(message)) installErrors.unshift(message);
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: retainPreviousProjectedProviderIds(),
+		});
+	};
 	try {
 		if (coldInstallPlan) {
 			hostedRuntimeContract.assertPlatformRoots();
@@ -6024,32 +6034,9 @@ export function convergeRuntimeManifest(
 					...pluginBootstrapPlan.runtimeUserTargets,
 				]),
 			);
-			const observation = observations.get("openclaw");
-			if (!observation?.commandPath) {
-				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
-			}
-			ensureManagedOpenClawProviderPlugin({
-				context: openClawContext,
-				commandPath: observation.commandPath,
-			});
 		}
 	} catch (error) {
-		installErrors.push(...rollbackSnapshots.restore());
-		const message = error instanceof Error ? error.message : String(error);
-		if (!installErrors.includes(message)) installErrors.unshift(message);
-		return runtimeConvergenceWithoutApply({
-			load,
-			paths,
-			workspaceRoot,
-			enabledRuntimes,
-			installErrors,
-			projectedProviderIds: Object.fromEntries(
-				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
-					runtime,
-					[...providerIds],
-				]),
-			),
-		});
+		return rollbackInstallFailure(error);
 	}
 
 	let openClawWorkspaceRoot: string | null;
@@ -6100,6 +6087,20 @@ export function convergeRuntimeManifest(
 	} catch (error) {
 		throw rollbackSnapshots.failure(error);
 	}
+	if (pluginBootstrapPlan) {
+		try {
+			const observation = observations.get("openclaw");
+			if (!observation?.commandPath) {
+				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
+			}
+			ensureManagedOpenClawProviderPlugin({
+				context: openClawContext,
+				commandPath: observation.commandPath,
+			});
+		} catch (error) {
+			return rollbackInstallFailure(error);
+		}
+	}
 	if (mutationPlan.systemdDriftErrors.length > 0) {
 		installErrors.push(...rollbackSnapshots.restore());
 		installErrors.push(...mutationPlan.systemdDriftErrors);
@@ -6109,12 +6110,7 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
-			projectedProviderIds: Object.fromEntries(
-				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
-					runtime,
-					[...providerIds],
-				]),
-			),
+			projectedProviderIds: retainPreviousProjectedProviderIds(),
 		});
 	}
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
@@ -7176,12 +7172,7 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			enabledRuntimes,
 			installErrors,
-			projectedProviderIds: Object.fromEntries(
-				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
-					runtime,
-					[...providerIds],
-				]),
-			),
+			projectedProviderIds: retainPreviousProjectedProviderIds(),
 			agentPluginFailedNames: [...agentPluginFailedNames].sort(),
 		});
 	}

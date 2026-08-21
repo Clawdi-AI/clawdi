@@ -335,12 +335,12 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(clawdiHome);
 	chownSync(clawdiHome, runtimeUid, runtimeGid);
 	chmodSync(clawdiHome, 0o700);
-	const openClawStateDir = join(clawdiHome, "openclaw-state");
-	mkdirSync(openClawStateDir);
+	const openClawStateDir = join(runtimeHome, ".openclaw");
+	mkdirSync(openClawStateDir, { recursive: true });
 	chownSync(openClawStateDir, runtimeUid, runtimeGid);
 	chmodSync(openClawStateDir, 0o700);
 	const openClawAgentsRoot = join(openClawStateDir, "agents");
-	mkdirSync(openClawAgentsRoot);
+	mkdirSync(openClawAgentsRoot, { recursive: true });
 	chownSync(openClawAgentsRoot, runtimeUid, runtimeGid);
 	chmodSync(openClawAgentsRoot, 0o700);
 	const activeAgentDir = join(clawdiHome, "active-openclaw-agent");
@@ -352,10 +352,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(secondaryAgentDir, { recursive: true });
 	chownSync(secondaryAgentRoot, runtimeUid, runtimeGid);
 	chownSync(secondaryAgentDir, runtimeUid, runtimeGid);
-	const configRoot = join(clawdiHome, "openclaw-config");
-	mkdirSync(configRoot, { mode: 0o700 });
-	chownSync(configRoot, runtimeUid, runtimeGid);
-	const configPath = join(configRoot, "openclaw.json");
+	const configPath = join(openClawStateDir, "openclaw.json");
 	const staleModels = Array.from({ length: 18 }, (_, index) => ({
 		id: `legacy-managed-${index}`,
 		name: `Legacy managed responses model ${index}`,
@@ -969,7 +966,7 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
 	process.env.CLAWDI_AUTH_TOKEN = "real-filebrowser-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-	const openClawStateDir = join(runtimeHome, ".openclaw-files-e2e");
+	const openClawStateDir = join(runtimeHome, ".openclaw");
 	const openClawConfig = join(openClawStateDir, "openclaw.json");
 	const openClawWorkspaceRoot = join(openClawStateDir, "workspace");
 	mkdirSync(openClawStateDir, { recursive: true, mode: 0o700 });
