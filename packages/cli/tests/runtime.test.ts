@@ -61,6 +61,7 @@ import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-cont
 import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
+import { managedSkillReceiptPath } from "../src/runtime/managed-skill-delivery";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -15915,7 +15916,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			runtimes: { openclaw: ["clawdi", "search.proxy"] },
 		});
 		expect(
-			existsSync(join(dirname(openclawSkill), ".clawdi-manifest-receipts", "clawdi.json")),
+			existsSync(managedSkillReceiptPath(paths.managedResourceRoot, "openclaw", "clawdi")),
 		).toBe(true);
 
 		writeFileSync(join(openclawSkill, "SKILL.md"), "tenant mutation before restart\n");
@@ -15966,7 +15967,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		const hermesSkillReceipt = JSON.parse(
-			readFileSync(join(dirname(hermesSkill), ".clawdi-manifest-receipts", "clawdi.json"), "utf-8"),
+			readFileSync(managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi"), "utf-8"),
 		);
 		expect(hermesSkillReceipt).toEqual({
 			schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",

@@ -2,16 +2,20 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	chmodSync,
+	closeSync,
+	constants,
 	existsSync,
+	fstatSync,
 	lstatSync,
 	mkdtempSync,
+	openSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -20,6 +24,35 @@ import { withRuntimeUserFileAccess } from "./runtime-user-command";
 const MAX_ENTRIES = 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_BYTES = 32 * 1024 * 1024;
+const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const LEGACY_RECEIPT_DIRECTORY = ".clawdi-manifest-receipts";
+const PLATFORM_RECEIPT_DIRECTORY = "skill-receipts";
+
+export const HERMES_MANAGED_SKILL_RECEIPT_SCHEMA = "clawdi.hermesManifestSkillReceipt.v2";
+export const OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA = "clawdi.openclawManifestSkillReceipt.v2";
+export type ManagedSkillReceiptRuntime = "hermes" | "openclaw";
+
+export class ManagedSkillResourceError extends Error {}
+
+function assertManagedSkillId(skillId: string): void {
+	if (!MANAGED_SKILL_ID_PATTERN.test(skillId)) {
+		throw new Error(`invalid managed Skill id: ${skillId}`);
+	}
+}
+
+export function managedSkillReceiptPath(
+	managedResourceRoot: string,
+	runtime: ManagedSkillReceiptRuntime,
+	skillId: string,
+): string {
+	assertManagedSkillId(skillId);
+	return join(managedResourceRoot, PLATFORM_RECEIPT_DIRECTORY, runtime, `${skillId}.json`);
+}
+
+export function legacyManagedSkillReceiptPath(skillsRoot: string, skillId: string): string {
+	assertManagedSkillId(skillId);
+	return join(skillsRoot, LEGACY_RECEIPT_DIRECTORY, `${skillId}.json`);
+}
 
 export type ManagedSkillTree = ReadonlyMap<string, Buffer>;
 
@@ -90,27 +123,45 @@ type ManagedSkillReceipt = {
 
 export function writeManagedSkillReceipt(input: {
 	path: string;
+	managedResourceRoot: string;
 	schemaVersion: string;
 	skillId: string;
 	ownershipIdentity: string;
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): void {
-	withRuntimeUserFileAccess(() => {
-		const treeFingerprint = managedSkillTreeFingerprint(
-			collectManagedSkillTree(input.target, { exclude: input.exclude }),
-		);
-		if (!treeFingerprint) throw new Error("installed Skill tree is unsafe");
-		const receipt: ManagedSkillReceipt = {
-			schemaVersion: input.schemaVersion,
-			skillId: input.skillId,
-			ownershipIdentity: input.ownershipIdentity,
-			treeFingerprint,
-		};
-		writePrivateFileAtomic(input.path, `${JSON.stringify(receipt)}\n`, {
-			mode: 0o600,
-			dirMode: 0o700,
-		});
+	const treeFingerprint = managedSkillTreeFingerprint(
+		collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude }),
+	);
+	if (!treeFingerprint) throw new ManagedSkillResourceError("installed Skill tree is unsafe");
+	writeManagedSkillReceiptRecord(input.managedResourceRoot, input.path, {
+		schemaVersion: input.schemaVersion,
+		skillId: input.skillId,
+		ownershipIdentity: input.ownershipIdentity,
+		treeFingerprint,
+	});
+}
+
+function writeManagedSkillReceiptRecord(
+	managedResourceRoot: string,
+	path: string,
+	receipt: ManagedSkillReceipt,
+): void {
+	writePrivateFileAtomic(path, `${JSON.stringify(receipt)}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+		trustedRoot: managedResourceRoot,
+	});
+}
+
+function runtimeUserTargetIsDirectory(path: string): boolean {
+	return withRuntimeUserFileAccess(() => {
+		try {
+			const target = lstatSync(path);
+			return !target.isSymbolicLink() && target.isDirectory();
+		} catch {
+			return false;
+		}
 	});
 }
 
@@ -121,19 +172,19 @@ function readManagedSkillMarkerRaw(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
+	let descriptor: number | null = null;
 	try {
-		const target = lstatSync(input.target);
-		if (target.isSymbolicLink() || !target.isDirectory()) return null;
-		const receiptStat = lstatSync(input.path);
+		if (!runtimeUserTargetIsDirectory(input.target)) return null;
+		descriptor = openSync(input.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		const receiptStat = fstatSync(descriptor);
 		const effectiveUid = process.geteuid?.();
 		if (
-			receiptStat.isSymbolicLink() ||
 			!receiptStat.isFile() ||
 			(receiptStat.mode & 0o022) !== 0 ||
 			(effectiveUid !== undefined && receiptStat.uid !== effectiveUid)
 		)
 			return null;
-		const receipt = JSON.parse(readFileSync(input.path, "utf8")) as Record<string, unknown>;
+		const receipt = JSON.parse(readFileSync(descriptor, "utf8")) as Record<string, unknown>;
 		if (
 			receipt.schemaVersion === input.schemaVersion &&
 			receipt.skillId === input.skillId &&
@@ -147,6 +198,8 @@ function readManagedSkillMarkerRaw(input: {
 		return null;
 	} catch {
 		return null;
+	} finally {
+		if (descriptor !== null) closeSync(descriptor);
 	}
 }
 
@@ -157,7 +210,7 @@ function readManagedSkillMarker(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
-	return withRuntimeUserFileAccess(() => readManagedSkillMarkerRaw(input));
+	return readManagedSkillMarkerRaw(input);
 }
 
 function readManagedSkillReceipt(input: {
@@ -167,14 +220,91 @@ function readManagedSkillReceipt(input: {
 	target: string;
 	exclude?: ReadonlySet<string>;
 }): ManagedSkillReceipt | null {
-	return withRuntimeUserFileAccess(() => {
-		const marker = readManagedSkillMarkerRaw(input);
-		if (!marker) return null;
-		return marker.treeFingerprint ===
-			managedSkillTreeFingerprint(collectManagedSkillTree(input.target, { exclude: input.exclude }))
-			? marker
-			: null;
-	});
+	const marker = readManagedSkillMarkerRaw(input);
+	if (!marker) return null;
+	return marker.treeFingerprint ===
+		managedSkillTreeFingerprint(
+			collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude }),
+		)
+		? marker
+		: null;
+}
+
+function realDirectoryWithin(root: string, path: string): boolean {
+	const trustedRoot = resolve(root);
+	const target = resolve(path);
+	const child = relative(trustedRoot, target);
+	if (child.startsWith("..") || isAbsolute(child)) {
+		throw new Error(`legacy managed Skill receipt root is outside tenant HOME: ${path}`);
+	}
+	let current = trustedRoot;
+	for (const segment of child ? ["", ...child.split("/")] : [""]) {
+		if (segment) current = join(current, segment);
+		try {
+			const node = lstatSync(current);
+			if (node.isSymbolicLink() || !node.isDirectory()) {
+				throw new Error(`legacy managed Skill receipt path is unsafe: ${current}`);
+			}
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+			throw error;
+		}
+	}
+	return true;
+}
+
+/**
+ * SUNSET(#1148): remove after every supported hosted CLI has migrated
+ * tenant-home Skill receipts into the platform managed-resource root.
+ */
+export function migrateLegacyManagedSkillReceiptDirectory(input: {
+	tenantHome: string;
+	managedResourceRoot: string;
+	runtime: ManagedSkillReceiptRuntime;
+	skillsRoot: string;
+}): void {
+	if (!realDirectoryWithin(input.tenantHome, input.skillsRoot)) return;
+	const legacyDirectory = join(input.skillsRoot, LEGACY_RECEIPT_DIRECTORY);
+	let directory: ReturnType<typeof lstatSync>;
+	try {
+		directory = lstatSync(legacyDirectory);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	if (directory.isSymbolicLink() || !directory.isDirectory()) {
+		rmSync(legacyDirectory, { recursive: true, force: true });
+		return;
+	}
+
+	const schemaVersion =
+		input.runtime === "hermes"
+			? HERMES_MANAGED_SKILL_RECEIPT_SCHEMA
+			: OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA;
+	for (const entry of readdirSync(legacyDirectory, { withFileTypes: true })) {
+		const match = /^([a-z0-9][a-z0-9._-]{0,63})\.json$/.exec(entry.name);
+		if (!match || !entry.isFile() || entry.isSymbolicLink()) continue;
+		const skillId = match[1];
+		const legacyPath = join(legacyDirectory, entry.name);
+		const target = join(input.skillsRoot, skillId);
+		const receipt = readManagedSkillReceipt({
+			path: legacyPath,
+			schemaVersion,
+			skillId,
+			target,
+			...(input.runtime === "openclaw"
+				? { exclude: new Set([".openclaw/source-origin.json"]) }
+				: {}),
+		});
+		if (!receipt) continue;
+		const destination = managedSkillReceiptPath(input.managedResourceRoot, input.runtime, skillId);
+		if (!existsSync(destination)) {
+			writeManagedSkillReceiptRecord(input.managedResourceRoot, destination, receipt);
+		}
+	}
+	// This directory was always Clawdi metadata. Invalid or unknown entries are
+	// deliberately not promoted into platform ownership authority.
+	rmSync(legacyDirectory, { recursive: true, force: true });
 }
 
 export function managedSkillMarkerOwnsTarget(input: {
@@ -274,13 +404,13 @@ export function withManagedTargetRollback<T>(input: {
 	const receiptBackup = input.receipt
 		? join(dirname(input.receipt), `.${basename(input.receipt)}-clawdi-rollback-${suffix}`)
 		: undefined;
-	const hadTarget = existsSync(input.target);
+	const hadTarget = withRuntimeUserFileAccess(() => existsSync(input.target));
 	const hadReceipt = input.receipt !== undefined && existsSync(input.receipt);
 	let targetMoved = false;
 	let receiptMoved = false;
 	try {
 		if (hadTarget) {
-			rename(input.target, targetBackup);
+			withRuntimeUserFileAccess(() => rename(input.target, targetBackup));
 			targetMoved = true;
 		}
 		if (hadReceipt && input.receipt && receiptBackup) {
@@ -289,23 +419,23 @@ export function withManagedTargetRollback<T>(input: {
 		}
 	} catch (error) {
 		if (receiptMoved && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
-		if (targetMoved) rename(targetBackup, input.target);
+		if (targetMoved) withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
 		throw error;
 	}
 	let result: T;
 	try {
 		result = input.operation();
 	} catch (error) {
-		remove(input.target, { recursive: true, force: true });
+		withRuntimeUserFileAccess(() => remove(input.target, { recursive: true, force: true }));
 		if (input.receipt) remove(input.receipt, { force: true });
-		if (hadTarget) rename(targetBackup, input.target);
+		if (hadTarget) withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
 		if (hadReceipt && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
 		throw error;
 	}
 	// The operation returning is the commit point. Backup cleanup is GC and
 	// must never roll back a live target or its ownership receipt.
 	try {
-		remove(targetBackup, { recursive: true, force: true });
+		withRuntimeUserFileAccess(() => remove(targetBackup, { recursive: true, force: true }));
 		if (receiptBackup) remove(receiptBackup, { force: true });
 	} catch {}
 	return result;

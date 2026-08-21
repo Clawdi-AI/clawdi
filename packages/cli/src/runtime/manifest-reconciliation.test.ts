@@ -10,6 +10,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readlinkSync,
+	renameSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -53,7 +54,17 @@ import {
 	restoreRuntimeLiveSnapshot,
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
-import { shouldIgnoreUserSkill } from "./managed-skill-reservation";
+import {
+	collectRuntimeUserManagedSkillTree,
+	legacyManagedSkillReceiptPath,
+	ManagedSkillResourceError,
+	managedSkillReceiptPath,
+	managedSkillTreeFingerprint,
+} from "./managed-skill-delivery";
+import {
+	managedSkillReservationLedgerPath,
+	shouldIgnoreUserSkill,
+} from "./managed-skill-reservation";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
@@ -4261,13 +4272,7 @@ echo spawned > '${installerLog}'
 			},
 			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
 		);
-		const receipt = join(
-			paths.userHome,
-			".hermes",
-			"skills",
-			".clawdi-manifest-receipts",
-			"clawdi.json",
-		);
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi");
 		const converge = (generation: number) => {
 			const result = convergeRuntimeManifest(
 				manifestLoad({ ...manifest, generation }, `legacy-hermes-bundle-${generation}`),
@@ -4329,12 +4334,12 @@ echo spawned > '${installerLog}'
 		const target = join(paths.userHome, ".hermes", "skills", "clawdi");
 		const skillPath = join(target, "SKILL.md");
 		const marker = join(target, ".clawdi-managed.json");
-		const receipt = join(
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi");
+		const legacyReceiptDirectory = join(
 			paths.userHome,
 			".hermes",
 			"skills",
 			".clawdi-manifest-receipts",
-			"clawdi.json",
 		);
 		const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 
@@ -4402,29 +4407,81 @@ echo spawned > '${installerLog}'
 
 		converge(1);
 		expect(existsSync(marker)).toBe(false);
-		expect([statSync(target).uid, statSync(skillPath).uid, statSync(receipt).uid]).toEqual([
-			runtimeUid,
-			runtimeUid,
-			runtimeUid,
-		]);
+		expect([statSync(target).uid, statSync(skillPath).uid]).toEqual([runtimeUid, runtimeUid]);
+		expect(statSync(receipt).uid).toBe(process.geteuid?.());
+		expect(statSync(receipt).mode & 0o777).toBe(0o600);
+		expect(statSync(dirname(receipt)).mode & 0o777).toBe(0o700);
+		expect(existsSync(legacyReceiptDirectory)).toBe(false);
 		expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({
 			ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
 		});
+		const legacyReceipt = legacyManagedSkillReceiptPath(
+			join(paths.userHome, ".hermes", "skills"),
+			"clawdi",
+		);
+		const beforeMigration = {
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			content: readFileSync(receipt),
+		};
+		mkdirSync(dirname(legacyReceipt), { recursive: true, mode: 0o700 });
+		chmodSync(dirname(legacyReceipt), 0o700);
+		renameSync(receipt, legacyReceipt);
+		converge(2);
+		expect(existsSync(legacyReceiptDirectory)).toBe(false);
+		expect({
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			content: readFileSync(receipt),
+		}).toEqual(beforeMigration);
+		expect(statSync(receipt).uid).toBe(0);
 		const stable = {
 			target: statSync(target).ino,
 			skill: statSync(skillPath).ino,
 			receipt: statSync(receipt).ino,
 			content: readFileSync(receipt),
 		};
-		for (const generation of [2, 3]) {
-			converge(generation);
-			expect({
-				target: statSync(target).ino,
-				skill: statSync(skillPath).ino,
-				receipt: statSync(receipt).ino,
-				content: readFileSync(receipt),
-			}).toEqual(stable);
-		}
+		converge(3);
+		expect({
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			receipt: statSync(receipt).ino,
+			content: readFileSync(receipt),
+		}).toEqual(stable);
+
+		expect(() => withRuntimeUserFileAccess(() => writeFileSync(receipt, "{}\n"))).toThrow();
+		withRuntimeUserFileAccess(() => writeFileSync(skillPath, "tenant mutation\n"));
+		const forgedFingerprint = managedSkillTreeFingerprint(
+			collectRuntimeUserManagedSkillTree(target),
+		);
+		if (!forgedFingerprint) throw new Error("counterfeit receipt fixture tree is unsafe");
+		writeFileSync(
+			receipt,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.hermesManifestSkillReceipt.v2",
+				skillId: "clawdi",
+				ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
+				treeFingerprint: forgedFingerprint,
+			})}\n`,
+			{ mode: 0o600 },
+		);
+		chownSync(receipt, runtimeUid, runtimeGid);
+		converge(4);
+		expect(readFileSync(skillPath)).toEqual(readFileSync(join(source, "SKILL.md")));
+		expect(statSync(receipt).uid).toBe(0);
+		const repaired = {
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			receipt: statSync(receipt).ino,
+			content: readFileSync(receipt),
+		};
+		converge(5);
+		expect({
+			target: statSync(target).ino,
+			skill: statSync(skillPath).ino,
+			receipt: statSync(receipt).ino,
+			content: readFileSync(receipt),
+		}).toEqual(repaired);
 	});
 
 	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
@@ -4715,6 +4772,143 @@ echo spawned > '${installerLog}'
 		expect(shouldIgnoreUserSkill(userOwnedSibling, "user-owned")).toBe(false);
 	});
 
+	test("isolates per-Skill resource failures without starving later Skills", () => {
+		const paths = tempRuntimePaths();
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const skillIds = ["a-fail", "b-ready", "c-ready"];
+		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
+		for (const skillId of skillIds) {
+			const source = {
+				type: "github" as const,
+				url: "https://github.com/Clawdi-AI/store",
+				path: `skills/${skillId}`,
+				commit: "a".repeat(40),
+			};
+			preparedSkills.set(skillId, {
+				skillId,
+				source,
+				sourceIdentity: `github\0${skillId}\0${source.url}\0${source.path}\0${source.commit}`,
+				archiveSha256: "b".repeat(64),
+				tarBytes: Buffer.from(`archive:${skillId}`),
+			});
+			entries.entries[skillId] = { enabled: true, source };
+		}
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: entries } },
+		);
+		const attempted: string[] = [];
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "skill-item-isolation"), paths, {
+			preparedHostedSourcedSkills: preparedSkills,
+			hostedHermesSkillExactSourceDriver: {
+				install: ({ skill }) => {
+					attempted.push(skill.skillId);
+					if (skill.skillId === "a-fail") {
+						throw new ManagedSkillResourceError("deterministic native install failure");
+					}
+					const target = join(paths.userHome, ".hermes", "skills", skill.skillId);
+					mkdirSync(target, { recursive: true });
+					writeFileSync(join(target, "SKILL.md"), `${skill.skillId}\n`);
+					return "installed";
+				},
+				anchorOwnership: () => undefined,
+				hasOwnershipReceipt: () => false,
+				verifyOwned: () => false,
+				uninstall: () => "removed",
+				cleanupManifestOwned: () => "removed",
+			},
+		});
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors).toEqual([
+			"runtime hermes Skill projection failed: a-fail: deterministic native install failure",
+		]);
+		expect(attempted).toEqual(skillIds);
+		expect(existsSync(join(paths.userHome, ".hermes", "skills", "a-fail"))).toBe(false);
+		for (const skillId of ["b-ready", "c-ready"]) {
+			expect(
+				readFileSync(join(paths.userHome, ".hermes", "skills", skillId, "SKILL.md"), "utf8"),
+			).toBe(`${skillId}\n`);
+		}
+	});
+
+	test("keeps unmanaged Skill rejection fail-closed across the Skill domain", () => {
+		const paths = tempRuntimePaths();
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const skillIds = ["a-unmanaged", "b-ready", "c-ready"];
+		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
+		for (const skillId of skillIds) {
+			const source = {
+				type: "github" as const,
+				url: "https://github.com/Clawdi-AI/store",
+				path: `skills/${skillId}`,
+				commit: "a".repeat(40),
+			};
+			preparedSkills.set(skillId, {
+				skillId,
+				source,
+				sourceIdentity: `github\0${skillId}\0${source.url}\0${source.path}\0${source.commit}`,
+				archiveSha256: "b".repeat(64),
+				tarBytes: Buffer.from(`archive:${skillId}`),
+			});
+			entries.entries[skillId] = { enabled: true, source };
+		}
+		const unmanaged = join(paths.userHome, ".hermes", "skills", "a-unmanaged");
+		mkdirSync(unmanaged, { recursive: true });
+		writeFileSync(join(unmanaged, "SKILL.md"), "tenant owned\n");
+		const attempted: string[] = [];
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: entries } },
+		);
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "skill-domain-integrity"),
+			paths,
+			{
+				preparedHostedSourcedSkills: preparedSkills,
+				hostedHermesSkillExactSourceDriver: {
+					install: ({ skill }) => {
+						attempted.push(skill.skillId);
+						return "installed";
+					},
+					anchorOwnership: () => undefined,
+					hasOwnershipReceipt: () => false,
+					verifyOwned: () => false,
+					uninstall: () => "removed",
+					cleanupManifestOwned: () => "removed",
+				},
+			},
+		);
+
+		expect(result.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged a-unmanaged skill at ${unmanaged}`,
+		);
+		expect(attempted).toEqual([]);
+		expect(readFileSync(join(unmanaged, "SKILL.md"), "utf8")).toBe("tenant owned\n");
+		expect(existsSync(join(paths.userHome, ".hermes", "skills", "b-ready"))).toBe(false);
+		expect(existsSync(join(paths.userHome, ".hermes", "skills", "c-ready"))).toBe(false);
+	});
+
 	test("installs a bundled OpenClaw Skill from cleaned runtime-readable staging", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
@@ -4752,24 +4946,32 @@ echo spawned > '${installerLog}'
 			readFileSync(join(packageSource, "SKILL.md")),
 		);
 		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
+		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "openclaw", "clawdi");
+		const legacyReceipt = legacyManagedSkillReceiptPath(dirname(target), "clawdi");
+		expect(existsSync(receipt)).toBe(true);
 		expect(
 			existsSync(
-				join(
-					paths.userHome,
-					".openclaw",
-					"workspace",
-					"skills",
-					".clawdi-manifest-receipts",
-					"clawdi.json",
-				),
+				join(paths.userHome, ".openclaw", "workspace", "skills", ".clawdi-manifest-receipts"),
 			),
-		).toBe(true);
+		).toBe(false);
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 
+		const targetBeforeMigration = statSync(target).ino;
+		mkdirSync(dirname(legacyReceipt), { recursive: true, mode: 0o700 });
+		renameSync(receipt, legacyReceipt);
+		const migrated = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "bundled-openclaw-skill-receipt-migration"),
+			paths,
+		);
+		expect(migrated.resourceProjectionErrors).toEqual([]);
+		expect(statSync(target).ino).toBe(targetBeforeMigration);
+		expect(existsSync(receipt)).toBe(true);
+		expect(existsSync(dirname(legacyReceipt))).toBe(false);
+
 		writeFileSync(join(target, "SKILL.md"), "tenant mutation\n");
-		rmSync(paths.managedResourceRoot, { recursive: true, force: true });
+		rmSync(managedSkillReservationLedgerPath(), { force: true });
 		const reconverged = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "bundled-openclaw-skill-restart"),
+			manifestLoad({ ...manifest, generation: 3 }, "bundled-openclaw-skill-restart"),
 			paths,
 		);
 		expect(reconverged.installErrors).toEqual([]);

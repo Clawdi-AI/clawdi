@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
 	claimLegacyHostedBundledSkill,
 	hostedBundledSkillIds,
@@ -11,6 +11,10 @@ import {
 	type PreparedHostedSourcedSkill,
 	prepareHostedBundledSkillArchive,
 } from "./hosted-sourced-skill-archive";
+import {
+	ManagedSkillResourceError,
+	migrateLegacyManagedSkillReceiptDirectory,
+} from "./managed-skill-delivery";
 import {
 	installReservedManagedSkill,
 	type ManagedSkillReservationSnapshot,
@@ -91,6 +95,7 @@ function reservationOwnershipIdentity(reservation: ManagedSkillReservationSnapsh
 function hostedSkillProjectionDrivers(input: {
 	manifest: RuntimeManifest;
 	home: string;
+	managedResourceRoot: string;
 	openClawWorkspaceRoot: string | null;
 	hermesDriver: HostedHermesSkillExactSourceDriver;
 	openClawDriver: HostedOpenClawSkillDriver;
@@ -109,14 +114,21 @@ function hostedSkillProjectionDrivers(input: {
 				input.hermesDriver.install({
 					home: input.home,
 					appRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skill,
 					previouslyReserved,
 				}),
 			anchorOwnership: (skillId, ownershipIdentity) =>
-				input.hermesDriver.anchorOwnership({ home: input.home, skillId, ownershipIdentity }),
+				input.hermesDriver.anchorOwnership({
+					home: input.home,
+					managedResourceRoot: input.managedResourceRoot,
+					skillId,
+					ownershipIdentity,
+				}),
 			hasOwnershipReceipt: (skill) =>
 				input.hermesDriver.hasOwnershipReceipt({
 					home: input.home,
+					managedResourceRoot: input.managedResourceRoot,
 					skillId: skill.skillId,
 					ownershipIdentity: skill.sourceIdentity,
 				}),
@@ -125,6 +137,7 @@ function hostedSkillProjectionDrivers(input: {
 				if (reservation.digest) {
 					input.hermesDriver.cleanupManifestOwned({
 						home: input.home,
+						managedResourceRoot: input.managedResourceRoot,
 						skillId: reservation.id,
 						ownershipIdentity,
 					});
@@ -133,6 +146,7 @@ function hostedSkillProjectionDrivers(input: {
 				input.hermesDriver.uninstall({
 					home: input.home,
 					appRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skillId: reservation.id,
 					ownershipIdentity,
 				});
@@ -149,6 +163,7 @@ function hostedSkillProjectionDrivers(input: {
 				return input.openClawDriver.install({
 					home: input.home,
 					workspaceRoot: input.openClawWorkspaceRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skill,
 					previouslyReserved,
 				});
@@ -159,6 +174,7 @@ function hostedSkillProjectionDrivers(input: {
 				}
 				input.openClawDriver.anchorOwnership({
 					workspaceRoot: input.openClawWorkspaceRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skillId,
 					ownershipIdentity,
 				});
@@ -167,6 +183,7 @@ function hostedSkillProjectionDrivers(input: {
 				if (!input.openClawWorkspaceRoot) return false;
 				return input.openClawDriver.hasOwnershipReceipt({
 					workspaceRoot: input.openClawWorkspaceRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skillId: skill.skillId,
 					ownershipIdentity: skill.sourceIdentity,
 				});
@@ -177,12 +194,52 @@ function hostedSkillProjectionDrivers(input: {
 				}
 				input.openClawDriver.cleanupManifestOwned({
 					workspaceRoot: input.openClawWorkspaceRoot,
+					managedResourceRoot: input.managedResourceRoot,
 					skillId: reservation.id,
 					ownershipIdentity: reservationOwnershipIdentity(reservation),
 				});
 			},
 		},
 	];
+}
+
+function assertSkillsRootInTenantHome(home: string, skillsRoot: string): void {
+	const candidate = relative(resolve(home), resolve(skillsRoot));
+	if (candidate.startsWith("..") || isAbsolute(candidate) || basename(skillsRoot) !== "skills") {
+		throw new Error(`managed Skill reservation is outside tenant HOME: ${skillsRoot}`);
+	}
+}
+
+export function migrateLegacyHostedSkillReceipts(input: {
+	manifest: RuntimeManifest;
+	home: string;
+	managedResourceRoot: string;
+}): void {
+	const hermesSkillsRoot = join(input.home, ".hermes", "skills");
+	const roots = new Map<string, "hermes" | "openclaw">([
+		[hermesSkillsRoot, "hermes"],
+		[join(input.home, ".openclaw", "workspace", "skills"), "openclaw"],
+	]);
+	if (input.manifest.workspaceRoot) {
+		const manifestSkillsRoot = join(input.manifest.workspaceRoot, "skills");
+		assertSkillsRootInTenantHome(input.home, manifestSkillsRoot);
+		roots.set(manifestSkillsRoot, "openclaw");
+	}
+	for (const reservation of managedSkillReservations("hosted-manifest")) {
+		const skillsRoot = dirname(reservation.targetDir);
+		assertSkillsRootInTenantHome(input.home, skillsRoot);
+		roots.set(skillsRoot, skillsRoot === hermesSkillsRoot ? "hermes" : "openclaw");
+	}
+	for (const [skillsRoot, runtime] of [...roots].sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		migrateLegacyManagedSkillReceiptDirectory({
+			tenantHome: input.home,
+			managedResourceRoot: input.managedResourceRoot,
+			runtime,
+			skillsRoot,
+		});
+	}
 }
 function recoverHostedSkillReservations(
 	driver: HostedSkillProjectionDriver,
@@ -268,8 +325,9 @@ function applyHostedSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
-): void {
-	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return;
+): string[] {
+	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return [];
+	const failures: string[] = [];
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const reservations = managedSkillReservations("hosted-manifest").filter(
 		(reservation) => dirname(reservation.targetDir) === driver.skillsRoot,
@@ -292,12 +350,17 @@ function applyHostedSkills(
 				(entry) => entry.targetDir === targetDir && entry.id === skillId,
 			);
 			if (!reservation) throw new Error(`managed Skill ${skillId} has no ownership reservation`);
-			releaseManagedSkill({
-				targetDir,
-				id: skillId,
-				manager: "hosted-manifest",
-				removeTarget: () => driver.remove(reservation),
-			});
+			try {
+				releaseManagedSkill({
+					targetDir,
+					id: skillId,
+					manager: "hosted-manifest",
+					removeTarget: () => driver.remove(reservation),
+				});
+			} catch (error) {
+				if (!(error instanceof ManagedSkillResourceError)) throw error;
+				failures.push(`${skillId}: ${error.message}`);
+			}
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
@@ -309,20 +372,26 @@ function applyHostedSkills(
 		if (withRuntimeUserFileAccess(() => existsSync(targetDir)) && owner !== "hosted-manifest") {
 			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
 		}
-		installReservedManagedSkill(
-			{
-				targetDir,
-				id: skillId,
-				manager: "hosted-manifest",
-				...preparedReservationIdentity(prepared),
-			},
-			() => driver.install(prepared, owner === "hosted-manifest"),
-		);
+		try {
+			installReservedManagedSkill(
+				{
+					targetDir,
+					id: skillId,
+					manager: "hosted-manifest",
+					...preparedReservationIdentity(prepared),
+				},
+				() => driver.install(prepared, owner === "hosted-manifest"),
+			);
+		} catch (error) {
+			if (!(error instanceof ManagedSkillResourceError)) throw error;
+			failures.push(`${skillId}: ${error.message}`);
+		}
 	}
+	return failures;
 }
-function runHostedSkillProjectionStep(label: string, step: () => void): void {
+function runHostedSkillProjectionStep<T>(label: string, step: () => T): T {
 	try {
-		step();
+		return step();
 	} catch (error) {
 		throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, {
 			cause: error,
@@ -333,15 +402,17 @@ export function reconcileHostedSkillProjection(input: {
 	manifest: RuntimeManifest;
 	observations: ReadonlyMap<string, RuntimeInstallObservation>;
 	home: string;
+	managedResourceRoot: string;
 	openClawWorkspaceRoot: string | null;
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>;
 	hermesDriver: HostedHermesSkillExactSourceDriver;
 	openClawDriver: HostedOpenClawSkillDriver;
-}): void {
+}): string[] {
 	const {
 		manifest,
 		observations,
 		home,
+		managedResourceRoot,
 		openClawWorkspaceRoot,
 		preparedSourcedSkills,
 		hermesDriver,
@@ -351,6 +422,7 @@ export function reconcileHostedSkillProjection(input: {
 	const drivers = hostedSkillProjectionDrivers({
 		manifest,
 		home,
+		managedResourceRoot,
 		openClawWorkspaceRoot,
 		hermesDriver,
 		openClawDriver,
@@ -361,9 +433,17 @@ export function reconcileHostedSkillProjection(input: {
 			validateHostedSkillsPlan(driver, manifest, preparedSkills);
 		}
 	});
+	const failures: string[] = [];
 	for (const driver of drivers) {
-		runHostedSkillProjectionStep(`runtime ${driver.name} Skill projection failed`, () => {
-			applyHostedSkills(driver, observations.get(driver.name), manifest, preparedSkills);
-		});
+		const driverFailures = runHostedSkillProjectionStep(
+			`runtime ${driver.name} Skill projection failed`,
+			() => applyHostedSkills(driver, observations.get(driver.name), manifest, preparedSkills),
+		);
+		failures.push(
+			...driverFailures.map(
+				(failure) => `runtime ${driver.name} Skill projection failed: ${failure}`,
+			),
+		);
 	}
+	return failures;
 }

@@ -120,7 +120,10 @@ import {
 	writeJsonFile,
 	writeRuntimePrivateFileAtomic,
 } from "./manifest-shared";
-import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
+import {
+	migrateLegacyHostedSkillReceipts,
+	reconcileHostedSkillProjection,
+} from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
@@ -183,8 +186,13 @@ export function convergeRuntimeManifest(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// Runtime-user state ownership is a platform invariant, not a manifest
-	// mutation: repair it before snapshots so rollback cannot restore drift.
+	// Platform metadata must leave tenant HOME before the recursive ownership
+	// invariant is repaired. Both operations precede snapshots by design.
+	migrateLegacyHostedSkillReceipts({
+		manifest,
+		home: projectionHome,
+		managedResourceRoot: paths.managedResourceRoot,
+	});
 	enforceRuntimeUserOwnership([
 		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true }),
 		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
@@ -852,27 +860,34 @@ export function convergeRuntimeManifest(
 					manifest,
 					projectionHome,
 					openClawWorkspaceRoot,
+					paths.managedResourceRoot,
 				);
 				skillProjectionSnapshot = captureRuntimeLiveSnapshot({
-					rootTargets: [managedSkillReservationLedgerPath()],
+					rootTargets: [
+						managedSkillReservationLedgerPath(),
+						...skillMutationTargets.platformTargets,
+					],
 					trustedRootDirectories: [paths.managedResourceRoot],
-					runtimeUserTargets: skillMutationTargets,
+					runtimeUserTargets: skillMutationTargets.runtimeUserTargets,
 					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
 					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(skillMutationTargets, [
-						paths.userHome,
-						paths.clawdiHome,
-					]),
+					metadataTargets: mutationAncestorMetadataTargets(
+						skillMutationTargets.runtimeUserTargets,
+						[paths.userHome, paths.clawdiHome],
+					),
 				});
-				reconcileHostedSkillProjection({
-					manifest,
-					observations,
-					home: projectionHome,
-					openClawWorkspaceRoot,
-					preparedSourcedSkills: preparedHostedSourcedSkills,
-					hermesDriver: hermesSkillNativeReconciler,
-					openClawDriver: openClawSkillDriver,
-				});
+				resourceProjectionErrors.push(
+					...reconcileHostedSkillProjection({
+						manifest,
+						observations,
+						home: projectionHome,
+						managedResourceRoot: paths.managedResourceRoot,
+						openClawWorkspaceRoot,
+						preparedSourcedSkills: preparedHostedSourcedSkills,
+						hermesDriver: hermesSkillNativeReconciler,
+						openClawDriver: openClawSkillDriver,
+					}),
+				);
 			} catch (error) {
 				const projectionError = error instanceof Error ? error.message : String(error);
 				try {
