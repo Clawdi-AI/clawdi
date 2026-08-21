@@ -88,7 +88,7 @@ test("runtime-user commands exclude platform credentials and tenant-writable PAT
 	}
 });
 
-test("isolated runtime commands override and clear native state locations", () => {
+test("runtime commands pin native state locations and allow explicit isolation overrides", () => {
 	const root = mkdtempSync(join(tmpdir(), "runtime-user-isolation-"));
 	const output = join(root, "environment.json");
 	const previousOpenClawState = process.env.OPENCLAW_STATE_DIR;
@@ -104,6 +104,15 @@ test("isolated runtime commands override and clear native state locations", () =
 		process.env.HERMES_PROFILE = "live-profile";
 		process.env.HERMES_CONFIG = "/live/hermes-config.yaml";
 		process.env.HERMES_ENV = "/live/hermes.env";
+		const pinned = spawnRuntimeUserCommand(
+			process.execPath,
+			["-p", "JSON.stringify([process.env.OPENCLAW_STATE_DIR, process.env.OPENCLAW_CONFIG_PATH])"],
+			root,
+			root,
+		);
+		expect(String(pinned.stdout).trim()).toBe(
+			JSON.stringify([join(root, ".openclaw"), join(root, ".openclaw", "openclaw.json")]),
+		);
 		const result = spawnRuntimeUserCommand(
 			process.execPath,
 			[

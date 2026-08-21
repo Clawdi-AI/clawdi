@@ -20,8 +20,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-	resolveOpenClawProviderAuthSdkExport,
-	resolveOpenClawProviderEnvVarsSdkExport,
+	resolveOpenClawSdkExport as resolveSdk,
+	OPENCLAW_SDK_EXPORT_PATHS as SDK_EXPORTS,
 } from "../../src/lib/codex-oauth-native-store";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import {
@@ -335,12 +335,12 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(clawdiHome);
 	chownSync(clawdiHome, runtimeUid, runtimeGid);
 	chmodSync(clawdiHome, 0o700);
-	const openClawStateDir = join(clawdiHome, "openclaw-state");
-	mkdirSync(openClawStateDir);
+	const openClawStateDir = join(runtimeHome, ".openclaw");
+	mkdirSync(openClawStateDir, { recursive: true });
 	chownSync(openClawStateDir, runtimeUid, runtimeGid);
 	chmodSync(openClawStateDir, 0o700);
 	const openClawAgentsRoot = join(openClawStateDir, "agents");
-	mkdirSync(openClawAgentsRoot);
+	mkdirSync(openClawAgentsRoot, { recursive: true });
 	chownSync(openClawAgentsRoot, runtimeUid, runtimeGid);
 	chmodSync(openClawAgentsRoot, 0o700);
 	const activeAgentDir = join(clawdiHome, "active-openclaw-agent");
@@ -352,10 +352,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	mkdirSync(secondaryAgentDir, { recursive: true });
 	chownSync(secondaryAgentRoot, runtimeUid, runtimeGid);
 	chownSync(secondaryAgentDir, runtimeUid, runtimeGid);
-	const configRoot = join(clawdiHome, "openclaw-config");
-	mkdirSync(configRoot, { mode: 0o700 });
-	chownSync(configRoot, runtimeUid, runtimeGid);
-	const configPath = join(configRoot, "openclaw.json");
+	const configPath = join(openClawStateDir, "openclaw.json");
 	const staleModels = Array.from({ length: 18 }, (_, index) => ({
 		id: `legacy-managed-${index}`,
 		name: `Legacy managed responses model ${index}`,
@@ -434,7 +431,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 	ensureRuntimeStateDirs(paths);
 
 	try {
-		const providerAuthSdkPath = resolveOpenClawProviderAuthSdkExport(runtimeHome, [commandPath]);
+		const providerAuthSdkPath = resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.providerAuth);
 		expect(providerAuthSdkPath).not.toBeNull();
 		if (!providerAuthSdkPath) throw new Error("official OpenClaw provider-auth SDK is unavailable");
 		const authTargets = [null, activeAgentDir, secondaryAgentDir];
@@ -619,9 +616,11 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			},
 			install: { source: "path" },
 		});
-		const providerEnvVarsSdkPath = resolveOpenClawProviderEnvVarsSdkExport(runtimeHome, [
-			commandPath,
-		]);
+		const providerEnvVarsSdkPath = resolveSdk(
+			runtimeHome,
+			[commandPath],
+			SDK_EXPORTS.providerEnvVars,
+		);
 		expect(providerEnvVarsSdkPath).not.toBeNull();
 		if (!providerEnvVarsSdkPath) {
 			throw new Error("official OpenClaw provider-env-vars SDK is unavailable");
@@ -967,7 +966,7 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/run/systemd/system";
 	process.env.CLAWDI_AUTH_TOKEN = "real-filebrowser-systemd-test-auth-token";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-	const openClawStateDir = join(runtimeHome, ".openclaw-files-e2e");
+	const openClawStateDir = join(runtimeHome, ".openclaw");
 	const openClawConfig = join(openClawStateDir, "openclaw.json");
 	const openClawWorkspaceRoot = join(openClawStateDir, "workspace");
 	mkdirSync(openClawStateDir, { recursive: true, mode: 0o700 });

@@ -1,6 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, chownSync, constants } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import {
+	accessSync,
+	chmodSync,
+	chownSync,
+	constants,
+	lchownSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { clearPlatformCredentialEnv } from "./platform-credential-env";
@@ -12,6 +21,14 @@ const DEFAULT_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 export interface RuntimeUserIdentity {
 	uid: number;
 	gid: number;
+}
+
+export interface RuntimeUserOwnershipRule {
+	path: string;
+	owner: "runtime-user";
+	kind: "directory" | "existing";
+	mode?: number;
+	recursive: boolean;
 }
 
 export type RuntimeUserIdentityResolver = (runtimeUser: string) => RuntimeUserIdentity;
@@ -289,6 +306,8 @@ function runtimeUserCommandEnv(
 	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		HOME: home,
+		OPENCLAW_STATE_DIR: join(home, ".openclaw"),
+		OPENCLAW_CONFIG_PATH: join(home, ".openclaw", "openclaw.json"),
 		PATH:
 			runtimeUid === null
 				? [...tenantBinPaths, process.env.PATH].filter(Boolean).join(":")
@@ -368,6 +387,94 @@ export function runtimeEgressGid(): number {
 function positiveLinuxIdEnv(key: string, fallback: number): number {
 	const raw = process.env[key]?.trim();
 	return raw ? parsePositiveLinuxId(raw, key) : fallback;
+}
+
+export function runtimeUserDirectoryOwnership(
+	path: string,
+	options: { mode?: number; ancestorsUnder?: string } = {},
+): RuntimeUserOwnershipRule[] {
+	const target = resolve(path);
+	const paths = [target];
+	if (options.ancestorsUnder) {
+		const boundary = resolve(options.ancestorsUnder);
+		const relativeTarget = relative(boundary, target);
+		if (relativeTarget === ".." || relativeTarget.startsWith("../") || isAbsolute(relativeTarget)) {
+			throw new Error(`runtime-user directory is outside its ownership boundary: ${target}`);
+		}
+		for (let current = dirname(target); ; current = dirname(current)) {
+			paths.push(current);
+			if (current === boundary) break;
+		}
+	}
+	return runtimeUserOwnershipRules(paths, "directory", options, target);
+}
+
+export const runtimeUserExistingOwnership = (paths: readonly string[]) =>
+	runtimeUserOwnershipRules(paths, "existing", {});
+
+function runtimeUserOwnershipRules(
+	paths: readonly string[],
+	kind: RuntimeUserOwnershipRule["kind"],
+	options: { mode?: number },
+	target?: string,
+): RuntimeUserOwnershipRule[] {
+	return [...new Set(paths.map((path) => resolve(path)))]
+		.sort((left, right) => left.length - right.length || left.localeCompare(right))
+		.map((path) => ({
+			path,
+			owner: "runtime-user",
+			kind,
+			...(path === target && options.mode !== undefined ? { mode: options.mode } : {}),
+			recursive: false,
+		}));
+}
+
+export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnershipRule[]): void {
+	if (rules.length === 0) return;
+	const identity = runtimeFilesystemIdentity();
+	for (const rule of rules) {
+		if (rule.kind === "directory") mkdirSync(rule.path, { recursive: true });
+		let node: NonNullable<ReturnType<typeof lstatSync>>;
+		try {
+			node = lstatSync(rule.path);
+		} catch (error) {
+			if (rule.kind === "existing" && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		if (rule.kind === "directory" && (!node.isDirectory() || node.isSymbolicLink())) {
+			throw new Error(`runtime-user ownership path must be a real directory: ${rule.path}`);
+		}
+		enforceRuntimeUserNodeOwnership(rule.path, node, identity, rule.recursive);
+		if (rule.mode !== undefined) chmodSync(rule.path, rule.mode);
+	}
+}
+
+function runtimeFilesystemIdentity(): RuntimeUserIdentity | null {
+	if (!runningAsRoot()) return null;
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (!runtimeUser || runtimeUser === "root" || runtimeUser === "0") return null;
+	const identity = { uid: runtimeUserUid(runtimeUser), gid: runtimeUserGid(runtimeUser) };
+	if (identity.uid === 0 || identity.gid === 0) {
+		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
+	}
+	return identity;
+}
+
+function enforceRuntimeUserNodeOwnership(
+	path: string,
+	node: NonNullable<ReturnType<typeof lstatSync>>,
+	identity: RuntimeUserIdentity | null,
+	recursive: boolean,
+): void {
+	if (identity && (node.uid !== identity.uid || node.gid !== identity.gid)) {
+		if (node.isSymbolicLink()) lchownSync(path, identity.uid, identity.gid);
+		else chownSync(path, identity.uid, identity.gid);
+	}
+	if (!recursive || !node.isDirectory() || node.isSymbolicLink()) return;
+	for (const entry of readdirSync(path)) {
+		const child = join(path, entry);
+		enforceRuntimeUserNodeOwnership(child, lstatSync(child), identity, true);
+	}
 }
 
 export function makeRuntimeUserOwned(path: string): void {
