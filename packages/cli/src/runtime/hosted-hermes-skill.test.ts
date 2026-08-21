@@ -40,23 +40,41 @@ function fakeHermesApp(home: string): string {
 	writeFileSync(
 		hermes,
 		`#!/usr/bin/python3
-import json, os, shutil, sys
+import json, os, re, shutil, sys
 from pathlib import Path
+from urllib.parse import urlparse
 root = Path(os.environ["HOME"]) / ".hermes" / "skills"
 with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
     log.write(" ".join(sys.argv[1:]) + chr(10))
 if sys.argv[1:3] == ["skills", "install"]:
     assert "--yes" in sys.argv and "--name" in sys.argv
-    name = sys.argv[sys.argv.index("--name") + 1]
+    identifier = sys.argv[3]
+    name_override = sys.argv[sys.argv.index("--name") + 1]
+    source_skill = Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md"
+    source_text = source_skill.read_bytes().decode("utf-8", errors="replace")
+    frontmatter = re.match(r"^---\\r?\\n(.*?)\\r?\\n---\\r?\\n", source_text, re.DOTALL)
+    native_name = None
+    if frontmatter:
+        name_line = re.search(r"""^name:\\s*['"]?([^'"\\r\\n]+)""", frontmatter.group(1), re.MULTILINE)
+        if name_line:
+            candidate = name_line.group(1).strip()
+            if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
+                native_name = candidate
+    if native_name is None:
+        parts = [part for part in urlparse(identifier).path.split("/") if part]
+        candidate = parts[-2] if len(parts) >= 2 and parts[-1].lower() == "skill.md" else re.sub(r"(?i)\\.md$", "", parts[-1])
+        if re.fullmatch(r"[a-z][a-z0-9_-]*", candidate.lower()) and candidate.lower() not in {"skill", "readme", "index", "unnamed-skill"}:
+            native_name = candidate
+    name = native_name or name_override
     if os.environ.get("FAKE_HERMES_INSTALL_NOOP") == "1":
+        print("Error: Could not fetch source Skill")
         raise SystemExit(0)
     target = root / name
     marker = root / ".native-installed" / name
     shutil.rmtree(target, ignore_errors=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
-    source_skill = Path(os.environ["FAKE_HERMES_SOURCE"]) / "SKILL.md"
-    (target / "SKILL.md").write_text(source_skill.read_bytes().decode("utf-8", errors="replace"), encoding="utf-8")
+    (target / "SKILL.md").write_text(source_text, encoding="utf-8")
     support = Path(os.environ["FAKE_HERMES_SOURCE"]) / "references" / "guide.md"
     if support.exists():
         (target / "references").mkdir(parents=True, exist_ok=True)
@@ -64,6 +82,13 @@ if sys.argv[1:3] == ["skills", "install"]:
     (target / ".hermes-native.json").write_text(json.dumps({"installed": True}) + chr(10))
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("installed")
+    hub = root / ".hub"
+    lock_path = hub / "lock.json"
+    hub.mkdir(parents=True, exist_ok=True)
+    lock = json.loads(lock_path.read_text()) if lock_path.exists() else {"version": 1, "installed": {}}
+    lock["installed"][name] = {"source": "url", "identifier": identifier, "install_path": name}
+    lock_path.write_text(json.dumps(lock, indent=2) + chr(10))
+    print("Installed: " + name)
 elif sys.argv[1:3] == ["skills", "uninstall"]:
     if len(sys.argv) != 4:
         print("hermes skills uninstall: error: unrecognized arguments: " + " ".join(sys.argv[4:]), file=sys.stderr)
@@ -73,8 +98,13 @@ elif sys.argv[1:3] == ["skills", "uninstall"]:
         raise SystemExit(0)
     if os.environ.get("FAKE_HERMES_UNINSTALL_FAIL") == "1":
         raise SystemExit(43)
-    shutil.rmtree(root / sys.argv[3])
-    (root / ".native-installed" / sys.argv[3]).unlink(missing_ok=True)
+    name = sys.argv[3]
+    shutil.rmtree(root / name)
+    (root / ".native-installed" / name).unlink(missing_ok=True)
+    lock_path = root / ".hub" / "lock.json"
+    lock = json.loads(lock_path.read_text())
+    lock["installed"].pop(name, None)
+    lock_path.write_text(json.dumps(lock, indent=2) + chr(10))
 else:
     raise SystemExit(2)
 `,
@@ -84,7 +114,7 @@ else:
 }
 
 describe("Hermes exact-source Workspace Skill driver", () => {
-	test("rejects a native false success without running a fake rollback", () => {
+	test("rejects a native false success and anchors the official frontmatter target", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-project-skill-"));
 		delete process.env.CLAWDI_RUNTIME_USER;
 		const home = join(root, "home");
@@ -93,7 +123,10 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const appRoot = fakeHermesApp(home);
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
-		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
+		writeFileSync(
+			join(sourceDir, "SKILL.md"),
+			'---\nname: native-review-pr\ndescription: "A long Project Skill description that keeps the native frontmatter name even when --name supplies the manifest id."\n---\n# Review PR\n',
+		);
 		process.env.FAKE_HERMES_SOURCE = sourceDir;
 		const commandLog = join(root, "hermes.log");
 		process.env.FAKE_HERMES_LOG = commandLog;
@@ -130,12 +163,35 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 				skill,
 				previouslyReserved: false,
 			}),
-		).toThrow("installed Skill tree is absent");
+		).toThrow("did not record an installed target: Error: Could not fetch source Skill");
 		expect(readFileSync(commandLog, "utf8").trim()).toBe(
 			`skills install ${installUrl} --name review-pr --yes`,
 		);
 		expect(existsSync(join(home, ".hermes", "skills", "review-pr"))).toBe(false);
 		delete process.env.FAKE_HERMES_INSTALL_NOOP;
+		const nativeTarget = hostedHermesSkillExactSourceDriver.target?.({ home, skill });
+		expect(nativeTarget).toBe(join(home, ".hermes", "skills", "native-review-pr"));
+		expect(
+			hostedHermesSkillExactSourceDriver.install({
+				home,
+				appRoot,
+				managedResourceRoot,
+				skill,
+				targetDir: nativeTarget,
+				previouslyReserved: false,
+			}),
+		).toBe("installed");
+		expect(existsSync(join(home, ".hermes", "skills", "review-pr"))).toBe(false);
+		expect(existsSync(nativeTarget ?? "")).toBe(true);
+		expect(
+			hostedHermesSkillExactSourceDriver.verifyOwned({
+				home,
+				appRoot,
+				managedResourceRoot,
+				skill,
+				targetDir: nativeTarget,
+			}),
+		).toBe(true);
 	});
 
 	test("requires paired ownership and uses Hermes install and uninstall semantics", async () => {
@@ -149,8 +205,9 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 		const sourceDir = join(root, "source", "review-pr");
 		mkdirSync(sourceDir, { recursive: true });
 		const skillV1 =
-			"# Review PR\n\n[Guide](references/guide.md)\n[Missing](references/missing.md)\n";
-		const skillV2 = "# Review PR v2\n\n[Guide](references/guide.md)\n";
+			"---\nname: review-pr\ndescription: Review pull requests\n---\n# Review PR\n\n[Guide](references/guide.md)\n[Missing](references/missing.md)\n";
+		const skillV2 =
+			"---\nname: review-pr\ndescription: Review pull requests\n---\n# Review PR v2\n\n[Guide](references/guide.md)\n";
 		const skillV1Source = Buffer.concat([Buffer.from(skillV1), Buffer.from([0xff])]);
 		const skillV1Native = Buffer.from(skillV1Source.toString("utf8"), "utf8");
 		writeFileSync(join(sourceDir, "SKILL.md"), skillV1Source);
