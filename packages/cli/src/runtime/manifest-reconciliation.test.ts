@@ -5208,6 +5208,11 @@ cp '${commandFixturePath}' '${commandPath}'
 			String(expectedArgs.length),
 			...expectedArgs,
 		]);
+		const inventory = JSON.parse(
+			readFileSync(join(paths.installInventory, "openclaw.json"), "utf8"),
+		) as Record<string, unknown>;
+		expect(inventory.installerArgs).toEqual(expectedArgs);
+		expect(inventory).not.toHaveProperty("command");
 		expect(expectedArgs).not.toContain("--version");
 	});
 

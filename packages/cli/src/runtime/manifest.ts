@@ -1027,17 +1027,6 @@ function makeEgressIdentityPrivateDir(path: string): void {
 	}
 }
 
-function runtimeInstallerCommand(name: string, install: RuntimeInstall | undefined): string[] {
-	if (!install) return [];
-	if (name === "openclaw") {
-		return ["bash", "<downloaded-official-openclaw-installer>", ...install.args];
-	}
-	if (name === "hermes") {
-		return ["bash", "<downloaded-official-hermes-installer>", ...install.args];
-	}
-	return [];
-}
-
 function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
 	if (name === "hermes") return join(home, ".local", "bin", "hermes");
@@ -2560,9 +2549,6 @@ function applyHostedCodexManagedProviderProjection(
 	const configContent = hostedCodexManagedConfigToml(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
 	makeRuntimeUserOwned(configPath);
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(codexHome, { mode: 0o700, ancestorsUnder: home }),
-	);
 
 	return {
 		path: configPath,
@@ -6419,7 +6405,7 @@ export function convergeRuntimeManifest(
 					status: observation.status,
 					executionUser: observation.executionUser,
 					install: observation.install,
-					command: runtimeInstallerCommand(name, runtime.install),
+					installerArgs: runtime.install?.args ?? [],
 					commandPath: observation.commandPath,
 					appRoot: observation.appRoot,
 					installerUrl: observation.installerUrl,
