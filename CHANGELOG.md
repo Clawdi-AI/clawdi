@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.10
+
+Package: `clawdi@0.14.10`
+
+### Fixed
+
+- Skills installed through the retired loopback-URL path are migrated once to
+  Hermes's local form via the official uninstall, clearing stale hub install
+  records; genuinely user-installed hub skills are untouched.
+
 ## Clawdi CLI v0.14.9
 
 Package: `clawdi@0.14.9`
