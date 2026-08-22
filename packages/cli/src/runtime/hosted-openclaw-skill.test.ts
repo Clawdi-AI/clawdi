@@ -17,9 +17,81 @@ import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { managedSkillReceiptPath } from "./managed-skill-delivery";
 
 let root = "";
+const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
 afterEach(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
 	root = "";
+	if (originalSystemctlPath === undefined) delete process.env.CLAWDI_SYSTEMCTL_PATH;
+	else process.env.CLAWDI_SYSTEMCTL_PATH = originalSystemctlPath;
+});
+
+test("retries the official workspace roster while the OpenClaw gateway is restarting", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-gateway-restart-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const systemctl = join(root, "systemctl");
+	const attempts = join(root, "attempts");
+	mkdirSync(dirname(command), { recursive: true });
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+attempt=$(($(cat '${attempts}' 2>/dev/null || printf 0) + 1))
+printf '%s\n' "$attempt" > '${attempts}'
+if test "$attempt" -eq 1; then exit 1; fi
+printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
+`,
+	);
+	writeFileSync(
+		systemctl,
+		`#!/bin/sh
+test "$*" = "--user show openclaw-gateway.service --property=LoadState --property=ActiveState"
+printf '%s\n' 'LoadState=loaded' 'ActiveState=deactivating'
+`,
+	);
+	chmodSync(command, 0o755);
+	chmodSync(systemctl, 0o755);
+	process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+
+	expect(hostedOpenClawSkillDriver.resolveWorkspace({ home })).toBe(workspaceRoot);
+	expect(readFileSync(attempts, "utf8")).toBe("2\n");
+});
+
+test("does not retry roster failures when the OpenClaw gateway failed or is not installed", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-gateway-failure-"));
+	for (const scenario of [
+		{ name: "failed", state: "LoadState=loaded\nActiveState=failed\n", exitCode: 0 },
+		{ name: "not-installed", state: "", exitCode: 1 },
+	] as const) {
+		const home = join(root, scenario.name, "home");
+		const command = join(home, ".local", "bin", "openclaw");
+		const systemctl = join(root, scenario.name, "systemctl");
+		const attempts = join(root, scenario.name, "attempts");
+		mkdirSync(dirname(command), { recursive: true });
+		writeFileSync(
+			command,
+			`#!/bin/sh
+printf '%s\n' "$*" >> '${attempts}'
+exit 1
+`,
+		);
+		writeFileSync(
+			systemctl,
+			`#!/bin/sh
+printf '%s' '${scenario.state}'
+exit ${scenario.exitCode}
+`,
+		);
+		chmodSync(command, 0o755);
+		chmodSync(systemctl, 0o755);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+
+		expect(() => hostedOpenClawSkillDriver.resolveWorkspace({ home })).toThrow(
+			"official agent workspace roster is unavailable",
+		);
+		expect(readFileSync(attempts, "utf8")).toBe("agents list --json\n");
+	}
 });
 
 test("repairs typed invalid config once before retrying the official workspace roster", () => {

@@ -22,12 +22,16 @@ import {
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
+import { parseSystemctlShow, systemctlPath } from "./systemd";
 
 const OPENCLAW_AGENT_ID = "main";
 const SOURCE_RECEIPT = ".openclaw/source-origin.json";
 const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
+const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
+const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
+const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
 
 export interface HostedOpenClawSkillDriver {
 	resolveWorkspace(input: { home: string; repairInvalidConfig?: boolean }): string;
@@ -165,12 +169,50 @@ function repairInvalidConfig(command: string, home: string): boolean {
 	return true;
 }
 
+function openClawGatewayIsTransitioning(home: string): boolean {
+	const result = spawnRuntimeUserCommand(
+		systemctlPath(),
+		["--user", "show", OPENCLAW_GATEWAY_UNIT, "--property=LoadState", "--property=ActiveState"],
+		home,
+		home,
+		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 64 * 1024 },
+	);
+	if (result.status !== 0) return false;
+	const state = parseSystemctlShow(String(result.stdout));
+	return (
+		state.LoadState === "loaded" &&
+		(state.ActiveState === "activating" || state.ActiveState === "deactivating")
+	);
+}
+
+function waitForOpenClawGatewayTransition(): void {
+	Atomics.wait(
+		new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+		0,
+		0,
+		OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS,
+	);
+}
+
 function resolveOfficialWorkspace(home: string, repairInvalidConfigOnFailure = false): string {
 	const command = commandPath(home);
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
 	});
+	for (
+		let attempt = 0;
+		result.status !== 0 &&
+		attempt < OPENCLAW_GATEWAY_TRANSITION_RETRIES &&
+		openClawGatewayIsTransitioning(home);
+		attempt += 1
+	) {
+		waitForOpenClawGatewayTransition();
+		result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
+			timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
+			maxBufferBytes: 1024 * 1024,
+		});
+	}
 	if (result.status !== 0 && repairInvalidConfigOnFailure && repairInvalidConfig(command, home)) {
 		result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 			timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
