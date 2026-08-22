@@ -30,7 +30,11 @@ import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
-import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
+import {
+	OFFICIAL_INSTALL_URLS,
+	officialInstallArgs,
+	type RuntimeManifest,
+} from "../../src/runtime/manifest-contract";
 import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
 import { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-managed-provider-plugin";
 import { getRuntimePaths } from "../../src/runtime/paths";
@@ -127,6 +131,322 @@ function chownTreeWithoutFollowingLinks(path: string, uid: number, gid: number):
 		chownTreeWithoutFollowingLinks(join(path, entry), uid, gid);
 	}
 }
+
+test.each(["hermes", "openclaw"] as const)(
+	"converges a virgin %s deployment from a cold user manager",
+	(runtime) => {
+		if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
+
+		expect(process.geteuid?.()).toBe(0);
+		const runtimeHome = "/home/clawdi";
+		const runtimeUid = 10_001;
+		const runtimeGid = 10_001;
+		const unitName = `${runtime}-gateway.service`;
+		const stockInstaller = "/opt/fixture/install-stock-runtime.sh";
+		const root = mkdtempSync(join(tmpdir(), `clawdi-virgin-${runtime}-`));
+		chmodSync(root, 0o755);
+		const environmentNames = [
+			"CLAWDI_AUTH_TOKEN",
+			"CLAWDI_CODEX_INSTALL_DISABLED",
+			"CLAWDI_HOME",
+			"CLAWDI_RUN_DIR",
+			"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
+			"CLAWDI_RUNTIME_GID",
+			"CLAWDI_RUNTIME_HOME",
+			"CLAWDI_RUNTIME_MODE",
+			"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
+			"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
+			"CLAWDI_RUNTIME_UID",
+			"CLAWDI_RUNTIME_USER",
+			"CLAWDI_SERVICE_STATE_DIR",
+			"CLAWDI_SYSTEMD_SYSTEM_ROOT",
+			"CLAWDI_TEST_STOCK_RUNTIME",
+		] as const;
+		const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]]));
+		const runUserSystemctl = (...args: string[]) =>
+			spawnSync(
+				"runuser",
+				[
+					"-u",
+					"clawdi",
+					"--",
+					"env",
+					`HOME=${runtimeHome}`,
+					`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
+					`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
+					"systemctl",
+					"--user",
+					...args,
+				],
+				{ encoding: "utf8" },
+			);
+		const waitForUserManager = () => {
+			for (let attempt = 0; attempt < 100; attempt++) {
+				const active = spawnSync("systemctl", [
+					"is-active",
+					"--quiet",
+					`user@${runtimeUid}.service`,
+				]);
+				if (active.status === 0 && existsSync(`/run/user/${runtimeUid}/bus`)) return;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+			}
+			throw new Error(`user@${runtimeUid}.service did not expose its D-Bus socket`);
+		};
+		let previousUmask: number | null = null;
+
+		try {
+			if (existsSync(`/run/user/${runtimeUid}/bus`)) {
+				for (const staleUnit of ["hermes-gateway.service", "openclaw-gateway.service"]) {
+					runUserSystemctl("disable", "--now", staleUnit);
+				}
+			}
+			spawnSync("loginctl", ["disable-linger", "clawdi"]);
+			const stopManager = spawnSync("systemctl", ["stop", `user@${runtimeUid}.service`], {
+				encoding: "utf8",
+			});
+			expect(stopManager.status, stopManager.stderr).toBe(0);
+			expect(
+				spawnSync("systemctl", ["is-active", "--quiet", `user@${runtimeUid}.service`]).status,
+			).not.toBe(0);
+
+			rmSync(runtimeHome, { recursive: true, force: true });
+			mkdirSync(runtimeHome, { mode: 0o700 });
+			chownSync(runtimeHome, runtimeUid, runtimeGid);
+			expect(existsSync(join(runtimeHome, ".config", "systemd", "user"))).toBe(false);
+
+			const enableLinger = spawnSync("loginctl", ["enable-linger", "clawdi"], {
+				encoding: "utf8",
+			});
+			expect(enableLinger.status, enableLinger.stderr).toBe(0);
+			const startManager = spawnSync("systemctl", ["start", `user@${runtimeUid}.service`], {
+				encoding: "utf8",
+			});
+			expect(startManager.status, startManager.stderr).toBe(0);
+			waitForUserManager();
+
+			Object.assign(process.env, {
+				CLAWDI_AUTH_TOKEN: `virgin-${runtime}-auth-token`,
+				CLAWDI_CODEX_INSTALL_DISABLED: "1",
+				CLAWDI_HOME: join(root, "clawdi-home"),
+				CLAWDI_RUN_DIR: join(root, "run"),
+				CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+				CLAWDI_RUNTIME_GID: String(runtimeGid),
+				CLAWDI_RUNTIME_HOME: runtimeHome,
+				CLAWDI_RUNTIME_MODE: "hosted",
+				CLAWDI_RUNTIME_UID: String(runtimeUid),
+				CLAWDI_RUNTIME_USER: "clawdi",
+				CLAWDI_SERVICE_STATE_DIR: join(root, "state"),
+				CLAWDI_SYSTEMD_SYSTEM_ROOT: "/run/systemd/system",
+				CLAWDI_TEST_STOCK_RUNTIME: runtime,
+			});
+			delete process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER;
+			delete process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER;
+			process.env[
+				runtime === "hermes"
+					? "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER"
+					: "CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER"
+			] = stockInstaller;
+
+			previousUmask = process.umask(0o077);
+			const paths = getRuntimePaths({ mode: "hosted" });
+			ensureRuntimeStateDirs(paths);
+			const commandPath = join(runtimeHome, ".local", "bin", runtime);
+			const manifest: RuntimeManifest = {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: `hdep_virgin_${runtime}`,
+				environmentId: `env_virgin_${runtime}`,
+				instanceId: `hri_virgin_${runtime}`,
+				generation: 1,
+				issuedAt: "2026-08-22T00:00:00.000Z",
+				workspaceRoot: join(runtimeHome, `clawdi-virgin-${runtime}-workspace`),
+				controlPlane: { apiUrl: "https://cloud-api.example.test" },
+				runtimes: {
+					[runtime]: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: OFFICIAL_INSTALL_URLS[runtime],
+							home: runtimeHome,
+							args: officialInstallArgs(runtime, runtimeHome),
+						},
+						run: {
+							command: commandPath,
+							args: ["gateway", "run"],
+							env: {},
+							prependPath: [],
+						},
+						services: {},
+					},
+				},
+				recovery: {},
+			};
+			const load: RuntimeManifestLoad = {
+				manifest,
+				source: "remote-datasource",
+				sourcePath: `virgin-${runtime}-fixture`,
+				offline: false,
+				applyContext: {
+					kind: "context-file",
+					backend: "incus",
+					identity: {
+						generation: manifest.generation,
+						manifestETag: `"virgin-${runtime}-test"`,
+						applyReceiptId: `virgin-${runtime}-receipt`,
+						bootNonce: `virgin-${runtime}-boot`,
+					},
+					manifestSource: {
+						type: "http",
+						url: `https://runtime.test/v1/runtime/manifest?environment_id=env_virgin_${runtime}`,
+						auth: { type: "bearer", token: `virgin-${runtime}-auth-token` },
+					},
+				},
+			};
+			const before = readSystemdUnitSnapshot(paths);
+			const transaction = new SystemdRuntimeTransaction();
+			let stateBeforeSharedActivation = "";
+			const result = convergeRuntimeManifest(load, paths, {
+				cacheLastGood: false,
+				systemdApply: {
+					transactionState: () => transaction.state,
+					installOfficialService: (unit, install) =>
+						transaction.installOfficialService(paths, unit, install),
+					quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
+					activateEgressPrerequisite: () => ({
+						applied: true,
+						systemUnitsChanged: [],
+						userUnitsChanged: [],
+					}),
+					activate: () => {
+						const state = runUserSystemctl(
+							"show",
+							unitName,
+							"--property=ActiveState",
+							"--property=MainPID",
+						);
+						expect(state.status, state.stderr).toBe(0);
+						stateBeforeSharedActivation = state.stdout;
+						return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
+							transaction,
+							stage: "final-activation",
+						});
+					},
+					rollback: () => transaction.rollback(paths),
+				},
+			});
+			expect(result.installErrors).toEqual([]);
+			expect(stateBeforeSharedActivation).toContain("ActiveState=active");
+			expect(
+				Number.parseInt(stateBeforeSharedActivation.match(/^MainPID=(\d+)$/m)?.[1] ?? "0", 10),
+			).toBeGreaterThan(1);
+
+			const inventory = JSON.parse(
+				readFileSync(join(paths.installInventory, `${runtime}.json`), "utf8"),
+			) as Record<string, unknown>;
+			expect(inventory.status).toBe("installed");
+			expect(inventory.executionUser).toBe("clawdi");
+			expect(inventory.executedInstallerUrl).toBe(stockInstaller);
+
+			const state = runUserSystemctl(
+				"show",
+				unitName,
+				"--property=LoadState",
+				"--property=ActiveState",
+				"--property=MainPID",
+				"--property=NeedDaemonReload",
+			);
+			expect(state.status, state.stderr).toBe(0);
+			expect(state.stdout).toContain("LoadState=loaded");
+			expect(state.stdout).toContain("ActiveState=active");
+			expect(state.stdout).toContain("NeedDaemonReload=no");
+			expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
+			const mainPid = Number.parseInt(state.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0", 10);
+			expect(mainPid).toBeGreaterThan(1);
+			expect(statSync(`/proc/${mainPid}`).uid).toBe(runtimeUid);
+			const processRevisions = readFileSync(`/proc/${mainPid}/environ`)
+				.toString("utf8")
+				.split("\0")
+				.filter((entry) => entry.startsWith("CLAWDI_RUNTIME_REV="));
+			expect(processRevisions).toHaveLength(1);
+			const processRevision = processRevisions[0].slice("CLAWDI_RUNTIME_REV=".length);
+			expect(processRevision).toMatch(/^[a-f0-9]{32}$/);
+			const managedEnvironment = readFileSync(
+				join(paths.systemdEnvRoot, `${unitName}.env`),
+				"utf8",
+			);
+			const desiredRevision = managedEnvironment.match(
+				/^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/m,
+			)?.[1];
+			expect(desiredRevision).toBe(processRevision);
+
+			const unitPath = join(paths.systemdUserRoot, unitName);
+			const dropInRoot = `${unitPath}.d`;
+			const dropInPath = join(dropInRoot, "10-clawdi-hosted.conf");
+			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
+			for (const path of [
+				paths.systemdUserRoot,
+				unitPath,
+				dropInRoot,
+				dropInPath,
+				enablementPath,
+			]) {
+				const node = lstatSync(path);
+				expect([node.uid, node.gid]).toEqual([0, 0]);
+			}
+			for (const path of [paths.systemdUserRoot, dropInRoot]) {
+				expect(lstatSync(path).mode & 0o555).toBe(0o555);
+			}
+			for (const path of [unitPath, dropInPath]) {
+				expect(lstatSync(path).mode & 0o444).toBe(0o444);
+			}
+
+			expect(transaction.journal).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						stage: "official-installer",
+						scope: "user",
+						action: "install",
+						units: [unitName],
+						outcome: "succeeded",
+					}),
+					expect.objectContaining({
+						stage: "final-activation",
+						scope: "user",
+						action: "daemon-reload",
+						outcome: "succeeded",
+					}),
+				]),
+			);
+		} finally {
+			if (previousUmask !== null) process.umask(previousUmask);
+			if (existsSync(`/run/user/${runtimeUid}/bus`)) {
+				for (const staleUnit of ["hermes-gateway.service", "openclaw-gateway.service"]) {
+					runUserSystemctl("disable", "--now", staleUnit);
+				}
+			}
+			rmSync(runtimeHome, { recursive: true, force: true });
+			mkdirSync(runtimeHome, { mode: 0o700 });
+			chownSync(runtimeHome, runtimeUid, runtimeGid);
+			for (const stockHome of ["/opt/stock/base-home", "/opt/stock/openclaw-home"]) {
+				const restore = spawnSync("cp", ["-a", `${stockHome}/.`, `${runtimeHome}/`], {
+					encoding: "utf8",
+				});
+				expect(restore.status, restore.stderr).toBe(0);
+			}
+			for (const [name, value] of previousEnvironment) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			rmSync(root, { recursive: true, force: true });
+			spawnSync("loginctl", ["enable-linger", "clawdi"]);
+			spawnSync("systemctl", ["start", `user@${runtimeUid}.service`]);
+			waitForUserManager();
+			const reload = runUserSystemctl("daemon-reload");
+			expect(reload.status, reload.stderr).toBe(0);
+		}
+	},
+	120_000,
+);
 
 test("propagates the real official OpenClaw installer failure and rolls back as UID 10001", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;

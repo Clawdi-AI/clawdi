@@ -34,17 +34,6 @@ for _attempt in $(seq 1 100); do
 	sleep 0.1
 done
 
-docker exec "$container" loginctl enable-linger clawdi
-docker exec "$container" systemctl start user@10001.service
-for _attempt in $(seq 1 100); do
-	if docker exec "$container" test -S /run/user/10001/bus \
-		&& docker exec "$container" systemctl is-active --quiet user@10001.service; then
-		break
-	fi
-	sleep 0.1
-done
-docker exec "$container" test -S /run/user/10001/bus
-docker exec "$container" systemctl is-active --quiet user@10001.service
 docker exec "$container" bash -lc \
 	'cp -a /repo/. /work/ && bun install --frozen-lockfile'
 docker exec --env CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD=1 "$container" \

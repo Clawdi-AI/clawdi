@@ -1457,8 +1457,16 @@ async function applyRuntimeDesiredState(
 						};
 						return systemdApply;
 					} catch (error) {
+						const mutationJournal = systemdTransaction.journal
+							.map(
+								(entry) =>
+									`${entry.sequence}:${entry.stage}/${entry.scope}/${entry.action}(${entry.units.join(",") || "manager"})=${entry.outcome}`,
+							)
+							.join(", ");
 						throw new Error(
-							`systemd apply failed: ${error instanceof Error ? error.message : String(error)}`,
+							`systemd apply failed: ${error instanceof Error ? error.message : String(error)}${
+								mutationJournal ? `; mutation journal: ${mutationJournal}` : ""
+							}`,
 						);
 					}
 				},
