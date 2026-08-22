@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.12
+
+Package: `clawdi@0.14.12`
+
+### Fixed
+
+- Fresh deployments converge on first boot: systemd files created for the
+  first time are published with manager-readable permissions before official
+  installers start gateways, and activation proof waits for the manager
+  reload it just required. Existing deployments were unaffected.
+
 ## Clawdi CLI v0.14.11
 
 Package: `clawdi@0.14.11`
