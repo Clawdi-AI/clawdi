@@ -1404,6 +1404,7 @@ async function applyRuntimeDesiredState(
 				activate: ({
 					restartDaemon,
 					restartEgressSidecar,
+					reloadUserUnits,
 					restartUserUnits,
 					staleSystemUnits,
 					staleUserUnits,
@@ -1428,6 +1429,7 @@ async function applyRuntimeDesiredState(
 									...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
 								],
+								forceReloadUserUnits: reloadUserUnits,
 								forceRestartUserUnits: restartUserUnits,
 								preserveActiveUnits,
 								previousUserDesiredRevisions,

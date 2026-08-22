@@ -5,6 +5,7 @@ import {
 	chmodSync,
 	chownSync,
 	existsSync,
+	lchownSync,
 	lstatSync,
 	readdirSync,
 	readFileSync,
@@ -12,6 +13,7 @@ import {
 	rmdirSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -1396,6 +1398,58 @@ export function removeStaleRuntimeSystemdFiles(
 	return errors;
 }
 
+function materializeRuntimeSystemdUserEnablement(
+	paths: RuntimePaths,
+	desiredUnits: readonly string[],
+	staleUnits: readonly string[],
+): string[] {
+	const desired = new Set(desiredUnits);
+	const units = [...new Set([...desiredUnits, ...staleUnits])].sort();
+	if (units.length === 0) return [];
+
+	const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
+	ensureDirectoryWithinTrustedRoot(paths.systemdUserRoot, wantsRoot, { mode: 0o755 });
+	chmodSync(wantsRoot, 0o755);
+	if (runningAsRoot()) chownSync(wantsRoot, 0, 0);
+
+	const changed: string[] = [];
+	for (const unitName of units) {
+		const path = join(wantsRoot, unitName);
+		const target = `../${unitName}`;
+		let current: ReturnType<typeof lstatSync> | null = null;
+		try {
+			current = lstatSync(path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+
+		if (!desired.has(unitName)) {
+			if (!current) continue;
+			if (current.isDirectory() && !current.isSymbolicLink()) {
+				throw new Error(`managed systemd enablement path is a directory: ${path}`);
+			}
+			rmSync(path, { force: true });
+			changed.push(unitName);
+			continue;
+		}
+
+		if (current?.isSymbolicLink() && readlinkSync(path) === target) {
+			if (runningAsRoot() && (current.uid !== 0 || current.gid !== 0)) lchownSync(path, 0, 0);
+			continue;
+		}
+		if (current) {
+			if (current.isDirectory() && !current.isSymbolicLink()) {
+				throw new Error(`managed systemd enablement path is a directory: ${path}`);
+			}
+			rmSync(path, { force: true });
+		}
+		symlinkSync(target, path);
+		if (runningAsRoot()) lchownSync(path, 0, 0);
+		changed.push(unitName);
+	}
+	return changed;
+}
+
 export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<string, string> {
 	const environment: Record<string, string> = {
 		HOME: paths.userHome,
@@ -1614,6 +1668,7 @@ export function writeRuntimeSystemdState(input: {
 }): {
 	systemUnits: string[];
 	userUnits: string[];
+	userEnablementChangedUnits: string[];
 	egressSidecarActive: boolean;
 	staleFiles: RuntimeSystemdStaleFilePlan;
 } {
@@ -1731,8 +1786,19 @@ export function writeRuntimeSystemdState(input: {
 			}),
 		);
 	}
+	const userEnablementChangedUnits = materializeRuntimeSystemdUserEnablement(
+		paths,
+		desiredUserUnitNames,
+		staleFiles.userUnits,
+	);
 
-	return { systemUnits, userUnits, egressSidecarActive: shouldRunEgress, staleFiles };
+	return {
+		systemUnits,
+		userUnits,
+		userEnablementChangedUnits,
+		egressSidecarActive: shouldRunEgress,
+		staleFiles,
+	};
 }
 
 export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]): void {

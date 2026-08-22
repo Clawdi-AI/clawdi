@@ -57,6 +57,7 @@ interface RuntimeSystemdApplySignal {
 	restartEgressSidecar: boolean;
 	stopEgressSidecar: boolean;
 	reconcileUserUnits: string[];
+	reloadUserUnits: string[];
 	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];

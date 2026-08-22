@@ -11,6 +11,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
 	realpathSync,
 	rmSync,
 	statSync,
@@ -250,6 +251,8 @@ test.each(["hermes", "openclaw"] as const)(
 			previousUmask = process.umask(0o077);
 			const paths = getRuntimePaths({ mode: "hosted" });
 			ensureRuntimeStateDirs(paths);
+			const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
+			const enablementPath = join(wantsRoot, unitName);
 			const commandPath = join(runtimeHome, ".local", "bin", runtime);
 			const manifest: RuntimeManifest = {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -310,14 +313,18 @@ test.each(["hermes", "openclaw"] as const)(
 				systemdApply: {
 					transactionState: () => transaction.state,
 					installOfficialService: (unit, install) =>
-						transaction.installOfficialService(paths, unit, install),
+						transaction.installOfficialService(paths, unit, () => {
+							chownTreeWithoutFollowingLinks(wantsRoot, 0, 0);
+							expect([lstatSync(wantsRoot).uid, lstatSync(wantsRoot).gid]).toEqual([0, 0]);
+							return install();
+						}),
 					quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
 					activateEgressPrerequisite: () => ({
 						applied: true,
 						systemUnitsChanged: [],
 						userUnitsChanged: [],
 					}),
-					activate: () => {
+					activate: ({ reloadUserUnits }) => {
 						const state = runUserSystemctl(
 							"show",
 							unitName,
@@ -329,6 +336,7 @@ test.each(["hermes", "openclaw"] as const)(
 						return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
 							transaction,
 							stage: "final-activation",
+							forceReloadUserUnits: reloadUserUnits,
 						});
 					},
 					rollback: () => transaction.rollback(paths),
@@ -382,7 +390,6 @@ test.each(["hermes", "openclaw"] as const)(
 			const unitPath = join(paths.systemdUserRoot, unitName);
 			const dropInRoot = `${unitPath}.d`;
 			const dropInPath = join(dropInRoot, "10-clawdi-hosted.conf");
-			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
 			for (const path of [
 				paths.systemdUserRoot,
 				unitPath,
@@ -399,6 +406,7 @@ test.each(["hermes", "openclaw"] as const)(
 			for (const path of [unitPath, dropInPath]) {
 				expect(lstatSync(path).mode & 0o444).toBe(0o444);
 			}
+			expect(readlinkSync(enablementPath)).toBe(`../${unitName}`);
 
 			expect(transaction.journal).toEqual(
 				expect.arrayContaining([
@@ -1547,10 +1555,11 @@ http.createServer((request, response) => {
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
-				activate: () => {
+				activate: ({ reloadUserUnits }) => {
 					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
 						transaction,
 						stage: "final-activation",
+						forceReloadUserUnits: reloadUserUnits,
 					});
 				},
 				rollback: () => transaction.rollback(paths),
@@ -1949,10 +1958,11 @@ esac
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
-				activate: () =>
+				activate: ({ reloadUserUnits }) =>
 					applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
 						transaction,
 						stage: "final-activation",
+						forceReloadUserUnits: reloadUserUnits,
 					}),
 				rollback: () => transaction.rollback(paths),
 			},

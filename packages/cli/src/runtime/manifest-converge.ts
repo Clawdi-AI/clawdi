@@ -1519,6 +1519,7 @@ function activateRuntimeServices(
 			restartEgressSidecar: state.restartEgressSidecar,
 			stopEgressSidecar: false,
 			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
+			reloadUserUnits: [],
 			restartUserUnits: [],
 			staleSystemUnits: [],
 			staleUserUnits: [],
@@ -1534,11 +1535,9 @@ function activateRuntimeServices(
 		const unitPath = join(paths.systemdUserRoot, item.unitName);
 		const installerOwnership = [
 			...runtimeUserDirectoryOwnership(paths.systemdUserRoot),
-			...runtimeUserDirectoryOwnership(join(paths.systemdUserRoot, "default.target.wants")),
 			...runtimeUserExistingOwnership([
 				unitPath,
 				`${unitPath}.bak`,
-				join(paths.systemdUserRoot, "default.target.wants", item.unitName),
 				...(item.program.runtime === "openclaw"
 					? [join(paths.userHome, ".openclaw", "gateway.systemd.env")]
 					: []),
@@ -1578,6 +1577,7 @@ function activateRuntimeServices(
 			restartEgressSidecar: state.restartEgressSidecar,
 			stopEgressSidecar: false,
 			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
+			reloadUserUnits: systemdUnits.userEnablementChangedUnits,
 			restartUserUnits: [
 				...new Set([
 					...state.agentPluginRestartUserUnits,
@@ -1817,6 +1817,7 @@ function rollbackRuntimeApply(
 				restartEgressSidecar: state.restartEgressSidecar && state.egressRollbackAuthorityVerified,
 				stopEgressSidecar: state.restartEgressSidecar && !state.egressRollbackAuthorityVerified,
 				reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
+				reloadUserUnits: [],
 				restartUserUnits: [
 					...new Set([
 						...state.agentPluginRestartUserUnits,

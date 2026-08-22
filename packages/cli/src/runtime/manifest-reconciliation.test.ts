@@ -5377,7 +5377,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(rollbackCalls).toBe(1);
 	});
 
-	test("keeps stale systemd files through authority commit and removes them afterward", () => {
+	test("keeps stale unit authority through commit while declaratively disabling user units", () => {
 		const paths = tempRuntimePaths();
 		const staleSystemUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
@@ -5403,6 +5403,8 @@ installReservedManagedSkill(${JSON.stringify({
 			staleUserEnvironment,
 			staleDropInEnvironment,
 		];
+		const staleEnablementFiles = [staleUserWant, staleDropInWant];
+		const retainedStaleFiles = staleFiles.filter((path) => !staleEnablementFiles.includes(path));
 		for (const path of staleFiles) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nstale\n`);
@@ -5431,7 +5433,8 @@ installReservedManagedSkill(${JSON.stringify({
 				cacheLastGood: false,
 				commitAuthority: () => {
 					expect(activated).toBe(true);
-					for (const path of staleFiles) expect(existsSync(path)).toBe(true);
+					for (const path of retainedStaleFiles) expect(existsSync(path)).toBe(true);
+					for (const path of staleEnablementFiles) expect(existsSync(path)).toBe(false);
 					committed = true;
 				},
 				systemdApply: {
@@ -5443,7 +5446,8 @@ installReservedManagedSkill(${JSON.stringify({
 							"clawdi-old.service",
 							"openclaw-gateway.service",
 						]);
-						for (const path of staleFiles) expect(existsSync(path)).toBe(true);
+						for (const path of retainedStaleFiles) expect(existsSync(path)).toBe(true);
+						for (const path of staleEnablementFiles) expect(existsSync(path)).toBe(false);
 						activated = true;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
@@ -6048,6 +6052,9 @@ printf '{"ok":true}\\n'
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 
+		rmSync(enablementPath);
+		symlinkSync("../unexpected.service", enablementPath);
+		lchownSync(enablementPath, 0, 0);
 		let installerBoundaryObserved = false;
 		const installed = convergeRuntimeManifest(
 			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
@@ -6065,19 +6072,21 @@ printf '{"ok":true}\\n'
 							unitPath,
 							unitBackupPath,
 							gatewayEnvironment,
-							wantsRoot,
-							enablementPath,
 						]) {
 							const node = lstatSync(path);
 							expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 						}
-						for (const path of [dirname(dropInPath), dropInPath]) {
+						for (const path of [dirname(dropInPath), dropInPath, wantsRoot, enablementPath]) {
 							const node = lstatSync(path);
 							expect([node.uid, node.gid]).toEqual([0, 0]);
 						}
+						expect(readlinkSync(enablementPath)).toBe("../openclaw-gateway.service");
 						return install();
 					},
-					activate: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						expect(signal.reloadUserUnits).toEqual(["openclaw-gateway.service"]);
+						return successfulPrerequisiteActivation();
+					},
 					rollback: () => {},
 				},
 			},
