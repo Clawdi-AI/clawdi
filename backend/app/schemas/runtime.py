@@ -686,7 +686,7 @@ class HostedCodexProviderProjection(BaseModel):
     baseUrl: str = Field(min_length=1, max_length=1000)
     apiMode: Literal["openai_responses"]
     managed_by: Literal["clawdi"]
-    runtimeEnvName: Literal["OPENAI_API_KEY", "CLAWDI_AI_API_KEY"]
+    runtimeEnvName: Literal["CLAWDI_AI_API_KEY"]
     apiKeySecretRef: Literal["secret://tool.codex.apiKey"]
 
 
