@@ -47,7 +47,8 @@ from app.core.skill_sync_protocol import (
     SkillSyncProtocol,
     resolve_skill_sync_protocol,
 )
-from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
+from app.models.agent_project_binding import AgentProjectBinding
+from app.models.project import PROJECT_KIND_ENVIRONMENT, PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import (
@@ -60,6 +61,7 @@ from app.schemas.common import Paginated
 from app.schemas.skill import (
     PersistedProjectKind,
     PersistedSkillAuthority,
+    ProjectSkillRefreshRequest,
     SkillContentUpdateRequest,
     SkillCreateRequest,
     SkillDeleteResponse,
@@ -69,6 +71,7 @@ from app.schemas.skill import (
     SkillSummaryResponse,
     SkillUploadResponse,
 )
+from app.services.audit import record_control_plane_audit
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
@@ -1116,6 +1119,248 @@ async def upload_skill_project(
         create_only=create_only,
         content_hash=content_hash,
         skill_sync_protocol=skill_sync_protocol,
+    )
+
+
+async def _project_skill_refresh_rows(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    project_id: UUID,
+    skill_key: str,
+    source_agent_id: UUID,
+    for_update: bool = False,
+) -> tuple[Skill, Skill, str, int]:
+    project = (
+        await db.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == owner_user_id,
+                Project.archived_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
+    if project.kind != PROJECT_KIND_WORKSPACE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_requires_workspace",
+                "message": "Only user-created Project Skills can be refreshed.",
+            },
+        )
+
+    target_query = select(Skill).where(
+        Skill.user_id == owner_user_id,
+        Skill.project_id == project_id,
+        Skill.skill_key == skill_key,
+        Skill.is_active,
+    )
+    if for_update:
+        target_query = target_query.with_for_update()
+    target = (await db.execute(target_query)).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill not found")
+    if target.authority != SKILL_AUTHORITY_CLOUD:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_requires_cloud_authority",
+                "message": "Only Cloud-owned Project Skills can be refreshed.",
+            },
+        )
+
+    source_project_id = (
+        await db.execute(
+            select(AgentEnvironment.default_project_id)
+            .join(Project, Project.id == AgentEnvironment.default_project_id)
+            .where(
+                AgentEnvironment.id == source_agent_id,
+                AgentEnvironment.user_id == owner_user_id,
+                AgentEnvironment.archived_at.is_(None),
+                Project.user_id == owner_user_id,
+                Project.kind == PROJECT_KIND_ENVIRONMENT,
+                Project.origin_environment_id == source_agent_id,
+                Project.archived_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if source_project_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Source Agent not found")
+    is_linked = await db.scalar(
+        select(AgentProjectBinding.id).where(
+            AgentProjectBinding.agent_id == source_agent_id,
+            AgentProjectBinding.project_id == project_id,
+            AgentProjectBinding.binding_type == "context",
+        )
+    )
+    if is_linked is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_source_not_linked",
+                "message": "Link the source Agent to this Project before refreshing its Skill.",
+            },
+        )
+
+    source_query = select(Skill).where(
+        Skill.user_id == owner_user_id,
+        Skill.project_id == source_project_id,
+        Skill.skill_key == skill_key,
+        Skill.authority == SKILL_AUTHORITY_AGENT_SYNC,
+        Skill.authority_agent_id == source_agent_id,
+        Skill.is_active,
+    )
+    if for_update:
+        source_query = source_query.with_for_update()
+    source = (await db.execute(source_query)).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_source_missing",
+                "message": "The source Agent has not synced this Skill.",
+            },
+        )
+    source_file_key = source.file_key
+    source_file_count = source.file_count
+    if source_file_key is None or source_file_count is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_source_unavailable",
+                "message": "The source Agent's Skill archive is unavailable.",
+            },
+        )
+    return target, source, source_file_key, source_file_count
+
+
+@project_router.post("/refresh", response_model=SkillUploadResponse)
+async def refresh_project_skill(
+    project_id: UUID,
+    body: ProjectSkillRefreshRequest,
+    auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    db: AsyncSession = Depends(get_session),
+) -> SkillUploadResponse:
+    """Explicitly replace one linked Project snapshot from its source Agent."""
+    if not is_valid_skill_key(body.skill_key):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+    await validate_project_for_caller(db, auth, project_id)
+    _target, source, source_file_key, source_file_count = await _project_skill_refresh_rows(
+        db,
+        owner_user_id=auth.user_id,
+        project_id=project_id,
+        skill_key=body.skill_key,
+        source_agent_id=body.source_agent_id,
+    )
+    source_snapshot = (source.id, source.content_hash, source_file_key, source_file_count)
+
+    # Do not retain database locks while checking the immutable source object.
+    await db.commit()
+    try:
+        source_exists = await file_store.exists(source_file_key)
+    except Exception as exc:
+        log.warning(
+            "project_skill_refresh_source_check_failed user=%s project=%s skill_key=%s error=%s",
+            auth.user_id,
+            project_id,
+            body.skill_key,
+            _sanitize_log(exc),
+        )
+        source_exists = False
+    if not source_exists:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_source_unavailable",
+                "message": "The source Agent's Skill archive is unavailable.",
+            },
+        )
+
+    await assert_project_skill_write_compatible(
+        db,
+        project_id=project_id,
+        skill_key=body.skill_key,
+        local_skill_key=source.name,
+        enforce_total_limit=False,
+        source_agent_id=body.source_agent_id,
+    )
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, body.skill_key)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    target, source, source_file_key, source_file_count = await _project_skill_refresh_rows(
+        db,
+        owner_user_id=auth.user_id,
+        project_id=project_id,
+        skill_key=body.skill_key,
+        source_agent_id=body.source_agent_id,
+        for_update=True,
+    )
+    if (source.id, source.content_hash, source_file_key, source_file_count) != source_snapshot:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "project_skill_refresh_source_changed",
+                "message": "The source Agent's Skill changed during refresh; retry.",
+            },
+        )
+
+    previous_content_hash = target.content_hash
+    changed = any(
+        (
+            target.name != source.name,
+            target.description != source.description,
+            target.content_hash != source.content_hash,
+            target.file_key != source_file_key,
+            target.file_count != source_file_count,
+            target.source_repo != source.source_repo,
+            target.agent_types != source.agent_types,
+        )
+    )
+    if changed:
+        target.name = source.name
+        target.description = source.description
+        target.content_hash = source.content_hash
+        target.file_key = source_file_key
+        target.file_count = source_file_count
+        target.source_repo = source.source_repo
+        target.agent_types = source.agent_types
+        target.authority = SKILL_AUTHORITY_CLOUD
+        target.authority_agent_id = None
+        target.version += 1
+        await bump_skills_revision(
+            db,
+            auth.user_id,
+            skill_key=target.skill_key,
+            project_id=project_id,
+            content_hash=target.content_hash,
+        )
+    record_control_plane_audit(
+        db,
+        actor_type="user",
+        actor_user_id=auth.user_id,
+        target_user_id=auth.user_id,
+        source="skills.api",
+        action="project_skill.refresh",
+        resource_type="skill",
+        resource_id=str(target.id),
+        environment_id=body.source_agent_id,
+        details={
+            "project_id": str(project_id),
+            "skill_key": target.skill_key,
+            "source_skill_id": str(source.id),
+            "previous_content_hash": previous_content_hash,
+            "content_hash": target.content_hash,
+            "changed": changed,
+        },
+    )
+    await db.commit()
+    return SkillUploadResponse(
+        skill_key=target.skill_key,
+        name=target.name,
+        version=target.version,
+        file_count=source_file_count,
+        content_hash=target.content_hash,
     )
 
 

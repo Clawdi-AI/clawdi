@@ -16,8 +16,10 @@ from app.core.config import settings
 from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
+from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
@@ -209,6 +211,268 @@ async def test_linked_project_skill_is_composed_into_managed_runtime_manifest(
     assert archive.status_code == 200, archive.text
     with tarfile.open(fileobj=io.BytesIO(archive.content), mode="r:gz") as result:
         assert result.getnames() == [f"{local_skill_key}/SKILL.md"]
+
+
+@pytest.mark.asyncio
+async def test_linked_project_skill_refreshes_from_established_agent_source(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    channel_agent: AgentEnvironment,
+):
+    skill_key = "refreshable-source"
+    uploaded = await _upload_project_skill(
+        client,
+        workspace_project.id,
+        skill_key,
+        marker="Old Project snapshot",
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    old_hash = uploaded.json()["content_hash"]
+
+    _set_auth(_connected_agent_auth(seed_user))
+    try:
+        initial_source = await client.post(
+            f"/v1/agents/{channel_agent.id}/skills/sync/upload",
+            data={"skill_key": skill_key},
+            files={
+                "file": (
+                    f"{skill_key}.tar.gz",
+                    _skill_archive(skill_key, "Initial Agent source"),
+                    "application/gzip",
+                )
+            },
+        )
+    finally:
+        _set_auth(AuthContext(user=seed_user))
+    assert initial_source.status_code == 200, initial_source.text
+
+    linked = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=workspace_project.id,
+    )
+    assert linked.status_code == 200, linked.text
+    await _make_runtime_renderable(
+        db_session,
+        user=seed_user,
+        agent_id=channel_agent.id,
+    )
+    old_batch = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[channel_agent.id],
+        owner_user_id=seed_user.id,
+    )
+    old_rendered = render_runtime_source(
+        old_batch,
+        environment_id=channel_agent.id,
+        public_api_url="https://cloud.example.test",
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    old_source = old_rendered.manifest["skills"]["entries"][skill_key]["source"]
+    assert old_source["contentHash"] == old_hash
+
+    _set_auth(_connected_agent_auth(seed_user))
+    try:
+        updated_source = await client.post(
+            f"/v1/agents/{channel_agent.id}/skills/sync/upload",
+            data={"skill_key": skill_key},
+            files={
+                "file": (
+                    f"{skill_key}.tar.gz",
+                    _skill_archive(skill_key, "Updated Agent source"),
+                    "application/gzip",
+                )
+            },
+        )
+    finally:
+        _set_auth(AuthContext(user=seed_user))
+    assert updated_source.status_code == 200, updated_source.text
+    new_hash = updated_source.json()["content_hash"]
+    assert new_hash != old_hash
+
+    refreshed = await client.post(
+        f"/v1/projects/{workspace_project.id}/skills/refresh",
+        json={"skill_key": skill_key, "source_agent_id": str(channel_agent.id)},
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["content_hash"] == new_hash
+
+    source_skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == channel_agent.default_project_id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    project_skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == workspace_project.id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert project_skill.authority == SKILL_AUTHORITY_CLOUD
+    assert project_skill.authority_agent_id is None
+    assert project_skill.content_hash == source_skill.content_hash
+    assert project_skill.file_key == source_skill.file_key
+    assert project_skill.file_count == source_skill.file_count
+
+    refreshed_batch = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[channel_agent.id],
+        owner_user_id=seed_user.id,
+    )
+    refreshed_rendered = render_runtime_source(
+        refreshed_batch,
+        environment_id=channel_agent.id,
+        public_api_url="https://cloud.example.test",
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    refreshed_source = refreshed_rendered.manifest["skills"]["entries"][skill_key]["source"]
+    assert refreshed_source["contentHash"] == new_hash
+    assert refreshed_source["archiveUrl"] != old_source["archiveUrl"]
+    archive = await client.get(urlsplit(refreshed_source["archiveUrl"]).path)
+    assert archive.status_code == 200, archive.text
+    with tarfile.open(fileobj=io.BytesIO(archive.content), mode="r:gz") as result:
+        skill_md = result.extractfile(f"{skill_key}/SKILL.md")
+        assert skill_md is not None
+        assert "Updated Agent source" in skill_md.read().decode()
+
+    audit = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "project_skill.refresh",
+                ControlPlaneAuditEvent.resource_id == str(project_skill.id),
+            )
+        )
+    ).scalar_one()
+    assert audit.actor_user_id == seed_user.id
+    assert audit.environment_id == channel_agent.id
+    assert audit.details["previous_content_hash"] == old_hash
+    assert audit.details["content_hash"] == new_hash
+    assert audit.details["changed"] is True
+
+
+@pytest.mark.asyncio
+async def test_project_skill_refresh_rejects_incomplete_agent_source(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    channel_agent: AgentEnvironment,
+):
+    skill_key = "incomplete-refresh-source"
+    uploaded = await _upload_project_skill(client, workspace_project.id, skill_key)
+    assert uploaded.status_code == 200, uploaded.text
+    db_session.add(
+        Skill(
+            user_id=seed_user.id,
+            project_id=channel_agent.default_project_id,
+            skill_key=skill_key,
+            name=skill_key,
+            description="Incomplete Agent source",
+            content_hash="f" * 64,
+            file_key=None,
+            file_count=None,
+            source=SKILL_AUTHORITY_AGENT_SYNC,
+            authority=SKILL_AUTHORITY_AGENT_SYNC,
+            authority_agent_id=channel_agent.id,
+        )
+    )
+    await db_session.commit()
+    linked = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=workspace_project.id,
+    )
+    assert linked.status_code == 200, linked.text
+
+    rejected = await client.post(
+        f"/v1/projects/{workspace_project.id}/skills/refresh",
+        json={"skill_key": skill_key, "source_agent_id": str(channel_agent.id)},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {
+        "code": "project_skill_refresh_source_unavailable",
+        "message": "The source Agent's Skill archive is unavailable.",
+    }
+    project_skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == workspace_project.id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert project_skill.content_hash == uploaded.json()["content_hash"]
+
+
+@pytest.mark.asyncio
+async def test_project_skill_refresh_rejects_viewer(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    channel_agent: AgentEnvironment,
+):
+    skill_key = "owner-refresh-only"
+    uploaded = await _upload_project_skill(client, workspace_project.id, skill_key)
+    assert uploaded.status_code == 200, uploaded.text
+    viewer = User(
+        clerk_id=f"viewer_{uuid.uuid4().hex}",
+        email=f"viewer-{uuid.uuid4().hex}@test.dev",
+        name="Project Viewer",
+    )
+    db_session.add(viewer)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=workspace_project.id,
+            member_user_id=viewer.id,
+            role="viewer",
+            joined_via="invite",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle="project-owner",
+        )
+    )
+    await db_session.commit()
+
+    _set_auth(AuthContext(user=viewer))
+    try:
+        rejected = await client.post(
+            f"/v1/projects/{workspace_project.id}/skills/refresh",
+            json={"skill_key": skill_key, "source_agent_id": str(channel_agent.id)},
+        )
+    finally:
+        _set_auth(AuthContext(user=seed_user))
+    assert rejected.status_code == 404, rejected.text
+
+    project_skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == workspace_project.id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert project_skill.content_hash == uploaded.json()["content_hash"]
+    audit_count = await db_session.scalar(
+        select(ControlPlaneAuditEvent.id).where(
+            ControlPlaneAuditEvent.action == "project_skill.refresh",
+            ControlPlaneAuditEvent.resource_id == str(project_skill.id),
+        )
+    )
+    assert audit_count is None
 
 
 @pytest.mark.asyncio
