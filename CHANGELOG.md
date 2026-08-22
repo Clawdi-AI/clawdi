@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.11
+
+Package: `clawdi@0.14.11`
+
+### Improved
+
+- Convergence no longer reports transient errors when a gateway is restarting
+  during an upgrade handoff.
+- Completed one-shot migrations from the 0.14.x rollout were removed now that
+  the fleet has fully converged, together with the last internal module
+  dependency cycles.
+
 ## Clawdi CLI v0.14.10
 
 Package: `clawdi@0.14.10`
