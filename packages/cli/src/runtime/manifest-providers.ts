@@ -947,7 +947,16 @@ export function openClawGatewayHostedPatch(
 }
 function jsonMergePatchIsApplied(current: unknown, patch: unknown): boolean {
 	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
-	if (!isPlainRecord(current)) return false;
+	if (!isPlainRecord(current)) {
+		if (current !== undefined) return false;
+		// OpenClaw canonicalizes deletion-only patches by omitting their empty parents.
+		return Object.values(patch).every(
+			(value) =>
+				value === undefined ||
+				value === null ||
+				(isPlainRecord(value) && jsonMergePatchIsApplied(undefined, value)),
+		);
+	}
 	return Object.entries(patch).every(([key, value]) =>
 		value === undefined
 			? true
