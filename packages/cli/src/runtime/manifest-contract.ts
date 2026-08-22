@@ -17,16 +17,6 @@ import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-value
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 export const HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2";
 
-// SUNSET(#1148): remove v1 reads after every supported hosted manifest producer
-// emits MANAGED_AI_PROVIDER_RUNTIME_ENV. Runtime providers and generated config stay canonical-only.
-export const LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV = "OPENAI_API_KEY";
-
-export function isHostedCodexManagedRuntimeEnv(value: string | null | undefined): boolean {
-	return (
-		value === MANAGED_AI_PROVIDER_RUNTIME_ENV || value === LEGACY_HOSTED_CODEX_MANAGED_RUNTIME_ENV
-	);
-}
-
 export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	openclaw: "https://openclaw.ai/install-cli.sh",
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
@@ -622,7 +612,7 @@ const hostedProviderAuthSchema = z
 		}
 	});
 
-const hostedProviderSchema = z
+const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
 		type: z.string().min(1).optional(),
@@ -643,28 +633,34 @@ const hostedProviderSchema = z
 			.optional(),
 		auth: hostedProviderAuthSchema.optional(),
 	})
-	.strict()
-	.superRefine((provider, ctx) => {
-		const hasErrorStatus = provider.status === "error";
-		const hasError = provider.error !== undefined;
-		if (hasErrorStatus !== hasError) {
-			ctx.addIssue({
-				code: "custom",
-				message: "provider status:error and error must be supplied together",
-				path: hasErrorStatus ? ["error"] : ["status"],
-			});
-		}
+	.strict();
 
-		const isProviderNotFound = hasErrorStatus && provider.error?.code === "provider_not_found";
-		const hasNormalProjection = provider.type !== undefined && provider.baseUrl !== undefined;
-		if (!isProviderNotFound && !hasNormalProjection) {
-			ctx.addIssue({
-				code: "custom",
-				message: "provider must include type and baseUrl unless it is a provider_not_found error",
-				path: [],
-			});
-		}
-	});
+function validateHostedProvider(
+	provider: z.infer<typeof hostedProviderBaseSchema>,
+	ctx: z.RefinementCtx,
+): void {
+	const hasErrorStatus = provider.status === "error";
+	const hasError = provider.error !== undefined;
+	if (hasErrorStatus !== hasError) {
+		ctx.addIssue({
+			code: "custom",
+			message: "provider status:error and error must be supplied together",
+			path: hasErrorStatus ? ["error"] : ["status"],
+		});
+	}
+
+	const isProviderNotFound = hasErrorStatus && provider.error?.code === "provider_not_found";
+	const hasNormalProjection = provider.type !== undefined && provider.baseUrl !== undefined;
+	if (!isProviderNotFound && !hasNormalProjection) {
+		ctx.addIssue({
+			code: "custom",
+			message: "provider must include type and baseUrl unless it is a provider_not_found error",
+			path: [],
+		});
+	}
+}
+
+const hostedProviderSchema = hostedProviderBaseSchema.superRefine(validateHostedProvider);
 
 const hostedRuntimeProviderSchema = hostedProviderSchema.superRefine((provider, ctx) => {
 	if (
@@ -679,17 +675,16 @@ const hostedRuntimeProviderSchema = hostedProviderSchema.superRefine((provider, 
 	}
 });
 
-const hostedCodexProviderV1ReadSchema = hostedProviderSchema.transform(
-	({ models: _legacyModels, ...provider }) => provider,
-);
+const hostedCodexProviderSchema = hostedProviderBaseSchema
+	.omit({ models: true })
+	.superRefine(validateHostedProvider);
 
 const hostedCodexToolSchema = z
 	.object({
 		enabled: z.literal(true),
 		provider_id: z.string().min(1),
 		primary_model: hostedPrimaryModelSchema,
-		// Older v1 manifests carried a Codex catalog. Accept it only long enough to self-upgrade.
-		provider: hostedCodexProviderV1ReadSchema,
+		provider: hostedCodexProviderSchema,
 	})
 	.strict()
 	.superRefine((tool, ctx) => {
@@ -704,7 +699,7 @@ const hostedCodexToolSchema = z
 			tool.provider.managed_by !== "clawdi" ||
 			tool.provider.apiMode !== "openai_responses" ||
 			canonicalSecretRefName(tool.provider.apiKeySecretRef) !== "tool.codex.apiKey" ||
-			!isHostedCodexManagedRuntimeEnv(tool.provider.runtimeEnvName) ||
+			tool.provider.runtimeEnvName !== MANAGED_AI_PROVIDER_RUNTIME_ENV ||
 			tool.provider.status === "error"
 		) {
 			ctx.addIssue({

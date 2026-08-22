@@ -15,7 +15,7 @@ import {
 	rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
@@ -25,7 +25,6 @@ const MAX_ENTRIES = 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_BYTES = 32 * 1024 * 1024;
 const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const LEGACY_RECEIPT_DIRECTORY = ".clawdi-manifest-receipts";
 const PLATFORM_RECEIPT_DIRECTORY = "skill-receipts";
 
 export const HERMES_MANAGED_SKILL_RECEIPT_SCHEMA = "clawdi.hermesManifestSkillReceipt.v2";
@@ -47,11 +46,6 @@ export function managedSkillReceiptPath(
 ): string {
 	assertManagedSkillId(skillId);
 	return join(managedResourceRoot, PLATFORM_RECEIPT_DIRECTORY, runtime, `${skillId}.json`);
-}
-
-export function legacyManagedSkillReceiptPath(skillsRoot: string, skillId: string): string {
-	assertManagedSkillId(skillId);
-	return join(skillsRoot, LEGACY_RECEIPT_DIRECTORY, `${skillId}.json`);
 }
 
 export type ManagedSkillTree = ReadonlyMap<string, Buffer>;
@@ -248,83 +242,6 @@ function readManagedSkillReceipt(input: {
 		return { status: "mismatch" };
 	}
 	return { status: "matched", receipt: marker };
-}
-
-function realDirectoryWithin(root: string, path: string): boolean {
-	const trustedRoot = resolve(root);
-	const target = resolve(path);
-	const child = relative(trustedRoot, target);
-	if (child.startsWith("..") || isAbsolute(child)) {
-		throw new Error(`legacy managed Skill receipt root is outside tenant HOME: ${path}`);
-	}
-	let current = trustedRoot;
-	for (const segment of child ? ["", ...child.split("/")] : [""]) {
-		if (segment) current = join(current, segment);
-		try {
-			const node = lstatSync(current);
-			if (node.isSymbolicLink() || !node.isDirectory()) {
-				throw new Error(`legacy managed Skill receipt path is unsafe: ${current}`);
-			}
-		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-			throw error;
-		}
-	}
-	return true;
-}
-
-/**
- * SUNSET(#1148): remove after every supported hosted CLI has migrated
- * tenant-home Skill receipts into the platform managed-resource root.
- */
-export function migrateLegacyManagedSkillReceiptDirectory(input: {
-	tenantHome: string;
-	managedResourceRoot: string;
-	runtime: ManagedSkillReceiptRuntime;
-	skillsRoot: string;
-}): void {
-	if (!realDirectoryWithin(input.tenantHome, input.skillsRoot)) return;
-	const legacyDirectory = join(input.skillsRoot, LEGACY_RECEIPT_DIRECTORY);
-	let directory: ReturnType<typeof lstatSync>;
-	try {
-		directory = lstatSync(legacyDirectory);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-		throw error;
-	}
-	if (directory.isSymbolicLink() || !directory.isDirectory()) {
-		rmSync(legacyDirectory, { recursive: true, force: true });
-		return;
-	}
-
-	const schemaVersion =
-		input.runtime === "hermes"
-			? HERMES_MANAGED_SKILL_RECEIPT_SCHEMA
-			: OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA;
-	for (const entry of readdirSync(legacyDirectory, { withFileTypes: true })) {
-		const match = /^([a-z0-9][a-z0-9._-]{0,63})\.json$/.exec(entry.name);
-		if (!match || !entry.isFile() || entry.isSymbolicLink()) continue;
-		const skillId = match[1];
-		const legacyPath = join(legacyDirectory, entry.name);
-		const target = join(input.skillsRoot, skillId);
-		const receipt = readManagedSkillReceipt({
-			path: legacyPath,
-			schemaVersion,
-			skillId,
-			target,
-			...(input.runtime === "openclaw"
-				? { exclude: new Set([".openclaw/source-origin.json"]) }
-				: {}),
-		});
-		if (receipt.status !== "matched") continue;
-		const destination = managedSkillReceiptPath(input.managedResourceRoot, input.runtime, skillId);
-		if (!existsSync(destination)) {
-			writeManagedSkillReceiptRecord(input.managedResourceRoot, destination, receipt.receipt);
-		}
-	}
-	// This directory was always Clawdi metadata. Invalid or unknown entries are
-	// deliberately not promoted into platform ownership authority.
-	rmSync(legacyDirectory, { recursive: true, force: true });
 }
 
 export function managedSkillMarkerOwnsTarget(input: {

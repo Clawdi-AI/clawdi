@@ -4452,25 +4452,13 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		const legacyWireResponse = hostedCliManifestResponse(home, "clawdi@1.2.3-test");
-		const terminalTooling = expectRecord(
-			legacyWireResponse.manifest.terminalTooling,
-			"legacy terminal tooling",
-		);
-		const codex = expectRecord(terminalTooling.codex, "legacy terminal Codex");
-		const wireProvider = expectRecord(codex.provider, "legacy terminal Codex provider");
+		const wireResponse = hostedCliManifestResponse(home, "clawdi@1.2.3-test");
+		const terminalTooling = expectRecord(wireResponse.manifest.terminalTooling, "terminal tooling");
+		const codex = expectRecord(terminalTooling.codex, "terminal Codex");
+		const wireProvider = expectRecord(codex.provider, "terminal Codex provider");
 		wireProvider.baseUrl = "https://codex-provider.example.test/v1";
-		wireProvider.runtimeEnvName = "OPENAI_API_KEY";
-		wireProvider.models = [{ id: "legacy-codex-model" }];
-		const normalized = normalizeHostedManifestFixture(legacyWireResponse);
-		const normalizedTerminalTooling = expectRecord(
-			normalized.manifest.projection?.terminalTooling,
-			"normalized terminal tooling",
-		);
-		const normalizedCodex = expectRecord(normalizedTerminalTooling.codex, "normalized Codex");
-		const normalizedProvider = expectRecord(normalizedCodex.provider, "normalized Codex provider");
-		expect(normalizedProvider.models).toBeUndefined();
-		const legacyWireLoad: RuntimeManifestLoad = {
+		const normalized = normalizeHostedManifestFixture(wireResponse);
+		const wireLoad: RuntimeManifestLoad = {
 			...normalized,
 			source: "remote-datasource",
 			sourcePath: "https://runtime-source.test/desired-state",
@@ -4488,7 +4476,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		};
 		const paths = getRuntimePaths();
 		seedMitmproxyCache(paths);
-		const convergence = convergeRuntimeManifest(legacyWireLoad, paths);
+		const convergence = convergeRuntimeManifest(wireLoad, paths);
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(statSync(codexHome).mode & 0o777).toBe(0o700);
@@ -4623,7 +4611,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 										baseUrl: "https://managed-provider.example.test/v1",
 										apiMode: "openai_responses",
 										managed_by: "clawdi",
-										runtimeEnvName: "OPENAI_API_KEY",
+										runtimeEnvName: "CLAWDI_AI_API_KEY",
 										apiKeySecretRef: "secret://tool.codex.apiKey",
 									},
 								},
@@ -6299,7 +6287,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(manifestSchema.safeParse(loaded.manifest).success).toBe(false);
 	});
 
-	it("removes the stale Hermes plugin and native provider when projection disappears", () => {
+	it("ignores a retired Hermes plugin while removing the native provider", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6335,14 +6323,14 @@ cp '${sdkSource}' '${sdkTarget}'
 		const first = convergeRuntimeManifest(withProvider, paths);
 		writeTestRuntimeAppliedState(paths, withProvider, first);
 		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
 		expect(
 			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
 		).toBeDefined();
 
 		convergeRuntimeManifest(withoutProvider, paths);
 
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
 		const unmanagedConfig = readHermesConfigYaml(home);
 		expect(unmanagedConfig.providers).toBeUndefined();
 		expect(unmanagedConfig.model).toBeUndefined();
@@ -6598,7 +6586,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const initialConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(initialConfig).toContain("provider: custom:hermes");
 		expect(initialConfig).toMatch(/api: "?https:\/\/hermes-provider\.example\.test\/v1"?/);
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
 
 		writeHermesVersionBinary(home, "0.18.0");
 		convergeRuntimeManifest(loaded, paths);
@@ -6606,7 +6594,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const currentRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
 		const currentConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(currentConfig).toBe(initialConfig);
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
 		expect(currentRevision).toBe(yamlRevision);
 	});
 
@@ -14546,6 +14534,10 @@ exit 64
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		const paths = getRuntimePaths();
+		const retiredWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
+		const retiredWhatsAppReceiptContent = '{"schemaVersion":"clawdi.managedHermesWhatsApp.v1"}\n';
+		mkdirSync(dirname(retiredWhatsAppReceipt), { recursive: true });
+		writeFileSync(retiredWhatsAppReceipt, retiredWhatsAppReceiptContent);
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -14664,6 +14656,7 @@ exit 64
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
@@ -16121,7 +16114,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search.proxy");
 	});
 
-	it("migrates retained v1 MCP ownership without copying legacy config values", () => {
+	it("ignores a retired projection-root v1 MCP ledger", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -16134,13 +16127,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const legacyLedgerPath = join(paths.projectionRoot, "managed-mcp-servers.json");
 		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
 		const hermesConfigPath = join(home, ".hermes", "config.yaml");
-		const legacySecretRef = "env://REDACTED_LEGACY_NAME";
-		const legacyPrefix = "Bearer ";
 		const legacyServer = {
 			url: "https://legacy.example.test/mcp",
 			transport: "streamable-http",
 			headers: {
-				Authorization: { secretRef: legacySecretRef, prefix: legacyPrefix },
+				Authorization: { secretRef: "env://REDACTED_LEGACY_NAME", prefix: "Bearer " },
 			},
 		};
 		const retainedV1Ledger = {
@@ -16154,92 +16145,50 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			`${JSON.stringify({ mcp_servers: { clawdi: legacyServer } }, null, 2)}\n`,
 		);
 		mkdirSync(dirname(legacyLedgerPath), { recursive: true });
-		writeFileSync(legacyLedgerPath, `${JSON.stringify(retainedV1Ledger, null, 2)}\n`);
-		expect(legacyPrefix).toHaveLength(7);
-		const load = (generation: number, includeServer: boolean): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_mcp_ledger_migration",
-				environmentId: "env_mcp_ledger_migration",
-				instanceId: "iid_mcp_ledger_migration",
-				generation,
-				issuedAt: "2026-07-31T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					hermes: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: [],
+		const legacyLedger = `${JSON.stringify(retainedV1Ledger, null, 2)}\n`;
+		writeFileSync(legacyLedgerPath, legacyLedger);
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_retired_mcp_ledger",
+					environmentId: "env_retired_mcp_ledger",
+					instanceId: "iid_retired_mcp_ledger",
+					generation: 1,
+					issuedAt: "2026-07-31T00:00:00Z",
+					workspaceRoot: workspace,
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						hermes: {
+							enabled: true,
+							install: {
+								authority: "official",
+								method: "official-installer",
+								url: "https://hermes-agent.nousresearch.com/install.sh",
+								home,
+								args: [],
+							},
 						},
 					},
-				},
-				projection: {
-					system: { home, workspace },
-					mcp: {
-						servers: includeServer
-							? {
-									clawdi: {
-										url: "https://current.example.test/mcp",
-										transport: "sse",
-										headers: { "X-Manifest": "current-only" },
-									},
-								}
-							: {},
+					projection: {
+						system: { home, workspace },
+						mcp: { servers: {} },
 					},
+					recovery: {},
 				},
-				recovery: {},
+				source: "remote-datasource",
+				sourcePath: "test://retired-mcp-ledger",
+				offline: false,
+				secretValues: {},
 			},
-			source: "remote-datasource",
-			sourcePath: `test://mcp-ledger-migration-${generation}`,
-			offline: false,
-			secretValues: {},
-		});
+			getRuntimePaths(),
+		);
 
-		const migrated = convergeRuntimeManifest(load(1, true), getRuntimePaths());
-		expect(migrated.installErrors).toEqual([]);
-		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
-			clawdi: {
-				url: "https://current.example.test/mcp",
-				transport: "sse",
-				headers: { "X-Manifest": "current-only" },
-			},
-		});
-		const migratedLedgerPayload = JSON.parse(readFileSync(ledgerPath, "utf-8"));
-		expect(migratedLedgerPayload).toEqual({
-			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-			runtimes: { hermes: ["clawdi"] },
-		});
-		const migratedNative = readFileSync(hermesConfigPath, "utf-8");
-		const migratedLedger = readFileSync(ledgerPath, "utf-8");
-		for (const legacyValue of [
-			legacyServer.url,
-			legacyServer.transport,
-			legacySecretRef,
-			legacyPrefix,
-		]) {
-			expect(migratedNative).not.toContain(legacyValue);
-			expect(migratedLedger).not.toContain(legacyValue);
-		}
-		expect(migratedLedger).not.toContain("env://");
-		expect(JSON.stringify(migratedLedgerPayload)).not.toContain(JSON.stringify(legacyServer));
-
-		const roundTripped = convergeRuntimeManifest(load(2, true), getRuntimePaths());
-		expect(roundTripped.installErrors).toEqual([]);
-		expect(readFileSync(hermesConfigPath, "utf-8")).toBe(migratedNative);
-		expect(readFileSync(ledgerPath, "utf-8")).toBe(migratedLedger);
-
-		const removed = convergeRuntimeManifest(load(3, false), getRuntimePaths());
-		expect(removed.installErrors).toEqual([]);
-		expect(readHermesConfigYaml(home).mcp_servers).toBeUndefined();
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
-			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-			runtimes: {},
-		});
+		expect(result.installErrors).toEqual([]);
+		expect(readHermesConfigYaml(home).mcp_servers).toEqual({ clawdi: legacyServer });
+		expect(readFileSync(legacyLedgerPath, "utf-8")).toBe(legacyLedger);
+		expect(existsSync(ledgerPath)).toBe(false);
 	});
 
 	it.each([
@@ -16254,7 +16203,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			"invalid runtimes",
 		],
 		[
-			"invalid v1 server name",
+			"retired v1 schema",
 			{
 				schemaVersion: "clawdi.hostedManagedMcpServers.v1",
 				runtimes: {
@@ -16272,7 +16221,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 					},
 				},
 			},
-			"invalid hermes server name",
+			"unsupported schema",
 		],
 		[
 			"invalid v2 server name",
@@ -17557,6 +17506,14 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
+		const retiredEnvironment = join(home, ".clawdi", "environments", "openclaw.json");
+		const retiredEnvironmentContent = `${JSON.stringify({
+			id: "env-retired",
+			agentType: "openclaw",
+			managedBy: "clawdi runtime init",
+		})}\n`;
+		mkdirSync(dirname(retiredEnvironment), { recursive: true });
+		writeFileSync(retiredEnvironment, retiredEnvironmentContent);
 		setRuntimeApplyGeneration(9, {
 			...CANONICAL_TEST_CONTEXT,
 			bootstrapBearer: "runtime-auth-token",
@@ -17626,6 +17583,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 				join(paths.localEnvironments, "codex.json"),
 				join(paths.localEnvironments, "openclaw.json"),
 			]);
+			expect(readFileSync(retiredEnvironment, "utf-8")).toBe(retiredEnvironmentContent);
 			expect(convergence.outputs.daemonAuthTokenFile).toBe(join(run, "secrets", "auth-token"));
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"runtime-auth-token\n",

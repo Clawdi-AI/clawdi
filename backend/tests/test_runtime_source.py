@@ -1384,8 +1384,10 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
         "decrypt",
         lambda ciphertext, _nonce: plaintext_by_ciphertext[ciphertext],
     )
+    batch = _batch()
+    _set_healthy_cli_observation(batch, desired="clawdi@1.2.3-test")
     source = render_runtime_source(
-        _batch(),
+        batch,
         environment_id=ENV_ID,
         public_api_url="https://cloud.test/",
         vault_key_identity="vault-key-generation-1",
