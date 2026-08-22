@@ -326,7 +326,17 @@ export function applySystemdRuntimeUpdate(
 	for (const unit of user.present) {
 		const state = requiredSystemdUnitState(userStates, "user", unit);
 		if (state.activeState !== "active") continue;
-		const revisions = systemdProcessRevisions(paths, unit, state);
+		let revisions: ReturnType<typeof systemdProcessRevisions>;
+		try {
+			revisions = systemdProcessRevisions(paths, unit, state);
+		} catch (error) {
+			if (!state.needDaemonReload) throw error;
+			// The manager may still be running the pre-candidate view. Reload and
+			// restart before the final proof, while preserving reload-only behavior
+			// when the current process already proves the desired revision.
+			userProcessRevisionDrift.add(unit);
+			continue;
+		}
 		if (revisions.processRevision === revisions.desiredRevision) continue;
 		const committedAlias = committedAliases[unit];
 		if (
@@ -927,11 +937,28 @@ function systemdProcessRevisions(
 		}
 		processRevision = runtimeRevisionFromProcessEnvironment(environment);
 	} catch (error) {
-		throw new Error(`could not prove active runtime revision for managed systemd unit ${unit}`, {
-			cause: error,
-		});
+		const detail = activeRuntimeRevisionProofFailureDetail(error);
+		throw new Error(
+			`could not prove active runtime revision for managed systemd unit ${unit}: ${detail}; manager reload required=${state.needDaemonReload ? "yes" : "no"}`,
+			{ cause: error },
+		);
 	}
 	return { desiredRevision, processRevision };
+}
+
+function activeRuntimeRevisionProofFailureDetail(error: unknown): string {
+	if (error instanceof Error && error.message === "invalid revision entry") {
+		return "active process environment does not contain exactly one valid CLAWDI_RUNTIME_REV";
+	}
+	const code =
+		error && typeof error === "object" && "code" in error && typeof error.code === "string"
+			? error.code
+			: null;
+	if (code === "ENOENT" || code === "ESRCH") return "active process exited during revision proof";
+	if (code === "EACCES" || code === "EPERM") {
+		return "active process environment was not readable under its filesystem identity";
+	}
+	return "active process environment could not be read";
 }
 
 function runtimeRevisionFromProcessEnvironment(environment: Buffer): string {

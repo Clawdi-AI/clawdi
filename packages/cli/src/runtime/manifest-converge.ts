@@ -1353,6 +1353,7 @@ function prepareRuntimeActivation(
 		manifest,
 		paths,
 		opts,
+		platformEnclaves,
 		secretValues,
 		projectionHome,
 		hermesWhatsAppAuthDir,
@@ -1379,6 +1380,12 @@ function prepareRuntimeActivation(
 			),
 		commonEnvironment: egressProjection.commonSystemdEnvironment,
 	});
+	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
+		// Candidate files are written under the root service's private umask.
+		// Publish manager-readable modes before a native installer can reload or
+		// start its unit for the first time.
+		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
+	}
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const officialServicePlan = planOfficialRuntimeServices(
 		state.runtimeSystemdUserPrograms,
