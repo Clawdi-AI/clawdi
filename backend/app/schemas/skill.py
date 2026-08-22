@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -100,6 +101,11 @@ class SkillUploadResponse(BaseModel):
     # an extra round-trip. Empty (legacy) is fine for old callers
     # that don't read it.
     content_hash: str = ""
+
+
+class ProjectSkillRefreshRequest(BaseModel):
+    skill_key: str = Field(min_length=1, max_length=200)
+    source_agent_id: UUID
 
 
 class SkillContentUpdateRequest(BaseModel):

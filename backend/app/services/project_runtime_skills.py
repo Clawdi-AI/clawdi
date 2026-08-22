@@ -339,6 +339,7 @@ async def _assert_agent_accepts_project_skills(
     agent_id: UUID,
     project_id: UUID,
     skill_identities: Iterable[ProjectSkillRuntimeIdentity],
+    allowed_workspace_skill_keys: set[str] | None = None,
 ) -> None:
     identities = tuple(skill_identities)
     if not identities:
@@ -378,7 +379,9 @@ async def _assert_agent_accepts_project_skills(
         else await _connected_workspace_skill_keys(db, agent=agent)
     )
     local_skill_keys = set(local_owners)
-    workspace_conflicts = local_skill_keys & workspace_skill_keys
+    workspace_conflicts = local_skill_keys & (
+        workspace_skill_keys - (allowed_workspace_skill_keys or set())
+    )
     project_conflicts = local_skill_keys & await _other_project_local_skill_keys(
         db,
         agent_id=agent_id,
@@ -428,6 +431,7 @@ async def assert_project_skill_write_compatible(
     skill_key: str,
     local_skill_key: str | None = None,
     enforce_total_limit: bool = True,
+    source_agent_id: UUID | None = None,
 ) -> list[UUID]:
     """Lock the graph and prove a Cloud Skill write has one runtime owner."""
     agent_ids = await lock_project_runtime_graph(db, project_id)
@@ -443,6 +447,9 @@ async def assert_project_skill_write_compatible(
                 agent_id=agent_id,
                 project_id=project_id,
                 skill_identities=proposed_identities,
+                allowed_workspace_skill_keys=(
+                    {local_skill_key} if agent_id == source_agent_id else None
+                ),
             )
     if enforce_total_limit:
         await _assert_project_skill_write_capacity(
@@ -483,7 +490,33 @@ async def assert_agent_workspace_skill_write_compatible(
     project_local_skill_keys = {
         project_skill_runtime_identity(skill_key, name).local_skill_key for skill_key, name in rows
     }
-    conflicts = sorted(skill_keys & project_local_skill_keys)
+    conflicts = skill_keys & project_local_skill_keys
+    if not conflicts:
+        return
+
+    # A linked Project may have been explicitly published from an existing
+    # Agent Workspace projection. Keep accepting updates to that established
+    # source row so a later explicit refresh can converge the Cloud snapshot;
+    # a new local copy still has no ownership evidence and remains rejected.
+    existing_source_keys = set(
+        (
+            await db.execute(
+                select(Skill.skill_key)
+                .join(
+                    AgentEnvironment,
+                    AgentEnvironment.default_project_id == Skill.project_id,
+                )
+                .where(
+                    AgentEnvironment.id == agent_id,
+                    AgentEnvironment.archived_at.is_(None),
+                    Skill.authority_agent_id == agent_id,
+                    Skill.authority == SKILL_AUTHORITY_AGENT_SYNC,
+                    Skill.is_active,
+                )
+            )
+        ).scalars()
+    )
+    conflicts = sorted(conflicts - existing_source_keys)
     if conflicts:
         skill_key = conflicts[0]
         raise HTTPException(

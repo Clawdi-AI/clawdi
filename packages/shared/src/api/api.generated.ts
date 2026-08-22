@@ -1785,6 +1785,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/skills/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Project Skill
+         * @description Explicitly replace one linked Project snapshot from its source Agent.
+         */
+        post: operations["refresh_project_skill_v1_projects__project_id__skills_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/skills": {
         parameters: {
             query?: never;
@@ -6664,6 +6684,16 @@ export interface components {
              * @constant
              */
             project_skill_reconcile_version: 1;
+        };
+        /** ProjectSkillRefreshRequest */
+        ProjectSkillRefreshRequest: {
+            /** Skill Key */
+            skill_key: string;
+            /**
+             * Source Agent Id
+             * Format: uuid
+             */
+            source_agent_id: string;
         };
         /** ProjectUpdate */
         ProjectUpdate: {
@@ -11806,6 +11836,41 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_upload_skill_project_v1_projects__project_id__skills_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_project_skill_v1_projects__project_id__skills_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSkillRefreshRequest"];
             };
         };
         responses: {
