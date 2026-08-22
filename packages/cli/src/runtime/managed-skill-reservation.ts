@@ -675,7 +675,3 @@ export function releaseManagedSkill(input: {
 		return "removed";
 	});
 }
-
-export function isReservedSkillArchivePath(path: string): boolean {
-	return path.split(/[\\/]/).some((segment) => segment.toLowerCase().startsWith(".clawdi-managed"));
-}
