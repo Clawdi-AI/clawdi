@@ -286,13 +286,16 @@ export function HeroCardSkeleton({
 	);
 }
 
-/** Meta line — array items render middot-separated on one truncating line. */
+/** Meta facts use middots on one truncating line or stable spacing when wrapping. */
 export function EntityMeta({
 	items,
 	className,
+	wrap = false,
 }: {
 	items: ReactNode | ReactNode[];
 	className?: string;
+	/** Keep each item intact and wrap between items instead of compressing the row. */
+	wrap?: boolean;
 }) {
 	const arr = (Array.isArray(items) ? items : [items]).filter(
 		(x) => x !== null && x !== undefined && x !== false && x !== "",
@@ -304,18 +307,22 @@ export function EntityMeta({
 		typeof item === "string" || typeof item === "number" ? `t:${item}` : `n:${i}`;
 	return (
 		<div
+			data-slot="entity-meta"
 			className={cn(
-				"mt-0.5 flex min-w-0 items-center overflow-hidden text-sm text-muted-foreground",
+				"mt-0.5 flex min-w-0 items-center text-sm text-muted-foreground",
+				wrap ? "flex-wrap gap-x-3 gap-y-1 overflow-visible" : "overflow-hidden",
 				className,
 			)}
 		>
 			{arr.map((item, i) => (
 				<span
 					key={keyFor(item, i)}
-					className="inline-flex min-w-0 items-center"
+					className={cn("inline-flex min-w-0 items-center", wrap && "max-w-full shrink-0")}
 					title={typeof item === "string" || typeof item === "number" ? String(item) : undefined}
 				>
-					{i > 0 ? <span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span> : null}
+					{i > 0 && !wrap ? (
+						<span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span>
+					) : null}
 					<span className="min-w-0 truncate">{item}</span>
 				</span>
 			))}
@@ -396,6 +403,7 @@ export function HeroCard({
 	titleClassName,
 	descriptionClassName,
 	footerClassName,
+	footerWrap = false,
 	children,
 }: {
 	icon?: ReactNode;
@@ -414,6 +422,8 @@ export function HeroCard({
 	titleClassName?: string;
 	descriptionClassName?: string;
 	footerClassName?: string;
+	/** Wrap dense footer facts between intact items. */
+	footerWrap?: boolean;
 	children?: ReactNode;
 }) {
 	return (
@@ -458,6 +468,7 @@ export function HeroCard({
 				<EntityMeta
 					items={footer}
 					className={cn("mt-auto text-xs text-muted-foreground tabular-nums", footerClassName)}
+					wrap={footerWrap}
 				/>
 			) : null}
 			{link ? (

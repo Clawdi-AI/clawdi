@@ -1121,6 +1121,9 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 				? fulfillJson(r, options.cloudAgentsResponse.body, options.cloudAgentsResponse.status)
 				: fulfillJson(r, options.cloudAgents ?? []);
 		}
+		if (/^\/v1\/agents\/[^/]+\/project-bindings$/.test(p) && r.request().method() === "GET") {
+			return fulfillJson(r, []);
+		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();
@@ -1157,6 +1160,7 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p === "/v1/channels") return fulfillJson(r, []);
 		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
 		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
+		if (p === "/v1/connectors") return fulfillJson(r, []);
 		if (p === "/v1/projects") return fulfillJson(r, []);
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);

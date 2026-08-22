@@ -40,6 +40,8 @@ export function AgentPluginCard({
 	const title = pluginDisplayName(item);
 	const { status, installability, hasUpdate, canInstall, canRetry, version } =
 		agentPluginActionState(item, runtime);
+	const showUpdateBadge = hasUpdate && item.desired?.convergence === "installed";
+	const visibleStatus = showUpdateBadge ? null : status;
 
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
@@ -53,24 +55,27 @@ export function AgentPluginCard({
 					</IconChip>
 				}
 				title={title}
+				badges={
+					visibleStatus || showUpdateBadge ? (
+						<>
+							{visibleStatus ? (
+								<StatusBadge status={visibleStatus.tone} withDot>
+									{visibleStatus.label}
+								</StatusBadge>
+							) : null}
+							{showUpdateBadge ? <StatusBadge status="info">Update available</StatusBadge> : null}
+						</>
+					) : undefined
+				}
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				footer={[
-					status ? (
-						<StatusBadge key="status" status={status.tone} withDot>
-							{status.label}
-						</StatusBadge>
-					) : null,
-					hasUpdate ? (
-						<StatusBadge key="update" status="info">
-							Update available
-						</StatusBadge>
-					) : null,
 					item.catalog?.publisher,
 					version,
 					item.catalog ? agentPluginComponentSummary(item.catalog) : null,
 				]}
+				footerWrap
 				actionsVisibility="always"
 				actions={
 					<>
