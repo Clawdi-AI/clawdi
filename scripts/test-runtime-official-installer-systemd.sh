@@ -35,7 +35,14 @@ for _attempt in $(seq 1 100); do
 done
 
 docker exec "$container" bash -lc \
-	'cp -a /repo/. /work/ && bun install --frozen-lockfile'
+	'cp -a /repo/. /work/ \
+		&& bun install --frozen-lockfile \
+		&& bun run --cwd packages/cli build \
+		&& mkdir -p /usr/local/share/clawdi/bootstrap \
+		&& npm pack ./packages/cli --pack-destination /usr/local/share/clawdi/bootstrap --silent >/dev/null \
+		&& mv /usr/local/share/clawdi/bootstrap/clawdi-*.tgz \
+			/usr/local/share/clawdi/bootstrap/clawdi-local.tgz'
 docker exec --env CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD=1 "$container" \
 	bun test --isolate --max-concurrency=1 --timeout 30000 \
+	"$@" \
 	packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts

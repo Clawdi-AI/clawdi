@@ -591,6 +591,12 @@ esac
 
 		expect(converge().installErrors).toEqual([]);
 		expect(restartSignals.at(-1)).toEqual(["openclaw-gateway.service"]);
+
+		manifest.projection = { channels: {} };
+		writeFileSync(configPath, "{}\n");
+		expect(converge().installErrors).toEqual([]);
+		expect(restartSignals.at(-1)).toEqual([]);
+		expect(readFileSync(configPath, "utf8")).toBe("{}\n");
 	});
 
 	test("renders systemd runtime services without creating user command shims", () => {
