@@ -12,7 +12,6 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createGunzip } from "node:zlib";
 import * as tar from "tar";
-import { isReservedSkillArchivePath } from "../runtime/managed-skill-reservation";
 import { assertValidSkillKey } from "./skill-key";
 
 /**
@@ -89,6 +88,10 @@ function isRegularArchiveFile(type: string | undefined): boolean {
 
 function isAllowedArchiveEntry(type: string | undefined): boolean {
 	return isRegularArchiveFile(type) || type === "Directory";
+}
+
+function isReservedSkillArchivePath(path: string): boolean {
+	return path.split(/[\\/]/).some((segment) => segment.toLowerCase().startsWith(".clawdi-managed"));
 }
 
 /**

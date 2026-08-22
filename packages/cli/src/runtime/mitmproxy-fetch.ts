@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { EgressEnginePin } from "./manifest-contract";
+import type { EgressEnginePin } from "./egress-engine";
 import type { RuntimePaths } from "./paths";
 
 export interface RuntimeMitmproxyReady {

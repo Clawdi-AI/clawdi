@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { z } from "zod";
+import { egressEngineSchema } from "./egress-engine";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
 import {
 	hostedAgentPluginsDesiredStateSchema,
@@ -13,6 +14,9 @@ import {
 	runtimeServiceNameSchema,
 } from "./run-config";
 import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-values";
+
+export type { EgressEnginePin } from "./egress-engine";
+export { egressEngineSchema } from "./egress-engine";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 export const HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2";
@@ -362,15 +366,6 @@ const runtimeCompanionsSchema = z
 		filebrowser: fileBrowserCompanionSchema.optional(),
 	})
 	.strict();
-
-export const egressEngineSchema = z.object({
-	type: z.literal("mitmproxy"),
-	version: z.string().min(1),
-	url: z.string().url(),
-	sha256: sha256Schema,
-});
-
-export type EgressEnginePin = z.infer<typeof egressEngineSchema>;
 
 const liveSyncAgentSchema = z.object({
 	agentType: runtimeNameSchema,
