@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -48,6 +47,7 @@ from app.services.composio import (
     ComposioRouteError,
     call_tool_router_mcp_tool,
     get_tool_router_mcp_session,
+    get_tool_router_mcp_tools,
     list_tool_router_mcp_tools,
     verify_mcp_bridge_token,
 )
@@ -642,41 +642,18 @@ async def _read_request_json(request: Request) -> JsonValue | None:
         return None
 
 
-# Connector tool definitions change only when the user connects/disconnects
-# an app; a short per-user cache keeps repeated tools/list calls (every MCP
-# client init) from paying a Composio round-trip each time.
-_CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
-_connector_tools_cache: dict[str, tuple[float, list[JsonObject]]] = {}
-
-
 async def _connector_mcp_tools(auth: AuthContext) -> list[JsonObject]:
     try:
         require_auth_scopes(auth, "connectors:read")
     except HTTPException:
         return []
     clerk_id = require_clerk_id(auth)
-    now = time.monotonic()
-    cached = _connector_tools_cache.get(clerk_id)
-    if cached and cached[0] > now:
-        return cached[1]
-    tools: list[JsonObject] = []
     try:
-        session = await get_tool_router_mcp_session(clerk_id)
-        result = await list_tool_router_mcp_tools(session)
-        serialized = _JSON_OBJECT_ADAPTER.validate_json(
-            result.model_dump_json(by_alias=True, exclude_none=True)
-        )
-        raw_tools = serialized.get("tools")
-        if isinstance(raw_tools, list):
-            tools = [tool for tool in raw_tools if isinstance(tool, dict)]
-        _connector_tools_cache[clerk_id] = (
-            now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
-            tools,
-        )
+        return await get_tool_router_mcp_tools(clerk_id)
     except (ComposioMcpUpstreamError, ComposioRouteError):
         # Failures are not cached — the next call retries immediately.
         logger.info("Connector MCP tools unavailable")
-    return tools
+        return []
 
 
 async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[JsonObject]:

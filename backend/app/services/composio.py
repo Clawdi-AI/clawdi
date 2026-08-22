@@ -237,6 +237,8 @@ class ConnectorAppPage(TypedDict):
 _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
+_tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, list[JsonObject]]] = {}
+_tool_router_tools_inflight: dict[str, asyncio.Task[list[JsonObject]]] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
@@ -460,7 +462,14 @@ def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
 async def close_composio_client() -> None:
     """Close the shared Composio HTTP clients on ASGI shutdown."""
     global _client, _sdk_client
+    pending_tools = tuple(_tool_router_tools_inflight.values())
+    _tool_router_tools_inflight.clear()
+    for task in pending_tools:
+        task.cancel()
+    if pending_tools:
+        await asyncio.gather(*pending_tools, return_exceptions=True)
     _tool_router_session_cache.clear()
+    _tool_router_tools_cache.clear()
     if _client is not None:
         await _call_generated_sdk(_client.close())
         _client = None
@@ -520,8 +529,52 @@ async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
 
 
 def invalidate_tool_router_mcp_session(user_id: str) -> None:
-    """Drop a user's cached Tool Router session after connection changes."""
+    """Drop a user's cached Tool Router session and schemas after connection changes."""
     _tool_router_session_cache.pop(user_id, None)
+    _tool_router_tools_cache.pop(user_id, None)
+
+
+async def get_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
+    """Return session-bound tools through a cancellation-safe per-user load."""
+    task = _tool_router_tools_inflight.get(user_id)
+    if task is None:
+        task = asyncio.create_task(_load_tool_router_mcp_tools(user_id))
+        _tool_router_tools_inflight[user_id] = task
+        task.add_done_callback(
+            lambda completed: _finish_tool_router_mcp_tools_load(user_id, completed)
+        )
+    return await asyncio.shield(task)
+
+
+async def _load_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
+    while True:
+        session = await get_tool_router_mcp_session(user_id)
+        cached = _tool_router_tools_cache.get(user_id)
+        if cached and cached[0] is session:
+            return cached[1]
+
+        result = await list_tool_router_mcp_tools(session)
+        if _tool_router_session_cache.get(user_id) is not session:
+            continue
+
+        serialized = _JSON_OBJECT_ADAPTER.validate_json(
+            result.model_dump_json(by_alias=True, exclude_none=True)
+        )
+        raw_tools = serialized.get("tools")
+        tools = (
+            [tool for tool in raw_tools if isinstance(tool, dict)]
+            if isinstance(raw_tools, list)
+            else []
+        )
+        _tool_router_tools_cache[user_id] = (session, tools)
+        return tools
+
+
+def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[list[JsonObject]]) -> None:
+    if _tool_router_tools_inflight.get(user_id) is task:
+        _tool_router_tools_inflight.pop(user_id, None)
+    if not task.cancelled():
+        task.exception()
 
 
 async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
