@@ -7,6 +7,7 @@ endpoint must remain the only public MCP surface.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -769,6 +770,120 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
         "resultType": "complete",
         "_meta": {"composio": {"request": "complete"}},
     }
+
+
+@pytest.mark.asyncio
+async def test_connector_tool_cache_is_user_scoped_session_bound_and_single_flight(monkeypatch):
+    from mcp.types import ListToolsResult
+
+    from app.core.auth import AuthContext
+    from app.models.user import User
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+
+    sessions = {
+        "clerk_cache_a": ComposioMcpSession(
+            url="https://composio.test/a/1",
+            headers={"x-api-key": "a-1"},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        ),
+        "clerk_cache_b": ComposioMcpSession(
+            url="https://composio.test/b/1",
+            headers={"x-api-key": "b-1"},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        ),
+    }
+    list_started = asyncio.Event()
+    release_list = asyncio.Event()
+    session_calls: list[str] = []
+    list_calls: list[str] = []
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        session_calls.append(user_id)
+        return sessions[user_id]
+
+    async def fake_list(session: ComposioMcpSession) -> ListToolsResult:
+        list_calls.append(session.url)
+        list_started.set()
+        await release_list.wait()
+        return ListToolsResult.model_validate(
+            {
+                "tools": [
+                    {
+                        "name": f"COMPOSIO_{session.url.rsplit('/', 2)[-2].upper()}",
+                        "inputSchema": {"type": "object"},
+                    }
+                ]
+            }
+        )
+
+    def auth(clerk_id: str) -> AuthContext:
+        return AuthContext(
+            user=User(
+                email=f"{clerk_id}@clawdi.local",
+                name="MCP Cache Test",
+                clerk_id=clerk_id,
+            )
+        )
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_inflight", {})
+
+    first = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_a")))
+    await list_started.wait()
+    second = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_a")))
+    await asyncio.sleep(0)
+    assert session_calls == ["clerk_cache_a"]
+    assert list_calls == ["https://composio.test/a/1"]
+
+    release_list.set()
+    first_tools, second_tools = await asyncio.gather(first, second)
+    cached_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_a"))
+    other_user_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_b"))
+
+    sessions["clerk_cache_a"] = ComposioMcpSession(
+        url="https://composio.test/a/2",
+        headers={"x-api-key": "a-2"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+    refreshed_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_a"))
+
+    assert first_tools == second_tools == cached_tools
+    assert first_tools[0]["name"] == "COMPOSIO_A"
+    assert other_user_tools[0]["name"] == "COMPOSIO_B"
+    assert refreshed_tools[0]["name"] == "COMPOSIO_A"
+    assert list_calls == [
+        "https://composio.test/a/1",
+        "https://composio.test/b/1",
+        "https://composio.test/a/2",
+    ]
+
+    failure_started = asyncio.Event()
+    release_failure = asyncio.Event()
+    sessions["clerk_cache_failure"] = ComposioMcpSession(
+        url="https://composio.test/failure/1",
+        headers={"x-api-key": "failure-1"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    async def failing_list(session: ComposioMcpSession) -> ListToolsResult:
+        failure_started.set()
+        await release_failure.wait()
+        raise mcp_bridge.ComposioMcpUpstreamError("unavailable")
+
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", failing_list)
+    failed_first = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_failure")))
+    await failure_started.wait()
+    failed_second = asyncio.create_task(
+        mcp_bridge._connector_mcp_tools(auth("clerk_cache_failure"))
+    )
+    await asyncio.sleep(0)
+    assert session_calls.count("clerk_cache_failure") == 1
+
+    release_failure.set()
+    assert await asyncio.gather(failed_first, failed_second) == [[], []]
 
 
 @pytest.mark.asyncio

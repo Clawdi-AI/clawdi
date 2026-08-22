@@ -1,9 +1,9 @@
 """Clawdi MCP endpoint with internal Composio Tool Router forwarding."""
 
+import asyncio
 import json
 import logging
 import re
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -44,6 +44,7 @@ from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
 from app.services.composio import (
+    ComposioMcpSession,
     ComposioMcpUpstreamError,
     ComposioRouteError,
     call_tool_router_mcp_tool,
@@ -642,11 +643,12 @@ async def _read_request_json(request: Request) -> JsonValue | None:
         return None
 
 
-# Connector tool definitions change only when the user connects/disconnects
-# an app; a short per-user cache keeps repeated tools/list calls (every MCP
-# client init) from paying a Composio round-trip each time.
-_CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
-_connector_tools_cache: dict[str, tuple[float, list[JsonObject]]] = {}
+# Tool Router sessions capture a user's connected accounts. Bind cached schemas
+# to that exact session so repeated MCP client startups avoid the remote
+# handshake for the session's 30-minute lifetime; connection changes invalidate
+# the session and force a refresh.
+_connector_tools_cache: dict[str, tuple[ComposioMcpSession, list[JsonObject]]] = {}
+_connector_tools_inflight: dict[str, asyncio.Future[list[JsonObject]]] = {}
 
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[JsonObject]:
@@ -655,27 +657,41 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[JsonObject]:
     except HTTPException:
         return []
     clerk_id = require_clerk_id(auth)
-    now = time.monotonic()
-    cached = _connector_tools_cache.get(clerk_id)
-    if cached and cached[0] > now:
-        return cached[1]
+    inflight = _connector_tools_inflight.get(clerk_id)
+    if inflight is not None:
+        return await asyncio.shield(inflight)
+
+    future = asyncio.get_running_loop().create_future()
+    _connector_tools_inflight[clerk_id] = future
     tools: list[JsonObject] = []
     try:
         session = await get_tool_router_mcp_session(clerk_id)
-        result = await list_tool_router_mcp_tools(session)
-        serialized = _JSON_OBJECT_ADAPTER.validate_json(
-            result.model_dump_json(by_alias=True, exclude_none=True)
-        )
-        raw_tools = serialized.get("tools")
-        if isinstance(raw_tools, list):
-            tools = [tool for tool in raw_tools if isinstance(tool, dict)]
-        _connector_tools_cache[clerk_id] = (
-            now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
-            tools,
-        )
+        cached = _connector_tools_cache.get(clerk_id)
+        if cached and cached[0] is session:
+            tools = cached[1]
+        else:
+            result = await list_tool_router_mcp_tools(session)
+            serialized = _JSON_OBJECT_ADAPTER.validate_json(
+                result.model_dump_json(by_alias=True, exclude_none=True)
+            )
+            raw_tools = serialized.get("tools")
+            if isinstance(raw_tools, list):
+                tools = [tool for tool in raw_tools if isinstance(tool, dict)]
+            _connector_tools_cache[clerk_id] = (session, tools)
     except (ComposioMcpUpstreamError, ComposioRouteError):
         # Failures are not cached — the next call retries immediately.
         logger.info("Connector MCP tools unavailable")
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
+    except Exception as exc:
+        future.set_exception(exc)
+        future.exception()
+        raise
+    finally:
+        if _connector_tools_inflight.get(clerk_id) is future:
+            _connector_tools_inflight.pop(clerk_id, None)
+    future.set_result(tools)
     return tools
 
 
