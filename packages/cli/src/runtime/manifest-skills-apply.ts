@@ -47,7 +47,7 @@ interface HostedSkillProjectionDriver {
 	install(
 		skill: PreparedHostedSourcedSkill,
 		targetDir: string,
-		previouslyReserved: boolean,
+		previousReservation?: ManagedSkillReservationSnapshot,
 	): "installed" | "unchanged";
 	anchorOwnership(skillId: string, ownershipIdentity: string, targetDir: string): void;
 	verifyOwned(skill: PreparedHostedSourcedSkill, targetDir: string): boolean;
@@ -119,14 +119,18 @@ function hostedSkillProjectionDrivers(input: {
 			target: (skill) =>
 				input.hermesDriver.target?.({ home: input.home, skill }) ??
 				join(hermesSkillsRoot, skill.skillId),
-			install: (skill, targetDir, previouslyReserved) =>
+			install: (skill, targetDir, previousReservation) =>
 				input.hermesDriver.install({
 					home: input.home,
 					appRoot,
 					managedResourceRoot: input.managedResourceRoot,
 					skill,
 					targetDir,
-					previouslyReserved,
+					previouslyReserved: previousReservation !== undefined,
+					previousTargetDir: previousReservation?.targetDir,
+					previousOwnershipIdentity: previousReservation
+						? reservationOwnershipIdentity(previousReservation)
+						: undefined,
 				}),
 			anchorOwnership: (skillId, ownershipIdentity, targetDir) =>
 				input.hermesDriver.anchorOwnership({
@@ -176,7 +180,7 @@ function hostedSkillProjectionDrivers(input: {
 				}
 				return join(openClawSkillsRoot, skill.skillId);
 			},
-			install: (skill, targetDir, previouslyReserved) => {
+			install: (skill, targetDir, previousReservation) => {
 				if (!input.openClawWorkspaceRoot) {
 					throw new Error("OpenClaw official agent workspace is unavailable");
 				}
@@ -186,7 +190,7 @@ function hostedSkillProjectionDrivers(input: {
 					workspaceRoot: input.openClawWorkspaceRoot,
 					managedResourceRoot: input.managedResourceRoot,
 					skill,
-					previouslyReserved,
+					previouslyReserved: previousReservation !== undefined,
 				});
 			},
 			anchorOwnership: (skillId, ownershipIdentity, _targetDir) => {
@@ -487,7 +491,7 @@ function applyHostedSkills(
 					...preparedReservationIdentity(prepared),
 				},
 				() => {
-					return driver.install(prepared, targetDir, reservation !== undefined);
+					return driver.install(prepared, targetDir, reservation);
 				},
 				{
 					verify: () => driver.verifyOwned(prepared, targetDir),
