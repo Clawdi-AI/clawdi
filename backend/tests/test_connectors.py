@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -1288,14 +1289,43 @@ def test_composio_request_boundary_rejects_unknown_auth_scheme():
         )
 
 
-async def test_close_composio_client_uses_public_sdk_lifecycles():
+async def test_close_composio_client_uses_public_sdk_lifecycles(monkeypatch):
     from composio import Composio
     from composio_client import AsyncComposio
 
+    session = composio.ComposioMcpSession(
+        url="https://composio.test/mcp",
+        headers={},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def pending_list(_session):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(composio, "_tool_router_session_cache", {"close-user": session})
+    monkeypatch.setattr(composio, "_tool_router_tools_cache", {})
+    monkeypatch.setattr(composio, "_tool_router_tools_inflight", {})
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", pending_list)
     composio._client = AsyncComposio(api_key="test-key")
     composio._sdk_client = Composio(api_key="test-key")
 
+    waiter = asyncio.create_task(composio.get_tool_router_mcp_tools("close-user"))
+    await started.wait()
+    load = composio._tool_router_tools_inflight["close-user"]
     await composio.close_composio_client()
 
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert load.cancelled()
+    assert stopped.is_set()
+    assert composio._tool_router_session_cache == {}
+    assert composio._tool_router_tools_cache == {}
+    assert composio._tool_router_tools_inflight == {}
     assert composio._client is None
     assert composio._sdk_client is None

@@ -17,8 +17,10 @@ import httpx
 import pytest
 from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
+from mcp.types import ListToolsResult
 
 from app.main import app
+from app.services.composio import ComposioMcpSession
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,45 @@ class _FakeToolRouterSession:
 @dataclass(frozen=True, slots=True)
 class _FakeComposioSdk:
     sessions: object
+
+
+def _mcp_session(user_id: str, generation: int = 1) -> ComposioMcpSession:
+    return ComposioMcpSession(
+        url=f"https://composio.test/{user_id}/{generation}",
+        headers={"x-session": f"{user_id}-{generation}"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+
+def _mcp_tools(name: str) -> ListToolsResult:
+    return ListToolsResult.model_validate(
+        {
+            "tools": [
+                {
+                    "name": name,
+                    "inputSchema": {"type": "object"},
+                    "_meta": {"cacheTest": name},
+                }
+            ]
+        }
+    )
+
+
+@pytest.fixture
+def tool_router_cache(monkeypatch):
+    from app.services import composio
+
+    sessions: dict[str, list[ComposioMcpSession]] = {}
+
+    async def fake_create(user_id: str, *, now: datetime):
+        assert now.tzinfo is not None
+        return sessions[user_id].pop(0)
+
+    monkeypatch.setattr(composio, "_tool_router_session_cache", {})
+    monkeypatch.setattr(composio, "_tool_router_tools_cache", {})
+    monkeypatch.setattr(composio, "_tool_router_tools_inflight", {})
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", fake_create)
+    return composio, sessions
 
 
 @pytest.mark.asyncio
@@ -297,10 +338,10 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
     async def fake_session():
         yield None
 
-    async def no_connector_session(user_id: str):
+    async def no_connector_tools(user_id: str):
         raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
-    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", no_connector_tools)
     app.dependency_overrides[get_auth] = fake_auth
     app.dependency_overrides[get_session] = fake_session
     try:
@@ -414,6 +455,10 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
         forwarded.append(("tools/list", session))
         return ListToolsResult.model_validate({"tools": [expected_tool]})
 
+    async def fake_connector_tools(user_id: str):
+        await fake_list(await fake_composio_session(user_id))
+        return [expected_tool]
+
     async def fake_call(session: ComposioMcpSession, name: str, arguments: dict):
         from mcp.types import CallToolResult
 
@@ -421,9 +466,8 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
         return CallToolResult.model_validate(expected_result)
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_composio_session)
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", fake_connector_tools)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
-    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
     app.dependency_overrides[get_auth] = fake_auth
     app.dependency_overrides[get_session] = fake_db_session
     try:
@@ -534,10 +578,10 @@ async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
             api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
         )
 
-    async def no_connector_session(user_id: str):
+    async def no_connector_tools(user_id: str):
         raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
-    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", no_connector_tools)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
     try:
@@ -773,117 +817,165 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
 
 
 @pytest.mark.asyncio
-async def test_connector_tool_cache_is_user_scoped_session_bound_and_single_flight(monkeypatch):
-    from mcp.types import ListToolsResult
-
-    from app.core.auth import AuthContext
-    from app.models.user import User
-    from app.routes import mcp_bridge
-    from app.services.composio import ComposioMcpSession
-
-    sessions = {
-        "clerk_cache_a": ComposioMcpSession(
-            url="https://composio.test/a/1",
-            headers={"x-api-key": "a-1"},
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-        ),
-        "clerk_cache_b": ComposioMcpSession(
-            url="https://composio.test/b/1",
-            headers={"x-api-key": "b-1"},
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-        ),
-    }
-    list_started = asyncio.Event()
-    release_list = asyncio.Event()
-    session_calls: list[str] = []
+async def test_connector_tool_cache_is_session_bound_and_user_scoped(
+    monkeypatch, tool_router_cache
+):
+    composio, sessions = tool_router_cache
+    sessions.update(
+        {
+            "user-a": [_mcp_session("user-a"), _mcp_session("user-a", 2)],
+            "user-b": [_mcp_session("user-b")],
+        }
+    )
     list_calls: list[str] = []
 
-    async def fake_session(user_id: str) -> ComposioMcpSession:
-        session_calls.append(user_id)
-        return sessions[user_id]
-
-    async def fake_list(session: ComposioMcpSession) -> ListToolsResult:
+    async def fake_list(session):
         list_calls.append(session.url)
-        list_started.set()
-        await release_list.wait()
-        return ListToolsResult.model_validate(
-            {
-                "tools": [
-                    {
-                        "name": f"COMPOSIO_{session.url.rsplit('/', 2)[-2].upper()}",
-                        "inputSchema": {"type": "object"},
-                    }
-                ]
-            }
-        )
+        return _mcp_tools(session.headers["x-session"])
 
-    def auth(clerk_id: str) -> AuthContext:
-        return AuthContext(
-            user=User(
-                email=f"{clerk_id}@clawdi.local",
-                name="MCP Cache Test",
-                clerk_id=clerk_id,
-            )
-        )
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
 
-    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
-    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
-    monkeypatch.setattr(mcp_bridge, "_connector_tools_inflight", {})
+    first = await composio.get_tool_router_mcp_tools("user-a")
+    cached = await composio.get_tool_router_mcp_tools("user-a")
+    isolated = await composio.get_tool_router_mcp_tools("user-b")
+    composio._tool_router_session_cache["user-a"] = sessions["user-a"].pop(0)
+    refreshed = await composio.get_tool_router_mcp_tools("user-a")
 
-    first = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_a")))
-    await list_started.wait()
-    second = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_a")))
-    await asyncio.sleep(0)
-    assert session_calls == ["clerk_cache_a"]
-    assert list_calls == ["https://composio.test/a/1"]
-
-    release_list.set()
-    first_tools, second_tools = await asyncio.gather(first, second)
-    cached_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_a"))
-    other_user_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_b"))
-
-    sessions["clerk_cache_a"] = ComposioMcpSession(
-        url="https://composio.test/a/2",
-        headers={"x-api-key": "a-2"},
-        expires_at=datetime.now(UTC) + timedelta(minutes=30),
-    )
-    refreshed_tools = await mcp_bridge._connector_mcp_tools(auth("clerk_cache_a"))
-
-    assert first_tools == second_tools == cached_tools
-    assert first_tools[0]["name"] == "COMPOSIO_A"
-    assert other_user_tools[0]["name"] == "COMPOSIO_B"
-    assert refreshed_tools[0]["name"] == "COMPOSIO_A"
+    assert first is cached
+    assert first[0] == {
+        "name": "user-a-1",
+        "inputSchema": {"type": "object"},
+        "_meta": {"cacheTest": "user-a-1"},
+    }
+    assert [first[0]["name"], isolated[0]["name"], refreshed[0]["name"]] == [
+        "user-a-1",
+        "user-b-1",
+        "user-a-2",
+    ]
     assert list_calls == [
-        "https://composio.test/a/1",
-        "https://composio.test/b/1",
-        "https://composio.test/a/2",
+        "https://composio.test/user-a/1",
+        "https://composio.test/user-b/1",
+        "https://composio.test/user-a/2",
     ]
 
-    failure_started = asyncio.Event()
-    release_failure = asyncio.Event()
-    sessions["clerk_cache_failure"] = ComposioMcpSession(
-        url="https://composio.test/failure/1",
-        headers={"x-api-key": "failure-1"},
-        expires_at=datetime.now(UTC) + timedelta(minutes=30),
-    )
 
-    async def failing_list(session: ComposioMcpSession) -> ListToolsResult:
-        failure_started.set()
-        await release_failure.wait()
-        raise mcp_bridge.ComposioMcpUpstreamError("unavailable")
+@pytest.mark.asyncio
+async def test_connector_tool_load_is_single_flight(monkeypatch, tool_router_cache):
+    composio, sessions = tool_router_cache
+    sessions["single-flight"] = [_mcp_session("single-flight")]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    list_calls = 0
 
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", failing_list)
-    failed_first = asyncio.create_task(mcp_bridge._connector_mcp_tools(auth("clerk_cache_failure")))
-    await failure_started.wait()
-    failed_second = asyncio.create_task(
-        mcp_bridge._connector_mcp_tools(auth("clerk_cache_failure"))
-    )
+    async def fake_list(_session):
+        nonlocal list_calls
+        list_calls += 1
+        started.set()
+        await release.wait()
+        return _mcp_tools("shared")
+
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
+
+    first = asyncio.create_task(composio.get_tool_router_mcp_tools("single-flight"))
+    await started.wait()
+    load = composio._tool_router_tools_inflight["single-flight"]
+    second = asyncio.create_task(composio.get_tool_router_mcp_tools("single-flight"))
     await asyncio.sleep(0)
-    assert session_calls.count("clerk_cache_failure") == 1
 
-    release_failure.set()
-    assert await asyncio.gather(failed_first, failed_second) == [[], []]
+    assert load is not first
+    assert list_calls == 1
+    release.set()
+    first_result, second_result = await asyncio.gather(first, second)
+    assert first_result is second_result
+
+
+@pytest.mark.asyncio
+async def test_connector_tool_load_restarts_after_inflight_invalidation(
+    monkeypatch, tool_router_cache
+):
+    composio, sessions = tool_router_cache
+    sessions["invalidation"] = [
+        _mcp_session("invalidation"),
+        _mcp_session("invalidation", 2),
+    ]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    list_calls: list[str] = []
+
+    async def fake_list(session):
+        list_calls.append(session.url)
+        if session.url.endswith("/1"):
+            started.set()
+            await release.wait()
+        return _mcp_tools(session.headers["x-session"])
+
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
+
+    request = asyncio.create_task(composio.get_tool_router_mcp_tools("invalidation"))
+    await started.wait()
+    composio.invalidate_tool_router_mcp_session("invalidation")
+    release.set()
+    result = await request
+
+    assert result[0]["name"] == "invalidation-2"
+    assert list_calls == [
+        "https://composio.test/invalidation/1",
+        "https://composio.test/invalidation/2",
+    ]
+    assert composio._tool_router_tools_cache["invalidation"][1] is result
+
+
+@pytest.mark.asyncio
+async def test_connector_tool_load_survives_creator_cancellation(monkeypatch, tool_router_cache):
+    composio, sessions = tool_router_cache
+    sessions["cancellation"] = [_mcp_session("cancellation")]
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_list(_session):
+        started.set()
+        await release.wait()
+        return _mcp_tools("survived")
+
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
+
+    creator = asyncio.create_task(composio.get_tool_router_mcp_tools("cancellation"))
+    await started.wait()
+    waiter = asyncio.create_task(composio.get_tool_router_mcp_tools("cancellation"))
+    await asyncio.sleep(0)
+    load = composio._tool_router_tools_inflight["cancellation"]
+    creator.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await creator
+    assert not load.cancelled()
+    assert not waiter.done()
+
+    release.set()
+    assert (await waiter)[0]["name"] == "survived"
+
+
+@pytest.mark.asyncio
+async def test_connector_tool_load_retries_after_failure(monkeypatch, tool_router_cache):
+    composio, sessions = tool_router_cache
+    sessions["retry"] = [_mcp_session("retry")]
+    attempts = 0
+
+    async def fake_list(_session):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise composio.ComposioMcpUpstreamError("unavailable")
+        return _mcp_tools("retried")
+
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
+
+    with pytest.raises(composio.ComposioMcpUpstreamError):
+        await composio.get_tool_router_mcp_tools("retry")
+    result = await composio.get_tool_router_mcp_tools("retry")
+
+    assert result[0]["name"] == "retried"
+    assert attempts == 2
 
 
 @pytest.mark.asyncio
@@ -1003,12 +1095,9 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
 
-    async def fake_list(session):
-        from mcp.types import ListToolsResult
-
-        return ListToolsResult.model_validate(
-            {"tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]}
-        )
+    async def fake_connector_tools(user_id: str):
+        await fake_session(user_id)
+        return [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]
 
     async def fake_call(session, name, arguments):
         from mcp.types import CallToolResult
@@ -1018,9 +1107,8 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
         )
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", fake_connector_tools)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
-    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
     try:
@@ -1040,7 +1128,6 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
                 },
             )
             scoped_key.scopes = ["connectors:read", "connectors:invoke"]
-            mcp_bridge._connector_tools_cache.clear()
             allowed_list = await ac.post(
                 "/v1/mcp/clawdi",
                 json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
@@ -1144,17 +1231,12 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
 
-    async def fake_list(session):
-        from mcp.types import ListToolsResult
-
-        return ListToolsResult.model_validate(
-            {
-                "tools": [
-                    {"name": "connector_calendar", "inputSchema": {"type": "object"}},
-                    {"name": "memory_search", "inputSchema": {"type": "object"}},
-                ]
-            }
-        )
+    async def fake_connector_tools(user_id: str):
+        await fake_session(user_id)
+        return [
+            {"name": "connector_calendar", "inputSchema": {"type": "object"}},
+            {"name": "memory_search", "inputSchema": {"type": "object"}},
+        ]
 
     async def fake_call(session, name, arguments):
         from mcp.types import CallToolResult
@@ -1164,9 +1246,8 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
         )
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", fake_connector_tools)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
-    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
     await mcp_bridge.file_store.put(
         session_b_file_key,
         b'[{"role":"user","content":"Cross-agent session detail"}]',
