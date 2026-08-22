@@ -14,6 +14,7 @@ RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		ca-certificates \
 		dbus-user-session \
+		nftables \
 		python3 \
 		systemd \
 		systemd-sysv \
