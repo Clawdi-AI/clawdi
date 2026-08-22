@@ -362,6 +362,61 @@ async def test_linked_project_skill_refreshes_from_established_agent_source(
 
 
 @pytest.mark.asyncio
+async def test_project_skill_refresh_rejects_incomplete_agent_source(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    workspace_project: Project,
+    channel_agent: AgentEnvironment,
+):
+    skill_key = "incomplete-refresh-source"
+    uploaded = await _upload_project_skill(client, workspace_project.id, skill_key)
+    assert uploaded.status_code == 200, uploaded.text
+    db_session.add(
+        Skill(
+            user_id=seed_user.id,
+            project_id=channel_agent.default_project_id,
+            skill_key=skill_key,
+            name=skill_key,
+            description="Incomplete Agent source",
+            content_hash="f" * 64,
+            file_key=None,
+            file_count=None,
+            source=SKILL_AUTHORITY_AGENT_SYNC,
+            authority=SKILL_AUTHORITY_AGENT_SYNC,
+            authority_agent_id=channel_agent.id,
+        )
+    )
+    await db_session.commit()
+    linked = await _link(
+        client,
+        agent_id=channel_agent.id,
+        project_id=workspace_project.id,
+    )
+    assert linked.status_code == 200, linked.text
+
+    rejected = await client.post(
+        f"/v1/projects/{workspace_project.id}/skills/refresh",
+        json={"skill_key": skill_key, "source_agent_id": str(channel_agent.id)},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"] == {
+        "code": "project_skill_refresh_source_unavailable",
+        "message": "The source Agent's Skill archive is unavailable.",
+    }
+    project_skill = (
+        await db_session.execute(
+            select(Skill).where(
+                Skill.project_id == workspace_project.id,
+                Skill.skill_key == skill_key,
+                Skill.is_active,
+            )
+        )
+    ).scalar_one()
+    assert project_skill.content_hash == uploaded.json()["content_hash"]
+
+
+@pytest.mark.asyncio
 async def test_project_skill_refresh_rejects_viewer(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

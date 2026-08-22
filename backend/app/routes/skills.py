@@ -1130,7 +1130,7 @@ async def _project_skill_refresh_rows(
     skill_key: str,
     source_agent_id: UUID,
     for_update: bool = False,
-) -> tuple[Skill, Skill]:
+) -> tuple[Skill, Skill, str, int]:
     project = (
         await db.execute(
             select(Project).where(
@@ -1223,7 +1223,9 @@ async def _project_skill_refresh_rows(
                 "message": "The source Agent has not synced this Skill.",
             },
         )
-    if source.file_key is None or source.file_count is None:
+    source_file_key = source.file_key
+    source_file_count = source.file_count
+    if source_file_key is None or source_file_count is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
@@ -1231,7 +1233,7 @@ async def _project_skill_refresh_rows(
                 "message": "The source Agent's Skill archive is unavailable.",
             },
         )
-    return target, source
+    return target, source, source_file_key, source_file_count
 
 
 @project_router.post("/refresh", response_model=SkillUploadResponse)
@@ -1245,19 +1247,19 @@ async def refresh_project_skill(
     if not is_valid_skill_key(body.skill_key):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
     await validate_project_for_caller(db, auth, project_id)
-    _target, source = await _project_skill_refresh_rows(
+    _target, source, source_file_key, source_file_count = await _project_skill_refresh_rows(
         db,
         owner_user_id=auth.user_id,
         project_id=project_id,
         skill_key=body.skill_key,
         source_agent_id=body.source_agent_id,
     )
-    source_snapshot = (source.id, source.content_hash, source.file_key)
+    source_snapshot = (source.id, source.content_hash, source_file_key, source_file_count)
 
     # Do not retain database locks while checking the immutable source object.
     await db.commit()
     try:
-        source_exists = await file_store.exists(source.file_key)
+        source_exists = await file_store.exists(source_file_key)
     except Exception as exc:
         log.warning(
             "project_skill_refresh_source_check_failed user=%s project=%s skill_key=%s error=%s",
@@ -1286,7 +1288,7 @@ async def refresh_project_skill(
     )
     lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, body.skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
-    target, source = await _project_skill_refresh_rows(
+    target, source, source_file_key, source_file_count = await _project_skill_refresh_rows(
         db,
         owner_user_id=auth.user_id,
         project_id=project_id,
@@ -1294,7 +1296,7 @@ async def refresh_project_skill(
         source_agent_id=body.source_agent_id,
         for_update=True,
     )
-    if (source.id, source.content_hash, source.file_key) != source_snapshot:
+    if (source.id, source.content_hash, source_file_key, source_file_count) != source_snapshot:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
@@ -1309,8 +1311,8 @@ async def refresh_project_skill(
             target.name != source.name,
             target.description != source.description,
             target.content_hash != source.content_hash,
-            target.file_key != source.file_key,
-            target.file_count != source.file_count,
+            target.file_key != source_file_key,
+            target.file_count != source_file_count,
             target.source_repo != source.source_repo,
             target.agent_types != source.agent_types,
         )
@@ -1319,8 +1321,8 @@ async def refresh_project_skill(
         target.name = source.name
         target.description = source.description
         target.content_hash = source.content_hash
-        target.file_key = source.file_key
-        target.file_count = source.file_count
+        target.file_key = source_file_key
+        target.file_count = source_file_count
         target.source_repo = source.source_repo
         target.agent_types = source.agent_types
         target.authority = SKILL_AUTHORITY_CLOUD
@@ -1357,7 +1359,7 @@ async def refresh_project_skill(
         skill_key=target.skill_key,
         name=target.name,
         version=target.version,
-        file_count=source.file_count,
+        file_count=source_file_count,
         content_hash=target.content_hash,
     )
 
