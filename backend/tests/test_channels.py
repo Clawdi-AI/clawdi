@@ -131,7 +131,11 @@ from app.services.whatsapp_native_transport import (
     WhatsAppSidecarHealth,
     WhatsAppSidecarUnavailableError,
 )
-from app.services.whatsapp_provider_bridge import persist_whatsapp_provider_event
+from app.services.whatsapp_provider_bridge import (
+    persist_whatsapp_provider_event,
+    register_whatsapp_provider_transport,
+    unregister_whatsapp_provider_transport,
+)
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
@@ -1666,6 +1670,96 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     assert health["last_error_stage"] in {"delivery", None}
     assert health["last_message_at"] is not None
     assert health["last_event_at"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_age", "expected_status", "expected_reasons"),
+    [
+        pytest.param(timedelta(days=10), "ok", [], id="historical-failure"),
+        pytest.param(
+            timedelta(minutes=1),
+            "error",
+            ["failed_deliveries", "recent_error"],
+            id="current-failure",
+        ),
+    ],
+)
+async def test_whatsapp_channel_health_only_surfaces_current_delivery_failures(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    failure_age: timedelta,
+    expected_status: str,
+    expected_reasons: list[str],
+):
+    class ConnectedWhatsAppTransport:
+        connected = True
+
+        async def relay_outbound_message(self, message):
+            return None
+
+        async def relay_raw_node(self, node):
+            return None
+
+        async def query_iq(self, node, timeout_ms):
+            return None
+
+    created_response = await client.post(
+        "/v1/channels",
+        json={"provider": "whatsapp", "name": f"health-whatsapp-{uuid4().hex}"},
+    )
+    assert created_response.status_code == 201, created_response.text
+    account_id = UUID(created_response.json()["id"])
+    failure_at = datetime.now(UTC) - failure_age
+    message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=None,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id="15551234567@s.whatsapp.net",
+        provider_message_id=None,
+        text="failed outbound",
+        payload={"delivery": DELIVERY_STATUS_FAILED},
+        created_at=failure_at,
+        updated_at=failure_at,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    db_session.add(
+        ChannelDelivery(
+            account_id=account_id,
+            bot_agent_link_id=None,
+            message_id=message.id,
+            user_id=seed_user.id,
+            status=DELIVERY_STATUS_FAILED,
+            attempts=5,
+            max_attempts=5,
+            next_attempt_at=failure_at,
+            last_error="provider rejected request",
+            created_at=failure_at,
+            updated_at=failure_at,
+        )
+    )
+    await db_session.commit()
+
+    register_whatsapp_provider_transport(account_id, ConnectedWhatsAppTransport())
+    try:
+        response = await client.get("/v1/channels/health")
+    finally:
+        unregister_whatsapp_provider_transport(account_id)
+
+    assert response.status_code == 200, response.text
+    health = next(
+        item for item in response.json()["items"] if item["account_id"] == str(account_id)
+    )
+    assert health["health_status"] == expected_status
+    assert health["reasons"] == expected_reasons
+    assert health["pending_deliveries"] == 0
+    assert health["in_progress_deliveries"] == 0
+    assert health["failed_deliveries"] == 1
+    assert health["last_error"] == "channel_delivery_failed"
+    assert health["native_transport"]["available"] is True
 
 
 @pytest.mark.asyncio
