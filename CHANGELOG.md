@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.13
+
+Package: `clawdi@0.14.13`
+
+### Fixed
+
+- Managed service enablement is now declared by the platform writing the
+  systemd wants links directly, removing the tenant-manager `enable` calls
+  that failed on brand-new hosts. Fresh deployments for both Hermes and
+  OpenClaw converge end to end, verified in a faithful zero-state environment.
+
 ## Clawdi CLI v0.14.12
 
 Package: `clawdi@0.14.12`
