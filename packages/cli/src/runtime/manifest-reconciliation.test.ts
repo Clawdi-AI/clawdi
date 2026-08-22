@@ -12,7 +12,6 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readlinkSync,
-	renameSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -58,7 +57,6 @@ import {
 } from "./live-state-snapshot";
 import {
 	collectRuntimeUserManagedSkillTree,
-	legacyManagedSkillReceiptPath,
 	ManagedSkillResourceError,
 	managedSkillReceiptPath,
 	managedSkillTreeFingerprint,
@@ -1685,6 +1683,31 @@ chmod 0755 '${commandPath}'
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
+	test("rejects retired terminal Codex provider shapes", () => {
+		const legacyEnv = structuredClone(TEST_HOSTED_CODEX_TOOLING);
+		legacyEnv.codex.provider.runtimeEnvName = "OPENAI_API_KEY";
+		expect(
+			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ terminalTooling: legacyEnv }))
+				.success,
+		).toBe(false);
+
+		const legacyCatalog: unknown = {
+			...structuredClone(TEST_HOSTED_CODEX_TOOLING),
+			codex: {
+				...structuredClone(TEST_HOSTED_CODEX_TOOLING.codex),
+				provider: {
+					...structuredClone(TEST_HOSTED_CODEX_TOOLING.codex.provider),
+					models: [{ id: "legacy-codex-model" }],
+				},
+			},
+		};
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ terminalTooling: legacyCatalog }),
+			).success,
+		).toBe(false);
+	});
+
 	test.each(["openai_chat", "anthropic_messages", "google_generate_content"])(
 		"rejects terminal Codex without the fixed responses API mode (%s)",
 		(apiMode) => {
@@ -2935,7 +2958,7 @@ chmod 0755 '${commandPath}'
 
 		expect(initial.installErrors).toEqual([]);
 		expect(initial.projectedProviderIds.hermes).toEqual(["responses"]);
-		expect(existsSync(dirname(legacyPlugin))).toBe(false);
+		expect(readFileSync(legacyPlugin, "utf8")).toBe('raise RuntimeError("obsolete")\n');
 		const initialConfig = readFileSync(hermesConfig, "utf8");
 		const initialRunConfig = readFileSync(runtimeRunConfigPath("hermes", paths), "utf8");
 		const initialHermes = parseYaml(initialConfig) as {
@@ -4241,7 +4264,7 @@ echo spawned > '${installerLog}'
 		expect(existsSync(join(paths.userHome, ".local", "bin", "openclaw"))).toBe(false);
 	});
 
-	test("migrates a runtime-owned legacy Hermes bundle once and then stays receipt-anchored", () => {
+	test("rejects a legacy Hermes bundle marker without reservation-backed ownership", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
@@ -4251,7 +4274,6 @@ echo spawned > '${installerLog}'
 		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
 		const target = join(paths.userHome, ".hermes", "skills", "clawdi");
 		const skillPath = join(target, "SKILL.md");
-		const sourceSkill = readFileSync(join(source, "SKILL.md"));
 		const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 		cpSync(source, target, { recursive: true });
 		chmodSync(target, 0o755);
@@ -4277,47 +4299,24 @@ echo spawned > '${installerLog}'
 			},
 			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
 		);
-		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi");
-		const converge = (generation: number) => {
-			const result = convergeRuntimeManifest(
-				manifestLoad({ ...manifest, generation }, `legacy-hermes-bundle-${generation}`),
-				paths,
-			);
-			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
-		};
-		const snapshot = () => ({
-			target: statSync(target).ino,
-			skill: statSync(skillPath).ino,
-			receipt: readFileSync(receipt),
-		});
+		const marker = join(target, ".clawdi-managed.json");
+		const targetBefore = statSync(target).ino;
+		const skillBefore = readFileSync(skillPath);
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "legacy-hermes-bundle"), paths);
 
-		converge(1);
-		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
-		expect(readFileSync(skillPath)).toEqual(sourceSkill);
-		expect(sourceSkill).toHaveLength(6002);
-		expect(createHash("sha256").update(sourceSkill).digest("hex")).toBe(
-			"89b3820af2f694a84526c06990ab6398fef2aa5b25d7812dd7a04ed1d46bdd61",
+		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors.join("\n")).toContain(
+			`refusing to replace unmanaged clawdi skill at ${target}`,
 		);
-		expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({
-			ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
-			treeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
-		});
-
-		let stable = snapshot();
-		for (const generation of [2, 3]) {
-			converge(generation);
-			expect(snapshot()).toEqual(stable);
-		}
-
-		writeFileSync(skillPath, "tampered\n");
-		converge(4);
-		expect(readFileSync(skillPath)).toEqual(sourceSkill);
-		stable = snapshot();
-		converge(5);
-		expect(snapshot()).toEqual(stable);
+		expect(statSync(target).ino).toBe(targetBefore);
+		expect(readFileSync(skillPath)).toEqual(skillBefore);
+		expect(existsSync(marker)).toBe(true);
+		expect(existsSync(managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi"))).toBe(
+			false,
+		);
 	});
 
-	test("repairs and claims a root-owned unreadable legacy Hermes marker", () => {
+	test("keeps Hermes Skill receipts root-owned and ignores in-home receipts", () => {
 		if (process.geteuid?.() !== 0) return;
 		const paths = tempRuntimePaths();
 		const fixtureRoot = dirname(paths.serviceStateRoot);
@@ -4338,7 +4337,6 @@ echo spawned > '${installerLog}'
 		const source = resolve(import.meta.dir, "../..", "skills", "hosted-versions", "1", "clawdi");
 		const target = join(paths.userHome, ".hermes", "skills", "clawdi");
 		const skillPath = join(target, "SKILL.md");
-		const marker = join(target, ".clawdi-managed.json");
 		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "hermes", "clawdi");
 		const legacyReceiptDirectory = join(
 			paths.userHome,
@@ -4351,34 +4349,14 @@ echo spawned > '${installerLog}'
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		cpSync(source, target, { recursive: true });
-		chmodSync(target, 0o755);
-		chmodSync(skillPath, 0o644);
-		writeFileSync(
-			marker,
-			`${JSON.stringify({
-				schema: "clawdi.hostedBundledSkillMarker.v1",
-				owner: "clawdi runtime init",
-				id: "clawdi",
-				version: 1,
-				digest: catalogEntry.digest,
-			})}\n`,
-			{ mode: 0o600 },
-		);
 		for (const path of [
 			paths.userHome,
 			join(paths.userHome, ".local"),
 			dirname(hermesCommand),
 			hermesCommand,
-			join(paths.userHome, ".hermes"),
-			join(paths.userHome, ".hermes", "skills"),
-			target,
-			skillPath,
 		]) {
 			chownSync(path, runtimeUid, runtimeGid);
 		}
-		chownSync(marker, 0, 0);
-		expect(() => withRuntimeUserFileAccess(() => readFileSync(marker))).toThrow();
 
 		const manifest = baseManifest(
 			paths,
@@ -4411,7 +4389,6 @@ echo spawned > '${installerLog}'
 		};
 
 		converge(1);
-		expect(existsSync(marker)).toBe(false);
 		expect([statSync(target).uid, statSync(skillPath).uid]).toEqual([runtimeUid, runtimeUid]);
 		expect(statSync(receipt).uid).toBe(process.geteuid?.());
 		expect(statSync(receipt).mode & 0o777).toBe(0o600);
@@ -4420,25 +4397,23 @@ echo spawned > '${installerLog}'
 		expect(JSON.parse(readFileSync(receipt, "utf8"))).toMatchObject({
 			ownershipIdentity: `content-sha256\0${catalogEntry.digest}`,
 		});
-		const legacyReceipt = legacyManagedSkillReceiptPath(
-			join(paths.userHome, ".hermes", "skills"),
-			"clawdi",
-		);
-		const beforeMigration = {
+		const legacyReceipt = join(legacyReceiptDirectory, "clawdi.json");
+		const beforeLegacyReceipt = {
 			target: statSync(target).ino,
 			skill: statSync(skillPath).ino,
 			content: readFileSync(receipt),
 		};
 		mkdirSync(dirname(legacyReceipt), { recursive: true, mode: 0o700 });
 		chmodSync(dirname(legacyReceipt), 0o700);
-		renameSync(receipt, legacyReceipt);
+		writeFileSync(legacyReceipt, readFileSync(receipt), { mode: 0o600 });
+		const legacyReceiptContent = readFileSync(legacyReceipt);
 		converge(2);
-		expect(existsSync(legacyReceiptDirectory)).toBe(false);
+		expect(readFileSync(legacyReceipt)).toEqual(legacyReceiptContent);
 		expect({
 			target: statSync(target).ino,
 			skill: statSync(skillPath).ino,
 			content: readFileSync(receipt),
-		}).toEqual(beforeMigration);
+		}).toEqual(beforeLegacyReceipt);
 		expect(statSync(receipt).uid).toBe(0);
 		const stable = {
 			target: statSync(target).ino,
@@ -5190,7 +5165,7 @@ installReservedManagedSkill(${JSON.stringify({
 		);
 		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
 		const receipt = managedSkillReceiptPath(paths.managedResourceRoot, "openclaw", "clawdi");
-		const legacyReceipt = legacyManagedSkillReceiptPath(dirname(target), "clawdi");
+		const legacyReceipt = join(dirname(target), ".clawdi-manifest-receipts", "clawdi.json");
 		expect(existsSync(receipt)).toBe(true);
 		expect(
 			existsSync(
@@ -5199,17 +5174,18 @@ installReservedManagedSkill(${JSON.stringify({
 		).toBe(false);
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 
-		const targetBeforeMigration = statSync(target).ino;
+		const targetBeforeLegacyReceipt = statSync(target).ino;
+		const receiptBeforeLegacyReceipt = readFileSync(receipt);
 		mkdirSync(dirname(legacyReceipt), { recursive: true, mode: 0o700 });
-		renameSync(receipt, legacyReceipt);
-		const migrated = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "bundled-openclaw-skill-receipt-migration"),
+		writeFileSync(legacyReceipt, receiptBeforeLegacyReceipt, { mode: 0o600 });
+		const reconvergedWithLegacyReceipt = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "bundled-openclaw-skill-legacy-receipt"),
 			paths,
 		);
-		expect(migrated.resourceProjectionErrors).toEqual([]);
-		expect(statSync(target).ino).toBe(targetBeforeMigration);
-		expect(existsSync(receipt)).toBe(true);
-		expect(existsSync(dirname(legacyReceipt))).toBe(false);
+		expect(reconvergedWithLegacyReceipt.resourceProjectionErrors).toEqual([]);
+		expect(statSync(target).ino).toBe(targetBeforeLegacyReceipt);
+		expect(readFileSync(receipt)).toEqual(receiptBeforeLegacyReceipt);
+		expect(readFileSync(legacyReceipt)).toEqual(receiptBeforeLegacyReceipt);
 
 		writeFileSync(join(target, "SKILL.md"), "tenant mutation\n");
 		rmSync(managedSkillReservationLedgerPath(), { force: true });
@@ -5225,7 +5201,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(false);
 	});
 
-	test("claims legacy OpenClaw Skills before receipt-guarded removal", () => {
+	test("ignores legacy OpenClaw markers without reservation-backed ownership", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
@@ -5274,9 +5250,10 @@ installReservedManagedSkill(${JSON.stringify({
 			},
 		);
 		expect(result.installErrors).toEqual([]);
-		expect(ownershipAnchors).toBe(1);
-		expect(guardedCleanupCalls).toBe(1);
-		expect(existsSync(target)).toBe(false);
+		expect(ownershipAnchors).toBe(0);
+		expect(guardedCleanupCalls).toBe(0);
+		expect(existsSync(target)).toBe(true);
+		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(true);
 	});
 
 	test("restores exact root and runtime-user targets before systemd rollback reconciliation", () => {

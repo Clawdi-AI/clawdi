@@ -43,12 +43,9 @@ import {
 	parseManagedWhatsAppSocketMetadataJson,
 } from "./whatsapp-upstream-contract";
 
-const LEGACY_MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
 const MANAGED_WHATSAPP_AUTH_MARKER_SCHEMA = "clawdi.managedWhatsAppAuth.v1";
 const MANAGED_WHATSAPP_AUTH_RECEIPT_SCHEMA = "clawdi.managedWhatsAppAuthReceipt.v1";
 const MANAGED_WHATSAPP_AUTH_RECEIPT_DIRECTORY = "whatsapp-auth";
-// SUNSET: Remove after every fleet host has converged past the retired Hermes WhatsApp receipt writer.
-export const RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT = "hermes-whatsapp.json";
 export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
@@ -336,17 +333,6 @@ function parseManagedWhatsAppAuthMarker(value: unknown): ManagedWhatsAppAuthMark
 	};
 }
 
-function readLegacyManagedWhatsAppAuthMarker(authDir: string): ManagedWhatsAppAuthMarker | null {
-	try {
-		const path = join(authDir, LEGACY_MANAGED_WHATSAPP_AUTH_MARKER);
-		const node = lstatSync(path);
-		if (node.isSymbolicLink() || !node.isFile()) return null;
-		return parseManagedWhatsAppAuthMarker(JSON.parse(readFileSync(path, "utf-8")) as unknown);
-	} catch {
-		return null;
-	}
-}
-
 function inspectManagedWhatsAppAuthReceipt(authDir: string): ManagedWhatsAppAuthReceiptInspection {
 	const path = managedWhatsAppAuthReceiptPath(authDir);
 	let node: ReturnType<typeof lstatSync>;
@@ -433,20 +419,7 @@ function removeManagedWhatsAppAuthReceipt(authDir: string): void {
 export function readManagedWhatsAppAuthMarker(authDir: string): ManagedWhatsAppAuthMarker | null {
 	return withManagedWhatsAppReceiptAccess(() => {
 		const receipt = inspectManagedWhatsAppAuthReceipt(authDir);
-		if (receipt.exists) {
-			if (receipt.marker && readLegacyManagedWhatsAppAuthMarker(authDir)) {
-				rmSync(join(authDir, LEGACY_MANAGED_WHATSAPP_AUTH_MARKER));
-			}
-			return receipt.marker;
-		}
-
-		const legacyMarker = readLegacyManagedWhatsAppAuthMarker(authDir);
-		if (!legacyMarker) return null;
-		// SUNSET(#1148): Remove tree-marker adoption after every fleet host has
-		// converged with out-of-tree managed WhatsApp auth receipts.
-		writeManagedWhatsAppAuthReceipt(authDir, legacyMarker);
-		rmSync(join(authDir, LEGACY_MANAGED_WHATSAPP_AUTH_MARKER));
-		return legacyMarker;
+		return receipt.marker;
 	});
 }
 

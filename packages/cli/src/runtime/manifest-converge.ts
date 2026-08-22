@@ -33,7 +33,6 @@ import {
 	applyHostedChannelProjection,
 	installHostedChannelProjectionDependencies,
 	materializeHostedChannelCredentials,
-	RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT,
 } from "./manifest-channels";
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
@@ -96,7 +95,6 @@ import {
 import { applyHostedRuntimeConfigProjection, projectionPayload } from "./manifest-runtime-config";
 import {
 	daemonAuthTokenRevision,
-	removeLegacyTenantClawdiState,
 	removeStaleRuntimeRunConfigs,
 	runtimeProgramRevisionForManifest,
 	writeDaemonAuthToken,
@@ -117,10 +115,7 @@ import {
 	writeJsonFile,
 	writeRuntimePrivateFileAtomic,
 } from "./manifest-shared";
-import {
-	migrateLegacyHostedSkillReceipts,
-	reconcileHostedSkillProjection,
-} from "./manifest-skills-apply";
+import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
@@ -270,12 +265,7 @@ function initializeRuntimeConvergence(
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	// Tenant HOME belongs to the runtime user except for declared platform
-	// enclaves. Metadata migration and ownership repair precede snapshots by design.
-	migrateLegacyHostedSkillReceipts({
-		manifest,
-		home: projectionHome,
-		managedResourceRoot: paths.managedResourceRoot,
-	});
+	// enclaves. Ownership repair precedes snapshots by design.
 	const platformEnclaves =
 		resolve(projectionHome) === resolve(paths.userHome)
 			? runtimeSystemdPlatformEnclaves(paths)
@@ -290,7 +280,6 @@ function initializeRuntimeConvergence(
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
-	removeLegacyTenantClawdiState(paths);
 	if (manifest.companions?.filebrowser) {
 		if (manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION) {
 			throw new Error("Files companion requires a hosted v2 bundle");
@@ -1677,9 +1666,6 @@ function commitRuntimeConvergence(
 	const egressRevisionPreviouslyCommitted =
 		state.desiredEgressSidecarSecretRevision !== undefined &&
 		state.desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
-	rmSync(join(paths.managedResourceRoot, RETIRED_MANAGED_HERMES_WHATSAPP_RECEIPT), {
-		force: true,
-	});
 	commitRuntimeInstallReceipts(state.installReceiptTargets, paths);
 	opts.commitAuthority?.(convergence, {
 		...(state.desiredDaemonAuthTokenRevision !== undefined &&

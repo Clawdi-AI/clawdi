@@ -1,13 +1,5 @@
-import {
-	existsSync,
-	lstatSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	rmdirSync,
-	rmSync,
-} from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
@@ -107,66 +99,6 @@ export function writeLiveSyncEnvironmentFiles(
 	});
 	writeLiveSyncEnvironmentIndex(desiredTypes, paths);
 	return written;
-}
-// SUNSET: Remove after every fleet host has migrated to the dedicated hosted CLAWDI_HOME.
-export function removeLegacyTenantClawdiState(paths: RuntimePaths): void {
-	const legacyRoot = join(paths.userHome, ".clawdi");
-	if (resolve(legacyRoot) === resolve(paths.clawdiHome)) return;
-	let root: ReturnType<typeof lstatSync>;
-	try {
-		root = lstatSync(legacyRoot);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
-	}
-	if (!root.isDirectory() || root.isSymbolicLink()) return;
-	const environments = join(legacyRoot, "environments");
-	let directory: ReturnType<typeof lstatSync>;
-	try {
-		directory = lstatSync(environments);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
-	}
-	if (!directory.isDirectory() || directory.isSymbolicLink()) return;
-	let removedManagedFile = false;
-	for (const entry of readdirSync(environments)) {
-		if (!entry.endsWith(".json")) continue;
-		const path = join(environments, entry);
-		try {
-			const node = lstatSync(path);
-			if (!node.isFile() || node.isSymbolicLink()) continue;
-			let value: unknown;
-			try {
-				value = JSON.parse(readFileSync(path, "utf8")) as unknown;
-			} catch {
-				continue;
-			}
-			if (
-				typeof value !== "object" ||
-				value === null ||
-				Array.isArray(value) ||
-				(value as Record<string, unknown>).managedBy !== "clawdi runtime init"
-			) {
-				continue;
-			}
-			rmSync(path);
-			removedManagedFile = true;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-	}
-	if (!removedManagedFile) return;
-	removeEmptyLegacyDirectory(environments);
-	removeEmptyLegacyDirectory(legacyRoot);
-}
-function removeEmptyLegacyDirectory(path: string): void {
-	try {
-		rmdirSync(path);
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code !== "ENOENT" && code !== "ENOTEMPTY") throw error;
-	}
 }
 function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
 	return paths.liveSyncEnvironmentIndex;

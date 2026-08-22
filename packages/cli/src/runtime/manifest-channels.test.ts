@@ -129,16 +129,17 @@ describe("managed WhatsApp auth receipts", () => {
 		expect(existsSync(receipt)).toBe(false);
 	});
 
-	test("adopts a valid legacy tree marker exactly once", () => {
+	test("rejects a legacy tree marker without a platform receipt", () => {
 		const path = authDir();
 		mkdirSync(path, { recursive: true });
 		writeFileSync(join(path, "creds.json"), `${credsJson("legacy-secret")}\n`);
 		writeFileSync(join(path, LEGACY_MARKER), legacyMarker());
 
-		materializeHostedChannelCredentials(manifest(path), { [SECRET_REF]: credsJson() }, home);
-
-		expect(readdirSync(path)).toEqual(["creds.json"]);
-		expect(existsSync(managedWhatsAppAuthReceiptPath(path))).toBe(true);
+		expect(() =>
+			materializeHostedChannelCredentials(manifest(path), { [SECRET_REF]: credsJson() }, home),
+		).toThrow(`refusing to overwrite unmanaged WhatsApp auth directory ${path}`);
+		expect(readdirSync(path).sort()).toEqual([LEGACY_MARKER, "creds.json"]);
+		expect(existsSync(managedWhatsAppAuthReceiptPath(path))).toBe(false);
 	});
 
 	test("does not adopt missing or malformed ownership state", () => {

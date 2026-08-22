@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -22,7 +21,6 @@ let root: string | null = null;
 
 afterEach(() => {
 	delete process.env.CLAWDI_RUNTIME_USER;
-	delete process.env.FAKE_HERMES_LOG;
 	if (root) rmSync(root, { recursive: true, force: true });
 	root = null;
 });
@@ -116,35 +114,6 @@ function fakeHermesLocalSkills(home: string): Array<{
 		});
 }
 
-function fakeHermesUninstaller(home: string): string {
-	const appRoot = join(home, ".hermes", "hermes-agent");
-	const hermes = join(appRoot, "venv", "bin", "hermes");
-	mkdirSync(dirname(hermes), { recursive: true });
-	writeFileSync(
-		hermes,
-		`#!/usr/bin/python3
-import json, os, shutil, sys
-from pathlib import Path
-
-if sys.argv[1:3] != ["skills", "uninstall"] or len(sys.argv) != 4:
-    raise SystemExit(2)
-if sys.stdin.readline().strip().lower() not in {"y", "yes"}:
-    raise SystemExit(3)
-name = sys.argv[3]
-skills_root = Path(os.environ["HOME"]) / ".hermes" / "skills"
-shutil.rmtree(skills_root / name)
-lock_path = skills_root / ".hub" / "lock.json"
-lock = json.loads(lock_path.read_text())
-lock["installed"].pop(name, None)
-lock_path.write_text(json.dumps(lock, indent=2) + chr(10))
-with Path(os.environ["FAKE_HERMES_LOG"]).open("a") as log:
-    log.write(" ".join(sys.argv[1:]) + chr(10))
-`,
-	);
-	chmodSync(hermes, 0o755);
-	return appRoot;
-}
-
 describe("Hermes exact-source Workspace Skill driver", () => {
 	test("places a hub-blocked dangerous source on the official local discovery surface", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-dangerous-local-"));
@@ -180,7 +149,6 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		expect(
 			hostedHermesSkillExactSourceDriver.install({
 				home,
-				appRoot: join(home, ".hermes", "hermes-agent"),
 				managedResourceRoot,
 				skill,
 				previouslyReserved: false,
@@ -206,7 +174,6 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		expect(
 			hostedHermesSkillExactSourceDriver.uninstall({
 				home,
-				appRoot: join(home, ".hermes", "hermes-agent"),
 				managedResourceRoot,
 				skillId,
 				ownershipIdentity: skill.sourceIdentity,
@@ -232,7 +199,6 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		const receipt = managedSkillReceiptPath(managedResourceRoot, "hermes", skillId);
 		const input = {
 			home,
-			appRoot: join(root, "missing-hermes-app"),
 			managedResourceRoot,
 			skill,
 		};
@@ -275,8 +241,8 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		).toBe(true);
 	});
 
-	test("migrates an owned legacy loopback hub install to stable local discovery once", () => {
-		root = mkdtempSync(join(tmpdir(), "hosted-hermes-loopback-migration-"));
+	test("ignores retired loopback hub metadata for a receipt-owned local Skill", () => {
+		root = mkdtempSync(join(tmpdir(), "hosted-hermes-loopback-metadata-"));
 		const home = join(root, "home");
 		const managedResourceRoot = join(root, "managed-resources");
 		mkdirSync(managedResourceRoot, { recursive: true });
@@ -287,10 +253,8 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		};
 		const archive = archiveSkill(root, skillId, skillFiles);
 		const skill = sourcedSkill(skillId, archive);
-		const target = join(home, ".hermes", "skills", skillId);
 		const input = {
 			home,
-			appRoot: join(home, ".hermes", "hermes-agent"),
 			managedResourceRoot,
 			skill,
 		};
@@ -298,8 +262,6 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		expect(
 			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
 		).toBe("installed");
-		const skillBytes = readFileSync(join(target, "SKILL.md"));
-		const guideBytes = readFileSync(join(target, "references", "guide.md"));
 		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
 		mkdirSync(dirname(lockPath), { recursive: true });
 		const externalEntry = {
@@ -321,36 +283,19 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 				},
 			})}\n`,
 		);
-		const commandLog = join(root, "hermes.log");
-		process.env.FAKE_HERMES_LOG = commandLog;
-		input.appRoot = fakeHermesUninstaller(home);
-
-		expect(
-			hostedHermesSkillExactSourceDriver.install({
-				...input,
-				previouslyReserved: true,
-				previousTargetDir: target,
-				previousOwnershipIdentity: skill.sourceIdentity,
-			}),
-		).toBe("installed");
-		expect(readFileSync(join(target, "SKILL.md"))).toEqual(skillBytes);
-		expect(readFileSync(join(target, "references", "guide.md"))).toEqual(guideBytes);
-		expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual({
-			version: 1,
-			installed: { "user-skill": externalEntry },
-		});
-		expect(fakeHermesLocalSkills(home)).toEqual([
-			{ name: skillId, source: "local", trust: "local", status: "enabled" },
-		]);
-		expect(readFileSync(commandLog, "utf8")).toBe(`skills uninstall ${skillId}\n`);
-
+		const lockBefore = readFileSync(lockPath);
 		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
 			"unchanged",
 		);
-		expect(readFileSync(commandLog, "utf8")).toBe(`skills uninstall ${skillId}\n`);
-		expect(JSON.parse(readFileSync(lockPath, "utf8")).installed["user-skill"]).toEqual(
-			externalEntry,
-		);
+		expect(readFileSync(lockPath)).toEqual(lockBefore);
+		expect(JSON.parse(readFileSync(lockPath, "utf8")).installed).toEqual({
+			[skillId]: {
+				source: "url",
+				identifier: `http://127.0.0.1:43123/0${"a".repeat(64)}/SKILL.md`,
+				install_path: skillId,
+			},
+			"user-skill": externalEntry,
+		});
 	});
 
 	test("preserves unreserved and locally changed targets", () => {
@@ -369,7 +314,6 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		expect(() =>
 			hostedHermesSkillExactSourceDriver.install({
 				home,
-				appRoot: join(fixtureRoot, "missing-hermes-app"),
 				managedResourceRoot,
 				skill,
 				previouslyReserved: false,

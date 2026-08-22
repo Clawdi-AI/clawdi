@@ -20,11 +20,7 @@ import {
 	hostedAiProviderCatalog,
 	hostedProviderRequiresApiKey,
 } from "./hosted-provider-resolution";
-import {
-	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-	isHostedCodexManagedRuntimeEnv,
-	type RuntimeManifest,
-} from "./manifest-contract";
+import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, tail } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { hermesConfigContext } from "./manifest-runtime-config";
@@ -368,19 +364,18 @@ export function hostedCodexManagedProvider(
 	const providerId = stringValue(codex?.provider_id);
 	const baseUrl = stringValue(provider?.baseUrl);
 	const apiMode = stringValue(provider?.apiMode);
-	// Manifest v1 keeps this field so older CLIs can parse and self-upgrade; Codex chooses its model.
-	const compatibilityModel = stringValue(primaryModel?.model);
+	const primaryModelName = stringValue(primaryModel?.model);
 	if (
 		codex?.enabled !== true ||
 		!provider ||
 		provider.managed_by !== "clawdi" ||
 		apiMode !== "openai_responses" ||
-		!isHostedCodexManagedRuntimeEnv(stringValue(provider.runtimeEnvName)) ||
+		stringValue(provider.runtimeEnvName) !== MANAGED_AI_PROVIDER_RUNTIME_ENV ||
 		normalizeSecretRef(stringValue(provider.apiKeySecretRef)) !== "secret://tool.codex.apiKey" ||
 		!providerId ||
 		stringValue(primaryModel?.provider_id) !== providerId ||
 		!baseUrl ||
-		!compatibilityModel
+		!primaryModelName
 	) {
 		return null;
 	}
@@ -519,7 +514,6 @@ function applyHostedHermesAiProviderProjection(
 	apply = true,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
-	if (apply) removeLegacyHermesModelProviderPlugin(home);
 	if (!projectionInput) {
 		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
 		if (apply && deletedProviderIds.length > 0) {
@@ -576,15 +570,6 @@ function applyHostedHermesAiProviderProjection(
 }
 function quoteTomlString(value: string): string {
 	return JSON.stringify(value);
-}
-export function legacyHermesModelProviderPluginDir(home: string): string {
-	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
-}
-// SUNSET: Remove after every fleet host has migrated to native Hermes provider projection.
-function removeLegacyHermesModelProviderPlugin(home: string): void {
-	withRuntimeUserFileAccess(() =>
-		rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true }),
-	);
 }
 export interface OpenClawHostedProviderPatch {
 	apply: boolean;

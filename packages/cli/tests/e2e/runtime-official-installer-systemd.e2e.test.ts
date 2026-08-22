@@ -1019,15 +1019,14 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 		chownSync(path, runtimeUid, runtimeGid);
 	}
 	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
+	const legacyEnvironmentPath = join(legacyEnvironmentRoot, "openclaw.json");
+	const legacyEnvironmentContent = `${JSON.stringify({
+		id: "env_legacy_openclaw",
+		agentType: "openclaw",
+		managedBy: "clawdi runtime init",
+	})}\n`;
 	mkdirSync(legacyEnvironmentRoot, { recursive: true });
-	writeFileSync(
-		join(legacyEnvironmentRoot, "openclaw.json"),
-		`${JSON.stringify({
-			id: "env_legacy_openclaw",
-			agentType: "openclaw",
-			managedBy: "clawdi runtime init",
-		})}\n`,
-	);
+	writeFileSync(legacyEnvironmentPath, legacyEnvironmentContent);
 	const systemNpmCli = "/usr/local/lib/node_modules/clawdi/bin/clawdi.mjs";
 	mkdirSync(dirname(systemNpmCli), { recursive: true });
 	writeFileSync(systemNpmCli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -1257,7 +1256,7 @@ http.createServer((request, response) => {
 		auth: "api-key",
 		apiKey: { id: "CLAWDI_AI_API_KEY" },
 	});
-	expect(existsSync(join(runtimeHome, ".clawdi"))).toBe(false);
+	expect(readFileSync(legacyEnvironmentPath, "utf8")).toBe(legacyEnvironmentContent);
 	expect(statSync(paths.clawdiHome).uid).toBe(runtimeUid);
 	expect(statSync(paths.clawdiHome).gid).toBe(runtimeGid);
 	expect(statSync(paths.clawdiHome).mode & 0o777).toBe(0o750);

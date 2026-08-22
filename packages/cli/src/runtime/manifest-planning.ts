@@ -69,7 +69,6 @@ import {
 	hostedCodexHome,
 	hostedCodexManagedConfigToml,
 	hostedCodexManagedProvider,
-	legacyHermesModelProviderPluginDir,
 	openClawGatewayHostedPatch,
 } from "./manifest-providers";
 import {
@@ -615,7 +614,6 @@ export function runtimeUserMutationTargets(
 		join(dirname(hermesAuthPath(home)), "auth.lock"),
 		openClawContext.agentDirs.main,
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
-		legacyHermesModelProviderPluginDir(home),
 		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,

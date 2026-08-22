@@ -24,8 +24,6 @@ export const HOSTED_RUNTIME_TARGETS = [
 	"openclaw",
 	"hermes",
 ] as const satisfies readonly RuntimeName[];
-// SUNSET: Remove v1 parsing and the projection-root fallback after every fleet host has written the v2 managed-resource ledger.
-const HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
 const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v2";
 const HOSTED_MCP_LEDGER_FILE = "managed-mcp-servers.json";
 const HOSTED_MCP_SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -41,19 +39,14 @@ export function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
 function hostedMcpLedgerPath(paths: RuntimePaths): string {
 	return join(paths.managedResourceRoot, HOSTED_MCP_LEDGER_FILE);
 }
-function legacyHostedMcpLedgerPath(paths: RuntimePaths): string {
-	return join(paths.projectionRoot, HOSTED_MCP_LEDGER_FILE);
-}
 function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger {
 	const path = hostedMcpLedgerPath(paths);
-	const legacyPath = legacyHostedMcpLedgerPath(paths);
-	const sourcePath = existsSync(path) ? path : existsSync(legacyPath) ? legacyPath : null;
-	if (!sourcePath) {
+	if (!existsSync(path)) {
 		return { schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION, runtimes: {} };
 	}
 	let payload: unknown;
 	try {
-		payload = JSON.parse(readFileSync(sourcePath, "utf-8"));
+		payload = JSON.parse(readFileSync(path, "utf-8"));
 	} catch (error) {
 		throw new Error(
 			`hosted MCP last-applied ledger is invalid: ${
@@ -61,11 +54,7 @@ function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger
 			}`,
 		);
 	}
-	if (
-		!isPlainRecord(payload) ||
-		(payload.schemaVersion !== HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION &&
-			payload.schemaVersion !== HOSTED_MCP_LEDGER_SCHEMA_VERSION)
-	) {
+	if (!isPlainRecord(payload) || payload.schemaVersion !== HOSTED_MCP_LEDGER_SCHEMA_VERSION) {
 		throw new Error("hosted MCP last-applied ledger has an unsupported schema");
 	}
 	if (
@@ -86,15 +75,7 @@ function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger
 	for (const runtime of HOSTED_RUNTIME_TARGETS) {
 		const runtimeOwnership = runtimes[runtime];
 		if (runtimeOwnership === undefined) continue;
-		// V1 values are untrusted legacy desired state. Migrate ownership by name only.
-		const names =
-			payload.schemaVersion === HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION
-				? isPlainRecord(runtimeOwnership)
-					? Object.keys(runtimeOwnership)
-					: null
-				: Array.isArray(runtimeOwnership)
-					? runtimeOwnership
-					: null;
+		const names = Array.isArray(runtimeOwnership) ? runtimeOwnership : null;
 		if (!names) {
 			throw new Error(`hosted MCP last-applied ledger has invalid ${runtime} servers`);
 		}
@@ -172,11 +153,7 @@ export function applyHostedMcpProjections(
 		outputs.add(runtime.commandPath);
 	}
 	// The last-applied ownership map advances only after every native target.
-	if (
-		Object.keys(plan.nextLedger.runtimes).length > 0 ||
-		existsSync(ledgerPath) ||
-		existsSync(legacyHostedMcpLedgerPath(paths))
-	) {
+	if (Object.keys(plan.nextLedger.runtimes).length > 0 || existsSync(ledgerPath)) {
 		writeHostedMcpManagedLedger(paths, plan.nextLedger);
 	}
 	return [...outputs];
