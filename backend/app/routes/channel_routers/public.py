@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -157,6 +157,8 @@ from app.services.whatsapp_native_transport import (
 from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 router = APIRouter(prefix="/channels", tags=["channels"])
+
+_CHANNEL_HEALTH_ERROR_WINDOW = timedelta(hours=24)
 
 
 async def _queue_agent_link_runtime_changed(
@@ -1529,6 +1531,7 @@ async def _channel_health_items(
     if not accounts:
         return []
     account_ids = [account.id for account in accounts]
+    recent_error_cutoff = datetime.now(UTC) - _CHANNEL_HEALTH_ERROR_WINDOW
 
     pending_inbox_rows = await db.execute(
         select(
@@ -1584,6 +1587,12 @@ async def _channel_health_items(
             func.count(ChannelDelivery.id)
             .filter(ChannelDelivery.status == DELIVERY_STATUS_FAILED)
             .label("failed_count"),
+            func.count(ChannelDelivery.id)
+            .filter(
+                ChannelDelivery.status == DELIVERY_STATUS_FAILED,
+                ChannelDelivery.updated_at >= recent_error_cutoff,
+            )
+            .label("recent_failed_count"),
         )
         .where(
             ChannelDelivery.account_id.in_(account_ids),
@@ -1592,8 +1601,8 @@ async def _channel_health_items(
         .group_by(ChannelDelivery.account_id)
     )
     delivery_counts_by_account = {
-        account_id: (int(pending), int(in_progress), int(failed))
-        for account_id, pending, in_progress, failed in delivery_rows.all()
+        account_id: (int(pending), int(in_progress), int(failed), int(recent_failed))
+        for account_id, pending, in_progress, failed, recent_failed in delivery_rows.all()
     }
 
     message_rows = await db.execute(
@@ -1695,11 +1704,12 @@ async def _channel_health_items(
         _channel_health_item(
             account=account,
             pending_inbox_stats=pending_inbox_by_account.get(account.id, (0, None)),
-            delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0)),
+            delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0, 0)),
             last_message_at=last_message_by_account.get(account.id),
             last_event_at=last_event_by_account.get(account.id),
             debug_error=debug_error_by_account.get(account.id),
             delivery_error=delivery_error_by_account.get(account.id),
+            recent_error_cutoff=recent_error_cutoff,
         )
         for account in accounts
     ]
@@ -1709,14 +1719,17 @@ def _channel_health_item(
     *,
     account: ChannelAccount,
     pending_inbox_stats: tuple[int, datetime | None],
-    delivery_counts: tuple[int, int, int],
+    delivery_counts: tuple[int, int, int, int],
     last_message_at: datetime | None,
     last_event_at: datetime | None,
     debug_error: tuple[datetime, str, str, str | None] | None,
     delivery_error: tuple[datetime, str] | None,
+    recent_error_cutoff: datetime,
 ) -> ChannelHealthItemResponse:
     pending_inbox, oldest_pending_inbox_at = pending_inbox_stats
-    pending_deliveries, in_progress_deliveries, failed_deliveries = delivery_counts
+    pending_deliveries, in_progress_deliveries, failed_deliveries, recent_failed_deliveries = (
+        delivery_counts
+    )
     last_error_at = None
     last_error = None
     last_error_stage = None
@@ -1730,12 +1743,22 @@ def _channel_health_item(
         last_error_stage = "delivery"
         last_error_outcome = "failure"
 
+    native_transport = _native_transport_health(account)
+    whatsapp_transport_connected = (
+        account.provider == CHANNEL_PROVIDER_WHATSAPP
+        and native_transport is not None
+        and native_transport.get("available") is True
+    )
     reasons: list[str] = []
     if account.status != CHANNEL_STATUS_ACTIVE:
         reasons.append("channel_disabled")
-    if failed_deliveries > 0:
+    if failed_deliveries > 0 and (not whatsapp_transport_connected or recent_failed_deliveries > 0):
         reasons.append("failed_deliveries")
-    if last_error is not None:
+    if last_error is not None and (
+        not whatsapp_transport_connected
+        or last_error_at is None
+        or last_error_at >= recent_error_cutoff
+    ):
         reasons.append("recent_error")
     if in_progress_deliveries > 0:
         reasons.append("deliveries_in_progress")
@@ -1775,7 +1798,7 @@ def _channel_health_item(
         last_error=last_error,
         last_error_stage=last_error_stage,
         last_error_outcome=last_error_outcome,
-        native_transport=_native_transport_health(account),
+        native_transport=native_transport,
     )
 
 
