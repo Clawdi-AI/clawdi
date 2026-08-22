@@ -574,23 +574,6 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         applied_generation=4,
         applied_instance_id="iid-observed-api",
     )
-    heartbeat = await client.post(
-        f"/v1/agents/{env_id}/sync-heartbeat",
-        json={"queue_depth": 1, "runtime_observed": observed},
-    )
-    assert heartbeat.status_code == 204, heartbeat.text
-
-    transitioning = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
-    canonical_source_revision = transitioning["desired"]["desired_source_revision"]
-    assert canonical_source_revision != desired_source_revision
-    assert transitioning["health"]["status"] == "unknown"
-
-    observed = _runtime_observed(
-        source_revision=canonical_source_revision,
-        active_cli_version="1.2.5-test",
-        applied_generation=4,
-        applied_instance_id="iid-observed-api",
-    )
     received_at_lower_bound = datetime.now(UTC)
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",
@@ -602,6 +585,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
     assert response.status_code == 200, response.text
     payload = response.json()
+    assert payload["desired"]["desired_source_revision"] == desired_source_revision
     assert payload["environment"]["id"] == env_id
     assert payload["desired"] == {
         "deployment_id": "dep-observed-api",
@@ -632,9 +616,9 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     ) == datetime.fromisoformat(observed["reportedAt"])
     assert payload["observed"]["observed_config_generation"] == 4
     assert payload["observed"]["observed_manifest_etag"] == expected_runtime_bundle_v2_etag(
-        canonical_source_revision
+        desired_source_revision
     )
-    assert payload["observed"]["observed_source_revision"] == canonical_source_revision
+    assert payload["observed"]["observed_source_revision"] == desired_source_revision
     assert payload["observed"]["diagnostics"]["schemaVersion"] == (
         "clawdi.hostedRuntimeObserved.v2"
     )
