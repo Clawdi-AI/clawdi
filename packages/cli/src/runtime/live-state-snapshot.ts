@@ -330,6 +330,7 @@ function restoreRuntimeLiveOwnership(
 }
 
 function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): void {
+	if (runtimeLiveNodeMatches(path, node)) return;
 	if (node.kind === "metadata") {
 		if (!node.existed) {
 			if (existsSync(path) && readdirSync(path).length === 0) rmSync(path, { recursive: true });
@@ -358,4 +359,56 @@ function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): vo
 	chmodSync(path, node.mode);
 	for (const [entry, child] of node.entries) restoreRuntimeLiveNode(join(path, entry), child);
 	restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
+}
+
+function runtimeLiveNodeMatches(path: string, node: RuntimeLiveSnapshotNode): boolean {
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(path);
+	} catch {
+		return node.kind === "missing" || (node.kind === "metadata" && !node.existed);
+	}
+	if (node.kind === "missing" || (node.kind === "metadata" && !node.existed)) return false;
+	if (node.kind === "metadata") {
+		return (
+			stat.isDirectory() &&
+			!stat.isSymbolicLink() &&
+			(stat.mode & 0o777) === node.mode &&
+			stat.uid === node.uid &&
+			stat.gid === node.gid
+		);
+	}
+	if (node.kind === "symlink") {
+		return (
+			stat.isSymbolicLink() &&
+			readlinkSync(path) === node.target &&
+			stat.uid === node.uid &&
+			stat.gid === node.gid
+		);
+	}
+	if (node.kind === "file") {
+		return (
+			stat.isFile() &&
+			!stat.isSymbolicLink() &&
+			(stat.mode & 0o777) === node.mode &&
+			stat.uid === node.uid &&
+			stat.gid === node.gid &&
+			readFileSync(path).equals(node.content)
+		);
+	}
+	if (
+		!stat.isDirectory() ||
+		stat.isSymbolicLink() ||
+		(stat.mode & 0o777) !== node.mode ||
+		stat.uid !== node.uid ||
+		stat.gid !== node.gid
+	) {
+		return false;
+	}
+	const entries = readdirSync(path).sort();
+	if (entries.length !== node.entries.size) return false;
+	return entries.every((entry) => {
+		const child = node.entries.get(entry);
+		return child !== undefined && runtimeLiveNodeMatches(join(path, entry), child);
+	});
 }
