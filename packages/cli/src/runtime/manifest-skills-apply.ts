@@ -7,7 +7,7 @@ import {
 	type PreparedHostedSourcedSkill,
 	prepareHostedBundledSkillArchive,
 } from "./hosted-sourced-skill-archive";
-import { ManagedSkillResourceError, managedSkillReceiptPath } from "./managed-skill-delivery";
+import { installedTreeMatches, ManagedSkillResourceError } from "./managed-skill-delivery";
 import {
 	installReservedManagedSkill,
 	type ManagedSkillReservationSnapshot,
@@ -35,15 +35,9 @@ interface HostedSkillProjectionDriver {
 	name: "hermes" | "openclaw";
 	enabled: boolean;
 	skillsRoot: string | null;
+	installedTreeExcludes?: ReadonlySet<string>;
 	target(skill: PreparedHostedSourcedSkill): string;
-	install(
-		skill: PreparedHostedSourcedSkill,
-		targetDir: string,
-		previousReservation?: ManagedSkillReservationSnapshot,
-	): "installed" | "unchanged";
-	anchorOwnership(skillId: string, ownershipIdentity: string, targetDir: string): void;
-	verifyOwned(skill: PreparedHostedSourcedSkill, targetDir: string): boolean;
-	remove(reservation: ManagedSkillReservationSnapshot): void;
+	install(skill: PreparedHostedSourcedSkill, targetDir: string): "installed" | "unchanged";
 }
 function preparedSkillMatchesDesired(
 	prepared: PreparedHostedSourcedSkill | undefined,
@@ -83,17 +77,11 @@ function preparedReservationIdentity(skill: PreparedHostedSourcedSkill): {
 } {
 	return skill.source.type === "bundled"
 		? { version: skill.source.version, digest: skill.source.digest }
-		: { sourceIdentity: skill.sourceIdentity };
-}
-function reservationOwnershipIdentity(reservation: ManagedSkillReservationSnapshot): string {
-	if (reservation.sourceIdentity) return reservation.sourceIdentity;
-	if (reservation.digest) return `content-sha256\0${reservation.digest}`;
-	throw new Error(`managed Skill ${reservation.id} has no ownership identity`);
+		: { sourceIdentity: skill.sourceIdentity, digest: skill.archiveSha256 };
 }
 function hostedSkillProjectionDrivers(input: {
 	manifest: RuntimeManifest;
 	home: string;
-	managedResourceRoot: string;
 	openClawWorkspaceRoot: string | null;
 	hermesDriver: HostedHermesSkillExactSourceDriver;
 	openClawDriver: HostedOpenClawSkillDriver;
@@ -110,61 +98,25 @@ function hostedSkillProjectionDrivers(input: {
 			target: (skill) =>
 				input.hermesDriver.target?.({ home: input.home, skill }) ??
 				join(hermesSkillsRoot, skill.skillId),
-			install: (skill, targetDir, previousReservation) =>
+			install: (skill, targetDir) =>
 				input.hermesDriver.install({
 					home: input.home,
-					managedResourceRoot: input.managedResourceRoot,
-					skill,
-					targetDir,
-					previouslyReserved: previousReservation !== undefined,
-				}),
-			anchorOwnership: (skillId, ownershipIdentity, targetDir) =>
-				input.hermesDriver.anchorOwnership({
-					home: input.home,
-					managedResourceRoot: input.managedResourceRoot,
-					skillId,
-					ownershipIdentity,
-					targetDir,
-				}),
-			verifyOwned: (skill, targetDir) =>
-				input.hermesDriver.verifyOwned({
-					home: input.home,
-					managedResourceRoot: input.managedResourceRoot,
 					skill,
 					targetDir,
 				}),
-			remove: (reservation) => {
-				const ownershipIdentity = reservationOwnershipIdentity(reservation);
-				if (reservation.digest) {
-					input.hermesDriver.cleanupManifestOwned({
-						home: input.home,
-						managedResourceRoot: input.managedResourceRoot,
-						skillId: reservation.id,
-						ownershipIdentity,
-						targetDir: reservation.targetDir,
-					});
-					return;
-				}
-				input.hermesDriver.uninstall({
-					home: input.home,
-					managedResourceRoot: input.managedResourceRoot,
-					skillId: reservation.id,
-					ownershipIdentity,
-					targetDir: reservation.targetDir,
-				});
-			},
 		},
 		{
 			name: "openclaw",
 			enabled: input.manifest.runtimes.openclaw?.enabled === true,
 			skillsRoot: openClawSkillsRoot,
+			installedTreeExcludes: new Set([".openclaw/source-origin.json"]),
 			target: (skill) => {
 				if (!openClawSkillsRoot) {
 					throw new Error("OpenClaw official agent workspace is unavailable");
 				}
 				return join(openClawSkillsRoot, skill.skillId);
 			},
-			install: (skill, targetDir, previousReservation) => {
+			install: (skill, targetDir) => {
 				if (!input.openClawWorkspaceRoot) {
 					throw new Error("OpenClaw official agent workspace is unavailable");
 				}
@@ -172,39 +124,7 @@ function hostedSkillProjectionDrivers(input: {
 				return input.openClawDriver.install({
 					home: input.home,
 					workspaceRoot: input.openClawWorkspaceRoot,
-					managedResourceRoot: input.managedResourceRoot,
 					skill,
-					previouslyReserved: previousReservation !== undefined,
-				});
-			},
-			anchorOwnership: (skillId, ownershipIdentity, _targetDir) => {
-				if (!input.openClawWorkspaceRoot) {
-					throw new Error("OpenClaw official agent workspace is unavailable");
-				}
-				input.openClawDriver.anchorOwnership({
-					workspaceRoot: input.openClawWorkspaceRoot,
-					managedResourceRoot: input.managedResourceRoot,
-					skillId,
-					ownershipIdentity,
-				});
-			},
-			verifyOwned: (skill, _targetDir) => {
-				if (!input.openClawWorkspaceRoot) return false;
-				return input.openClawDriver.verifyOwned({
-					workspaceRoot: input.openClawWorkspaceRoot,
-					managedResourceRoot: input.managedResourceRoot,
-					skill,
-				});
-			},
-			remove: (reservation) => {
-				if (!input.openClawWorkspaceRoot) {
-					throw new Error("OpenClaw official agent workspace is unavailable");
-				}
-				input.openClawDriver.cleanupManifestOwned({
-					workspaceRoot: input.openClawWorkspaceRoot,
-					managedResourceRoot: input.managedResourceRoot,
-					skillId: reservation.id,
-					ownershipIdentity: reservationOwnershipIdentity(reservation),
 				});
 			},
 		},
@@ -224,20 +144,13 @@ function pendingReservationMatchesPrepared(
 	);
 }
 
-function discardPendingHostedSkill(
-	driver: HostedSkillProjectionDriver,
-	managedResourceRoot: string,
-	skillId: string,
-	targetDir: string,
-): void {
+function discardPendingHostedSkill(targetDir: string): void {
 	withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true }));
-	rmSync(managedSkillReceiptPath(managedResourceRoot, driver.name, skillId), { force: true });
 }
 
 function recoverPendingHostedSkillInstallations(
 	driver: HostedSkillProjectionDriver,
 	manifest: RuntimeManifest,
-	managedResourceRoot: string,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
 	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return;
@@ -259,52 +172,12 @@ function recoverPendingHostedSkillInstallations(
 			targetDir: reservation.targetDir,
 			id: reservation.id,
 			manager: "hosted-manifest",
-			verify: () => promotable !== null && driver.verifyOwned(promotable, reservation.targetDir),
-			discard: () =>
-				discardPendingHostedSkill(
-					driver,
-					managedResourceRoot,
-					reservation.id,
-					reservation.targetDir,
-				),
-		});
-	}
-}
-
-function recoverHostedSkillReservations(
-	driver: HostedSkillProjectionDriver,
-	manifest: RuntimeManifest,
-	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
-): void {
-	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return;
-	const desiredEntries = manifest.projection?.skills?.entries ?? {};
-	const skillIds = new Set([...Object.keys(desiredEntries), ...hostedBundledSkillIds()]);
-	for (const skillId of [...skillIds].sort()) {
-		const desired = desiredEntries[skillId];
-		if (!driver.enabled || desired?.enabled !== true) continue;
-		const prepared = preparedSkills.get(skillId);
-		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
-			continue;
-		}
-		let targetDir: string;
-		try {
-			targetDir = driver.target(prepared);
-		} catch (error) {
-			if (error instanceof ManagedSkillResourceError) continue;
-			throw error;
-		}
-		if (
-			!withRuntimeUserFileAccess(() => existsSync(targetDir)) ||
-			managedSkillReservationOwner(targetDir, skillId) !== "unreserved" ||
-			!driver.verifyOwned(prepared, targetDir)
-		) {
-			continue;
-		}
-		reserveManagedSkill({
-			targetDir,
-			id: skillId,
-			manager: "hosted-manifest",
-			...preparedReservationIdentity(prepared),
+			verify: () =>
+				promotable !== null &&
+				installedTreeMatches(promotable, reservation.targetDir, {
+					exclude: driver.installedTreeExcludes,
+				}),
+			discard: () => discardPendingHostedSkill(reservation.targetDir),
 		});
 	}
 }
@@ -346,7 +219,6 @@ function applyHostedSkills(
 	driver: HostedSkillProjectionDriver,
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
-	managedResourceRoot: string,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): string[] {
 	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return [];
@@ -377,7 +249,11 @@ function applyHostedSkills(
 					targetDir: reservation.targetDir,
 					id: skillId,
 					manager: "hosted-manifest",
-					removeTarget: () => driver.remove(reservation),
+					removeTarget: () => {
+						withRuntimeUserFileAccess(() =>
+							rmSync(reservation.targetDir, { recursive: true, force: true }),
+						);
+					},
 				});
 			} catch (error) {
 				if (!(error instanceof ManagedSkillResourceError)) throw error;
@@ -402,6 +278,27 @@ function applyHostedSkills(
 		if (withRuntimeUserFileAccess(() => existsSync(targetDir)) && owner !== "hosted-manifest") {
 			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
 		}
+		const reservationIdentity = preparedReservationIdentity(prepared);
+		if (
+			reservation?.targetDir === targetDir &&
+			reservation.digest === reservationIdentity.digest &&
+			installedTreeMatches(prepared, targetDir, {
+				exclude: driver.installedTreeExcludes,
+			})
+		) {
+			if (
+				reservation.version !== reservationIdentity.version ||
+				reservation.sourceIdentity !== reservationIdentity.sourceIdentity
+			) {
+				reserveManagedSkill({
+					targetDir,
+					id: skillId,
+					manager: "hosted-manifest",
+					...reservationIdentity,
+				});
+			}
+			continue;
+		}
 		try {
 			installReservedManagedSkill(
 				{
@@ -414,11 +311,14 @@ function applyHostedSkills(
 					...preparedReservationIdentity(prepared),
 				},
 				() => {
-					return driver.install(prepared, targetDir, reservation);
+					return driver.install(prepared, targetDir);
 				},
 				{
-					verify: () => driver.verifyOwned(prepared, targetDir),
-					discard: () => discardPendingHostedSkill(driver, managedResourceRoot, skillId, targetDir),
+					verify: () =>
+						installedTreeMatches(prepared, targetDir, {
+							exclude: driver.installedTreeExcludes,
+						}),
+					discard: () => discardPendingHostedSkill(targetDir),
 				},
 			);
 		} catch (error) {
@@ -461,15 +361,25 @@ export function reconcileHostedSkillProjection(input: {
 	const drivers = hostedSkillProjectionDrivers({
 		manifest,
 		home,
-		managedResourceRoot,
 		openClawWorkspaceRoot,
 		hermesDriver,
 		openClawDriver,
 	});
+	rmSync(join(managedResourceRoot, "skill-receipts"), { recursive: true, force: true });
+	for (const driver of drivers) {
+		const skillsRoot = driver.skillsRoot;
+		if (skillsRoot) {
+			withRuntimeUserFileAccess(() =>
+				rmSync(join(skillsRoot, ".clawdi-manifest-receipts"), {
+					recursive: true,
+					force: true,
+				}),
+			);
+		}
+	}
 	runHostedSkillProjectionStep("runtime Skill projection planning failed", () => {
 		for (const driver of drivers) {
-			recoverPendingHostedSkillInstallations(driver, manifest, managedResourceRoot, preparedSkills);
-			recoverHostedSkillReservations(driver, manifest, preparedSkills);
+			recoverPendingHostedSkillInstallations(driver, manifest, preparedSkills);
 			validateHostedSkillsPlan(driver, manifest, preparedSkills);
 		}
 	});
@@ -477,14 +387,7 @@ export function reconcileHostedSkillProjection(input: {
 	for (const driver of drivers) {
 		const driverFailures = runHostedSkillProjectionStep(
 			`runtime ${driver.name} Skill projection failed`,
-			() =>
-				applyHostedSkills(
-					driver,
-					observations.get(driver.name),
-					manifest,
-					managedResourceRoot,
-					preparedSkills,
-				),
+			() => applyHostedSkills(driver, observations.get(driver.name), manifest, preparedSkills),
 		);
 		failures.push(
 			...driverFailures.map(

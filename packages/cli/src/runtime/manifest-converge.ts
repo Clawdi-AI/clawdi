@@ -1092,25 +1092,21 @@ function applyRuntimeResourceProjections(
 				manifest,
 				projectionHome,
 				plan.openClawWorkspaceRoot,
-				paths.managedResourceRoot,
 				preparedHostedSourcedSkills,
 				hermesSkillNativeReconciler,
 			);
 			skillProjectionScope = state.rollbackSnapshots.captureScoped(
 				"runtime Skill filesystem rollback failed",
 				{
-					rootTargets: [
-						managedSkillReservationLedgerPath(),
-						...skillMutationTargets.platformTargets,
-					],
+					rootTargets: [managedSkillReservationLedgerPath()],
 					trustedRootDirectories: [paths.managedResourceRoot],
-					runtimeUserTargets: skillMutationTargets.runtimeUserTargets,
+					runtimeUserTargets: skillMutationTargets,
 					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
 					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(
-						skillMutationTargets.runtimeUserTargets,
-						[paths.userHome, paths.clawdiHome],
-					),
+					metadataTargets: mutationAncestorMetadataTargets(skillMutationTargets, [
+						paths.userHome,
+						paths.clawdiHome,
+					]),
 				},
 			);
 			state.resourceProjectionErrors.push(

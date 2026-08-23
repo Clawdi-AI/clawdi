@@ -37,9 +37,9 @@ export interface PreparedHostedSourcedSkill {
 	source:
 		| HostedSkillSource
 		| { type: "bundled"; version: number; digest: string; assetDirectory: string };
-	/** Stable canonical ownership identity; independent of tar encoding and cache lifetime. */
+	/** Canonical manifest source identity persisted in sourced Skill reservations. */
 	sourceIdentity: string;
-	/** Byte hash used only to detect corruption in the local archive cache. */
+	/** SHA-256 of tarBytes; also the sourced Skill reservation payload digest. */
 	archiveSha256: string;
 	tarBytes: Buffer;
 }

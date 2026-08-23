@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import {
 	managedWhatsAppAuthReceiptPath,
 	materializeHostedChannelCredentials,
+	validateHostedChannelCredentialsPlan,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
@@ -129,17 +130,33 @@ describe("managed WhatsApp auth receipts", () => {
 		expect(existsSync(receipt)).toBe(false);
 	});
 
-	test("rejects a legacy tree marker without a platform receipt", () => {
+	test("adopts a 0.13.92 tree marker without replacing session state", () => {
 		const path = authDir();
 		mkdirSync(path, { recursive: true });
+		const sessionPath = join(path, "session-key.json");
 		writeFileSync(join(path, "creds.json"), `${credsJson("legacy-secret")}\n`);
+		writeFileSync(sessionPath, '{"preserved":true}\n');
 		writeFileSync(join(path, LEGACY_MARKER), legacyMarker());
+		const sessionBefore = { bytes: readFileSync(sessionPath), inode: statSync(sessionPath).ino };
+		const desired = manifest(path);
 
-		expect(() =>
-			materializeHostedChannelCredentials(manifest(path), { [SECRET_REF]: credsJson() }, home),
-		).toThrow(`refusing to overwrite unmanaged WhatsApp auth directory ${path}`);
-		expect(readdirSync(path).sort()).toEqual([LEGACY_MARKER, "creds.json"]);
+		validateHostedChannelCredentialsPlan(
+			desired,
+			{ [SECRET_REF]: credsJson("legacy-secret") },
+			home,
+		);
+		expect(existsSync(join(path, LEGACY_MARKER))).toBe(true);
 		expect(existsSync(managedWhatsAppAuthReceiptPath(path))).toBe(false);
+
+		materializeHostedChannelCredentials(
+			desired,
+			{ [SECRET_REF]: credsJson("legacy-secret") },
+			home,
+		);
+		expect(existsSync(join(path, LEGACY_MARKER))).toBe(false);
+		expect(existsSync(managedWhatsAppAuthReceiptPath(path))).toBe(true);
+		expect(readFileSync(sessionPath)).toEqual(sessionBefore.bytes);
+		expect(statSync(sessionPath).ino).toBe(sessionBefore.inode);
 	});
 
 	test("does not adopt missing or malformed ownership state", () => {
