@@ -70,6 +70,7 @@ export interface RuntimePrivateAppliedAuthority {
 	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
+	officialServiceCommandRevisions: Record<string, string>;
 }
 export function writeRuntimePrivateFileAtomic(
 	paths: RuntimePaths,

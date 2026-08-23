@@ -261,6 +261,24 @@ function convergeRuntimeManifest(
 	);
 }
 
+function convergeAndCommitTestRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts: Omit<TestConvergeOptions, "commitAuthority"> = {},
+) {
+	let officialServiceCommandRevisions: Record<string, string> = {};
+	const convergence = convergeRuntimeManifest(load, paths, {
+		...opts,
+		commitAuthority: (_committed, authority) => {
+			officialServiceCommandRevisions = authority.officialServiceCommandRevisions;
+		},
+	});
+	if (convergence.installErrors.length === 0) {
+		writeTestRuntimeAppliedState(paths, load, convergence, { officialServiceCommandRevisions });
+	}
+	return convergence;
+}
+
 function hermesManagedBaileysRoot(home: string): string {
 	return join(
 		home,
@@ -2424,6 +2442,7 @@ function writeTestRuntimeAppliedState(
 		etag?: string;
 		sourceRevision?: string;
 		egressSidecarSecretRevision?: string;
+		officialServiceCommandRevisions?: Record<string, string>;
 	} = {},
 ): void {
 	const applyContext = load.applyContext;
@@ -2466,6 +2485,7 @@ function writeTestRuntimeAppliedState(
 			...(input.egressSidecarSecretRevision
 				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
 				: {}),
+			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
 		},
@@ -5073,7 +5093,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		};
 
 		writeFileSync(configPatchFailure, "fail\n");
-		const failedConfigPatch = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const failedConfigPatch = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(failedConfigPatch.installErrors).toContainEqual(
@@ -5089,7 +5109,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(existsSync(gatewayEnvPath)).toBe(false);
 		rmSync(configPatchFailure);
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const convergence = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 
@@ -5141,7 +5161,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const configMtime = statSync(openclawConfig).mtimeMs;
 		const envMtime = statSync(gatewayEnvPath).mtimeMs;
 		const commandsAfterConvergence = readFileSync(openclawCommand, "utf8");
-		const idempotent = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const idempotent = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(idempotent.installErrors).toEqual([]);
@@ -5150,7 +5170,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
 
 		rmSync(unitPath, { force: true });
-		const reinstalled = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const reinstalled = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(reinstalled.installErrors).toEqual([]);
@@ -5166,7 +5186,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 
 		if (!loaded.secretValues) throw new Error("expected runtime secret fixture");
 		loaded.secretValues["secret://runtime/openclaw/gateway-token"] = "rotated-gateway-token";
-		const rotated = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const rotated = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(rotated.installErrors).toEqual([]);
@@ -6230,14 +6250,11 @@ cp '${sdkSource}' '${sdkTarget}'
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const hermesBin = join(home, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(hermesBin, "#!/bin/sh\nexit 0\n");
-		chmodSync(hermesBin, 0o700);
+		writeHermesVersionBinary(home, "0.20.1");
 
 		const loaded: RuntimeManifestLoad = {
 			source: "remote-datasource",
@@ -12864,7 +12881,7 @@ exit 64
 		);
 	});
 
-	it("reconciles an already-installed OpenClaw channel plugin with forced provenance", () => {
+	it("keeps an already-installed OpenClaw channel plugin with verified provenance", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12948,9 +12965,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-			"plugins install @openclaw/discord --force\n",
-		);
+		expect(existsSync(openclawPluginInstalls)).toBe(false);
 		const patchText = readFileSync(openclawPatch, "utf-8");
 		expect(patchText).toContain('"discord"');
 		expect(patchText).toContain('"plugins"');
@@ -13556,6 +13571,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			join(paths.statusRoot, "cloud-status.json"),
 			join(paths.statusRoot, "cloud-result.json"),
 			join(paths.statusRoot, "egress-engine.json"),
+			join(paths.statusRoot, "runtime-install-receipts.json"),
 			join(paths.cacheRoot, "channels.etag"),
 		];
 		const retiredDirectories = [

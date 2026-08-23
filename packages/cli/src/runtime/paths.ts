@@ -62,7 +62,6 @@ export interface RuntimePaths {
 	bootStatus: string;
 	runtimeWatchStatus: string;
 	runtimeHeartbeatRoot: string;
-	installReceipts: string;
 	managedResourceRoot: string;
 	runRoot: string;
 	convergeLock: string;
@@ -221,7 +220,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		bootStatus: join(statusRoot, "boot-status.json"),
 		runtimeWatchStatus: join(statusRoot, "runtime-watch.json"),
 		runtimeHeartbeatRoot: join(serviceStateRoot, "heartbeat"),
-		installReceipts: join(statusRoot, "runtime-install-receipts.json"),
 		managedResourceRoot: join(serviceStateRoot, "managed-resources"),
 		runRoot,
 		convergeLock: join(runRoot, "locks", "converge.lock"),

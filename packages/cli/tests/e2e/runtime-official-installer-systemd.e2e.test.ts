@@ -1900,13 +1900,11 @@ http.createServer((request, response) => {
 	const candidatesRoot = join(paths.fileBrowserInstallRoot, "candidates");
 	const activeCandidate = join(candidatesRoot, binarySha256);
 	const activeBinary = join(activeCandidate, "filebrowser");
-	const receipt = paths.installReceipts;
 	for (const path of [
 		paths.fileBrowserInstallRoot,
 		candidatesRoot,
 		activeCandidate,
 		activeBinary,
-		receipt,
 		paths.manifestLastGood,
 	]) {
 		expect(statSync(path).uid).toBe(0);
@@ -1921,7 +1919,6 @@ http.createServer((request, response) => {
 	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(runtimeUid);
 	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(runtimeGid);
 	expect(statSync(paths.fileBrowserStateRoot).mode & 0o777).toBe(0o700);
-	expect(statSync(receipt).mode & 0o777).toBe(0o600);
 	expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
 	expect(readFileSync(paths.manifestLastGood, "utf8")).toContain(`"secret": "${"s".repeat(43)}"`);
 	const cache = join(paths.fileBrowserStateRoot, "cache");
@@ -1936,7 +1933,6 @@ http.createServer((request, response) => {
 	for (const path of [
 		paths.fileBrowserConfigRoot,
 		paths.fileBrowserConfig,
-		receipt,
 		paths.manifestLastGood,
 	]) {
 		const denied = spawnSync("runuser", ["-u", "clawdi", "--", "test", "!", "-r", path]);
@@ -1948,7 +1944,6 @@ http.createServer((request, response) => {
 		activeCandidate,
 		activeBinary,
 		paths.fileBrowserConfig,
-		receipt,
 		paths.manifestLastGood,
 		join(paths.systemdSystemRoot, "clawdi-files.service"),
 	]) {
@@ -2071,7 +2066,7 @@ http.createServer((request, response) => {
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
 }, 120_000);
 
-test("repairs a live Hermes user-service ownership enclave without losing the unit", () => {
+test("repairs a live Hermes user-service ownership enclave without losing the unit", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -2095,23 +2090,8 @@ test("repairs a live Hermes user-service ownership enclave without losing the un
 		"default.target.wants",
 		unitName,
 	);
-	const runUserSystemctl = (...args: string[]) =>
-		spawnSync(
-			"runuser",
-			[
-				"-u",
-				"clawdi",
-				"--",
-				"env",
-				`HOME=${runtimeHome}`,
-				`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
-				`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
-				"systemctl",
-				"--user",
-				...args,
-			],
-			{ encoding: "utf8" },
-		);
+	ensureBehavioralGuardUserManager();
+	const runUserSystemctl = runBehavioralGuardUserSystemctl;
 
 	for (const staleUnit of ["openclaw-gateway.service", unitName]) {
 		runUserSystemctl("disable", "--now", staleUnit);
@@ -2155,9 +2135,8 @@ EOF
   "gateway run")
     exec /bin/sleep infinity
     ;;
-  *)
-    exit 64
-    ;;
+  "config path") printf '%s\\n' "$HOME/.hermes/config.yaml" ;;
+  *) exit 64 ;;
 esac
 `,
 		{ mode: 0o755 },
@@ -2221,34 +2200,14 @@ esac
 			},
 		},
 	};
-	const converge = () => {
-		const before = readSystemdUnitSnapshot(paths);
-		const transaction = new SystemdRuntimeTransaction();
-		return convergeRuntimeManifest(load, paths, {
-			cacheLastGood: false,
-			systemdApply: {
-				transactionState: () => transaction.state,
-				installOfficialService: (unit, install) =>
-					transaction.installOfficialService(paths, unit, install),
-				quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
-				activateEgressPrerequisite: () => ({
-					applied: true,
-					systemUnitsChanged: [],
-					userUnitsChanged: [],
-				}),
-				activate: ({ reloadUserUnits }) =>
-					applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-						transaction,
-						stage: "final-activation",
-						forceReloadUserUnits: reloadUserUnits,
-					}),
-				rollback: () => transaction.rollback(paths),
-			},
-		});
+	const converge = async () => {
+		const result = await applyRuntimeManifestLoad(load, paths);
+		if (result.kind !== "converged") throw new Error(`unexpected apply result: ${result.kind}`);
+		return result.convergence;
 	};
 
 	try {
-		expect(converge().installErrors).toEqual([]);
+		expect((await converge()).installErrors).toEqual([]);
 		const initialState = runUserSystemctl(
 			"show",
 			unitName,
@@ -2277,7 +2236,7 @@ esac
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
 
-		const repaired = converge();
+		const repaired = await converge();
 		expect(repaired.installErrors).toEqual([]);
 		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
 		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
@@ -2450,9 +2409,8 @@ EOF
     printf '%s\\n' "\${BEHAVIORAL_GUARD_DASHBOARD:-missing}" > ${BEHAVIORAL_GUARD_DASHBOARD_MARKER}
     exec /bin/sleep infinity
     ;;
-  *)
-    exit 64
-    ;;
+  "config path") printf '%s\\n' "$HOME/.hermes/config.yaml" ;;
+  *) exit 64 ;;
 esac
 `,
 		{ mode: 0o755 },

@@ -1,7 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
-	type BigIntStats,
 	chmodSync,
 	chownSync,
 	existsSync,
@@ -12,17 +10,15 @@ import {
 	readlinkSync,
 	rmdirSync,
 	rmSync,
-	statSync,
 	symlinkSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
-import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
+import { runtimeCommandCurrentRevision, runtimeCommandPath } from "./manifest-install";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
 	DEFAULT_RUN_ROOT,
@@ -70,12 +66,6 @@ import {
 } from "./systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
 
-function runtimeCommandPath(name: string, home: string): string | null {
-	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
-	if (name === "hermes") return join(home, ".local", "bin", "hermes");
-	return null;
-}
-
 export interface RuntimeSystemdUserProgram {
 	programKind: "runtime" | "file-browser";
 	runtime: RuntimeName;
@@ -98,19 +88,13 @@ export interface RuntimeEgressSystemdProgram {
 	secretFilePath: string | null;
 }
 
-export interface RuntimeInstallReceiptTarget {
-	desiredRevision: string;
-	currentRevision: () => string | null;
-	expectedCurrentRevision: string | null;
-}
-
 export interface OfficialRuntimeServicePlan {
-	targets: Map<string, RuntimeInstallReceiptTarget>;
 	pending: Array<{
 		unitName: string;
 		program: RuntimeSystemdUserProgram;
-		target: RuntimeInstallReceiptTarget;
+		commandRevision: string | null;
 	}>;
+	commandRevisions: Record<string, string>;
 }
 
 export interface RuntimeSystemdUserMutationPlan {
@@ -477,214 +461,63 @@ function officialRuntimeServiceCommand(
 	return commandPath && executableExists(commandPath) ? commandPath : descriptor.command;
 }
 
-function runtimeFileCurrentRevision(path: string): string | null {
-	if (!isAbsolute(path)) return null;
-	try {
-		const linkStat = lstatSync(path);
-		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
-		const fileStat = linkStat.isSymbolicLink() ? statSync(path) : linkStat;
-		if (!fileStat.isFile()) return null;
-		const contents = readFileSync(path);
-		return runtimeContentSha256({
-			path,
-			contentsSha256: createHash("sha256").update(contents).digest("hex"),
-			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
-			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
-			linkUid: linkStat.uid,
-			linkGid: linkStat.gid,
-			fileMode: fileStat.mode & 0o7777,
-			fileUid: fileStat.uid,
-			fileGid: fileStat.gid,
-		});
-	} catch {
-		return null;
-	}
-}
-
-function runtimeCommandStatIdentity(path: string): string | null {
-	if (!isAbsolute(path)) return null;
-	const statIdentity = (stat: BigIntStats) => ({
-		dev: stat.dev.toString(),
-		ino: stat.ino.toString(),
-		mode: stat.mode.toString(),
-		uid: stat.uid.toString(),
-		gid: stat.gid.toString(),
-		size: stat.size.toString(),
-		mtimeNs: stat.mtimeNs.toString(),
-		ctimeNs: stat.ctimeNs.toString(),
-	});
-	try {
-		const linkStat = lstatSync(path, { bigint: true });
-		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
-		const fileStat = linkStat.isSymbolicLink() ? statSync(path, { bigint: true }) : linkStat;
-		if (!fileStat.isFile()) return null;
-		return runtimeContentSha256({
-			path,
-			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
-			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
-			link: statIdentity(linkStat),
-			file: statIdentity(fileStat),
-		});
-	} catch {
-		return null;
-	}
-}
-
-export function runtimeCommandCurrentRevision(
-	command: string,
-	home: string,
-	cwd: string,
-): string | null {
-	const executableRevision = runtimeFileCurrentRevision(command);
-	if (!executableRevision) return null;
-	try {
-		const result = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
-			timeoutMs: RUNTIME_VERSION_PROBE_TIMEOUT_MS,
-		});
-		if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
-			throw new RuntimeUserCommandTimeoutError(
-				`runtime --version probe for ${command}`,
-				RUNTIME_VERSION_PROBE_TIMEOUT_MS,
-			);
-		}
-		if (result.status !== 0) return null;
-		const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
-		const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
-		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
-		return version ? runtimeContentSha256({ executableRevision, version }) : null;
-	} catch (error) {
-		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
-		return null;
-	}
-}
-
-type RuntimeCommandRevisionResolver = (command: string, home: string, cwd: string) => string | null;
-
-const runtimeCommandRevisionCache = new Map<string, { statIdentity: string; revision: string }>();
-
-export function runtimeCommandCurrentRevisionCached(
-	command: string,
-	home: string,
-	cwd: string,
-	resolveRevision: RuntimeCommandRevisionResolver = runtimeCommandCurrentRevision,
-): string | null {
-	const key = `${command}\0${home}\0${cwd}`;
-	const statIdentity = runtimeCommandStatIdentity(command);
-	if (!statIdentity) {
-		runtimeCommandRevisionCache.delete(key);
-		return null;
-	}
-	const cached = runtimeCommandRevisionCache.get(key);
-	if (cached?.statIdentity === statIdentity) return cached.revision;
-	const revision = resolveRevision(command, home, cwd);
-	if (!revision) {
-		runtimeCommandRevisionCache.delete(key);
-		return null;
-	}
-	runtimeCommandRevisionCache.set(key, { statIdentity, revision });
-	return revision;
-}
-
-interface OfficialServiceCurrentRevisions {
-	canonical: string;
-	legacyMetadataAware: string;
-}
-
-function officialServiceCurrentRevisions(
+function officialServiceBaseUnitIsCurrent(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
-): OfficialServiceCurrentRevisions | null {
+): boolean {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor) return null;
+	if (!descriptor) return false;
 	const unitName = systemdUnitFileName(descriptor.programName);
 	const unitPath = join(paths.systemdUserRoot, unitName);
 	try {
 		const contents = readFileSync(unitPath);
-		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
+		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return false;
 		const unitStat = lstatSync(unitPath);
-		if (!unitStat.isFile()) return null;
-		const commandRevision = runtimeCommandCurrentRevision(
-			officialRuntimeServiceCommand(descriptor, paths),
-			paths.userHome,
-			paths.userHome,
-		);
-		if (!commandRevision) return null;
-		const contentIdentity = {
-			commandRevision,
-			programName: descriptor.programName,
-			unitName,
-			unitSha256: createHash("sha256").update(contents).digest("hex"),
-		};
-		return {
-			canonical: runtimeContentSha256(contentIdentity),
-			legacyMetadataAware: runtimeContentSha256({
-				...contentIdentity,
-				unitMode: unitStat.mode & 0o7777,
-				unitUid: unitStat.uid,
-				unitGid: unitStat.gid,
-			}),
-		};
+		if (!unitStat.isFile()) return false;
+		return true;
 	} catch (error) {
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
-		return null;
+		return false;
 	}
 }
 
-function officialServiceDesiredRevision(program: RuntimeSystemdUserProgram): string {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor) throw new Error("official service receipt requires an official service program");
-	return runtimeContentSha256({
-		runtime: descriptor.runtime,
-		programName: descriptor.programName,
-		serviceIdentity: descriptor.service,
-		installerCommand: descriptor.command,
-		installArgs: descriptor.installArgs,
-	});
-}
-
-function verifiedReceiptCurrentRevision(
-	receipt: RuntimeInstallReceiptEntry | undefined,
-	desiredRevision: string,
-	currentRevisions: () => OfficialServiceCurrentRevisions | null,
+function officialRuntimeServiceCommandRevision(
+	program: RuntimeSystemdUserProgram,
+	paths: RuntimePaths,
 ): string | null {
-	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
-	const current = currentRevisions();
-	if (!current) return null;
-	// Pre-content-only receipts included unit ownership and mode. Accept them
-	// once, then commit the canonical content revision without reinstalling.
-	return receipt.currentRevision === current.canonical ||
-		receipt.currentRevision === current.legacyMetadataAware
-		? current.canonical
-		: null;
+	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
+	if (!descriptor) return null;
+	return runtimeCommandCurrentRevision(
+		officialRuntimeServiceCommand(descriptor, paths),
+		paths.userHome,
+		paths.userHome,
+	);
 }
 
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
-	receipts: RuntimeInstallReceipts | null,
 	executeInstallers: boolean,
+	committedCommandRevisions: Readonly<Record<string, string>>,
 ): OfficialRuntimeServicePlan {
-	const targets = new Map<string, RuntimeInstallReceiptTarget>();
 	const pending: OfficialRuntimeServicePlan["pending"] = [];
-	if (!executeInstallers) return { targets, pending };
+	const commandRevisions: Record<string, string> = {};
+	if (!executeInstallers) return { pending, commandRevisions };
 	for (const program of officialRuntimeSystemdPrograms(programs)) {
-		const key = systemdUnitFileName(runtimeSystemdProgramName(program));
-		const desiredRevision = officialServiceDesiredRevision(program);
-		const currentRevisions = () => officialServiceCurrentRevisions(program, paths);
-		const currentRevision = () => currentRevisions()?.canonical ?? null;
-		const expectedCurrentRevision = verifiedReceiptCurrentRevision(
-			receipts?.officialServices[key],
-			desiredRevision,
-			currentRevisions,
-		);
-		const target = { desiredRevision, currentRevision, expectedCurrentRevision };
-		targets.set(key, target);
-		if (expectedCurrentRevision === null) pending.push({ unitName: key, program, target });
+		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
+		const commandRevision = officialRuntimeServiceCommandRevision(program, paths);
+		if (commandRevision) commandRevisions[unitName] = commandRevision;
+		if (
+			!officialServiceBaseUnitIsCurrent(program, paths) ||
+			!commandRevision ||
+			committedCommandRevisions[unitName] !== commandRevision
+		) {
+			pending.push({ unitName, program, commandRevision });
+		}
 	}
-	return { targets, pending };
+	return { pending, commandRevisions };
 }
 
-const RUNTIME_VERSION_PROBE_TIMEOUT_MS = 10_000;
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
 const RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS = 15_000;
@@ -1094,11 +927,13 @@ export function installOfficialRuntimeService(
 	reloadRuntimeUserManager(paths, paths.userHome);
 	const error = installOfficialRuntimeUserService({ ...item.program, cwd: paths.userHome }, paths);
 	if (error) return error;
-	const currentRevision = item.target.currentRevision();
-	if (!currentRevision) {
+	if (!officialServiceBaseUnitIsCurrent(item.program, paths)) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
 	}
-	item.target.expectedCurrentRevision = currentRevision;
+	item.commandRevision = officialRuntimeServiceCommandRevision(item.program, paths);
+	if (!item.commandRevision) {
+		return `official ${runtimeSystemdProgramName(item.program)} command revision could not be verified`;
+	}
 	return null;
 }
 

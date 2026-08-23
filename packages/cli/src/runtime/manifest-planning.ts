@@ -25,7 +25,6 @@ import {
 } from "./hosted-provider-resolution";
 import type { HostedRuntimeContractOptions } from "./hosted-runtime-contract";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
-import { runtimeInstallReceiptsPath } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
 	type RuntimeLiveSnapshot,
@@ -642,7 +641,6 @@ export function runtimeManagedMutationPlan(input: {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
 	const fileBrowserMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
 	for (const target of fileBrowserMutation.rootTargets) rootTargets.add(target);
-	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
 	const egressPin = input.manifest.egressEngine;
 	if (egressPin?.type === "mitmproxy") {

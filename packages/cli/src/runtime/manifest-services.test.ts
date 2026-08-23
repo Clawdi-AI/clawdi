@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
-	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -15,13 +13,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
 	ensureTestOpenClawWorkspaceCli,
 	type TestConvergeOptions,
 	withTestSystemdTransaction,
 } from "../test-support/systemd-apply";
-import { runtimeContentSha256 } from "./applied-state";
-import { readRuntimeInstallReceipts, writeRuntimeInstallReceipts } from "./install-receipts";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	type RuntimeManifest,
@@ -29,8 +26,8 @@ import {
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import { runtimeCommandCurrentRevision } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
+import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
@@ -230,63 +227,6 @@ function installGateManifest(
 	};
 }
 
-function pluginInspectFixture(pluginSourcePath: string): Record<string, unknown> {
-	return {
-		plugin: {
-			id: "discord",
-			source: pluginSourcePath,
-			origin: "global",
-			status: "loaded",
-			version: "1.2.3",
-			enabled: true,
-		},
-		install: {
-			source: "npm",
-			spec: "@openclaw/discord",
-			installPath: dirname(pluginSourcePath),
-			resolvedName: "@openclaw/discord",
-			resolvedVersion: "1.2.3",
-			integrity: "sha512-test",
-		},
-	};
-}
-
-function writeFakePluginCli(input: {
-	path: string;
-	installLogPath: string;
-	inspectStatePath: string;
-	pluginSourcePath: string;
-	failInstallMarker: string;
-	version?: string;
-}): void {
-	mkdirSync(dirname(input.path), { recursive: true });
-	writeFileSync(
-		input.path,
-		`#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-	  "--version") printf '%s\\n' '${input.version ?? "OpenClaw 2026.7.29"}' ;;
-  "plugins inspect discord --json") cat '${input.inspectStatePath}' ;;
-  "plugins install @openclaw/discord --force")
-	mkdir -p '${dirname(input.inspectStatePath)}'
-	printf '%s\\n' 'plugins install @openclaw/discord --force' >> '${input.installLogPath}'
-	[ ! -f '${input.failInstallMarker}' ] || exit 73
-	mkdir -p '${dirname(input.pluginSourcePath)}'
-	printf '%s\\n' 'export const discordPlugin = true;' > '${input.pluginSourcePath}'
-	chmod 0644 '${input.pluginSourcePath}'
-	printf '%s\\n' '${JSON.stringify(pluginInspectFixture(input.pluginSourcePath))}' > '${input.inspectStatePath}'
-	;;
-  "plugins install @openclaw/discord")
-	exit 1
-	;;
-  "config patch --stdin") cat >/dev/null ;;
-  *) exit 64 ;;
-esac
-`,
-	);
-	chmodSync(input.path, 0o700);
-}
-
 interface InstallGateHarness {
 	converge: (commitAuthority?: () => void) => ReturnType<typeof convergeRuntimeManifest>;
 	drift: () => void;
@@ -294,14 +234,12 @@ interface InstallGateHarness {
 	failNextInstall: () => void;
 	restoreInstaller: () => void;
 	installCount: () => number;
-	receipt: () => unknown;
 }
 
 interface OfficialServiceInstallHarness extends InstallGateHarness {
 	addForeignDropIn: () => string;
 	driftMetadata: () => void;
 	hangVersionProbe: () => void;
-	stageLegacyReceipt: () => unknown;
 }
 
 function officialServiceHarness(
@@ -314,7 +252,6 @@ function officialServiceHarness(
 			? join(paths.userHome, ".local", "bin", "openclaw")
 			: join(paths.userHome, ".local", "bin", "hermes");
 	const unitPath = join(paths.systemdUserRoot, `${runtime}-gateway.service`);
-	const unitName = `${runtime}-gateway.service`;
 	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 	writeFakeSystemctl({ path: systemctlCommand, logPath });
@@ -337,12 +274,23 @@ function officialServiceHarness(
 		offline: false,
 	};
 	return {
-		converge: (commitAuthority) =>
+		converge: (afterCommit) =>
 			convergeRuntimeManifest(load, paths, {
-				...(commitAuthority ? { commitAuthority } : {}),
+				commitAuthority: (convergence, authority) => {
+					commitRuntimeAppliedState({
+						load,
+						paths,
+						etag: '"official-service-test"',
+						sourceRevision: "a".repeat(64),
+						convergence,
+						applyIdentity: null,
+						officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
+					});
+					afterCommit?.();
+				},
 				executeOfficialServiceInstallers: true,
 			}),
-		drift: () => writeFileSync(unitPath, `${readFileSync(unitPath, "utf8")}# drift\n`),
+		drift: () => writeFileSync(unitPath, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`),
 		revise: () =>
 			writeCli(false, runtime === "hermes" ? "Hermes Agent v0.18.1" : "OpenClaw 2026.7.30"),
 		failNextInstall: () => writeCli(true),
@@ -350,7 +298,6 @@ function officialServiceHarness(
 		installCount: () =>
 			readFileSync(logPath, "utf8").match(new RegExp(`${runtime} gateway install`, "g"))?.length ??
 			0,
-		receipt: () => readRuntimeInstallReceipts(paths)?.officialServices[unitName],
 		addForeignDropIn: () => {
 			const path = join(
 				paths.systemdUserRoot,
@@ -364,81 +311,12 @@ function officialServiceHarness(
 		driftMetadata: () => chmodSync(unitPath, 0o600),
 		hangVersionProbe: () =>
 			writeFakeGatewayCli({ path: command, logPath, runtime, unitPath, hangVersion: true }),
-		stageLegacyReceipt: () => {
-			const receipts = readRuntimeInstallReceipts(paths);
-			const receipt = receipts?.officialServices[unitName];
-			if (!receipts || !receipt) throw new Error("official service receipt is unavailable");
-			const canonicalReceipt = structuredClone(receipt);
-			const commandRevision = runtimeCommandCurrentRevision(
-				command,
-				paths.userHome,
-				paths.userHome,
-			);
-			if (!commandRevision) throw new Error("official service command revision is unavailable");
-			const unit = readFileSync(unitPath);
-			const unitStat = lstatSync(unitPath);
-			receipt.currentRevision = runtimeContentSha256({
-				commandRevision,
-				programName: `${runtime}-gateway`,
-				unitName,
-				unitSha256: createHash("sha256").update(unit).digest("hex"),
-				unitMode: unitStat.mode & 0o7777,
-				unitUid: unitStat.uid,
-				unitGid: unitStat.gid,
-			});
-			writeRuntimeInstallReceipts(receipts, paths);
-			return canonicalReceipt;
-		},
-	};
-}
-
-function channelPluginHarness(): InstallGateHarness {
-	const paths = tempRuntimePaths();
-	const command = join(paths.userHome, ".local", "bin", "openclaw");
-	const installLogPath = join(paths.runRoot, "plugin-installs.log");
-	const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
-	const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
-	const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
-	process.env.CLAWDI_SYSTEMD_APPLY = "0";
-	writeFakePluginCli({
-		path: command,
-		installLogPath,
-		inspectStatePath,
-		pluginSourcePath,
-		failInstallMarker,
-	});
-	const load: RuntimeManifestLoad = {
-		manifest: installGateManifest(paths, "openclaw", command),
-		source: "remote-datasource",
-		sourcePath: "inline-plugin-receipt",
-		offline: false,
-		secretValues: {},
-	};
-	return {
-		converge: (commitAuthority) =>
-			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
-		drift: () => writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n"),
-		revise: () =>
-			writeFakePluginCli({
-				path: command,
-				installLogPath,
-				inspectStatePath,
-				pluginSourcePath,
-				failInstallMarker,
-				version: "OpenClaw 2026.7.30",
-			}),
-		failNextInstall: () => writeFileSync(failInstallMarker, "fail\n"),
-		restoreInstaller: () => rmSync(failInstallMarker, { force: true }),
-		installCount: () =>
-			readFileSync(installLogPath, "utf8").match(/@openclaw\/discord/g)?.length ?? 0,
-		receipt: () => readRuntimeInstallReceipts(paths)?.channelPlugins["openclaw:discord"],
 	};
 }
 
 const installGateHarnesses = [
 	["Hermes official service", () => officialServiceHarness("hermes")],
 	["OpenClaw official service", () => officialServiceHarness("openclaw")],
-	["channel plugin", channelPluginHarness],
 ] as const;
 
 function writeFakeSystemctl(input: {
@@ -570,6 +448,16 @@ esac
 		const restartSignals: string[][] = [];
 		const converge = () =>
 			convergeRuntimeManifest(load, paths, {
+				commitAuthority: (convergence, authority) =>
+					commitRuntimeAppliedState({
+						load,
+						paths,
+						etag: '"openclaw-channel-drift"',
+						sourceRevision: "a".repeat(64),
+						convergence,
+						applyIdentity: null,
+						officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
+					}),
 				systemdApply: {
 					activateEgressPrerequisite: () => ({
 						applied: true,
@@ -1412,22 +1300,19 @@ esac
 	});
 
 	test.each(installGateHarnesses)(
-		"gates %s installs on a verified no-op and fails closed on drift",
+		"gates %s installs on a live no-op and fails closed on drift",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
 			expect(harness.installCount()).toBe(1);
-			expect(harness.receipt()).toBeDefined();
 
 			expect(harness.converge().installErrors).toEqual([]);
 			expect(harness.installCount()).toBe(1);
 
 			harness.drift();
-			const receiptBeforeFailure = harness.receipt();
 			harness.failNextInstall();
 			expect(harness.converge().installErrors.join("\n")).toContain("install failed");
 			expect(harness.installCount()).toBe(2);
-			expect(harness.receipt()).toEqual(receiptBeforeFailure);
 
 			harness.restoreInstaller();
 			expect(harness.converge().installErrors).toEqual([]);
@@ -1458,82 +1343,20 @@ esac
 		const harness = officialServiceHarness(runtime);
 		expect(harness.converge().installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(1);
-		const receipt = harness.receipt();
 
 		harness.driftMetadata();
 		expect(harness.converge().installErrors).toEqual([]);
 
 		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toEqual(receipt);
 	});
 
-	test.each([
-		["Hermes", "hermes"],
-		["OpenClaw", "openclaw"],
-	] as const)("migrates a legacy %s service receipt without reinstalling", (_name, runtime) => {
-		const harness = officialServiceHarness(runtime);
-		expect(harness.converge().installErrors).toEqual([]);
-		const canonicalReceipt = harness.stageLegacyReceipt();
-		expect(harness.receipt()).not.toEqual(canonicalReceipt);
-
-		expect(harness.converge().installErrors).toEqual([]);
-
-		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toEqual(canonicalReceipt);
-	});
-
-	test.each(installGateHarnesses)(
-		"rolls back the %s receipt when authority commit fails",
-		(_name, createHarness) => {
-			const harness = createHarness();
-			const failed = harness.converge(() => {
-				throw new Error("authority commit rejected");
-			});
-
-			expect(failed.installErrors.join("\n")).toContain("authority commit rejected");
-			expect(harness.installCount()).toBe(1);
-			expect(harness.receipt()).toBeUndefined();
-
-			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(2);
-			expect(harness.receipt()).toBeDefined();
-		},
-	);
-
-	test.each(installGateHarnesses)(
-		"restores the prior %s receipt when replacement authority fails",
-		(_name, createHarness) => {
-			const harness = createHarness();
-			expect(harness.converge().installErrors).toEqual([]);
-			const previousReceipt = harness.receipt();
-			expect(previousReceipt).toBeDefined();
-
-			harness.revise();
-			const failed = harness.converge(() => {
-				throw new Error("replacement authority rejected");
-			});
-
-			expect(failed.installErrors.join("\n")).toContain("replacement authority rejected");
-			expect(harness.installCount()).toBe(2);
-			expect(harness.receipt()).toEqual(previousReceipt);
-
-			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(3);
-			expect(harness.receipt()).not.toEqual(previousReceipt);
-			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(3);
-		},
-	);
-
-	test.each(installGateHarnesses)("does not bless post-commit %s drift", (_name, createHarness) => {
+	test.each(installGateHarnesses)("detects post-commit %s drift", (_name, createHarness) => {
 		const harness = createHarness();
 		expect(harness.converge(harness.drift).installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeDefined();
 
 		expect(harness.converge().installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toBeDefined();
 	});
 
 	test.each([
@@ -1542,7 +1365,6 @@ esac
 	] as const)("reports foreign %s gateway drop-ins without deleting them", (_name, runtime) => {
 		const harness = officialServiceHarness(runtime);
 		expect(harness.converge().installErrors).toEqual([]);
-		const receipt = harness.receipt();
 		const foreignDropIn = harness.addForeignDropIn();
 		const foreignContents = readFileSync(foreignDropIn, "utf8");
 
@@ -1556,7 +1378,6 @@ esac
 		expect(drifted.installErrors.join("\n")).toContain(foreignDropIn);
 		expect(drifted.outputs.systemdUserUnits).toEqual([]);
 		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toEqual(receipt);
 		expect(readFileSync(foreignDropIn, "utf8")).toBe(foreignContents);
 	});
 
@@ -1648,14 +1469,14 @@ esac
 
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
-			"systemctl --user daemon-reload",
-			"systemctl --user reset-failed hermes-gateway.service",
+		expect(
+			readFileSync(logPath, "utf8")
+				.trim()
+				.split("\n")
+				.filter((line) => line.includes(" gateway ")),
+		).toEqual([
 			"hermes gateway install --force",
-			"systemctl --user daemon-reload",
-			"systemctl --user reset-failed openclaw-gateway.service",
 			"openclaw gateway install --force --json",
-			"systemctl --user daemon-reload",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",
 		]);
@@ -1925,6 +1746,7 @@ esac
 			unitPath,
 			failInstall: true,
 		});
+		writeFileSync(unitPath, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`);
 		const failedReinstall = convergeRuntimeManifest(load("inline-reinstall-failure", 3), paths, {
 			executeOfficialServiceInstallers: true,
 		});

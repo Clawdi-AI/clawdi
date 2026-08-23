@@ -249,6 +249,7 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		join(paths.statusRoot, "cloud-status.json"),
 		join(paths.statusRoot, "cloud-result.json"),
 		join(paths.statusRoot, "egress-engine.json"),
+		join(paths.statusRoot, "runtime-install-receipts.json"),
 		join(paths.cacheRoot, "channels.etag"),
 	])
 		removeRetiredRuntimeState(path);

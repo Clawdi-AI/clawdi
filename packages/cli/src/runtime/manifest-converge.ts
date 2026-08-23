@@ -24,7 +24,6 @@ import {
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
-import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
 import { captureRuntimeLiveSnapshot, type RuntimeLiveSnapshot } from "./live-state-snapshot";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
@@ -51,11 +50,9 @@ import {
 	writeTransparentEgressEnvFile,
 } from "./manifest-egress";
 import {
-	commitRuntimeInstallReceipts,
 	observeRuntimeInstall,
 	planRuntimeInstallObservation,
 	type RuntimeInstallObservation,
-	type RuntimeInstallReceiptTargets,
 	runtimeColdInstallMutationPlan,
 	runtimeCommandPath,
 } from "./manifest-install";
@@ -186,7 +183,6 @@ interface RuntimeConvergenceState {
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
 	installErrors: string[];
 	resourceProjectionErrors: string[];
-	installReceiptTargets: RuntimeInstallReceiptTargets;
 	projectedProviderIds: Record<string, string[]>;
 	observations: Map<string, RuntimeInstallObservation>;
 	openClawOwnerBrowserBootstrapSupported: boolean;
@@ -197,6 +193,7 @@ interface RuntimeConvergenceState {
 	desiredDaemonProgramRevision?: string;
 	restartEgressSidecar: boolean;
 	desiredEgressSidecarSecretRevision?: string;
+	officialServiceCommandRevisions: Record<string, string>;
 	rollbackEgressSecretOverride?: RuntimeEgressSecretMaterial;
 	rollbackEgressSecretRevision?: string;
 	egressRollbackAuthorityVerified: boolean;
@@ -204,7 +201,6 @@ interface RuntimeConvergenceState {
 }
 
 interface RuntimeInstallStage {
-	previousInstallReceipts: RuntimeInstallReceipts | null;
 	coldInstallPlan: ReturnType<typeof runtimeColdInstallMutationPlan>;
 	pluginBootstrapPlan: ReturnType<typeof managedOpenClawPluginBootstrapMutationPlan>;
 }
@@ -326,11 +322,6 @@ function initializeRuntimeConvergence(
 		runtimeSystemdUserPrograms: [],
 		installErrors: [],
 		resourceProjectionErrors: [],
-		installReceiptTargets: {
-			officialServices: new Map(),
-			channelPlugins: new Map(),
-			companions: new Map(),
-		},
 		projectedProviderIds: {},
 		observations: new Map(),
 		openClawOwnerBrowserBootstrapSupported: false,
@@ -338,6 +329,7 @@ function initializeRuntimeConvergence(
 		systemdActivationApplied: false,
 		restartDaemon: false,
 		restartEgressSidecar: false,
+		officialServiceCommandRevisions: {},
 		egressRollbackAuthorityVerified: true,
 		staleSystemdFiles: { files: [], systemUnits: [], userUnits: [] },
 	};
@@ -421,14 +413,6 @@ function prepareRuntimeInstallStage(
 	if (state.installErrors.length > 0) {
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	let previousInstallReceipts: RuntimeInstallReceipts | null;
-	try {
-		previousInstallReceipts = readRuntimeInstallReceipts(paths);
-	} catch (error) {
-		state.installErrors.push(error instanceof Error ? error.message : String(error));
-		return { result: runtimeConvergenceFailure(context, state) };
-	}
-
 	const coldInstallPlan = runtimeColdInstallMutationPlan(manifest, paths, state.observations);
 	if (coldInstallPlan) {
 		state.rollbackSnapshots.capture("runtime installer rollback failed", coldInstallPlan.snapshot);
@@ -469,7 +453,7 @@ function prepareRuntimeInstallStage(
 	} catch (error) {
 		return { result: rollbackRuntimeInstallFailure(context, state, error) };
 	}
-	return { stage: { previousInstallReceipts, coldInstallPlan, pluginBootstrapPlan } };
+	return { stage: { coldInstallPlan, pluginBootstrapPlan } };
 }
 
 function prepareRuntimeConvergencePlan(
@@ -604,18 +588,7 @@ function prepareRuntimeApplyDependencies(
 	// before any official installer or CLI command drops privilege. Modes are
 	// intentionally preserved, so private runtime state stays private.
 	enforceRuntimeUserOwnership(plan.mutationPlan.runtimeUserOwnership);
-	const fileBrowserInstall = ensureFileBrowserCompanion(
-		manifest,
-		paths,
-		plan.previousInstallReceipts?.companions.filebrowser,
-		opts.fileBrowserInstallOptions,
-	);
-	if (fileBrowserInstall) {
-		state.installReceiptTargets.companions.set(
-			fileBrowserInstall.receiptKey,
-			fileBrowserInstall.receiptTarget,
-		);
-	}
+	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
 	const openClawObservation = state.observations.get("openclaw");
 	if (openClawObservation) {
 		try {
@@ -708,8 +681,6 @@ function prepareRuntimeApplyDependencies(
 				manifest,
 				projectionHome,
 				paths.userHome,
-				plan.previousInstallReceipts,
-				state.installReceiptTargets,
 			);
 		} catch (error) {
 			state.installErrors.push(
@@ -1182,7 +1153,6 @@ interface RuntimeActivationPlan {
 function prepareRuntimeActivation(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	egressProjection: RuntimeEgressProjection,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 ): RuntimeActivationPlan {
@@ -1227,8 +1197,8 @@ function prepareRuntimeActivation(
 	const officialServicePlan = planOfficialRuntimeServices(
 		state.runtimeSystemdUserPrograms,
 		paths,
-		plan.previousInstallReceipts,
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
+		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
 	const pendingOfficialUnits = new Set(officialServicePlan.pending.map((item) => item.unitName));
 	state.runtimeProjectionRestartUserUnits = [
@@ -1245,7 +1215,6 @@ function prepareRuntimeActivation(
 	]
 		.filter((unitName) => !pendingOfficialUnits.has(unitName))
 		.sort();
-	state.installReceiptTargets.officialServices = officialServicePlan.targets;
 	// Agent Plugin mutations must precede every native service installer.
 	// The final activation below restarts the affected runtime units.
 	const appliedAgentPluginTransaction = state.agentPluginTransaction;
@@ -1379,18 +1348,16 @@ function activateRuntimeServices(
 			enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
 		}
 		if (error) throw new Error(error);
+		if (!item.commandRevision) {
+			throw new Error(`official ${item.unitName} command revision could not be verified`);
+		}
+		officialServicePlan.commandRevisions[item.unitName] = item.commandRevision;
 	}
+	state.officialServiceCommandRevisions = officialServicePlan.commandRevisions;
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
 	enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
-	for (const item of officialServicePlan.pending) {
-		const currentRevision = item.target.currentRevision();
-		if (!currentRevision) {
-			throw new Error(`official ${item.unitName} service install could not be verified`);
-		}
-		item.target.expectedCurrentRevision = currentRevision;
-	}
 	if (opts.systemdApply) {
 		state.agentPluginUnitsQuiesced = false;
 		const activation = opts.systemdApply.activate({
@@ -1487,7 +1454,6 @@ function commitRuntimeConvergence(
 	const egressRevisionPreviouslyCommitted =
 		state.desiredEgressSidecarSecretRevision !== undefined &&
 		state.desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
-	commitRuntimeInstallReceipts(state.installReceiptTargets, paths);
 	opts.commitAuthority?.(convergence, {
 		...(state.desiredDaemonAuthTokenRevision !== undefined &&
 		(state.systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
@@ -1501,6 +1467,7 @@ function commitRuntimeConvergence(
 		(state.systemdActivationApplied || egressRevisionPreviouslyCommitted)
 			? { egressSidecarSecretRevision: state.desiredEgressSidecarSecretRevision }
 			: {}),
+		officialServiceCommandRevisions: state.officialServiceCommandRevisions,
 	});
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);
@@ -1688,7 +1655,6 @@ export function convergeRuntimeManifest(
 		const activationPlan = prepareRuntimeActivation(
 			context,
 			state,
-			plan,
 			egressProjection,
 			providerProjectionRevisions,
 		);

@@ -48,7 +48,6 @@ import {
 } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
-import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
 	restoreRuntimeLiveSnapshot,
@@ -5223,7 +5222,6 @@ installReservedManagedSkill(${JSON.stringify({
 				paths.managedSecretCacheFile,
 				paths.appliedState,
 				paths.oauthCredentialRoot,
-				paths.installReceipts,
 				paths.runConfigRoot,
 				paths.egressProfileBundle,
 				paths.managedResourceRoot,
@@ -6234,11 +6232,6 @@ exit 42
 		expect(unit).toContain(
 			`EnvironmentFile=${join(paths.systemdEnvRoot, "clawdi-files.service.env")}`,
 		);
-		expect(readRuntimeInstallReceipts(paths)?.companions.filebrowser).toMatchObject({
-			desiredRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
-			currentRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
-		});
-
 		const second = convergeRuntimeManifest(fileBrowserManifestLoad(manifest), paths, options);
 		expect(second.installErrors).toEqual([]);
 		expect(downloads).toBe(1);
@@ -6247,7 +6240,7 @@ exit 42
 		expect(readFileSync(active, "utf8")).toBe(binary);
 	});
 
-	test("rolls Files candidate, config, receipts, and systemd back on hash or readiness failure", () => {
+	test("rolls Files candidate, config, and systemd back on hash or readiness failure", () => {
 		const paths = tempRuntimePaths();
 		const originalBinary = "original Files binary\n";
 		const originalManifest = fileBrowserManifest(paths, {
@@ -6275,8 +6268,6 @@ exit 42
 			join(paths.systemdSystemRoot, "clawdi-files.service"),
 			"utf8",
 		);
-		const originalReceipts = readFileSync(paths.installReceipts, "utf8");
-
 		const desiredBinary = "desired Files binary\n";
 		const hashFailureManifest = fileBrowserManifest(paths, {
 			generation: 2,
@@ -6304,8 +6295,6 @@ exit 42
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
-		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
-
 		const readinessManifest = fileBrowserManifest(paths, {
 			generation: 3,
 			binary: originalBinary,
@@ -6345,7 +6334,6 @@ exit 42
 		expect(readFileSync(join(paths.systemdSystemRoot, "clawdi-files.service"), "utf8")).toBe(
 			originalUnit,
 		);
-		expect(readFileSync(paths.installReceipts, "utf8")).toBe(originalReceipts);
 	});
 
 	test("preserves candidate inputs when service quiesce fails", () => {

@@ -13,7 +13,6 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { runningAsRoot } from "./runtime-user-command";
@@ -56,7 +55,6 @@ export function runtimeRootLiveMutationTargets(
 		paths.managedSecretCacheFile,
 		paths.appliedState,
 		paths.oauthCredentialRoot,
-		runtimeInstallReceiptsPath(paths),
 		paths.runConfigRoot,
 		paths.egressProfileBundle,
 		paths.managedResourceRoot,

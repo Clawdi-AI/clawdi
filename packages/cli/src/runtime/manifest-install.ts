@@ -14,11 +14,6 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeContentSha256 } from "./applied-state";
 import { SYSTEM_CA_BUNDLE } from "./egress-env";
-import {
-	emptyRuntimeInstallReceipts,
-	type RuntimeInstallReceiptEntry,
-	writeRuntimeInstallReceipts,
-} from "./install-receipts";
 import type { RuntimeManagedMutationPlan } from "./live-state-snapshot";
 import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import { mutationAncestorMetadataTargets } from "./manifest-shared";
@@ -31,6 +26,7 @@ import {
 	commandResolvable,
 	enforceRuntimeUserOwnership,
 	executableExists,
+	RuntimeUserCommandTimeoutError,
 	type RuntimeUserOwnershipRule,
 	runtimeUserDirectoryOwnership,
 	runtimeUserExistingOwnership,
@@ -72,16 +68,6 @@ function runtimeInstallObservation(
 		error: null,
 		...observation,
 	};
-}
-export interface RuntimeInstallReceiptTarget {
-	desiredRevision: string;
-	currentRevision: () => string | null;
-	expectedCurrentRevision: string | null;
-}
-export interface RuntimeInstallReceiptTargets {
-	officialServices: Map<string, RuntimeInstallReceiptTarget>;
-	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
-	companions: Map<"filebrowser", RuntimeInstallReceiptTarget>;
 }
 export function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".local", "bin", "openclaw");
@@ -436,7 +422,16 @@ export function runtimeCommandCurrentRevision(
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
 	try {
-		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
+		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
+			timeoutMs: 10_000,
+		});
+		if (
+			versionResult.error &&
+			"code" in versionResult.error &&
+			versionResult.error.code === "ETIMEDOUT"
+		) {
+			throw new RuntimeUserCommandTimeoutError(`runtime --version probe for ${command}`, 10_000);
+		}
 		if (versionResult.status !== 0) return null;
 		const stdout = Buffer.isBuffer(versionResult.stdout)
 			? versionResult.stdout.toString("utf8")
@@ -450,51 +445,9 @@ export function runtimeCommandCurrentRevision(
 			executableRevision,
 			version,
 		});
-	} catch {
+	} catch (error) {
+		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
-	}
-}
-export function verifiedReceiptCurrentRevision(
-	receipt: RuntimeInstallReceiptEntry | undefined,
-	desiredRevision: string,
-	currentRevision: () => string | null,
-): string | null {
-	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
-	const current = currentRevision();
-	return current === receipt.currentRevision ? current : null;
-}
-export function commitRuntimeInstallReceipts(
-	targets: RuntimeInstallReceiptTargets,
-	paths: RuntimePaths,
-): void {
-	const receipts = emptyRuntimeInstallReceipts();
-	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
-	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
-	const filebrowser = targets.companions.get("filebrowser");
-	if (filebrowser) {
-		receipts.companions.filebrowser = verifiedRuntimeInstallReceipt("filebrowser", filebrowser);
-	}
-	writeRuntimeInstallReceipts(receipts, paths);
-}
-function verifiedRuntimeInstallReceipt(
-	key: string,
-	target: RuntimeInstallReceiptTarget,
-): RuntimeInstallReceiptEntry {
-	if (!target.expectedCurrentRevision) {
-		throw new Error(`runtime install receipt target ${key} was not verified`);
-	}
-	const currentRevision = target.currentRevision();
-	if (currentRevision !== target.expectedCurrentRevision) {
-		throw new Error(`runtime install receipt target ${key} changed before commit`);
-	}
-	return { desiredRevision: target.desiredRevision, currentRevision };
-}
-function commitRuntimeInstallReceiptGroup(
-	receipts: Record<string, RuntimeInstallReceiptEntry>,
-	targets: Map<string, RuntimeInstallReceiptTarget>,
-): void {
-	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
-		receipts[key] = verifiedRuntimeInstallReceipt(key, target);
 	}
 }
 export function runtimeInstallerMutationTargets(

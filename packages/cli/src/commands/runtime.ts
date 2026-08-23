@@ -318,6 +318,7 @@ export function commitRuntimeAppliedState(input: {
 	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
+	officialServiceCommandRevisions?: Record<string, string>;
 }): void {
 	if (
 		input.applyIdentity &&
@@ -363,6 +364,7 @@ export function commitRuntimeAppliedState(input: {
 			Object.keys(input.userProcessRevisionAliases).length > 0
 				? { userProcessRevisionAliases: input.userProcessRevisionAliases }
 				: {}),
+			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 		},
@@ -1275,6 +1277,7 @@ export async function applyRuntimeManifestLoad(
 				daemonProgramRevision: authority.daemonProgramRevision,
 				egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				userProcessRevisionAliases: authority.userProcessRevisionAliases,
+				officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
 			}),
 		requireSystemdApplied: applyIdentity !== null,
 	});

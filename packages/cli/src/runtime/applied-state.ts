@@ -23,6 +23,11 @@ const projectedProviderIdsSchema = z.record(
 	}),
 );
 
+const officialServiceCommandRevisionsSchema = z.record(
+	z.string().regex(/^[A-Za-z0-9_.@-]+\.service$/),
+	z.string().regex(/^[a-f0-9]{64}$/),
+);
+
 const providerIdsSchema = z
 	.array(z.string().min(1))
 	.refine((ids) => new Set(ids).size === ids.length, {
@@ -70,6 +75,7 @@ export const runtimeAppliedStateSchema = z
 			.regex(/^[a-f0-9]{32}$/)
 			.optional(),
 		userProcessRevisionAliases: userProcessRevisionAliasesSchema.optional(),
+		officialServiceCommandRevisions: officialServiceCommandRevisionsSchema.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})
