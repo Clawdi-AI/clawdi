@@ -120,7 +120,7 @@ describe("ChatGPT OAuth ownership ledger", () => {
 			requiresWriteAheadIntent: true,
 			expectedCredentialFingerprint: TARGET_FINGERPRINT,
 		});
-		expect(intentLedgerForDecision(decision)).toEqual({
+		expect(intentLedgerForDecision(decision, seedIntent)).toEqual({
 			nativeProfileId: "native:provider-1",
 			credentialRevision: "revision-1",
 			state: "intent",
@@ -159,7 +159,7 @@ describe("ChatGPT OAuth ownership ledger", () => {
 		});
 	});
 
-	it("retries remove from before evidence and retires only after absence is proven", () => {
+	it("retries remove from before evidence and drops the ledger only after absence is proven", () => {
 		const firstDecision = decide({
 			desiredCredentialRevision: null,
 			desiredNativeProfileId: null,
@@ -167,7 +167,7 @@ describe("ChatGPT OAuth ownership ledger", () => {
 			ledger: seeded,
 			native: { state: "managed", credentialFingerprint: TARGET_FINGERPRINT },
 		});
-		const intent = intentLedgerForDecision(firstDecision);
+		const intent = intentLedgerForDecision(firstDecision, seeded);
 		expect(intent).toEqual({
 			nativeProfileId: "native:provider-1",
 			credentialRevision: "revision-1",
@@ -199,11 +199,7 @@ describe("ChatGPT OAuth ownership ledger", () => {
 		).toEqual({
 			nativeAction: "preserve",
 			requiresWriteAheadIntent: false,
-			nextLedger: {
-				nativeProfileId: "native:provider-1",
-				credentialRevision: "revision-1",
-				state: "retired",
-			},
+			nextLedger: null,
 		});
 		expect(
 			decide({

@@ -7,10 +7,7 @@ import {
 	type HermesConfigCommandContext,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
-import {
-	mergeRuntimeEnvWithProviderPlaceholders,
-	mergeRuntimeServiceEnvWithProviderPlaceholders,
-} from "./hosted-provider-resolution";
+import { mergeRuntimeEnvWithProviderPlaceholders } from "./hosted-provider-resolution";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import {
@@ -183,12 +180,7 @@ export function resolvedRuntimeServiceSettings(
 	settings: RuntimeRunSettings,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings {
-	const merged = mergeRuntimeServiceEnvWithProviderPlaceholders(
-		runtime,
-		service,
-		settings,
-		providerEnv,
-	);
+	const merged = mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv, service);
 	return runtime === "hermes" && service === "dashboard"
 		? (withHermesDashboardAuthEnvironment(manifest, merged) ?? merged)
 		: merged;

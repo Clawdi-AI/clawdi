@@ -58,7 +58,6 @@ import {
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-context";
-import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
 import {
@@ -67,7 +66,6 @@ import {
 	reserveManagedSkill,
 } from "../src/runtime/managed-skill-reservation";
 import {
-	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
 	materializeHostedChannelCredentials,
@@ -107,6 +105,7 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-us
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import {
+	ensureTestOpenClawWorkspaceCli,
 	type TestConvergeOptions,
 	withTestSystemdTransaction,
 } from "../src/test-support/systemd-apply";
@@ -237,6 +236,7 @@ function convergeRuntimeManifest(
 ) {
 	if (!process.env.CLAWDI_RUNTIME_MODE) process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
 	const requiredSecretRefs = new Set(manifestSecretRefs(load.manifest));
 	const defaultSecretValues = Object.fromEntries(
@@ -254,10 +254,6 @@ function convergeRuntimeManifest(
 		{
 			...opts,
 			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
-			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
-				...hostedOpenClawSkillDriver,
-				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
-			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
@@ -1305,6 +1301,7 @@ fi`;
 }
 
 function seedOpenClawBinary(home: string): void {
+	writeOpenClawConfigMutationFixture(home);
 	const openclawBin = join(home, ".local", "bin", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
@@ -2644,27 +2641,6 @@ function writeOfflineStrictAppliedState(
 	);
 }
 
-function applyOpenClawProviderPatchLog(
-	patchLog: string,
-	initialProviders: Record<string, unknown>,
-): Record<string, unknown> {
-	const providers = { ...initialProviders };
-	const patchText = existsSync(patchLog) ? readFileSync(patchLog, "utf-8") : "";
-	for (const rawPatch of patchText.split("\n---\n")) {
-		const trimmed = rawPatch.trim();
-		if (!trimmed) continue;
-		const patch = JSON.parse(trimmed);
-		if (!isRecord(patch)) continue;
-		const models = isRecord(patch.models) ? patch.models : {};
-		const patchProviders = isRecord(models.providers) ? models.providers : {};
-		for (const [providerId, providerPatch] of Object.entries(patchProviders)) {
-			if (providerPatch === null) delete providers[providerId];
-			else providers[providerId] = providerPatch;
-		}
-	}
-	return providers;
-}
-
 describe("runtime paths", () => {
 	it("uses ~/.clawdi in local mode", () => {
 		const home = join(root, "home", "alice");
@@ -3899,8 +3875,8 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-provider-patch.json");
-		const openclawOriginsPatch = join(root, "openclaw-origins-patch.json");
 		const openclawCommand = join(root, "openclaw-provider-command.txt");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -3912,11 +3888,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				"#!/bin/sh",
 				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  if [ ! -f '${openclawPatch}' ]; then`,
-				`    cat > '${openclawPatch}'`,
-				"  else",
-				`    cat > '${openclawOriginsPatch}'`,
-				"  fi",
+				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
 				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
@@ -3991,10 +3963,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
-			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
-		]);
+		expect(readFileSync(openclawCommand, "utf-8").trim()).toBe("config patch --stdin");
 		expect(JSON.parse(readFileSync(openclawPatch, "utf-8"))).toEqual({
 			agents: {
 				defaults: {
@@ -4012,7 +3981,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				},
 			},
 		});
-		const patch = JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
 		expect(patch.secrets).toEqual({
 			providers: {
@@ -4072,9 +4041,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const loaded = hostedManagedOpenClawV2Load(home, 1);
 		loaded.manifest.egressEngine = seedMitmproxyCache(paths);
 
-		const convergence = convergeRuntimeManifest(loaded, paths, {
-			hostedOpenClawSkillDriver,
-		});
+		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors).toEqual([]);
 		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
@@ -4095,7 +4062,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		writeFileSync(configPath, '{"legacyInvalidConfig":true}\n');
 		writeFileSync(database, "preserve\n");
 		convergeRuntimeManifest(loaded, paths, {
-			hostedOpenClawSkillDriver,
 			commitAuthority: () => {
 				throw new Error("late authority failure");
 			},
@@ -4492,173 +4458,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
 	});
 
-	it("migrates the legacy Codex shim before bootstrapping the user npm prefix", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const binDir = join(root, "fake-bin");
-		const npmArgsPath = join(root, "npm-args.txt");
-		const userCodexConfig = join(home, ".codex", "config.toml");
-		const legacyCodexMarker = join(home, ".local", "share", "clawdi", "codex", "user-data");
-		const legacyCodexCommand = join(home, ".local", "bin", "codex");
-		const legacyCodexRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
-		const partialPackageJson = join(
-			home,
-			".local",
-			"lib",
-			"node_modules",
-			"@openai",
-			"codex",
-			"package.json",
-		);
-		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
-		const previousPath = process.env.PATH;
-		const previousUmask = process.umask(0o077);
-		mkdirSync(binDir, { recursive: true });
-		mkdirSync(dirname(userCodexConfig), { recursive: true });
-		mkdirSync(dirname(legacyCodexMarker), { recursive: true });
-		mkdirSync(dirname(legacyCodexCommand), { recursive: true });
-		mkdirSync(dirname(partialPackageJson), { recursive: true });
-		writeFileSync(userCodexConfig, userConfigBytes);
-		writeFileSync(legacyCodexMarker, "preserve\n");
-		writeFileSync(partialPackageJson, '{"version":"0.147.0"}\n');
-		writeFileSync(
-			legacyCodexCommand,
-			[
-				"#!/usr/bin/env sh",
-				"export CLAWDI_AI_API_KEY='clawdi-egress-placeholder'",
-				`exec '${legacyCodexRealBin}' "$@"`,
-				"",
-			].join("\n"),
-		);
-		chmodSync(legacyCodexCommand, 0o755);
-		writeFileSync(
-			join(binDir, "npm"),
-			[
-				"#!/usr/bin/env bash",
-				"set -euo pipefail",
-				`printf '%s\\n' "$@" > '${npmArgsPath}'`,
-				"prefix=''",
-				'while [ "$#" -gt 0 ]; do',
-				'  case "$1" in',
-				"    --prefix)",
-				'      prefix="$2"',
-				"      shift 2",
-				"      ;;",
-				"    *)",
-				"      shift",
-				"      ;;",
-				"  esac",
-				"done",
-				'test ! -e "$prefix/bin/codex"',
-				'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
-				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
-				"cat > \"$prefix/bin/codex\" <<'SH'",
-				"#!/usr/bin/env sh",
-				'for arg in "$@"; do printf \'arg=<%s>\\n\' "$arg"; done',
-				"SH",
-				'chmod 755 "$prefix/bin/codex"',
-				"",
-			].join("\n"),
-		);
-		chmodSync(join(binDir, "npm"), 0o755);
-		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.PATH = [binDir, previousPath].filter(Boolean).join(":");
-		const paths = getRuntimePaths();
-
-		try {
-			const convergence = convergeRuntimeManifest(
-				{
-					source: "remote-datasource",
-					sourcePath: "https://runtime-source.test/desired-state",
-					offline: false,
-					manifest: {
-						schemaVersion: "clawdi.runtimeDesiredState.v1",
-						deploymentId: "dep_codex_addon",
-						environmentId: "env_codex_addon",
-						instanceId: "iid_codex_addon",
-						generation: 1,
-						issuedAt: "2026-07-10T00:00:00Z",
-						workspaceRoot: join(home, "clawdi"),
-						controlPlane: { apiUrl: "https://cloud-api.test" },
-						runtimes: {
-							openclaw: { enabled: false },
-						},
-						projection: {
-							system: { home },
-							providers: {},
-							terminalTooling: {
-								codex: {
-									enabled: true,
-									provider_id: "codex-managed",
-									primary_model: {
-										provider_id: "codex-managed",
-										model: "gpt-5.5",
-									},
-									provider: {
-										kind: "openai-compatible",
-										baseUrl: "https://managed-provider.example.test/v1",
-										apiMode: "openai_responses",
-										managed_by: "clawdi",
-										runtimeEnvName: "CLAWDI_AI_API_KEY",
-										apiKeySecretRef: "secret://tool.codex.apiKey",
-									},
-								},
-							},
-						},
-						egressProfiles: { profiles: [] },
-						recovery: { cacheManifest: true, allowOfflineBoot: true },
-					},
-				},
-				paths,
-			);
-
-			expect(convergence.installErrors).toEqual([]);
-		} finally {
-			process.umask(previousUmask);
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-			process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-		}
-
-		const npmArgs = readFileSync(npmArgsPath, "utf-8");
-		expect(npmArgs).toContain("@openai/codex@0.146.0");
-		expect(npmArgs).toContain(`${paths.userNpmPrefix}\n`);
-		expect(npmArgs).not.toContain("--force\n");
-		expect(npmArgs).not.toContain("--cache\n");
-		const realBin = join(paths.userNpmPrefix, "bin", "codex");
-		const packageJson = join(paths.userNpmPrefix, "lib/node_modules/@openai/codex/package.json");
-		expect(statSync(paths.userNpmPrefix).mode & 0o777).toBe(0o700);
-		expect(statSync(dirname(realBin)).mode & 0o777).toBe(0o700);
-		expect(statSync(realBin).mode & 0o777).toBe(0o755);
-		expect(statSync(packageJson).mode & 0o777).toBe(0o600);
-		expect(readFileSync(userCodexConfig, "utf8")).toContain('env_key = "CLAWDI_AI_API_KEY"');
-		expect(readFileSync(legacyCodexMarker, "utf8")).toBe("preserve\n");
-
-		const runCodex = (args: string[]) => {
-			const result = spawnSync(realBin, args, {
-				encoding: "utf8",
-			});
-			expect(result.status).toBe(0);
-			return result.stdout.trimEnd().split("\n");
-		};
-		expect(runCodex(["exec", "quoted arg", ""])).toEqual([
-			"arg=<exec>",
-			"arg=<quoted arg>",
-			"arg=<>",
-		]);
-		for (const args of [
-			["resume", "session id", "--flag=value"],
-			["exec", "", "'quoted'", '"double quoted"'],
-		]) {
-			expect(runCodex(args)).toEqual(args.map((arg) => `arg=<${arg}>`));
-		}
-	});
-
 	it("preserves a healthy user-upgraded Hosted Codex package", () => {
 		const home = join(root, "codex-user-upgraded", "home", "clawdi");
 		const state = join(root, "codex-user-upgraded", "var", "lib", "clawdi");
@@ -4908,35 +4707,20 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			const run = join(caseRoot, "run", "clawdi");
 			const workspace = join(home, "clawdi");
 			const openclawBin = join(home, ".local", "bin", "openclaw");
-			const openclawPatchLog = join(caseRoot, "openclaw-provider-patches.jsonl");
-			const publicSdkConfig =
-				providerCase.id === "managed-to-managed"
-					? writeOpenClawConfigMutationFixture(home, {
-							models: {
-								providers: {
-									"user-local": {
-										baseUrl: "http://127.0.0.1:11434/v1",
-										models: [{ id: "local-model" }],
-									},
-								},
-							},
-						})
-					: null;
+			const publicSdkConfig = writeOpenClawConfigMutationFixture(home, {
+				models: {
+					providers: {
+						"user-local": {
+							baseUrl: "http://127.0.0.1:11434/v1",
+							models: [{ id: "local-model" }],
+						},
+					},
+				},
+			});
 			mkdirSync(dirname(openclawBin), { recursive: true });
 			mkdirSync(join(home, ".hermes"), { recursive: true });
 			mkdirSync(workspace, { recursive: true });
-			writeFileSync(
-				openclawBin,
-				`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatchLog}'
-  printf '\\n---\\n' >> '${openclawPatchLog}'
-  exit 0
-fi
-exit 0
-`,
-			);
+			writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
 			chmodSync(openclawBin, 0o700);
 			writeHermesVersionBinary(home, "0.18.0");
 			writeFileSync(
@@ -4953,7 +4737,7 @@ exit 0
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
 			process.env.CLAWDI_SERVICE_STATE_DIR = state;
 			process.env.CLAWDI_RUN_DIR = run;
-			if (publicSdkConfig) {
+			if (providerCase.id === "managed-to-managed") {
 				process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 				process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK =
 					writeFakeOpenClawProviderAuthSdk(
@@ -4973,38 +4757,13 @@ exit 0
 			const secondLoad = hostedProviderSwitchLoad(home, providerCase.second, 2);
 			const second = convergeRuntimeManifest(secondLoad, paths);
 			expect(second.installErrors).toEqual([]);
-			if (providerCase.id === "byok-to-byok") {
-				const projectionInput = hostedAiProviderCatalog(secondLoad.manifest, "openclaw");
-				expect(projectionInput).not.toBeNull();
-				if (!projectionInput) throw new Error("expected OpenClaw provider projection input");
-				const sharedPatch = buildOpenClawHostedProviderPatch(projectionInput, [firstAgentProvider]);
-				const appliedProviderPatches = readFileSync(openclawPatchLog, "utf-8")
-					.split("\n---\n")
-					.map((content) => content.trim())
-					.filter(Boolean)
-					.map((content) => JSON.parse(content) as unknown)
-					.filter((patch): patch is Record<string, unknown> => {
-						if (!isRecord(patch)) return false;
-						const models = patch.models;
-						return isRecord(models) && isRecord(models.providers);
-					});
-				expect(appliedProviderPatches.at(-1)).toEqual(JSON.parse(sharedPatch.content));
-			}
-
-			const openclawProviders = publicSdkConfig
-				? expectRecord(
-						expectRecord(
-							JSON.parse(readFileSync(publicSdkConfig.configPath, "utf8")).models,
-							"OpenClaw models config",
-						).providers,
-						"OpenClaw providers config",
-					)
-				: applyOpenClawProviderPatchLog(openclawPatchLog, {
-						"user-local": {
-							baseUrl: "http://127.0.0.1:11434/v1",
-							models: [{ id: "local-model" }],
-						},
-					});
+			const openclawProviders = expectRecord(
+				expectRecord(
+					JSON.parse(readFileSync(publicSdkConfig.configPath, "utf8")).models,
+					"OpenClaw models config",
+				).providers,
+				"OpenClaw providers config",
+			);
 			expect(Object.keys(openclawProviders).sort()).toEqual(
 				["user-local", secondAgentProvider].sort(),
 			);
@@ -5225,22 +4984,20 @@ exit 0
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatchLog = join(root, "openclaw-provider-patches.jsonl");
+		const { configPath } = writeOpenClawConfigMutationFixture(home, {
+			models: {
+				providers: {
+					orphaned: {
+						baseUrl: "https://orphaned.example.test/v1",
+						models: [{ id: "orphaned-model" }],
+					},
+				},
+			},
+		});
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatchLog}'
-  printf '\\n---\\n' >> '${openclawPatchLog}'
-  exit 0
-fi
-exit 0
-`,
-		);
+		writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 		writeHermesVersionBinary(home, "0.18.0");
 		writeFileSync(
@@ -5263,12 +5020,11 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(existsSync(paths.appliedState)).toBe(false);
-		const openclawProviders = applyOpenClawProviderPatchLog(openclawPatchLog, {
-			orphaned: {
-				baseUrl: "https://orphaned.example.test/v1",
-				models: [{ id: "orphaned-model" }],
-			},
-		});
+		const openclawProviders = expectRecord(
+			expectRecord(JSON.parse(readFileSync(configPath, "utf8")).models, "OpenClaw models config")
+				.providers,
+			"OpenClaw providers config",
+		);
 		expect(openclawProviders.orphaned).toBeDefined();
 		expect(openclawProviders["byok-b"]).toBeDefined();
 		const hermesProviders = expectRecord(
@@ -5293,6 +5049,7 @@ exit 0
 		const patchCount = join(root, "openclaw-patch-count");
 		const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 		const gatewayEnvPath = join(run, "systemd", "env", "openclaw-gateway.service.env");
+		writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -5439,7 +5196,6 @@ exit 0
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
 			"gateway install --force --json",
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
@@ -5483,13 +5239,12 @@ exit 0
 		utimesSync(gatewayEnvPath, fixedCredentialTime, fixedCredentialTime);
 		const configMtime = statSync(openclawConfig).mtimeMs;
 		const envMtime = statSync(gatewayEnvPath).mtimeMs;
+		const commandsAfterConvergence = readFileSync(openclawCommand, "utf8");
 		const idempotent = convergeRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(idempotent.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"]',
-		]);
+		expect(readFileSync(openclawCommand, "utf8")).toBe(commandsAfterConvergence);
 		expect(statSync(openclawConfig).mtimeMs).toBe(configMtime);
 		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
 
@@ -5498,8 +5253,7 @@ exit 0
 			executeOfficialServiceInstallers: true,
 		});
 		expect(reinstalled.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"]',
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
 			"gateway install --force --json",
 		]);
 		expect(readFileSync(installerToken, "utf8")).toBe("gateway-token\n");
@@ -5515,9 +5269,8 @@ exit 0
 			executeOfficialServiceInstallers: true,
 		});
 		expect(rotated.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
 		]);
 		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
 			"rotated-gateway-token",
@@ -5536,24 +5289,13 @@ exit 0
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-runtime-provider-patch.json");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			openclawBin,
-			[
-				"#!/bin/sh",
-				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  cat > '${openclawPatch}'`,
-				"  exit 0",
-				"fi",
-				"exit 2",
-				"",
-			].join("\n"),
-		);
+		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 		writeHermesVersionBinary(home, "0.18.0");
 
@@ -5655,7 +5397,7 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("openclaw/gpt-5.5");
 		expect(patch.models.providers.openclaw.baseUrl).toBe(
 			"https://openclaw-provider.example.test/v1",
@@ -5729,6 +5471,11 @@ exit 0
 		const nativeProfileId = nativeOAuthProfileId("hermes", "openai-codex");
 		const ledgerKey = createHash("sha256").update("openai-codex").digest("hex");
 		const ledgerPath = join(paths.oauthCredentialRoot, "hermes", `${ledgerKey}.json`);
+		const retiredLedgerPath = join(
+			paths.oauthCredentialRoot,
+			"hermes",
+			`${createHash("sha256").update("retired-provider").digest("hex")}.json`,
+		);
 		mkdirSync(dirname(authPath), { recursive: true });
 		writeFileSync(
 			authPath,
@@ -5764,6 +5511,17 @@ exit 0
 		});
 		mkdirSync(dirname(ledgerPath), { recursive: true });
 		writeFileSync(
+			retiredLedgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "hermes",
+				providerId: "retired-provider",
+				nativeProfileId: "retired",
+				credentialRevision: "retired",
+				state: "retired",
+			})}\n`,
+		);
+		writeFileSync(
 			ledgerPath,
 			`${JSON.stringify({
 				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
@@ -5783,6 +5541,7 @@ exit 0
 
 		const first = convergeRuntimeManifest(firstLoad, paths);
 		expect(first.installErrors).toEqual([]);
+		expect(existsSync(retiredLedgerPath)).toBe(false);
 		let auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
 		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
@@ -5872,53 +5631,7 @@ exit 0
 				refresh_token: "user-independent-refresh",
 			}),
 		]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		auth.credential_pool["openai-codex"].unshift({
-			id: nativeProfileId,
-			label: "User replacement",
-			auth_type: "oauth",
-			priority: 0,
-			source: "manual:device_code",
-			access_token: "foreign-namespaced-access",
-			refresh_token: "foreign-namespaced-refresh",
-		});
-		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "hermes",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "hermes-revision-2",
-				state: "adopted",
-			})}\n`,
-		);
-		convergeRuntimeManifest(removedLoad, paths);
-		auth = JSON.parse(readFileSync(authPath, "utf8"));
-		expect(auth.credential_pool["openai-codex"]).toEqual([
-			expect.objectContaining({
-				id: nativeProfileId,
-				access_token: "foreign-namespaced-access",
-				refresh_token: "foreign-namespaced-refresh",
-			}),
-			expect.objectContaining({ id: "user-independent" }),
-		]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		const readdedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
-		};
-		convergeRuntimeManifest(readdedLoad, paths);
-		auth = JSON.parse(readFileSync(authPath, "utf8"));
-		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
-			id: nativeProfileId,
-			access_token: "foreign-namespaced-access",
-			refresh_token: "foreign-namespaced-refresh",
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(existsSync(ledgerPath)).toBe(false);
 	}, 30_000);
 
 	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
@@ -6074,17 +5787,6 @@ exit 0
 				},
 			},
 		};
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-				runtime: "openclaw",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "openclaw-revision-2",
-				state: "seeded",
-			})}\n`,
-		);
 		convergeRuntimeManifest(removedLoad, paths);
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		expect(store.profiles[nativeProfileId]).toBeUndefined();
@@ -6096,54 +5798,7 @@ exit 0
 		expect(store.order?.openai ?? []).toEqual(["openai:default"]);
 		expect(store.lastGood?.openai).toBeUndefined();
 		expect(store.usageStats?.[nativeProfileId]).toBeUndefined();
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
-			schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-			state: "retired",
-		});
-
-		store.profiles[nativeProfileId] = {
-			type: "oauth",
-			provider: "openai",
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		};
-		store.order.openai = [nativeProfileId, "openai:default"];
-		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "openclaw",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "openclaw-revision-2",
-				state: "adopted",
-			})}\n`,
-		);
-		convergeRuntimeManifest(removedLoad, paths);
-		store = JSON.parse(readFileSync(storePath, "utf8"));
-		expect(store.profiles[nativeProfileId]).toMatchObject({
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		});
-		expect(store.profiles["openai:default"]).toMatchObject({
-			access: "native-reauth-access",
-			refresh: "native-reauth-refresh",
-		});
-		expect(store.order.openai).toEqual([nativeProfileId, "openai:default"]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		const readdedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
-		};
-		convergeRuntimeManifest(readdedLoad, paths);
-		store = JSON.parse(readFileSync(storePath, "utf8"));
-		expect(store.profiles[nativeProfileId]).toMatchObject({
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(existsSync(ledgerPath)).toBe(false);
 		const calls = readFileSync(sdkCalls, "utf8");
 		expect(calls).toContain("ensure ");
 		expect(calls).toContain("update ");
@@ -6596,24 +6251,13 @@ cp '${sdkSource}' '${sdkTarget}'
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-codex-oauth-patch.json");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			openclawBin,
-			[
-				"#!/bin/sh",
-				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  cat > '${openclawPatch}'`,
-				"  exit 0",
-				"fi",
-				"exit 2",
-				"",
-			].join("\n"),
-		);
+		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 
 		const loaded: RuntimeManifestLoad = {
@@ -6670,7 +6314,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.plugins.entries.codex.enabled).toBe(true);
 		expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.5");
 		expect(patch.models).toBeUndefined();
@@ -6775,24 +6419,13 @@ cp '${sdkSource}' '${sdkTarget}'
 			const state = join(caseRoot, "var", "lib", "clawdi");
 			const run = join(caseRoot, "run", "clawdi");
 			const openclawBin = join(home, ".local", "bin", "openclaw");
-			const openclawPatch = join(caseRoot, "openclaw-provider-patch.json");
+			const { configPath } = writeOpenClawConfigMutationFixture(home);
 			mkdirSync(dirname(openclawBin), { recursive: true });
 			process.env.HOME = home;
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
 			process.env.CLAWDI_SERVICE_STATE_DIR = state;
 			process.env.CLAWDI_RUN_DIR = run;
-			writeFileSync(
-				openclawBin,
-				[
-					"#!/bin/sh",
-					'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-					`  cat > '${openclawPatch}'`,
-					"  exit 0",
-					"fi",
-					"exit 2",
-					"",
-				].join("\n"),
-			);
+			writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 			chmodSync(openclawBin, 0o700);
 
 			const loaded: RuntimeManifestLoad = {
@@ -6850,7 +6483,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 			expect(convergence.installErrors).toEqual([]);
-			const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+			const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 			expect(patch.models.providers.openclaw.api).toBe(providerCase.expectedOpenClawApi);
 			expect(patch.models.providers.openclaw.api).not.toBeUndefined();
 		}
@@ -7024,13 +6657,11 @@ exit 64
 		);
 
 		expect(convergence.installErrors).toEqual([]);
-		const providerHealth = JSON.parse(
-			readFileSync(getRuntimePaths().providerHealthStatus, "utf-8"),
-		);
-		expect(providerHealth.providers.openclaw.status).toBe("error");
-		expect(providerHealth.providers.openclaw.reasons).toContain("provider_error");
-		expect(providerHealth.providers.openclaw.reasons).toContain("provider_secret_unavailable");
-		expect(providerHealth.providers.openclaw.reasons).toContain("api_key_secret_ref_missing");
+		const providerHealth = readHostedRuntimeObserved(getRuntimePaths())?.providers?.openclaw;
+		expect(providerHealth?.status).toBe("error");
+		expect(providerHealth?.reasons).toContain("provider_error");
+		expect(providerHealth?.reasons).toContain("provider_secret_unavailable");
+		expect(providerHealth?.reasons).toContain("api_key_secret_ref_missing");
 	});
 
 	it("loads only the selected hosted runtime entry", async () => {
@@ -7382,7 +7013,6 @@ exit 64
 				);
 			}
 			expect(readFileSync(paths.appliedState, "utf-8")).not.toContain(runtimeAuthToken);
-			expectExistingFileNotToContain(paths.providerHealthStatus, runtimeAuthToken);
 			expect(JSON.stringify(convergence)).not.toContain(runtimeAuthToken);
 			expect(JSON.stringify(watchedConvergence)).not.toContain(runtimeAuthToken);
 		} finally {
@@ -8230,6 +7860,7 @@ exit 64
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
+		writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -10649,6 +10280,7 @@ chmod +x "$prefix/bin/clawdi"
 			let runtimeExitCode: number | undefined;
 			const logs: string[] = [];
 			mkdirSync(join(run, "secrets"), { recursive: true });
+			if (runtime === "openclaw") writeOpenClawConfigMutationFixture(home);
 			mkdirSync(dirname(runtimeBin), { recursive: true });
 			mkdirSync(bin, { recursive: true });
 			process.env.HOME = home;
@@ -16472,7 +16104,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const mitmproxy = seedMitmproxyCache();
@@ -16568,11 +16200,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
-		expect(runtimeSidecarUnit).toContain("Before=user@10001.service");
+		expect(runtimeSidecarUnit).toContain(`Before=user@${TEST_PROCESS_UID}.service`);
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_USER="${TEST_PROCESS_USER}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_UID="${TEST_PROCESS_UID}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_GID="${TEST_PROCESS_GID}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
@@ -16672,7 +16304,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const mitmproxy = seedMitmproxyCache();
@@ -16723,7 +16355,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(sidecarUnit).toContain("Type=notify");
-		expect(sidecarUnit).toContain("Before=user@10001.service");
+		expect(sidecarUnit).toContain(`Before=user@${TEST_PROCESS_UID}.service`);
 		expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
@@ -16733,8 +16365,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			`CLAWDI_EGRESS_TRANSPARENT_PORT="${TRANSPARENT_EGRESS_PORT}"`,
 		);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_UID="${TEST_PROCESS_UID}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_GID="${TEST_PROCESS_GID}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(sidecarEnv).toContain(
@@ -17203,7 +16835,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		writeOpenClawConfigMutationFixture(home);
 		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -17313,10 +16944,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(getRuntimePaths().manifestLastGood, "utf-8")).not.toContain("sk-runtime");
-			const providerHealth = JSON.parse(
-				readFileSync(getRuntimePaths().providerHealthStatus, "utf-8"),
-			);
-			expect(providerHealth.providers["clawdi-managed-v2"]).toEqual({
+			const providerHealth = readHostedRuntimeObserved(paths)?.providers;
+			expect(providerHealth?.["clawdi-managed-v2"]).toEqual({
 				status: "ok",
 				configured: true,
 				kind: "openai-compatible",

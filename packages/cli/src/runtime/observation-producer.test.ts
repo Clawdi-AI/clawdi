@@ -81,11 +81,20 @@ function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 }
 
 function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): void {
-	for (const path of [paths.runtimeWatchStatus, paths.providerHealthStatus]) {
+	for (const path of [paths.runtimeWatchStatus, paths.manifestLastGood]) {
 		mkdirSync(dirname(path), { recursive: true });
 	}
 	writeFileSync(paths.runtimeWatchStatus, JSON.stringify({ event: { status: "applied" } }));
-	writeFileSync(paths.providerHealthStatus, JSON.stringify({ providers: { default: { status } } }));
+	writeFileSync(
+		paths.manifestLastGood,
+		JSON.stringify({
+			projection: {
+				providers: {
+					default: { status, baseUrl: "https://api.test/v1", model: "test-model" },
+				},
+			},
+		}),
+	);
 }
 
 async function observationSchedule(

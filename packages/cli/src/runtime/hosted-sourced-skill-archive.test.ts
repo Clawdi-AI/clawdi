@@ -219,10 +219,7 @@ describe("hosted sourced Skill archives", () => {
 			projectManifest(legacyHash),
 			hostedRuntimePaths(),
 			{
-				fetcher: async () =>
-					new Response(Uint8Array.from(canonical.archive), {
-						status: 200,
-					}),
+				fetcher: async () => new Response(Uint8Array.from(canonical.archive), { status: 200 }),
 			},
 		);
 

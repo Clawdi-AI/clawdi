@@ -1,11 +1,10 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { isValidSemver } from "../lib/semver";
-import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import {
 	getHermesRawConfigValue,
 	getHermesResolvedConfigValue,
@@ -24,13 +23,7 @@ import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from ".
 import { type RuntimeInstallObservation, tail } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { hermesConfigContext } from "./manifest-runtime-config";
-import {
-	canonicalJsonEqual,
-	isPlainRecord,
-	recordValue,
-	stringValue,
-	writeRuntimePrivateFileAtomic,
-} from "./manifest-shared";
+import { canonicalJsonEqual, isPlainRecord, recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
@@ -47,64 +40,7 @@ import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
 
-export function writeProviderHealthStatus(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
-	paths: RuntimePaths,
-): string | null {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers || Object.keys(providers).length === 0) {
-		rmSync(paths.providerHealthStatus, { force: true });
-		return null;
-	}
-
-	const observed: Record<string, unknown> = {};
-	for (const providerId of Object.keys(providers).sort()) {
-		const provider = recordValue(providers[providerId]);
-		if (!provider) continue;
-		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
-		const secretAvailable =
-			apiKeySecretRef === null
-				? null
-				: providerSecretAvailable(secretValues ?? {}, apiKeySecretRef);
-		const reasons = providerHealthReasons(provider, secretAvailable);
-		observed[providerId] = {
-			status: reasons.length > 0 ? "error" : "ok",
-			configured: true,
-			kind: stringValue(provider.kind),
-			baseUrl: stringValue(provider.baseUrl),
-			model: stringValue(provider.model),
-			models: Array.isArray(provider.models) ? provider.models : undefined,
-			apiKeySecretRef,
-			secretAvailable,
-			reasons,
-		};
-	}
-
-	if (Object.keys(observed).length === 0) {
-		rmSync(paths.providerHealthStatus, { force: true });
-		return null;
-	}
-	writeRuntimePrivateFileAtomic(
-		paths,
-		paths.providerHealthStatus,
-		`${JSON.stringify(
-			{
-				schemaVersion: "clawdi.hostedRuntimeProviderHealth.v1",
-				generatedAt: new Date().toISOString(),
-				providers: observed,
-			},
-			null,
-			2,
-		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
-	);
-	return paths.providerHealthStatus;
-}
-function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
-	return runtimeSecretValue(secretValues, ref) !== null;
-}
-function providerHealthReasons(
+export function providerHealthReasons(
 	provider: Record<string, unknown>,
 	secretAvailable: boolean | null,
 ): string[] {
@@ -223,7 +159,7 @@ export function applyHostedAiProviderProjection(
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			applyOpenClawHostedProviderPatch(observation, providerPatch, openClawContext, workspaceRoot);
+			applyOpenClawHostedProviderPatch(providerPatch, openClawContext, workspaceRoot);
 		}
 		if (openClawContext.managedApiKeyProjection) {
 			if (openClawContext.agentDirs.managed.length === 0) {
@@ -402,7 +338,6 @@ export function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string
 	if (process.env.CLAWDI_CODEX_INSTALL_DISABLED === "1") return null;
 	const npmPrefix = paths.userNpmPrefix;
 	const realBin = join(npmPrefix, "bin", "codex");
-	removeLegacyHostedCodexCommandShim(realBin, paths.userHome);
 	let installedVersion = hostedCodexInstalledVersion(npmPrefix);
 	const bootstrapRequired = installedVersion === null || !executableExists(realBin);
 	if (bootstrapRequired) {
@@ -486,25 +421,6 @@ function installHostedCodexBootstrap(
 		);
 	}
 }
-function removeLegacyHostedCodexCommandShim(commandPath: string, home: string): void {
-	let content: string;
-	try {
-		content = readFileSync(commandPath, "utf8");
-	} catch {
-		// A missing or unreadable command is handled by the normal bootstrap check.
-		return;
-	}
-	const legacyRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
-	const expected = [
-		"#!/usr/bin/env sh",
-		`export ${MANAGED_AI_PROVIDER_RUNTIME_ENV}='${MANAGED_EGRESS_PLACEHOLDER_VALUE}'`,
-		`exec '${legacyRealBin}' "$@"`,
-		"",
-	].join("\n");
-	if (content === expected) {
-		withRuntimeUserFileAccess(() => rmSync(commandPath));
-	}
-}
 function applyHostedHermesAiProviderProjection(
 	observation: RuntimeInstallObservation,
 	projectionInput: HostedAiProviderProjectionInput | null,
@@ -573,7 +489,6 @@ function quoteTomlString(value: string): string {
 }
 export interface OpenClawHostedProviderPatch {
 	apply: boolean;
-	args: string[];
 	content: string;
 	providerIds: string[];
 }
@@ -633,22 +548,11 @@ await sdk.mutateConfigFile({
 });
 `;
 function applyOpenClawHostedProviderPatch(
-	observation: RuntimeInstallObservation,
 	patch: OpenClawHostedProviderPatch,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
-	const sdkPath = context.sdk.configMutation;
-	if (!sdkPath) {
-		runRuntimeUserCommand(
-			observation.commandPath ?? "openclaw",
-			["config", "patch", "--stdin", ...patch.args],
-			patch.content,
-			context.home,
-			workspaceRoot,
-		);
-		return;
-	}
+	const sdkPath = context.requireSdkExport("configMutation");
 	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	runRuntimeUserCommand(
 		"node",
@@ -666,7 +570,6 @@ export function buildOpenClawHostedProviderPatch(
 		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
 		return {
 			apply: deletedProviderIds.length > 0,
-			args: [],
 			content: `${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
 			providerIds: [],
 		};
@@ -684,7 +587,6 @@ export function buildOpenClawHostedProviderPatch(
 		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
 	return {
 		apply: true,
-		args: openClawProviderReplacementArgs(file.content),
 		content: mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
 		providerIds,
 	};
@@ -713,18 +615,6 @@ function providerIdsFromPatch(runtime: ProviderPatchRuntime, content: string): S
 			.filter(([, value]) => value !== null)
 			.map(([providerId]) => providerId),
 	);
-}
-function openClawProviderReplacementArgs(content: string): string[] {
-	const parsed = JSON.parse(content) as unknown;
-	const root = recordValue(parsed);
-	const models = root ? recordValue(root.models) : null;
-	const providers = models ? recordValue(models.providers) : null;
-	if (!providers) return [];
-	return Object.entries(providers).flatMap(([providerId, provider]) => {
-		const providerConfig = recordValue(provider);
-		if (!providerConfig) return [];
-		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}]`];
-	});
 }
 function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace"): string {
 	const parsed = JSON.parse(patchContent) as unknown;

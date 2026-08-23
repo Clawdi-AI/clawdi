@@ -1,14 +1,12 @@
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import {
 	type OpenClawAgentWorkspace,
 	parseOpenClawAgentWorkspaces,
 } from "../adapters/openclaw-workspace";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	ManagedSkillResourceError,
 	managedSkillTargetMatchesSource,
 	withManagedTargetRollback,
-	withStagedManagedSkill,
 } from "./managed-skill-delivery";
 import {
 	executableExists,
@@ -24,21 +22,6 @@ const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
 const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
 const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
-
-export interface HostedOpenClawSkillDriver {
-	resolveWorkspace(input: { home: string; repairInvalidConfig?: boolean }): string;
-	installDirectory(input: {
-		home: string;
-		workspaceRoot: string;
-		skillId: string;
-		sourceDir: string;
-	}): "installed" | "unchanged";
-	install(input: {
-		home: string;
-		workspaceRoot: string;
-		skill: PreparedHostedSourcedSkill;
-	}): "installed" | "unchanged";
-}
 
 function installedCommandPath(home: string): string | null {
 	return withRuntimeUserFileAccess(() => {
@@ -142,7 +125,10 @@ function waitForOpenClawGatewayTransition(): void {
 	);
 }
 
-function resolveOfficialWorkspace(home: string, repairInvalidConfigOnFailure = false): string {
+export function resolveHostedOpenClawWorkspace(
+	home: string,
+	repairInvalidConfigOnFailure = false,
+): string {
 	const command = commandPath(home);
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
@@ -174,7 +160,7 @@ function resolveOfficialWorkspace(home: string, repairInvalidConfigOnFailure = f
 }
 
 function assertOfficialWorkspace(input: { home: string; workspaceRoot: string }): void {
-	if (resolveOfficialWorkspace(input.home) !== resolve(input.workspaceRoot))
+	if (resolveHostedOpenClawWorkspace(input.home) !== resolve(input.workspaceRoot))
 		throw new Error("OpenClaw official agent workspace changed during Skill reconciliation");
 }
 
@@ -194,61 +180,51 @@ function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>
 	return details.join("; ") || "process failed without details";
 }
 
-export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
-	resolveWorkspace(input) {
-		return withRuntimeUserFileAccess(() =>
-			resolveOfficialWorkspace(input.home, input.repairInvalidConfig),
-		);
-	},
-	installDirectory(input) {
-		const target = targetDir(input.workspaceRoot, input.skillId);
-		assertOfficialWorkspace(input);
-		return withManagedTargetRollback({
-			target,
-			operation: () => {
-				// The roster may reference a workspace OpenClaw has not created yet on first run.
-				const result = spawnRuntimeUserCommand(
-					commandPath(input.home),
-					[
-						"skills",
-						"install",
-						input.sourceDir,
-						"--agent",
-						OPENCLAW_AGENT_ID,
-						"--as",
-						input.skillId,
-						"--force",
-					],
-					input.home,
-					input.home,
-					{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
+export function activateHostedOpenClawSkill(input: {
+	home: string;
+	workspaceRoot: string;
+	sourceDir: string;
+	targetDir: string;
+}): void {
+	const skillId = basename(input.targetDir);
+	const target = resolve(input.targetDir);
+	if (target !== resolve(targetDir(input.workspaceRoot, skillId))) {
+		throw new ManagedSkillResourceError("OpenClaw Skill target is invalid");
+	}
+	assertOfficialWorkspace(input);
+	withManagedTargetRollback({
+		target,
+		operation: () => {
+			// The roster may reference a workspace OpenClaw has not created yet on first run.
+			const result = spawnRuntimeUserCommand(
+				commandPath(input.home),
+				[
+					"skills",
+					"install",
+					input.sourceDir,
+					"--agent",
+					OPENCLAW_AGENT_ID,
+					"--as",
+					skillId,
+					"--force",
+				],
+				input.home,
+				input.home,
+				{ timeoutMs: 120_000, maxBufferBytes: 1024 * 1024 },
+			);
+			if (result.status !== 0) {
+				throw new ManagedSkillResourceError(
+					`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 				);
-				if (result.status !== 0)
-					throw new ManagedSkillResourceError(
-						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
-					);
-				assertOfficialWorkspace(input);
-				if (
-					!managedSkillTargetMatchesSource(input.sourceDir, target, {
-						exclude: OPENCLAW_INSTALLED_TREE_EXCLUDES,
-					})
-				) {
-					throw new ManagedSkillResourceError(
-						"OpenClaw Skill activation changed exact source bytes",
-					);
-				}
-				return "installed" as const;
-			},
-		});
-	},
-	install(input) {
-		return withStagedManagedSkill(input.skill, (sourceDir) =>
-			this.installDirectory({
-				home: input.home,
-				workspaceRoot: input.workspaceRoot,
-				skillId: input.skill.skillId,
-				sourceDir,
-			}),
-		);
-	},
-};
+			}
+			assertOfficialWorkspace(input);
+			if (
+				!managedSkillTargetMatchesSource(input.sourceDir, target, {
+					exclude: OPENCLAW_INSTALLED_TREE_EXCLUDES,
+				})
+			) {
+				throw new ManagedSkillResourceError("OpenClaw Skill activation changed exact source bytes");
+			}
+		},
+	});
+}

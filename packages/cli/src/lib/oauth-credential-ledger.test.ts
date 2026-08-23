@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -46,33 +46,5 @@ describe("OAuth credential ownership ledger persistence", () => {
 			targetCredentialFingerprint,
 		});
 		expect(readOAuthCredentialLedger(path)).toEqual(ledger);
-	});
-
-	it("reads a legacy receipt without migrating it unless explicitly requested", () => {
-		root = mkdtempSync(join(tmpdir(), "clawdi-oauth-ledger-"));
-		const path = join(root, "provider.json");
-		const legacyBytes = `${JSON.stringify({
-			schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-			runtime: "hermes",
-			providerId: "openai-codex",
-			nativeProfileId: "clawdi:profile",
-			credentialRevision: "revision-1",
-			state: "seeded",
-		})}\n`;
-		writeFileSync(path, legacyBytes);
-
-		const ledger = readOAuthCredentialLedger(path);
-		expect(ledger).toMatchObject({
-			schemaVersion: OAUTH_CREDENTIAL_LEDGER_SCHEMA_VERSION,
-			runtime: "hermes",
-			providerId: "openai-codex",
-			state: "seeded",
-		});
-		expect(readFileSync(path, "utf8")).toBe(legacyBytes);
-
-		const migrated = readOAuthCredentialLedger(path, { migrateLegacy: true });
-		expect(migrated).toEqual(ledger);
-		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(migrated);
-		expect(readOAuthCredentialLedger(path)).toEqual(migrated);
 	});
 });

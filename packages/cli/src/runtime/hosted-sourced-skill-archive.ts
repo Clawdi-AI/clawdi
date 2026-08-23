@@ -153,38 +153,14 @@ function isReceipt(value: unknown): value is HostedSourcedSkillArchiveReceipt {
 				typeof source.installUrl === "string";
 }
 
-function assertProjectSkillEndpoints(
+function assertProjectSkillOrigin(
 	manifest: RuntimeManifest,
 	skillId: string,
 	source: Extract<HostedSkillSource, { type: "project" }>,
 ): void {
-	const controlPlane = new URL(manifest.controlPlane.apiUrl);
-	const archive = new URL(source.archiveUrl);
-	const install = new URL(source.installUrl);
-	if (archive.origin !== controlPlane.origin || install.origin !== controlPlane.origin) {
+	const origin = new URL(manifest.controlPlane.apiUrl).origin;
+	if ([source.archiveUrl, source.installUrl].some((url) => new URL(url).origin !== origin)) {
 		throw new Error(`Project Skill ${skillId} download endpoints do not match the control plane`);
-	}
-	const archiveMatch =
-		/^\/v1\/runtime\/project-skill-archives\/([0-9a-f-]{36})\/([0-9a-f-]{36})\/([0-9a-f-]{36})\/([a-f0-9]{64})\/([a-f0-9]{64})\/([a-z0-9-]+)\.tar\.gz$/.exec(
-			archive.pathname,
-		);
-	const installMatch =
-		/^\/v1\/runtime\/project-skill-files\/([0-9a-f-]{36})\/([0-9a-f-]{36})\/([a-f0-9]{64})\/([a-f0-9]{64})\/SKILL\.md$/.exec(
-			install.pathname,
-		);
-	if (
-		!archiveMatch ||
-		!installMatch ||
-		archiveMatch[1] !== manifest.environmentId ||
-		archiveMatch[2] !== source.projectId ||
-		archiveMatch[4] !== source.contentHash ||
-		archiveMatch[6] !== skillId ||
-		installMatch[1] !== manifest.environmentId ||
-		installMatch[2] !== archiveMatch[3] ||
-		installMatch[3] !== source.contentHash ||
-		installMatch[4] !== archiveMatch[5]
-	) {
-		throw new Error(`Project Skill ${skillId} install endpoint is invalid`);
 	}
 }
 
@@ -216,6 +192,7 @@ async function fetchProjectSkillArchive(
 		const skillDir = join(extractedRoot, skillId);
 		const canonical = await snapshotSkillArchive(skillDir, extractedRoot, skillId);
 		const skillEntries = readdirSync(skillDir);
+		// SUNSET: remove once the control plane has backfilled tree hashes for pre-2026-04-28 project skills.
 		const matchesLegacySingleFileHash =
 			skillEntries.length === 1 &&
 			skillEntries[0] === "SKILL.md" &&
@@ -276,7 +253,7 @@ export async function prepareHostedSourcedSkillArchives(
 			continue;
 		}
 		if (desired.source.type === "project") {
-			assertProjectSkillEndpoints(manifest, skillId, desired.source);
+			assertProjectSkillOrigin(manifest, skillId, desired.source);
 		}
 		const cached = readCachedArchive(paths, skillId, desired.source);
 		if (cached) {

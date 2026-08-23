@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { OAuthCredentialLedgerSnapshot } from "./chatgpt-oauth-reconciliation";
@@ -14,7 +14,7 @@ const oauthCredentialLedgerSchema = z
 		providerId: z.string().min(1),
 		nativeProfileId: z.string().min(1),
 		credentialRevision: z.string().min(1).max(64),
-		state: z.enum(["intent", "seeded", "adopted", "revoked", "retired"]),
+		state: z.enum(["intent", "seeded", "adopted", "revoked"]),
 		operation: z.enum(["seed", "upsert", "remove"]).optional(),
 		credentialFingerprint: z
 			.string()
@@ -65,21 +65,6 @@ const oauthCredentialLedgerSchema = z
 		}
 	});
 
-const legacyOAuthCredentialReceiptSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.runtimeOAuthCredential.v1"),
-		runtime: z.enum(["hermes", "openclaw"]),
-		providerId: z.string().min(1),
-		nativeProfileId: z.string().min(1),
-		credentialRevision: z.string().min(1).max(64),
-		state: z.enum(["seeded", "adopted", "revoked"]),
-		credentialFingerprint: z
-			.string()
-			.regex(/^sha256:[a-f0-9]{64}$/)
-			.optional(),
-	})
-	.strict();
-
 export type OAuthCredentialLedger = z.infer<typeof oauthCredentialLedgerSchema>;
 export type OAuthCredentialLedgerRuntime = OAuthCredentialLedger["runtime"];
 
@@ -92,38 +77,15 @@ export function oauthCredentialLedgerPath(
 	return join(root, runtime, `${providerKey}.json`);
 }
 
-export function readOAuthCredentialLedger(
-	path: string,
-	options: {
-		migrateLegacy?: boolean;
-		afterMigrate?: (path: string, parent: string) => void;
-	} = {},
-): OAuthCredentialLedger | null {
+export function readOAuthCredentialLedger(path: string): OAuthCredentialLedger | null {
 	if (!existsSync(path)) return null;
 	const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-	const canonical = oauthCredentialLedgerSchema.safeParse(raw);
-	if (canonical.success) return canonical.data;
-	const legacy = legacyOAuthCredentialReceiptSchema.parse(raw);
-	const migrated = oauthCredentialLedgerSchema.parse({
-		schemaVersion: OAUTH_CREDENTIAL_LEDGER_SCHEMA_VERSION,
-		runtime: legacy.runtime,
-		providerId: legacy.providerId,
-		nativeProfileId: legacy.nativeProfileId,
-		credentialRevision: legacy.credentialRevision,
-		state: legacy.state,
-		...(legacy.credentialFingerprint
-			? { credentialFingerprint: legacy.credentialFingerprint }
-			: {}),
-	});
-	if (!options.migrateLegacy) return migrated;
-	const migratedSnapshot = oauthCredentialLedgerSnapshot(migrated);
-	if (!migratedSnapshot) throw new Error("Migrated OAuth credential ledger snapshot is missing");
-	return writeOAuthCredentialLedger(
-		path,
-		{ runtime: migrated.runtime, providerId: migrated.providerId },
-		migratedSnapshot,
-		{ afterWrite: options.afterMigrate },
-	);
+	// SUNSET: remove after the fleet no longer carries pre-#1187 retired tombstones.
+	if (typeof raw === "object" && raw !== null && "state" in raw && raw.state === "retired") {
+		rmSync(path, { force: true });
+		return null;
+	}
+	return oauthCredentialLedgerSchema.parse(raw);
 }
 
 export function writeOAuthCredentialLedger(

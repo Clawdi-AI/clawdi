@@ -1,10 +1,9 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	decideChatGptOAuthCredentialReconciliation,
 	intentLedgerForDecision,
 	type NativeOAuthCredentialObservation,
-	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
@@ -74,24 +73,6 @@ interface RuntimeOAuthCredentialDriver {
 			action: Exclude<RuntimeOAuthCredentialAction, "inspect">;
 		},
 	) => NativeOAuthCredentialMutationResult;
-}
-function runtimeOAuthLedgerPath(
-	paths: RuntimePaths,
-	runtime: "hermes" | "openclaw",
-	providerId: string,
-): string {
-	return oauthCredentialLedgerPath(paths.oauthCredentialRoot, runtime, providerId);
-}
-function writeRuntimeOAuthLedger(
-	path: string,
-	runtime: "hermes" | "openclaw",
-	providerId: string,
-	snapshot: OAuthCredentialLedgerSnapshot,
-): void {
-	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot);
-}
-function readRuntimeOAuthLedger(path: string): OAuthCredentialLedger | null {
-	return readOAuthCredentialLedger(path, { migrateLegacy: true });
 }
 function decodeJwtExpiryMs(token: string): number | null {
 	const encoded = token.split(".")[1];
@@ -601,8 +582,8 @@ export function reconcileHostedRuntimeOAuthCredentials(input: {
 	if (existsSync(ledgerDir)) {
 		for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
 			const path = join(ledgerDir, filename);
-			const ledger = readRuntimeOAuthLedger(path);
-			if (!ledger || desiredProviderIds.has(ledger.providerId) || ledger.state === "retired") {
+			const ledger = readOAuthCredentialLedger(path);
+			if (!ledger || desiredProviderIds.has(ledger.providerId)) {
 				continue;
 			}
 			const snapshot = oauthCredentialLedgerSnapshot(ledger);
@@ -620,11 +601,10 @@ export function reconcileHostedRuntimeOAuthCredentials(input: {
 				native,
 			});
 			if (decision.requiresWriteAheadIntent) {
-				writeRuntimeOAuthLedger(
+				writeOAuthCredentialLedger(
 					path,
-					input.runtime,
-					ledger.providerId,
-					intentLedgerForDecision(decision),
+					{ runtime: input.runtime, providerId: ledger.providerId },
+					intentLedgerForDecision(decision, snapshot),
 				);
 			}
 			if (decision.nativeAction === "remove") {
@@ -646,12 +626,24 @@ export function reconcileHostedRuntimeOAuthCredentials(input: {
 					expectedFingerprint,
 				});
 			}
-			writeRuntimeOAuthLedger(path, input.runtime, ledger.providerId, decision.nextLedger);
+			if (decision.nextLedger) {
+				writeOAuthCredentialLedger(
+					path,
+					{ runtime: input.runtime, providerId: ledger.providerId },
+					decision.nextLedger,
+				);
+			} else {
+				rmSync(path, { force: true });
+			}
 		}
 	}
 	for (const credential of desired) {
-		const ledgerPath = runtimeOAuthLedgerPath(input.paths, input.runtime, credential.providerId);
-		const ledger = readRuntimeOAuthLedger(ledgerPath);
+		const ledgerPath = oauthCredentialLedgerPath(
+			input.paths.oauthCredentialRoot,
+			input.runtime,
+			credential.providerId,
+		);
+		const ledger = readOAuthCredentialLedger(ledgerPath);
 		const snapshot = oauthCredentialLedgerSnapshot(ledger);
 		const nativeProfileId = nativeOAuthProfileId(input.runtime, credential.providerId);
 		const desiredFingerprint = oauthCredentialFingerprint(
@@ -672,11 +664,10 @@ export function reconcileHostedRuntimeOAuthCredentials(input: {
 			native,
 		});
 		if (decision.requiresWriteAheadIntent) {
-			writeRuntimeOAuthLedger(
+			writeOAuthCredentialLedger(
 				ledgerPath,
-				input.runtime,
-				credential.providerId,
-				intentLedgerForDecision(decision),
+				{ runtime: input.runtime, providerId: credential.providerId },
+				intentLedgerForDecision(decision, snapshot),
 			);
 		}
 		executeHostedRuntimeOAuthAction({
@@ -687,6 +678,13 @@ export function reconcileHostedRuntimeOAuthCredentials(input: {
 			credentialRevision: credential.credentialRevision,
 			material: credential.material,
 		});
-		writeRuntimeOAuthLedger(ledgerPath, input.runtime, credential.providerId, decision.nextLedger);
+		if (!decision.nextLedger) {
+			throw new Error("Desired hosted OAuth reconciliation cannot delete its ownership ledger");
+		}
+		writeOAuthCredentialLedger(
+			ledgerPath,
+			{ runtime: input.runtime, providerId: credential.providerId },
+			decision.nextLedger,
+		);
 	}
 }

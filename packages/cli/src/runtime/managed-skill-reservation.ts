@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
 	cpSync,
 	existsSync,
@@ -15,20 +14,13 @@ import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { withRuntimeConvergeLock } from "./converge-lock";
 import { ManagedSkillResourceError, withManagedTargetRollback } from "./managed-skill-delivery";
-import { getRuntimePaths } from "./paths";
+import { detectRuntimeMode, getRuntimePaths } from "./paths";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
 const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const SOURCED_MANAGED_SKILL_TARGET_PATTERN = /^[a-z][a-z0-9_-]*$/;
-const RESERVED_SOURCED_MANAGED_SKILL_TARGETS = new Set([
-	"skill",
-	"readme",
-	"index",
-	"unnamed-skill",
-]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 // Exact local bundled Skill trees shipped by published CLI releases before the
 // ownership ledger. Pre-ledger installs had no marker, so content is the only
@@ -72,22 +64,16 @@ interface ManagedSkillReservationLedger {
 	localSetupMigrations: Record<string, { target: string; id: string }>;
 }
 
-interface PendingManagedSkillReservation extends ManagedSkillReservation {
-	previousTarget?: string;
-}
+type PendingManagedSkillReservation = ManagedSkillReservation;
 
-export interface PendingManagedSkillReservationSnapshot extends ManagedSkillReservationSnapshot {
-	previousTargetDir?: string;
-}
+export type PendingManagedSkillReservationSnapshot = ManagedSkillReservationSnapshot;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function ledgerPath(): string {
-	const root = process.env.CLAWDI_SERVICE_STATE_DIR?.trim();
-	const mode = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
-	if (mode === "hosted" || root) {
+	if (detectRuntimeMode() === "hosted") {
 		return join(getRuntimePaths({ mode: "hosted" }).managedResourceRoot, LEDGER_FILE);
 	}
 	return join(getClawdiDir(), "managed-resources", LEDGER_FILE);
@@ -95,13 +81,6 @@ function ledgerPath(): string {
 
 export function managedSkillReservationLedgerPath(): string {
 	return ledgerPath();
-}
-
-function legacyHostedLedgerPath(path: string): string | null {
-	const runtimePaths = getRuntimePaths({ mode: "hosted" });
-	return path === join(runtimePaths.managedResourceRoot, LEDGER_FILE)
-		? join(runtimePaths.projectionRoot, LEDGER_FILE)
-		: null;
 }
 
 function emptyLedger(): ManagedSkillReservationLedger {
@@ -113,28 +92,11 @@ function emptyLedger(): ManagedSkillReservationLedger {
 	};
 }
 
-function validSourcedManagedSkillTarget(value: string): boolean {
-	const candidate = value.toLowerCase();
-	return (
-		SOURCED_MANAGED_SKILL_TARGET_PATTERN.test(candidate) &&
-		!RESERVED_SOURCED_MANAGED_SKILL_TARGETS.has(candidate)
-	);
+function reservationTargetMatchesIdentity(target: string, value: { id?: unknown }): boolean {
+	return basename(target) === value.id;
 }
 
-function reservationTargetMatchesIdentity(
-	target: string,
-	value: { id?: unknown; sourceIdentity?: unknown; manager?: unknown },
-): boolean {
-	const targetName = basename(target);
-	return (
-		targetName === value.id ||
-		(value.manager === "hosted-manifest" &&
-			typeof value.sourceIdentity === "string" &&
-			validSourcedManagedSkillTarget(targetName))
-	);
-}
-
-function parseReservation(target: string, raw: unknown): ManagedSkillReservation {
+function parseReservation(target: string, raw: unknown): ManagedSkillReservation | null {
 	if (
 		!isRecord(raw) ||
 		raw.target !== target ||
@@ -149,7 +111,8 @@ function parseReservation(target: string, raw: unknown): ManagedSkillReservation
 		!reservationIdentityIsValid(raw) ||
 		(raw.manager !== "hosted-manifest" && raw.manager !== "local-setup")
 	) {
-		throw new Error("managed Skill ownership state is invalid");
+		console.warn(`ignoring invalid managed Skill ownership entry at ${target}`);
+		return null;
 	}
 	return {
 		target,
@@ -162,18 +125,12 @@ function parseReservation(target: string, raw: unknown): ManagedSkillReservation
 }
 
 function readLedger(path: string): ManagedSkillReservationLedger {
-	const legacyPath = legacyHostedLedgerPath(path);
-	const sourcePath = existsSync(path)
-		? path
-		: legacyPath && existsSync(legacyPath)
-			? legacyPath
-			: null;
-	if (!sourcePath) return emptyLedger();
+	if (!existsSync(path)) return emptyLedger();
 	let value: unknown;
 	try {
-		const stat = lstatSync(sourcePath);
+		const stat = lstatSync(path);
 		if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("not a regular file");
-		value = JSON.parse(readFileSync(sourcePath, "utf8"));
+		value = JSON.parse(readFileSync(path, "utf8"));
 	} catch {
 		throw new Error("managed Skill ownership state is invalid");
 	}
@@ -188,27 +145,13 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 	}
 	const reservations: Record<string, ManagedSkillReservation> = {};
 	for (const [target, raw] of Object.entries(value.reservations)) {
-		reservations[target] = parseReservation(target, raw);
+		const reservation = parseReservation(target, raw);
+		if (reservation) reservations[target] = reservation;
 	}
 	const pendingReservations: Record<string, PendingManagedSkillReservation> = {};
-	try {
-		for (const [target, raw] of Object.entries(value.pendingReservations ?? {})) {
-			const reservation = parseReservation(target, raw);
-			if (
-				!isRecord(raw) ||
-				(raw.previousTarget !== undefined &&
-					(typeof raw.previousTarget !== "string" ||
-						resolve(raw.previousTarget) !== raw.previousTarget))
-			) {
-				throw new Error("invalid pending reservation");
-			}
-			pendingReservations[target] = {
-				...reservation,
-				previousTarget: typeof raw.previousTarget === "string" ? raw.previousTarget : undefined,
-			};
-		}
-	} catch {
-		throw new Error("managed Skill ownership state is invalid");
+	for (const [target, raw] of Object.entries(value.pendingReservations ?? {})) {
+		const reservation = parseReservation(target, raw);
+		if (reservation) pendingReservations[target] = reservation;
 	}
 	const localSetupMigrations: Record<string, { target: string; id: string }> = {};
 	for (const [target, raw] of Object.entries(value.localSetupMigrations ?? {})) {
@@ -292,7 +235,6 @@ export function pendingManagedSkillReservations(
 		.filter((reservation) => reservation.manager === manager)
 		.map((reservation) => ({
 			targetDir: reservation.target,
-			previousTargetDir: reservation.previousTarget,
 			id: reservation.id,
 			version: reservation.version,
 			digest: reservation.digest,
@@ -365,10 +307,7 @@ export function mutateUserSkillTarget<T>(targetDir: string, skillId: string, mut
 		assertUserSkillTargetMutable(targetDir, skillId);
 		return mutation();
 	};
-	if (
-		process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted" ||
-		process.env.CLAWDI_SERVICE_STATE_DIR?.trim()
-	) {
+	if (detectRuntimeMode() === "hosted") {
 		return withRuntimeConvergeLock(getRuntimePaths({ mode: "hosted" }), commit);
 	}
 	return withPrivateDirectoryLockSync(join(getClawdiDir(), "locks", "managed-skills.lock"), commit);
@@ -380,8 +319,7 @@ export function migrateLegacyLocalSetupSkill(input: {
 	version: number;
 	digest: (targetDir: string) => string;
 }): "adopted" | "already_migrated" | "absent" | "unmanaged" | "hosted" {
-	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") return "hosted";
-	if (process.env.CLAWDI_SERVICE_STATE_DIR?.trim()) return "hosted";
+	if (detectRuntimeMode() === "hosted") return "hosted";
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
 	if (
@@ -476,7 +414,6 @@ export function reserveManagedSkill(input: {
 export function installReservedManagedSkill<T>(
 	input: {
 		targetDir: string;
-		previousTargetDir?: string;
 		id: string;
 		version?: number;
 		digest?: string;
@@ -488,7 +425,6 @@ export function installReservedManagedSkill<T>(
 ): T {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
-	const previousTarget = input.previousTargetDir ? resolve(input.previousTargetDir) : target;
 	if (
 		!reservationTargetMatchesIdentity(target, input) ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
@@ -500,26 +436,15 @@ export function installReservedManagedSkill<T>(
 	return withLedgerWriteLock(input.manager, () => {
 		const ledger = readLedger(path);
 		const previous = ledger.reservations[target];
-		const replaced = previousTarget === target ? previous : ledger.reservations[previousTarget];
 		const pending = ledger.pendingReservations[target];
 		if (previous && (previous.manager !== input.manager || previous.id !== input.id)) {
 			throw new Error(`managed Skill ${input.id} is owned by a different manager`);
 		}
-		if (
-			pending &&
-			(!reservationMatches(pending, input) || (pending.previousTarget ?? target) !== previousTarget)
-		) {
+		if (pending && !reservationMatches(pending, input)) {
 			throw new Error(`managed Skill ${input.id} is pending for a different installation`);
-		}
-		if (
-			previousTarget !== target &&
-			(!replaced || replaced.manager !== input.manager || replaced.id !== input.id)
-		) {
-			throw new Error(`managed Skill ${input.id} replacement reservation is invalid`);
 		}
 		ledger.pendingReservations[target] = {
 			target,
-			...(previousTarget !== target ? { previousTarget } : {}),
 			id: input.id,
 			version: input.version,
 			digest: input.digest,
@@ -554,7 +479,6 @@ export function installReservedManagedSkill<T>(
 			sourceIdentity: input.sourceIdentity,
 			manager: input.manager,
 		};
-		if (previousTarget !== target) delete ledger.reservations[previousTarget];
 		delete ledger.pendingReservations[target];
 		writeLedger(path, ledger);
 		return result;
@@ -586,12 +510,6 @@ export function recoverPendingManagedSkillInstallation(input: {
 				sourceIdentity: pending.sourceIdentity,
 				manager: pending.manager,
 			};
-			if (pending.previousTarget && pending.previousTarget !== target) {
-				const replaced = ledger.reservations[pending.previousTarget];
-				if (replaced && replaced.id === pending.id && replaced.manager === pending.manager) {
-					delete ledger.reservations[pending.previousTarget];
-				}
-			}
 			delete ledger.pendingReservations[target];
 			writeLedger(path, ledger);
 			return "promoted";
@@ -618,15 +536,10 @@ export function replaceManagedSkillDirectoryAtomic(
 		return mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
 	});
 	const stagedTarget = join(stagingRoot, basename(targetDir));
-	const previousTarget = join(
-		parent,
-		`.${basename(targetDir)}-previous-${process.pid}-${randomUUID()}`,
-	);
 	try {
 		withRuntimeUserFileAccess(() => cpSync(sourceDir, stagedTarget, { recursive: true }));
 		withManagedTargetRollback({
 			target: targetDir,
-			targetBackup: previousTarget,
 			beforeRestore: options.beforeRestore,
 			beforeCleanup: options.beforeCleanup,
 			restoreFailure: (activationError, restoreError) => {

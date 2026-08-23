@@ -46,7 +46,6 @@ import {
 	assertHostedBundledSkillCatalogDigest,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
-import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import { readRuntimeInstallReceipts } from "./install-receipts";
@@ -55,7 +54,6 @@ import {
 	restoreRuntimeLiveSnapshot,
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
-import { ManagedSkillResourceError } from "./managed-skill-delivery";
 import {
 	managedSkillReservationLedgerPath,
 	managedSkillReservationState,
@@ -742,6 +740,38 @@ esac
 `,
 	);
 	chmodSync(input.path, 0o700);
+}
+
+function writeFakeOpenClawConfigMutationSdk(home: string): string {
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, "{}\n");
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
+		}),
+	);
+	writeFileSync(
+		join(packageRoot, "config-mutation.mjs"),
+		`import { readFileSync, writeFileSync } from "node:fs";
+const configPath = ${JSON.stringify(configPath)};
+export async function readConfigFileSnapshotForWrite() {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  return { snapshot: { valid: true, config, sourceConfig: structuredClone(config) } };
+}
+export async function mutateConfigFile(options) {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
+}
+`,
+	);
+	return configPath;
 }
 
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
@@ -2784,12 +2814,11 @@ chmod 0755 '${commandPath}'
 
 	test("keeps hosted managed provider key out of the agent env", () => {
 		const paths = tempRuntimePaths();
-		const providerPatchPath = join(paths.serviceStateRoot, "openclaw-provider-patch.json");
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
 		writeFakeGatewayCli({
 			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
-			configPatchPath: providerPatchPath,
 		});
 		const hosted = hostedRuntimeManifestSchema.parse(
 			hostedManifestFixture({
@@ -2824,7 +2853,7 @@ chmod 0755 '${commandPath}'
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
-		expect(JSON.parse(readFileSync(providerPatchPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
 			models: {
 				providers: {
 					"clawdi-managed": {
@@ -2849,15 +2878,6 @@ chmod 0755 '${commandPath}'
 		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(envFile).not.toContain("sk-managed");
-		expect(JSON.parse(readFileSync(paths.providerHealthStatus, "utf8"))).toMatchObject({
-			providers: {
-				default: {
-					status: "ok",
-					models: [{ id: "gpt-test" }],
-					reasons: [],
-				},
-			},
-		});
 	});
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
@@ -4612,28 +4632,16 @@ echo spawned > '${installerLog}'
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
 		const preparedSkills = new Map([[prepared.skillId, prepared]]);
-		let installs = 0;
-		const driver = {
-			install: () => {
-				installs += 1;
-				mkdirSync(skillDir, { recursive: true });
-				writeFileSync(join(skillDir, "SKILL.md"), "manifest-owned\n");
-				return "installed" as const;
-			},
-		};
 
 		const collision = convergeRuntimeManifest(
 			manifestLoad(manifest, "skill-ledger-collision"),
 			paths,
-			{
-				preparedHostedSourcedSkills: preparedSkills,
-				hostedHermesSkillExactSourceDriver: driver,
-			},
+			{ preparedHostedSourcedSkills: preparedSkills },
 		);
 		expect(collision.resourceProjectionErrors.join("\n")).toContain(
 			`refusing to replace unmanaged review-pr skill at ${skillDir}`,
 		);
-		expect(installs).toBe(0);
+		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("user-owned collision\n");
 		rmSync(skillDir, { recursive: true, force: true });
 		mkdirSync(userOwnedSibling, { recursive: true });
 		writeFileSync(join(userOwnedSibling, "SKILL.md"), "keep me\n");
@@ -4641,10 +4649,10 @@ echo spawned > '${installerLog}'
 		const installed = convergeRuntimeManifest(
 			manifestLoad({ ...manifest, generation: 2 }, "skill-ledger-install"),
 			paths,
-			{ preparedHostedSourcedSkills: preparedSkills, hostedHermesSkillExactSourceDriver: driver },
+			{ preparedHostedSourcedSkills: preparedSkills },
 		);
 		expect([...installed.installErrors, ...installed.resourceProjectionErrors]).toEqual([]);
-		expect(installs).toBe(1);
+		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("manifest-owned\n");
 		const ledger = JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8"));
 		expect(ledger.reservations[skillDir]).toMatchObject({
 			id: "review-pr",
@@ -4657,10 +4665,9 @@ echo spawned > '${installerLog}'
 		const unchanged = convergeRuntimeManifest(
 			manifestLoad({ ...manifest, generation: 3 }, "skill-ledger-unchanged"),
 			paths,
-			{ preparedHostedSourcedSkills: preparedSkills, hostedHermesSkillExactSourceDriver: driver },
+			{ preparedHostedSourcedSkills: preparedSkills },
 		);
 		expect([...unchanged.installErrors, ...unchanged.resourceProjectionErrors]).toEqual([]);
-		expect(installs).toBe(1);
 		expect(statSync(skillDir).ino).toBe(stableInode);
 		const movedSource = { ...source, commit: "c".repeat(40) };
 		const movedPrepared = {
@@ -4682,13 +4689,9 @@ echo spawned > '${installerLog}'
 				"skill-ledger-source-moved",
 			),
 			paths,
-			{
-				preparedHostedSourcedSkills: new Map([[movedPrepared.skillId, movedPrepared]]),
-				hostedHermesSkillExactSourceDriver: driver,
-			},
+			{ preparedHostedSourcedSkills: new Map([[movedPrepared.skillId, movedPrepared]]) },
 		);
 		expect([...moved.installErrors, ...moved.resourceProjectionErrors]).toEqual([]);
-		expect(installs).toBe(1);
 		expect(statSync(skillDir).ino).toBe(stableInode);
 		expect(
 			JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8")).reservations[skillDir]
@@ -4701,7 +4704,7 @@ echo spawned > '${installerLog}'
 				"skill-ledger-remove",
 			),
 			paths,
-			{ preparedHostedSourcedSkills: new Map(), hostedHermesSkillExactSourceDriver: driver },
+			{ preparedHostedSourcedSkills: new Map() },
 		);
 		expect([...removed.installErrors, ...removed.resourceProjectionErrors]).toEqual([]);
 		expect(existsSync(skillDir)).toBe(false);
@@ -4780,28 +4783,14 @@ installReservedManagedSkill(${JSON.stringify({
 			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
 			{ projection: { skills: { entries: { [skillId]: { enabled: true, source } } } } },
 		);
-		let installs = 0;
 		const result = convergeRuntimeManifest(
 			manifestLoad(manifest, "recover-killed-skill-installer"),
 			paths,
-			{
-				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
-				hostedHermesSkillExactSourceDriver: {
-					install: () => {
-						installs += 1;
-						const installingLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
-						expect(installingLedger.reservations[target]).toBeUndefined();
-						expect(installingLedger.pendingReservations[target]).toBeDefined();
-						mkdirSync(target, { recursive: true });
-						writeFileSync(join(target, "SKILL.md"), "verified tree\n");
-						return "installed";
-					},
-				},
-			},
+			{ preparedHostedSourcedSkills: new Map([[skillId, prepared]]) },
 		);
 
 		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
-		expect(installs).toBe(1);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("verified tree\n");
 		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
 		const committedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
 		expect(committedLedger.reservations[target].digest).toBe(prepared.archiveSha256);
@@ -4843,61 +4832,6 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(existsSync(target)).toBe(false);
 	});
 
-	test("moves an enabled stale reservation to the Hermes native target", () => {
-		const paths = tempRuntimePaths();
-		ensureRuntimeStateDirs(paths);
-		mkdirSync(paths.managedResourceRoot, { recursive: true });
-		const skillId = "phala-cloud-template-workflows";
-		const source = {
-			type: "project" as const,
-			projectId: "22222222-2222-4222-8222-222222222222",
-			contentHash: "a".repeat(64),
-			archiveUrl: "https://cloud-api.example.test/project-skill.tar.gz",
-			installUrl: "https://cloud-api.example.test/project-skill/SKILL.md",
-		};
-		const prepared = preparedTestSourcedSkill(skillId, source, "native projection\n");
-		const sourceIdentity = prepared.sourceIdentity;
-		const staleTarget = join(paths.userHome, ".hermes", "skills", skillId);
-		const nativeTarget = join(paths.userHome, ".hermes", "skills", "phala-workflows");
-		reserveManagedSkill({
-			targetDir: staleTarget,
-			id: skillId,
-			manager: "hosted-manifest",
-			sourceIdentity,
-		});
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		const manifest = baseManifest(
-			paths,
-			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
-			{ projection: { skills: { entries: { [skillId]: { enabled: true, source } } } } },
-		);
-
-		const result = convergeRuntimeManifest(
-			manifestLoad(manifest, "stale-enabled-hermes-skill"),
-			paths,
-			{
-				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
-				hostedHermesSkillExactSourceDriver: {
-					target: () => nativeTarget,
-					install: (input) => {
-						expect(input.targetDir).toBe(nativeTarget);
-						mkdirSync(nativeTarget, { recursive: true });
-						writeFileSync(join(nativeTarget, "SKILL.md"), "native projection\n");
-						return "installed";
-					},
-				},
-			},
-		);
-
-		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
-		expect(managedSkillReservationState(staleTarget, skillId)).toBe("unreserved");
-		expect(managedSkillReservationState(nativeTarget, skillId)).toBe("reserved");
-		expect(shouldIgnoreUserSkill(nativeTarget, "phala-workflows")).toBe(true);
-		expect(readFileSync(join(nativeTarget, "SKILL.md"), "utf8")).toBe("native projection\n");
-	});
-
 	test("isolates per-Skill resource failures without starving later Skills", () => {
 		const paths = tempRuntimePaths();
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
@@ -4916,6 +4850,10 @@ installReservedManagedSkill(${JSON.stringify({
 			preparedSkills.set(skillId, preparedTestSourcedSkill(skillId, source, `${skillId}\n`));
 			entries.entries[skillId] = { enabled: true, source };
 		}
+		const failed = preparedSkills.get("a-fail");
+		if (!failed) throw new Error("missing failing Skill fixture");
+		failed.tarBytes = Buffer.from("invalid archive");
+		failed.archiveSha256 = createHash("sha256").update(failed.tarBytes).digest("hex");
 		const manifest = baseManifest(
 			paths,
 			{
@@ -4927,31 +4865,14 @@ installReservedManagedSkill(${JSON.stringify({
 			},
 			{ projection: { skills: entries } },
 		);
-		const attempted: string[] = [];
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "skill-item-isolation"), paths, {
 			preparedHostedSourcedSkills: preparedSkills,
-			hostedHermesSkillExactSourceDriver: {
-				target: ({ skill }) => {
-					if (skill.skillId === "a-fail") {
-						throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
-					}
-					return join(paths.userHome, ".hermes", "skills", skill.skillId);
-				},
-				install: ({ skill }) => {
-					attempted.push(skill.skillId);
-					const target = join(paths.userHome, ".hermes", "skills", skill.skillId);
-					mkdirSync(target, { recursive: true });
-					writeFileSync(join(target, "SKILL.md"), `${skill.skillId}\n`);
-					return "installed";
-				},
-			},
 		});
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.resourceProjectionErrors).toEqual([
 			"runtime hermes Skill projection failed: a-fail: prepared Skill archive could not be staged",
 		]);
-		expect(attempted).toEqual(["b-ready", "c-ready"]);
 		expect(existsSync(join(paths.userHome, ".hermes", "skills", "a-fail"))).toBe(false);
 		for (const skillId of ["b-ready", "c-ready"]) {
 			expect(
@@ -4981,7 +4902,6 @@ installReservedManagedSkill(${JSON.stringify({
 		const unmanaged = join(paths.userHome, ".hermes", "skills", "a-unmanaged");
 		mkdirSync(unmanaged, { recursive: true });
 		writeFileSync(join(unmanaged, "SKILL.md"), "tenant owned\n");
-		const attempted: string[] = [];
 		const manifest = baseManifest(
 			paths,
 			{
@@ -4998,19 +4918,12 @@ installReservedManagedSkill(${JSON.stringify({
 			paths,
 			{
 				preparedHostedSourcedSkills: preparedSkills,
-				hostedHermesSkillExactSourceDriver: {
-					install: ({ skill }) => {
-						attempted.push(skill.skillId);
-						return "installed";
-					},
-				},
 			},
 		);
 
 		expect(result.resourceProjectionErrors.join("\n")).toContain(
 			`refusing to replace unmanaged a-unmanaged skill at ${unmanaged}`,
 		);
-		expect(attempted).toEqual([]);
 		expect(readFileSync(join(unmanaged, "SKILL.md"), "utf8")).toBe("tenant owned\n");
 		expect(existsSync(join(paths.userHome, ".hermes", "skills", "b-ready"))).toBe(false);
 		expect(existsSync(join(paths.userHome, ".hermes", "skills", "c-ready"))).toBe(false);
@@ -5123,17 +5036,7 @@ installReservedManagedSkill(${JSON.stringify({
 			{ openclaw: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
 			{ projection: { skills: { entries: {} } } },
 		);
-		const result = convergeRuntimeManifest(
-			manifestLoad(manifest, "legacy-openclaw-remove"),
-			paths,
-			{
-				hostedOpenClawSkillDriver: {
-					resolveWorkspace: () => openClawWorkspaceRoot,
-					installDirectory: () => "installed",
-					install: () => "installed",
-				},
-			},
-		);
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "legacy-openclaw-remove"), paths);
 		expect(result.installErrors).toEqual([]);
 		expect(existsSync(target)).toBe(true);
 		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(true);
@@ -5373,7 +5276,6 @@ installReservedManagedSkill(${JSON.stringify({
 			[
 				paths.managedConfig,
 				paths.syncState,
-				paths.providerHealthStatus,
 				paths.egressEngineStatus,
 				paths.manifestLastGood,
 				paths.managedSecretCacheFile,
@@ -5813,6 +5715,7 @@ exit 0
 			wantsRoot,
 			enablementPath,
 		];
+		const skillProjectionLog = join(appRoot, "skill-projection-owners.log");
 
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.userHome, { recursive: true });
@@ -5830,17 +5733,28 @@ exit 0
 			`#!/usr/bin/env bash
 set -euo pipefail
 test "$(id -u)" = "10001"
-if [ "$*" = "--version" ]; then
-  printf '%s\\n' 'OpenClaw test-version'
-  exit 0
-fi
-test "$*" = "gateway install --force --json"
-unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
-cp "$unit" "$unit.bak"
-printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > "$unit"
-printf '%s\\n' 'OPENCLAW_OFFICIAL_USER_STATE=1' > "$HOME/.openclaw/gateway.systemd.env"
-chmod 0600 "$HOME/.openclaw/gateway.systemd.env"
-printf '{"ok":true}\\n'
+case "$*" in
+  "--version")
+    printf '%s\\n' 'OpenClaw test-version'
+    ;;
+  "agents list --json")
+    printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
+    ;;
+  "skills install "*)
+    : > '${skillProjectionLog}'
+    ${platformOwnedPaths.map((path) => `stat -c '%u:%g' '${path}' >> '${skillProjectionLog}'`).join("\n    ")}
+    exit 45
+    ;;
+  "gateway install --force --json")
+    unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
+    cp "$unit" "$unit.bak"
+    printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > "$unit"
+    printf '%s\\n' 'OPENCLAW_OFFICIAL_USER_STATE=1' > "$HOME/.openclaw/gateway.systemd.env"
+    chmod 0600 "$HOME/.openclaw/gateway.systemd.env"
+    printf '{"ok":true}\\n'
+    ;;
+  *) exit 64 ;;
+esac
 `,
 		);
 		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
@@ -5875,19 +5789,6 @@ printf '{"ok":true}\\n'
 			},
 			resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
 		};
-		let skillProjectionObserved = false;
-		const openClawSkillDriver = {
-			...hostedOpenClawSkillDriver,
-			resolveWorkspace: () => join(appRoot, "workspace"),
-			install: () => {
-				skillProjectionObserved = true;
-				for (const path of platformOwnedPaths) {
-					const node = lstatSync(path);
-					expect([node.uid, node.gid]).toEqual([0, 0]);
-				}
-				throw new ManagedSkillResourceError("injected Skill projection stop");
-			},
-		};
 		const manifest = baseManifest(
 			paths,
 			{
@@ -5913,12 +5814,15 @@ printf '{"ok":true}\\n'
 			{
 				executeOfficialServiceInstallers: false,
 				hostedRuntimeContract,
-				hostedOpenClawSkillDriver: openClawSkillDriver,
 			},
 		);
 		expect(result.installErrors).toEqual([]);
-		expect(result.resourceProjectionErrors.join("\n")).toContain("injected Skill projection stop");
-		expect(skillProjectionObserved).toBe(true);
+		expect(result.resourceProjectionErrors.join("\n")).toContain(
+			"OpenClaw official Skill install failed: exit code 45 without output",
+		);
+		expect(readFileSync(skillProjectionLog, "utf8").trim().split("\n")).toEqual(
+			platformOwnedPaths.map(() => "0:0"),
+		);
 		for (const path of runtimeOwnedPaths) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
@@ -5944,7 +5848,6 @@ printf '{"ok":true}\\n'
 			paths,
 			{
 				hostedRuntimeContract,
-				hostedOpenClawSkillDriver: openClawSkillDriver,
 				systemdApply: {
 					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
@@ -6005,7 +5908,6 @@ printf '{"ok":true}\\n'
 				},
 				executeOfficialServiceInstallers: false,
 				hostedRuntimeContract,
-				hostedOpenClawSkillDriver: openClawSkillDriver,
 			},
 		);
 		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");

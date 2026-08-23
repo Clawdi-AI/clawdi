@@ -5,7 +5,7 @@ export interface NativeOAuthCredentialObservation {
 	credentialFingerprint?: string;
 }
 
-export type OAuthCredentialLedgerStableState = "seeded" | "adopted" | "revoked" | "retired";
+export type OAuthCredentialLedgerStableState = "seeded" | "adopted" | "revoked";
 
 export type OAuthCredentialLedgerState = "intent" | OAuthCredentialLedgerStableState;
 
@@ -25,7 +25,7 @@ export type NativeOAuthCredentialAction = "preserve" | OAuthCredentialIntentOper
 
 export interface OAuthCredentialReconciliationDecision {
 	nativeAction: NativeOAuthCredentialAction;
-	nextLedger: OAuthCredentialLedgerSnapshot;
+	nextLedger: OAuthCredentialLedgerSnapshot | null;
 	requiresWriteAheadIntent: boolean;
 	expectedCredentialFingerprint?: string;
 	targetCredentialFingerprint?: string;
@@ -77,14 +77,6 @@ export function decideChatGptOAuthCredentialReconciliation(input: {
 		ledger.credentialRevision === desiredCredentialRevision
 	) {
 		if (native.state === "missing") {
-			if (ledger.state === "retired") {
-				return seedDecision(
-					desiredNativeProfileId,
-					desiredCredentialRevision,
-					desiredCredentialFingerprint,
-					true,
-				);
-			}
 			return preserveDecision({
 				nativeProfileId: desiredNativeProfileId,
 				credentialRevision: desiredCredentialRevision,
@@ -130,6 +122,7 @@ export function decideChatGptOAuthCredentialReconciliation(input: {
 
 export function intentLedgerForDecision(
 	decision: OAuthCredentialReconciliationDecision,
+	currentLedger: OAuthCredentialLedgerSnapshot | null = null,
 ): OAuthCredentialLedgerSnapshot {
 	if (!decision.requiresWriteAheadIntent || decision.nativeAction === "preserve") {
 		throw new Error("OAuth credential decision does not require a write-ahead intent");
@@ -146,9 +139,11 @@ export function intentLedgerForDecision(
 	) {
 		throw new Error(`${decision.nativeAction} intent requires target-credential evidence`);
 	}
+	const identity = decision.nextLedger ?? currentLedger;
+	if (!identity) throw new Error("OAuth credential intent requires ledger identity");
 	return {
-		nativeProfileId: decision.nextLedger.nativeProfileId,
-		credentialRevision: decision.nextLedger.credentialRevision,
+		nativeProfileId: identity.nativeProfileId,
+		credentialRevision: identity.credentialRevision,
 		state: "intent",
 		operation: decision.nativeAction,
 		...(decision.expectedCredentialFingerprint
@@ -164,32 +159,32 @@ function decideWithoutDesiredCredential(
 	ledger: OAuthCredentialLedgerSnapshot | null,
 	native: NativeOAuthCredentialObservation,
 ): OAuthCredentialReconciliationDecision {
-	if (!ledger) return preserveDecision(retiredLedger(null));
+	if (!ledger) return preserveDecision(null);
 	if (ledger.state === "intent") {
 		if (ledger.operation === "remove") {
-			if (native.state === "missing") return preserveDecision(retiredLedger(ledger));
+			if (native.state === "missing") return preserveDecision(null);
 			if (
 				ledger.beforeCredentialFingerprint &&
 				native.credentialFingerprint === ledger.beforeCredentialFingerprint
 			) {
-				return removeDecision(ledger, ledger.beforeCredentialFingerprint, false);
+				return removeDecision(ledger.beforeCredentialFingerprint, false);
 			}
 			return preserveDecision(ledger);
 		}
 
 		const targetFingerprint = intentTargetFingerprint(ledger);
 		if (targetFingerprint && native.credentialFingerprint === targetFingerprint) {
-			return removeDecision(ledger, targetFingerprint, true);
+			return removeDecision(targetFingerprint, true);
 		}
 		if (ledger.operation === "seed" && native.state === "missing") {
-			return preserveDecision(retiredLedger(ledger));
+			return preserveDecision(null);
 		}
 		if (
 			ledger.operation === "upsert" &&
 			ledger.beforeCredentialFingerprint &&
 			native.credentialFingerprint === ledger.beforeCredentialFingerprint
 		) {
-			return preserveDecision(retiredLedger(ledger));
+			return preserveDecision(null);
 		}
 		return preserveDecision(ledger);
 	}
@@ -201,9 +196,9 @@ function decideWithoutDesiredCredential(
 			(ledger.credentialFingerprint !== undefined &&
 				native.credentialFingerprint === ledger.credentialFingerprint));
 	if (owned) {
-		return removeDecision(ledger, requireObservedFingerprint(native), true);
+		return removeDecision(requireObservedFingerprint(native), true);
 	}
-	return preserveDecision(retiredLedger(ledger));
+	return preserveDecision(null);
 }
 
 function decideFromIntent(input: {
@@ -342,7 +337,6 @@ function upsertDecision(
 }
 
 function removeDecision(
-	ledger: OAuthCredentialLedgerSnapshot,
 	expectedCredentialFingerprint: string,
 	requiresWriteAheadIntent: boolean,
 ): OAuthCredentialReconciliationDecision {
@@ -350,12 +344,12 @@ function removeDecision(
 		nativeAction: "remove",
 		requiresWriteAheadIntent,
 		expectedCredentialFingerprint,
-		nextLedger: retiredLedger(ledger),
+		nextLedger: null,
 	};
 }
 
 function preserveDecision(
-	nextLedger: OAuthCredentialLedgerSnapshot,
+	nextLedger: OAuthCredentialLedgerSnapshot | null,
 ): OAuthCredentialReconciliationDecision {
 	return {
 		nativeAction: "preserve",
@@ -374,16 +368,6 @@ function seededLedger(
 		credentialRevision,
 		state: "seeded",
 		...(credentialFingerprint ? { credentialFingerprint } : {}),
-	};
-}
-
-function retiredLedger(
-	ledger: OAuthCredentialLedgerSnapshot | null,
-): OAuthCredentialLedgerSnapshot {
-	return {
-		nativeProfileId: ledger?.nativeProfileId ?? "retired",
-		credentialRevision: ledger?.credentialRevision ?? "retired",
-		state: "retired",
 	};
 }
 

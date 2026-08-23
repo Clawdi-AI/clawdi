@@ -70,6 +70,24 @@ describe("managed Skill reservations", () => {
 		});
 		expect(managedSkillReservationState(first, "example")).toBe("reserved");
 		expect(managedSkillReservationState(second, "example")).toBe("unreserved");
+
+		const legacyTarget = join(root, "hub", "skills", "legacy-key");
+		const ledgerPath = managedSkillReservationLedgerPath();
+		const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		ledger.reservations[legacyTarget] = {
+			...ledger.reservations[first],
+			target: legacyTarget,
+		};
+		writeFileSync(ledgerPath, `${JSON.stringify(ledger)}\n`);
+		const warnings: string[] = [];
+		const warn = console.warn;
+		try {
+			console.warn = (message?: unknown) => warnings.push(String(message));
+			expect(managedSkillReservationState(first, "example")).toBe("reserved");
+		} finally {
+			console.warn = warn;
+		}
+		expect(warnings.join("\n")).toContain(legacyTarget);
 	});
 
 	it("does not treat a forged co-located marker as authority", () => {
@@ -187,68 +205,6 @@ describe("managed Skill reservations", () => {
 		expect(managedSkillReservationState(path, "example")).toBe("reserved");
 	});
 
-	it("moves a sourced reservation to the official native target", () => {
-		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
-		mkdirSync(join(root, "state"));
-		const previousTarget = join(root, "skills", "project-skill");
-		const nativeTarget = join(root, "skills", "frontmatter-name");
-		const sourceIdentity = [
-			"project",
-			"project-skill",
-			"22222222-2222-4222-8222-222222222222",
-			"a".repeat(64),
-		].join("\0");
-		reserveManagedSkill({
-			targetDir: previousTarget,
-			id: "project-skill",
-			manager: "hosted-manifest",
-			sourceIdentity,
-		});
-
-		installReservedManagedSkill(
-			{
-				targetDir: nativeTarget,
-				previousTargetDir: previousTarget,
-				id: "project-skill",
-				manager: "hosted-manifest",
-				sourceIdentity,
-			},
-			() => {
-				expect(shouldIgnoreUserSkill(previousTarget, "project-skill")).toBe(true);
-				expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(false);
-			},
-			verifiedInstall,
-		);
-
-		expect(managedSkillReservationState(previousTarget, "project-skill")).toBe("unreserved");
-		expect(managedSkillReservationState(nativeTarget, "project-skill")).toBe("reserved");
-		expect(shouldIgnoreUserSkill(nativeTarget, "frontmatter-name")).toBe(true);
-	});
-
-	it("rejects unsafe native targets for sourced reservations", () => {
-		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
-		mkdirSync(join(root, "state"));
-		const sourceIdentity = [
-			"project",
-			"project-skill",
-			"22222222-2222-4222-8222-222222222222",
-			"a".repeat(64),
-		].join("\0");
-
-		expect(() =>
-			reserveManagedSkill({
-				targetDir: join(root, "skills", ".hub"),
-				id: "project-skill",
-				manager: "hosted-manifest",
-				sourceIdentity,
-			}),
-		).toThrow("managed Skill reservation identity is invalid");
-	});
-
 	it("reports malformed ownership state instead of silently hiding Skills", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
@@ -266,6 +222,7 @@ describe("managed Skill reservations", () => {
 	it("records legacy migration independently for each canonical target", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "service-state");
 		const existing = join(root, "one", "skills", "clawdi");
 		const absent = join(root, "two", "skills", "clawdi");
 		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), existing, { recursive: true });
@@ -483,7 +440,7 @@ describe("managed Skill reservations", () => {
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
 	});
 
-	it("preserves the previous target when activation and restore both fail", () => {
+	it("preserves the rollback backup when activation and restore both fail", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
 		const source = join(root, "source");
@@ -517,7 +474,7 @@ describe("managed Skill reservations", () => {
 
 		expect(existsSync(path)).toBe(false);
 		const recovery = readdirSync(dirname(path)).find((entry) =>
-			entry.startsWith(`.${basename(path)}-previous-`),
+			entry.startsWith(`.${basename(path)}-clawdi-rollback-`),
 		);
 		expect(recovery).toBeDefined();
 		if (!recovery) throw new Error("expected recovery artifact");
@@ -525,7 +482,7 @@ describe("managed Skill reservations", () => {
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
 	});
 
-	it("keeps committed ownership when previous-target cleanup fails", () => {
+	it("keeps committed ownership when rollback backup cleanup fails", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
 		const source = join(root, "source");
@@ -553,7 +510,9 @@ describe("managed Skill reservations", () => {
 		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Updated\n");
 		expect(managedSkillReservationState(path, "example")).toBe("reserved");
 		expect(
-			readdirSync(dirname(path)).some((entry) => entry.startsWith(`.${basename(path)}-previous-`)),
+			readdirSync(dirname(path)).some((entry) =>
+				entry.startsWith(`.${basename(path)}-clawdi-rollback-`),
+			),
 		).toBe(true);
 	});
 

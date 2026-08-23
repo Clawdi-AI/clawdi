@@ -9,6 +9,7 @@ import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-sta
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
+import { providerHealthReasons } from "./manifest-providers";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -161,17 +162,6 @@ function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObse
 }
 
 function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProviders | null {
-	const providerStatus = readJsonRecord(paths.providerHealthStatus);
-	const statusProviders = recordValue(providerStatus?.providers);
-	if (statusProviders && Object.keys(statusProviders).length > 0) {
-		const observed: HostedRuntimeObservedProviders = {};
-		for (const [providerId, value] of Object.entries(statusProviders)) {
-			const provider = recordValue(value);
-			if (provider) observed[providerId] = provider;
-		}
-		if (Object.keys(observed).length > 0) return observed;
-	}
-
 	const manifest = readJsonRecord(paths.manifestLastGood);
 	const projection = recordValue(manifest?.projection);
 	const providers = recordValue(projection?.providers);
@@ -188,13 +178,14 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		const secretAvailable =
 			apiKeySecretRef === null ? null : providerSecretAvailable(secrets, apiKeySecretRef);
-		const reasons = providerReasons(provider, secretAvailable);
+		const reasons = providerHealthReasons(provider, secretAvailable);
 		observed[providerId] = {
 			status: reasons.length > 0 ? "error" : "ok",
 			configured: true,
 			kind: stringValue(provider.kind),
 			baseUrl: stringValue(provider.baseUrl),
 			model: stringValue(provider.model),
+			models: Array.isArray(provider.models) ? provider.models : undefined,
 			apiKeySecretRef,
 			secretAvailable,
 			reasons,
@@ -205,47 +196,6 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 
 function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
 	return runtimeSecretValue(secrets, ref) !== null;
-}
-
-function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {
-	const reasons: string[] = [];
-	const status = stringValue(provider.status);
-	if (status && status !== "ok") {
-		reasons.push(`provider_${status}`);
-	}
-	const error = recordValue(provider.error);
-	const errorCode = error ? stringValue(error.code) : null;
-	if (errorCode) {
-		reasons.push(errorCode);
-	}
-	const baseUrl = stringValue(provider.baseUrl);
-	if (!baseUrl) {
-		reasons.push("base_url_missing");
-	} else {
-		try {
-			const parsed = new URL(baseUrl);
-			const apiMode = stringValue(provider.apiMode);
-			if (isOpenAiCompatibleMode(apiMode) && (!parsed.pathname || parsed.pathname === "/")) {
-				reasons.push("base_url_path_missing");
-			}
-		} catch {
-			reasons.push("base_url_invalid");
-		}
-	}
-	if (!stringValue(provider.model)) {
-		reasons.push("model_missing");
-	}
-	if (stringValue(provider.apiKeySecretRef) && secretAvailable === false) {
-		reasons.push("secret_missing");
-	}
-	if (provider.apiKeyRequired === true && !stringValue(provider.apiKeySecretRef)) {
-		reasons.push("api_key_secret_ref_missing");
-	}
-	return reasons;
-}
-
-function isOpenAiCompatibleMode(apiMode: string | null): boolean {
-	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 
 function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd | null {
