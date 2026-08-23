@@ -11,7 +11,6 @@ import {
 import { resolve } from "node:path";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import type { EgressProfileBundle } from "./egress-profiles";
-import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import { makeEgressIdentityOwned } from "./manifest-secrets";
 import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -57,15 +56,10 @@ export function clearEgressProfileBundle(paths: RuntimePaths): null {
 	return null;
 }
 export function requireV2EgressEngineReady(
-	manifest: RuntimeManifest,
 	profileBundlePath: string | null,
 	engine: RuntimeMitmproxyEnsureResult | null,
 ): void {
-	if (
-		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
-		profileBundlePath &&
-		engine?.status !== "ready"
-	) {
+	if (profileBundlePath && engine?.status !== "ready") {
 		throw new Error(
 			`required egress engine is not ready: ${engine?.error ?? "status unavailable"}`,
 		);

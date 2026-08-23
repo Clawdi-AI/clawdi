@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { toErrorMessage } from "../serve/log";
 import {
@@ -13,30 +12,16 @@ import {
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
+import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import { egressProfileSecretRefs } from "./egress-profiles";
+import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import {
-	hostedManifestEgressProfiles,
-	isClawdiManagedProviderProjection,
-} from "./hosted-egress-profiles";
-import {
-	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-	type HostedRuntimeBundleV2Manifest,
-	type HostedRuntimeManifest,
-	hasUnsupportedAgentPluginInstallations,
-	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
-	hostedRuntimeSemanticIssues,
-	isHostedGatewayRunArgs,
-	manifestSchema,
-	OFFICIAL_INSTALL_URLS,
-	officialInstallArgs,
-	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
 	validateUnmanagedProviderSecretValues,
 } from "./manifest-contract";
-import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
+import type { RuntimePaths } from "./paths";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -55,8 +40,8 @@ export interface RuntimeManifestLoad {
 	applyContext?: RuntimeApplyContext;
 	channelBindings?: RuntimeBundleChannelBinding[];
 	sourceRevision?: string;
-	// Original datasource manifest before local runtime projections are applied.
-	sourceManifest?: RuntimeManifest;
+	// Validated wire bundle with secretValues persisted separately.
+	sourceBundle?: unknown;
 	etag?: string;
 }
 
@@ -111,42 +96,36 @@ const runtimeBundleChannelBindingSchema = z.discriminatedUnion("provider", [
 
 export type RuntimeBundleChannelBinding = z.infer<typeof runtimeBundleChannelBindingSchema>;
 
-const hostedRuntimeBundleV2Schema = z
+export const hostedRuntimeBundleV2Schema = z
 	.object({
 		schemaVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
-		manifest: hostedRuntimeBundleV2ManifestSchema,
+		manifest: z.unknown(),
 		applyGeneration: z.number().int().positive().safe().optional(),
 		channelBindings: z.array(runtimeBundleChannelBindingSchema),
 		secretValues: z.record(canonicalSecretRefSchema, z.string()),
 	})
 	.strict()
+	.transform((bundle, ctx) => {
+		const manifest = hostedRuntimeBundleV2ManifestSchema.safeParse(bundle.manifest);
+		if (!manifest.success) {
+			for (const issue of manifest.error.issues) {
+				ctx.addIssue({ ...issue, path: ["manifest", ...issue.path] });
+			}
+			return z.NEVER;
+		}
+		return {
+			...bundle,
+			sourceBundle: { ...bundle, secretValues: {} },
+			manifest: {
+				...manifest.data,
+				...(bundle.applyGeneration === undefined
+					? {}
+					: { applyGeneration: bundle.applyGeneration }),
+			},
+		};
+	})
 	.superRefine(validateUnmanagedProviderSecretValues);
-
-export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
-	const bundle = hostedRuntimeBundleV2Schema.parse(value);
-	return {
-		manifest: markHostedRuntimeBundleV2(
-			hostedManifestToRuntimeManifest(bundle.manifest, bundle.applyGeneration),
-		),
-		source: "remote-datasource",
-		sourcePath: "https://fixture.invalid/v1/runtime/manifest",
-		offline: false,
-		secretValues: normalizeSecretValues(bundle.secretValues),
-		channelBindings: bundle.channelBindings,
-		sourceRevision: bundle.sourceRevision,
-	};
-}
-
-function markHostedRuntimeBundleV2(manifest: RuntimeManifest): RuntimeManifest {
-	return {
-		...manifest,
-		projection: {
-			...(manifest.projection ?? {}),
-			sourceBundleVersion: HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-		},
-	};
-}
 
 export interface RuntimeManifestNotModified {
 	source: "remote-datasource";
@@ -203,21 +182,17 @@ function zodErrors(error: z.ZodError): string[] {
 	});
 }
 
-function parseManifest(value: unknown): RuntimeManifest {
-	return manifestSchema.parse(value);
-}
-
-function normalizeRemoteManifestPayload(value: unknown): {
-	manifest: RuntimeManifest;
-	secretValues?: Record<string, string>;
-	channelBindings?: RuntimeBundleChannelBinding[];
-	sourceRevision?: string;
-} {
+export function parseHostedRuntimeBundleV2(
+	value: unknown,
+	sourcePath: string,
+): RuntimeManifestLoad {
 	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
 	return {
-		manifest: markHostedRuntimeBundleV2(
-			hostedManifestToRuntimeManifest(hostedResponse.manifest, hostedResponse.applyGeneration),
-		),
+		manifest: hostedResponse.manifest,
+		sourceBundle: hostedResponse.sourceBundle,
+		source: "remote-datasource",
+		sourcePath,
+		offline: false,
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		channelBindings: hostedResponse.channelBindings,
 		sourceRevision: hostedResponse.sourceRevision,
@@ -225,13 +200,7 @@ function normalizeRemoteManifestPayload(value: unknown): {
 }
 
 function rawGeneration(value: unknown): number | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	const record = value as Record<string, unknown>;
-	const manifestValue = record.manifest;
-	const generation =
-		typeof manifestValue === "object" && manifestValue !== null && !Array.isArray(manifestValue)
-			? (manifestValue as Record<string, unknown>).generation
-			: record.generation;
+	const generation = plainRecord(plainRecord(value)?.manifest)?.generation;
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
@@ -341,14 +310,9 @@ export async function loadRemoteRuntimeManifest(
 		};
 	}
 
-	let normalized: {
-		manifest: RuntimeManifest;
-		secretValues?: Record<string, string>;
-		channelBindings?: RuntimeBundleChannelBinding[];
-		sourceRevision?: string;
-	};
+	let normalized: RuntimeManifestLoad;
 	try {
-		normalized = normalizeRemoteManifestPayload(fetched.raw);
+		normalized = parseHostedRuntimeBundleV2(fetched.raw, fetched.url);
 		assertRuntimeBundleAuthority(normalized.sourceRevision, fetched.etag);
 		assertRuntimeApplyIdentityMatchesManifest(normalized.manifest, applyContext);
 	} catch (error) {
@@ -361,7 +325,7 @@ export async function loadRemoteRuntimeManifest(
 			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
-	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
+	const loaded = validateLoadedManifest(normalized, paths);
 	if (!("manifest" in loaded)) {
 		return {
 			...loaded,
@@ -414,106 +378,6 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
-type NormalizableHostedRuntimeManifest = HostedRuntimeManifest &
-	Partial<Pick<HostedRuntimeBundleV2Manifest, "agentPlugins">>;
-type HostedRuntimeRunSettings = NormalizableHostedRuntimeManifest["runtimes"][string]["run"];
-
-export function hostedManifestToRuntimeManifest(
-	hosted: NormalizableHostedRuntimeManifest,
-	applyGeneration?: number,
-): RuntimeManifest {
-	const paths = getRuntimePaths({ mode: "hosted" });
-	const selectedRuntime = hosted.runtime;
-	const runtime = hosted.runtimes[selectedRuntime];
-	return {
-		schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
-		deploymentId: hosted.deploymentId,
-		environmentId: hosted.environmentId,
-		instanceId: hosted.instanceId,
-		generation: hosted.generation,
-		...(applyGeneration === undefined ? {} : { applyGeneration }),
-		issuedAt: hosted.issuedAt,
-		expiresAt: hosted.expiresAt,
-		locale: hosted.locale,
-		runtime: selectedRuntime,
-		controlPlane: {
-			apiUrl: hosted.controlPlane.cloudApiUrl,
-		},
-		clawdiCli: { ...hosted.clawdiCli },
-		egressEngine: hosted.egressEngine,
-		companions: hosted.companions,
-		runtimes: {
-			[selectedRuntime]: {
-				enabled: runtime.enabled,
-				providerMode: runtime.providerMode,
-				install: {
-					authority: "official" as const,
-					method: "official-installer" as const,
-					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
-					home: paths.userHome,
-					args: officialInstallArgs(selectedRuntime, paths.userHome),
-				},
-				run: hostedRuntimeRunSettings(selectedRuntime, runtime.run),
-				services: Object.fromEntries(
-					Object.entries(runtime.services ?? {}).map(([service, run]) => [
-						service,
-						copyHostedRuntimeRunSettings(run),
-					]),
-				),
-				...hostedRuntimeProviderBinding(runtime),
-			},
-		},
-		openclawGatewayAuth: hosted.system.openclawGatewayAuth,
-		hermesDashboardAuth: hosted.system.hermesDashboardAuth,
-		projection: {
-			sourceSchemaVersion: hosted.schemaVersion,
-			sourceBundleVersion: HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-			system: hosted.system,
-			providers: hosted.providers,
-			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
-			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
-			...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
-			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
-			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
-		},
-		liveSync: hosted.liveSync,
-		egressProfiles: hostedManifestEgressProfiles(hosted),
-		recovery: {
-			cacheManifest: hosted.recovery.cacheManifest,
-			allowOfflineBoot: hosted.recovery.allowOfflineBoot,
-		},
-	};
-}
-
-function hostedRuntimeProviderBinding(
-	runtime: NormalizableHostedRuntimeManifest["runtimes"][string],
-):
-	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
-	| { provider_ids: [] } {
-	if (runtime.providerMode === "unmanaged") return { provider_ids: [] };
-	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
-}
-
-function hostedRuntimeRunSettings(
-	runtime: NormalizableHostedRuntimeManifest["runtime"],
-	run: HostedRuntimeRunSettings,
-): RuntimeRunSettings {
-	const settings = copyHostedRuntimeRunSettings(run);
-	if (isHostedGatewayRunArgs(runtime, run.args)) {
-		settings.args = ["gateway", "run"];
-	}
-	return settings;
-}
-
-function copyHostedRuntimeRunSettings(run: HostedRuntimeRunSettings): RuntimeRunSettings {
-	return {
-		args: [...run.args],
-		env: {},
-		prependPath: [],
-		...(run.secretEnv === undefined ? {} : { secretEnv: { ...run.secretEnv } }),
-	};
-}
-
 function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 	const appliedState = readRuntimeAppliedState(paths);
 	if (!appliedState) return {};
@@ -521,131 +385,6 @@ function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 		instanceId: appliedState.instanceId,
 		generation: appliedState.generation,
 	};
-}
-
-function manifestExpiryError(manifest: RuntimeManifest): string | null {
-	if (!manifest.expiresAt) return null;
-	const expiresAtMs = Date.parse(manifest.expiresAt);
-	if (!Number.isFinite(expiresAtMs)) {
-		return `manifest expiresAt is not a valid timestamp: ${manifest.expiresAt}`;
-	}
-	if (expiresAtMs <= Date.now()) {
-		return `manifest expired at ${manifest.expiresAt}`;
-	}
-	return null;
-}
-
-function validateManifestSemantics(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	trustDomain: "generic" | "hosted" = "generic",
-): string[] {
-	const errors: string[] = [];
-	const isHostedV2 =
-		trustDomain === "hosted" &&
-		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
-	const expiryError = manifestExpiryError(manifest);
-	if (expiryError) errors.push(expiryError);
-	if (!isAbsolute(paths.userHome)) errors.push(`runtime HOME must be absolute: ${paths.userHome}`);
-	if (manifest.workspaceRoot && !isAbsolute(manifest.workspaceRoot)) {
-		errors.push(`runtime workspaceRoot must be absolute: ${manifest.workspaceRoot}`);
-	}
-	if (trustDomain !== "generic") {
-		if (hasUnsupportedAgentPluginInstallations(manifest) && !isHostedV2) {
-			errors.push(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-		}
-		const cliPolicy = hostedCliPayloadPolicySchema.safeParse(manifest.clawdiCli);
-		if (!cliPolicy.success) {
-			errors.push(...zodErrors(cliPolicy.error).map((error) => `clawdiCli.${error}`));
-		}
-	}
-	if (manifest.runtime) {
-		const runtime = manifest.runtime;
-		const system = plainRecord(manifest.projection?.system);
-		errors.push(
-			...hostedRuntimeSemanticIssues({
-				hostedV2: isHostedV2,
-				runtime,
-				runtimes: manifest.runtimes,
-				openclawGatewayAuth: manifest.openclawGatewayAuth,
-				hermesDashboardAuth: manifest.hermesDashboardAuth,
-				openclawControlUiAllowedOrigins: system?.openclawControlUiAllowedOrigins,
-				providers: manifest.projection?.providers,
-			}).map((issue) => issue.message),
-		);
-		if (runtime === "openclaw" && isHostedV2) {
-			const run = manifest.runtimes.openclaw?.run;
-			if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
-				errors.push("OpenClaw v2 gateway token must not be embedded in manifest env");
-			}
-			for (const service of Object.values(manifest.runtimes.openclaw?.services ?? {})) {
-				for (const source of ["env", "secretEnv"] as const) {
-					for (const envName of Object.keys(service[source] ?? {})) {
-						if (envName === "OPENCLAW_GATEWAY_TOKEN") {
-							errors.push("OpenClaw v2 gateway token must be scoped to the gateway run secretEnv");
-						}
-					}
-				}
-			}
-		}
-	}
-	for (const [name, runtime] of Object.entries(manifest.runtimes)) {
-		if (!runtime.enabled) continue;
-		const runCommand = runtime.run?.command?.trim();
-		if (!isSupportedRuntimeName(name)) {
-			if (runtime.install) {
-				errors.push(
-					`runtime ${name} install metadata is not supported by this Clawdi CLI; provide run.command or upgrade the CLI`,
-				);
-			}
-			if (!runCommand) {
-				errors.push(
-					`runtime ${name} is not supported by this Clawdi CLI; provide run.command or upgrade the CLI`,
-				);
-			}
-			continue;
-		}
-		if (!runtime.install) continue;
-		const expectedUrl = OFFICIAL_INSTALL_URLS[name];
-		if (runtime.install.url !== expectedUrl) {
-			errors.push(`runtime ${name} must use official installer ${expectedUrl}`);
-		}
-		if (runtime.install.home !== paths.userHome) {
-			errors.push(`runtime ${name} install.home must match runtime HOME ${paths.userHome}`);
-		}
-		if (!isAbsolute(runtime.install.home)) {
-			errors.push(`runtime ${name} install.home must be absolute`);
-		}
-		if (runtime.install.args.includes("--dir")) {
-			errors.push(`runtime ${name} install args must not include --dir`);
-		}
-		const expectedArgs = officialInstallArgs(name, runtime.install.home);
-		if (
-			runtime.install.args.length !== expectedArgs.length ||
-			runtime.install.args.some((arg, index) => arg !== expectedArgs[index])
-		) {
-			errors.push(`runtime ${name} install must use canonical official args`);
-		}
-		const prefixIndexes = runtime.install.args.flatMap((arg, index) =>
-			arg === "--prefix" ? [index] : [],
-		);
-		if (prefixIndexes.length > 0) {
-			const expectedPrefixIndex = expectedArgs.indexOf("--prefix");
-			const expectedPrefix =
-				expectedPrefixIndex >= 0 ? expectedArgs[expectedPrefixIndex + 1] : undefined;
-			const prefixIndex = prefixIndexes[0];
-			if (
-				prefixIndexes.length !== 1 ||
-				expectedPrefix === undefined ||
-				runtime.install.args[prefixIndex + 1] !== expectedPrefix
-			) {
-				errors.push(
-					`runtime ${name} install prefix must match the official launcher prefix ${expectedPrefix ?? "none"}`,
-				);
-			}
-		}
-	}
-	return errors;
 }
 
 export async function loadRuntimeManifest(
@@ -664,7 +403,7 @@ export async function loadRuntimeManifest(
 		remote.mode === "repair" &&
 		(remote.stage === "network" || remote.stage === "auth");
 	if (fetchFailed || "notModified" in remote) {
-		const cached = loadLastGoodManifest(paths, offlineLastGoodManifestLoadOptions, applyContext);
+		const cached = loadLastGoodManifest(paths, true, applyContext);
 		if ("manifest" in cached) return cached;
 		const fetchErrors =
 			"errors" in remote
@@ -681,21 +420,9 @@ export async function loadRuntimeManifest(
 	return remote;
 }
 
-interface LastGoodManifestLoadOptions {
-	requireOfflineBoot: boolean;
-	requireAppliedAuthority: boolean;
-	requireSemanticValidity: boolean;
-}
-
-const offlineLastGoodManifestLoadOptions: LastGoodManifestLoadOptions = {
-	requireOfflineBoot: true,
-	requireAppliedAuthority: false,
-	requireSemanticValidity: true,
-};
-
 function loadLastGoodManifest(
 	paths: RuntimePaths,
-	opts: LastGoodManifestLoadOptions,
+	requireOfflineBoot: boolean,
 	applyContext: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	if (!existsSync(paths.manifestLastGood)) {
@@ -706,31 +433,37 @@ function loadLastGoodManifest(
 		};
 	}
 	try {
-		const manifest = parseManifest(readJsonFile(paths.manifestLastGood));
-		if (opts.requireOfflineBoot && manifest.recovery.allowOfflineBoot !== true) {
+		const sourceBundle = readJsonFile(paths.manifestLastGood);
+		const cachedBundle = plainRecord(sourceBundle);
+		if (!cachedBundle) throw new Error("cached runtime bundle must be an object");
+		const cached = loadCachedSecretValues(paths);
+		if ("errors" in cached) return cached;
+		const parsed = parseHostedRuntimeBundleV2(
+			{ ...cachedBundle, secretValues: cached.secretValues },
+			paths.manifestLastGood,
+		);
+		const appliedState = readRuntimeAppliedState(paths);
+		const restored = applyRuntimeBundleChannelsToManifestLoad(
+			{
+				...parsed,
+				source: "last-good-cache",
+				sourcePath: paths.manifestLastGood,
+				offline: true,
+				applyContext,
+			},
+			paths,
+		);
+		const manifest = restored.manifest;
+		if (requireOfflineBoot && manifest.recovery.allowOfflineBoot !== true) {
 			return {
 				mode: "repair",
 				stage: "local",
 				errors: ["cached manifest does not allow offline boot"],
 			};
 		}
-		if (opts.requireSemanticValidity) {
-			const semanticErrors = validateManifestSemantics(manifest, paths, "hosted");
-			if (semanticErrors.length > 0) {
-				return {
-					mode: "repair",
-					stage: "local",
-					errors: semanticErrors.map((error) => `cached ${error}`),
-				};
-			}
-		}
-		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
-		const strictV2Cache =
-			manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
 		if (
-			opts.requireOfflineBoot &&
-			(strictV2Cache || cachedApplyIdentity !== null) &&
+			requireOfflineBoot &&
 			!runtimeApplyIdentitiesEqual(applyContext.identity, cachedApplyIdentity)
 		) {
 			return {
@@ -742,8 +475,6 @@ function loadLastGoodManifest(
 				activeGeneration: appliedState?.generation ?? null,
 			};
 		}
-		const cached = loadCachedSecretValues(paths);
-		if ("errors" in cached) return cached;
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
 			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
@@ -757,28 +488,22 @@ function loadLastGoodManifest(
 				};
 			}
 		}
-		if ((strictV2Cache || opts.requireAppliedAuthority) && !appliedState) {
+		if (!appliedState) {
 			return {
 				mode: "repair",
 				stage: "local",
-				errors: [
-					strictV2Cache
-						? "cached strict-v2 manifest has no durable applied authority; refusing offline boot"
-						: "cached manifest has no durable applied authority",
-				],
+				errors: ["cached manifest has no durable applied authority; refusing offline boot"],
 			};
 		}
 		if (
-			(strictV2Cache || cachedApplyIdentity || opts.requireAppliedAuthority) &&
-			appliedState &&
-			(appliedState?.generation !== manifest.generation ||
-				resolveRuntimeApplyGeneration(appliedState) !== resolveRuntimeApplyGeneration(manifest) ||
-				appliedState.instanceId !== manifest.instanceId ||
-				appliedState.contentIdentity.sha256 !==
-					runtimeContentSha256({
-						manifest,
-						secretValues: cached.secretValues,
-					}))
+			appliedState.generation !== manifest.generation ||
+			resolveRuntimeApplyGeneration(appliedState) !== resolveRuntimeApplyGeneration(manifest) ||
+			appliedState.instanceId !== manifest.instanceId ||
+			appliedState.contentIdentity.sha256 !==
+				runtimeContentSha256({
+					manifest: sourceBundle,
+					secretValues: cached.secretValues,
+				})
 		) {
 			return {
 				mode: "repair",
@@ -789,22 +514,9 @@ function loadLastGoodManifest(
 				activeGeneration: appliedState?.generation ?? null,
 			};
 		}
-		if (secretRefs.length > 0) {
-			return {
-				manifest,
-				source: "last-good-cache",
-				sourcePath: paths.manifestLastGood,
-				offline: true,
-				secretValues: cached.secretValues,
-				applyContext,
-			};
-		}
 		return {
+			...restored,
 			manifest,
-			source: "last-good-cache",
-			sourcePath: paths.manifestLastGood,
-			offline: true,
-			applyContext,
 		};
 	} catch (error) {
 		return {
@@ -825,15 +537,7 @@ export function loadCommittedRuntimeManifest(
 	paths: RuntimePaths,
 	applyContext: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
-	return loadLastGoodManifest(
-		paths,
-		{
-			requireOfflineBoot: false,
-			requireAppliedAuthority: true,
-			requireSemanticValidity: false,
-		},
-		applyContext,
-	);
+	return loadLastGoodManifest(paths, false, applyContext);
 }
 
 function loadCachedSecretValues(
@@ -926,21 +630,14 @@ function plainRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function validateLoadedManifest(
-	normalized: {
-		manifest: RuntimeManifest;
-		secretValues?: Record<string, string>;
-		channelBindings?: RuntimeBundleChannelBinding[];
-		sourceRevision?: string;
-	},
+	normalized: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	source: RuntimeManifestLoad["source"],
-	sourcePath: string,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	const existing = loadExistingState(paths);
 	const manifest = normalized.manifest;
-	const semanticErrors = validateManifestSemantics(manifest, paths, "hosted");
+	const continuityErrors: string[] = [];
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
-		semanticErrors.push(
+		continuityErrors.push(
 			`manifest instanceId ${manifest.instanceId} does not match applied instanceId ${existing.instanceId}`,
 		);
 	}
@@ -949,27 +646,18 @@ function validateLoadedManifest(
 		existing.generation !== undefined &&
 		manifest.generation < existing.generation
 	) {
-		semanticErrors.push(
+		continuityErrors.push(
 			`manifest generation ${manifest.generation} is older than applied generation ${existing.generation}`,
 		);
 	}
-	if (semanticErrors.length > 0) {
+	if (continuityErrors.length > 0) {
 		return {
 			mode: "manifest-rejected",
-			stage: source === "remote-datasource" ? "network" : "local",
-			errors: semanticErrors,
+			stage: normalized.source === "remote-datasource" ? "network" : "local",
+			errors: continuityErrors,
 			rejectedGeneration: manifest.generation,
 			activeGeneration: existing.generation ?? null,
 		};
 	}
-
-	return {
-		manifest,
-		source,
-		sourcePath,
-		offline: false,
-		secretValues: normalized.secretValues,
-		channelBindings: normalized.channelBindings,
-		sourceRevision: normalized.sourceRevision,
-	};
+	return normalized;
 }

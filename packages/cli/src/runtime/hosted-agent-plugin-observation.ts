@@ -7,12 +7,13 @@ import {
 	type HostedAgentPluginReceipt,
 	readHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
-import { manifestSchema, type RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifest } from "./manifest-contract";
 import {
 	agentPluginNameSchema,
 	type HostedAgentPluginInstallation,
 	hostedAgentPluginInstallationSchema,
 } from "./manifest-resources";
+import { hostedRuntimeBundleV2Schema } from "./manifest-source";
 import type { RuntimePaths } from "./paths";
 
 type AgentPluginObservation = components["schemas"]["HostedRuntimeObservedAgentPluginV1"];
@@ -88,9 +89,9 @@ function readAppliedManifest(
 	applied: RuntimeAppliedState,
 ): RuntimeManifest | null {
 	try {
-		const manifest = manifestSchema.parse(
+		const manifest = hostedRuntimeBundleV2Schema.parse(
 			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
-		);
+		).manifest;
 		return manifest.instanceId === applied.instanceId &&
 			resolveRuntimeApplyGeneration(manifest) === resolveRuntimeApplyGeneration(applied)
 			? manifest

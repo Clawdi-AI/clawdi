@@ -34,9 +34,7 @@ import {
 	materializeHostedChannelCredentials,
 } from "./manifest-channels";
 import {
-	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
-	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 	hasUnsupportedAgentPluginInstallations,
 } from "./manifest-contract";
 import {
@@ -83,7 +81,6 @@ import {
 	applyHostedAiProviderProjection,
 	applyHostedCodexManagedProviderProjection,
 	ensureHostedCodexCli,
-	hostedCodexManagedProvider,
 	previewHostedAiProviderProjectionRevision,
 } from "./manifest-providers";
 import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
@@ -233,12 +230,6 @@ function initializeRuntimeConvergence(
 ): { context: RuntimeConvergenceContext; state: RuntimeConvergenceState } {
 	const { manifest } = load;
 	if (
-		(hasUnsupportedAgentPluginInstallations(manifest) || opts.preparedHostedAgentPlugins) &&
-		manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION
-	) {
-		throw new Error(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
-	}
-	if (
 		hasUnsupportedAgentPluginInstallations(manifest) &&
 		!opts.preparedHostedAgentPlugins &&
 		!opts.resourcePreparationFailures?.agentPlugins
@@ -276,9 +267,6 @@ function initializeRuntimeConvergence(
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
 	if (manifest.companions?.filebrowser) {
-		if (manifest.projection?.sourceBundleVersion !== HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION) {
-			throw new Error("Files companion requires a hosted v2 bundle");
-		}
 		if (!opts.systemdApply) {
 			throw new Error("Files companion requires systemd apply and readiness hooks");
 		}
@@ -500,10 +488,7 @@ function prepareRuntimeConvergencePlan(
 			manifest.runtimes.openclaw?.enabled === true ||
 			Boolean(openClawCommand && executableExists(openClawCommand));
 		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? resolveOpenClawWorkspaceForConvergence(
-					projectionHome,
-					manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-				)
+			? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
 			: null;
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
@@ -684,10 +669,7 @@ function prepareRuntimeApplyDependencies(
 	}
 
 	let codexCli: Record<string, string> | null = null;
-	if (
-		hostedCodexManagedProvider(manifest) ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
-	) {
+	if (manifest.projection?.terminalTooling?.codex) {
 		try {
 			codexCli = ensureHostedCodexCli(paths);
 		} catch (error) {
@@ -801,7 +783,7 @@ function prepareRuntimeEgressProjection(
 	const egressEngine = egressProfileBundlePath
 		? ensureRuntimeMitmproxy(manifest.egressEngine, paths, opts.egressEngineEnsureOptions)
 		: null;
-	requireV2EgressEngineReady(manifest, egressProfileBundlePath, egressEngine);
+	requireV2EgressEngineReady(egressProfileBundlePath, egressEngine);
 	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths, secretValues);
 	const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
@@ -1413,13 +1395,12 @@ function activateRuntimeServices(
 		probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
 	}
 	let manifestLastGood: string | null = null;
-	if (state.installErrors.length === 0 && opts.cacheLastGood !== false) {
-		manifestLastGood = writeLastGoodManifest(
-			load.sourceManifest ?? manifest,
-			paths,
-			load.secretValues,
-			manifest,
-		);
+	if (
+		state.installErrors.length === 0 &&
+		opts.cacheLastGood !== false &&
+		load.sourceBundle !== undefined
+	) {
+		manifestLastGood = writeLastGoodManifest(load.sourceBundle, paths, load.secretValues, manifest);
 	}
 	return { manifestLastGood };
 }

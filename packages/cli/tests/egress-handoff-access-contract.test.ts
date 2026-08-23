@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { convergeRuntimeManifest } from "../src/runtime/manifest";
-import { normalizeHostedRuntimeBundleV2 } from "../src/runtime/manifest-source";
+import { parseHostedRuntimeBundleV2 } from "../src/runtime/manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../src/runtime/state";
 
@@ -266,7 +266,7 @@ esac
 			"secret://tool.codex.apiKey": "handoff-codex-key",
 			[HANDOFF_TEST_SECRET_REF]: "handoff-sidecar-secret",
 		};
-		const load = normalizeHostedRuntimeBundleV2(fixture);
+		const load = parseHostedRuntimeBundleV2(fixture, "test://egress-handoff-access");
 		load.applyContext = {
 			kind: "context-file",
 			backend: "incus",

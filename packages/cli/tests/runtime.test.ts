@@ -76,16 +76,15 @@ import {
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
 import {
-	hostedRuntimeManifestSchema,
-	manifestSchema,
+	hostedRuntimeBundleV2ManifestSchema,
 	officialInstallArgs,
 	validateUnmanagedProviderSecretValues,
 } from "../src/runtime/manifest-contract";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-	hostedManifestToRuntimeManifest,
 	loadRemoteRuntimeManifest as loadRemoteRuntimeManifestWithContext,
 	manifestSecretRefs,
+	parseHostedRuntimeBundleV2,
 	type RuntimeBundleChannelBinding,
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
@@ -161,7 +160,7 @@ function explicitTestApplyContext(
 
 const hostedRuntimeManifestResponseSchema = z
 	.object({
-		manifest: hostedRuntimeManifestSchema,
+		manifest: hostedRuntimeBundleV2ManifestSchema,
 		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
 	})
 	.strict()
@@ -173,7 +172,7 @@ function normalizeHostedManifestFixture(value: unknown): {
 } {
 	const parsed = hostedRuntimeManifestResponseSchema.parse(value);
 	return {
-		manifest: hostedManifestToRuntimeManifest(parsed.manifest),
+		manifest: parsed.manifest,
 		secretValues: normalizeSecretValues(parsed.secretValues),
 	};
 }
@@ -870,30 +869,14 @@ function runtimeWatchLocaleManifest(
 	language: "en" | "fr" = "en",
 	timezone = "UTC",
 ): RuntimeManifest {
-	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "dep_watch_locale",
-		environmentId: "env_watch_locale",
-		instanceId: "iid_watch_locale",
-		generation,
-		issuedAt: "2026-07-11T00:00:00Z",
-		locale: { language, timezone },
-		workspaceRoot: join(home, "clawdi"),
-		controlPlane: { apiUrl: "https://cloud-api.test" },
-		clawdiCli: {
-			source: "npm:clawdi",
-			packageSpec: TEST_RUNNING_CLI_SPEC,
-			registry: "https://registry.npmjs.org",
+	const payload = hostedRuntimeWatchLocalePayload(home, generation, language, timezone);
+	return normalizeHostedManifestFixture({
+		manifest: payload.manifest,
+		secretValues: {
+			...TEST_HOSTED_CODEX_SECRET_VALUES,
+			...TEST_RUNTIME_SERVICE_SECRET_VALUES,
 		},
-		runtimes: {
-			openclaw: {
-				enabled: true,
-				run: hostedOpenClawRuntime().run,
-				services: {},
-			},
-		},
-		recovery: { cacheManifest: true, allowOfflineBoot: true },
-	};
+	}).manifest;
 }
 
 interface HostedRuntimeResponseFixture {
@@ -1140,34 +1123,6 @@ function hostedCliManifestResponse(
 			},
 		},
 		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
-	};
-}
-
-function genericCliDesiredState(packageSpec: string): RuntimeManifest {
-	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "dep_generic_cli_update",
-		environmentId: "env_generic_cli_update",
-		instanceId: "iid_generic_cli_update",
-		generation: 1,
-		issuedAt: "2026-07-12T00:00:00Z",
-		controlPlane: { apiUrl: "https://cloud-api.test" },
-		clawdiCli: {
-			source: "npm:clawdi",
-			packageSpec,
-			registry: "https://registry.npmjs.org",
-		},
-		runtimes: { openclaw: { enabled: true } },
-		recovery: {},
-	};
-}
-
-function cachedHostedCliDesiredState(home: string, packageSpec: string): RuntimeManifest {
-	return {
-		...genericCliDesiredState(packageSpec),
-		workspaceRoot: join(home, "clawdi"),
-		runtimes: { openclaw: { enabled: false } },
-		recovery: { cacheManifest: true, allowOfflineBoot: true },
 	};
 }
 
@@ -1492,12 +1447,25 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	);
 	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 	const paths = getRuntimePaths();
+	seedMitmproxyCache(paths);
+	const payload = hostedRuntimeWatchLocalePayload(home, 1, "en", "UTC");
+	const sourceRevision = testBundleEtag("manifest-locale-1").slice(8, -1);
 	const load: RuntimeManifestLoad = {
 		manifest: runtimeWatchLocaleManifest(home, 1),
+		sourceBundle: {
+			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceRevision,
+			manifest: payload.manifest,
+			channelBindings: [],
+			secretValues: {},
+		},
+		sourceRevision,
+		channelBindings: [],
 		source: "remote-datasource",
 		sourcePath: "https://runtime.test/v1/runtime/manifest",
 		offline: false,
 		secretValues: {
+			...TEST_HOSTED_CODEX_SECRET_VALUES,
 			"secret://clawdi/auth-token":
 				TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://clawdi/auth-token"],
 			"secret://runtime/openclaw/gateway-token":
@@ -1640,78 +1608,65 @@ function hostedOAuthRuntimeLoad(input: {
 	const secretRef = `secret://provider.${providerId}.oauthProfile`;
 	const runtime =
 		input.runtime === "hermes"
-			? {
-					...hostedHermesRuntime({
-						provider_ids: [providerId],
-						primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
-					}),
-					install: {
-						authority: "official" as const,
-						method: "official-installer" as const,
-						url: "https://hermes-agent.nousresearch.com/install.sh",
-						home: input.home,
-						args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-					},
-				}
-			: {
-					...hostedOpenClawRuntime({
-						provider_ids: [providerId],
-						primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
-					}),
-					install: {
-						authority: "official" as const,
-						method: "official-installer" as const,
-						url: "https://openclaw.ai/install-cli.sh",
-						home: input.home,
-						args: ["--json", "--no-onboard"],
-					},
-				};
-	return {
-		source: "remote-datasource",
-		sourcePath: "https://runtime-source.test/desired-state",
-		offline: false,
-		secretValues: {
-			[secretRef]: hostedOAuthEnvelope(input.accessToken, input.refreshToken),
-		},
+			? hostedHermesRuntime({
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
+				})
+			: hostedOpenClawRuntime({
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
+				});
+	const normalized = normalizeHostedManifestFixture({
 		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: input.runtime,
 			deploymentId: "dep_hosted_oauth",
 			environmentId: "env_hosted_oauth",
+			...hostedRequiredState(),
+			providers: {
+				[providerId]: {
+					kind: "openai-compatible",
+					type: "openai",
+					baseUrl: "https://api.openai.com/v1",
+					models: [{ id: "gpt-5.2-codex" }],
+					apiMode: "openai_responses",
+					managed_by: "user",
+					auth: {
+						type: "agent_profile",
+						tool: "codex",
+						profile: "default",
+						credentialSecretRef: secretRef,
+						credentialRevision: input.credentialRevision,
+					},
+				},
+			},
 			instanceId: "iid_hosted_oauth",
 			generation: input.generation,
 			issuedAt: "2026-07-31T00:00:00Z",
-			workspaceRoot: join(input.home, "clawdi"),
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: { [input.runtime]: runtime },
-			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				system:
-					input.runtime === "hermes"
-						? hostedHermesSystemFixture(input.home)
-						: hostedSystemFixture(input.home),
-				providers: {
-					[providerId]: {
-						kind: "openai-compatible",
-						type: "openai",
-						baseUrl: "https://api.openai.com/v1",
-						model: "gpt-5.2-codex",
-						models: [{ id: "gpt-5.2-codex" }],
-						apiMode: "openai_responses",
-						managed_by: "user",
-						auth: {
-							type: "agent_profile",
-							tool: "codex",
-							profile: "default",
-							credentialSecretRef: secretRef,
-							credentialRevision: input.credentialRevision,
-						},
-					},
-				},
-				terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
+			locale: TEST_HOSTED_LOCALE,
+			system:
+				input.runtime === "hermes"
+					? hostedHermesSystemFixture(input.home)
+					: hostedSystemFixture(input.home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: TEST_RUNNING_CLI_SPEC,
+				registry: "https://registry.npmjs.org",
 			},
-			egressProfiles: { profiles: [] },
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
+			runtimes: { [input.runtime]: runtime },
 		},
+		secretValues: {
+			[secretRef]: hostedOAuthEnvelope(input.accessToken, input.refreshToken),
+			...TEST_HOSTED_CODEX_SECRET_VALUES,
+			...TEST_RUNTIME_SERVICE_SECRET_VALUES,
+		},
+	});
+	return {
+		...normalized,
+		source: "remote-datasource",
+		sourcePath: "https://runtime-source.test/desired-state",
+		offline: false,
 	};
 }
 
@@ -1883,6 +1838,7 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${workspace}"}]\n'
   exit 0
 fi
+${fakeOpenClawConfigPatchCommand(configPath)}
 if [ "\${1:-} \${2:-}" = "skills install" ]; then
   source="\${3:?missing source}"; shift 3; slug=""
   while [ "$#" -gt 0 ]; do
@@ -2088,65 +2044,65 @@ export async function removeProviderAuthProfilesWithLock({ provider, agentDir })
 }
 
 function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
-	return {
-		source: "remote-datasource",
-		sourcePath: "https://runtime-source.test/desired-state",
-		offline: false,
-		secretValues: {
-			"secret://provider.hermes.apiKey": "sk-hermes-provider",
-		},
+	seedMitmproxyCache();
+	const normalized = normalizeHostedManifestFixture({
 		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "hermes",
 			deploymentId: "dep_hermes_provider",
 			environmentId: "env_hermes_provider",
+			...hostedRequiredState(),
+			providers: {
+				hermes: {
+					kind: "openai-compatible",
+					type: "custom_openai_compatible",
+					baseUrl: "https://hermes-provider.example.test/v1",
+					models: [
+						{
+							id: "kimi/kimi-for-coding",
+							context_window: 262144,
+							max_tokens: 32768,
+							input_modalities: ["text", "image"],
+							supports_vision: true,
+							supports_tools: true,
+							supports_reasoning: true,
+						},
+					],
+					apiMode: "openai_chat",
+					managed_by: "user",
+					runtimeEnvName: "HERMES_PROVIDER_API_KEY",
+					apiKeySecretRef: "secret://provider.hermes.apiKey",
+				},
+			},
 			instanceId: "iid_hermes_provider",
 			generation: 1,
 			issuedAt: "2026-06-22T00:00:00Z",
-			workspaceRoot: join(home, "clawdi"),
-			controlPlane: { apiUrl: "https://cloud-api.test" },
+			locale: TEST_HOSTED_LOCALE,
+			system: hostedHermesSystemFixture(home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: TEST_RUNNING_CLI_SPEC,
+				registry: "https://registry.npmjs.org",
+			},
 			runtimes: {
-				hermes: {
-					enabled: true,
-					providerMode: "configured",
+				hermes: hostedHermesRuntime({
 					provider_ids: ["hermes"],
 					primary_model: { provider_id: "hermes", model: "kimi/kimi-for-coding" },
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://hermes-agent.nousresearch.com/install.sh",
-						home,
-						args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-					},
-				},
+				}),
 			},
-			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				system: { home },
-				providers: {
-					hermes: {
-						kind: "openai-compatible",
-						baseUrl: "https://hermes-provider.example.test/v1",
-						model: "kimi/kimi-for-coding",
-						models: [
-							{
-								id: "kimi/kimi-for-coding",
-								context_window: 262144,
-								max_tokens: 32768,
-								input_modalities: ["text", "image"],
-								supports_vision: true,
-								supports_tools: true,
-								supports_reasoning: true,
-							},
-						],
-						apiMode: "openai_chat",
-						runtimeEnvName: "HERMES_PROVIDER_API_KEY",
-						apiKeySecretRef: "secret://provider.hermes.apiKey",
-					},
-				},
-			},
-			egressProfiles: { profiles: [] },
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		},
+		secretValues: {
+			"secret://provider.hermes.apiKey": "sk-hermes-provider",
+			...TEST_HOSTED_CODEX_SECRET_VALUES,
+			...TEST_RUNTIME_SERVICE_SECRET_VALUES,
+		},
+	});
+	return {
+		...normalized,
+		source: "remote-datasource",
+		sourcePath: "https://runtime-source.test/desired-state",
+		offline: false,
 	};
 }
 
@@ -2178,42 +2134,6 @@ function hostedHermesDashboardCapabilityLoad(home: string): RuntimeManifestLoad 
 	return load;
 }
 
-const HOSTED_PROVIDER_SWITCH_PROVIDERS: Record<string, Record<string, unknown>> = {
-	"clawdi-managed": hostedProviderSwitchProvider("clawdi-managed", "clawdi"),
-	"clawdi-managed-v2": hostedProviderSwitchProvider("clawdi-managed-v2", "clawdi"),
-	"byok-a": hostedProviderSwitchProvider("byok-a", "user"),
-	"byok-b": hostedProviderSwitchProvider("byok-b", "user"),
-};
-
-function hostedProviderSwitchProvider(
-	providerId: string,
-	managedBy: "clawdi" | "user",
-): Record<string, unknown> {
-	const envPrefix = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_");
-	return {
-		kind: "openai-compatible",
-		type: "custom_openai_compatible",
-		baseUrl: `https://${providerId}.provider.example.test/v1`,
-		model: hostedProviderSwitchModel(providerId),
-		models: [
-			{
-				id: hostedProviderSwitchModel(providerId),
-				context_window: 128000,
-				max_tokens: 8192,
-				supports_tools: true,
-			},
-		],
-		apiMode: providerId === "clawdi-managed" ? "openai_responses" : "openai_chat",
-		managed_by: managedBy,
-		runtimeEnvName: managedBy === "clawdi" ? "CLAWDI_AI_API_KEY" : `BYOK_${envPrefix}_API_KEY`,
-		apiKeySecretRef: `secret://provider.${providerId}.apiKey`,
-	};
-}
-
-function hostedProviderSwitchModel(providerId: string): string {
-	return `${providerId}-model`;
-}
-
 function hostedCodexTerminalProvider(baseUrl: string): Record<string, unknown> {
 	return {
 		kind: "openai-compatible",
@@ -2226,99 +2146,11 @@ function hostedCodexTerminalProvider(baseUrl: string): Record<string, unknown> {
 	};
 }
 
-function hostedProviderSwitchLoad(
-	home: string,
-	selectedProviderId: string,
-	generation: number,
-): RuntimeManifestLoad {
-	const codexProvider = hostedCodexTerminalProvider(
-		"https://clawdi-managed.provider.example.test/v1",
-	);
-	const terminalTooling = {
-		codex: {
-			enabled: true,
-			provider_id: "clawdi-managed",
-			primary_model: {
-				provider_id: "clawdi-managed",
-				model: hostedProviderSwitchModel("clawdi-managed"),
-			},
-			provider: codexProvider,
-		},
-	};
-	return {
-		source: "remote-datasource",
-		sourcePath: "https://runtime-source.test/desired-state",
-		offline: false,
-		secretValues: {
-			...Object.fromEntries(
-				Object.keys(HOSTED_PROVIDER_SWITCH_PROVIDERS).map((providerId) => [
-					`secret://provider.${providerId}.apiKey`,
-					`sk-${providerId}`,
-				]),
-			),
-			...TEST_HOSTED_CODEX_SECRET_VALUES,
-		},
-		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_provider_switch",
-			environmentId: "env_provider_switch",
-			instanceId: "iid_provider_switch",
-			generation,
-			issuedAt: "2026-07-08T00:00:00Z",
-			workspaceRoot: join(home, "clawdi"),
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: {
-				openclaw: {
-					...hostedOpenClawRuntime({
-						provider_ids: [selectedProviderId],
-						primary_model: {
-							provider_id: selectedProviderId,
-							model: hostedProviderSwitchModel(selectedProviderId),
-						},
-					}),
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://openclaw.ai/install-cli.sh",
-						home,
-						args: ["--json", "--no-onboard"],
-					},
-				},
-				hermes: {
-					...hostedHermesRuntime({
-						provider_ids: [selectedProviderId],
-						primary_model: {
-							provider_id: selectedProviderId,
-							model: hostedProviderSwitchModel(selectedProviderId),
-						},
-					}),
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://hermes-agent.nousresearch.com/install.sh",
-						home,
-						args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-					},
-				},
-			},
-			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				system: { home, workspace: join(home, "clawdi") },
-				providers: HOSTED_PROVIDER_SWITCH_PROVIDERS,
-				terminalTooling,
-			},
-			egressProfiles: { profiles: [] },
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		},
-	};
-}
-
 function hostedSingleProviderModeLoad(
 	home: string,
 	runtimeName: "openclaw" | "hermes",
 	providerMode: "configured" | "unmanaged",
 	generation: number,
-	options: { hostedV2?: boolean } = {},
 ): RuntimeManifestLoad {
 	const configuredRuntime =
 		runtimeName === "openclaw"
@@ -2337,29 +2169,13 @@ function hostedSingleProviderModeLoad(
 		providerMode === "configured"
 			? configuredRuntime
 			: { ...runtimeWithoutPrimaryModel, providerMode: "unmanaged" as const, provider_ids: [] };
-	const install =
-		runtimeName === "openclaw"
-			? {
-					authority: "official" as const,
-					method: "official-installer" as const,
-					url: "https://openclaw.ai/install-cli.sh",
-					home,
-					args: ["--json", "--no-onboard"],
-				}
-			: {
-					authority: "official" as const,
-					method: "official-installer" as const,
-					url: "https://hermes-agent.nousresearch.com/install.sh",
-					home,
-					args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-				};
 	const providers =
 		providerMode === "configured"
 			? {
 					"clawdi-managed": {
 						kind: "openai-compatible",
+						type: "custom_openai_compatible",
 						baseUrl: "https://managed.provider.example.test/v1",
-						model: "gpt-5.5",
 						models: [{ id: "gpt-5.5" }],
 						apiMode: "openai_responses",
 						managed_by: "clawdi",
@@ -2379,59 +2195,48 @@ function hostedSingleProviderModeLoad(
 			provider: codexProvider,
 		},
 	};
-	return {
-		source: "remote-datasource",
-		sourcePath: "https://runtime-source.test/desired-state",
-		offline: false,
+	seedMitmproxyCache();
+	const normalized = normalizeHostedManifestFixture({
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: runtimeName,
+			deploymentId: "dep_provider_mode",
+			environmentId: "env_provider_mode",
+			...hostedRequiredState(),
+			providers,
+			terminalTooling,
+			instanceId: "iid_provider_mode",
+			generation,
+			issuedAt: "2026-07-14T00:00:00Z",
+			locale: TEST_HOSTED_LOCALE,
+			system:
+				runtimeName === "openclaw" ? hostedSystemFixture(home) : hostedHermesSystemFixture(home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: TEST_RUNNING_CLI_SPEC,
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { [runtimeName]: runtime },
+		},
 		secretValues: {
 			...(providerMode === "configured"
 				? { "secret://provider.clawdi-managed.apiKey": "sk-managed-provider" }
 				: {}),
-			...(options.hostedV2 && runtimeName === "openclaw"
-				? { "secret://runtime/openclaw/gateway-token": "managed-gateway-token" }
-				: {}),
 			...TEST_HOSTED_CODEX_SECRET_VALUES,
+			...TEST_RUNTIME_SERVICE_SECRET_VALUES,
 		},
-		manifest: {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_provider_mode",
-			environmentId: "env_provider_mode",
-			instanceId: "iid_provider_mode",
-			generation,
-			issuedAt: "2026-07-14T00:00:00Z",
-			workspaceRoot: join(home, "clawdi"),
-			runtime: runtimeName,
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			openclawGatewayAuth:
-				options.hostedV2 && runtimeName === "openclaw"
-					? {
-							mode: "token",
-							tokenRef: "secret://runtime/openclaw/gateway-token",
-							deviceAuthRequired: false,
-							activation: {
-								enabled: true,
-								capability: "openclaw-native-auth-v1",
-							},
-						}
-					: undefined,
-			runtimes: { [runtimeName]: { ...runtime, install } },
-			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				...(options.hostedV2 ? { sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2" } : {}),
-				system: { home, workspace: join(home, "clawdi") },
-				providers,
-				terminalTooling,
-			},
-			egressProfiles: hostedManifestEgressProfiles({ providers, terminalTooling }),
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		},
+	});
+	return {
+		...normalized,
+		source: "remote-datasource",
+		sourcePath: "https://runtime-source.test/desired-state",
+		offline: false,
 	};
 }
 
 function hostedManagedOpenClawV2Load(home: string, generation: number): RuntimeManifestLoad {
-	const load = hostedSingleProviderModeLoad(home, "openclaw", "configured", generation, {
-		hostedV2: true,
-	});
+	const load = hostedSingleProviderModeLoad(home, "openclaw", "configured", generation);
 	const providerId = "clawdi-v2-deployment-42";
 	const providers = {
 		[providerId]: {
@@ -2476,7 +2281,7 @@ function writeTestRuntimeAppliedState(
 		input.sourceRevision ??
 		load.sourceRevision ??
 		runtimeContentSha256({
-			manifest: load.sourceManifest ?? load.manifest,
+			manifest: load.sourceBundle ?? load.manifest,
 			channelBindings: load.channelBindings ?? [],
 			secretValues: load.secretValues ?? {},
 		});
@@ -2503,7 +2308,7 @@ function writeTestRuntimeAppliedState(
 			contentIdentity: {
 				sourcePath: load.sourcePath,
 				sha256: runtimeContentSha256({
-					manifest: load.manifest,
+					manifest: load.sourceBundle ?? load.manifest,
 					secretValues: load.secretValues ?? {},
 				}),
 			},
@@ -2562,34 +2367,6 @@ function setRuntimeApplyGeneration(
 			bootNonce: `test-boot-nonce-${String(generation).padStart(6, "0")}`,
 		},
 		context,
-	);
-}
-
-function writeOfflineStrictAppliedState(
-	paths: RuntimePaths,
-	manifest: RuntimeManifest,
-	contentSha256: string,
-): void {
-	mkdirSync(paths.serviceStateRoot, { recursive: true });
-	writeRuntimeAppliedState(
-		{
-			schemaVersion: "clawdi.runtimeAppliedState.v2",
-			appliedAt: "2026-07-16T00:01:00.000Z",
-			instanceId: manifest.instanceId,
-			etag: testBundleEtag("transport-etag-offline"),
-			sourceRevision: "a".repeat(64),
-			generation: manifest.generation,
-			manifestETag: OFFLINE_RUNTIME_APPLY_IDENTITY.manifestETag,
-			applyReceiptId: OFFLINE_RUNTIME_APPLY_IDENTITY.applyReceiptId,
-			bootNonce: OFFLINE_RUNTIME_APPLY_IDENTITY.bootNonce,
-			contentIdentity: {
-				sourcePath: "https://runtime.test/v1/runtime/manifest",
-				sha256: contentSha256,
-			},
-			providerIds: [],
-			projectedProviderIds: {},
-		},
-		paths,
 	);
 }
 
@@ -2824,7 +2601,7 @@ describe("runtime applied content identity", () => {
 		};
 		const load = (secret: string): RuntimeManifestLoad => ({
 			manifest,
-			sourceManifest: manifest,
+			sourceBundle: manifest,
 			secretValues: { "secret://provider.default.apiKey": secret },
 			source: "remote-datasource",
 			sourcePath: "inline-secret-identity",
@@ -2850,7 +2627,7 @@ describe("runtime manifest datasource", () => {
 		expect(parsed.success).toBe(false);
 	});
 
-	it("does not load cached secrets for a disabled runtime", async () => {
+	it("invalidates 0.13.92 and 0.14.14 normalized last-good state offline", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2877,6 +2654,8 @@ describe("runtime manifest datasource", () => {
 				},
 				runtimes: { openclaw: { enabled: false } },
 				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					providers: {
 						default: {
 							kind: "openai-compatible",
@@ -2894,303 +2673,11 @@ describe("runtime manifest datasource", () => {
 		);
 
 		const loaded = await loadRuntimeManifest(paths);
-		expect("manifest" in loaded).toBe(true);
-		if (!("manifest" in loaded)) throw new Error("expected offline manifest load success");
-		expect(loaded.source).toBe("last-good-cache");
-		expect(loaded.offline).toBe(true);
-		expect(loaded.secretValues).toBeUndefined();
-	});
-
-	it("reports degraded-offline apply and boot state after remote fetch failure", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_AUTH_TOKEN = "auth-token";
-		const paths = getRuntimePaths();
-		mkdirSync(paths.cacheRoot, { recursive: true });
-		writeFileSync(
-			paths.manifestLastGood,
-			JSON.stringify(cachedHostedCliDesiredState(home, TEST_RUNNING_CLI_SPEC)),
-		);
-		const { restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: () => {
-					throw new Error("control plane unavailable");
-				},
-			},
-		]);
-
-		try {
-			const loaded = await loadRuntimeManifest(paths);
-			if (!("manifest" in loaded)) {
-				throw new Error(`expected last-good manifest: ${loaded.errors.join("; ")}`);
-			}
-			const convergence = convergeRuntimeManifest(loaded, paths, { cacheLastGood: false });
-			const boot = buildRuntimeBootStatus(
-				{
-					mode: convergence.mode,
-					status: "ok",
-					stage: "final",
-					bootId: "boot-degraded-offline",
-					runtimeMode: "hosted",
-					activeGeneration: convergence.manifest.generation,
-					instanceId: convergence.manifest.instanceId,
-					enabledRuntimes: convergence.enabledRuntimes,
-					errors: [],
-					exitCode: 0,
-					datasource: "RuntimeSource",
-					hostPolicy: { source: "builtin", exists: true, valid: true },
-				},
-				paths,
-			);
-
-			expect(loaded.source).toBe("last-good-cache");
-			expect(loaded.offline).toBe(true);
-			expect(convergence.mode).toBe("degraded-offline");
-			expect(boot.mode).toBe("degraded-offline");
-		} finally {
-			restore();
-		}
-	});
-
-	it("gates strict-v2 offline cache on the current, durable, and migration identity states", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const paths = getRuntimePaths();
-		mkdirSync(paths.cacheRoot, { recursive: true });
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_offline_identity",
-			environmentId: "env_offline_identity",
-			instanceId: "iid_offline_identity",
-			generation: 3,
-			issuedAt: "2026-07-16T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: TEST_RUNNING_CLI_SPEC,
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: { openclaw: { enabled: false } },
-			projection: { sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2" },
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		};
-		writeFileSync(paths.manifestLastGood, JSON.stringify(manifest));
-		writeOfflineStrictAppliedState(
-			paths,
-			manifest,
-			runtimeContentSha256({
-				manifest: manifestSchema.parse(manifest),
-				secretValues: {},
-			}),
-		);
-		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_CONTEXT);
-		const loaded = await loadRuntimeManifest(paths);
-		if (!("manifest" in loaded)) {
-			throw new Error(`expected offline manifest load success: ${loaded.errors.join("; ")}`);
-		}
-		expect(loaded.applyContext?.identity).toEqual(OFFLINE_RUNTIME_APPLY_IDENTITY);
-
-		writeCanonicalApplyContext(
-			{
-				...OFFLINE_RUNTIME_APPLY_IDENTITY,
-				applyReceiptId: "apply-receipt-offline-0002",
-			},
-			CANONICAL_TEST_CONTEXT,
-		);
-		const mismatched = await loadRuntimeManifest(paths);
-		expect("errors" in mismatched).toBe(true);
-		if (!("errors" in mismatched)) throw new Error("expected offline identity mismatch");
-		expect(mismatched.errors).toContain(
-			"cached strict-v2 apply identity does not match the current runtime apply identity; refusing offline boot",
-		);
-
-		const applied = readRuntimeAppliedState(paths);
-		if (!applied) throw new Error("expected durable offline applied state");
-		const {
-			manifestETag: _manifestETag,
-			applyReceiptId: _applyReceiptId,
-			bootNonce: _bootNonce,
-			...legacyApplied
-		} = applied;
-		writeRuntimeAppliedState(legacyApplied, paths);
-		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY);
-		const firstIdentityFileMigration = await loadRuntimeManifest(paths);
-		expect("errors" in firstIdentityFileMigration).toBe(true);
-		if (!("errors" in firstIdentityFileMigration)) {
-			throw new Error("expected first identity-file migration to fail closed");
-		}
-		expect(firstIdentityFileMigration.errors).toContain(
-			"cached strict-v2 apply identity does not match the current runtime apply identity; refusing offline boot",
-		);
-	});
-
-	it("refuses strict-v2 offline identity restoration when cached manifest content changed", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const paths = getRuntimePaths();
-		mkdirSync(paths.cacheRoot, { recursive: true });
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_offline_content_mismatch",
-			environmentId: "env_offline_content_mismatch",
-			instanceId: "iid_offline_content_mismatch",
-			generation: 3,
-			issuedAt: "2026-07-16T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: TEST_RUNNING_CLI_SPEC,
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: { openclaw: { enabled: false } },
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		};
-		writeFileSync(paths.manifestLastGood, JSON.stringify(manifest));
-		writeOfflineStrictAppliedState(
-			paths,
-			manifest,
-			runtimeContentSha256({
-				manifest: manifestSchema.parse({
-					...manifest,
-					issuedAt: "2026-07-15T00:00:00Z",
-				}),
-				secretValues: {},
-			}),
-		);
-		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_CONTEXT);
-
-		const loaded = await loadRuntimeManifest(paths);
 		expect("errors" in loaded).toBe(true);
-		if (!("errors" in loaded)) throw new Error("expected offline manifest mismatch failure");
+		if (!("errors" in loaded)) throw new Error("expected normalized cache invalidation");
 		expect(loaded.mode).toBe("repair");
-		expect(loaded.errors).toContain(
-			"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
-		);
-	});
-
-	it("refuses strict-v2 offline identity restoration when cached secret content changed", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const paths = getRuntimePaths();
-		mkdirSync(paths.cacheRoot, { recursive: true });
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_offline_secret_mismatch",
-			environmentId: "env_offline_secret_mismatch",
-			instanceId: "iid_offline_secret_mismatch",
-			generation: 3,
-			issuedAt: "2026-07-16T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: TEST_RUNNING_CLI_SPEC,
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: { openclaw: { enabled: false } },
-			projection: {
-				providers: {
-					default: {
-						kind: "openai-compatible",
-						baseUrl: "https://sub2api.test/v1",
-						apiKeySecretRef: "secret://provider.default.apiKey",
-					},
-				},
-			},
-			recovery: { cacheManifest: true, allowOfflineBoot: true },
-		};
-		writeFileSync(paths.manifestLastGood, JSON.stringify(manifest));
-		writeFileSync(
-			paths.managedSecretCacheFile,
-			JSON.stringify({ "secret://provider.default.apiKey": "sk-new-cached-value" }),
-		);
-		writeOfflineStrictAppliedState(
-			paths,
-			manifest,
-			runtimeContentSha256({
-				manifest: manifestSchema.parse(manifest),
-				secretValues: normalizeSecretValues({
-					"secret://provider.default.apiKey": "sk-original-applied-value",
-				}),
-			}),
-		);
-		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_CONTEXT);
-
-		const loaded = await loadRuntimeManifest(paths);
-		expect("errors" in loaded).toBe(true);
-		if (!("errors" in loaded)) throw new Error("expected offline secret mismatch failure");
-		expect(loaded.mode).toBe("repair");
-		expect(loaded.errors).toContain(
-			"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
-		);
-	});
-
-	it("does not require an unselected provider secret for offline boot", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const paths = getRuntimePaths();
-		mkdirSync(paths.cacheRoot, { recursive: true });
-		writeFileSync(
-			paths.manifestLastGood,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_cached_secret_missing",
-				environmentId: "env_cached_secret_missing",
-				instanceId: "iid_cached_secret_missing",
-				generation: 3,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				clawdiCli: {
-					source: "npm:clawdi",
-					packageSpec: TEST_RUNNING_CLI_SPEC,
-					registry: "https://registry.npmjs.org",
-				},
-				runtimes: { openclaw: { enabled: false } },
-				projection: {
-					providers: {
-						default: {
-							kind: "openai-compatible",
-							baseUrl: "https://sub2api.test/v1",
-							apiKeySecretRef: "secret://provider.default.apiKey",
-						},
-					},
-				},
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
-			}),
-		);
-
-		const loaded = await loadRuntimeManifest(paths);
-		expect("manifest" in loaded).toBe(true);
-		if (!("manifest" in loaded)) throw new Error("expected offline manifest load success");
-		expect(loaded.source).toBe("last-good-cache");
-		expect(loaded.offline).toBe(true);
-		expect(loaded.secretValues).toBeUndefined();
+		expect(loaded.errors.join("\n")).toContain("could not read last-good runtime manifest");
+		expect(loaded.errors.join("\n")).not.toContain("sk-cached-provider");
 	});
 
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
@@ -3363,33 +2850,6 @@ describe("runtime manifest datasource", () => {
 			} finally {
 				restore();
 			}
-		});
-	}
-
-	for (const packageSpec of [
-		"clawdi@latest",
-		"clawdi@agent-v2",
-		"clawdi@1.2.3+build.1",
-		"clawdi",
-	]) {
-		it(`rejects cached hosted state with ${packageSpec} and no hosted marker`, async () => {
-			const home = join(root, "home", "clawdi");
-			const state = join(root, "var", "lib", "clawdi");
-			process.env.HOME = home;
-			process.env.CLAWDI_RUNTIME_MODE = "hosted";
-			process.env.CLAWDI_SERVICE_STATE_DIR = state;
-			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
-			const paths = getRuntimePaths();
-			mkdirSync(paths.cacheRoot, { recursive: true });
-			writeFileSync(
-				paths.manifestLastGood,
-				JSON.stringify(cachedHostedCliDesiredState(home, packageSpec)),
-			);
-
-			const loaded = await loadRuntimeManifest(paths);
-			expect("errors" in loaded).toBe(true);
-			if (!("errors" in loaded)) throw new Error("expected cached manifest rejection");
-			expect(loaded.errors.join("\n")).toContain("must be clawdi@<exact-semver>");
 		});
 	}
 
@@ -3881,7 +3341,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 					hermes: { enabled: false },
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: {
 						...hostedSystemFixture(home),
 						home,
@@ -3915,12 +3374,17 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			},
 			gateway: {
 				mode: "local",
+				port: 18789,
+				bind: "lan",
 				auth: {
 					mode: "token",
 					token: "gateway-token",
 				},
 				controlUi: {
 					allowedOrigins: ["https://app-v2-18789.k3s.example.test"],
+					basePath: "/",
+					dangerouslyAllowHostHeaderOriginFallback: false,
+					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
@@ -4315,9 +3779,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		};
 		configBeforeUnmanaged.auth.order.clawdi = ["clawdi:unmanaged"];
 		writeFileSync(openclawConfig, `${JSON.stringify(configBeforeUnmanaged, null, 2)}\n`);
-		const unmanagedLoad = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 3, {
-			hostedV2: true,
-		});
+		const unmanagedLoad = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 3);
 		unmanagedLoad.manifest.egressEngine = TEST_EGRESS_ENGINE_PIN;
 		const unmanaged = convergeRuntimeManifest(unmanagedLoad, paths);
 		expect(unmanaged.installErrors).toEqual([]);
@@ -4338,67 +3800,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(
 			JSON.parse(readFileSync(secondaryStore, "utf8")).profiles["clawdi:unmanaged"],
 		).toMatchObject({ key: "preserve-without-managed-projection" });
-	});
-
-	it("writes Codex managed provider config from hosted runtime converge", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const codexHome = join(home, ".codex");
-		mkdirSync(codexHome, { recursive: true });
-		writeFileSync(join(codexHome, "config.toml"), '# stale Hosted config\nmodel = "stale"\n');
-		chmodSync(codexHome, 0o755);
-		chmodSync(join(codexHome, "config.toml"), 0o644);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-
-		const wireResponse = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
-		const terminalTooling = expectRecord(wireResponse.manifest.terminalTooling, "terminal tooling");
-		const codex = expectRecord(terminalTooling.codex, "terminal Codex");
-		const wireProvider = expectRecord(codex.provider, "terminal Codex provider");
-		wireProvider.baseUrl = "https://codex-provider.example.test/v1";
-		const normalized = normalizeHostedManifestFixture(wireResponse);
-		const wireLoad: RuntimeManifestLoad = {
-			...normalized,
-			source: "remote-datasource",
-			sourcePath: "https://runtime-source.test/desired-state",
-			offline: false,
-			manifest: {
-				...normalized.manifest,
-				locale: undefined,
-				openclawGatewayAuth: undefined,
-				projection: { terminalTooling: normalized.manifest.projection?.terminalTooling },
-				runtimes: {
-					openclaw: { enabled: false },
-					hermes: { enabled: false },
-				},
-			},
-		};
-		const paths = getRuntimePaths();
-		seedMitmproxyCache(paths);
-		const convergence = convergeRuntimeManifest(wireLoad, paths);
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(statSync(codexHome).mode & 0o777).toBe(0o700);
-		const configPath = join(codexHome, "config.toml");
-		expect(statSync(configPath).mode & 0o777).toBe(0o600);
-		expect(readFileSync(configPath, "utf-8")).toBe(
-			[
-				"# Generated by Clawdi hosted runtime. Do not put API keys in this file.",
-				'model_provider = "clawdi"',
-				"",
-				"[model_providers.clawdi]",
-				'name = "clawdi"',
-				'base_url = "https://codex-provider.example.test/v1"',
-				'env_key = "CLAWDI_AI_API_KEY"',
-				'wire_api = "responses"',
-				"",
-			].join("\n"),
-		);
-		expect(readFileSync(configPath, "utf-8")).not.toMatch(/^model\s*=|model_catalog_json|models/m);
-		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
 	});
 
 	it("preserves a healthy user-upgraded Hosted Codex package", () => {
@@ -4560,7 +3961,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 
 		try {
 			const convergence = convergeRuntimeManifest(
-				hostedProviderSwitchLoad(home, "clawdi-managed", 2),
+				hostedSingleProviderModeLoad(home, "openclaw", "configured", 2),
 				paths,
 			);
 
@@ -4575,161 +3976,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			else process.env.PATH = previousPath;
 		}
 	});
-
-	it("keeps the Codex tool profile configured when runtime providers are user-owned", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-
-		const convergence = convergeRuntimeManifest(
-			{
-				source: "remote-datasource",
-				sourcePath: "https://runtime-source.test/desired-state",
-				offline: false,
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_codex_byok_provider",
-					environmentId: "env_codex_byok_provider",
-					instanceId: "iid_codex_byok_provider",
-					generation: 1,
-					issuedAt: "2026-07-10T00:00:00Z",
-					workspaceRoot: join(home, "clawdi"),
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: { enabled: false },
-					},
-					projection: {
-						system: { home },
-						providers: {
-							default: {
-								kind: "openai-compatible",
-								baseUrl: "https://byok-provider.example.test/v1",
-								model: "gpt-5.5",
-								apiMode: "openai_responses",
-								managed_by: "user",
-								runtimeEnvName: "OPENAI_API_KEY",
-								apiKeySecretRef: "secret://provider.byok.apiKey",
-							},
-						},
-						terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
-					},
-					egressProfiles: { profiles: [] },
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
-				},
-			},
-			getRuntimePaths(),
-		);
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(
-			'model_provider = "clawdi"',
-		);
-	});
-
-	it("reconciles hosted provider projections when the selected provider changes", () => {
-		const cases = [
-			{ id: "managed-to-byok", first: "clawdi-managed", second: "byok-a" },
-			{ id: "byok-to-managed", first: "byok-a", second: "clawdi-managed" },
-			{ id: "managed-to-managed", first: "clawdi-managed", second: "clawdi-managed-v2" },
-			{ id: "byok-to-byok", first: "byok-a", second: "byok-b" },
-		];
-		for (const providerCase of cases) {
-			const firstAgentProvider =
-				providerCase.first === "clawdi-managed-v2" ? "clawdi" : providerCase.first;
-			const secondAgentProvider =
-				providerCase.second === "clawdi-managed-v2" ? "clawdi" : providerCase.second;
-			const caseRoot = join(root, providerCase.id);
-			const home = join(caseRoot, "home", "clawdi");
-			const state = join(caseRoot, "var", "lib", "clawdi");
-			const run = join(caseRoot, "run", "clawdi");
-			const workspace = join(home, "clawdi");
-			const openclawBin = join(home, ".local", "bin", "openclaw");
-			const publicSdkConfig = writeOpenClawConfigMutationFixture(home, {
-				models: {
-					providers: {
-						"user-local": {
-							baseUrl: "http://127.0.0.1:11434/v1",
-							models: [{ id: "local-model" }],
-						},
-					},
-				},
-			});
-			mkdirSync(dirname(openclawBin), { recursive: true });
-			mkdirSync(join(home, ".hermes"), { recursive: true });
-			mkdirSync(workspace, { recursive: true });
-			writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
-			chmodSync(openclawBin, 0o700);
-			writeHermesVersionBinary(home, "0.18.0");
-			writeFileSync(
-				join(home, ".hermes", "config.yaml"),
-				[
-					"providers:",
-					"  user-local:",
-					'    api: "http://127.0.0.1:11434/v1"',
-					'    custom_field: "keep-me"',
-					"",
-				].join("\n"),
-			);
-			process.env.HOME = home;
-			process.env.CLAWDI_RUNTIME_MODE = "hosted";
-			process.env.CLAWDI_SERVICE_STATE_DIR = state;
-			process.env.CLAWDI_RUN_DIR = run;
-			if (providerCase.id === "managed-to-managed") {
-				process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-				process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK =
-					writeFakeOpenClawProviderAuthSdk(
-						join(caseRoot, "provider-auth"),
-						join(caseRoot, "provider-auth-calls.log"),
-					);
-			}
-
-			const paths = getRuntimePaths();
-			const firstLoad = hostedProviderSwitchLoad(home, providerCase.first, 1);
-			const first = convergeRuntimeManifest(firstLoad, paths);
-			expect(first.installErrors).toEqual([]);
-			writeTestRuntimeAppliedState(paths, firstLoad, first, {
-				etag: `"${providerCase.id}-1"`,
-			});
-
-			const secondLoad = hostedProviderSwitchLoad(home, providerCase.second, 2);
-			const second = convergeRuntimeManifest(secondLoad, paths);
-			expect(second.installErrors).toEqual([]);
-			const openclawProviders = expectRecord(
-				expectRecord(
-					JSON.parse(readFileSync(publicSdkConfig.configPath, "utf8")).models,
-					"OpenClaw models config",
-				).providers,
-				"OpenClaw providers config",
-			);
-			expect(Object.keys(openclawProviders).sort()).toEqual(
-				["user-local", secondAgentProvider].sort(),
-			);
-			expect(openclawProviders[firstAgentProvider]).toBeUndefined();
-			expect(openclawProviders[secondAgentProvider]).toMatchObject({
-				baseUrl: `https://${providerCase.second}.provider.example.test/v1`,
-			});
-			expect(openclawProviders["user-local"]).toMatchObject({
-				baseUrl: "http://127.0.0.1:11434/v1",
-			});
-
-			const hermesConfig = readHermesConfigYaml(home);
-			const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-			expect(Object.keys(hermesProviders).sort()).toEqual(
-				["user-local", secondAgentProvider].sort(),
-			);
-			expect(hermesProviders[firstAgentProvider]).toBeUndefined();
-			expect(hermesProviders[secondAgentProvider]).toMatchObject({
-				api: `https://${providerCase.second}.provider.example.test/v1`,
-			});
-			expect(hermesProviders["user-local"]).toMatchObject({
-				custom_field: "keep-me",
-			});
-		}
-	}, 30_000);
 
 	it.each(["openclaw", "hermes"] as const)(
 		"converges %s in unmanaged mode without touching user provider config",
@@ -4771,7 +4017,15 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			expect(convergence.installErrors).toEqual([]);
 			expect(convergence.projectedProviderIds[runtimeName]).toEqual([]);
 			expect(convergence.projectedProviderIds.codex).toEqual(["clawdi"]);
-			expect(readFileSync(userConfigPath, "utf-8")).toBe(userConfig);
+			if (runtimeName === "openclaw") {
+				expect(
+					JSON.parse(readFileSync(userConfigPath, "utf-8")).models.providers["user-local"],
+				).toEqual({ baseUrl: "http://localhost:11434/v1" });
+			} else {
+				expect(
+					expectRecord(readHermesConfigYaml(home).providers, "Hermes providers")["user-local"],
+				).toEqual({ api: "http://localhost:11434/v1" });
+			}
 			expect(readFileSync(userCodexConfig, "utf-8")).toContain('model_provider = "clawdi"');
 			const runConfig = JSON.parse(
 				readFileSync(join(getRuntimePaths().runConfigRoot, `${runtimeName}.json`), "utf-8"),
@@ -4789,7 +4043,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			for (const forbidden of [
 				"OPENAI_API_KEY",
 				"CLAWDI_AI_API_KEY",
-				"clawdi-egress-placeholder",
 				"provider.clawdi-managed",
 				"egress-secrets.json",
 			]) {
@@ -4918,65 +4171,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(existsSync(join(home, ".codex", "config.toml"))).toBe(true);
 	});
 
-	it("does not delete unknown provider projections when applied state is missing", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "clawdi");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const { configPath } = writeOpenClawConfigMutationFixture(home, {
-			models: {
-				providers: {
-					orphaned: {
-						baseUrl: "https://orphaned.example.test/v1",
-						models: [{ id: "orphaned-model" }],
-					},
-				},
-			},
-		});
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		mkdirSync(join(home, ".hermes"), { recursive: true });
-		mkdirSync(workspace, { recursive: true });
-		writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
-		writeHermesVersionBinary(home, "0.18.0");
-		writeFileSync(
-			join(home, ".hermes", "config.yaml"),
-			[
-				"providers:",
-				"  clawdi-orphaned:",
-				'    api: "https://orphaned.example.test/v1"',
-				'    custom_field: "preserve-without-applied-state"',
-				"",
-			].join("\n"),
-		);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-
-		const paths = getRuntimePaths();
-		const convergence = convergeRuntimeManifest(hostedProviderSwitchLoad(home, "byok-b", 1), paths);
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(existsSync(paths.appliedState)).toBe(false);
-		const openclawProviders = expectRecord(
-			expectRecord(JSON.parse(readFileSync(configPath, "utf8")).models, "OpenClaw models config")
-				.providers,
-			"OpenClaw providers config",
-		);
-		expect(openclawProviders.orphaned).toBeDefined();
-		expect(openclawProviders["byok-b"]).toBeDefined();
-		const hermesProviders = expectRecord(
-			readHermesConfigYaml(home).providers,
-			"Hermes providers config",
-		);
-		expect(hermesProviders["clawdi-orphaned"]).toMatchObject({
-			custom_field: "preserve-without-applied-state",
-		});
-		expect(hermesProviders["byok-b"]).toBeDefined();
-	});
-
 	it("projects complete OpenClaw gateway config before the official service installer", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5088,8 +4282,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 					},
 				},
 				projection: {
-					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: {
 						...hostedSystemFixture(home),
 						home,
@@ -5222,178 +4414,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			"rotated-gateway-token",
 		);
 		expect(readFileSync(openclawCommand, "utf8")).not.toContain("rotated-gateway-token");
-	});
-
-	it("projects runtime-scoped hosted providers into each enabled agent config", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const { configPath } = writeOpenClawConfigMutationFixture(home);
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
-		writeHermesVersionBinary(home, "0.18.0");
-
-		const loaded: RuntimeManifestLoad = {
-			source: "remote-datasource",
-			sourcePath: "https://runtime-source.test/desired-state",
-			offline: false,
-			secretValues: {
-				"secret://provider.openclaw.apiKey": "sk-openclaw-provider",
-				"secret://provider.hermes.apiKey": "sk-hermes-provider",
-			},
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_runtime_scoped_provider",
-				environmentId: "env_runtime_scoped_provider",
-				instanceId: "iid_runtime_scoped_provider",
-				generation: 1,
-				issuedAt: "2026-06-22T00:00:00Z",
-				workspaceRoot: join(home, "clawdi"),
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						provider_ids: ["openclaw"],
-						primary_model: { provider_id: "openclaw", model: "gpt-5.5" },
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: ["--json", "--no-onboard"],
-						},
-					},
-					hermes: {
-						enabled: true,
-						provider_ids: ["hermes"],
-						primary_model: {
-							provider_id: "hermes",
-							model: "kimi/kimi-for-coding",
-						},
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-						},
-					},
-				},
-				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					system: { home },
-					providers: {
-						openclaw: {
-							kind: "openai-compatible",
-							baseUrl: "https://openclaw-provider.example.test/v1",
-							model: "gpt-5.5",
-							models: [
-								{
-									id: "gpt-5.5",
-									context_window: 272000,
-									max_tokens: 128000,
-									input_modalities: ["text", "image"],
-									supports_vision: true,
-									supports_tools: true,
-									supports_reasoning: true,
-								},
-							],
-							apiMode: "openai_responses",
-							runtimeEnvName: "OPENCLAW_PROVIDER_API_KEY",
-							apiKeySecretRef: "secret://provider.openclaw.apiKey",
-						},
-						hermes: {
-							kind: "openai-compatible",
-							baseUrl: "https://hermes-provider.example.test/v1",
-							model: "kimi/kimi-for-coding",
-							models: [
-								{
-									id: "kimi/kimi-for-coding",
-									context_window: 262144,
-									max_tokens: 32768,
-									input_modalities: ["text", "image"],
-									supports_vision: true,
-									supports_tools: true,
-									supports_reasoning: true,
-								},
-							],
-							apiMode: "openai_chat",
-							runtimeEnvName: "HERMES_PROVIDER_API_KEY",
-							apiKeySecretRef: "secret://provider.hermes.apiKey",
-						},
-					},
-				},
-				egressProfiles: { profiles: [] },
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
-			},
-		};
-
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("openclaw/gpt-5.5");
-		expect(patch.models.providers.openclaw.baseUrl).toBe(
-			"https://openclaw-provider.example.test/v1",
-		);
-		expect(patch.models.providers.openclaw.models[0]).toMatchObject({
-			id: "gpt-5.5",
-			contextWindow: 272000,
-			maxTokens: 128000,
-			input: ["text", "image"],
-			reasoning: true,
-			compat: { supportsTools: true },
-		});
-		expect(patch.models.providers.openclaw.models[0].api).toBeUndefined();
-		expect(JSON.stringify(patch)).not.toContain("hermes-provider.example.test");
-		const hermesConfig = readHermesConfigYaml(home);
-		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
-		expect(hermesModel.provider).toBe("custom:hermes");
-		expect(hermesModel.default).toBe("kimi/kimi-for-coding");
-		expect(hermesModel.context_length).toBeUndefined();
-		expect(hermesModel.max_tokens).toBeUndefined();
-		expect(hermesModel.supports_vision).toBeUndefined();
-		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		const hermesProvider = expectRecord(hermesProviders.hermes, "Hermes provider config");
-		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(hermesProvider.transport).toBe("chat_completions");
-		expect(hermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
-		const hermesProviderModels = expectRecord(
-			hermesProvider.models,
-			"Hermes provider model metadata",
-		);
-		const kimiModel = expectRecord(
-			hermesProviderModels["kimi/kimi-for-coding"],
-			"Hermes provider kimi model metadata",
-		);
-		expect(kimiModel.context_length).toBe(262144);
-		expect(kimiModel.supports_vision).toBe(true);
-		expect(kimiModel.max_tokens).toBe(32768);
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
-		const openclawRunConfig = JSON.parse(
-			readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
-		);
-		const hermesRunConfig = JSON.parse(
-			readFileSync(join(getRuntimePaths().runConfigRoot, "hermes.json"), "utf-8"),
-		);
-		expect(openclawRunConfig.env.OPENCLAW_PROVIDER_API_KEY).toBeUndefined();
-		expect(openclawRunConfig.secretEnv).toEqual({
-			OPENCLAW_PROVIDER_API_KEY: "secret://provider.openclaw.apiKey",
-		});
-		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBeUndefined();
-		expect(hermesRunConfig.secretEnv).toEqual({
-			HERMES_PROVIDER_API_KEY: "secret://provider.hermes.apiKey",
-		});
-		expect(JSON.stringify(openclawRunConfig)).not.toContain("sk-openclaw-provider");
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
-		expect(JSON.stringify(openclawRunConfig)).not.toContain("secret://provider.hermes.apiKey");
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("secret://provider.openclaw.apiKey");
 	});
 
 	it("owns one hosted Hermes OAuth family across rotation, logout, reconnect, and removal", () => {
@@ -5548,19 +4568,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			"post-reconnect-rotated-access",
 		);
 
-		const removedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			secretValues: {},
-			manifest: {
-				...nativeReauthenticatedLoad.manifest,
-				generation: 3,
-				runtimes: {},
-				projection: {
-					...nativeReauthenticatedLoad.manifest.projection,
-					providers: {},
-				},
-			},
-		};
+		const removedLoad = hostedSingleProviderModeLoad(home, "hermes", "unmanaged", 3);
 		convergeRuntimeManifest(removedLoad, paths);
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
@@ -5714,19 +4722,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			"post-reconnect-rotated-access",
 		);
 
-		const removedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			secretValues: {},
-			manifest: {
-				...nativeReauthenticatedLoad.manifest,
-				generation: 3,
-				runtimes: {},
-				projection: {
-					...nativeReauthenticatedLoad.manifest.projection,
-					providers: {},
-				},
-			},
-		};
+		const removedLoad = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 3);
 		convergeRuntimeManifest(removedLoad, paths);
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		expect(store.profiles[nativeProfileId]).toBeUndefined();
@@ -5864,17 +4860,6 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
 	});
 
-	it("rejects multiple Hermes hosted providers at manifest admission", () => {
-		const home = join(root, "home", "clawdi");
-		const loaded = hostedHermesProviderLoad(home);
-		loaded.manifest.runtimes.hermes = {
-			...loaded.manifest.runtimes.hermes,
-			provider_ids: ["hermes", "moonshot"],
-		};
-
-		expect(manifestSchema.safeParse(loaded.manifest).success).toBe(false);
-	});
-
 	it("ignores a retired Hermes plugin while removing the native provider", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5901,7 +4886,6 @@ cp '${sdkSource}' '${sdkTarget}'
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: { home },
 				},
 			},
@@ -6186,152 +5170,6 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(currentRevision).toBe(yamlRevision);
 	});
 
-	it("projects runtime-scoped Codex OAuth providers as native agent profiles", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const { configPath } = writeOpenClawConfigMutationFixture(home);
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
-
-		const loaded: RuntimeManifestLoad = {
-			source: "remote-datasource",
-			sourcePath: "https://runtime-source.test/desired-state",
-			offline: false,
-			secretValues: {},
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_runtime_codex_oauth",
-				environmentId: "env_runtime_codex_oauth",
-				instanceId: "iid_runtime_codex_oauth",
-				generation: 1,
-				issuedAt: "2026-06-22T00:00:00Z",
-				workspaceRoot: join(home, "clawdi"),
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						provider_ids: ["openclaw"],
-						primary_model: { provider_id: "openclaw", model: "gpt-5.5" },
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: ["--json", "--no-onboard"],
-						},
-					},
-				},
-				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					system: { home },
-					providers: {
-						openclaw: {
-							kind: "openai-compatible",
-							type: "openai",
-							baseUrl: "https://api.openai.com/v1",
-							model: "gpt-5.5",
-							apiMode: "openai_responses",
-							auth: {
-								type: "agent_profile",
-								tool: "codex",
-								profile: "default",
-							},
-						},
-					},
-				},
-				egressProfiles: { profiles: [] },
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
-			},
-		};
-
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
-		expect(patch.plugins.entries.codex.enabled).toBe(true);
-		expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.5");
-		expect(patch.models).toBeUndefined();
-		const openclawRunConfig = JSON.parse(
-			readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
-		);
-		expect(openclawRunConfig.secretEnv).toEqual({});
-		expect(JSON.stringify(openclawRunConfig)).not.toContain("apiKeySecretRef");
-	});
-
-	it("does not fall back to a different runtime-scoped hosted provider", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeHermesVersionBinary(home, "0.20.1");
-
-		const loaded: RuntimeManifestLoad = {
-			source: "remote-datasource",
-			sourcePath: "https://runtime-source.test/desired-state",
-			offline: false,
-			secretValues: {
-				"secret://provider.openclaw.apiKey": "sk-openclaw-provider",
-			},
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_runtime_provider_missing",
-				environmentId: "env_runtime_provider_missing",
-				instanceId: "iid_runtime_provider_missing",
-				generation: 1,
-				issuedAt: "2026-06-22T00:00:00Z",
-				workspaceRoot: join(home, "clawdi"),
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					hermes: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: ["--skip-setup", "--skip-browser", "--non-interactive"],
-						},
-					},
-				},
-				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					system: { home },
-					providers: {
-						openclaw: {
-							kind: "openai-compatible",
-							baseUrl: "https://openclaw-provider.example.test/v1",
-							model: "gpt-5.5",
-							apiMode: "openai_responses",
-							runtimeEnvName: "OPENCLAW_PROVIDER_API_KEY",
-							apiKeySecretRef: "secret://provider.openclaw.apiKey",
-						},
-					},
-				},
-				egressProfiles: { profiles: [] },
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
-			},
-		};
-
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const hermesRunConfig = JSON.parse(
-			readFileSync(join(getRuntimePaths().runConfigRoot, "hermes.json"), "utf-8"),
-		);
-		expect(hermesRunConfig.secretEnv).toEqual({});
-		expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(false);
-	});
-
 	it("preserves non-OpenAI hosted provider protocols in direct agent projection", () => {
 		for (const providerCase of [
 			{
@@ -6365,57 +5203,27 @@ cp '${sdkSource}' '${sdkTarget}'
 			writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 			chmodSync(openclawBin, 0o700);
 
-			const loaded: RuntimeManifestLoad = {
-				source: "remote-datasource",
-				sourcePath: "https://runtime-source.test/desired-state",
-				offline: false,
-				secretValues: {
-					"secret://provider.openclaw.apiKey": `sk-${providerCase.id}`,
+			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "configured", 1);
+			const providers = {
+				openclaw: {
+					kind: "openai-compatible" as const,
+					type: providerCase.type,
+					baseUrl: providerCase.baseUrl,
+					model: providerCase.model,
+					apiMode: providerCase.apiMode,
+					runtimeEnvName: `${providerCase.id.toUpperCase()}_API_KEY`,
+					apiKeySecretRef: "secret://provider.openclaw.apiKey",
 				},
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: `dep_${providerCase.id}_provider`,
-					environmentId: `env_${providerCase.id}_provider`,
-					instanceId: `iid_${providerCase.id}_provider`,
-					generation: 1,
-					issuedAt: "2026-06-22T00:00:00Z",
-					workspaceRoot: join(home, "clawdi"),
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							provider_ids: ["openclaw"],
-							primary_model: {
-								provider_id: "openclaw",
-								model: providerCase.model,
-							},
-							install: {
-								authority: "official",
-								method: "official-installer",
-								url: "https://openclaw.ai/install-cli.sh",
-								home,
-								args: ["--json", "--no-onboard"],
-							},
-						},
-					},
-					projection: {
-						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
-						system: { home },
-						providers: {
-							openclaw: {
-								kind: "openai-compatible",
-								type: providerCase.type,
-								baseUrl: providerCase.baseUrl,
-								model: providerCase.model,
-								apiMode: providerCase.apiMode,
-								runtimeEnvName: `${providerCase.id.toUpperCase()}_API_KEY`,
-								apiKeySecretRef: "secret://provider.openclaw.apiKey",
-							},
-						},
-					},
-					egressProfiles: { profiles: [] },
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
-				},
+			};
+			loaded.manifest.runtimes.openclaw.provider_ids = ["openclaw"];
+			loaded.manifest.runtimes.openclaw.primary_model = {
+				provider_id: "openclaw",
+				model: providerCase.model,
+			};
+			loaded.manifest.projection = { ...loaded.manifest.projection, providers };
+			loaded.manifest.egressProfiles = hostedManifestEgressProfiles({ providers });
+			loaded.secretValues = {
+				"secret://provider.openclaw.apiKey": `sk-${providerCase.id}`,
 			};
 
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
@@ -6534,13 +5342,19 @@ cp '${sdkSource}' '${sdkTarget}'
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-provider-patch.json");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
-			`#!/usr/bin/env bash
-printf 'provider projection should not run for unhealthy provider\\n' >&2
-exit 64
-`,
+			[
+				"#!/bin/sh",
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
+				`  cat > '${openclawPatch}'`,
+				"  exit 0",
+				"fi",
+				"exit 2",
+				"",
+			].join("\n"),
 		);
 		chmodSync(openclawBin, 0o700);
 		process.env.HOME = home;
@@ -6548,50 +5362,42 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		const convergence = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_key_required_missing_ref",
-					environmentId: "env_key_required_missing_ref",
-					instanceId: "iid_key_required_missing_ref",
-					generation: 1,
-					issuedAt: "2026-06-26T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							run: {
-								command: openclawBin,
-								args: ["gateway", "run"],
-								env: {},
-								prependPath: [],
-							},
-						},
-					},
-					projection: {
-						providers: {
-							openclaw: {
-								kind: "openai-compatible",
-								type: "anthropic",
-								baseUrl: "https://api.anthropic.com",
-								model: "claude-opus-4-6",
-								apiMode: "anthropic_messages",
-								apiKeyRequired: true,
-								status: "error",
-								error: { code: "provider_secret_unavailable" },
-							},
-						},
-					},
-					recovery: {},
+		const fixture = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
+		fixture.manifest.runtimes = {
+			openclaw: hostedOpenClawRuntime({
+				provider_ids: ["openclaw"],
+				primary_model: { provider_id: "openclaw", model: "claude-opus-4-6" },
+			}),
+		};
+		fixture.manifest.providers = {
+			openclaw: {
+				kind: "openai-compatible",
+				type: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				apiMode: "anthropic_messages",
+				apiKeyRequired: true,
+				status: "error",
+				error: {
+					code: "provider_secret_unavailable",
+					message: "provider secret is unavailable",
 				},
-				source: "remote-datasource",
-				sourcePath: "test://key-required-missing-ref",
-				offline: false,
-				secretValues: {},
 			},
-			getRuntimePaths(),
+		};
+		const loaded = parseHostedRuntimeBundleV2(
+			{
+				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+				sourceRevision: "f".repeat(64),
+				manifest: fixture.manifest,
+				channelBindings: [],
+				secretValues: {
+					...TEST_HOSTED_CODEX_SECRET_VALUES,
+					...TEST_RUNTIME_SERVICE_SECRET_VALUES,
+				},
+			},
+			"https://runtime-source.test/desired-state",
 		);
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
 		const providerHealth = readHostedRuntimeObserved(getRuntimePaths())?.providers?.openclaw;
@@ -7331,7 +6137,7 @@ exit 64
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
-			expect(systemctlCalls).toContain("start clawdi-runtime-sidecar.service");
+			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
 			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
@@ -9280,28 +8086,33 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
+		const cached = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
+		Object.assign(cached.manifest, {
+			deploymentId: "dep-provider-observed",
+			environmentId: "env-provider-observed",
+			instanceId: "iid-provider-observed",
+			generation: 9,
+			providers: {
+				default: {
+					kind: "openai-compatible",
+					type: "custom_openai_compatible",
+					baseUrl: "https://sub2api.test/v1",
+					models: [{ id: "gpt-5.5" }],
+					apiMode: "openai_responses",
+					managed_by: "user",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://provider.default.apiKey",
+				},
+			},
+		});
 		writeFileSync(
 			paths.manifestLastGood,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep-provider-observed",
-				environmentId: "env-provider-observed",
-				instanceId: "iid-provider-observed",
-				generation: 9,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true } },
-				projection: {
-					providers: {
-						default: {
-							kind: "openai-compatible",
-							baseUrl: "https://sub2api.test/v1",
-							model: "gpt-5.5",
-							apiKeySecretRef: "secret://provider.default.apiKey",
-						},
-					},
-				},
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
+				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+				sourceRevision: "a".repeat(64),
+				manifest: cached.manifest,
+				channelBindings: [],
+				secretValues: {},
 			}),
 		);
 		writeFileSync(
@@ -9360,7 +8171,8 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				configured: true,
 				kind: "openai-compatible",
 				baseUrl: "https://sub2api.test/v1",
-				model: "gpt-5.5",
+				model: null,
+				models: [{ id: "gpt-5.5" }],
 				apiKeySecretRef: "secret://provider.default.apiKey",
 				secretAvailable: true,
 				reasons: [],
@@ -9381,27 +8193,32 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
+		const cached = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
+		Object.assign(cached.manifest, {
+			deploymentId: "dep-provider-missing-secret",
+			environmentId: "env-provider-missing-secret",
+			instanceId: "iid-provider-missing-secret",
+			generation: 10,
+			providers: {
+				default: {
+					kind: "openai-compatible",
+					type: "custom_openai_compatible",
+					baseUrl: "https://sub2api.test/v1",
+					apiMode: "openai_responses",
+					managed_by: "user",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://provider.default.apiKey",
+				},
+			},
+		});
 		writeFileSync(
 			paths.manifestLastGood,
 			JSON.stringify({
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep-provider-missing-secret",
-				environmentId: "env-provider-missing-secret",
-				instanceId: "iid-provider-missing-secret",
-				generation: 10,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true } },
-				projection: {
-					providers: {
-						default: {
-							kind: "openai-compatible",
-							baseUrl: "https://sub2api.test/v1",
-							apiKeySecretRef: "secret://provider.default.apiKey",
-						},
-					},
-				},
-				recovery: { cacheManifest: true, allowOfflineBoot: true },
+				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+				sourceRevision: "c".repeat(64),
+				manifest: cached.manifest,
+				channelBindings: [],
+				secretValues: {},
 			}),
 		);
 		writeRuntimeBootStatus(
@@ -9464,7 +8281,10 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		};
 		const previous = {
 			manifest: previousManifest,
-			secretValues: { "secret://runtime/openclaw/gateway-token": "gateway-token" },
+			secretValues: {
+				...TEST_HOSTED_CODEX_SECRET_VALUES,
+				"secret://runtime/openclaw/gateway-token": "gateway-token",
+			},
 		};
 		const next = { manifest: nextManifest, secretValues: previous.secretValues };
 
@@ -9520,6 +8340,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		const paths = getRuntimePaths();
 		const current = runtimeWatchLocaleManifest(home, 10);
 		const runtimeAuthSecret = {
+			...TEST_HOSTED_CODEX_SECRET_VALUES,
 			"secret://clawdi/auth-token":
 				TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://clawdi/auth-token"],
 		};
@@ -10776,70 +9597,22 @@ chmod +x "$prefix/bin/clawdi"
 		const paths = getRuntimePaths();
 		seedCurrentCliInstall(state, "clawdi@1.2.1-test.1", "1.2.1-test.1");
 		const mitmproxy = seedMitmproxyCache(paths);
+		const baseline = normalizeHostedManifestFixture(
+			hostedEgressSecretRotationPayload(home, mitmproxy, "sk-before-upgrade"),
+		);
+		baseline.manifest = {
+			...baseline.manifest,
+			deploymentId: "dep_cli_mitm",
+			environmentId: "env_cli_mitm",
+			instanceId: "iid_cli_mitm",
+			generation: 1,
+		};
 		convergeRuntimeManifest(
 			{
+				...baseline,
 				source: "remote-datasource",
 				sourcePath: "test://self-upgrade-egress-before",
 				offline: false,
-				secretValues: {
-					"secret://provider.default.apiKey": "sk-before-upgrade",
-				},
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_cli_mitm",
-					environmentId: "env_cli_mitm",
-					instanceId: "iid_cli_mitm",
-					generation: 1,
-					issuedAt: "2026-06-06T00:00:00Z",
-					workspaceRoot: join(home, "clawdi"),
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					egressEngine: mitmproxy,
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-5.5" },
-						},
-					},
-					projection: {
-						providers: {
-							default: {
-								kind: "openai-compatible",
-								type: "custom_openai_compatible",
-								baseUrl: "https://ai-gateway.example.test/v1",
-								models: [{ id: "gpt-5.5" }],
-								apiMode: "openai_responses",
-								runtimeEnvName: "OPENAI_API_KEY",
-								apiKeySecretRef: "secret://provider.default.apiKey",
-							},
-						},
-					},
-					egressProfiles: {
-						profiles: [
-							{
-								id: "managed-provider",
-								enabled: true,
-								kind: "provider",
-								match: {
-									scheme: "https",
-									host: "ai-gateway.example.test",
-								},
-								rewrite: {
-									setHeaders: {
-										authorization: {
-											type: "secretRef",
-											secretRef: "secret://provider.default.apiKey",
-											prefix: "Bearer ",
-										},
-									},
-								},
-								priority: 80,
-								owner: "provider-projection",
-							},
-						],
-					},
-					recovery: { cacheManifest: true, allowOfflineBoot: true },
-				},
 			},
 			paths,
 		);
@@ -10921,7 +9694,6 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdApply.applied).toBe(true);
 			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-sidecar.service");
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
 			expect(systemctlCalls).not.toContain("restart clawdi-daemon.service");
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
@@ -11265,7 +10037,7 @@ exit 64
 		}
 	});
 
-	it("runtime init applies remote channel desired state during first boot", async () => {
+	it("runtime init replaces normalized last-good state while applying remote channels", async () => {
 		installSuccessfulSystemctlFixture();
 		setRuntimeApplyGeneration(7, CANONICAL_TEST_CONTEXT);
 		const home = join(root, "home", "clawdi");
@@ -11348,6 +10120,44 @@ exit 64
 			TEST_RUNNING_CLI_VERSION,
 			"https://registry.npmjs.org",
 		);
+		const paths = getRuntimePaths();
+		mkdirSync(paths.cacheRoot, { recursive: true });
+		writeFileSync(
+			paths.manifestLastGood,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_init",
+				environmentId: "env_init",
+				instanceId: "iid_init",
+				generation: 6,
+				issuedAt: "2026-06-05T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: TEST_RUNNING_CLI_SPEC,
+					registry: "https://registry.npmjs.org",
+				},
+				runtimes: { openclaw: { enabled: false } },
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					providers: {
+						legacy: {
+							kind: "openai-compatible",
+							baseUrl: "https://legacy-provider.test/v1",
+							apiKeySecretRef: "secret://provider.legacy.apiKey",
+						},
+					},
+				},
+				recovery: { cacheManifest: true, allowOfflineBoot: true },
+			})}\n`,
+			{ mode: 0o600 },
+		);
+		writeFileSync(
+			paths.managedSecretCacheFile,
+			'{"secret://provider.legacy.apiKey":"sk-legacy-cache"}\n',
+			{ mode: 0o600 },
+		);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -11416,7 +10226,7 @@ exit 64
 			expect(process.exitCode).toBe(0);
 			expect(captured).toHaveLength(1);
 			expect(captured[0].path).toBe("/v1/runtime/manifest");
-			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+			expect(readRuntimeAppliedState(paths)).toMatchObject({
 				etag: testBundleEtag("manifest-etag-init-7"),
 				generation: 7,
 			});
@@ -11477,16 +10287,30 @@ exit 64
 			const egressSecretsText = readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8");
 			expect(egressSecretsText).toContain("agent-token-init");
 			expect(egressSecretsText).toContain("discord-agent-token-init");
-			const cachedManifestText = readFileSync(getRuntimePaths().manifestLastGood, "utf-8");
-			expect(cachedManifestText).toContain('"channels"');
+			const cachedManifestText = readFileSync(paths.manifestLastGood, "utf-8");
+			const cachedManifest = JSON.parse(cachedManifestText);
+			expect(cachedManifest).toMatchObject({
+				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					generation: 7,
+				},
+				channelBindings: [{ provider: "telegram" }, { provider: "discord" }],
+				secretValues: {},
+			});
+			expect(cachedManifestText).not.toContain("sourceBundleVersion");
+			expect(cachedManifestText).not.toContain("sourceSchemaVersion");
 			expect(cachedManifestText).not.toContain("agent-token-init");
 			expect(cachedManifestText).not.toContain("discord-agent-token-init");
-			const cachedSecretsText = readFileSync(getRuntimePaths().managedSecretCacheFile, "utf-8");
+			expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
+			const cachedSecretsText = readFileSync(paths.managedSecretCacheFile, "utf-8");
+			expect(cachedSecretsText).not.toContain("sk-legacy-cache");
 			expect(cachedSecretsText).toContain("placeholder-token");
 			expect(cachedSecretsText).toContain("999999999:");
 			expect(cachedSecretsText).toContain("clawdi_");
 			expect(cachedSecretsText).toContain("agent-token-init");
 			expect(cachedSecretsText).toContain("discord-agent-token-init");
+			expect(statSync(paths.managedSecretCacheFile).mode & 0o777).toBe(0o600);
 			const profileBundleText = readFileSync(getRuntimePaths().egressProfileBundle, "utf-8");
 			const profileBundle = JSON.parse(profileBundleText) as {
 				profiles: Array<Record<string, unknown>>;
@@ -11716,7 +10540,6 @@ exit 64
 					},
 				},
 				projection: {
-					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 					system: {},
 				},
 				recovery: {},
@@ -11905,7 +10728,6 @@ exit 64
 			].join("\n"),
 		);
 		seedHermesManagedBaileys(home);
-		seedOpenClawBinary(home);
 		writeFakeSystemdManager({
 			path: systemctlPath,
 			logPath: systemctlLog,
@@ -12002,15 +10824,6 @@ exit 64
 		};
 
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load, paths);
-		projected.manifest.runtimes.openclaw = {
-			enabled: true,
-			run: {
-				args: ["gateway", "run"],
-				env: {},
-				prependPath: [],
-			},
-			services: {},
-		};
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
 		expect(credentialProjection).toEqual([
 			expect.objectContaining({
@@ -12055,9 +10868,6 @@ exit 64
 			sessionDir,
 		);
 		const initialHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
-		const initialOpenClawRevision = systemdEnvRevision(
-			readSystemdEnvFile(paths, "openclaw-gateway"),
-		);
 		const hermesDropIn = join(
 			paths.systemdUserRoot,
 			"hermes-gateway.service.d",
@@ -12089,9 +10899,6 @@ exit 64
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
 			initialHermesRevision,
 		);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-			initialOpenClawRevision,
-		);
 
 		const projectedCreds = JSON.parse(
 			projected.secretValues?.[credentialSecretRef] ?? "null",
@@ -12122,9 +10929,6 @@ exit 64
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
 		);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-			initialOpenClawRevision,
-		);
 		writeFileSync(systemctlLog, "");
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
@@ -12140,7 +10944,6 @@ exit 64
 		});
 		const systemctlCalls = readFileSync(systemctlLog, "utf-8");
 		expect(systemctlCalls).toContain("--user restart hermes-gateway.service");
-		expect(systemctlCalls).not.toContain("restart openclaw-gateway.service");
 
 		const removed = applyRuntimeBundleChannelsToManifestLoad(
 			{ ...load, channelBindings: [], secretValues: {} },
@@ -12264,49 +11067,21 @@ exit 0
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_channel_delete",
-				environmentId: "env_channel_delete",
-				instanceId: "iid_channel_delete",
-				generation: 8,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-					hermes: { enabled: false },
-				},
-				projection: {
-					system: { home, workspace },
-					channels: {
-						whatsapp: {
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 8);
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			channels: {
+				whatsapp: {
+					enabled: true,
+					defaultAccount: "clawdi_whatsapp",
+					accounts: {
+						clawdi_whatsapp: {
 							enabled: true,
-							defaultAccount: "clawdi_whatsapp",
-							accounts: {
-								clawdi_whatsapp: {
-									enabled: true,
-									authDir: join(home, ".openclaw", "credentials", "whatsapp"),
-								},
-							},
+							authDir: join(home, ".openclaw", "credentials", "whatsapp"),
 						},
 					},
 				},
-				recovery: {},
 			},
-			source: "remote-datasource",
-			sourcePath: "test://channel-delete",
-			offline: false,
-			secretValues: {},
 		};
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
@@ -12325,7 +11100,8 @@ exit 0
 		const patches = readFileSync(openclawPatch, "utf-8")
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
-			.map((entry) => JSON.parse(entry));
+			.map((entry) => JSON.parse(entry))
+			.filter((patch) => Object.hasOwn(patch, "channels"));
 		expect(patches).toHaveLength(2);
 		expect(patches[0].channels.whatsapp.accounts).toHaveProperty("clawdi_whatsapp");
 		expect(patches[0].channels.whatsapp.accounts.clawdi_whatsapp.authDir).toBe(
@@ -12374,43 +11150,15 @@ exit 0
 		const previousLiveSnapshot = Object.fromEntries(
 			liveFiles.map((path) => [path, readFileSync(path, "utf-8")]),
 		);
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_channel_plugin_failure",
-				environmentId: "env_channel_plugin_failure",
-				instanceId: "iid_channel_plugin_failure",
-				generation: 2,
-				issuedAt: "2026-07-13T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 2);
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			channels: {
+				discord: {
+					enabled: true,
+					accounts: { default: { enabled: true } },
 				},
-				projection: {
-					system: { home, workspace },
-					channels: {
-						discord: {
-							enabled: true,
-							accounts: { default: { enabled: true } },
-						},
-					},
-				},
-				recovery: {},
 			},
-			source: "remote-datasource",
-			sourcePath: "test://channel-plugin-install-failure",
-			offline: false,
-			secretValues: {},
 		};
 
 		const convergence = convergeRuntimeManifest(loaded, paths);
@@ -12642,58 +11390,26 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 
 		const missingSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/credential-missing/creds-json`;
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_whatsapp_missing_secret",
-				environmentId: "env_whatsapp_missing_secret",
-				instanceId: "iid_whatsapp_missing_secret",
-				generation: 9,
-				issuedAt: "2026-07-07T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 9);
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			channels: {
+				whatsapp: {
+					enabled: true,
+					defaultAccount: accountKey,
+					accounts: { [accountKey]: { enabled: true, authDir } },
 				},
-				projection: {
-					system: { home, workspace },
-					channels: {
-						whatsapp: {
-							enabled: true,
-							defaultAccount: accountKey,
-							accounts: {
-								[accountKey]: {
-									enabled: true,
-									authDir,
-								},
-							},
-						},
-					},
-					channelCredentials: [
-						{
-							provider: "whatsapp",
-							kind: "whatsapp_baileys_auth_state",
-							accountKey,
-							credentialId: "credential-missing",
-							files: [{ path: "creds.json", secretRef: missingSecretRef }],
-							targets: { openclaw: { authDir } },
-						},
-					],
-				},
-				recovery: {},
 			},
-			source: "remote-datasource",
-			sourcePath: "test://whatsapp-missing-secret",
-			offline: false,
-			secretValues: {},
+			channelCredentials: [
+				{
+					provider: "whatsapp",
+					kind: "whatsapp_baileys_auth_state",
+					accountKey,
+					credentialId: "credential-missing",
+					files: [{ path: "creds.json", secretRef: missingSecretRef }],
+					targets: { openclaw: { authDir } },
+				},
+			],
 		};
 
 		expect(() => convergeRuntimeManifest(loaded, getRuntimePaths())).toThrow(
@@ -12751,39 +11467,11 @@ exit 64
 		const manifestWithChannels = (
 			channels: Record<string, unknown>,
 			generation: number,
-		): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_channel_remove",
-				environmentId: "env_channel_remove",
-				instanceId: "iid_channel_remove",
-				generation,
-				issuedAt: "2026-06-06T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-					hermes: { enabled: false },
-				},
-				projection: {
-					system: { home, workspace },
-					channels,
-				},
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://channel-remove-${generation}`,
-			offline: false,
-			secretValues: {},
-		});
+		): RuntimeManifestLoad => {
+			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", generation);
+			loaded.manifest.projection = { ...loaded.manifest.projection, channels };
+			return loaded;
+		};
 		const telegramChannel = {
 			enabled: true,
 			defaultAccount: "default",
@@ -12812,7 +11500,8 @@ exit 64
 		const patches = readFileSync(openclawPatch, "utf-8")
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
-			.map((entry) => JSON.parse(entry));
+			.map((entry) => JSON.parse(entry))
+			.filter((patch) => Object.hasOwn(patch, "channels"));
 		expect(patches).toHaveLength(3);
 		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
 		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
@@ -12830,7 +11519,6 @@ exit 64
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "workspace");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-patch.json");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
@@ -12869,42 +11557,12 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_installed_plugin",
-				environmentId: "env_installed_plugin",
-				instanceId: "iid_installed_plugin",
-				generation: 2,
-				issuedAt: "2026-06-11T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-					hermes: { enabled: false },
-				},
-				projection: {
-					system: { home, workspace },
-					channels: {
-						discord: {
-							token: "secret://channels/discord/acct-discord-1",
-						},
-					},
-				},
-				recovery: {},
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 2);
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			channels: {
+				discord: { token: "secret://channels/discord/acct-discord-1" },
 			},
-			source: "remote-datasource",
-			sourcePath: "test://already-installed-plugin",
-			offline: false,
-			secretValues: {},
 		};
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
@@ -13157,28 +11815,20 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			generation: number,
 			revision: string,
 			install: RuntimeManifest["runtimes"][string]["install"],
-		): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_cold_mcp",
-				environmentId: "env_cold_mcp",
-				instanceId: "iid_cold_mcp",
-				generation,
-				issuedAt: "2026-07-29T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true, install } },
-				projection: {
-					system: { home, workspace },
-					mcp: { servers: { clawdi: managedRemoteMcpServer("clawdi", revision) } },
-				},
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://cold-mcp-${generation}`,
-			offline: false,
-			secretValues: { "secret://mcp/clawdi": "deploy-key-secret" },
-		});
+		): RuntimeManifestLoad => {
+			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", generation);
+			loaded.manifest.workspaceRoot = workspace;
+			loaded.manifest.runtimes.openclaw.install = install;
+			loaded.manifest.projection = {
+				...loaded.manifest.projection,
+				mcp: { servers: { clawdi: managedRemoteMcpServer("clawdi", revision) } },
+			};
+			loaded.secretValues = {
+				...loaded.secretValues,
+				"secret://mcp/clawdi": "deploy-key-secret",
+			};
+			return loaded;
+		};
 		const officialInstall = {
 			authority: "official" as const,
 			method: "official-installer" as const,
@@ -13263,53 +11913,25 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			selectedRuntime: "openclaw" | "hermes",
 			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
 			skillEnabled = true,
-		): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_generic_mcp",
-				environmentId: "env_generic_mcp",
-				instanceId: "iid_generic_mcp",
-				generation,
-				issuedAt: "2026-07-28T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: selectedRuntime === "openclaw",
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-					hermes: {
-						enabled: selectedRuntime === "hermes",
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: [],
-						},
-					},
-				},
-				projection: {
-					system: { home, workspace },
-					mcp: { servers },
-					skills: { entries: { clawdi: { enabled: skillEnabled, version: 1 } } },
-				},
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://generic-mcp-${generation}`,
-			offline: false,
-			secretValues: {
-				"secret://mcp/clawdi": "deploy-key-secret",
-				"secret://mcp/search.proxy": "search-proxy-secret",
-			},
-		});
+		): RuntimeManifestLoad => {
+			const loaded = hostedSingleProviderModeLoad(home, selectedRuntime, "unmanaged", generation);
+			loaded.manifest.workspaceRoot = workspace;
+			loaded.manifest.projection = {
+				...loaded.manifest.projection,
+				mcp: { servers },
+				skills: { entries: { clawdi: { enabled: skillEnabled, version: 1 } } },
+			};
+			loaded.secretValues = {
+				...loaded.secretValues,
+				...Object.fromEntries(
+					Object.keys(servers).map((serverName) => [
+						`secret://mcp/${serverName}`,
+						`${serverName}-secret`,
+					]),
+				),
+			};
+			return loaded;
+		};
 		const initialServers = {
 			clawdi: managedRemoteMcpServer("clawdi", "v1"),
 			"search.proxy": managedRemoteMcpServer("search.proxy", "v1"),
@@ -13584,36 +12206,20 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			},
 			paths,
 		);
-		const load = (generation: number): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_mcp_ownership",
-				environmentId: "env_mcp_ownership",
-				instanceId: "iid_mcp_ownership",
-				generation,
-				issuedAt: "2026-07-28T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-				},
-				projection: { system: { home, workspace }, mcp: { servers: { clawdi: desiredServer } } },
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://mcp-ownership-${generation}`,
-			offline: false,
-			secretValues: { "secret://mcp/clawdi": "deploy-key-secret" },
-		});
+		const load = (generation: number): RuntimeManifestLoad => {
+			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", generation);
+			loaded.manifest.instanceId = "iid_mcp_ownership";
+			loaded.manifest.workspaceRoot = workspace;
+			loaded.manifest.projection = {
+				...loaded.manifest.projection,
+				mcp: { servers: { clawdi: desiredServer } },
+			};
+			loaded.secretValues = {
+				...loaded.secretValues,
+				"secret://mcp/clawdi": "deploy-key-secret",
+			};
+			return loaded;
+		};
 
 		const upgraded = convergeAndCommitTestRuntimeManifest(load(1), paths);
 		expect(upgraded.installErrors).toEqual([]);
@@ -13662,41 +12268,21 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const load = (
 			generation: number,
 			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
-		): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_mcp_ownership",
-				environmentId: "env_mcp_ownership",
-				instanceId: "iid_mcp_ownership",
-				generation,
-				issuedAt: "2026-07-28T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-				},
-				projection: { system: { home, workspace }, mcp: { servers } },
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://mcp-ownership-${generation}`,
-			offline: false,
-			secretValues: Object.fromEntries(
-				Object.keys(servers).map((serverName) => [
-					`secret://mcp/${serverName}`,
-					`${serverName}-secret`,
-				]),
-			),
-		});
+		): RuntimeManifestLoad => {
+			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", generation);
+			loaded.manifest.workspaceRoot = workspace;
+			loaded.manifest.projection = { ...loaded.manifest.projection, mcp: { servers } };
+			loaded.secretValues = {
+				...loaded.secretValues,
+				...Object.fromEntries(
+					Object.keys(servers).map((serverName) => [
+						`secret://mcp/${serverName}`,
+						`${serverName}-secret`,
+					]),
+				),
+			};
+			return loaded;
+		};
 
 		const beforeCollision = readFileSync(openclawConfigPath, "utf-8");
 		expect(() =>
@@ -13773,50 +12359,23 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 
-		const failed = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_partial_mcp",
-					environmentId: "env_partial_mcp",
-					instanceId: "iid_partial_mcp",
-					generation: 1,
-					issuedAt: "2026-07-28T00:00:00Z",
-					workspaceRoot: workspace,
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							install: {
-								authority: "official",
-								method: "official-installer",
-								url: "https://openclaw.ai/install-cli.sh",
-								home,
-								args: [],
-							},
-						},
-					},
-					projection: {
-						system: { home, workspace },
-						mcp: {
-							servers: {
-								first: managedRemoteMcpServer("first", "v1"),
-								second: managedRemoteMcpServer("second", "v1"),
-							},
-						},
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://partial-mcp",
-				offline: false,
-				secretValues: {
-					"secret://mcp/first": "first-secret",
-					"secret://mcp/second": "second-secret",
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 1);
+		loaded.manifest.workspaceRoot = workspace;
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			mcp: {
+				servers: {
+					first: managedRemoteMcpServer("first", "v1"),
+					second: managedRemoteMcpServer("second", "v1"),
 				},
 			},
-			getRuntimePaths(),
-		);
+		};
+		loaded.secretValues = {
+			...loaded.secretValues,
+			"secret://mcp/first": "first-secret",
+			"secret://mcp/second": "second-secret",
+		};
+		const failed = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toBe("set first\nset second\n");
@@ -13824,153 +12383,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			"user-entry": { command: "user-owned", args: ["keep"] },
 		});
 		expect(readRuntimeAppliedState(paths)).toBeNull();
-	});
-
-	it("restores prior MCP authority when a forward projection is partial", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "workspace");
-		const calls = join(root, "existing-managed-mcp-calls.log");
-		const { configPath: openclawConfig } = writeFakeOpenClawMcpBinary(home, {
-			callsPath: calls,
-			failSetServer: "second",
-		});
-		const hermesBin = join(home, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesBin), { recursive: true });
-		writeHermesVersionBinary(home, "0.20.1");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const paths = getRuntimePaths();
-		const hermesConfig = join(home, ".hermes", "config.yaml");
-		const ownedV1 = managedRemoteMcpServer("owned", "v1");
-		const ownedV2 = managedRemoteMcpServer("owned", "v2");
-		const second = managedRemoteMcpServer("second", "v1");
-
-		const load = (
-			generation: number,
-			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
-		): RuntimeManifestLoad => ({
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_existing_managed_mcp",
-				environmentId: "env_existing_managed_mcp",
-				instanceId: "iid_existing_managed_mcp",
-				generation,
-				issuedAt: "2026-07-28T00:00:00Z",
-				workspaceRoot: workspace,
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://openclaw.ai/install-cli.sh",
-							home,
-							args: [],
-						},
-					},
-					hermes: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: [],
-						},
-					},
-				},
-				projection: { system: { home, workspace }, mcp: { servers } },
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: `test://existing-managed-mcp-${generation}`,
-			offline: false,
-			secretValues: {
-				"secret://mcp/owned": "owned-secret",
-				"secret://mcp/second": "second-secret",
-			},
-		});
-
-		const initial = convergeAndCommitTestRuntimeManifest(load(1, { owned: ownedV1 }), paths);
-		expect(initial.installErrors).toEqual([]);
-		const previousAppliedState = readFileSync(paths.appliedState);
-		const previousOpenClawStat = statSync(openclawConfig);
-		const previousHermesStat = statSync(hermesConfig);
-
-		const failed = convergeAndCommitTestRuntimeManifest(
-			load(2, {
-				owned: ownedV2,
-				second,
-			}),
-			paths,
-		);
-
-		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
-		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
-		expect(readOpenClawMcpServers(home)).toEqual({
-			owned: nativeManagedRemoteMcpServer("owned", "v1"),
-		});
-		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
-			owned: nativeManagedRemoteMcpServer("owned", "v1"),
-		});
-		expect(readFileSync(paths.appliedState)).toEqual(previousAppliedState);
-		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
-		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
-		expect(statSync(openclawConfig).gid).toBe(previousOpenClawStat.gid);
-		expect(statSync(hermesConfig).mode).toBe(previousHermesStat.mode);
-		expect(statSync(hermesConfig).uid).toBe(previousHermesStat.uid);
-		expect(statSync(hermesConfig).gid).toBe(previousHermesStat.gid);
-	});
-
-	it("does not add the hosted runtime sidecar without egress profiles", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-
-		const convergence = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_runtime_no_egress",
-					environmentId: "env_runtime_no_egress",
-					instanceId: "iid_runtime_no_egress",
-					generation: 1,
-					issuedAt: "2026-06-15T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-5.5" },
-						},
-						hermes: { enabled: false },
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://runtime-no-egress",
-				offline: false,
-				secretValues: {},
-			},
-			getRuntimePaths(),
-		);
-
-		expect(
-			convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
-		).not.toContain("clawdi-runtime-sidecar.service");
-		expect(
-			convergence.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)),
-		).not.toContain("clawdi-runtime-sidecar.service");
 	});
 
 	it("keeps provider secrets sidecar-only in the ephemeral run-dir config", () => {
@@ -13983,78 +12395,9 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const mitmproxy = seedMitmproxyCache();
-
-		const convergence = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_provider_secret_boundary",
-					environmentId: "env_provider_secret_boundary",
-					instanceId: "iid_provider_secret_boundary",
-					generation: 1,
-					issuedAt: "2026-06-26T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					egressEngine: mitmproxy,
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-5.5" },
-						},
-						hermes: { enabled: false },
-					},
-					projection: {
-						providers: {
-							default: {
-								kind: "openai-compatible",
-								baseUrl: "https://provider.test/v1",
-								model: "gpt-5.5",
-								apiMode: "openai_responses",
-								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_AI_API_KEY",
-								apiKeySecretRef: "secret://provider.default.apiKey",
-							},
-						},
-					},
-					egressProfiles: {
-						profiles: [
-							{
-								id: "managed-provider",
-								enabled: true,
-								kind: "provider",
-								match: {
-									scheme: "https",
-									host: "provider.test",
-									headers: {},
-									query: {},
-								},
-								rewrite: {
-									setHeaders: {
-										authorization: {
-											type: "secretRef",
-											secretRef: "secret://provider.default.apiKey",
-											prefix: "Bearer ",
-										},
-									},
-								},
-								priority: 80,
-								owner: "provider-projection",
-							},
-						],
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://provider-secret-boundary",
-				offline: false,
-				secretValues: {
-					"secret://provider.default.apiKey": "sk-runtime",
-					"secret://provider.hermes.apiKey": "sk-other-runtime",
-				},
-			},
-			getRuntimePaths(),
-		);
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "configured", 1);
+		loaded.manifest.runtimes.openclaw.install = undefined;
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		const paths = getRuntimePaths();
 		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
@@ -14097,10 +12440,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(openclawUnit).not.toContain("\nExecStart=");
 		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawUnit).not.toContain("user=clawdi");
-		expect(openclawUnit).not.toContain("sk-runtime");
+		expect(openclawUnit).not.toContain("sk-managed-provider");
 		expect(openclawEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(openclawEnv).not.toMatch(/^OPENAI_API_KEY=/m);
-		expect(openclawEnv).not.toContain("sk-runtime");
+		expect(openclawEnv).not.toContain("sk-managed-provider");
 		expect(openclawEnv).not.toContain(dirname(paths.cliManagedBin));
 		expect(statSync(join(run, "secrets")).mode & 0o777).toBe(0o711);
 		expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
@@ -14114,63 +12457,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(statSync(egressSecretPath).gid).toBe(10002);
 		}
 		const egressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8"));
-		expect(egressSecrets["secret://provider.default.apiKey"]).toBe("sk-runtime");
-		expect(JSON.stringify(egressSecrets)).not.toContain("sk-other-runtime");
-	});
-
-	it("does not put missing provider secrets into direct systemd launch env", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-
-		convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_provider_secret_missing",
-					environmentId: "env_provider_secret_missing",
-					instanceId: "iid_provider_secret_missing",
-					generation: 1,
-					issuedAt: "2026-06-26T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: {
-							enabled: true,
-							provider_ids: ["default"],
-							primary_model: { provider_id: "default", model: "gpt-5.5" },
-						},
-					},
-					projection: {
-						providers: {
-							default: {
-								kind: "openai-compatible",
-								baseUrl: "https://provider.test/v1",
-								model: "gpt-5.5",
-								apiMode: "openai_responses",
-								managed_by: "clawdi",
-								runtimeEnvName: "CLAWDI_AI_API_KEY",
-								apiKeySecretRef: "secret://provider.default.apiKey",
-							},
-						},
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://provider-secret-missing",
-				offline: false,
-				secretValues: {},
-			},
-			getRuntimePaths(),
-		);
-		const openclawEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
-		expect(openclawEnv).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
-		expect(openclawEnv).not.toMatch(/^OPENAI_API_KEY=/m);
-		expect(openclawEnv).not.toContain("secret://provider.default.apiKey");
+		expect(egressSecrets["secret://provider.clawdi-managed.apiKey"]).toBe("sk-managed-provider");
 	});
 
 	it("runs the egress-only sidecar with a lifecycle nft redirect", () => {
@@ -14183,44 +12470,19 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const mitmproxy = seedMitmproxyCache();
-
-		const load: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_transparent_egress",
-				environmentId: "env_transparent_egress",
-				instanceId: "iid_transparent_egress",
-				generation: 1,
-				issuedAt: "2026-06-26T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				egressEngine: mitmproxy,
-				runtimes: {
-					openclaw: { enabled: true },
-					hermes: { enabled: false },
-				},
-				egressProfiles: {
-					profiles: [
-						{
-							id: "deny-metadata",
-							enabled: true,
-							kind: "deny",
-							match: {
-								scheme: "https",
-								host: "169.254.169.254",
-								pathPrefix: "/",
-							},
-							priority: 1,
-						},
-					],
-				},
-				recovery: {},
+		const load = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 1);
+		load.manifest.runtimes.openclaw.install = undefined;
+		load.manifest.egressProfiles?.profiles.push({
+			id: "deny-metadata",
+			enabled: true,
+			kind: "deny",
+			match: {
+				scheme: "https",
+				host: "169.254.169.254",
+				pathPrefix: "/",
 			},
-			source: "remote-datasource",
-			sourcePath: "test://transparent-egress",
-			offline: false,
-			secretValues: {},
-		};
+			priority: 1,
+		});
 		convergeRuntimeManifest(load, getRuntimePaths());
 
 		const paths = getRuntimePaths();
@@ -14257,9 +12519,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ADDON_PATH="${paths.egressAddon}"`);
 		expect(transparentEgressEnv).toContain(
 			`CLAWDI_EGRESS_ENGINE_BINARY_PATH="${paths.egressServiceBinary}"`,
-		);
-		expect(sidecarUnit).toContain(
-			`BindReadOnlyPaths=${cachedMitmproxyBinary(paths, mitmproxy)}:${paths.egressServiceBinary}:norbind`,
 		);
 		expect(statSync(paths.egressProfileRoot).mode & 0o777).toBe(0o711);
 		expect(statSync(paths.egressProfileBundle).mode & 0o777).toBe(0o640);
@@ -14411,6 +12670,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const userPath = join(workspace, "USER.md");
 		mkdirSync(workspace, { recursive: true });
 		mkdirSync(dirname(soulPath), { recursive: true });
+		seedOpenClawBinary(home);
 		writeFileSync(soulPath, "User preface.\n\nUser epilogue.\n");
 		writeFileSync(userPath, "User profile stays untouched.\n");
 		process.env.HOME = home;
@@ -14418,41 +12678,22 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
-		const manifestFor = (language: "en" | "fr", timezone: string): RuntimeManifest => ({
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_locale_openclaw",
-			environmentId: "env_locale_openclaw",
-			instanceId: "iid_locale_openclaw",
-			generation: language === "en" ? 1 : 2,
-			issuedAt: "2026-07-11T00:00:00Z",
-			locale: { language, timezone },
-			workspaceRoot: workspace,
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					run: { command: "/bin/true", args: [], env: {}, prependPath: [] },
-				},
-			},
-			recovery: {},
-		});
 		const paths = getRuntimePaths();
-		const converge = (manifest: RuntimeManifest) =>
-			convergeRuntimeManifest(
-				{
-					manifest,
-					source: "remote-datasource",
-					sourcePath: "test://locale-openclaw",
-					offline: false,
-					secretValues: {},
-				},
-				paths,
+		const converge = (language: "en" | "fr", timezone: string) => {
+			const load = hostedSingleProviderModeLoad(
+				home,
+				"openclaw",
+				"unmanaged",
+				language === "en" ? 1 : 2,
 			);
+			load.manifest.locale = { language, timezone };
+			return convergeRuntimeManifest(load, paths);
+		};
 
-		converge(manifestFor("en", "UTC"));
+		converge("en", "UTC");
 		const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
 
-		converge(manifestFor("fr", "Europe/Paris"));
+		converge("fr", "Europe/Paris");
 		const soul = readFileSync(soulPath, "utf-8");
 		expect(soul.startsWith("User preface.\n\nUser epilogue.\n")).toBe(true);
 		expect(soul.match(/clawdi managed locale/g)).toHaveLength(2);
@@ -14461,7 +12702,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
 		const updatedEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(systemdEnvRevision(updatedEnv)).not.toBe(initialRevision);
-		converge(manifestFor("fr", "Europe/Paris"));
+		converge("fr", "Europe/Paris");
 		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 			systemdEnvRevision(updatedEnv),
@@ -14518,97 +12759,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const config = readHermesConfigYaml(home);
 		expect(config.custom_setting).toBe("keep");
 		expect(config.timezone).toBe("Asia/Taipei");
-	});
-
-	it("runtime program revisions ignore unrelated control-plane and sibling runtime changes", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		const baseManifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_revision",
-			environmentId: "env_revision",
-			instanceId: "iid_revision",
-			generation: 1,
-			issuedAt: "2026-06-06T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			clawdiCli: { source: "npm:clawdi", packageSpec: TEST_RUNNING_CLI_SPEC },
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					services: {
-						worker: {
-							command: "/bin/true",
-							args: [],
-							env: {},
-							prependPath: [],
-						},
-					},
-				},
-				hermes: { enabled: false },
-			},
-			recovery: {},
-		};
-		const revisionFor = (manifest: RuntimeManifest, unitName: string) => {
-			const paths = getRuntimePaths();
-			convergeRuntimeManifest(
-				{
-					manifest,
-					source: "remote-datasource",
-					sourcePath: "test://revision",
-					offline: false,
-					secretValues: {},
-				},
-				paths,
-			);
-			return systemdEnvRevision(readSystemdEnvFile(paths, unitName));
-		};
-
-		const baseRev = revisionFor(baseManifest, "openclaw-gateway");
-		const baseWorkerRev = revisionFor(baseManifest, "clawdi-openclaw-worker");
-		const controlPlaneRev = revisionFor(
-			{
-				...baseManifest,
-				controlPlane: { apiUrl: "https://cloud-api-next.test" },
-			},
-			"openclaw-gateway",
-		);
-		const controlPlaneWorkerRev = revisionFor(
-			{
-				...baseManifest,
-				controlPlane: { apiUrl: "https://cloud-api-next.test" },
-			},
-			"clawdi-openclaw-worker",
-		);
-		const skillOnlyManifest: RuntimeManifest = {
-			...baseManifest,
-			projection: {
-				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
-			},
-		};
-		const skillGatewayRev = revisionFor(skillOnlyManifest, "openclaw-gateway");
-		const skillWorkerRev = revisionFor(skillOnlyManifest, "clawdi-openclaw-worker");
-		const siblingRuntimeRev = revisionFor(
-			{
-				...baseManifest,
-				runtimes: {
-					...baseManifest.runtimes,
-					hermes: { enabled: true },
-				},
-			},
-			"openclaw-gateway",
-		);
-
-		expect(controlPlaneRev).toBe(baseRev);
-		expect(controlPlaneWorkerRev).toBe(baseWorkerRev);
-		expect(skillGatewayRev).toBe(baseRev);
-		expect(skillWorkerRev).toBe(baseWorkerRev);
-		expect(siblingRuntimeRev).toBe(baseRev);
 	});
 
 	it("rejects a desired generation below the durable applied generation", async () => {

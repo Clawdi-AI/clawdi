@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
@@ -81,19 +81,37 @@ function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 }
 
 function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): void {
-	for (const path of [paths.runtimeWatchStatus, paths.manifestLastGood]) {
+	for (const path of [
+		paths.runtimeWatchStatus,
+		paths.manifestLastGood,
+		paths.managedSecretCacheFile,
+	]) {
 		mkdirSync(dirname(path), { recursive: true });
 	}
 	writeFileSync(paths.runtimeWatchStatus, JSON.stringify({ event: { status: "applied" } }));
+	const bundle = JSON.parse(
+		readFileSync(
+			join(import.meta.dir, "../../../../test-fixtures/runtime-bundle-v2.golden.json"),
+			"utf8",
+		),
+	) as {
+		manifest: {
+			providers: Record<string, { status?: "error"; error?: { code: string; message: string } }>;
+		};
+	};
+	const provider = bundle.manifest.providers.clawdi;
+	if (!provider) throw new Error("missing provider observation fixture");
+	if (status === "error") {
+		provider.status = "error";
+		provider.error = { code: "provider_unavailable", message: "provider unavailable" };
+	} else {
+		delete provider.status;
+		delete provider.error;
+	}
+	writeFileSync(paths.manifestLastGood, JSON.stringify(bundle));
 	writeFileSync(
-		paths.manifestLastGood,
-		JSON.stringify({
-			projection: {
-				providers: {
-					default: { status, baseUrl: "https://api.test/v1", model: "test-model" },
-				},
-			},
-		}),
+		paths.managedSecretCacheFile,
+		JSON.stringify({ "secret://tool.codex.apiKey": "test-codex-provider-key" }),
 	);
 }
 

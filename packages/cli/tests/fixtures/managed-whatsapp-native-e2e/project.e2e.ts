@@ -19,7 +19,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 	const home = requiredEnvironment("E2E_HOME");
 	const scenarioPath = requiredEnvironment("E2E_SCENARIO");
 	const outputRoot = requiredEnvironment("E2E_OUTPUT");
-	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_RUNTIME_HOME = home;
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(outputRoot, "platform-state");
 	mkdirSync(process.env.CLAWDI_SERVICE_STATE_DIR, { recursive: true });
 	const scenario = recordValue(JSON.parse(readFileSync(scenarioPath, "utf8")));

@@ -10,6 +10,7 @@ import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { providerHealthReasons } from "./manifest-providers";
+import { hostedRuntimeBundleV2Schema } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -162,9 +163,8 @@ function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObse
 }
 
 function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProviders | null {
-	const manifest = readJsonRecord(paths.manifestLastGood);
-	const projection = recordValue(manifest?.projection);
-	const providers = recordValue(projection?.providers);
+	const cached = hostedRuntimeBundleV2Schema.safeParse(readJsonRecord(paths.manifestLastGood));
+	const providers = recordValue(cached.success ? cached.data.manifest.projection?.providers : null);
 	if (!providers || Object.keys(providers).length === 0) return null;
 
 	const secrets = {
