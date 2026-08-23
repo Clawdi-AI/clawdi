@@ -2497,7 +2497,7 @@ chmod 0755 '${commandPath}'
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
-		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
+		expect(normalized.manifest.projection?.providers).toEqual(hostedManifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
 		);
@@ -2880,9 +2880,9 @@ chmod 0755 '${commandPath}'
 				runtimeEnvName: "ANTHROPIC_TEST_API_KEY",
 				apiKeySecretRef: "secret://providers/anthropic/api-key",
 			},
-		};
+		} satisfies NonNullable<NonNullable<RuntimeManifest["projection"]>["providers"]>;
 		const manifestFor = (
-			providers: Record<string, unknown>,
+			providers: NonNullable<NonNullable<RuntimeManifest["projection"]>["providers"]>,
 			primaryModel: { provider_id: string; model: string } | undefined,
 			generation: number,
 		): RuntimeManifest =>

@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
+import {
+	AI_PROVIDER_API_MODES,
+	AI_PROVIDER_TYPES,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+} from "@clawdi/shared";
 import { z } from "zod";
 import { egressEngineSchema } from "./egress-engine";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
@@ -352,85 +356,6 @@ const liveSyncSchema = z.object({
 	agents: z.array(liveSyncAgentSchema).default([]),
 });
 
-const runtimeProjectionSchema = z.object({
-	sourceSchemaVersion: z.string().min(1).optional(),
-	sourceBundleVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION).optional(),
-	system: z.unknown().nullable().optional(),
-	providers: z.record(z.string().min(1), z.unknown()).optional(),
-	channels: z.record(z.string().min(1), z.unknown()).optional(),
-	channelCredentials: z.array(z.unknown()).optional(),
-	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
-	mcp: hostedMcpDesiredStateSchema.optional(),
-	skills: hostedSkillsDesiredStateSchema.optional(),
-	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
-	tools: z.unknown().optional(),
-	terminalTooling: z.unknown().optional(),
-});
-
-const runtimeDesiredStateShape = {
-	deploymentId: z.string().min(1),
-	environmentId: z.string().min(1),
-	instanceId: z.string().min(1),
-	generation: z.number().int().nonnegative(),
-	applyGeneration: z.number().int().positive().safe().optional(),
-	issuedAt: z.string().min(1),
-	expiresAt: z.string().min(1).optional(),
-	locale: runtimeLocaleSchema.optional(),
-	workspaceRoot: z.string().min(1).optional(),
-	runtime: hostedRuntimeChoiceSchema.optional(),
-	controlPlane: z.object({
-		apiUrl: z.string().url(),
-	}),
-	clawdiCli: cliPayloadPolicySchema.optional(),
-	egressEngine: egressEngineSchema.optional(),
-	companions: runtimeCompanionsSchema.optional(),
-	runtimes: z.record(runtimeNameSchema, runtimeSchema),
-	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
-	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
-	projection: runtimeProjectionSchema.optional(),
-	egressProfiles: egressProfileInputBundleSchema.optional(),
-	liveSync: liveSyncSchema.optional(),
-	recovery: z
-		.object({
-			cacheManifest: z.boolean().optional(),
-			allowOfflineBoot: z.boolean().optional(),
-		})
-		.default({}),
-};
-
-function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: string): void {
-	ctx.addIssue({
-		code: "custom",
-		message: message ?? `Unrecognized key: "${field}"`,
-		path: [field],
-	});
-}
-
-const runtimeManifestSchema = z
-	.object({
-		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
-		...runtimeDesiredStateShape,
-		secrets: z.unknown().optional(),
-	})
-	.superRefine((manifest, ctx) => {
-		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
-	})
-	.transform(({ secrets: _secrets, ...manifest }) => manifest);
-
-export const manifestSchema = z
-	.unknown()
-	.superRefine((value, ctx) => {
-		if (
-			typeof value === "object" &&
-			value !== null &&
-			!Array.isArray(value) &&
-			Object.hasOwn(value, "bridge")
-		) {
-			addForbiddenFieldIssue(ctx, "bridge");
-		}
-	})
-	.pipe(runtimeManifestSchema);
-
 const hostedControlPlaneSchema = z
 	.object({
 		cloudApiUrl: z.string().url(),
@@ -545,8 +470,8 @@ const hostedProviderModelSchema = z
 		id: z.string().min(1),
 		label: z.string().min(1).optional(),
 		alias: z.string().min(1).optional(),
-		api_mode: z.string().min(1).optional(),
-		input_modalities: z.array(z.string().min(1)).optional(),
+		api_mode: z.enum(AI_PROVIDER_API_MODES).optional(),
+		input_modalities: z.array(z.enum(["text", "image", "video", "audio"])).optional(),
 		supports_vision: z.boolean().optional(),
 		supports_tools: z.boolean().optional(),
 		supports_reasoning: z.boolean().optional(),
@@ -585,11 +510,11 @@ const hostedProviderAuthSchema = z
 const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
-		type: z.string().min(1).optional(),
+		type: z.enum(AI_PROVIDER_TYPES).optional(),
 		baseUrl: z.string().url().optional(),
 		models: z.array(hostedProviderModelSchema).optional(),
-		apiMode: z.string().min(1).optional(),
-		managed_by: z.string().min(1).optional(),
+		apiMode: z.enum(AI_PROVIDER_API_MODES).optional(),
+		managed_by: z.enum(["user", "clawdi"]).optional(),
 		runtimeEnvName: z.string().min(1).optional(),
 		apiKeySecretRef: canonicalSecretRefSchema.nullable().optional(),
 		apiKeyRequired: z.boolean().optional(),
@@ -685,6 +610,90 @@ const hostedTerminalToolingSchema = z
 		codex: hostedCodexToolSchema,
 	})
 	.strict();
+
+const runtimeProjectionSchema = z.object({
+	sourceSchemaVersion: z.string().min(1).optional(),
+	sourceBundleVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION).optional(),
+	system: z.unknown().nullable().optional(),
+	providers: z
+		.record(
+			z.string().min(1),
+			hostedProviderBaseSchema.extend({ model: z.string().min(1) }).partial(),
+		)
+		.optional(),
+	channels: z.record(z.string().min(1), z.unknown()).optional(),
+	channelCredentials: z.array(z.unknown()).optional(),
+	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
+	mcp: hostedMcpDesiredStateSchema.optional(),
+	skills: hostedSkillsDesiredStateSchema.optional(),
+	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
+	tools: z.unknown().optional(),
+	terminalTooling: z.unknown().optional(),
+});
+
+const runtimeDesiredStateShape = {
+	deploymentId: z.string().min(1),
+	environmentId: z.string().min(1),
+	instanceId: z.string().min(1),
+	generation: z.number().int().nonnegative(),
+	applyGeneration: z.number().int().positive().safe().optional(),
+	issuedAt: z.string().min(1),
+	expiresAt: z.string().min(1).optional(),
+	locale: runtimeLocaleSchema.optional(),
+	workspaceRoot: z.string().min(1).optional(),
+	runtime: hostedRuntimeChoiceSchema.optional(),
+	controlPlane: z.object({
+		apiUrl: z.string().url(),
+	}),
+	clawdiCli: cliPayloadPolicySchema.optional(),
+	egressEngine: egressEngineSchema.optional(),
+	companions: runtimeCompanionsSchema.optional(),
+	runtimes: z.record(runtimeNameSchema, runtimeSchema),
+	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
+	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
+	projection: runtimeProjectionSchema.optional(),
+	egressProfiles: egressProfileInputBundleSchema.optional(),
+	liveSync: liveSyncSchema.optional(),
+	recovery: z
+		.object({
+			cacheManifest: z.boolean().optional(),
+			allowOfflineBoot: z.boolean().optional(),
+		})
+		.default({}),
+};
+
+function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: string): void {
+	ctx.addIssue({
+		code: "custom",
+		message: message ?? `Unrecognized key: "${field}"`,
+		path: [field],
+	});
+}
+
+const runtimeManifestSchema = z
+	.object({
+		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
+		...runtimeDesiredStateShape,
+		secrets: z.unknown().optional(),
+	})
+	.superRefine((manifest, ctx) => {
+		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
+	})
+	.transform(({ secrets: _secrets, ...manifest }) => manifest);
+
+export const manifestSchema = z
+	.unknown()
+	.superRefine((value, ctx) => {
+		if (
+			typeof value === "object" &&
+			value !== null &&
+			!Array.isArray(value) &&
+			Object.hasOwn(value, "bridge")
+		) {
+			addForbiddenFieldIssue(ctx, "bridge");
+		}
+	})
+	.pipe(runtimeManifestSchema);
 
 const hostedLiveSyncAgentSchema = liveSyncAgentSchema
 	.extend({
@@ -788,7 +797,7 @@ export interface HostedRuntimeSemanticView {
 	};
 	hermesDashboardAuth?: { activation: { enabled?: boolean } };
 	openclawControlUiAllowedOrigins?: unknown;
-	providers?: Readonly<Record<string, unknown>>;
+	providers?: Readonly<Record<string, { runtimeEnvName?: string }>>;
 }
 
 export interface HostedRuntimeSemanticIssue {
@@ -861,8 +870,7 @@ export function hostedRuntimeSemanticIssues(
 			);
 		}
 		for (const [providerId, provider] of Object.entries(view.providers ?? {})) {
-			if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
-			if ((provider as Record<string, unknown>).runtimeEnvName === "OPENCLAW_GATEWAY_TOKEN") {
+			if (provider.runtimeEnvName === "OPENCLAW_GATEWAY_TOKEN") {
 				addIssue("OpenClaw v2 provider environment must not target native auth controls", [
 					"providers",
 					providerId,
