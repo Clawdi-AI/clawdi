@@ -1,14 +1,19 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import type { EgressProfileInputBundle } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
+import { recordValue, toWebSocketUrl } from "./manifest-shared";
 import type { RuntimeBundleChannelBinding, RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
-import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
+import {
+	managedWhatsAppAuthCredentials,
+	managedWhatsAppAuthDir,
+} from "./whatsapp-credential-projection";
 import { buildManagedWhatsAppEgressProfiles } from "./whatsapp-egress";
 import {
+	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY,
+	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
 	type ManagedWhatsAppSocketMetadataJson,
@@ -53,6 +58,7 @@ interface ManagedChannelLink {
 	secretRef: string;
 	placeholderSecretRef: string;
 	credential?: ManagedChannelCredential;
+	whatsappMaterial: WhatsAppBaileysCredentialMaterial | null;
 }
 
 interface OpenClawEnvSecretRef {
@@ -68,7 +74,6 @@ interface RuntimeChannelCredentialProjection {
 	accountKey: string;
 	linkId: string;
 	credentialId: string;
-	authDir: string;
 	files: {
 		path: "creds.json";
 		secretRef: string;
@@ -135,7 +140,7 @@ function managedBundleChannelLink(
 			throw new Error("runtime bundle WhatsApp capability does not match its Link");
 		}
 	}
-	return {
+	const link: ManagedChannelLink = {
 		account: {
 			id: binding.provider === "whatsapp" ? binding.accountId : binding.accountKey,
 			provider: binding.provider,
@@ -148,7 +153,11 @@ function managedBundleChannelLink(
 			binding.provider === "whatsapp"
 				? runtimeBundleWhatsAppCredential(binding, secretValues)
 				: undefined,
+		whatsappMaterial: null,
 	};
+	return binding.provider === "whatsapp"
+		? { ...link, whatsappMaterial: whatsappBaileysCredentialMaterial(link) }
+		: link;
 }
 
 function runtimeBundleWhatsAppCredential(
@@ -581,7 +590,7 @@ function buildManagedChannelEgressProfiles(
 		}
 	}
 	const whatsapp = singleLinkForProvider(links, "whatsapp");
-	if (whatsapp && !whatsappBaileysCredentialMaterial(whatsapp)) {
+	if (whatsapp && !whatsapp.whatsappMaterial) {
 		throw new Error(`managed WhatsApp Link ${whatsapp.linkId} has no valid synthetic auth`);
 	}
 	profiles.push(
@@ -618,12 +627,7 @@ function mergeEgressProfiles(
 }
 
 function isChannelProjectionProfile(profile: EgressProfile): boolean {
-	return (
-		profile.owner === "clawdi-native-channels" ||
-		profile.owner === "clawdi-native-whatsapp" ||
-		profile.id === "direct-provider-passthrough" ||
-		profile.id.startsWith("direct-provider-passthrough-")
-	);
+	return profile.owner === "clawdi-native-channels" || profile.owner === "clawdi-native-whatsapp";
 }
 
 function managedWhatsAppSecretValues(
@@ -637,7 +641,7 @@ function managedWhatsAppSecretValues(
 		),
 	);
 	for (const link of links) {
-		const material = whatsappBaileysCredentialMaterial(link);
+		const material = link.whatsappMaterial;
 		if (material) {
 			const credsSecretRef = material.credential.credsSecretRef;
 			if (projectedCredentialSecrets.has(credsSecretRef)) {
@@ -673,19 +677,20 @@ function whatsappBaileysCredentialProjection(
 	runtimeHome: string,
 	targets: RuntimeCredentialTargets,
 ): RuntimeChannelCredentialProjection | null {
-	const material = whatsappBaileysCredentialMaterial(link);
+	const material = link.whatsappMaterial;
 	if (!material) return null;
-	const openclawAuthDir = openClawWhatsAppAuthDir(runtimeHome, link.accountKey);
-	const hermesAuthDir = hermesWhatsAppAuthDir(runtimeHome);
 	const targetProjection: RuntimeChannelCredentialProjection["targets"] = {};
 	if (targets.openclaw) {
-		targetProjection.openclaw = { authDir: openclawAuthDir };
+		targetProjection.openclaw = {
+			authDir: managedWhatsAppAuthDir(runtimeHome, "openclaw", link.accountKey),
+		};
 	}
 	if (targets.hermes) {
-		targetProjection.hermes = { authDir: hermesAuthDir };
+		targetProjection.hermes = {
+			authDir: managedWhatsAppAuthDir(runtimeHome, "hermes", link.accountKey),
+		};
 	}
-	const primaryAuthDir = targetProjection.openclaw?.authDir ?? targetProjection.hermes?.authDir;
-	if (!primaryAuthDir) return null;
+	if (!targetProjection.openclaw && !targetProjection.hermes) return null;
 	return {
 		provider: "whatsapp",
 		kind: "whatsapp_baileys_auth_state",
@@ -693,7 +698,6 @@ function whatsappBaileysCredentialProjection(
 		accountKey: link.accountKey,
 		linkId: link.linkId,
 		credentialId: material.credential.id,
-		authDir: primaryAuthDir,
 		files: [
 			{
 				path: "creds.json",
@@ -748,16 +752,12 @@ function managedWhatsAppCreds(
 		additionalData: {
 			...additionalData,
 			[CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY]: metadata,
+			[CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY]: {
+				schemaVersion: CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
+				credentialId: material.credential.id,
+			},
 		},
 	};
-}
-
-function openClawWhatsAppAuthDir(runtimeHome: string, accountKey: string): string {
-	return join(runtimeHome, ".openclaw", "credentials", "whatsapp", accountKey);
-}
-
-function hermesWhatsAppAuthDir(runtimeHome: string): string {
-	return join(runtimeHome, ".hermes", "platforms", "whatsapp", "session");
 }
 
 interface RuntimeCredentialTargets {
@@ -772,17 +772,6 @@ function runtimeCredentialTargets(manifest: RuntimeManifest): RuntimeCredentialT
 	};
 }
 
-function recordValue(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-	return value as Record<string, unknown>;
-}
-
 function stripTrailingSlash(value: string): string {
 	return value.replace(/\/+$/, "");
-}
-
-function toWebSocketUrl(baseUrl: string): string {
-	if (baseUrl.startsWith("https://")) return `wss://${baseUrl.slice("https://".length)}`;
-	if (baseUrl.startsWith("http://")) return `ws://${baseUrl.slice("http://".length)}`;
-	return baseUrl;
 }

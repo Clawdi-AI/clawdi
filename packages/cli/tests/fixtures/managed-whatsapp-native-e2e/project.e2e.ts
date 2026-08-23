@@ -88,15 +88,12 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 
 	const appRoot =
 		runtime === "openclaw" ? join(home, ".openclaw") : join(home, ".hermes", "hermes-agent");
-	const installInventory = join(outputRoot, "install-inventory");
-	mkdirSync(installInventory, { recursive: true });
 	const compatibility = reconcileManagedBaileysCompatibility({
 		desiredRuntime: runtime,
 		home,
 		appRoot,
-		paths: { installInventory },
 	});
-	expect(["applied", "already-patched", "compatible"]).toContain(compatibility.status);
+	expect(["applied", "already-patched"]).toContain(compatibility.status);
 
 	const egressInput = projected.manifest.egressProfiles;
 	if (!egressInput) throw new Error("managed WhatsApp egress profiles were not projected");

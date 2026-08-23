@@ -1,6 +1,10 @@
+import { hasExactKeys, recordValue } from "./manifest-shared";
+
 export const CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER = "x-clawdi-whatsapp-link-capability";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY = "clawdi.managedWhatsAppSocket";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA = "clawdi.managedWhatsAppSocket.v1";
+export const CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY = "clawdi.managedWhatsAppCredential";
+export const CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA = "clawdi.managedWhatsAppCredential.v1";
 
 export interface ManagedWhatsAppSocketMetadataJson {
 	schemaVersion: typeof CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA;
@@ -10,6 +14,11 @@ export interface ManagedWhatsAppSocketMetadataJson {
 		ISSUER: string;
 		PUBLIC_KEY: { type: "Buffer"; data: string };
 	};
+}
+
+export interface ManagedWhatsAppCredentialMetadataJson {
+	schemaVersion: typeof CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA;
+	credentialId: string;
 }
 
 export function parseManagedWhatsAppSocketMetadataJson(
@@ -56,14 +65,24 @@ export function parseManagedWhatsAppSocketMetadataJson(
 	};
 }
 
-function recordValue(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+export function parseManagedWhatsAppCredentialMetadataJson(
+	value: unknown,
+): ManagedWhatsAppCredentialMetadataJson {
+	const metadata = recordValue(value);
+	if (
+		!metadata ||
+		!hasExactKeys(metadata, ["credentialId", "schemaVersion"]) ||
+		metadata.schemaVersion !== CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA ||
+		typeof metadata.credentialId !== "string" ||
+		metadata.credentialId.length === 0 ||
+		metadata.credentialId.trim() !== metadata.credentialId
+	) {
+		throw new Error("invalid Clawdi managed WhatsApp credential metadata");
+	}
+	return {
+		schemaVersion: CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
+		credentialId: metadata.credentialId,
+	};
 }
 
 function isCanonicalBase64Bytes(value: string, byteLength: number): boolean {

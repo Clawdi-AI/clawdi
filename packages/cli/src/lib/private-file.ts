@@ -1,4 +1,14 @@
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	closeSync,
+	existsSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { ensureDirectoryWithinTrustedRoot } from "./trusted-directory";
 
@@ -14,6 +24,7 @@ interface PrivateFileWriteOptions {
 	 * re-assert.
 	 */
 	dirMode?: number;
+	durable?: boolean;
 	trustedRoot?: string;
 }
 
@@ -49,11 +60,22 @@ export function writePrivateFileAtomic(
 	try {
 		writeFileSync(tmp, content, { mode });
 		chmodBestEffort(tmp, mode);
+		if (options.durable) fsyncPath(tmp);
 		renameSync(tmp, path);
 		chmodBestEffort(path, mode);
+		if (options.durable) fsyncPath(dir);
 	} catch (error) {
 		rmSync(tmp, { force: true });
 		throw error;
+	}
+}
+
+function fsyncPath(path: string): void {
+	const descriptor = openSync(path, "r");
+	try {
+		fsyncSync(descriptor);
+	} finally {
+		closeSync(descriptor);
 	}
 }
 

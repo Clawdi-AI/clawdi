@@ -624,6 +624,9 @@ function prepareRuntimeApplyDependencies(
 		runtimeEntries,
 	} = context;
 	hostedRuntimeContract.assertPlatformRoots();
+	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
+	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
+	rmSync(join(paths.installInventory, "managed-baileys-compat.json"), { force: true });
 	// Runtime-user targets and their ancestor metadata are already in the
 	// exact pre-image snapshot. Establish their positive ownership boundary
 	// before any official installer or CLI command drops privilege. Modes are
@@ -763,7 +766,6 @@ function prepareRuntimeApplyDependencies(
 			desiredRuntime: managedWhatsAppRuntime,
 			home: projectionHome,
 			...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
-			paths,
 		});
 		if (compatibility.status === "rollback-refused") {
 			throw new Error(compatibility.errors.join(", "));

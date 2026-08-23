@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	copyFileSync,
-	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -16,11 +14,9 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createContext, SourceTextModule } from "node:vm";
 import {
-	MANAGED_BAILEYS_PATCH_REVISION,
 	MANAGED_BAILEYS_STATIC_PATCH_TARGETS,
 	type ManagedBaileysRuntime,
 	managedBaileysCompatMutationTargets,
-	managedBaileysCompatReceiptPath,
 	managedBaileysCompatSnapshotRuntimes,
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
@@ -58,7 +54,6 @@ interface ArtifactFixture {
 	home: string;
 	appRoot: string;
 	baileysRoot: string;
-	installInventory: string;
 }
 
 afterEach(() => {
@@ -78,115 +73,54 @@ it("defines exactly the three audited Baileys targets and no consumer target", (
 	expect(socketPatch?.hunks.map((hunk) => hunk.after).join("\n")).not.toContain(
 		"wss://web.whatsapp.com/ws/chat",
 	);
-	const qualifiedRc14Hashes = new Map([
-		["lib/Socket/socket.js", "ff8b19ff02491fa080ee371f066d49c94acb903207dd0d9fdb5548e5a594fb4a"],
-		[
-			"lib/Utils/noise-handler.js",
-			"970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
-		],
-		[
-			"lib/Utils/noise-handler.d.ts",
-			"a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
-		],
-	]);
 	for (const target of MANAGED_BAILEYS_STATIC_PATCH_TARGETS) {
-		const qualifiedHash = qualifiedRc14Hashes.get(target.relativePath);
-		if (!qualifiedHash) throw new Error(`missing rc14 hash for ${target.relativePath}`);
-		expect(sha256File(join(pristineBaileysRoot, target.relativePath))).toBe(qualifiedHash);
 		expect(new Set(target.hunks.map((hunk) => hunk.id)).size).toBe(target.hunks.length);
 	}
 });
 
 describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility", (runtime) => {
-	it("is inert before a managed Link has produced a receipt", () => {
+	it("leaves all-before content unchanged when compatibility is not desired", () => {
 		const fixture = createArtifactFixture(runtime);
 
 		const result = reconcileManagedBaileysCompatibility({
 			desiredRuntime: null,
 			home: fixture.home,
-			paths: fixture,
 		});
 
 		expect(result.status).toBe("inert");
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 		assertTargetHunkState(fixture, "before");
 	});
 
-	it("does not inspect a user-owned alias without a managed receipt", () => {
-		const fixture = createArtifactFixture(runtime, "8.0.0");
-		const target = artifactTargets(fixture)[0];
-		if (!target) throw new Error("missing user-owned alias fixture");
-		writeFileSync(target.path, `${readFileSync(target.path, "utf8")}\n// user-owned-drift\n`);
-		const unchanged = readFileSync(target.path);
-
-		const result = rollback(fixture);
-
-		expect(result.status).toBe("inert");
-		expect(readFileSync(target.path)).toEqual(unchanged);
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-	});
-
-	it("applies exact before hunks and records actual file hashes plus owned hunk identity", () => {
+	it("leaves a native foreign version inert when compatibility is not desired", () => {
 		const fixture = createArtifactFixture(runtime);
-		const observedBefore = new Map<string, string>(
-			artifactTargets(fixture).map(({ target, path }) => [target.relativePath, sha256File(path)]),
-		);
-		const result = reconcile(fixture);
-
-		expect(result.status).toBe("applied");
-		assertTargetHunkState(fixture, "after");
-		const receipt = readReceipt(fixture);
-		expect(receipt).toMatchObject({
-			schemaVersion: "clawdi.managedBaileysPatchReceipt.v4",
-			patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
-			artifact: {
-				runtime,
-				artifactRoot: fixture.baileysRoot,
-				baileys: {
-					name: runtime === "openclaw" ? "baileys" : "@whiskeysockets/baileys",
-					observedVersion: "7.0.0-rc13",
-					compatibleMajor: 7,
-				},
-			},
-		});
-		for (const targetReceipt of receipt.artifact.targets) {
-			const target = artifactTargets(fixture).find(
-				(entry) => entry.target.relativePath === targetReceipt.relativePath,
-			);
-			if (!target) throw new Error("receipt target fixture is missing");
-			const beforeSha256 = observedBefore.get(targetReceipt.relativePath);
-			if (!beforeSha256) throw new Error("receipt before hash fixture is missing");
-			expect(targetReceipt.observedBeforeSha256).toBe(beforeSha256);
-			expect(targetReceipt.observedAfterSha256).toBe(sha256File(target.path));
-			expect(targetReceipt.ownedHunkIds).toEqual(target.target.hunks.map((hunk) => hunk.id));
+		const targets = artifactTargets(fixture);
+		for (const { target, path } of targets) {
+			let content = readFileSync(path, "utf8");
+			for (const hunk of target.hunks) {
+				content = content.replace(hunk.before, `// upstream replacement for ${hunk.id}\n`);
+			}
+			writeFileSync(path, content);
 		}
-		expect(JSON.stringify(receipt)).not.toContain("integrity");
-		expect(receipt).not.toHaveProperty("appliedAt");
+		const unchanged = targets.map(({ path }) => readFileSync(path));
+
+		expect(rollback(fixture).status).toBe("inert");
+		targets.forEach(({ path }, index) => {
+			expect(readFileSync(path)).toEqual(unchanged[index]);
+		});
 	});
 
-	it("is a no-op after receipt and all exact after-hunks converge", () => {
+	it("applies, recognizes, and rolls back uniform content states", () => {
 		const fixture = createArtifactFixture(runtime);
-		reconcile(fixture);
-		const receiptPath = managedBaileysCompatReceiptPath(fixture);
-		const beforeReceipt = readFileSync(receiptPath, "utf8");
+		expect(reconcile(fixture).status).toBe("applied");
+		assertTargetHunkState(fixture, "after");
 		const beforeTargets = artifactTargets(fixture).map(({ path }) => readFileSync(path));
-
 		expect(reconcile(fixture).status).toBe("already-patched");
-		expect(readFileSync(receiptPath, "utf8")).toBe(beforeReceipt);
 		artifactTargets(fixture).forEach(({ path }, index) => {
 			expect(readFileSync(path)).toEqual(beforeTargets[index]);
 		});
-	});
-
-	it("converges recognized mixed before/after hunks only with its durable receipt", () => {
-		const fixture = createArtifactFixture(runtime);
-		reconcile(fixture);
-		const targets = artifactTargets(fixture);
-		setHunkState(targets[0], targets[0]?.target.hunks[2]?.id, "before");
-		setHunkState(targets.at(-1), targets.at(-1)?.target.hunks[0]?.id, "before");
-
-		expect(reconcile(fixture).status).toBe("applied");
-		assertTargetHunkState(fixture, "after");
+		writeBaileysIdentity(fixture, "8.0.0");
+		expect(rollback(fixture).status).toBe("rolled-back");
+		assertTargetHunkState(fixture, "before");
 	});
 
 	it("preserves an unrelated external edit outside owned hunks during rollback", () => {
@@ -201,10 +135,9 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 
 		assertTargetHunkState(fixture, "before");
 		expect(readFileSync(edited.path, "utf8")).toEndWith("\n// external-tail\n");
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 	});
 
-	it("refuses a changed owned after-hunk before mutating any rollback target", () => {
+	it("refuses a changed after-hunk when other managed after traces remain", () => {
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		const targets = artifactTargets(fixture);
@@ -228,7 +161,6 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		targets.forEach(({ path }, index) => {
 			expect(readFileSync(path)).toEqual(unchanged[index]);
 		});
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
 	});
 
 	it("refuses rollback when a present package is missing one audited target", () => {
@@ -248,16 +180,14 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		targets.slice(1).forEach(({ path }, index) => {
 			expect(readFileSync(path)).toEqual(unchanged[index]);
 		});
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
 	});
 
-	it("forgets the receipt only when the entire audited package root is uninstalled", () => {
+	it("is inert after the package root is uninstalled", () => {
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		rmSync(fixture.baileysRoot, { recursive: true });
 
-		expect(rollback(fixture).status).toBe("rolled-back");
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+		expect(rollback(fixture).status).toBe("inert");
 	});
 });
 
@@ -287,13 +217,29 @@ it.each(["openclaw", "hermes"] as const)(
 	},
 );
 
-it("scopes snapshot targets to the desired and receipt-owned aliases only", () => {
+it("rolls back the previous runtime before applying a runtime switch", () => {
+	const openclaw = createArtifactFixture("openclaw");
+	expect(reconcile(openclaw).status).toBe("applied");
+	const hermesAppRoot = join(openclaw.home, ".hermes", "hermes-agent");
+	const hermes: ArtifactFixture = {
+		runtime: "hermes",
+		root: openclaw.root,
+		home: openclaw.home,
+		appRoot: hermesAppRoot,
+		baileysRoot: installArtifactAlias(openclaw.home, "hermes"),
+	};
+
+	expect(reconcile(hermes).status).toBe("applied");
+	assertTargetHunkState(openclaw, "before");
+	assertTargetHunkState(hermes, "after");
+});
+
+it("derives snapshot targets from desired and installed aliases", () => {
 	const fixture = createArtifactFixture("openclaw");
 	expect(
 		managedBaileysCompatSnapshotRuntimes({
 			desiredRuntime: null,
 			home: fixture.home,
-			paths: fixture,
 		}),
 	).toEqual([]);
 	reconcile(fixture);
@@ -301,29 +247,26 @@ it("scopes snapshot targets to the desired and receipt-owned aliases only", () =
 		managedBaileysCompatSnapshotRuntimes({
 			desiredRuntime: null,
 			home: fixture.home,
-			paths: fixture,
 		}),
 	).toEqual(["openclaw"]);
 	expect(
 		managedBaileysCompatSnapshotRuntimes({
 			desiredRuntime: "hermes",
 			home: fixture.home,
-			paths: fixture,
 		}),
 	).toEqual(["hermes", "openclaw"]);
 
 	const paths = {
 		...getRuntimePaths(),
 		userHome: fixture.home,
-		installInventory: fixture.installInventory,
 		localEnvironments: join(fixture.root, "environments"),
 	};
 	const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		runtime: "hermes",
-		deploymentId: "dep-receipt-snapshot",
-		environmentId: "env-receipt-snapshot",
-		instanceId: "iid-receipt-snapshot",
+		deploymentId: "dep-content-snapshot",
+		environmentId: "env-content-snapshot",
+		instanceId: "iid-content-snapshot",
 		generation: 1,
 		issuedAt: "2026-08-02T00:00:00Z",
 		controlPlane: { apiUrl: "https://cloud-api.test" },
@@ -349,21 +292,6 @@ it("scopes snapshot targets to the desired and receipt-owned aliases only", () =
 			),
 		),
 	).toBe(false);
-
-	writeJson(managedBaileysCompatReceiptPath(fixture), { schemaVersion: "unknown" });
-	expect(() =>
-		managedBaileysCompatSnapshotRuntimes({
-			desiredRuntime: null,
-			home: fixture.home,
-			paths: fixture,
-		}),
-	).toThrow("receipt is invalid");
-	expect(() => runtimeUserMutationTargets(manifest, paths, fixture.home, new Map())).toThrow(
-		"receipt is invalid",
-	);
-	expect(readFileSync(managedBaileysCompatReceiptPath(fixture), "utf8")).toBe(
-		'{\n  "schemaVersion": "unknown"\n}\n',
-	);
 });
 
 it.each([
@@ -373,7 +301,6 @@ it.each([
 	const fixture = createArtifactFixture(runtime, version);
 
 	expect(reconcile(fixture).status).toBe("applied");
-	expect(readReceipt(fixture).artifact.baileys.observedVersion).toBe(version);
 	assertTargetHunkState(fixture, "after");
 });
 
@@ -423,7 +350,6 @@ it("rejects changed target semantics before mutating any target", () => {
 	targets.forEach(({ path }, index) => {
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
 it.each(["duplicate-before", "both-forms"] as const)(
@@ -444,88 +370,25 @@ it.each(["duplicate-before", "both-forms"] as const)(
 		targets.forEach(({ path }, index) => {
 			expect(readFileSync(path)).toEqual(unchanged[index]);
 		});
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 	},
 );
 
-it("rejects recognized mixed before/after hunks without a receipt", () => {
+it("rejects recognized mixed before/after hunks", () => {
 	const fixture = createArtifactFixture("openclaw");
 	const target = artifactTargets(fixture)[0];
 	setHunkState(target, target?.target.hunks[0]?.id, "after");
 	const unchanged = artifactTargets(fixture).map(({ path }) => readFileSync(path));
 
-	expect(() => reconcile(fixture)).toThrow("mixed before/after hunks without an ownership receipt");
+	expect(() => reconcile(fixture)).toThrow("refused mixed openclaw hunks");
 	artifactTargets(fixture).forEach(({ path }, index) => {
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-});
-
-it("treats all after-hunks without a receipt as compatible and never claims rollback ownership", () => {
-	const fixture = createArtifactFixture("openclaw");
-	reconcile(fixture);
-	rmSync(managedBaileysCompatReceiptPath(fixture));
-	const patched = artifactTargets(fixture).map(({ path }) => readFileSync(path));
-
-	expect(reconcile(fixture).status).toBe("compatible");
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-	expect(rollback(fixture).status).toBe("inert");
-	artifactTargets(fixture).forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(patched[index]);
-	});
-});
-
-it("retires old ownership instead of reversing after-equivalent hunks on a 7.x version change", () => {
-	const fixture = createArtifactFixture("openclaw");
-	reconcile(fixture);
-	writeBaileysIdentity(fixture, "7.6.0");
-	const patched = artifactTargets(fixture).map(({ path }) => readFileSync(path));
-
-	expect(reconcile(fixture).status).toBe("compatible");
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-	expect(rollback(fixture).status).toBe("inert");
-	artifactTargets(fixture).forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(patched[index]);
-	});
-});
-
-it("owns only newly applied before-hunks across a mixed 7.x version transition", () => {
-	const fixture = createArtifactFixture("openclaw");
-	reconcile(fixture);
-	writeBaileysIdentity(fixture, "7.7.0");
-	const socket = artifactTargets(fixture)[0];
-	const newlyAppliedId = socket?.target.hunks[0]?.id;
-	if (!socket || !newlyAppliedId) throw new Error("missing mixed transition fixture");
-	setHunkState(socket, newlyAppliedId, "before");
-
-	expect(reconcile(fixture).status).toBe("applied");
-	const receipt = readReceipt(fixture);
-	const socketReceipt = receipt.artifact.targets.find(
-		(target) => target.relativePath === socket?.target.relativePath,
-	);
-	expect(socketReceipt?.ownedHunkIds).toEqual([newlyAppliedId]);
-	expect(
-		receipt.artifact.targets
-			.filter((target) => target.relativePath !== socket?.target.relativePath)
-			.flatMap((target) => target.ownedHunkIds),
-	).toEqual([]);
-
-	expect(rollback(fixture).status).toBe("rolled-back");
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-	const socketContent = readFileSync(socket.path, "utf8");
-	for (const hunk of socket.target.hunks) {
-		expect(
-			exactMatchCount(socketContent, hunk[hunk.id === newlyAppliedId ? "before" : "after"]),
-		).toBe(1);
-	}
-	expect(() => reconcile(fixture)).toThrow("mixed before/after hunks without an ownership receipt");
 });
 
 it.each(["8.0.0", "6.9.9"])("rejects incompatible Baileys major %s", (version) => {
 	const fixture = createArtifactFixture("openclaw", version);
 	expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
 	assertTargetHunkState(fixture, "before");
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
 it.each(["7.*", "7.0", "07.0.0", "7.0.0-rc.01", "v7.0.0", "not-semver"])(
@@ -534,11 +397,10 @@ it.each(["7.*", "7.0", "07.0.0", "7.0.0-rc.01", "v7.0.0", "not-semver"])(
 		const fixture = createArtifactFixture("hermes", version);
 		expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
 		assertTargetHunkState(fixture, "before");
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 	},
 );
 
-it("reapplies after a compatible 7.x installer replacement and updates receipt ownership", () => {
+it("reapplies after a compatible 7.x installer replacement", () => {
 	const fixture = createArtifactFixture("openclaw");
 	reconcile(fixture);
 	for (const target of artifactTargets(fixture)) restorePristineTarget(target);
@@ -548,101 +410,9 @@ it("reapplies after a compatible 7.x installer replacement and updates receipt o
 	writeBaileysIdentity(fixture, "7.4.1-rc.2");
 
 	expect(reconcile(fixture).status).toBe("applied");
-	expect(readReceipt(fixture).artifact.baileys.observedVersion).toBe("7.4.1-rc.2");
 	expect(rollback(fixture).status).toBe("rolled-back");
 	assertTargetHunkState(fixture, "before");
 	expect(readFileSync(socket.path, "utf8")).toEndWith("\n// installer-7.4-tail\n");
-});
-
-it("refuses an unknown receipt revision without touching pristine targets", () => {
-	const fixture = createArtifactFixture("openclaw");
-	writeJson(managedBaileysCompatReceiptPath(fixture), {
-		schemaVersion: "clawdi.managedBaileysPatchReceipt.v999",
-		patchRevision: "unknown",
-	});
-
-	expect(() => reconcile(fixture)).toThrow("receipt is invalid");
-	assertTargetHunkState(fixture, "before");
-});
-
-it("refuses a malformed current receipt without changing owned after-hunks", () => {
-	const fixture = createArtifactFixture("openclaw");
-	reconcile(fixture);
-	const receipt = readReceipt(fixture);
-	const malformed = { ...receipt, unexpected: true };
-	writeJson(managedBaileysCompatReceiptPath(fixture), malformed);
-	const unchanged = artifactTargets(fixture).map(({ path }) => readFileSync(path));
-
-	expect(() => rollback(fixture)).toThrow("receipt is invalid");
-	artifactTargets(fixture).forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(unchanged[index]);
-	});
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
-});
-
-it("validates a malformed receipt before missing Hermes dependencies can invoke npm", () => {
-	const fixture = createArtifactFixture("hermes");
-	expect(reconcile(fixture).status).toBe("applied");
-	const bridgeRoot = join(fixture.appRoot, "scripts", "whatsapp-bridge");
-	const nodeModules = join(bridgeRoot, "node_modules");
-	const npmMarker = installFailingNpmSentinel(fixture);
-	const receiptPath = managedBaileysCompatReceiptPath(fixture);
-	const receipt = readReceipt(fixture);
-	const firstTarget = receipt.artifact.targets[0];
-	if (!firstTarget) throw new Error("missing receipt target fixture");
-	firstTarget.ownedHunkIds = ["unknown-hunk"];
-	writeJson(receiptPath, receipt);
-	const receiptBefore = readFileSync(receiptPath);
-	const packageBefore = readFileSync(join(bridgeRoot, "package.json"));
-	const lockBefore = readFileSync(join(bridgeRoot, "package-lock.json"));
-	rmSync(nodeModules, { recursive: true });
-
-	expect(() => reconcile(fixture)).toThrow("receipt is invalid");
-	expect(existsSync(npmMarker)).toBe(false);
-	expect(existsSync(nodeModules)).toBe(false);
-	expect(readFileSync(receiptPath)).toEqual(receiptBefore);
-	expect(readFileSync(join(bridgeRoot, "package.json"))).toEqual(packageBefore);
-	expect(readFileSync(join(bridgeRoot, "package-lock.json"))).toEqual(lockBefore);
-});
-
-it("validates a malformed old-runtime receipt before a Hermes runtime switch", () => {
-	const openclaw = createArtifactFixture("openclaw");
-	expect(reconcile(openclaw).status).toBe("applied");
-	const openclawBefore = artifactTargets(openclaw).map(({ path }) => readFileSync(path));
-	const receiptPath = managedBaileysCompatReceiptPath(openclaw);
-	const receipt = readReceipt(openclaw);
-	writeJson(receiptPath, { ...receipt, unexpected: true });
-	const receiptBefore = readFileSync(receiptPath);
-
-	const hermesAppRoot = join(openclaw.home, ".hermes", "hermes-agent");
-	installArtifactAlias(openclaw.home, "hermes");
-	const hermes: ArtifactFixture = {
-		runtime: "hermes",
-		root: openclaw.root,
-		home: openclaw.home,
-		appRoot: hermesAppRoot,
-		baileysRoot: join(
-			hermesAppRoot,
-			"scripts",
-			"whatsapp-bridge",
-			"node_modules",
-			"@whiskeysockets",
-			"baileys",
-		),
-		installInventory: openclaw.installInventory,
-	};
-	const bridgeRoot = join(hermesAppRoot, "scripts", "whatsapp-bridge");
-	const nodeModules = join(bridgeRoot, "node_modules");
-	const npmMarker = installFailingNpmSentinel(hermes);
-	rmSync(nodeModules, { recursive: true });
-
-	expect(() => reconcile(hermes)).toThrow("receipt is invalid");
-	expect(existsSync(npmMarker)).toBe(false);
-	expect(existsSync(nodeModules)).toBe(false);
-	expect(readFileSync(receiptPath)).toEqual(receiptBefore);
-	artifactTargets(openclaw).forEach(({ path }, index) => {
-		expect(readFileSync(path)).toEqual(openclawBefore[index]);
-	});
 });
 
 it("rejects the wrong alias package name and symlinked package identity", () => {
@@ -679,7 +449,6 @@ it("refuses a symlinked patch target before mutating any audited file", () => {
 	targets.slice(1).forEach(({ path }, index) => {
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
-	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
 it("snapshots the Hermes dependency tree only when isolated npm ci may replace it", () => {
@@ -883,7 +652,6 @@ function reconcile(fixture: ArtifactFixture) {
 		desiredRuntime: fixture.runtime,
 		home: fixture.home,
 		appRoot: fixture.appRoot,
-		paths: fixture,
 	});
 }
 
@@ -891,7 +659,6 @@ function rollback(fixture: ArtifactFixture) {
 	return reconcileManagedBaileysCompatibility({
 		desiredRuntime: null,
 		home: fixture.home,
-		paths: fixture,
 	});
 }
 
@@ -902,11 +669,10 @@ function createArtifactFixture(
 	const root = mkdtempSync(join(tmpdir(), `clawdi-managed-baileys-${runtime}-`));
 	temporaryRoots.push(root);
 	const home = join(root, "home");
-	const installInventory = join(root, "state", "install-inventory");
 	const appRoot =
 		runtime === "openclaw" ? join(home, ".openclaw") : join(home, ".hermes", "hermes-agent");
 	const baileysRoot = installArtifactAlias(home, runtime, version);
-	return { runtime, root, home, appRoot, baileysRoot, installInventory };
+	return { runtime, root, home, appRoot, baileysRoot };
 }
 
 function installArtifactAlias(
@@ -940,21 +706,6 @@ function writeBaileysIdentity(fixture: ArtifactFixture, version: string): void {
 		name: fixture.runtime === "openclaw" ? "baileys" : "@whiskeysockets/baileys",
 		version,
 	});
-}
-
-function installFailingNpmSentinel(fixture: ArtifactFixture): string {
-	const managedNpm = join(fixture.home, ".local", "bin", "npm");
-	const marker = join(fixture.root, "npm-spawned");
-	mkdirSync(dirname(managedNpm), { recursive: true });
-	writeFileSync(
-		managedNpm,
-		`#!/usr/bin/env node
-require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(" "));
-process.exit(97);
-`,
-	);
-	chmodSync(managedNpm, 0o755);
-	return marker;
 }
 
 function artifactTargets(fixture: ArtifactFixture) {
@@ -1016,33 +767,9 @@ function restorePristineTarget(
 	copyFileSync(join(pristineBaileysRoot, entry.target.relativePath), entry.path);
 }
 
-interface TestPatchReceipt {
-	schemaVersion: string;
-	patchRevision: string;
-	artifact: {
-		runtime: ManagedBaileysRuntime;
-		artifactRoot: string;
-		baileys: { name: string; observedVersion: string; compatibleMajor: number };
-		targets: Array<{
-			relativePath: string;
-			observedBeforeSha256: string;
-			observedAfterSha256: string;
-			ownedHunkIds: string[];
-		}>;
-	};
-}
-
-function readReceipt(fixture: ArtifactFixture): TestPatchReceipt {
-	return JSON.parse(readFileSync(managedBaileysCompatReceiptPath(fixture), "utf8"));
-}
-
 function writeJson(path: string, value: unknown): void {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function sha256File(path: string): string {
-	return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 interface SocketHarnessConfig {

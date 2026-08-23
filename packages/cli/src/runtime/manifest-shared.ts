@@ -97,6 +97,17 @@ export function recordValue(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
 }
+export function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+}
+export function toWebSocketUrl(value: string): string {
+	const url = new URL(value);
+	if (url.protocol === "https:") url.protocol = "wss:";
+	else if (url.protocol === "http:") url.protocol = "ws:";
+	else throw new Error("URL must use HTTP or HTTPS");
+	if (url.pathname === "/" && !url.search && !url.hash) return url.origin;
+	return url.toString();
+}
 export function stringValue(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }

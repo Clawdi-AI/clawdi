@@ -75,10 +75,6 @@ import {
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
 import {
-	managedWhatsAppAuthReceiptPath,
-	readManagedWhatsAppAuthMarker,
-} from "../src/runtime/manifest-channels";
-import {
 	hostedRuntimeManifestSchema,
 	manifestSchema,
 	officialInstallArgs,
@@ -7574,36 +7570,6 @@ exit 64
 							owner: "clawdi-native-channels",
 						},
 						{
-							id: "direct-provider-passthrough-openclaw",
-							enabled: true,
-							kind: "passthrough",
-							match: {
-								scheme: "https",
-								host: "openclaw-provider.example.test",
-								pathPrefix: "/v1/",
-								headers: {},
-								query: {},
-							},
-							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-							priority: 240,
-							owner: "provider-projection",
-						},
-						{
-							id: "direct-provider-passthrough-hermes",
-							enabled: true,
-							kind: "passthrough",
-							match: {
-								scheme: "https",
-								host: "hermes-provider.example.test",
-								pathPrefix: "/v1/",
-								headers: {},
-								query: {},
-							},
-							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-							priority: 240,
-							owner: "provider-projection",
-						},
-						{
 							id: "explicit-provider-profile",
 							enabled: true,
 							kind: "passthrough",
@@ -14449,9 +14415,18 @@ exit 64
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		const paths = getRuntimePaths();
 		const retiredWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
+		const retiredWhatsAppAuthReceipts = join(paths.managedResourceRoot, "whatsapp-auth");
+		const retiredBaileysCompatInventory = join(
+			paths.installInventory,
+			"managed-baileys-compat.json",
+		);
 		const retiredWhatsAppReceiptContent = '{"schemaVersion":"clawdi.managedHermesWhatsApp.v1"}\n';
 		mkdirSync(dirname(retiredWhatsAppReceipt), { recursive: true });
 		writeFileSync(retiredWhatsAppReceipt, retiredWhatsAppReceiptContent);
+		mkdirSync(retiredWhatsAppAuthReceipts, { recursive: true });
+		writeFileSync(join(retiredWhatsAppAuthReceipts, "openclaw.json"), "{}\n");
+		mkdirSync(dirname(retiredBaileysCompatInventory), { recursive: true });
+		writeFileSync(retiredBaileysCompatInventory, "{}\n");
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -14545,7 +14520,6 @@ exit 64
 				accountKey,
 				linkId,
 				credentialId,
-				authDir: sessionDir,
 				targets: { hermes: { authDir: sessionDir } },
 			}),
 		]);
@@ -14571,6 +14545,8 @@ exit 64
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
+		expect(existsSync(retiredWhatsAppAuthReceipts)).toBe(false);
+		expect(existsSync(retiredBaileysCompatInventory)).toBe(false);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
@@ -14688,15 +14664,6 @@ exit 64
 		);
 
 		writeFileSync(baileysSocket, patchedSocket);
-		const sessionReceipt = managedWhatsAppAuthReceiptPath(sessionDir);
-		const committedReceipt = readFileSync(sessionReceipt, "utf8");
-		writeFileSync(sessionReceipt, '{"schemaVersion":"invalid"}\n');
-		const invalidMarkerRemoval = convergeRuntimeManifest(removed, paths);
-		expect(invalidMarkerRemoval.installErrors).toEqual([]);
-		expect(existsSync(sessionDir)).toBe(true);
-		writeFileSync(sessionReceipt, committedReceipt);
-		expect(readManagedWhatsAppAuthMarker(sessionDir)?.target).toBe("hermes");
-
 		const removedConvergence = convergeRuntimeManifest(removed, paths);
 		expect(removedConvergence.installErrors).toEqual([]);
 		expect(existsSync(paths.egressProfileBundle)).toBe(false);
@@ -15036,8 +15003,8 @@ exit 0
 								accountKey,
 								linkId: "link-whatsapp-runtime",
 								credentialId,
-								authDir,
 								files: [{ path: "creds.json", secretRef }],
+								targets: { openclaw: { authDir } },
 							},
 						],
 					},
@@ -15087,18 +15054,31 @@ exit 0
 			advSecretKey: "wa-materialized-secret",
 			me: { id: "15551234567:1@s.whatsapp.net" },
 			noiseKey: { private: { type: "Buffer", data: "AQID" } },
-			additionalData: { "clawdi.managedWhatsAppSocket": managedMetadata },
+			additionalData: {
+				"clawdi.managedWhatsAppSocket": managedMetadata,
+				"clawdi.managedWhatsAppCredential": {
+					schemaVersion: "clawdi.managedWhatsAppCredential.v1",
+					credentialId: "credential-whatsapp-1",
+				},
+			},
 		};
 		const rotatedCreds = {
 			advSecretKey: "wa-rotated-secret",
 			me: { id: "15557654321:1@s.whatsapp.net" },
 			noiseKey: { private: { type: "Buffer", data: "BAUG" } },
-			additionalData: { "clawdi.managedWhatsAppSocket": managedMetadata },
+			additionalData: {
+				"clawdi.managedWhatsAppSocket": managedMetadata,
+				"clawdi.managedWhatsAppCredential": {
+					schemaVersion: "clawdi.managedWhatsAppCredential.v1",
+					credentialId: "credential-whatsapp-2",
+				},
+			},
 		};
 
 		const initial = manifestWithCredential("credential-whatsapp-1", initialCreds, 10);
 		materializeHostedChannelCredentials(initial.manifest, initial.secretValues, home);
 		expect(readFileSync(join(authDir, "creds.json"), "utf8")).toContain("wa-materialized-secret");
+		writeFileSync(join(authDir, "session-key.json"), '{"stale":true}\n');
 
 		const rotated = manifestWithCredential("credential-whatsapp-2", rotatedCreds, 11);
 		materializeHostedChannelCredentials(rotated.manifest, rotated.secretValues, home);
@@ -15106,9 +15086,6 @@ exit 0
 		expect(rotatedFile).toContain("wa-rotated-secret");
 		expect(rotatedFile).not.toContain("wa-materialized-secret");
 		expect(readdirSync(authDir)).toEqual(["creds.json"]);
-		const receipt = managedWhatsAppAuthReceiptPath(authDir);
-		expect(readFileSync(receipt, "utf8")).toContain("credential-whatsapp-2");
-		expect(statSync(receipt).mode & 0o777).toBe(0o600);
 
 		materializeHostedChannelCredentials(
 			unlinkedManifest.manifest,
@@ -15116,7 +15093,6 @@ exit 0
 			home,
 		);
 		expect(existsSync(authDir)).toBe(false);
-		expect(existsSync(receipt)).toBe(false);
 	});
 
 	it("preserves the last good OpenClaw WhatsApp auth when the next secret is missing", () => {
@@ -15210,8 +15186,8 @@ exit 64
 							kind: "whatsapp_baileys_auth_state",
 							accountKey,
 							credentialId: "credential-missing",
-							authDir,
 							files: [{ path: "creds.json", secretRef: missingSecretRef }],
+							targets: { openclaw: { authDir } },
 						},
 					],
 				},
