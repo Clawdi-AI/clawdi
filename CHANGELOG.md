@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.14
+
+Package: `clawdi@0.14.14`
+
+### Changed
+
+- Collapse hosted Skill ownership to the reservation ledger; platform receipt
+  subsystem removed (net -900 lines).
+- WhatsApp auth directory: adopt 0.13.x in-tree marker into the platform
+  receipt on upgrade, session preserved.
+
 ## Clawdi CLI v0.14.13
 
 Package: `clawdi@0.14.13`
