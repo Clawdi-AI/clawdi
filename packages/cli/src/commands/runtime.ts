@@ -172,8 +172,6 @@ interface RuntimeApplyOptions {
 		authority: RuntimePrivateAppliedAuthority,
 	) => void;
 	continueOnCliUpdateError?: boolean;
-	deferCliInstall?: boolean;
-	deferCliInstallReason?: string;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSkill>;
@@ -195,8 +193,6 @@ interface RuntimeWatchFailureBackoff {
 
 interface RuntimeWatchTickOptions {
 	forceRefresh: boolean;
-	deferCliInstall?: boolean;
-	deferCliInstallReason?: string;
 	recoverFailedSystemdUnits?: boolean;
 	failureBackoff?: RuntimeWatchFailureBackoff;
 	now: number;
@@ -1101,8 +1097,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 		failureEtag = bundleEtag;
 		const applyResult = await applyRuntimeManifestLoad(loaded, paths, {
 			continueOnCliUpdateError: true,
-			deferCliInstall: opts.deferCliInstall,
-			deferCliInstallReason: opts.deferCliInstallReason,
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			hostedRuntimeContract: opts.hostedRuntimeContract,
 		});
@@ -1298,8 +1292,6 @@ async function applyRuntimeDesiredState(
 		let cliUpdate: RuntimeCliUpdateResult;
 		try {
 			cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
-				deferInstall: opts.deferCliInstall,
-				deferReason: opts.deferCliInstallReason,
 				runningVersion: ACTIVE_CLI_VERSION,
 			});
 		} catch (error) {
@@ -1308,6 +1300,12 @@ async function applyRuntimeDesiredState(
 				kind: "cli_update_failed",
 				cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
 			};
+		}
+		if (cliUpdate.status === "error") {
+			if (!opts.continueOnCliUpdateError) {
+				throw new Error(cliUpdate.error ?? "CLI update failed");
+			}
+			return { kind: "cli_update_failed", cliUpdate };
 		}
 		if (cliUpdate.selfReexec) {
 			return { kind: "cli_handoff", cliUpdate };
@@ -1524,6 +1522,7 @@ function runtimeCliUpdateError(
 		activePath: paths.cliManagedBin,
 		activeTarget: null,
 		version: null,
+		retryAt: null,
 		selfReexec: false,
 		error: toErrorMessage(error),
 	};
@@ -1563,8 +1562,6 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const mode = detectRuntimeMode();
 	const intervalMs = parsePositiveMs(opts.intervalMs, RUNTIME_WATCH_INTERVAL_MS, "--interval-ms");
 	const selfHealMs = parsePositiveMs(opts.selfHealMs, RUNTIME_WATCH_SELF_HEAL_MS, "--self-heal-ms");
-	let cliInstallRetryPending = false;
-	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
 	let failureBackoff: RuntimeWatchFailureBackoff | null = null;
 	const wakeSignal = createRuntimeWatchWakeSignal();
@@ -1633,8 +1630,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		for (;;) {
 			if (opts.abort?.aborted) return;
 			const tickNow = Date.now();
-			const cliInstallRetryDue = cliInstallRetryPending && tickNow >= nextCliInstallRetryAt;
-			const deferCliInstall = cliInstallRetryPending && !cliInstallRetryDue;
+			const cliInstallRetryDue = nextCliInstallRetryAt > 0 && tickNow >= nextCliInstallRetryAt;
 			const failureRetryDue = failureBackoff !== null && tickNow >= failureBackoff.nextRetryAt;
 			// Full refreshes also re-resolve floating CLI channels when manifest ETags are unchanged.
 			const forceRefresh =
@@ -1647,15 +1643,11 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 					forceRefresh,
 					applyContext,
 					hostedRuntimeContract: opts.hostedRuntimeContract,
-					deferCliInstall,
 					failureBackoff: failureBackoff ?? undefined,
 					now: tickNow,
 					// Conditional retries run every 15 seconds. Recover failed units
 					// only on the five-minute full refresh, or once in one-shot mode.
 					recoverFailedSystemdUnits: forceRefresh || opts.once === true,
-					deferCliInstallReason: deferCliInstall
-						? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
-						: undefined,
 				});
 			} catch (error) {
 				const message = toErrorMessage(error);
@@ -1669,17 +1661,14 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			}
 			if (event !== null) {
 				const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
-				if (cliUpdateStatus === "error") {
-					cliInstallRetryPending = true;
-					cliInstallBackoffMs = nextBoundedBackoffMs(cliInstallBackoffMs);
-					nextCliInstallRetryAt = Date.now() + cliInstallBackoffMs;
+				const cliRetryAt = runtimeWatchCliRetryAt(event);
+				if (cliRetryAt !== null) {
+					nextCliInstallRetryAt = cliRetryAt;
 				} else if (
 					cliUpdateStatus === "installed" ||
 					cliUpdateStatus === "current" ||
 					cliUpdateStatus === "not_requested"
 				) {
-					cliInstallRetryPending = false;
-					cliInstallBackoffMs = 0;
 					nextCliInstallRetryAt = 0;
 				}
 				if (event.status === "error" && event.stage !== "cli-update") {
@@ -1729,6 +1718,15 @@ function runtimeWatchCliUpdateStatus(
 		return status;
 	}
 	return null;
+}
+
+function runtimeWatchCliRetryAt(event: Record<string, unknown>): number | null {
+	const cliUpdate = event.cliUpdate;
+	if (!cliUpdate || typeof cliUpdate !== "object" || Array.isArray(cliUpdate)) return null;
+	const retryAt = (cliUpdate as Record<string, unknown>).retryAt;
+	if (typeof retryAt !== "string") return null;
+	const timestamp = Date.parse(retryAt);
+	return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function nextBoundedBackoffMs(previousMs: number): number {
