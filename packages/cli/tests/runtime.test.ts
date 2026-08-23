@@ -5723,6 +5723,11 @@ exit 0
 		const nativeProfileId = nativeOAuthProfileId("hermes", "openai-codex");
 		const ledgerKey = createHash("sha256").update("openai-codex").digest("hex");
 		const ledgerPath = join(paths.oauthCredentialRoot, "hermes", `${ledgerKey}.json`);
+		const retiredLedgerPath = join(
+			paths.oauthCredentialRoot,
+			"hermes",
+			`${createHash("sha256").update("retired-provider").digest("hex")}.json`,
+		);
 		mkdirSync(dirname(authPath), { recursive: true });
 		writeFileSync(
 			authPath,
@@ -5758,6 +5763,17 @@ exit 0
 		});
 		mkdirSync(dirname(ledgerPath), { recursive: true });
 		writeFileSync(
+			retiredLedgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "hermes",
+				providerId: "retired-provider",
+				nativeProfileId: "retired",
+				credentialRevision: "retired",
+				state: "retired",
+			})}\n`,
+		);
+		writeFileSync(
 			ledgerPath,
 			`${JSON.stringify({
 				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
@@ -5777,6 +5793,7 @@ exit 0
 
 		const first = convergeRuntimeManifest(firstLoad, paths);
 		expect(first.installErrors).toEqual([]);
+		expect(existsSync(retiredLedgerPath)).toBe(false);
 		let auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
 		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
@@ -5866,53 +5883,7 @@ exit 0
 				refresh_token: "user-independent-refresh",
 			}),
 		]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		auth.credential_pool["openai-codex"].unshift({
-			id: nativeProfileId,
-			label: "User replacement",
-			auth_type: "oauth",
-			priority: 0,
-			source: "manual:device_code",
-			access_token: "foreign-namespaced-access",
-			refresh_token: "foreign-namespaced-refresh",
-		});
-		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "hermes",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "hermes-revision-2",
-				state: "adopted",
-			})}\n`,
-		);
-		convergeRuntimeManifest(removedLoad, paths);
-		auth = JSON.parse(readFileSync(authPath, "utf8"));
-		expect(auth.credential_pool["openai-codex"]).toEqual([
-			expect.objectContaining({
-				id: nativeProfileId,
-				access_token: "foreign-namespaced-access",
-				refresh_token: "foreign-namespaced-refresh",
-			}),
-			expect.objectContaining({ id: "user-independent" }),
-		]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		const readdedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
-		};
-		convergeRuntimeManifest(readdedLoad, paths);
-		auth = JSON.parse(readFileSync(authPath, "utf8"));
-		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
-			id: nativeProfileId,
-			access_token: "foreign-namespaced-access",
-			refresh_token: "foreign-namespaced-refresh",
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(existsSync(ledgerPath)).toBe(false);
 	}, 30_000);
 
 	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
@@ -6068,17 +6039,6 @@ exit 0
 				},
 			},
 		};
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-				runtime: "openclaw",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "openclaw-revision-2",
-				state: "seeded",
-			})}\n`,
-		);
 		convergeRuntimeManifest(removedLoad, paths);
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		expect(store.profiles[nativeProfileId]).toBeUndefined();
@@ -6090,54 +6050,7 @@ exit 0
 		expect(store.order?.openai ?? []).toEqual(["openai:default"]);
 		expect(store.lastGood?.openai).toBeUndefined();
 		expect(store.usageStats?.[nativeProfileId]).toBeUndefined();
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
-			schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-			state: "retired",
-		});
-
-		store.profiles[nativeProfileId] = {
-			type: "oauth",
-			provider: "openai",
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		};
-		store.order.openai = [nativeProfileId, "openai:default"];
-		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "openclaw",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "openclaw-revision-2",
-				state: "adopted",
-			})}\n`,
-		);
-		convergeRuntimeManifest(removedLoad, paths);
-		store = JSON.parse(readFileSync(storePath, "utf8"));
-		expect(store.profiles[nativeProfileId]).toMatchObject({
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		});
-		expect(store.profiles["openai:default"]).toMatchObject({
-			access: "native-reauth-access",
-			refresh: "native-reauth-refresh",
-		});
-		expect(store.order.openai).toEqual([nativeProfileId, "openai:default"]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
-
-		const readdedLoad: RuntimeManifestLoad = {
-			...nativeReauthenticatedLoad,
-			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
-		};
-		convergeRuntimeManifest(readdedLoad, paths);
-		store = JSON.parse(readFileSync(storePath, "utf8"));
-		expect(store.profiles[nativeProfileId]).toMatchObject({
-			access: "foreign-namespaced-access",
-			refresh: "foreign-namespaced-refresh",
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(existsSync(ledgerPath)).toBe(false);
 		const calls = readFileSync(sdkCalls, "utf8");
 		expect(calls).toContain("ensure ");
 		expect(calls).toContain("update ");
