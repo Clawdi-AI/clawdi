@@ -1,3 +1,5 @@
+import { hasExactKeys, recordValue } from "./manifest-shared";
+
 export const CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER = "x-clawdi-whatsapp-link-capability";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY = "clawdi.managedWhatsAppSocket";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA = "clawdi.managedWhatsAppSocket.v1";
@@ -81,16 +83,6 @@ export function parseManagedWhatsAppCredentialMetadataJson(
 		schemaVersion: CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
 		credentialId: metadata.credentialId,
 	};
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
 }
 
 function isCanonicalBase64Bytes(value: string, byteLength: number): boolean {

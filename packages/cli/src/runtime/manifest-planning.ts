@@ -50,7 +50,7 @@ import {
 	managedWhatsAppAuthRoot,
 	OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS,
 	openClawManagedChannelsPatch,
-	readManagedWhatsAppAuthMarker,
+	readManagedWhatsAppAuthMetadata,
 	validateHostedChannelCredentialsPlan,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
@@ -566,11 +566,11 @@ function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home:
 	if (root && existsSync(root)) {
 		for (const entry of readdirSync(root)) {
 			const authDir = join(root, entry);
-			if (readManagedWhatsAppAuthMarker(authDir)) targets.add(authDir);
+			if (readManagedWhatsAppAuthMetadata(authDir)) targets.add(authDir);
 		}
 	}
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
-	if (hermesAuthDir && readManagedWhatsAppAuthMarker(hermesAuthDir)) {
+	if (hermesAuthDir && readManagedWhatsAppAuthMetadata(hermesAuthDir)) {
 		targets.add(hermesAuthDir);
 	}
 	return [...targets];
@@ -580,7 +580,7 @@ export function managedWhatsAppCompatibilityRuntime(
 ): ManagedBaileysRuntime | null {
 	const runtimes = new Set<ManagedBaileysRuntime>();
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
-		runtimes.add(credential.target === "hermes" ? "hermes" : "openclaw");
+		runtimes.add(credential.target);
 	}
 	if (runtimes.size > 1) {
 		throw new Error("managed WhatsApp projection must target exactly one native runtime");

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EgressProfileInputBundle } from "./egress-profiles";
+import { toWebSocketUrl } from "./manifest-shared";
 import { CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER } from "./whatsapp-upstream-contract";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -86,10 +87,7 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 }
 
 function managedWhatsAppWebSocketUrl(controlPlaneApiUrl: string): string {
-	const url = new URL(controlPlaneApiUrl);
-	if (url.protocol === "https:") url.protocol = "wss:";
-	else if (url.protocol === "http:") url.protocol = "ws:";
-	else throw new Error("WhatsApp egress control plane URL must use HTTP or HTTPS");
+	const url = new URL(toWebSocketUrl(controlPlaneApiUrl));
 	url.pathname = "/v1/channels/whatsapp/baileys";
 	url.search = "";
 	url.hash = "";

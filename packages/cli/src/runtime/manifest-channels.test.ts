@@ -66,8 +66,8 @@ function manifest(path: string, credentialId = "credential-test"): RuntimeManife
 					kind: "whatsapp_baileys_auth_state",
 					accountKey: ACCOUNT_KEY,
 					credentialId,
-					authDir: path,
 					files: [{ path: "creds.json", secretRef: SECRET_REF }],
+					targets: { openclaw: { authDir: path } },
 				},
 			],
 		},
@@ -170,26 +170,20 @@ describe("managed WhatsApp auth directories", () => {
 	});
 
 	test("rejects directories without valid creds metadata", () => {
-		const cases: Array<{ name: string; creds: string }> = [
-			{ name: "missing", creds: JSON.stringify({ advSecretKey: "user-secret" }) },
-			{
-				name: "malformed-socket",
-				creds: JSON.stringify({
-					additionalData: { "clawdi.managedWhatsAppSocket": {} },
-				}),
-			},
-			{
-				name: "malformed-credential",
-				creds: credsJson("user-secret", "credential-test").replace(
-					"clawdi.managedWhatsAppCredential.v1",
-					"invalid",
-				),
-			},
+		const cases = [
+			JSON.stringify({ advSecretKey: "user-secret" }),
+			JSON.stringify({
+				additionalData: { "clawdi.managedWhatsAppSocket": {} },
+			}),
+			credsJson("user-secret", "credential-test").replace(
+				"clawdi.managedWhatsAppCredential.v1",
+				"invalid",
+			),
 		];
-		for (const testCase of cases) {
-			const path = authDir(testCase.name);
+		for (const creds of cases) {
+			const path = authDir();
 			mkdirSync(path, { recursive: true });
-			writeFileSync(join(path, "creds.json"), `${testCase.creds}\n`);
+			writeFileSync(join(path, "creds.json"), `${creds}\n`);
 			writeFileSync(join(path, LEGACY_MARKER), legacyMarker());
 
 			expect(() =>
@@ -199,6 +193,7 @@ describe("managed WhatsApp auth directories", () => {
 					home,
 				),
 			).toThrow(`refusing to overwrite unmanaged WhatsApp auth directory ${path}`);
+			rmSync(path, { recursive: true, force: true });
 		}
 	});
 

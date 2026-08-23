@@ -1,43 +1,15 @@
-import { resolve } from "node:path";
-import { z } from "zod";
 import type { RuntimeManifest } from "./manifest-contract";
-import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
-
-const uuidSchema = z.string().uuid();
+import { recordValue } from "./manifest-shared";
+import { managedWhatsAppAuthDir } from "./whatsapp-credential-projection";
 
 export function managedHermesWhatsAppAuthDir(
 	manifest: RuntimeManifest,
 	home: string,
 ): string | null {
 	if (manifest.runtimes.hermes?.enabled !== true) return null;
-	const channels = plainRecord(manifest.projection?.channels);
-	const whatsapp = plainRecord(channels?.whatsapp);
-	const accounts = plainRecord(whatsapp?.accounts);
-	if (!accounts || Object.keys(accounts).length === 0) return null;
-	const accountKeys = Object.keys(accounts).sort();
-	if (accountKeys.length !== 1) {
-		throw new Error("managed Hermes WhatsApp projection must contain exactly one account");
-	}
-	const [accountKey] = accountKeys;
-	if (!accountKey) throw new Error("managed Hermes WhatsApp account identity is missing");
-	const credentials = managedWhatsAppAuthCredentials(
-		manifest.projection?.channelCredentials,
-	).filter((credential) => credential.target === "hermes" && credential.accountKey === accountKey);
-	if (credentials.length !== 1) {
-		throw new Error("managed Hermes WhatsApp projection must contain one exact credential");
-	}
-	const credential = credentials[0];
-	if (!credential?.linkId) {
-		throw new Error("managed Hermes WhatsApp projection is missing its Link identity");
-	}
-	uuidSchema.parse(credential.linkId);
-	uuidSchema.parse(credential.credentialId);
-	const authDir = resolve(credential.authDir);
-	const expectedAuthDir = resolve(home, ".hermes", "platforms", "whatsapp", "session");
-	if (authDir !== expectedAuthDir) {
-		throw new Error(`managed Hermes WhatsApp auth directory must be ${expectedAuthDir}`);
-	}
-	return authDir;
+	const channels = recordValue(manifest.projection?.channels);
+	if (!managedChannelHasAccounts(channels?.whatsapp)) return null;
+	return managedWhatsAppAuthDir(home, "hermes", "");
 }
 
 export function buildHermesManagedChannelsPatch(
@@ -140,13 +112,7 @@ export function buildHermesManagedChannelsPatch(
 }
 
 export function managedChannelHasAccounts(channel: unknown): boolean {
-	const record = plainRecord(channel);
-	const accounts = plainRecord(record?.accounts);
+	const record = recordValue(channel);
+	const accounts = recordValue(record?.accounts);
 	return accounts !== null && Object.keys(accounts).length > 0;
-}
-
-function plainRecord(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
 }

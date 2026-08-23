@@ -1,10 +1,25 @@
+import { resolve } from "node:path";
+import { recordValue } from "./manifest-shared";
+
+export type ManagedWhatsAppAuthTarget = "openclaw" | "hermes";
+
 export interface ManagedWhatsAppAuthCredential {
 	accountKey: string;
 	linkId: string | null;
 	credentialId: string;
 	authDir: string;
 	credsJsonSecretRef: string;
-	target: "openclaw" | "hermes" | "legacy";
+	target: ManagedWhatsAppAuthTarget;
+}
+
+export function managedWhatsAppAuthDir(
+	home: string,
+	target: ManagedWhatsAppAuthTarget,
+	accountKey: string,
+): string {
+	return target === "hermes"
+		? resolve(home, ".hermes", "platforms", "whatsapp", "session")
+		: resolve(home, ".openclaw", "credentials", "whatsapp", accountKey);
 }
 
 export function managedWhatsAppAuthCredentials(
@@ -36,11 +51,12 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 		throw new Error("WhatsApp auth credential projection is incomplete");
 	}
 	const targets = recordValue(record.targets);
+	if (!targets) {
+		throw new Error("WhatsApp auth credential projection is incomplete");
+	}
 	const credentials: ManagedWhatsAppAuthCredential[] = [];
-	const openclawTarget = targets ? recordValue(targets.openclaw) : null;
-	const openclawAuthDir = targets
-		? stringValue(openclawTarget?.authDir)
-		: stringValue(record.authDir);
+	const openclawTarget = recordValue(targets.openclaw);
+	const openclawAuthDir = stringValue(openclawTarget?.authDir);
 	if (openclawAuthDir) {
 		credentials.push({
 			accountKey,
@@ -48,10 +64,10 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 			credentialId,
 			authDir: openclawAuthDir,
 			credsJsonSecretRef,
-			target: targets ? "openclaw" : "legacy",
+			target: "openclaw",
 		});
 	}
-	const hermesTarget = targets ? recordValue(targets.hermes) : null;
+	const hermesTarget = recordValue(targets.hermes);
 	const hermesAuthDir = hermesTarget ? stringValue(hermesTarget.authDir) : null;
 	if (hermesAuthDir) {
 		credentials.push({
@@ -68,13 +84,6 @@ function parseManagedWhatsAppAuthCredential(value: unknown): ManagedWhatsAppAuth
 	}
 	return credentials;
 }
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function stringValue(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
 }

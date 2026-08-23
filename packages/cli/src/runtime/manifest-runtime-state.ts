@@ -169,11 +169,7 @@ export function runtimeProgramRevisionForManifest(
 					mergeRuntimeSecretEnv(runtime, runtimeSettings, providerEnvironment.secretEnv),
 				),
 				...hostedWhatsAppAuthCredentials(manifest)
-					.filter(
-						(credential) =>
-							credential.target === runtime ||
-							(runtime === "openclaw" && credential.target === "legacy"),
-					)
+					.filter((credential) => credential.target === runtime)
 					.map((credential) => credential.credsJsonSecretRef),
 			]
 		: [];
