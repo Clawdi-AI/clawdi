@@ -1,31 +1,20 @@
 // Upgrade procedure: packages/cli/docs/managed-baileys-compat-upgrade.md
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
-	chmodSync,
 	closeSync,
 	existsSync,
-	fsyncSync,
 	lstatSync,
-	mkdirSync,
 	openSync,
 	readFileSync,
 	readSync,
 	realpathSync,
-	renameSync,
-	rmSync,
 	statSync,
-	writeSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { isValidSemver } from "../lib/semver";
-import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, spawnRuntimeUserCommand } from "./runtime-user-command";
 
-export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v3";
-
-const BAILEYS_COMPATIBLE_MAJOR = 7;
-const RECEIPT_FILE = "managed-baileys-compat.json";
-const RECEIPT_SCHEMA = "clawdi.managedBaileysPatchReceipt.v4";
 const HERMES_BAILEYS_DEPENDENCY_INSTALL_TIMEOUT_MS = 300_000;
 
 export type ManagedBaileysRuntime = "openclaw" | "hermes";
@@ -38,7 +27,6 @@ interface StrictContextHunk {
 
 interface StaticPatchTarget {
 	relativePath: string;
-	auditPristineSha256: string;
 	hunks: readonly StrictContextHunk[];
 }
 
@@ -51,47 +39,20 @@ interface ManagedBaileysArtifact {
 }
 
 interface VerifiedPackageIdentity {
-	version: string;
 	path: string;
 	sha256: string;
 }
 
-interface ManagedBaileysPatchReceiptTarget {
-	relativePath: string;
-	observedBeforeSha256: string;
-	observedAfterSha256: string;
-	ownedHunkIds: string[];
-}
-
-interface ManagedBaileysPatchReceiptArtifact {
-	runtime: ManagedBaileysRuntime;
-	artifactRoot: string;
-	baileys: {
-		name: string;
-		observedVersion: string;
-		compatibleMajor: typeof BAILEYS_COMPATIBLE_MAJOR;
-	};
-	targets: ManagedBaileysPatchReceiptTarget[];
-}
-
-interface ManagedBaileysPatchReceipt {
-	schemaVersion: typeof RECEIPT_SCHEMA;
-	patchRevision: typeof MANAGED_BAILEYS_PATCH_REVISION;
-	artifact: ManagedBaileysPatchReceiptArtifact;
-}
-
 type ManagedBaileysReconcileResult =
-	| { status: "inert"; receiptPath: string }
-	| { status: "compatible"; receiptPath: string }
-	| { status: "already-patched"; receiptPath: string }
-	| { status: "applied"; receiptPath: string }
-	| { status: "rolled-back"; receiptPath: string }
-	| { status: "rollback-refused"; receiptPath: string; errors: string[] };
+	| { status: "inert" }
+	| { status: "already-patched" }
+	| { status: "applied" }
+	| { status: "rolled-back" }
+	| { status: "rollback-refused"; errors: string[] };
 
 const BAILEYS_TARGETS = [
 	{
 		relativePath: "lib/Socket/socket.js",
-		auditPristineSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
 		hunks: [
 			{
 				id: "socket.default-connection-config-import.v1",
@@ -171,7 +132,6 @@ const BAILEYS_TARGETS = [
 	},
 	{
 		relativePath: "lib/Utils/noise-handler.js",
-		auditPristineSha256: "970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
 		hunks: [
 			{
 				id: "noise.configurable-trust.v1",
@@ -205,7 +165,6 @@ const BAILEYS_TARGETS = [
 	},
 	{
 		relativePath: "lib/Utils/noise-handler.d.ts",
-		auditPristineSha256: "a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
 		hunks: [
 			{
 				id: "noise.types-configurable-trust.v1",
@@ -230,22 +189,20 @@ const BAILEYS_TARGETS = [
 	},
 ] as const satisfies readonly StaticPatchTarget[];
 
-export function managedBaileysCompatReceiptPath(
-	paths: Pick<RuntimePaths, "installInventory">,
-): string {
-	return join(paths.installInventory, RECEIPT_FILE);
-}
-
 export function managedBaileysCompatSnapshotRuntimes(input: {
 	desiredRuntime: ManagedBaileysRuntime | null;
 	home: string;
-	paths: Pick<RuntimePaths, "installInventory">;
 }): ManagedBaileysRuntime[] {
-	const receipt = readReceipt(managedBaileysCompatReceiptPath(input.paths));
-	if (receipt) assertReceiptLayout(receipt, input.home);
 	const runtimes = new Set<ManagedBaileysRuntime>();
 	if (input.desiredRuntime) runtimes.add(input.desiredRuntime);
-	if (receipt) runtimes.add(receipt.artifact.runtime);
+	for (const runtime of ["openclaw", "hermes"] as const) {
+		if (
+			runtime !== input.desiredRuntime &&
+			artifactContainsAfterHunk(resolveInstalledArtifact(runtime, input.home))
+		) {
+			runtimes.add(runtime);
+		}
+	}
 	return [...runtimes];
 }
 
@@ -269,137 +226,56 @@ export function reconcileManagedBaileysCompatibility(input: {
 	desiredRuntime: ManagedBaileysRuntime | null;
 	home: string;
 	appRoot?: string;
-	paths: Pick<RuntimePaths, "installInventory">;
 }): ManagedBaileysReconcileResult {
-	const receiptPath = managedBaileysCompatReceiptPath(input.paths);
-	let existingReceipt = readReceipt(receiptPath);
-	if (existingReceipt) assertReceiptLayout(existingReceipt, input.home);
-	if (!input.desiredRuntime) return rollbackManagedBaileysCompatibility(receiptPath, input.home);
-	if (!input.appRoot) {
+	if (input.desiredRuntime && !input.appRoot) {
 		throw new Error(`managed WhatsApp ${input.desiredRuntime} artifact root is unavailable`);
 	}
+	const desiredArtifact =
+		input.desiredRuntime && input.appRoot
+			? resolveArtifact({
+					runtime: input.desiredRuntime,
+					home: input.home,
+					appRoot: input.appRoot,
+				})
+			: null;
+	let rolledBack = false;
+	for (const runtime of ["openclaw", "hermes"] as const) {
+		if (runtime === input.desiredRuntime) continue;
+		const artifact = resolveInstalledArtifact(runtime, input.home);
+		if (!artifactContainsAfterHunk(artifact)) continue;
+		try {
+			rolledBack = reconcileArtifact(artifact, "before") === "mutated" || rolledBack;
+		} catch (error) {
+			if (!input.desiredRuntime) {
+				return { status: "rollback-refused", errors: [String(error)] };
+			}
+			throw error;
+		}
+	}
+	if (!input.desiredRuntime) return { status: rolledBack ? "rolled-back" : "inert" };
 	if (input.desiredRuntime === "hermes") {
+		if (!input.appRoot) throw new Error("managed WhatsApp Hermes artifact root is unavailable");
 		ensureHermesManagedBaileysDependencies(input.home, input.appRoot);
 	}
-	const artifact = resolveArtifact({
-		runtime: input.desiredRuntime,
-		home: input.home,
-		appRoot: input.appRoot,
-	});
-	const packageIdentity = verifyArtifactIdentity(artifact);
-	const observedVersion = packageIdentity.version;
-	const targetStates = artifact.targets.map((target) => classifyTarget(artifact, target));
-	assertRecognizedTargets(artifact, targetStates);
-
-	if (existingReceipt && !receiptLayoutMatches(existingReceipt.artifact, artifact)) {
-		const rollback = rollbackManagedBaileysCompatibility(receiptPath, input.home);
-		if (rollback.status === "rollback-refused") {
-			throw new Error(
-				`managed WhatsApp compatibility could not recover the previous artifact: ${rollback.errors.join(", ")}`,
-			);
-		}
-		existingReceipt = null;
+	if (!desiredArtifact) throw new Error("managed WhatsApp compatibility artifact is unavailable");
+	const result = reconcileArtifact(desiredArtifact, "after");
+	if (desiredArtifact.runtime === "hermes") {
+		writeHermesDependencyStamp(assertHermesBridgeRoot(desiredArtifact));
 	}
-
-	const allHunks = targetStates.flatMap((target) => target.hunks);
-	if (!existingReceipt) {
-		if (allHunks.every((hunk) => hunk.state === "after")) {
-			if (artifact.runtime === "hermes") {
-				writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
-			}
-			return { status: "compatible", receiptPath };
-		}
-		if (!allHunks.every((hunk) => hunk.state === "before")) {
-			throw new Error(
-				`managed WhatsApp compatibility refused mixed before/after hunks without an ownership receipt for ${artifact.runtime}`,
-			);
-		}
-	}
-
-	const versionChanged = existingReceipt
-		? existingReceipt.artifact.baileys.observedVersion !== observedVersion
-		: false;
-	const beforeHunks = allHunks.filter((hunk) => hunk.state === "before");
-	if (existingReceipt && versionChanged && beforeHunks.length === 0) {
-		removeReceiptDurable(receiptPath);
-		if (artifact.runtime === "hermes") {
-			writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
-		}
-		return { status: "compatible", receiptPath };
-	}
-	if (existingReceipt && beforeHunks.length === 0) {
-		if (artifact.runtime === "hermes") {
-			writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
-		}
-		return { status: "already-patched", receiptPath };
-	}
-
-	const ownedHunks = ownedHunksForApply(targetStates, existingReceipt, versionChanged);
-	const plans = targetStates.map((state) =>
-		planTargetHunkMutation(
-			state,
-			new Set(state.hunks.filter((hunk) => hunk.state === "before").map((hunk) => hunk.hunk.id)),
-			"after",
-		),
-	);
-	const receipt = buildReceipt(artifact, observedVersion, plans, ownedHunks);
-	writeReceiptDurable(receiptPath, receipt);
-	applyTargetPlans(plans, [{ path: packageIdentity.path, expectedSha256: packageIdentity.sha256 }]);
-	if (artifact.runtime === "hermes") writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
-	return { status: "applied", receiptPath };
+	return { status: result === "mutated" ? "applied" : "already-patched" };
 }
 
-function rollbackManagedBaileysCompatibility(
-	receiptPath: string,
-	home: string,
-): ManagedBaileysReconcileResult {
-	const receipt = readReceipt(receiptPath);
-	if (!receipt) return { status: "inert", receiptPath };
-	const artifact = resolveInstalledArtifact(receipt.artifact.runtime, home);
-	const errors: string[] = [];
-	if (!receiptLayoutMatches(receipt.artifact, artifact)) {
-		errors.push("managed WhatsApp compatibility receipt does not match the audited artifact");
-	} else if (directoryEntryExists(artifact.root)) {
-		let packageIdentity: VerifiedPackageIdentity | null = null;
-		try {
-			packageIdentity = verifyArtifactIdentity(artifact);
-		} catch (error) {
-			errors.push(String(error));
-		}
-		const targetStates: ClassifiedTarget[] = [];
-		if (errors.length === 0) {
-			for (const target of artifact.targets) {
-				try {
-					targetStates.push(classifyTarget(artifact, target));
-				} catch (error) {
-					errors.push(String(error));
-				}
-			}
-		}
-		if (errors.length === 0) {
-			try {
-				assertRecognizedTargets(artifact, targetStates);
-			} catch (error) {
-				errors.push(String(error));
-			}
-		}
-		if (errors.length > 0) return { status: "rollback-refused", receiptPath, errors };
-		if (packageIdentity?.version === receipt.artifact.baileys.observedVersion) {
-			const receiptTargets = new Map(
-				receipt.artifact.targets.map((target) => [target.relativePath, target]),
-			);
-			const plans = targetStates.map((state) => {
-				const receiptTarget = receiptTargets.get(state.target.relativePath);
-				if (!receiptTarget) throw new Error("managed WhatsApp receipt target is missing");
-				return planTargetHunkMutation(state, new Set(receiptTarget.ownedHunkIds), "before");
-			});
-			applyTargetPlans(plans, [
-				{ path: packageIdentity.path, expectedSha256: packageIdentity.sha256 },
-			]);
-		}
-	}
-	removeReceiptDurable(receiptPath);
-	return { status: "rolled-back", receiptPath };
+function reconcileArtifact(
+	artifact: ManagedBaileysArtifact,
+	desired: "before" | "after",
+): "unchanged" | "mutated" {
+	const targetStates = artifact.targets.map((target) => classifyTarget(artifact, target));
+	const current = uniformArtifactState(artifact, targetStates);
+	if (current === desired) return "unchanged";
+	const packageIdentity = verifyArtifactIdentity(artifact, desired === "after");
+	const plans = targetStates.map((state) => planTargetHunkMutation(state, desired));
+	applyTargetPlans(plans, [{ path: packageIdentity.path, expectedSha256: packageIdentity.sha256 }]);
+	return "mutated";
 }
 
 function ensureHermesManagedBaileysDependencies(home: string, appRoot: string): void {
@@ -450,7 +326,7 @@ function writeHermesDependencyStamp(bridgeRoot: string): void {
 		}
 		if (readFileSync(stamp, "utf8") === content) return;
 	}
-	writeDurableAtomic(stamp, content, 0o644, 0o755);
+	writePrivateFileAtomic(stamp, content, { mode: 0o644, dirMode: 0o755, durable: true });
 	makeRuntimeUserOwned(stamp);
 }
 
@@ -500,7 +376,10 @@ function assertHermesBridgeRoot(artifact: ManagedBaileysArtifact): string {
 	return artifact.hermesBridgeRoot;
 }
 
-function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): VerifiedPackageIdentity {
+function verifyArtifactIdentity(
+	artifact: ManagedBaileysArtifact,
+	requireCompatibleVersion: boolean,
+): VerifiedPackageIdentity {
 	assertTrustedRealDirectory(artifact.root);
 	const packagePath = join(artifact.root, "package.json");
 	assertTrustedRealFile(artifact.root, packagePath);
@@ -521,12 +400,15 @@ function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): VerifiedPacka
 			`managed WhatsApp compatibility requires package ${artifact.packageName}; found ${String(name)}`,
 		);
 	}
-	if (typeof version !== "string" || !isValidSemver(version) || !version.startsWith("7.")) {
+	if (
+		requireCompatibleVersion &&
+		(typeof version !== "string" || !isValidSemver(version) || !version.startsWith("7."))
+	) {
 		throw new Error(
 			`managed WhatsApp compatibility requires valid Baileys SemVer major 7; found ${String(version)}`,
 		);
 	}
-	return { version, path: packagePath, sha256: sha256String(packageContent) };
+	return { path: packagePath, sha256: sha256String(packageContent) };
 }
 
 type HunkState = "before" | "after" | "unknown";
@@ -551,6 +433,22 @@ interface TargetMutationPlan {
 	content: string;
 	observedBeforeSha256: string;
 	observedAfterSha256: string;
+}
+
+function artifactContainsAfterHunk(artifact: ManagedBaileysArtifact): boolean {
+	for (const target of artifact.targets) {
+		const path = join(artifact.root, target.relativePath);
+		try {
+			if (!lstatSync(path).isFile() || realpathSync(path) !== resolve(path)) continue;
+			const content = readFileSync(path, "utf8");
+			if (target.hunks.some((hunk) => exactMatchOffsets(content, hunk.after).length > 0)) {
+				return true;
+			}
+		} catch {
+			// Passive cleanup stays inert unless managed patch content is positively identified.
+		}
+	}
+	return false;
 }
 
 function classifyTarget(
@@ -600,10 +498,10 @@ function exactMatchOffsets(content: string, needle: string): number[] {
 	return offsets;
 }
 
-function assertRecognizedTargets(
+function uniformArtifactState(
 	artifact: ManagedBaileysArtifact,
 	states: ClassifiedTarget[],
-): void {
+): Exclude<HunkState, "unknown"> {
 	const unknown = states.flatMap((target) =>
 		target.hunks.flatMap((hunk) =>
 			hunk.state === "unknown"
@@ -618,43 +516,23 @@ function assertRecognizedTargets(
 			`managed WhatsApp compatibility patch refused non-unique or changed ${artifact.runtime} hunks: ${unknown.join(", ")}`,
 		);
 	}
-}
-
-function ownedHunksForApply(
-	states: ClassifiedTarget[],
-	existingReceipt: ManagedBaileysPatchReceipt | null,
-	versionChanged: boolean,
-): Map<string, Set<string>> {
-	const receiptTargets = new Map(
-		(existingReceipt?.artifact.targets ?? []).map((target) => [target.relativePath, target]),
-	);
-	return new Map(
-		states.map((state) => {
-			const owned = new Set<string>();
-			if (!versionChanged) {
-				for (const id of receiptTargets.get(state.target.relativePath)?.ownedHunkIds ?? []) {
-					owned.add(id);
-				}
-			}
-			for (const hunk of state.hunks) {
-				if (hunk.state === "before") owned.add(hunk.hunk.id);
-			}
-			return [state.target.relativePath, owned];
-		}),
-	);
+	const recognized = new Set(states.flatMap((target) => target.hunks.map((hunk) => hunk.state)));
+	if (recognized.size !== 1) {
+		throw new Error(`managed WhatsApp compatibility patch refused mixed ${artifact.runtime} hunks`);
+	}
+	const state = recognized.values().next().value;
+	if (state !== "before" && state !== "after") {
+		throw new Error(`managed WhatsApp compatibility patch could not classify ${artifact.runtime}`);
+	}
+	return state;
 }
 
 function planTargetHunkMutation(
 	state: ClassifiedTarget,
-	selectedHunkIds: ReadonlySet<string>,
 	desired: Exclude<HunkState, "unknown">,
 ): TargetMutationPlan {
-	const knownIds = new Set(state.hunks.map((hunk) => hunk.hunk.id));
-	for (const id of selectedHunkIds) {
-		if (!knownIds.has(id)) throw new Error(`managed WhatsApp patch references unknown hunk ${id}`);
-	}
 	const edits = state.hunks.flatMap((hunk) => {
-		if (!selectedHunkIds.has(hunk.hunk.id) || hunk.state === desired) return [];
+		if (hunk.state === desired) return [];
 		if (hunk.state === "unknown") {
 			throw new Error(`managed WhatsApp patch cannot mutate unknown hunk ${hunk.hunk.id}`);
 		}
@@ -679,8 +557,7 @@ function planTargetHunkMutation(
 	}
 	for (const hunk of state.hunks) {
 		const result = classifyHunk(content, hunk.hunk);
-		const expected = selectedHunkIds.has(hunk.hunk.id) ? desired : hunk.state;
-		if (result.state !== expected) {
+		if (result.state !== desired) {
 			throw new Error(`managed WhatsApp hunk mutation verification failed for ${hunk.hunk.id}`);
 		}
 	}
@@ -721,87 +598,23 @@ function applyTargetPlans(
 	}
 }
 
-function stageReplacement(path: string, content: string): string {
-	const stagingPath = join(dirname(path), `.${basename(path)}.clawdi-stage-${randomUUID()}`);
-	const mode = statSync(path).mode & 0o777;
-	let descriptor: number | null = null;
-	try {
-		descriptor = openSync(stagingPath, "wx", mode);
-		const bytes = Buffer.from(content);
-		let offset = 0;
-		while (offset < bytes.length) offset += writeSync(descriptor, bytes, offset);
-		fsyncSync(descriptor);
-		closeSync(descriptor);
-		descriptor = null;
-		chmodSync(stagingPath, mode);
-		makeRuntimeUserOwned(stagingPath);
-		return stagingPath;
-	} catch (error) {
-		rmSync(stagingPath, { force: true });
-		throw error;
-	} finally {
-		if (descriptor !== null) closeSync(descriptor);
-	}
-}
-
 function replaceTargetContents(
 	entries: readonly { path: string; expectedSha256: string; content: string }[],
 	auditedStates: readonly { path: string; expectedSha256: string }[] = entries,
 ): void {
-	const staged: Array<(typeof entries)[number] & { stagingPath: string }> = [];
-	try {
-		for (const entry of entries) {
-			staged.push({ ...entry, stagingPath: stageReplacement(entry.path, entry.content) });
+	for (const entry of auditedStates) {
+		if (sha256File(entry.path) !== entry.expectedSha256) {
+			throw new Error(
+				`managed WhatsApp compatibility artifact changed during reconcile: ${entry.path}`,
+			);
 		}
-		for (const entry of auditedStates) {
-			if (sha256File(entry.path) !== entry.expectedSha256) {
-				throw new Error(
-					`managed WhatsApp compatibility artifact changed during reconcile: ${entry.path}`,
-				);
-			}
-		}
-		for (const entry of staged) {
-			renameSync(entry.stagingPath, entry.path);
-			makeRuntimeUserOwned(entry.path);
-			fsyncDirectory(dirname(entry.path));
-		}
-	} finally {
-		for (const entry of staged) rmSync(entry.stagingPath, { force: true });
 	}
-}
-
-function writeReceiptDurable(path: string, receipt: ManagedBaileysPatchReceipt): void {
-	writeDurableAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`, 0o600, 0o755);
-}
-
-function writeDurableAtomic(path: string, content: string, mode: number, dirMode: number): void {
-	const directory = dirname(path);
-	mkdirSync(directory, { recursive: true, mode: dirMode });
-	const stagingPath = join(directory, `.${basename(path)}.clawdi-stage-${randomUUID()}`);
-	let descriptor: number | null = null;
-	try {
-		descriptor = openSync(stagingPath, "wx", mode);
-		const bytes = Buffer.from(content);
-		let offset = 0;
-		while (offset < bytes.length) offset += writeSync(descriptor, bytes, offset);
-		fsyncSync(descriptor);
-		closeSync(descriptor);
-		descriptor = null;
-		chmodSync(stagingPath, mode);
-		renameSync(stagingPath, path);
-		fsyncDirectory(directory);
-	} finally {
-		if (descriptor !== null) closeSync(descriptor);
-		rmSync(stagingPath, { force: true });
-	}
-}
-
-function fsyncDirectory(path: string): void {
-	const descriptor = openSync(path, "r");
-	try {
-		fsyncSync(descriptor);
-	} finally {
-		closeSync(descriptor);
+	for (const entry of entries) {
+		writePrivateFileAtomic(entry.path, entry.content, {
+			mode: statSync(entry.path).mode & 0o777,
+			durable: true,
+		});
+		makeRuntimeUserOwned(entry.path);
 	}
 }
 
@@ -818,173 +631,6 @@ function assertTrustedRealFile(root: string, path: string): void {
 	}
 	if (!lstatSync(path).isFile() || realpathSync(path) !== resolve(path)) {
 		throw new Error(`managed WhatsApp compatibility target must be a real file: ${path}`);
-	}
-}
-
-function buildReceipt(
-	artifact: ManagedBaileysArtifact,
-	observedVersion: string,
-	plans: TargetMutationPlan[],
-	ownedHunks: ReadonlyMap<string, ReadonlySet<string>>,
-): ManagedBaileysPatchReceipt {
-	const planByPath = new Map(plans.map((plan) => [plan.state.target.relativePath, plan]));
-	return {
-		schemaVersion: RECEIPT_SCHEMA,
-		patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
-		artifact: {
-			runtime: artifact.runtime,
-			artifactRoot: artifact.root,
-			baileys: {
-				name: artifact.packageName,
-				observedVersion,
-				compatibleMajor: BAILEYS_COMPATIBLE_MAJOR,
-			},
-			targets: artifact.targets.map((target) => {
-				const plan = planByPath.get(target.relativePath);
-				if (!plan) throw new Error(`managed WhatsApp patch plan is missing ${target.relativePath}`);
-				const owned = ownedHunks.get(target.relativePath) ?? new Set<string>();
-				return {
-					relativePath: target.relativePath,
-					observedBeforeSha256: plan.observedBeforeSha256,
-					observedAfterSha256: plan.observedAfterSha256,
-					ownedHunkIds: target.hunks.map((hunk) => hunk.id).filter((id) => owned.has(id)),
-				};
-			}),
-		},
-	};
-}
-
-function receiptLayoutMatches(
-	receipt: ManagedBaileysPatchReceiptArtifact | undefined,
-	artifact: ManagedBaileysArtifact,
-): boolean {
-	if (
-		!receipt ||
-		receipt.runtime !== artifact.runtime ||
-		receipt.artifactRoot !== artifact.root ||
-		receipt.baileys.name !== artifact.packageName ||
-		receipt.baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR
-	) {
-		return false;
-	}
-	if (receipt.targets.length !== artifact.targets.length) return false;
-	return receipt.targets.every((target, index) => {
-		const expected = artifact.targets[index];
-		if (!expected || target.relativePath !== expected.relativePath) return false;
-		const knownHunks = new Set(expected.hunks.map((hunk) => hunk.id));
-		return target.ownedHunkIds.every((id) => knownHunks.has(id));
-	});
-}
-
-function assertReceiptLayout(receipt: ManagedBaileysPatchReceipt, home: string): void {
-	const artifact = resolveInstalledArtifact(receipt.artifact.runtime, home);
-	if (!receiptLayoutMatches(receipt.artifact, artifact)) {
-		throw new Error(
-			"managed WhatsApp compatibility receipt is invalid: artifact ownership layout is unknown",
-		);
-	}
-}
-
-function readReceipt(path: string): ManagedBaileysPatchReceipt | null {
-	if (!existsSync(path)) return null;
-	try {
-		if (!lstatSync(path).isFile() || realpathSync(path) !== resolve(path)) {
-			throw new Error("receipt must be a real file");
-		}
-		const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
-		const record = recordValue(value);
-		if (!record || !hasExactKeys(record, ["artifact", "patchRevision", "schemaVersion"])) {
-			throw new Error("receipt root is invalid");
-		}
-		if (
-			record.schemaVersion !== RECEIPT_SCHEMA ||
-			record.patchRevision !== MANAGED_BAILEYS_PATCH_REVISION
-		) {
-			throw new Error("unknown receipt schema or patch revision");
-		}
-		const artifact = recordValue(record.artifact);
-		const baileys = recordValue(artifact?.baileys);
-		const targets = artifact?.targets;
-		if (
-			!artifact ||
-			!hasExactKeys(artifact, ["artifactRoot", "baileys", "runtime", "targets"]) ||
-			(artifact.runtime !== "openclaw" && artifact.runtime !== "hermes") ||
-			typeof artifact.artifactRoot !== "string" ||
-			!baileys ||
-			!hasExactKeys(baileys, ["compatibleMajor", "name", "observedVersion"]) ||
-			typeof baileys.name !== "string" ||
-			typeof baileys.observedVersion !== "string" ||
-			!isValidSemver(baileys.observedVersion) ||
-			!baileys.observedVersion.startsWith("7.") ||
-			baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR ||
-			!Array.isArray(targets) ||
-			targets.length === 0
-		) {
-			throw new Error("receipt artifact set is invalid");
-		}
-		let ownsAnyHunk = false;
-		const relativePaths = new Set<string>();
-		for (const targetValue of targets) {
-			const target = recordValue(targetValue);
-			if (
-				!target ||
-				!hasExactKeys(target, [
-					"observedAfterSha256",
-					"observedBeforeSha256",
-					"ownedHunkIds",
-					"relativePath",
-				]) ||
-				typeof target.relativePath !== "string" ||
-				relativePaths.has(target.relativePath) ||
-				!isSha256(target.observedBeforeSha256) ||
-				!isSha256(target.observedAfterSha256) ||
-				!Array.isArray(target.ownedHunkIds)
-			) {
-				throw new Error("receipt target is invalid");
-			}
-			relativePaths.add(target.relativePath);
-			const hunkIds = new Set<string>();
-			for (const hunkId of target.ownedHunkIds) {
-				if (typeof hunkId !== "string" || !hunkId || hunkIds.has(hunkId)) {
-					throw new Error("receipt owned hunk id is invalid");
-				}
-				hunkIds.add(hunkId);
-				ownsAnyHunk = true;
-			}
-		}
-		if (!ownsAnyHunk) throw new Error("receipt owns no compatibility hunks");
-		return value as ManagedBaileysPatchReceipt;
-	} catch (error) {
-		throw new Error(`managed WhatsApp compatibility receipt is invalid: ${String(error)}`);
-	}
-}
-
-function removeReceiptDurable(path: string): void {
-	rmSync(path, { force: true });
-	fsyncDirectory(dirname(path));
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
-}
-
-function isSha256(value: unknown): value is string {
-	return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
-}
-
-function directoryEntryExists(path: string): boolean {
-	try {
-		lstatSync(path);
-		return true;
-	} catch (error) {
-		if (error instanceof Error && Reflect.get(error, "code") === "ENOENT") return false;
-		throw error;
 	}
 }
 

@@ -644,7 +644,6 @@ export function runtimeUserMutationTargets(
 	const compatibilityRuntimes = managedBaileysCompatSnapshotRuntimes({
 		desiredRuntime: managedWhatsAppRuntime,
 		home,
-		paths,
 	});
 	for (const runtime of compatibilityRuntimes) {
 		const appRoot = runtimeAppRoot(runtime, home);

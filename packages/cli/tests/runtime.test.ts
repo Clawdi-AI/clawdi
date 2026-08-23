@@ -14445,9 +14445,18 @@ exit 64
 		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		const paths = getRuntimePaths();
 		const retiredWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
+		const retiredWhatsAppAuthReceipts = join(paths.managedResourceRoot, "whatsapp-auth");
+		const retiredBaileysCompatInventory = join(
+			paths.installInventory,
+			"managed-baileys-compat.json",
+		);
 		const retiredWhatsAppReceiptContent = '{"schemaVersion":"clawdi.managedHermesWhatsApp.v1"}\n';
 		mkdirSync(dirname(retiredWhatsAppReceipt), { recursive: true });
 		writeFileSync(retiredWhatsAppReceipt, retiredWhatsAppReceiptContent);
+		mkdirSync(retiredWhatsAppAuthReceipts, { recursive: true });
+		writeFileSync(join(retiredWhatsAppAuthReceipts, "openclaw.json"), "{}\n");
+		mkdirSync(dirname(retiredBaileysCompatInventory), { recursive: true });
+		writeFileSync(retiredBaileysCompatInventory, "{}\n");
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -14567,6 +14576,8 @@ exit 64
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
+		expect(existsSync(retiredWhatsAppAuthReceipts)).toBe(false);
+		expect(existsSync(retiredBaileysCompatInventory)).toBe(false);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
