@@ -22,23 +22,24 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { commitRuntimeAppliedState } from "../../src/commands/runtime";
+import { applyRuntimeManifestLoad } from "../../src/commands/runtime";
 import {
 	resolveOpenClawSdkExport as resolveSdk,
 	OPENCLAW_SDK_EXPORT_PATHS as SDK_EXPORTS,
 } from "../../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../../src/lib/version";
-import { readRuntimeAppliedState, runtimeContentSha256 } from "../../src/runtime/applied-state";
+import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
 import { applyRuntimeCliDesiredState } from "../../src/runtime/cli-update";
 import { hostedOpenClawSkillDriver } from "../../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
-import type { PreparedHostedSourcedSkill } from "../../src/runtime/hosted-sourced-skill-archive";
+import { prepareHostedSourcedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
 import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
 import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
+	manifestSchema,
 	type RuntimeManifest,
 } from "../../src/runtime/manifest-contract";
 import type { HostedSkillSource } from "../../src/runtime/manifest-resources";
@@ -2333,6 +2334,9 @@ const BEHAVIORAL_GUARD_ENVIRONMENT = [
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
 ] as const;
 
+const BEHAVIORAL_GUARD_MAIN_MARKER = "/home/clawdi/.clawdi-e2e-main-generation";
+const BEHAVIORAL_GUARD_DASHBOARD_MARKER = "/home/clawdi/.clawdi-e2e-dashboard-generation";
+
 function configureBehavioralGuardEnvironment(root: string, systemctl = "/usr/bin/systemctl") {
 	const previous = new Map(BEHAVIORAL_GUARD_ENVIRONMENT.map((name) => [name, process.env[name]]));
 	const systemdSystemRoot = join(root, "systemd", "system");
@@ -2429,6 +2433,7 @@ Description=Hermes behavioral guard gateway
 
 [Service]
 Type=simple
+ExecStartPre=/bin/sh -c 'test "$BEHAVIORAL_GUARD_MAIN" != broken-generation-two'
 ExecStart=${path} gateway run
 Restart=no
 
@@ -2444,12 +2449,11 @@ EOF
     systemctl --user daemon-reload
     ;;
   "gateway run")
-    if [ "\${BEHAVIORAL_GUARD_MAIN:-}" = "broken-generation-two" ]; then
-      exit 78
-    fi
+    printf '%s\\n' "\${BEHAVIORAL_GUARD_MAIN:-missing}" > ${BEHAVIORAL_GUARD_MAIN_MARKER}
     exec /bin/sleep infinity
     ;;
   "dashboard")
+    printf '%s\\n' "\${BEHAVIORAL_GUARD_DASHBOARD:-missing}" > ${BEHAVIORAL_GUARD_DASHBOARD_MARKER}
     exec /bin/sleep infinity
     ;;
   *)
@@ -2493,7 +2497,7 @@ function behavioralGuardSkill(
 	root: string,
 	commit: string,
 	content: string,
-): { prepared: PreparedHostedSourcedSkill; source: HostedSkillSource } {
+): { archive: Buffer; archiveUrl: string; source: HostedSkillSource } {
 	const skillId = "lean-replay-guard";
 	const source: HostedSkillSource = {
 		type: "github",
@@ -2501,24 +2505,37 @@ function behavioralGuardSkill(
 		path: `skills/${skillId}`,
 		commit,
 	};
-	const sourceRoot = join(root, `skill-${commit.slice(0, 8)}`);
-	const skillRoot = join(sourceRoot, skillId);
+	const repositoryRoot = `store-${commit}`;
+	const skillRoot = join(root, repositoryRoot, "skills", skillId);
 	mkdirSync(skillRoot, { recursive: true });
 	writeFileSync(join(skillRoot, "SKILL.md"), content);
-	const packed = spawnSync("tar", ["-czf", "-", "-C", sourceRoot, skillId]);
+	const packed = spawnSync("tar", ["-czf", "-", "-C", root, repositoryRoot]);
 	if (packed.status !== 0 || !Buffer.isBuffer(packed.stdout)) {
 		throw new Error(`could not build behavioral guard Skill archive: ${packed.stderr}`);
 	}
 	return {
+		archive: packed.stdout,
+		archiveUrl: `https://codeload.github.com/Clawdi-AI/store/tar.gz/${commit}`,
 		source,
-		prepared: {
-			skillId,
-			source,
-			sourceIdentity: ["github", skillId, source.url, source.path, source.commit].join("\0"),
-			archiveSha256: createHash("sha256").update(packed.stdout).digest("hex"),
-			tarBytes: packed.stdout,
-		},
 	};
+}
+
+async function prepareBehavioralGuardSkill(
+	load: RuntimeManifestLoad,
+	paths: ReturnType<typeof getRuntimePaths>,
+	fixture: ReturnType<typeof behavioralGuardSkill>,
+) {
+	return prepareHostedSourcedSkillArchives(load.manifest, paths, {
+		fetcher: async (input) => {
+			if (String(input) !== fixture.archiveUrl) {
+				throw new Error(`unexpected behavioral guard Skill request: ${String(input)}`);
+			}
+			return new Response(Uint8Array.from(fixture.archive), {
+				status: 200,
+				headers: { "content-length": String(fixture.archive.byteLength) },
+			});
+		},
+	});
 }
 
 function behavioralGuardManifest(input: {
@@ -2594,48 +2611,15 @@ function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 	};
 }
 
-function convergeBehavioralGuard(
+async function convergeBehavioralGuard(
 	load: RuntimeManifestLoad,
 	paths: ReturnType<typeof getRuntimePaths>,
-	preparedHostedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill> = new Map(),
 ) {
-	const before = readSystemdUnitSnapshot(paths);
-	const transaction = new SystemdRuntimeTransaction();
-	return convergeRuntimeManifest(load, paths, {
-		preparedHostedSourcedSkills,
-		commitAuthority: (convergence, authority) =>
-			commitRuntimeAppliedState({
-				load,
-				paths,
-				etag: `"behavioral-e2e-generation-${load.manifest.generation}"`,
-				sourceRevision: runtimeContentSha256({ manifest: load.manifest }),
-				convergence,
-				applyIdentity: load.applyContext?.identity ?? null,
-				daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-				daemonProgramRevision: authority.daemonProgramRevision,
-				egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-				userProcessRevisionAliases: authority.userProcessRevisionAliases,
-			}),
-		systemdApply: {
-			transactionState: () => transaction.state,
-			installOfficialService: (unit, install) =>
-				transaction.installOfficialService(paths, unit, install),
-			quiesce: (units) => transaction.quiesce(paths, units),
-			activateEgressPrerequisite: () => ({
-				applied: true,
-				systemUnitsChanged: [],
-				userUnitsChanged: [],
-			}),
-			activate: (signal) =>
-				applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-					transaction,
-					stage: "final-activation",
-					forceReloadUserUnits: signal.reloadUserUnits,
-					forceRestartUserUnits: signal.restartUserUnits,
-				}),
-			rollback: () => transaction.rollback(paths),
-		},
-	});
+	const result = await applyRuntimeManifestLoad(load, paths);
+	if (result.kind !== "converged") {
+		throw new Error(`unexpected behavioral guard apply result: ${result.kind}`);
+	}
+	return result.convergence;
 }
 
 function behavioralGuardUnitState(unit: string): {
@@ -2678,8 +2662,12 @@ function behavioralGuardObservableState(
 		),
 		environmentFiles: directoryFileDigests(paths.systemdEnvRoot),
 		skillTree: filesystemTreeIdentity(skillRoot),
-		lastGood: readFileSync(paths.manifestLastGood, "utf8"),
+		lastGood: manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))),
 		appliedState: stableBehavioralGuardAppliedState(paths),
+		processMarkers: {
+			gateway: readFileSync(BEHAVIORAL_GUARD_MAIN_MARKER, "utf8"),
+			dashboard: readFileSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, "utf8"),
+		},
 		services: {
 			gateway: behavioralGuardUnitState("hermes-gateway.service"),
 			dashboard: behavioralGuardUnitState("clawdi-hermes-dashboard.service"),
@@ -2687,7 +2675,7 @@ function behavioralGuardObservableState(
 	};
 }
 
-test("replays last-good declarative state after a failed candidate and advances afterward", () => {
+test("replays last-good declarative state after a failed candidate and advances afterward", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -2708,7 +2696,7 @@ test("replays last-good declarative state after a failed candidate and advances 
 			generation: 1,
 			command: healthyCommand,
 			mainMarker: "generation-one",
-			dashboardMarker: "stable-dashboard",
+			dashboardMarker: "generation-one",
 			skillSource: generationOneSkill.source,
 		}),
 	);
@@ -2717,7 +2705,7 @@ test("replays last-good declarative state after a failed candidate and advances 
 			generation: 2,
 			command: healthyCommand,
 			mainMarker: "broken-generation-two",
-			dashboardMarker: "stable-dashboard",
+			dashboardMarker: "broken-generation-two",
 			skillSource: generationTwoSkill.source,
 		}),
 	);
@@ -2726,7 +2714,7 @@ test("replays last-good declarative state after a failed candidate and advances 
 			generation: 3,
 			command: healthyCommand,
 			mainMarker: "repaired-generation-three",
-			dashboardMarker: "stable-dashboard",
+			dashboardMarker: "repaired-generation-three",
 			skillSource: generationThreeSkill.source,
 		}),
 	);
@@ -2734,25 +2722,22 @@ test("replays last-good declarative state after a failed candidate and advances 
 	try {
 		cleanBehavioralGuardUnits(paths);
 		rmSync(skillRoot, { recursive: true, force: true });
-		const initial = convergeBehavioralGuard(
-			generationOne,
-			paths,
-			new Map([["lean-replay-guard", generationOneSkill.prepared]]),
-		);
+		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
+		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
+		await prepareBehavioralGuardSkill(generationOne, paths, generationOneSkill);
+		await prepareBehavioralGuardSkill(generationTwo, paths, generationTwoSkill);
+		await prepareBehavioralGuardSkill(generationThree, paths, generationThreeSkill);
+		const initial = await convergeBehavioralGuard(generationOne, paths);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 
-		const failed = convergeBehavioralGuard(
-			generationTwo,
-			paths,
-			new Map([["lean-replay-guard", generationTwoSkill.prepared]]),
-		);
+		const failed = await convergeBehavioralGuard(generationTwo, paths);
 		expect(failed.installErrors.length).toBeGreaterThan(0);
 		const failedFinalState = behavioralGuardObservableState(paths, skillRoot);
 		expect(failedFinalState.appliedState.generation).toBe(1);
-		expect(failedFinalState.lastGood).toContain('"generation": 1');
+		expect(failedFinalState.lastGood.generation).toBe(1);
 		expect(failedFinalState.skillTree["SKILL.md"]).toContain(
 			createHash("sha256").update("generation one\n").digest("hex"),
 		);
@@ -2762,34 +2747,38 @@ test("replays last-good declarative state after a failed candidate and advances 
 		);
 		expect(failedGatewayEnvironment).toContain('BEHAVIORAL_GUARD_MAIN="generation-one"');
 		expect(failedGatewayEnvironment).not.toContain("broken-generation-two");
+		expect(failedFinalState.processMarkers).toEqual({
+			gateway: "generation-one\n",
+			dashboard: "generation-one\n",
+		});
 		expect(failedFinalState.services.gateway.ActiveState).toBe("active");
 		expect(failedFinalState.services.dashboard.ActiveState).toBe("active");
 
-		const replayed = convergeBehavioralGuard(
-			generationOne,
-			paths,
-			new Map([["lean-replay-guard", generationOneSkill.prepared]]),
-		);
+		const replayed = await convergeBehavioralGuard(generationOne, paths);
 		expect([...replayed.installErrors, ...replayed.resourceProjectionErrors]).toEqual([]);
 		expect(failedFinalState).toEqual(behavioralGuardObservableState(paths, skillRoot));
 
-		const repaired = convergeBehavioralGuard(
-			generationThree,
-			paths,
-			new Map([["lean-replay-guard", generationThreeSkill.prepared]]),
-		);
+		const repaired = await convergeBehavioralGuard(generationThree, paths);
 		expect([...repaired.installErrors, ...repaired.resourceProjectionErrors]).toEqual([]);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(3);
-		expect(readFileSync(paths.manifestLastGood, "utf8")).toContain('"generation": 3');
+		expect(
+			manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).generation,
+		).toBe(3);
 		expect(readFileSync(join(skillRoot, "SKILL.md"), "utf8")).toBe("generation three\n");
 		expect(
 			readFileSync(join(paths.systemdEnvRoot, "hermes-gateway.service.env"), "utf8"),
 		).toContain('BEHAVIORAL_GUARD_MAIN="repaired-generation-three"');
+		expect(readFileSync(BEHAVIORAL_GUARD_MAIN_MARKER, "utf8")).toBe("repaired-generation-three\n");
+		expect(readFileSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, "utf8")).toBe(
+			"repaired-generation-three\n",
+		);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 	} finally {
 		cleanBehavioralGuardUnits(paths);
 		rmSync(skillRoot, { recursive: true, force: true });
+		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
+		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
 		restoreHermesCommand();
 		restoreEnvironment();
 		rmSync(root, { recursive: true, force: true });
@@ -2802,7 +2791,7 @@ test("restarts only rendered-but-unactivated services after a write-side crash",
 	expect(process.geteuid?.()).toBe(0);
 	const root = mkdtempSync(join(tmpdir(), "clawdi-lean-crash-guard-"));
 	chmodSync(root, 0o755);
-	const pauseMarker = join(root, "activation-preflight.marker");
+	const pauseMarker = join(root, "activation-mutation.marker");
 	const systemctlWrapper = join(root, "systemctl-crash-guard");
 	writeFileSync(pauseMarker, "", { mode: 0o666 });
 	chmodSync(pauseMarker, 0o666);
@@ -2812,7 +2801,7 @@ test("restarts only rendered-but-unactivated services after a write-side crash",
 set -eu
 if [ "\${CLAWDI_E2E_CRASH_ARMED:-}" = "1" ] \
   && [ "\${1:-}" = "--user" ] \
-  && [ "\${2:-}" = "show" ]; then
+  && { [ "\${2:-}" = "start" ] || [ "\${2:-}" = "restart" ] || [ "\${2:-}" = "stop" ]; }; then
   printf '%s\\n' ready > ${JSON.stringify(pauseMarker)}
   while :; do sleep 1; done
 fi
@@ -2847,7 +2836,9 @@ exec /usr/bin/systemctl "$@"
 
 	try {
 		cleanBehavioralGuardUnits(paths);
-		const initial = convergeBehavioralGuard(generationOne, paths);
+		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
+		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
+		const initial = await convergeBehavioralGuard(generationOne, paths);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		const gatewayBefore = behavioralGuardUnitState("hermes-gateway.service");
 		const dashboardBefore = behavioralGuardUnitState("clawdi-hermes-dashboard.service");
@@ -2886,7 +2877,7 @@ exec /usr/bin/systemctl "$@"
 				new Response(child.stderr).text(),
 			]);
 			throw new Error(
-				`crash child did not reach activation preflight (${status}): ${stdout}${stderr}`,
+				`crash child did not reach an activation mutation (${status}): ${stdout}${stderr}`,
 			);
 		}
 
@@ -2908,7 +2899,7 @@ exec /usr/bin/systemctl "$@"
 		expect(childStatus).not.toBe(0);
 		child = null;
 
-		const recovered = convergeBehavioralGuard(generationTwo, paths);
+		const recovered = await convergeBehavioralGuard(generationTwo, paths);
 		expect([...recovered.installErrors, ...recovered.resourceProjectionErrors]).toEqual([]);
 		const gatewayAfter = behavioralGuardUnitState("hermes-gateway.service");
 		const dashboardAfter = behavioralGuardUnitState("clawdi-hermes-dashboard.service");
@@ -2920,7 +2911,9 @@ exec /usr/bin/systemctl "$@"
 			dashboardEnvironmentBefore,
 		);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(2);
-		expect(readFileSync(paths.manifestLastGood, "utf8")).toContain('"generation": 2');
+		expect(
+			manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).generation,
+		).toBe(2);
 	} finally {
 		if (child) {
 			try {
@@ -2929,6 +2922,8 @@ exec /usr/bin/systemctl "$@"
 			await child.exited;
 		}
 		cleanBehavioralGuardUnits(paths);
+		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
+		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
 		restoreHermesCommand();
 		restoreEnvironment();
 		rmSync(root, { recursive: true, force: true });

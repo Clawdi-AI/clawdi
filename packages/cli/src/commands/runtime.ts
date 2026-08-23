@@ -172,6 +172,11 @@ interface RuntimeApplyOptions {
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
+export type RuntimeManifestApplyOptions = Omit<
+	RuntimeApplyOptions,
+	"authorityCommit" | "requireSystemdApplied"
+>;
+
 interface RuntimeWatchFailureBackoff {
 	backoffMs: number;
 	etag: string | null;
@@ -809,23 +814,7 @@ async function runtimeInitLocked(
 		let applyResult: RuntimeApplyResult;
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
-			const contentRevision = runtimePublicContentRevision(convergenceLoad);
-			const applyIdentity = convergenceLoad.applyContext?.identity ?? null;
-			applyResult = await applyRuntimeDesiredState(convergenceLoad, paths, {
-				authorityCommit: (convergence, authority) =>
-					commitRuntimeAppliedState({
-						load: convergenceLoad,
-						paths,
-						etag: loaded.etag ?? `"sha256:${contentRevision}"`,
-						sourceRevision: loaded.sourceRevision ?? contentRevision,
-						convergence,
-						applyIdentity,
-						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-						daemonProgramRevision: authority.daemonProgramRevision,
-						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-						userProcessRevisionAliases: authority.userProcessRevisionAliases,
-					}),
-				requireSystemdApplied: applyIdentity !== null,
+			applyResult = await applyRuntimeManifestLoad(convergenceLoad, paths, {
 				hostedRuntimeContract: opts.hostedRuntimeContract,
 			});
 		} catch (error) {
@@ -1094,26 +1083,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 			throw new Error("runtime bundle is missing applied authority identity");
 		}
 		failureEtag = bundleEtag;
-		const applyIdentity = loaded.applyContext?.identity ?? null;
-		const applyResult = await applyRuntimeDesiredState(loaded, paths, {
-			authorityCommit: (convergence, authority) =>
-				commitRuntimeAppliedState({
-					load: loaded,
-					paths,
-					etag: bundleEtag,
-					sourceRevision,
-					convergence,
-					applyIdentity,
-					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-					daemonProgramRevision: authority.daemonProgramRevision,
-					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-					userProcessRevisionAliases: authority.userProcessRevisionAliases,
-				}),
+		const applyResult = await applyRuntimeManifestLoad(loaded, paths, {
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
 			deferCliInstallReason: opts.deferCliInstallReason,
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
-			requireSystemdApplied: applyIdentity !== null,
 			hostedRuntimeContract: opts.hostedRuntimeContract,
 		});
 		if (applyResult.kind === "cli_handoff") {
@@ -1268,6 +1242,32 @@ function runtimeWatchFailureBackoff(
 		etag,
 		nextRetryAt: now + backoffMs,
 	};
+}
+
+export async function applyRuntimeManifestLoad(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts: RuntimeManifestApplyOptions = {},
+): Promise<RuntimeApplyResult> {
+	const contentRevision = runtimePublicContentRevision(load);
+	const applyIdentity = load.applyContext?.identity ?? null;
+	return applyRuntimeDesiredState(load, paths, {
+		...opts,
+		authorityCommit: (convergence, authority) =>
+			commitRuntimeAppliedState({
+				load,
+				paths,
+				etag: load.etag ?? `"sha256:${contentRevision}"`,
+				sourceRevision: load.sourceRevision ?? contentRevision,
+				convergence,
+				applyIdentity,
+				daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
+				daemonProgramRevision: authority.daemonProgramRevision,
+				egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+				userProcessRevisionAliases: authority.userProcessRevisionAliases,
+			}),
+		requireSystemdApplied: applyIdentity !== null,
+	});
 }
 
 async function applyRuntimeDesiredState(
