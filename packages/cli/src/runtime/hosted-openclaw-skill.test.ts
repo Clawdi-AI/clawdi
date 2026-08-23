@@ -11,9 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-	activateHostedOpenClawSkill,
+	repairHostedOpenClawConfig,
 	resolveHostedOpenClawWorkspace,
-} from "./hosted-openclaw-skill";
+} from "./hosted-openclaw-context";
+import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
@@ -163,7 +164,11 @@ esac
 	);
 	chmodSync(command, 0o755);
 
-	expect(resolveHostedOpenClawWorkspace(home, true)).toBe(workspaceRoot);
+	expect(() => resolveHostedOpenClawWorkspace(home)).toThrow(
+		"official agent workspace roster is unavailable",
+	);
+	expect(repairHostedOpenClawConfig(home)).toBe(true);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 		"agents list --json",
 		"config validate --json",
@@ -225,9 +230,10 @@ exit 2
 		);
 		chmodSync(command, 0o755);
 
-		expect(() => resolveHostedOpenClawWorkspace(home, scenario.repairInvalidConfig)).toThrow(
+		expect(() => resolveHostedOpenClawWorkspace(home)).toThrow(
 			"official agent workspace roster is unavailable",
 		);
+		if (scenario.repairInvalidConfig) expect(repairHostedOpenClawConfig(home)).toBe(false);
 		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 			...scenario.expectedCommands,
 		]);
@@ -241,20 +247,11 @@ test("runs official install from home and rolls back failed replacement", () => 
 	const command = join(home, ".local", "bin", "openclaw");
 	const installLog = join(root, "install.log");
 	const installCwdLog = join(root, "install-cwd.log");
-	const workspaceDriftMarker = join(root, "workspace-drift");
 	mkdirSync(dirname(command), { recursive: true });
 	writeFileSync(
 		command,
 		`#!/bin/sh
 set -eu
-if test "$1 $2 $3" = "agents list --json"; then
-  if test -f '${workspaceDriftMarker}'; then
-    printf '[{"id":"main","workspace":"${join(home, "different-workspace")}"}]\n'
-    exit 0
-  fi
-  printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
-  exit 0
-fi
 test "$1 $2" = "skills install"
 printf '%s\n' "$*" >> '${installLog}'
 printf '%s\n' "$PWD" >> '${installCwdLog}'
@@ -271,7 +268,6 @@ cp -R "$source_dir" '${workspaceRoot}/skills/'"$skill_id"
 mkdir -p '${workspaceRoot}/skills/'"$skill_id"'/.openclaw'
 printf '{}\n' > '${workspaceRoot}/skills/'"$skill_id"'/.openclaw/source-origin.json'
 if test "\${FAKE_OPENCLAW_FAIL_AFTER_WRITE:-}" = "1"; then exit 45; fi
-if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDriftMarker}'; fi
 `,
 	);
 	chmodSync(command, 0o755);
@@ -296,46 +292,6 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	expect(activate).toThrow("official Skill install failed: exit code 45 without output");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
-	process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE = "1";
-	expect(activate).toThrow("changed during Skill reconciliation");
-	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	delete process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE;
-	rmSync(workspaceDriftMarker);
-});
-
-test("fails before official install when the OpenClaw workspace changes during reconciliation", async () => {
-	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-workspace-mismatch-"));
-	const home = join(root, "home");
-	const workspaceRoot = join(home, "desired-workspace");
-	const command = join(home, ".local", "bin", "openclaw");
-	const installMarker = join(root, "install-called");
-	mkdirSync(dirname(command), { recursive: true });
-	mkdirSync(workspaceRoot, { recursive: true });
-	writeFileSync(
-		command,
-		`#!/bin/sh
-if test "$1 $2 $3" = "agents list --json"; then
-  printf '[{"id":"main","workspace":"${join(home, "different-workspace")}"}]\n'
-  exit 0
-fi
-touch '${installMarker}'
-exit 0
-`,
-	);
-	chmodSync(command, 0o755);
-	const sourceDir = join(root, "source", "review-pr");
-	mkdirSync(sourceDir, { recursive: true });
-	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
-	expect(() =>
-		activateHostedOpenClawSkill({
-			home,
-			workspaceRoot,
-			sourceDir,
-			targetDir: join(workspaceRoot, "skills", "review-pr"),
-		}),
-	).toThrow("changed during Skill reconciliation");
-	expect(existsSync(installMarker)).toBe(false);
-	expect(existsSync(join(workspaceRoot, "skills", "review-pr"))).toBe(false);
 });
 
 test("reports a spawn error when the official install process cannot start", () => {
@@ -344,17 +300,7 @@ test("reports a spawn error when the official install process cannot start", () 
 	const workspaceRoot = join(home, "agent-workspace");
 	const command = join(home, ".local", "bin", "openclaw");
 	mkdirSync(dirname(command), { recursive: true });
-	writeFileSync(
-		command,
-		`#!/bin/sh
-if test "$1 $2 $3" = "agents list --json"; then
-  printf '[{"id":"main","workspace":"${workspaceRoot}"}]\n'
-  printf '%s\n' '#!/definitely/missing/openclaw-interpreter' > "$0"
-  exit 0
-fi
-exit 64
-`,
-	);
+	writeFileSync(command, "#!/definitely/missing/openclaw-interpreter\n");
 	chmodSync(command, 0o755);
 	const sourceDir = join(root, "source", "review-pr");
 	mkdirSync(sourceDir, { recursive: true });

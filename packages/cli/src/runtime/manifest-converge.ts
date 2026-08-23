@@ -20,8 +20,9 @@ import {
 import {
 	createOpenClawHostedContext,
 	hostedOpenClawRuntimeUserOwnership,
+	repairHostedOpenClawConfig,
+	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
-import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-skill";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
 import { captureRuntimeLiveSnapshot, type RuntimeLiveSnapshot } from "./live-state-snapshot";
@@ -225,6 +226,18 @@ interface RuntimeConvergencePlan extends RuntimeInstallStage {
 	workspaceExistedBeforeApply: boolean;
 	liveSnapshot: RuntimeLiveSnapshot;
 	resourceRollbackScope: RuntimeSnapshotRollbackScope;
+}
+
+function resolveOpenClawWorkspaceForConvergence(
+	home: string,
+	repairInvalidConfig: boolean,
+): string {
+	try {
+		return resolveHostedOpenClawWorkspace(home);
+	} catch (error) {
+		if (!repairInvalidConfig || !repairHostedOpenClawConfig(home)) throw error;
+		return resolveHostedOpenClawWorkspace(home);
+	}
 }
 
 function initializeRuntimeConvergence(
@@ -499,7 +512,7 @@ function prepareRuntimeConvergencePlan(
 			manifest.runtimes.openclaw?.enabled === true ||
 			Boolean(openClawCommand && executableExists(openClawCommand));
 		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? resolveHostedOpenClawWorkspace(
+			? resolveOpenClawWorkspaceForConvergence(
 					projectionHome,
 					manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 				)
@@ -657,12 +670,6 @@ function prepareRuntimeApplyDependencies(
 			}
 			enforceRuntimeUserOwnership(runtimeUserExistingOwnership(supplementalTargets));
 		}
-	}
-	if (
-		plan.openClawWorkspaceRoot &&
-		resolve(resolveHostedOpenClawWorkspace(projectionHome)) !== resolve(plan.openClawWorkspaceRoot)
-	) {
-		throw new Error("OpenClaw official agent workspace changed during runtime reconciliation");
 	}
 	if (opts.preparedHostedAgentPlugins) {
 		const commands = hostedAgentPluginCommands(projectionHome);
