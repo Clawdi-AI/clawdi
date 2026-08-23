@@ -151,6 +151,15 @@ describe("managed Skill reservations", () => {
 				digest: "not-a-sha256",
 			}),
 		).toThrow("identity is invalid");
+		expect(() =>
+			reserveManagedSkill({
+				targetDir: path,
+				id: "example",
+				manager: "hosted-manifest",
+				digest: "c".repeat(64),
+				sourceIdentity: "invalid",
+			}),
+		).toThrow("identity is invalid");
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
 	});
 

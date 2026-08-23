@@ -2,13 +2,9 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	chmodSync,
-	closeSync,
-	constants,
 	existsSync,
-	fstatSync,
 	lstatSync,
 	mkdtempSync,
-	openSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
@@ -16,7 +12,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
@@ -24,29 +19,8 @@ import { withRuntimeUserFileAccess } from "./runtime-user-command";
 const MAX_ENTRIES = 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_BYTES = 32 * 1024 * 1024;
-const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const PLATFORM_RECEIPT_DIRECTORY = "skill-receipts";
-
-export const HERMES_MANAGED_SKILL_RECEIPT_SCHEMA = "clawdi.hermesManifestSkillReceipt.v2";
-export const OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA = "clawdi.openclawManifestSkillReceipt.v2";
-export type ManagedSkillReceiptRuntime = "hermes" | "openclaw";
 
 export class ManagedSkillResourceError extends Error {}
-
-function assertManagedSkillId(skillId: string): void {
-	if (!MANAGED_SKILL_ID_PATTERN.test(skillId)) {
-		throw new Error(`invalid managed Skill id: ${skillId}`);
-	}
-}
-
-export function managedSkillReceiptPath(
-	managedResourceRoot: string,
-	runtime: ManagedSkillReceiptRuntime,
-	skillId: string,
-): string {
-	assertManagedSkillId(skillId);
-	return join(managedResourceRoot, PLATFORM_RECEIPT_DIRECTORY, runtime, `${skillId}.json`);
-}
 
 export type ManagedSkillTree = ReadonlyMap<string, Buffer>;
 
@@ -111,182 +85,24 @@ export function collectRuntimeUserManagedSkillTree(
 	return withRuntimeUserFileAccess(() => collectManagedSkillTree(root, options));
 }
 
-export function managedSkillTreeFingerprint(tree: ManagedSkillTree): string {
-	const hash = createHash("sha256");
-	for (const [name, bytes] of [...tree].sort(([left], [right]) => left.localeCompare(right)))
-		hash.update(name).update("\0").update(bytes).update("\0");
-	return hash.digest("hex");
-}
-
 export function managedSkillTreesEqual(left: ManagedSkillTree, right: ManagedSkillTree): boolean {
 	if (left.size !== right.size) return false;
 	for (const [name, bytes] of left) if (!right.get(name)?.equals(bytes)) return false;
 	return true;
 }
 
-type ManagedSkillReceipt = {
-	schemaVersion: string;
-	skillId: string;
-	ownershipIdentity: string;
-	treeFingerprint: string;
-};
-
-export function writeManagedSkillReceipt(input: {
-	path: string;
-	managedResourceRoot: string;
-	schemaVersion: string;
-	skillId: string;
-	ownershipIdentity: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): void {
-	const collection = collectRuntimeUserManagedSkillTree(input.target, { exclude: input.exclude });
-	if (collection.status !== "collected") {
-		throw new ManagedSkillResourceError(`installed Skill tree is ${collection.status}`);
-	}
-	const treeFingerprint = managedSkillTreeFingerprint(collection.tree);
-	writeManagedSkillReceiptRecord(input.managedResourceRoot, input.path, {
-		schemaVersion: input.schemaVersion,
-		skillId: input.skillId,
-		ownershipIdentity: input.ownershipIdentity,
-		treeFingerprint,
-	});
-}
-
-function writeManagedSkillReceiptRecord(
-	managedResourceRoot: string,
-	path: string,
-	receipt: ManagedSkillReceipt,
-): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(receipt)}\n`, {
-		mode: 0o600,
-		dirMode: 0o700,
-		trustedRoot: managedResourceRoot,
-	});
-}
-
-function runtimeUserTargetIsDirectory(path: string): boolean {
-	return withRuntimeUserFileAccess(() => {
-		try {
-			const target = lstatSync(path);
-			return !target.isSymbolicLink() && target.isDirectory();
-		} catch {
-			return false;
-		}
-	});
-}
-
-function readManagedSkillMarkerRaw(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): ManagedSkillReceipt | null {
-	let descriptor: number | null = null;
-	try {
-		descriptor = openSync(input.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-		const receiptStat = fstatSync(descriptor);
-		const effectiveUid = process.geteuid?.();
-		if (
-			!receiptStat.isFile() ||
-			(receiptStat.mode & 0o022) !== 0 ||
-			(effectiveUid !== undefined && receiptStat.uid !== effectiveUid)
-		)
-			return null;
-		const receipt = JSON.parse(readFileSync(descriptor, "utf8")) as Record<string, unknown>;
-		if (
-			receipt.schemaVersion === input.schemaVersion &&
-			receipt.skillId === input.skillId &&
-			typeof receipt.ownershipIdentity === "string" &&
-			receipt.ownershipIdentity.length > 0 &&
-			receipt.ownershipIdentity.length <= 2048 &&
-			typeof receipt.treeFingerprint === "string" &&
-			/^[a-f0-9]{64}$/.test(receipt.treeFingerprint)
-		)
-			return receipt as ManagedSkillReceipt;
-		return null;
-	} catch {
-		return null;
-	} finally {
-		if (descriptor !== null) closeSync(descriptor);
-	}
-}
-
-function readManagedSkillMarker(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): ManagedSkillReceipt | null {
-	if (!runtimeUserTargetIsDirectory(input.target)) return null;
-	return readManagedSkillMarkerRaw(input);
-}
-
-function readManagedSkillReceipt(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}):
-	| { status: "matched"; receipt: ManagedSkillReceipt }
-	| { status: "absent" | "unsafe" | "mismatch" } {
-	const collection = collectRuntimeUserManagedSkillTree(input.target, {
-		exclude: input.exclude,
-	});
-	if (collection.status !== "collected") return collection;
-	const marker = readManagedSkillMarkerRaw(input);
-	if (!marker || marker.treeFingerprint !== managedSkillTreeFingerprint(collection.tree)) {
-		return { status: "mismatch" };
-	}
-	return { status: "matched", receipt: marker };
-}
-
-export function managedSkillMarkerOwnsTarget(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): boolean {
-	return readManagedSkillMarker(input) !== null;
-}
-
-export function managedSkillMarkerMatchesIdentity(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	ownershipIdentity: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): boolean {
-	return readManagedSkillMarker(input)?.ownershipIdentity === input.ownershipIdentity;
-}
-
-export function managedSkillReceiptMatchesIdentity(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	ownershipIdentity: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): boolean {
-	return managedSkillReceiptIdentityState(input) === "matched";
-}
-
-export function managedSkillReceiptIdentityState(input: {
-	path: string;
-	schemaVersion: string;
-	skillId: string;
-	ownershipIdentity: string;
-	target: string;
-	exclude?: ReadonlySet<string>;
-}): "matched" | "absent" | "unsafe" | "mismatch" {
-	const result = readManagedSkillReceipt(input);
-	if (result.status !== "matched") return result.status;
-	return result.receipt.ownershipIdentity === input.ownershipIdentity ? "matched" : "mismatch";
+export function managedSkillTargetMatchesSource(
+	sourceDir: string,
+	targetDir: string,
+	options: { exclude?: ReadonlySet<string> } = {},
+): boolean {
+	const source = collectManagedSkillTree(sourceDir);
+	const installed = collectRuntimeUserManagedSkillTree(targetDir, options);
+	return (
+		source.status === "collected" &&
+		installed.status === "collected" &&
+		managedSkillTreesEqual(source.tree, installed.tree)
+	);
 }
 
 export function withStagedManagedSkill<T>(
@@ -331,9 +147,18 @@ export function withStagedManagedSkill<T>(
 	}
 }
 
+export function installedTreeMatches(
+	skill: PreparedHostedSourcedSkill,
+	targetDir: string,
+	options: { exclude?: ReadonlySet<string> } = {},
+): boolean {
+	return withStagedManagedSkill(skill, (sourceDir) =>
+		managedSkillTargetMatchesSource(sourceDir, targetDir, options),
+	);
+}
+
 export function withManagedTargetRollback<T>(input: {
 	target: string;
-	receipt?: string;
 	operation: () => T;
 	targetBackup?: string;
 	beforeRestore?: () => void;
@@ -348,24 +173,14 @@ export function withManagedTargetRollback<T>(input: {
 	const targetBackup =
 		input.targetBackup ??
 		join(dirname(input.target), `.${basename(input.target)}-clawdi-rollback-${suffix}`);
-	const receiptBackup = input.receipt
-		? join(dirname(input.receipt), `.${basename(input.receipt)}-clawdi-rollback-${suffix}`)
-		: undefined;
 	const hadTarget = withRuntimeUserFileAccess(() => existsSync(input.target));
-	const hadReceipt = input.receipt !== undefined && existsSync(input.receipt);
 	let targetMoved = false;
-	let receiptMoved = false;
 	try {
 		if (hadTarget) {
 			withRuntimeUserFileAccess(() => rename(input.target, targetBackup));
 			targetMoved = true;
 		}
-		if (hadReceipt && input.receipt && receiptBackup) {
-			rename(input.receipt, receiptBackup);
-			receiptMoved = true;
-		}
 	} catch (error) {
-		if (receiptMoved && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
 		if (targetMoved) withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
 		throw error;
 	}
@@ -374,13 +189,11 @@ export function withManagedTargetRollback<T>(input: {
 		result = input.operation();
 	} catch (error) {
 		withRuntimeUserFileAccess(() => remove(input.target, { recursive: true, force: true }));
-		if (input.receipt) remove(input.receipt, { force: true });
 		try {
 			if (hadTarget) {
 				input.beforeRestore?.();
 				withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
 			}
-			if (hadReceipt && input.receipt && receiptBackup) rename(receiptBackup, input.receipt);
 		} catch (restoreError) {
 			if (input.restoreFailure) throw input.restoreFailure(error, restoreError);
 			throw restoreError;
@@ -388,11 +201,10 @@ export function withManagedTargetRollback<T>(input: {
 		throw error;
 	}
 	// The operation returning is the commit point. Backup cleanup is GC and
-	// must never roll back a live target or its ownership receipt.
+	// must never roll back a live target.
 	try {
 		if (hadTarget) input.beforeCleanup?.();
 		withRuntimeUserFileAccess(() => remove(targetBackup, { recursive: true, force: true }));
-		if (receiptBackup) remove(receiptBackup, { force: true });
 	} catch {}
 	return result;
 }

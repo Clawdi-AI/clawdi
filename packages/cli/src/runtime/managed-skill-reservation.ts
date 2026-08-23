@@ -51,6 +51,7 @@ interface ManagedSkillReservation {
 	target: string;
 	id: string;
 	version?: number;
+	/** Hosted archive SHA-256 after convergence, or a local-setup directory digest. */
 	digest?: string;
 	sourceIdentity?: string;
 	manager: ManagedSkillReservationManager;
@@ -303,13 +304,19 @@ export function pendingManagedSkillReservations(
 function reservationIdentityIsValid(value: {
 	digest?: unknown;
 	sourceIdentity?: unknown;
+	manager?: unknown;
 }): boolean {
 	const hasDigest = typeof value.digest === "string" && SHA256_PATTERN.test(value.digest);
+	const hasInvalidDigest = value.digest !== undefined && !hasDigest;
 	const hasSourceIdentity =
 		typeof value.sourceIdentity === "string" &&
 		(value.sourceIdentity.startsWith("github\0") || value.sourceIdentity.startsWith("project\0")) &&
 		value.sourceIdentity.length <= 2048;
-	return hasDigest !== hasSourceIdentity;
+	const hasInvalidSourceIdentity = value.sourceIdentity !== undefined && !hasSourceIdentity;
+	if (hasInvalidDigest || hasInvalidSourceIdentity) return false;
+	return value.manager === "local-setup"
+		? hasDigest && !hasSourceIdentity
+		: hasDigest || hasSourceIdentity;
 }
 
 function reservationMatches(
@@ -619,7 +626,6 @@ export function replaceManagedSkillDirectoryAtomic(
 		withRuntimeUserFileAccess(() => cpSync(sourceDir, stagedTarget, { recursive: true }));
 		withManagedTargetRollback({
 			target: targetDir,
-			receipt: options.receipt,
 			targetBackup: previousTarget,
 			beforeRestore: options.beforeRestore,
 			beforeCleanup: options.beforeCleanup,
@@ -647,7 +653,6 @@ export function replaceManagedSkillDirectoryAtomic(
 }
 
 export interface ManagedSkillDirectoryActivationOptions {
-	receipt?: string;
 	beforeActivate?: () => void;
 	afterActivate?: () => void;
 	beforeRestore?: () => void;

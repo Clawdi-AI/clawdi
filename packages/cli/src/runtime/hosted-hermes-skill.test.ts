@@ -8,14 +8,12 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
-	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
-import { managedSkillReceiptPath } from "./managed-skill-delivery";
 
 let root: string | null = null;
 
@@ -118,8 +116,6 @@ describe("Hermes exact-source Workspace Skill driver", () => {
 	test("places a hub-blocked dangerous source on the official local discovery surface", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-dangerous-local-"));
 		const home = join(root, "home");
-		const managedResourceRoot = join(root, "managed-resources");
-		mkdirSync(managedResourceRoot, { recursive: true });
 		const skillId = "dangerous-local";
 		const dangerousSkill = `---
 name: blocked-page-recovery
@@ -149,9 +145,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		expect(
 			hostedHermesSkillExactSourceDriver.install({
 				home,
-				managedResourceRoot,
 				skill,
-				previouslyReserved: false,
 			}),
 		).toBe("installed");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(dangerousSkill);
@@ -171,23 +165,11 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 
 		// A fresh discovery instance models a restarted gateway process.
 		expect(fakeHermesLocalSkills(home)).toHaveLength(1);
-		expect(
-			hostedHermesSkillExactSourceDriver.uninstall({
-				home,
-				managedResourceRoot,
-				skillId,
-				ownershipIdentity: skill.sourceIdentity,
-			}),
-		).toBe("removed");
-		expect(existsSync(target)).toBe(false);
-		expect(fakeHermesLocalSkills(home)).toEqual([]);
 	});
 
-	test("repairs receipt and byte drift and atomically replaces an owned source", () => {
+	test("atomically replaces an exact source", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-local-repair-"));
 		const home = join(root, "home");
-		const managedResourceRoot = join(root, "managed-resources");
-		mkdirSync(managedResourceRoot, { recursive: true });
 		const skillId = "review-pr";
 		const skillV1 = "---\nname: native-review-pr\n---\n# Review PR v1\n";
 		const skillV2 = "---\nname: native-review-pr\n---\n# Review PR v2\n";
@@ -196,56 +178,25 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		const skill = sourcedSkill(skillId, archiveV1);
 		const updatedSkill = sourcedSkill(skillId, archiveV2, "b".repeat(40));
 		const target = join(home, ".hermes", "skills", skillId);
-		const receipt = managedSkillReceiptPath(managedResourceRoot, "hermes", skillId);
-		const input = {
-			home,
-			managedResourceRoot,
-			skill,
-		};
+		const input = { home, skill };
 
-		expect(
-			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
-		).toBe("installed");
-		const stableInode = statSync(target).ino;
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
-			"unchanged",
-		);
-		expect(statSync(target).ino).toBe(stableInode);
-
-		rmSync(receipt);
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
-			"installed",
-		);
+		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		writeFileSync(join(target, "SKILL.md"), "tenant drift\n");
-		expect(hostedHermesSkillExactSourceDriver.verifyOwned(input)).toBe(false);
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
-			"installed",
-		);
+		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
 
 		expect(
 			hostedHermesSkillExactSourceDriver.install({
 				...input,
 				skill: updatedSkill,
-				previouslyReserved: true,
 			}),
 		).toBe("installed");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
-		expect(
-			hostedHermesSkillExactSourceDriver.hasOwnershipReceipt({
-				home,
-				managedResourceRoot,
-				skillId,
-				ownershipIdentity: updatedSkill.sourceIdentity,
-			}),
-		).toBe(true);
 	});
 
-	test("ignores retired loopback hub metadata for a receipt-owned local Skill", () => {
+	test("does not modify Hermes hub metadata", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-loopback-metadata-"));
 		const home = join(root, "home");
-		const managedResourceRoot = join(root, "managed-resources");
-		mkdirSync(managedResourceRoot, { recursive: true });
 		const skillId = "review-pr";
 		const skillFiles = {
 			"SKILL.md": "---\nname: review-pr\n---\n# Review PR\n",
@@ -253,15 +204,9 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		};
 		const archive = archiveSkill(root, skillId, skillFiles);
 		const skill = sourcedSkill(skillId, archive);
-		const input = {
-			home,
-			managedResourceRoot,
-			skill,
-		};
+		const input = { home, skill };
 
-		expect(
-			hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: false }),
-		).toBe("installed");
+		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
 		mkdirSync(dirname(lockPath), { recursive: true });
 		const externalEntry = {
@@ -284,9 +229,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			})}\n`,
 		);
 		const lockBefore = readFileSync(lockPath);
-		expect(hostedHermesSkillExactSourceDriver.install({ ...input, previouslyReserved: true })).toBe(
-			"unchanged",
-		);
+		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		expect(readFileSync(lockPath)).toEqual(lockBefore);
 		expect(JSON.parse(readFileSync(lockPath, "utf8")).installed).toEqual({
 			[skillId]: {
@@ -296,46 +239,5 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			},
 			"user-skill": externalEntry,
 		});
-	});
-
-	test("preserves unreserved and locally changed targets", () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "hosted-hermes-local-ownership-"));
-		root = fixtureRoot;
-		const home = join(fixtureRoot, "home");
-		const managedResourceRoot = join(fixtureRoot, "managed-resources");
-		mkdirSync(managedResourceRoot, { recursive: true });
-		const skillId = "review-pr";
-		const archive = archiveSkill(fixtureRoot, skillId, { "SKILL.md": "# Managed\n" });
-		const skill = sourcedSkill(skillId, archive);
-		const target = join(home, ".hermes", "skills", skillId);
-		mkdirSync(target, { recursive: true });
-		writeFileSync(join(target, "SKILL.md"), "user-owned\n");
-
-		expect(() =>
-			hostedHermesSkillExactSourceDriver.install({
-				home,
-				managedResourceRoot,
-				skill,
-				previouslyReserved: false,
-			}),
-		).toThrow("not paired with a manifest reservation");
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("user-owned\n");
-
-		hostedHermesSkillExactSourceDriver.anchorOwnership({
-			home,
-			managedResourceRoot,
-			skillId,
-			ownershipIdentity: skill.sourceIdentity,
-		});
-		writeFileSync(join(target, "SKILL.md"), "changed after receipt\n");
-		expect(() =>
-			hostedHermesSkillExactSourceDriver.cleanupManifestOwned({
-				home,
-				managedResourceRoot,
-				skillId,
-				ownershipIdentity: skill.sourceIdentity,
-			}),
-		).toThrow("ownership receipt");
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("changed after receipt\n");
 	});
 });

@@ -1,4 +1,3 @@
-import { existsSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
 	type OpenClawAgentWorkspace,
@@ -7,15 +6,9 @@ import {
 import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
 import {
 	ManagedSkillResourceError,
-	managedSkillMarkerMatchesIdentity,
-	managedSkillMarkerOwnsTarget,
-	managedSkillReceiptIdentityState,
-	managedSkillReceiptMatchesIdentity,
-	managedSkillReceiptPath,
-	OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA,
+	managedSkillTargetMatchesSource,
 	withManagedTargetRollback,
 	withStagedManagedSkill,
-	writeManagedSkillReceipt,
 } from "./managed-skill-delivery";
 import {
 	executableExists,
@@ -25,8 +18,7 @@ import {
 import { parseSystemctlShow, systemctlPath } from "./systemd";
 
 const OPENCLAW_AGENT_ID = "main";
-const SOURCE_RECEIPT = ".openclaw/source-origin.json";
-const EXCLUDED_NATIVE_FILES = new Set([SOURCE_RECEIPT]);
+const OPENCLAW_INSTALLED_TREE_EXCLUDES = new Set([".openclaw/source-origin.json"]);
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
 const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
@@ -38,42 +30,14 @@ export interface HostedOpenClawSkillDriver {
 	installDirectory(input: {
 		home: string;
 		workspaceRoot: string;
-		managedResourceRoot: string;
 		skillId: string;
 		sourceDir: string;
-		ownershipIdentity: string;
-		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
 	install(input: {
 		home: string;
 		workspaceRoot: string;
-		managedResourceRoot: string;
 		skill: PreparedHostedSourcedSkill;
-		previouslyReserved?: boolean;
 	}): "installed" | "unchanged";
-	anchorOwnership(input: {
-		workspaceRoot: string;
-		managedResourceRoot: string;
-		skillId: string;
-		ownershipIdentity: string;
-	}): void;
-	hasOwnershipReceipt(input: {
-		workspaceRoot: string;
-		managedResourceRoot: string;
-		skillId: string;
-		ownershipIdentity: string;
-	}): boolean;
-	verifyOwned(input: {
-		workspaceRoot: string;
-		managedResourceRoot: string;
-		skill: PreparedHostedSourcedSkill;
-	}): boolean;
-	cleanupManifestOwned(input: {
-		workspaceRoot: string;
-		managedResourceRoot: string;
-		skillId: string;
-		ownershipIdentity: string;
-	}): "absent" | "removed";
 }
 
 function installedCommandPath(home: string): string | null {
@@ -94,22 +58,6 @@ function commandPath(home: string): string {
 }
 const targetDir = (workspaceRoot: string, skillId: string) =>
 	join(workspaceRoot, "skills", skillId);
-function receiptInput(
-	managedResourceRoot: string,
-	workspaceRoot: string,
-	skillId: string,
-	ownershipIdentity: string,
-) {
-	return {
-		path: managedSkillReceiptPath(managedResourceRoot, "openclaw", skillId),
-		managedResourceRoot,
-		schemaVersion: OPENCLAW_MANAGED_SKILL_RECEIPT_SCHEMA,
-		skillId,
-		ownershipIdentity,
-		target: targetDir(workspaceRoot, skillId),
-		exclude: EXCLUDED_NATIVE_FILES,
-	};
-}
 
 function parseOfficialWorkspaceRoster(stdout: string): string {
 	let roster: OpenClawAgentWorkspace[];
@@ -254,25 +202,9 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 	},
 	installDirectory(input) {
 		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(
-			input.managedResourceRoot,
-			input.workspaceRoot,
-			input.skillId,
-			input.ownershipIdentity,
-		);
-		if (managedSkillReceiptMatchesIdentity(receipt)) return "unchanged";
-		if (
-			withRuntimeUserFileAccess(() => existsSync(target)) &&
-			!input.previouslyReserved &&
-			!managedSkillMarkerOwnsTarget(receipt)
-		)
-			throw new Error(
-				"refusing to replace an OpenClaw Skill without a matching Clawdi ownership receipt",
-			);
 		assertOfficialWorkspace(input);
 		return withManagedTargetRollback({
 			target,
-			receipt: receipt.path,
 			operation: () => {
 				// The roster may reference a workspace OpenClaw has not created yet on first run.
 				const result = spawnRuntimeUserCommand(
@@ -296,89 +228,27 @@ export const hostedOpenClawSkillDriver: HostedOpenClawSkillDriver = {
 						`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 					);
 				assertOfficialWorkspace(input);
-				writeManagedSkillReceipt(receipt);
+				if (
+					!managedSkillTargetMatchesSource(input.sourceDir, target, {
+						exclude: OPENCLAW_INSTALLED_TREE_EXCLUDES,
+					})
+				) {
+					throw new ManagedSkillResourceError(
+						"OpenClaw Skill activation changed exact source bytes",
+					);
+				}
 				return "installed" as const;
 			},
 		});
 	},
 	install(input) {
-		if (
-			managedSkillReceiptMatchesIdentity(
-				receiptInput(
-					input.managedResourceRoot,
-					input.workspaceRoot,
-					input.skill.skillId,
-					input.skill.sourceIdentity,
-				),
-			)
-		)
-			return "unchanged";
 		return withStagedManagedSkill(input.skill, (sourceDir) =>
 			this.installDirectory({
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
-				managedResourceRoot: input.managedResourceRoot,
 				skillId: input.skill.skillId,
 				sourceDir,
-				ownershipIdentity: input.skill.sourceIdentity,
-				previouslyReserved: input.previouslyReserved,
 			}),
 		);
-	},
-	anchorOwnership(input) {
-		writeManagedSkillReceipt(
-			receiptInput(
-				input.managedResourceRoot,
-				input.workspaceRoot,
-				input.skillId,
-				input.ownershipIdentity,
-			),
-		);
-	},
-	hasOwnershipReceipt(input) {
-		return managedSkillMarkerMatchesIdentity(
-			receiptInput(
-				input.managedResourceRoot,
-				input.workspaceRoot,
-				input.skillId,
-				input.ownershipIdentity,
-			),
-		);
-	},
-	verifyOwned(input) {
-		return managedSkillReceiptMatchesIdentity(
-			receiptInput(
-				input.managedResourceRoot,
-				input.workspaceRoot,
-				input.skill.skillId,
-				input.skill.sourceIdentity,
-			),
-		);
-	},
-	cleanupManifestOwned(input) {
-		const target = targetDir(input.workspaceRoot, input.skillId);
-		const receipt = receiptInput(
-			input.managedResourceRoot,
-			input.workspaceRoot,
-			input.skillId,
-			input.ownershipIdentity,
-		);
-		const receiptState = managedSkillReceiptIdentityState(receipt);
-		if (receiptState === "absent") {
-			rmSync(receipt.path, { force: true });
-			return "absent";
-		}
-		if (receiptState === "unsafe") {
-			throw new Error("refusing manifest cleanup because the OpenClaw Skill tree is unsafe");
-		}
-		if (receiptState !== "matched")
-			throw new Error(
-				"refusing manifest cleanup because OpenClaw Skill bytes no longer match the ownership receipt",
-			);
-		withRuntimeUserFileAccess(() => {
-			rmSync(target, { recursive: true });
-		});
-		rmSync(receipt.path, { force: true });
-		return "removed";
 	},
 };

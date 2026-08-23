@@ -41,7 +41,7 @@ import {
 	managedBaileysCompatSnapshotRuntimes,
 } from "./managed-baileys-compat";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
-import { ManagedSkillResourceError, managedSkillReceiptPath } from "./managed-skill-delivery";
+import { ManagedSkillResourceError } from "./managed-skill-delivery";
 import { managedSkillReservations } from "./managed-skill-reservation";
 import {
 	hostedChannelCredentialsDeclared,
@@ -671,22 +671,19 @@ export function hostedSkillMutationTargets(
 	manifest: RuntimeManifest,
 	home: string,
 	openClawWorkspaceRoot: string | null,
-	managedResourceRoot: string,
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 	hermesDriver: HostedHermesSkillExactSourceDriver,
-): { platformTargets: string[]; runtimeUserTargets: string[] } {
+): string[] {
 	const runtimeUserTargets = new Set<string>();
-	const platformTargets = new Set<string>();
 	const hermesSkillsRoot = join(home, ".hermes", "skills");
 	const openClawSkillsRoot = openClawWorkspaceRoot ? join(openClawWorkspaceRoot, "skills") : null;
-	const addSkillTargets = (runtime: "hermes" | "openclaw", skillsRoot: string, skillId: string) => {
+	const addSkillTarget = (skillsRoot: string, skillId: string) => {
 		runtimeUserTargets.add(join(skillsRoot, skillId));
-		platformTargets.add(managedSkillReceiptPath(managedResourceRoot, runtime, skillId));
 	};
 	let managesHermesSourcedSkill = false;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		addSkillTargets("hermes", hermesSkillsRoot, skillId);
-		if (openClawSkillsRoot) addSkillTargets("openclaw", openClawSkillsRoot, skillId);
+		addSkillTarget(hermesSkillsRoot, skillId);
+		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
 		if ("source" in desired && manifest.runtimes.hermes?.enabled === true) {
 			managesHermesSourcedSkill = true;
 			const prepared = preparedSourcedSkills.get(skillId);
@@ -702,25 +699,20 @@ export function hostedSkillMutationTargets(
 		}
 	}
 	for (const skillId of hostedBundledSkillIds()) {
-		addSkillTargets("hermes", hermesSkillsRoot, skillId);
-		if (openClawSkillsRoot) addSkillTargets("openclaw", openClawSkillsRoot, skillId);
+		addSkillTarget(hermesSkillsRoot, skillId);
+		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
 	}
 	for (const reservation of managedSkillReservations("hosted-manifest")) {
 		if (dirname(reservation.targetDir) === hermesSkillsRoot) {
 			if (reservation.sourceIdentity) managesHermesSourcedSkill = true;
 			runtimeUserTargets.add(reservation.targetDir);
-			platformTargets.add(managedSkillReceiptPath(managedResourceRoot, "hermes", reservation.id));
 		}
 		if (openClawSkillsRoot && dirname(reservation.targetDir) === openClawSkillsRoot) {
 			runtimeUserTargets.add(reservation.targetDir);
-			platformTargets.add(managedSkillReceiptPath(managedResourceRoot, "openclaw", reservation.id));
 		}
 	}
 	if (managesHermesSourcedSkill) runtimeUserTargets.add(join(hermesSkillsRoot, ".hub"));
-	return {
-		platformTargets: [...platformTargets].sort(),
-		runtimeUserTargets: [...runtimeUserTargets].sort(),
-	};
+	return [...runtimeUserTargets].sort();
 }
 export function runtimeManagedMutationPlan(input: {
 	manifest: RuntimeManifest;
