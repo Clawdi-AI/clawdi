@@ -75,7 +75,7 @@ function healthyAppliedRuntimePaths() {
 }
 
 describe("hosted runtime observed v2", () => {
-	test("reports authority only from applied state and the active process version", () => {
+	test("reports applied authority and keeps status version separate from the active process", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -105,11 +105,15 @@ describe("hosted runtime observed v2", () => {
 			paths,
 		);
 		mkdirSync(dirname(paths.cliBootstrapStatus), { recursive: true });
-		writeFileSync(paths.cliBootstrapStatus, JSON.stringify({ version: "0.0.0-stale" }));
+		writeFileSync(
+			paths.cliBootstrapStatus,
+			JSON.stringify({ version: "0.0.0-stale", imageShimExtension: true }),
+		);
 
 		const observed = readHostedRuntimeObserved(paths);
 		expect(observed?.schemaVersion).toBe("clawdi.hostedRuntimeObserved.v2");
 		expect(observed?.activeCliVersion).toBe(getCliVersion());
+		expect(observed?.cli?.version).toBe("0.0.0-stale");
 		expect(observed?.applied).toEqual({
 			etag: '"bundle-applied"',
 			sourceRevision: "a".repeat(64),

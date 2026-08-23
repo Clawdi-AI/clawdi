@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
+import { toErrorMessage } from "../serve/log";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
@@ -45,7 +47,8 @@ export function readHostedRuntimeObserved(
 	const appliedState =
 		options.appliedState === undefined ? readRuntimeAppliedState(paths) : options.appliedState;
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
-	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
+	const activeCliVersion = getCliVersion();
+	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
 	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
@@ -63,10 +66,10 @@ export function readHostedRuntimeObserved(
 		reportedAt: options.reportedAt ?? new Date().toISOString(),
 		runtimeMode: paths.mode,
 		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedAuthority !== null),
-		activeCliVersion: getCliVersion(),
+		activeCliVersion,
 		applied: appliedAuthority,
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
-		cli: summarizeCliBootstrap(cliBootstrap),
+		cli: observedCli(cliBootstrap),
 	};
 	if (systemd) {
 		observed.systemd = systemd;
@@ -144,16 +147,16 @@ function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 	);
 }
 
-function summarizeCliBootstrap(value: JsonRecord | null): HostedRuntimeObservedCli | null {
+function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObservedCli | null {
 	if (!value) return null;
 	return {
-		status: stringValue(value.status),
-		source: stringValue(value.source),
-		packageSpec: stringValue(value.packageSpec),
-		registry: stringValue(value.registry),
-		activePath: stringValue(value.activePath),
-		activeTarget: stringValue(value.activeTarget),
-		version: stringValue(value.version),
+		status: value.status ?? null,
+		source: value.source ?? null,
+		packageSpec: value.packageSpec ?? null,
+		registry: value.registry ?? null,
+		activePath: value.activePath ?? null,
+		activeTarget: value.activeTarget ?? null,
+		version: value.version ?? null,
 	};
 }
 
@@ -411,7 +414,7 @@ function runRuntimeUserSystemctl(
 	} catch (error) {
 		return {
 			exitCode: 1,
-			output: error instanceof Error ? error.message : String(error),
+			output: toErrorMessage(error),
 		};
 	}
 }

@@ -68,7 +68,6 @@ import {
 	reconcileHostedRuntimeOAuthCredentials,
 } from "./manifest-oauth";
 import {
-	excludeRuntimeSnapshotCoverage,
 	hostedSkillMutationTargets,
 	managedOpenClawPluginBootstrapMutationPlan,
 	managedWhatsAppCompatibilityRuntime,
@@ -518,16 +517,6 @@ function prepareRuntimeConvergencePlan(
 						manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
 				})
 			: null;
-		validateRuntimeProjectionPlan({
-			manifest,
-			paths,
-			openClawWorkspaceRoot,
-			secretValues,
-			observations: state.observations,
-			previousProjectedProviderIds,
-			hermesWhatsAppAuthDir,
-			openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
-		});
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
 			paths,
@@ -537,6 +526,16 @@ function prepareRuntimeConvergencePlan(
 			observations: state.observations,
 			egressProfileBundlePath: plannedEgressProfileBundlePath,
 			egress: null,
+		});
+		validateRuntimeProjectionPlan({
+			manifest,
+			paths,
+			openClawWorkspaceRoot,
+			secretValues,
+			observations: state.observations,
+			previousProjectedProviderIds,
+			hermesWhatsAppAuthDir,
+			openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 		});
 		validateRuntimeSystemdPlan(plannedRuntimePrograms);
 		mutationPlan = runtimeManagedMutationPlan({
@@ -572,19 +571,9 @@ function prepareRuntimeConvergencePlan(
 	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(() => existsSync(workspaceRoot));
 	let liveSnapshot: RuntimeLiveSnapshot;
 	try {
-		let snapshotPlan = mutationPlan.snapshot;
-		if (installStage.coldInstallPlan) {
-			snapshotPlan = excludeRuntimeSnapshotCoverage(
-				snapshotPlan,
-				installStage.coldInstallPlan.snapshot,
-			);
-		}
-		if (installStage.pluginBootstrapPlan) {
-			snapshotPlan = excludeRuntimeSnapshotCoverage(snapshotPlan, installStage.pluginBootstrapPlan);
-		}
 		liveSnapshot = state.rollbackSnapshots.capture(
 			"runtime filesystem rollback failed",
-			snapshotPlan,
+			mutationPlan.snapshot,
 		);
 	} catch (error) {
 		throw state.rollbackSnapshots.failure(error);

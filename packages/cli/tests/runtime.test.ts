@@ -13390,61 +13390,6 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("keeps the paired-image CLI current only behind the exact test fixture gate", () => {
-		const home = join(root, "home-paired-cli", "clawdi");
-		const state = join(root, "state-paired-cli");
-		const run = join(root, "run-paired-cli");
-		const bin = join(root, "bin-paired-cli");
-		const npmMarker = join(root, "paired-npm-invoked");
-		const previousPath = process.env.PATH;
-		mkdirSync(bin, { recursive: true });
-		writeFileSync(join(bin, "npm"), `#!/usr/bin/env sh\ntouch '${npmMarker}'\nexit 99\n`);
-		chmodSync(join(bin, "npm"), 0o700);
-		process.env.PATH = `${bin}:${previousPath ?? ""}`;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		seedCurrentCliInstall(
-			state,
-			"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
-			"1.2.22",
-			"https://registry.npmjs.org",
-		);
-		const paths = getRuntimePaths();
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_paired_cli",
-			environmentId: "env_paired_cli",
-			instanceId: "iid_paired_cli",
-			generation: 1,
-			issuedAt: "2026-07-31T00:00:00Z",
-			controlPlane: { apiUrl: "https://cloud-api.test" },
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: "clawdi@1.2.22",
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
-			recovery: {},
-		};
-
-		try {
-			const current = applyRuntimeCliDesiredState(manifest, paths);
-			expect(current.status).toBe("current");
-			expect(current.selfReexec).toBe(false);
-			expect(existsSync(npmMarker)).toBe(false);
-			expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).packageSpec).toBe(
-				"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
-			);
-		} finally {
-			delete process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-		}
-	});
-
 	it("preserves the real last-good CLI across a status-missing rollback and later upgrade", () => {
 		const home = join(root, "home-cli-rollback-lifecycle", "clawdi");
 		const state = join(root, "state-cli-rollback-lifecycle");

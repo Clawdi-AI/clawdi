@@ -60,12 +60,9 @@ export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: un
 	// that leaves command ownership with the official gateway unit.
 	return (
 		exactStringArray(value, HOSTED_GATEWAY_RUN_ARGS) ||
-		exactStringArray(
-			value,
-			runtime === "openclaw"
-				? LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS
-				: LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS,
-		)
+		(runtime === "openclaw" && exactStringArray(value, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS)) ||
+		// SUNSET: remove once every hosted Hermes host has converged on CLI >= 0.14.14 (last-good rewritten canonical).
+		(runtime === "hermes" && exactStringArray(value, LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS))
 	);
 }
 
@@ -197,9 +194,6 @@ const cliPayloadPolicySchema = z.object({
 	registry: z.string().min(1).optional(),
 });
 
-const HOSTED_BOOTSTRAP_PACKAGE_ROOT = "/usr/local/share/clawdi/bootstrap/";
-export const HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE = `${HOSTED_BOOTSTRAP_PACKAGE_ROOT}clawdi-local.tgz`;
-
 function isHostedExactCliPackageSpec(value: string): boolean {
 	const npmVersion = /^clawdi@(.+)$/.exec(value)?.[1];
 	return npmVersion !== undefined && isHostedExactSemver(npmVersion);
@@ -218,25 +212,10 @@ function isHostedExactSemver(value: string): boolean {
 		.every((identifier) => !/^\d+$/.test(identifier) || /^(0|[1-9]\d*)$/.test(identifier));
 }
 
-function isHostedFixtureCliPackageSpec(value: string): boolean {
-	if (isHostedExactCliPackageSpec(value)) return true;
-	if (!value.startsWith(HOSTED_BOOTSTRAP_PACKAGE_ROOT)) return false;
-	const basename = value.slice(HOSTED_BOOTSTRAP_PACKAGE_ROOT.length);
-	return !basename.includes("..") && /^[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(basename);
-}
-
 export const hostedCliPackageSpecSchema = z
 	.string()
 	.max(200)
 	.refine(isHostedExactCliPackageSpec, "must be clawdi@<exact-semver>");
-
-export const hostedFixtureCliPackageSpecSchema = z
-	.string()
-	.max(200)
-	.refine(
-		isHostedFixtureCliPackageSpec,
-		"must be clawdi@<exact-semver> or a managed bootstrap tarball",
-	);
 
 export const hostedCliPayloadPolicySchema = z
 	.object({
@@ -245,10 +224,6 @@ export const hostedCliPayloadPolicySchema = z
 		registry: z.literal("https://registry.npmjs.org"),
 	})
 	.strict();
-
-export const hostedFixtureCliPayloadPolicySchema = hostedCliPayloadPolicySchema.safeExtend({
-	packageSpec: hostedFixtureCliPackageSpecSchema,
-});
 
 const sha256Schema = z.string().regex(/^[a-fA-F0-9]{64}$/);
 

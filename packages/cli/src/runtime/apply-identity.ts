@@ -1,10 +1,8 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import {
-	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
-	hostedCliPackageSpecSchema,
-} from "./manifest-contract";
+import { toErrorMessage } from "../serve/log";
+import { hostedCliPackageSpecSchema } from "./manifest-contract";
 import { getRuntimePaths } from "./paths";
 
 export const runtimeApplyIdentitySchema = z
@@ -85,9 +83,7 @@ const runtimeContextV2FileSchema = z
 		schemaVersion: z.literal("clawdi.runtimeContext.v2"),
 		backend: z.literal("incus"),
 		apply: runtimeApplyIdentitySchema,
-		cliPackageSpec: hostedCliPackageSpecSchema.or(
-			z.literal(HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE),
-		),
+		cliPackageSpec: hostedCliPackageSpecSchema,
 		manifestSource: runtimeManifestSourceSchema,
 	})
 	.strict();
@@ -152,11 +148,7 @@ function readRuntimeContextFile(contextPath: string): RuntimeContextFile {
 	try {
 		raw = JSON.parse(readFileSync(contextPath, "utf-8"));
 	} catch (error) {
-		throw new Error(
-			`could not read runtime context file ${contextPath}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
+		throw new Error(`could not read runtime context file ${contextPath}: ${toErrorMessage(error)}`);
 	}
 	const parsed = runtimeContextFileSchema.safeParse(raw);
 	if (!parsed.success) {
@@ -164,15 +156,6 @@ function readRuntimeContextFile(contextPath: string): RuntimeContextFile {
 			`invalid runtime context file ${contextPath}: ${parsed.error.issues
 				.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
 				.join("; ")}`,
-		);
-	}
-	if (
-		parsed.data.schemaVersion === "clawdi.runtimeContext.v2" &&
-		parsed.data.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE &&
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1"
-	) {
-		throw new Error(
-			`invalid runtime context file ${contextPath}: cliPackageSpec: ${HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE} requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`,
 		);
 	}
 	return parsed.data;

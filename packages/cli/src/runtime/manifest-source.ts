@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { toErrorMessage } from "../serve/log";
 import {
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
@@ -295,7 +296,7 @@ async function fetchRuntimeManifestPayload(
 			return { url, raw: await response.json(), etag };
 		} catch (error) {
 			throw new RuntimeManifestResponseError(
-				`runtime manifest response is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+				`runtime manifest response is not valid JSON: ${toErrorMessage(error)}`,
 				etag,
 			);
 		}
@@ -326,11 +327,7 @@ export async function loadRemoteRuntimeManifest(
 		return {
 			mode: "repair",
 			stage: runtimeFetchFailureStage(error),
-			errors: [
-				`could not fetch runtime manifest: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			],
+			errors: [`could not fetch runtime manifest: ${toErrorMessage(error)}`],
 			...(error instanceof RuntimeManifestResponseError && error.etag ? { etag: error.etag } : {}),
 		};
 	}
@@ -358,7 +355,7 @@ export async function loadRemoteRuntimeManifest(
 		return {
 			mode: "manifest-rejected",
 			stage: "network",
-			errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
+			errors: error instanceof z.ZodError ? zodErrors(error) : [toErrorMessage(error)],
 			etag: fetched.etag,
 			rejectedGeneration: rawGeneration(fetched.raw),
 			activeGeneration: loadExistingState(paths).generation ?? null,
@@ -382,7 +379,7 @@ function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
 	return {
 		mode: "repair",
 		stage: "local",
-		errors: [error instanceof Error ? error.message : String(error)],
+		errors: [toErrorMessage(error)],
 	};
 }
 
@@ -814,9 +811,7 @@ function loadLastGoodManifest(
 			mode: "repair",
 			stage: "local",
 			errors: [
-				`could not read last-good runtime manifest at ${paths.manifestLastGood}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+				`could not read last-good runtime manifest at ${paths.manifestLastGood}: ${toErrorMessage(error)}`,
 			],
 		};
 	}
@@ -863,9 +858,7 @@ function loadCachedSecretValues(
 			mode: "repair",
 			stage: "local",
 			errors: [
-				`could not read cached runtime secret values at ${paths.managedSecretCacheFile}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+				`could not read cached runtime secret values at ${paths.managedSecretCacheFile}: ${toErrorMessage(error)}`,
 			],
 		};
 	}

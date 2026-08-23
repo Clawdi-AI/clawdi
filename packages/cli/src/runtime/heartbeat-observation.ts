@@ -15,7 +15,6 @@ import {
 	runtimeApplyIdentitiesEqual,
 	runtimeApplyIdentitySchema,
 } from "./apply-identity";
-import { agentPluginsObservationSchema } from "./hosted-agent-plugin-observation";
 import { assertRuntimeBundleAuthority } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -24,153 +23,10 @@ import { writeRuntimePlatformFileAtomic } from "./state";
 const positiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const isoTimestampSchema = z.string().datetime({ offset: true });
 
-const observedAppliedSchema = z
-	.object({
-		etag: z.string(),
-		sourceRevision: z.string(),
-		generation: z.number().int().nonnegative(),
-		instanceId: z.string(),
-		appliedProviderIds: z.array(z.string()),
-	})
-	.strict();
-
-const observedBootSchema = z
-	.object({
-		status: z.enum(["ok", "error", "unknown"]),
-		mode: z.string(),
-		stage: z.string(),
-		timestamp: z.string(),
-		activeGeneration: z.number().int().nonnegative().nullable().optional(),
-		instanceId: z.string().nullable().optional(),
-		enabledRuntimes: z.array(z.string()),
-		errors: z.array(z.string()),
-	})
-	.strict();
-
-const observedCliSchema = z
-	.object({
-		status: z.string().nullable().optional(),
-		source: z.string().nullable().optional(),
-		packageSpec: z.string().nullable().optional(),
-		registry: z.string().nullable().optional(),
-		activePath: z.string().nullable().optional(),
-		activeTarget: z.string().nullable().optional(),
-		version: z.string().nullable().optional(),
-	})
-	.strict();
-
-const observedSystemdUnitSchema = z
-	.object({
-		scope: z.enum(["system", "user"]),
-		name: z.string(),
-		activeState: z.string(),
-		subState: z.string(),
-		status: z.enum(["ok", "error", "unknown"]),
-		error: z.string().nullable().optional(),
-	})
-	.strict();
-
-const observedSystemdSchema = z
-	.object({
-		status: z.enum(["ok", "error", "unknown"]),
-		unitCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-		units: z.array(observedSystemdUnitSchema),
-	})
-	.strict()
-	.superRefine((systemd, ctx) => {
-		if (systemd.unitCount < systemd.units.length) {
-			ctx.addIssue({
-				code: "custom",
-				message: "unitCount must include every reported systemd unit",
-				path: ["unitCount"],
-			});
-		}
-	});
-
-const observedSupervisorProgramSchema = z
-	.object({
-		name: z.string(),
-		state: z.string(),
-		status: z.enum(["ok", "error", "unknown"]),
-		description: z.string().nullable().optional(),
-	})
-	.strict();
-
-const observedSupervisorSchema = z
-	.object({
-		status: z.enum(["ok", "error", "unknown"]),
-		programs: z.array(observedSupervisorProgramSchema),
-	})
-	.strict();
-
 export type HostedRuntimeObservedEvent = components["schemas"]["RuntimeObservationEventV2"] & {
 	generation: number;
 	manifestETag: string;
 };
-
-const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = z
-	.object({
-		schemaVersion: z.literal("clawdi.hostedRuntimeObserved.v2"),
-		reportedAt: isoTimestampSchema,
-		runtimeMode: z.literal("hosted"),
-		status: z.enum(["ok", "error", "unknown"]),
-		activeCliVersion: z.string().nullable(),
-		applied: observedAppliedSchema,
-		boot: observedBootSchema.nullable(),
-		cli: observedCliSchema.nullable(),
-		systemd: observedSystemdSchema.nullable().optional(),
-		supervisor: observedSupervisorSchema.nullable().optional(),
-		providers: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().optional(),
-		agentPlugins: agentPluginsObservationSchema.nullable().optional(),
-		error: z.string().nullable().optional(),
-		convergeError: z.string().nullable().optional(),
-		truncated: z.boolean().nullable().optional(),
-		generation: positiveSafeIntegerSchema,
-		manifestETag: z.string().min(1).max(128),
-		applyReceiptId: z.string().min(16).max(128),
-		bootNonce: z.string().min(16).max(128),
-		bootSessionId: z.string().min(1).max(128),
-		successorBootSessionId: z.string().min(1).max(128).optional(),
-		predecessorBootSessionId: z.string().min(1).max(128).optional(),
-		sequence: positiveSafeIntegerSchema,
-		eventId: z.string().min(1).max(128),
-		capturedAt: isoTimestampSchema,
-	})
-	.strict()
-	.superRefine((event, ctx) => {
-		if (event.reportedAt !== event.capturedAt) {
-			ctx.addIssue({
-				code: "custom",
-				message: "reportedAt must equal the original capturedAt for companion events",
-				path: ["reportedAt"],
-			});
-		}
-		if (
-			event.systemd &&
-			event.systemd.unitCount > event.systemd.units.length &&
-			event.truncated !== true
-		) {
-			ctx.addIssue({
-				code: "custom",
-				message: "truncated must be true when systemd units are omitted",
-				path: ["truncated"],
-			});
-		}
-		if (event.predecessorBootSessionId === event.bootSessionId) {
-			ctx.addIssue({
-				code: "custom",
-				message: "predecessorBootSessionId must differ from bootSessionId",
-				path: ["predecessorBootSessionId"],
-			});
-		}
-		if (event.successorBootSessionId === event.bootSessionId) {
-			ctx.addIssue({
-				code: "custom",
-				message: "successorBootSessionId must differ from bootSessionId",
-				path: ["successorBootSessionId"],
-			});
-		}
-	});
 
 const persistedBootIdentitySchema = runtimeApplyIdentitySchema
 	.safeExtend({
@@ -182,17 +38,6 @@ const pendingEventSchema = z
 	.object({
 		payloadJson: z.string().min(1),
 		payloadSha256: z.string().regex(/^[a-f0-9]{64}$/),
-	})
-	.strict();
-
-const legacyHeartbeatStateSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.runtimeHeartbeatObservation.v1"),
-		environmentId: z.string().min(1),
-		bootIdentity: persistedBootIdentitySchema,
-		nextSequence: positiveSafeIntegerSchema,
-		lastCapturedAt: isoTimestampSchema.nullable().optional(),
-		pending: pendingEventSchema.nullable(),
 	})
 	.strict();
 
@@ -227,7 +72,6 @@ const heartbeatStateSchema = z
 	});
 
 type PersistedHeartbeatState = z.infer<typeof heartbeatStateSchema>;
-type LegacyHeartbeatState = z.infer<typeof legacyHeartbeatStateSchema>;
 type PersistedBootIdentity = z.infer<typeof persistedBootIdentitySchema>;
 
 export interface BufferedRuntimeObservedEvent {
@@ -292,28 +136,14 @@ export class HostedRuntimeHeartbeatSession {
 		return true;
 	}
 
-	private initializeAppliedState(
-		persisted: PersistedHeartbeatState | LegacyHeartbeatState | null,
-	): void {
+	private initializeAppliedState(persisted: PersistedHeartbeatState | null): void {
 		const appliedState = this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
 		const applyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (!appliedState || !applyIdentity) return;
 
 		let candidate: PersistedHeartbeatState;
 		if (persisted && runtimeApplyIdentitiesEqual(persisted.bootIdentity, applyIdentity)) {
-			if (persisted.schemaVersion === "clawdi.runtimeHeartbeatObservation.v1") {
-				candidate = {
-					schemaVersion: "clawdi.runtimeHeartbeatObservation.v2",
-					environmentId: this.environmentId,
-					bootIdentity: persisted.bootIdentity,
-					successorBootSessionId: this.newSuccessorId(persisted.bootIdentity.bootSessionId),
-					predecessorBootSessionId: null,
-					phase: "preparing-successor",
-					nextSequence: persisted.nextSequence,
-					lastCapturedAt: persisted.lastCapturedAt ?? null,
-					pending: persisted.pending,
-				};
-			} else if (persisted.phase === "active") {
+			if (persisted.phase === "active") {
 				candidate = this.rotateState(persisted);
 			} else {
 				candidate = persisted;
@@ -399,8 +229,9 @@ export class HostedRuntimeHeartbeatSession {
 			throw new Error("runtime heartbeat snapshot does not match captured applied state");
 		}
 		assertRuntimeBundleAuthority(snapshot.applied.sourceRevision, snapshot.applied.etag);
-		const event = hostedRuntimeObservedEventSchema.parse({
+		const event: HostedRuntimeObservedEvent = {
 			...snapshot,
+			applied: snapshot.applied,
 			generation: this.currentBootIdentity.generation,
 			manifestETag: this.currentBootIdentity.manifestETag,
 			applyReceiptId: this.currentBootIdentity.applyReceiptId,
@@ -413,8 +244,8 @@ export class HostedRuntimeHeartbeatSession {
 			sequence: this.state.nextSequence,
 			eventId: nonEmptyId(this.createId(), "runtime heartbeat event ID"),
 			capturedAt,
-		});
-		const payloadJson = serializeObservedEvent(event);
+		};
+		const payloadJson = JSON.stringify(event);
 		const pending = {
 			payloadJson,
 			payloadSha256: sha256(payloadJson),
@@ -479,10 +310,7 @@ export function runtimeHeartbeatObservationStatePath(
 	return join(paths.runtimeHeartbeatRoot, `${environmentKey}.json`);
 }
 
-function readState(
-	path: string,
-	environmentId: string,
-): PersistedHeartbeatState | LegacyHeartbeatState | null {
+function readState(path: string, environmentId: string): PersistedHeartbeatState | null {
 	let serialized: string;
 	try {
 		serialized = readFileSync(path, "utf-8");
@@ -495,7 +323,7 @@ function readState(
 
 	try {
 		const raw: unknown = JSON.parse(serialized);
-		const state = z.union([heartbeatStateSchema, legacyHeartbeatStateSchema]).parse(raw);
+		const state = heartbeatStateSchema.parse(raw);
 		if (state.environmentId !== environmentId) {
 			throw new Error("runtime heartbeat state environment binding does not match");
 		}
@@ -539,25 +367,19 @@ function decodePendingEvent(
 	if (sha256(pending.payloadJson) !== pending.payloadSha256) {
 		throw new Error("durable runtime heartbeat event payload hash does not match");
 	}
-	let raw: unknown;
+	let event: HostedRuntimeObservedEvent;
 	try {
-		raw = JSON.parse(pending.payloadJson);
+		event = JSON.parse(pending.payloadJson);
 	} catch (error) {
 		throw new Error(
-			`durable runtime heartbeat event payload is invalid JSON: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			`durable runtime heartbeat event payload is invalid JSON: ${toErrorMessage(error)}`,
 		);
 	}
 	return {
-		event: hostedRuntimeObservedEventSchema.parse(raw),
+		event,
 		payloadJson: pending.payloadJson,
 		payloadSha256: pending.payloadSha256,
 	};
-}
-
-function serializeObservedEvent(event: HostedRuntimeObservedEvent): string {
-	return JSON.stringify(hostedRuntimeObservedEventSchema.parse(event));
 }
 
 function sha256(value: string): string {

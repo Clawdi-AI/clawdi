@@ -109,19 +109,17 @@ describe("runtime apply identity", () => {
 		expect(() => readRuntimeApplyContext()).toThrow(/canonical absolute path/);
 	});
 
-	test("reads legacy v2 context without treating its CLI field as authority", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-paired-cli-fixture-"));
+	test("reads legacy v2 context only with an exact CLI version", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-v2-context-"));
 		roots.push(root);
 		const path = contextFile(root);
 		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
 		parsed.schemaVersion = "clawdi.runtimeContext.v2";
-		parsed.cliPackageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz";
+		parsed.cliPackageSpec = "clawdi@1.2.3-test";
 		writeFileSync(path, JSON.stringify(parsed));
-		expect(() => readRuntimeApplyContext(path)).toThrow(/CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1/);
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		expect(readRuntimeApplyContext(path).identity.generation).toBe(8);
 
-		parsed.cliPackageSpec = "/tmp/clawdi-local.tgz";
+		parsed.cliPackageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz";
 		writeFileSync(path, JSON.stringify(parsed));
 		expect(() => readRuntimeApplyContext(path)).toThrow(/invalid runtime context file/);
 	});

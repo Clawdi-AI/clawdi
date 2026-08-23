@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import { toErrorMessage } from "../serve/log";
 import {
 	type FileBrowserCompanionInstallOptions,
 	fileBrowserCompanionMutationPlan,
@@ -252,6 +253,7 @@ export function resolveRuntimeRunConfigs(input: {
 	const secretEnv = input.runtime.enabled
 		? mergeRuntimeSecretEnv(input.name, runtimeRunSettings, providerSecretEnv)
 		: {};
+	scopedSecretValues(input.secretValues, Object.values(secretEnv));
 	const secretFilePath = null;
 	const runtime = buildRuntimeRunConfig({
 		runtime: runtimeName,
@@ -390,35 +392,6 @@ export function validateRuntimeProjectionPlan(input: {
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
 	)) {
-		const observation = observations.get(name);
-		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
-		const runtimeName = runtimeNameSchema.parse(name);
-		const providerEnvironment = runtime.enabled
-			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
-			: { placeholderEnv: {}, secretEnv: {} };
-		const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
-			providerEnvironment;
-		const runtimeSettings = resolvedRuntimeSettings(
-			runtimeName,
-			runtime.run,
-			providerPlaceholderEnv,
-		);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtimeSettings, providerSecretEnv)
-			: {};
-		scopedSecretValues(secretValues, Object.values(secretEnv));
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const settings = resolvedRuntimeServiceSettings(
-				manifest,
-				runtimeName,
-				service,
-				serviceSettings,
-				providerPlaceholderEnv,
-			);
-			mergeRuntimeSecretEnv(name, settings, providerSecretEnv, service);
-		}
-
 		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
 		assertHostedProviderProjectionMode(name, manifest, projectionInput);
 		const configuredProjectionUnavailable =
@@ -461,30 +434,6 @@ export function validateRuntimeProjectionPlan(input: {
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
 	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
-}
-export function excludeRuntimeSnapshotCoverage(
-	plan: RuntimeManagedMutationPlan,
-	coveragePlan: RuntimeManagedMutationPlan,
-): RuntimeManagedMutationPlan {
-	const contentRoots = coveragePlan.runtimeUserTargets.map((path) => resolve(path));
-	const coveredByContentRoot = (path: string): boolean => {
-		const candidate = resolve(path);
-		return contentRoots.some((root) => {
-			const relativePath = relative(root, candidate);
-			return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-		});
-	};
-	const coveredMetadata = new Set(coveragePlan.metadataTargets.map((path) => resolve(path)));
-	return {
-		...plan,
-		runtimeUserTargets: plan.runtimeUserTargets.filter((path) => !coveredByContentRoot(path)),
-		runtimeUserSymlinkTargets: plan.runtimeUserSymlinkTargets.filter(
-			(path) => !coveredByContentRoot(path),
-		),
-		metadataTargets: plan.metadataTargets.filter(
-			(path) => !coveredByContentRoot(path) && !coveredMetadata.has(resolve(path)),
-		),
-	};
 }
 export function managedOpenClawPluginBootstrapMutationPlan(
 	context: OpenClawHostedContext,
@@ -535,7 +484,7 @@ export class RuntimeSnapshotRollbackStack {
 	restore(
 		scope?: RuntimeSnapshotRollbackScope,
 		formatFailure: (failure: string, error: unknown) => string = (failure, error) =>
-			`${failure}: ${error instanceof Error ? error.message : String(error)}`,
+			`${failure}: ${toErrorMessage(error)}`,
 	): string[] {
 		const errors: string[] = [];
 		for (const { failure, snapshot } of this.#snapshots.splice(scope?.start ?? 0).reverse()) {
@@ -551,9 +500,7 @@ export class RuntimeSnapshotRollbackStack {
 	failure(error: unknown): unknown {
 		const rollbackErrors = this.restore();
 		if (rollbackErrors.length === 0) return error;
-		return new Error(
-			`${error instanceof Error ? error.message : String(error)}; ${rollbackErrors.join("; ")}`,
-		);
+		return new Error(`${toErrorMessage(error)}; ${rollbackErrors.join("; ")}`);
 	}
 }
 function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
@@ -614,13 +561,9 @@ export function runtimeUserMutationTargets(
 		join(dirname(hermesAuthPath(home)), "auth.lock"),
 		openClawContext.agentDirs.main,
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
-		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 		...channelPluginTargets,
 	]);
-	if (openClawContext.managedApiKeyProjection) {
-		for (const target of openClawContext.providerPlugin.mutationTargets) targets.add(target);
-	}
 	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		if (manifest.runtimes[name]?.enabled !== true) continue;
