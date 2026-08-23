@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { createGunzip } from "node:zlib";
+import { createGunzip, gunzipSync } from "node:zlib";
 import * as tar from "tar";
 import { assertValidSkillKey } from "./skill-key";
 
@@ -94,6 +94,70 @@ function isReservedSkillArchivePath(path: string): boolean {
 	return path.split(/[\\/]/).some((segment) => segment.toLowerCase().startsWith(".clawdi-managed"));
 }
 
+export interface TarExtractionLimits {
+	entryCount: number;
+	fileCount?: number;
+	entryBytes: number;
+	totalEntryBytes: number;
+	expandedTarBytes: number;
+}
+
+export interface TarExtractionOptions {
+	limits?: TarExtractionLimits;
+	resourceLabel?: string;
+	filter?: (path: string, entry: ArchiveEntry) => boolean;
+	allowReservedManagementPaths?: boolean;
+}
+
+interface ArchiveEntry {
+	size: number;
+	type?: string;
+}
+
+function extractionFilter(
+	options: TarExtractionOptions,
+): (path: string, entry: ArchiveEntry) => boolean {
+	const limits = options.limits ?? SKILL_ARCHIVE_EXTRACTION_LIMITS;
+	const fileCountLimit = "fileCount" in limits ? limits.fileCount : undefined;
+	const label = options.resourceLabel ?? "Skill archive";
+	let entryCount = 0;
+	let fileCount = 0;
+	let totalEntryBytes = 0;
+	return (path, entry) => {
+		if (options.filter && !options.filter(path, entry)) return false;
+		if (path.includes("..") || path.startsWith("/")) return false;
+		if (!options.allowReservedManagementPaths && isReservedSkillArchivePath(path)) {
+			throw new Error(`${label} contains reserved management metadata`);
+		}
+		const type = "type" in entry ? entry.type : undefined;
+		if (!isAllowedArchiveEntry(type)) {
+			throw new Error(`${label} contains an unsupported entry type`);
+		}
+		entryCount += 1;
+		if (entryCount > limits.entryCount) {
+			throw new Error(`${label} exceeds ${limits.entryCount} entries`);
+		}
+		const size = entry.size;
+		if (!Number.isSafeInteger(size) || size < 0) {
+			throw new Error(`${label} contains an invalid entry size`);
+		}
+		if (size > limits.entryBytes) {
+			throw new Error(`${label} entry exceeds ${limits.entryBytes} bytes`);
+		}
+		if (isRegularArchiveFile(type)) {
+			fileCount += 1;
+			if (fileCountLimit !== undefined && fileCount > fileCountLimit) {
+				throw new Error(`${label} exceeds ${fileCountLimit} files`);
+			}
+		}
+		totalEntryBytes += size;
+		if (totalEntryBytes > limits.totalEntryBytes) {
+			throw new Error(`${label} exceeds ${limits.totalEntryBytes} total entry bytes`);
+		}
+		return true;
+	};
+}
+
 /**
  * Extract a gzipped tar archive into `cwd`.
  *
@@ -103,47 +167,20 @@ function isReservedSkillArchivePath(path: string): boolean {
  * boundary is `close`, emitted in a finalization microtask after `finish` and
  * `end`; waiting for `finish` lets the caller resume before that finalization.
  */
-export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
-	return assertExpandedTarLimit(bytes).then(
+export function extractTarGz(
+	cwd: string,
+	bytes: Buffer,
+	options: TarExtractionOptions = {},
+): Promise<void> {
+	const limits = options.limits ?? SKILL_ARCHIVE_EXTRACTION_LIMITS;
+	const label = options.resourceLabel ?? "Skill archive";
+	return assertExpandedTarLimit(bytes, limits.expandedTarBytes, label).then(
 		() =>
 			new Promise((resolvePromise, reject) => {
-				let entryCount = 0;
-				let totalEntryBytes = 0;
 				const stream = tar.extract({
 					cwd,
 					gzip: true,
-					filter: (path, entry) => {
-						entryCount += 1;
-						if (entryCount > SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount) {
-							throw new Error(
-								`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount} entries`,
-							);
-						}
-						const size = entry.size;
-						if (!Number.isSafeInteger(size) || size < 0) {
-							throw new Error("Skill archive contains an invalid entry size");
-						}
-						if (size > SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes) {
-							throw new Error(
-								`Skill archive entry exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes} bytes`,
-							);
-						}
-						totalEntryBytes += size;
-						if (totalEntryBytes > SKILL_ARCHIVE_EXTRACTION_LIMITS.totalEntryBytes) {
-							throw new Error(
-								`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.totalEntryBytes} total entry bytes`,
-							);
-						}
-						if (path.includes("..") || path.startsWith("/")) return false;
-						if (isReservedSkillArchivePath(path)) {
-							throw new Error("Skill archive contains reserved management metadata");
-						}
-						const type = "type" in entry ? entry.type : undefined;
-						if (!isAllowedArchiveEntry(type)) {
-							throw new Error("Skill archive contains an unsupported entry type");
-						}
-						return true;
-					},
+					filter: extractionFilter(options),
 				});
 				stream.on("close", () => resolvePromise());
 				stream.on("error", reject);
@@ -152,10 +189,40 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 	);
 }
 
+export function extractTarGzSync(
+	cwd: string,
+	bytes: Buffer,
+	options: TarExtractionOptions = {},
+): void {
+	const limits = options.limits ?? SKILL_ARCHIVE_EXTRACTION_LIMITS;
+	const label = options.resourceLabel ?? "Skill archive";
+	let expanded: Buffer;
+	try {
+		expanded = gunzipSync(bytes, { maxOutputLength: limits.expandedTarBytes });
+	} catch (error) {
+		throw new Error(
+			`${label} is invalid or exceeds ${limits.expandedTarBytes} expanded tar bytes`,
+			{
+				cause: error,
+			},
+		);
+	}
+	const stream = tar.extract({
+		cwd,
+		sync: true,
+		filter: extractionFilter(options),
+	});
+	stream.end(expanded);
+}
+
 /** Decompress once into a counting sink before giving the archive to tar.
  * This makes the absolute expansion limit independent of tar EOF/backpressure
  * behavior and guarantees a gzip bomb is rejected before extraction writes. */
-function assertExpandedTarLimit(bytes: Buffer): Promise<void> {
+export function assertExpandedTarLimit(
+	bytes: Buffer,
+	limit = SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes,
+	label = "Skill archive",
+): Promise<void> {
 	return new Promise((resolvePromise, reject) => {
 		let expandedTarBytes = 0;
 		let settled = false;
@@ -169,12 +236,8 @@ function assertExpandedTarLimit(bytes: Buffer): Promise<void> {
 		gunzip.on("error", (error) => fail(error));
 		gunzip.on("data", (chunk: Buffer) => {
 			expandedTarBytes += chunk.length;
-			if (expandedTarBytes > SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes) {
-				fail(
-					new Error(
-						`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes} expanded tar bytes`,
-					),
-				);
+			if (expandedTarBytes > limit) {
+				fail(new Error(`${label} exceeds ${limit} expanded tar bytes`));
 			}
 		});
 		gunzip.on("end", () => {

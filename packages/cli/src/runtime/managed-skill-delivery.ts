@@ -1,24 +1,21 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	chmodSync,
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdtempSync,
 	readdirSync,
-	readFileSync,
 	renameSync,
 	rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import { collectRegularFileTree } from "../lib/file-tree";
+import { extractTarGzSync } from "../lib/tar";
+import { MANAGED_SKILL_TREE_LIMITS, managedSkillDirectoryDigest } from "./hosted-bundled-skill";
+import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
-
-const MAX_ENTRIES = 1024;
-const MAX_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_TREE_BYTES = 32 * 1024 * 1024;
 
 export class ManagedSkillResourceError extends Error {}
 
@@ -44,28 +41,13 @@ export function collectManagedSkillTree(
 		return { status: isMissingPathError(error) ? "absent" : "unsafe" };
 	}
 	if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return { status: "unsafe" };
-	const files = new Map<string, Buffer>();
-	let entries = 0;
-	let totalBytes = 0;
-	const visit = (directory: string, prefix = ""): void => {
-		for (const entry of readdirSync(directory, { withFileTypes: true })) {
-			entries += 1;
-			if (entries > MAX_ENTRIES || entry.isSymbolicLink()) throw new Error("unsafe Skill tree");
-			const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-			const path = join(directory, entry.name);
-			if (entry.isDirectory()) visit(path, relative);
-			else if (entry.isFile()) {
-				const bytes = readFileSync(path);
-				totalBytes += bytes.byteLength;
-				if (bytes.byteLength > MAX_FILE_BYTES || totalBytes > MAX_TREE_BYTES)
-					throw new Error("oversized Skill tree");
-				if (!options.exclude?.has(relative)) files.set(relative, bytes);
-			} else throw new Error("unsupported Skill entry");
-		}
-	};
 	try {
-		visit(root);
-		return { status: "collected", tree: files };
+		const files = collectRegularFileTree(root, {
+			limits: MANAGED_SKILL_TREE_LIMITS,
+			exclude: (path) => options.exclude?.has(path) === true,
+			resourceLabel: "managed Skill tree",
+		});
+		return { status: "collected", tree: new Map(files.map((file) => [file.path, file.bytes])) };
 	} catch (error) {
 		if (isMissingPathError(error)) {
 			try {
@@ -105,24 +87,36 @@ export function managedSkillTargetMatchesSource(
 	);
 }
 
-export function withStagedManagedSkill<T>(
-	skill: PreparedHostedSourcedSkill,
+export function withPreparedHostedSkill<T>(
+	skill: PreparedHostedSkill,
 	operation: (sourceDir: string) => T,
 ): T {
-	if (createHash("sha256").update(skill.tarBytes).digest("hex") !== skill.archiveSha256) {
-		throw new ManagedSkillResourceError("prepared Skill archive digest mismatch");
-	}
 	const root = mkdtempSync(join(tmpdir(), "clawdi-managed-skill-"));
 	try {
-		const extracted = spawnSync("tar", ["-xzf", "-", "-C", root], {
-			input: skill.tarBytes,
-			stdio: ["pipe", "pipe", "pipe"],
-			maxBuffer: 1024 * 1024,
-		});
-		if (extracted.status !== 0) {
-			throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
+		const sourceDir = join(root, skill.id);
+		if ("sourceDir" in skill) {
+			try {
+				if (
+					!existsSync(join(skill.sourceDir, "SKILL.md")) ||
+					managedSkillDirectoryDigest(skill.sourceDir) !== skill.identity.digest
+				) {
+					throw new ManagedSkillResourceError("prepared bundled Skill tree digest mismatch");
+				}
+				cpSync(skill.sourceDir, sourceDir, { recursive: true });
+			} catch (error) {
+				if (error instanceof ManagedSkillResourceError) throw error;
+				throw new ManagedSkillResourceError("prepared bundled Skill could not be staged");
+			}
+		} else {
+			if (createHash("sha256").update(skill.tarBytes).digest("hex") !== skill.identity.digest) {
+				throw new ManagedSkillResourceError("prepared Skill archive digest mismatch");
+			}
+			try {
+				extractTarGzSync(root, skill.tarBytes);
+			} catch {
+				throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
+			}
 		}
-		const sourceDir = join(root, skill.skillId);
 		const sourceTree = collectManagedSkillTree(sourceDir);
 		if (!existsSync(join(sourceDir, "SKILL.md")) || sourceTree.status !== "collected") {
 			throw new ManagedSkillResourceError(`prepared Skill archive is ${sourceTree.status}`);
@@ -135,12 +129,6 @@ export function withStagedManagedSkill<T>(
 			} else chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
 		};
 		makeReadable(root);
-		if (
-			skill.source.type === "bundled" &&
-			managedSkillDirectoryDigest(sourceDir) !== skill.source.digest
-		) {
-			throw new ManagedSkillResourceError("prepared bundled Skill tree digest mismatch");
-		}
 		return operation(sourceDir);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -148,11 +136,11 @@ export function withStagedManagedSkill<T>(
 }
 
 export function installedTreeMatches(
-	skill: PreparedHostedSourcedSkill,
+	skill: PreparedHostedSkill,
 	targetDir: string,
 	options: { exclude?: ReadonlySet<string> } = {},
 ): boolean {
-	return withStagedManagedSkill(skill, (sourceDir) =>
+	return withPreparedHostedSkill(skill, (sourceDir) =>
 		managedSkillTargetMatchesSource(sourceDir, targetDir, options),
 	);
 }

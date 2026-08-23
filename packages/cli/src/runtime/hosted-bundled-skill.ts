@@ -1,6 +1,4 @@
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { computeManagedBundleHash, type ManagedBundleHashEntry } from "./managed-bundle-hash";
+import { collectRegularFileTree, sha256TreeDigest } from "../lib/file-tree";
 
 export interface HostedBundledSkillCatalogEntry {
 	id: string;
@@ -22,49 +20,27 @@ const HOSTED_BUNDLED_SKILL_CATALOG = new Map<
 					id: "clawdi",
 					version: 1,
 					assetDirectory: "hosted-versions/1/clawdi",
-					digest: "272ec28025eb3c5227e4f7d7215327d5c070e7c4c87933e4d6df2f5bf33f9b9c",
+					digest: "33e84837c336bbf7498daa1bb52f5568c456a331ec41f6bf8848bd1699e7671b",
 				}),
 			],
 		]),
 	],
 ]);
 
-function collectDirectoryEntries(
-	directory: string,
-	prefix: string,
-	files: ManagedBundleHashEntry[],
-): void {
-	const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
-		left.name.localeCompare(right.name),
-	);
-	for (const entry of entries) {
-		const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-		const path = join(directory, entry.name);
-		const stat = lstatSync(path);
-		if (stat.isSymbolicLink()) {
-			throw new Error(`symbolic links are not supported in managed skills: ${path}`);
-		}
-		if (stat.isDirectory()) {
-			collectDirectoryEntries(path, relativePath, files);
-			continue;
-		}
-		if (stat.isFile()) {
-			const mode = stat.mode & 0o777;
-			files.push({ relativePath, mode, content: readFileSync(path) });
-			continue;
-		}
-		throw new Error(`unsupported entry in managed skill: ${path}`);
-	}
-}
+export const MANAGED_SKILL_TREE_LIMITS = Object.freeze({
+	entries: 1_024,
+	files: 1_024,
+	fileBytes: 16 * 1024 * 1024,
+	totalBytes: 32 * 1024 * 1024,
+});
 
 function directoryDigest(directory: string): string {
-	const stat = lstatSync(directory);
-	if (stat.isSymbolicLink() || !stat.isDirectory()) {
-		throw new Error(`managed skill path is not a directory: ${directory}`);
-	}
-	const files: ManagedBundleHashEntry[] = [];
-	collectDirectoryEntries(directory, "", files);
-	return computeManagedBundleHash(files);
+	return sha256TreeDigest(
+		collectRegularFileTree(directory, {
+			limits: MANAGED_SKILL_TREE_LIMITS,
+			resourceLabel: "managed Skill tree",
+		}),
+	).slice("sha256-tree-v1:".length);
 }
 
 export function managedSkillDirectoryDigest(directory: string): string {

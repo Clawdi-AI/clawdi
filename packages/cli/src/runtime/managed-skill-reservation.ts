@@ -25,16 +25,17 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 // Exact local bundled Skill trees shipped by published CLI releases before the
 // ownership ledger. Pre-ledger installs had no marker, so content is the only
 // durable identity proof available for one-time adoption.
+// SUNSET: remove with the local setup migration after its supported upgrade window.
 const LEGACY_LOCAL_SETUP_SKILL_DIGESTS = new Set([
-	"954d8b81e67138cb59385353490679d191451d5d36bfe461571f91db43fb4bb4",
-	"b89cad1fa72e8b90b65b579e86e3fe57730b0d349710b13b192794d3862010bf",
-	"5719cc8e5dbdf4f3b7ff732589d3b23883fbead713652434a5e765c17308708a",
-	"2bb89a1ba5b546ea75cbc07351908aabdd19e3abc6fa4f3af0e83bb7fbda36d6",
-	"c8ce517615d7d8919d6149afee7b5702c39e157c5684b94b6fb365e3fc9644e7",
-	"ed7f4415a7a024990b7ce4d94040ce06621c5182ac42434b6eb6a19abefd5043",
-	"cd66a3403006f5da4dfa61d8e03be0324e8a79ec9e0012e693d044fd8436cd40",
-	"872c56a22685709fc6f7a77a167fe5695bce459a6cdba0551f88e00f1c53d814",
-	"4350e8e0fa37b6a4825e11361f88c7849e9b76050586fcb765e8e19f77dec28c",
+	"d71c123874e7b43b5d182bf9367af372dc3e3a5c9ed1f0b273478a06204b1299",
+	"aa26ff9fe7784855e220aa35a7c0e84c131b5c7e470b308c9faab1bcd3e77079",
+	"2ca7b416cc72e101d1a117eda67043c31043bcbe6987ce8f52f797042bfde3f9",
+	"0d4a6e0091493116211bbfd767ede540b510f627138c4e6714c1f3209ffa881c",
+	"3337f4aca269a9ff3fd5e1b086607092052799bc88ecb599da57b9888f4d9230",
+	"f8b4f8a999a46c7599771cda089d6d056c9abe65dc8b37411fa8f2080a13b9f6",
+	"4f635dd155cb3a67a2955c5a83954b24514d8e40c5d72a36e2e3c60f4e495ca1",
+	"cfce9adc538b4538829a23767fc171db62e474e28fd89ef5ce494b26223d31a0",
+	"4aee715a987cad84716ca71a6e1d7da80e9c1eca103c0c41aefdee31ed77974d",
 ]);
 
 export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";

@@ -47,7 +47,7 @@ import {
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
@@ -270,7 +270,10 @@ function preparedTestSourcedSkill(
 	skillId: string,
 	source: HostedSkillSource,
 	skillMd: string,
-): PreparedHostedSourcedSkill {
+): PreparedHostedSkill & {
+	identity: { source: HostedSkillSource; sourceIdentity: string; digest: string };
+	tarBytes: Buffer;
+} {
 	const fixtureRoot = mkdtempSync(join(tmpdir(), "clawdi-prepared-skill-test-"));
 	tempRoots.push(fixtureRoot);
 	const sourceRoot = join(fixtureRoot, "source");
@@ -285,10 +288,12 @@ function preparedTestSourcedSkill(
 			? ["github", skillId, source.url, source.path, source.commit].join("\0")
 			: ["project", skillId, source.projectId, source.contentHash].join("\0");
 	return {
-		skillId,
-		source,
-		sourceIdentity,
-		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
+		id: skillId,
+		identity: {
+			source,
+			sourceIdentity,
+			digest: createHash("sha256").update(tarBytes).digest("hex"),
+		},
 		tarBytes,
 	};
 }
@@ -4422,7 +4427,7 @@ echo spawned > '${installerLog}'
 			targetDir: openClawEnabledSourcedTarget,
 			id: enabledSourcedId,
 			manager: "hosted-manifest",
-			sourceIdentity: enabledSourced.sourceIdentity,
+			sourceIdentity: enabledSourced.identity.sourceIdentity,
 		});
 		const manifest = baseManifest(
 			paths,
@@ -4476,8 +4481,8 @@ echo spawned > '${installerLog}'
 		);
 		expect(ledger.reservations[openClawEnabledSourcedTarget]).toMatchObject({
 			id: enabledSourcedId,
-			digest: enabledSourced.archiveSha256,
-			sourceIdentity: enabledSourced.sourceIdentity,
+			digest: enabledSourced.identity.digest,
+			sourceIdentity: enabledSourced.identity.sourceIdentity,
 			manager: "hosted-manifest",
 		});
 		expect(existsSync(disabledTarget)).toBe(false);
@@ -4631,7 +4636,7 @@ echo spawned > '${installerLog}'
 		const userOwnedSibling = join(paths.userHome, ".hermes", "skills", "user-owned");
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
-		const preparedSkills = new Map([[prepared.skillId, prepared]]);
+		const preparedSkills = new Map([[prepared.id, prepared]]);
 
 		const collision = convergeRuntimeManifest(
 			manifestLoad(manifest, "skill-ledger-collision"),
@@ -4656,8 +4661,8 @@ echo spawned > '${installerLog}'
 		const ledger = JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8"));
 		expect(ledger.reservations[skillDir]).toMatchObject({
 			id: "review-pr",
-			digest: prepared.archiveSha256,
-			sourceIdentity: prepared.sourceIdentity,
+			digest: prepared.identity.digest,
+			sourceIdentity: prepared.identity.sourceIdentity,
 			manager: "hosted-manifest",
 		});
 
@@ -4672,10 +4677,13 @@ echo spawned > '${installerLog}'
 		const movedSource = { ...source, commit: "c".repeat(40) };
 		const movedPrepared = {
 			...prepared,
-			source: movedSource,
-			sourceIdentity:
-				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
-				movedSource.commit,
+			identity: {
+				...prepared.identity,
+				source: movedSource,
+				sourceIdentity:
+					"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
+					movedSource.commit,
+			},
 		};
 		const moved = convergeRuntimeManifest(
 			manifestLoad(
@@ -4689,14 +4697,14 @@ echo spawned > '${installerLog}'
 				"skill-ledger-source-moved",
 			),
 			paths,
-			{ preparedHostedSourcedSkills: new Map([[movedPrepared.skillId, movedPrepared]]) },
+			{ preparedHostedSourcedSkills: new Map([[movedPrepared.id, movedPrepared]]) },
 		);
 		expect([...moved.installErrors, ...moved.resourceProjectionErrors]).toEqual([]);
 		expect(statSync(skillDir).ino).toBe(stableInode);
 		expect(
 			JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8")).reservations[skillDir]
 				.sourceIdentity,
-		).toBe(movedPrepared.sourceIdentity);
+		).toBe(movedPrepared.identity.sourceIdentity);
 
 		const removed = convergeRuntimeManifest(
 			manifestLoad(
@@ -4722,7 +4730,7 @@ echo spawned > '${installerLog}'
 			commit: "a".repeat(40),
 		};
 		const prepared = preparedTestSourcedSkill(skillId, source, "verified tree\n");
-		const sourceIdentity = prepared.sourceIdentity;
+		const sourceIdentity = prepared.identity.sourceIdentity;
 		const target = join(paths.userHome, ".hermes", "skills", skillId);
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "old committed tree\n");
@@ -4744,7 +4752,7 @@ const { installReservedManagedSkill } = await import(${JSON.stringify(moduleUrl)
 installReservedManagedSkill(${JSON.stringify({
 					targetDir: target,
 					id: skillId,
-					digest: prepared.archiveSha256,
+					digest: prepared.identity.digest,
 					sourceIdentity,
 					manager: "hosted-manifest",
 				})}, () => {
@@ -4793,7 +4801,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("verified tree\n");
 		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
 		const committedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
-		expect(committedLedger.reservations[target].digest).toBe(prepared.archiveSha256);
+		expect(committedLedger.reservations[target].digest).toBe(prepared.identity.digest);
 		expect(committedLedger.pendingReservations).toEqual({});
 	});
 
@@ -4838,7 +4846,7 @@ installReservedManagedSkill(${JSON.stringify({
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 		const skillIds = ["a-fail", "b-ready", "c-ready"];
-		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
 		for (const skillId of skillIds) {
 			const source = {
@@ -4852,8 +4860,9 @@ installReservedManagedSkill(${JSON.stringify({
 		}
 		const failed = preparedSkills.get("a-fail");
 		if (!failed) throw new Error("missing failing Skill fixture");
+		if (!("tarBytes" in failed)) throw new Error("failing Skill fixture is not sourced");
 		failed.tarBytes = Buffer.from("invalid archive");
-		failed.archiveSha256 = createHash("sha256").update(failed.tarBytes).digest("hex");
+		failed.identity.digest = createHash("sha256").update(failed.tarBytes).digest("hex");
 		const manifest = baseManifest(
 			paths,
 			{
@@ -4887,7 +4896,7 @@ installReservedManagedSkill(${JSON.stringify({
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 		const skillIds = ["a-unmanaged", "b-ready", "c-ready"];
-		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
 		for (const skillId of skillIds) {
 			const source = {
@@ -4965,6 +4974,8 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
 			readFileSync(join(packageSource, "SKILL.md")),
 		);
+		expect(statSync(target).mode & 0o777).toBe(0o755);
+		expect(statSync(join(target, "SKILL.md")).mode & 0o777).toBe(0o644);
 		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 

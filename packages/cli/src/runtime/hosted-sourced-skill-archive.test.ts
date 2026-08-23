@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
 import { computeSkillArchiveHash, snapshotSkillArchive } from "../lib/tar";
-import { prepareHostedSourcedSkillArchives } from "./hosted-sourced-skill-archive";
+import { gcHostedSkillArchives, prepareHostedSkillArchives } from "./hosted-sourced-skill-archive";
 import type { RuntimeManifest } from "./manifest-contract";
 import { hostedSkillSourceSchema } from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
@@ -143,13 +143,18 @@ describe("hosted sourced Skill archives", () => {
 			});
 		};
 		const paths = hostedRuntimePaths();
-		const first = await prepareHostedSourcedSkillArchives(desired, paths, {
+		const first = await prepareHostedSkillArchives(desired, paths, {
 			authToken: "runtime-token",
 			fetcher,
 		});
-		expect(first.get("review-pr")?.sourceIdentity).toBe(
-			["project", "review-pr", "22222222-2222-4222-8222-222222222222", canonical.hash].join("\0"),
-		);
+		expect(first.get("review-pr")?.identity).toMatchObject({
+			sourceIdentity: [
+				"project",
+				"review-pr",
+				"22222222-2222-4222-8222-222222222222",
+				canonical.hash,
+			].join("\0"),
+		});
 		expect(requests).toEqual([
 			{
 				url: desiredEntry.source.archiveUrl,
@@ -158,16 +163,16 @@ describe("hosted sourced Skill archives", () => {
 			},
 		]);
 
-		const cached = await prepareHostedSourcedSkillArchives(desired, paths, {
+		const cached = await prepareHostedSkillArchives(desired, paths, {
 			fetcher: async () => {
 				throw new Error("exact cache should work offline");
 			},
 		});
-		expect(cached.get("review-pr")?.archiveSha256).toBe(first.get("review-pr")?.archiveSha256);
+		expect(cached.get("review-pr")?.identity.digest).toBe(first.get("review-pr")?.identity.digest);
 
 		const wrongOrigin = projectManifest(canonical.hash, "https://other.example.test");
 		wrongOrigin.controlPlane.apiUrl = "https://cloud-api.example.test";
-		await expect(prepareHostedSourcedSkillArchives(wrongOrigin, paths)).rejects.toThrow(
+		await expect(prepareHostedSkillArchives(wrongOrigin, paths)).rejects.toThrow(
 			"do not match the control plane",
 		);
 	});
@@ -185,13 +190,13 @@ describe("hosted sourced Skill archives", () => {
 		const paths = hostedRuntimePaths();
 
 		await expect(
-			prepareHostedSourcedSkillArchives(projectManifest("0".repeat(64)), paths, {
+			prepareHostedSkillArchives(projectManifest("0".repeat(64)), paths, {
 				authToken: "runtime-token",
 				fetcher: async () => new Response(Uint8Array.from(canonical.archive), { status: 200 }),
 			}),
 		).rejects.toThrow("does not match its content identity");
 		await expect(
-			prepareHostedSourcedSkillArchives(projectManifest(canonical.hash), paths, {
+			prepareHostedSkillArchives(projectManifest(canonical.hash), paths, {
 				authToken: "runtime-token",
 				fetcher: async () =>
 					new Response("too large", {
@@ -215,7 +220,7 @@ describe("hosted sourced Skill archives", () => {
 		const canonical = await snapshotSkillArchive(skillDir, root, "review-pr");
 		const legacyHash = createHash("sha256").update(skillMd).digest("hex");
 
-		const prepared = await prepareHostedSourcedSkillArchives(
+		const prepared = await prepareHostedSkillArchives(
 			projectManifest(legacyHash),
 			hostedRuntimePaths(),
 			{
@@ -223,9 +228,11 @@ describe("hosted sourced Skill archives", () => {
 			},
 		);
 
-		const preparedArchive = prepared.get("review-pr")?.tarBytes;
-		if (!preparedArchive) throw new Error("missing prepared legacy Project Skill archive");
-		expect(await computeSkillArchiveHash(preparedArchive, "review-pr")).toBe(canonical.hash);
+		const preparedSkill = prepared.get("review-pr");
+		if (!preparedSkill || !("tarBytes" in preparedSkill)) {
+			throw new Error("missing prepared legacy Project Skill archive");
+		}
+		expect(await computeSkillArchiveHash(preparedSkill.tarBytes, "review-pr")).toBe(canonical.hash);
 	});
 
 	test("fetches the exact commit and reuses only a digest-verified cache", async () => {
@@ -250,22 +257,22 @@ describe("hosted sourced Skill archives", () => {
 			});
 		};
 		const paths = hostedRuntimePaths();
-		const first = await prepareHostedSourcedSkillArchives(manifest(commit), paths, { fetcher });
+		const first = await prepareHostedSkillArchives(manifest(commit), paths, { fetcher });
 		const prepared = first.get("review-pr");
 		expect(prepared).toMatchObject({
-			skillId: "review-pr",
-			source: { commit },
+			id: "review-pr",
+			identity: { source: { commit } },
 		});
-		expect(prepared?.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(prepared?.identity.digest).toMatch(/^[a-f0-9]{64}$/);
 		expect(requestedUrls).toEqual([`https://codeload.github.com/Clawdi-AI/store/tar.gz/${commit}`]);
 
-		const cached = await prepareHostedSourcedSkillArchives(manifest(commit), paths, {
+		const cached = await prepareHostedSkillArchives(manifest(commit), paths, {
 			fetcher: async () => {
 				throw new Error("cache should satisfy the exact source offline");
 			},
 		});
-		expect(cached.get("review-pr")?.archiveSha256).toBe(prepared?.archiveSha256);
-		expect(cached.get("review-pr")?.sourceIdentity).toBe(prepared?.sourceIdentity);
+		expect(cached.get("review-pr")?.identity.digest).toBe(prepared?.identity.digest);
+		expect(cached.get("review-pr")?.identity).toEqual(prepared?.identity);
 
 		// Cache loss may yield different gzip/tar bytes for the same pinned tree.
 		rmSync(join(paths.cacheRoot, "workspace-skills"), { recursive: true });
@@ -276,15 +283,15 @@ describe("hosted sourced Skill archives", () => {
 		);
 		chmodSync(join(skillDir, "reference.md"), 0o755);
 		const repackedArchive = await codeloadArchive(root, repositoryRoot, 1);
-		const refetched = await prepareHostedSourcedSkillArchives(manifest(commit), paths, {
+		const refetched = await prepareHostedSkillArchives(manifest(commit), paths, {
 			fetcher: async () =>
 				new Response(Uint8Array.from(repackedArchive), {
 					status: 200,
 					headers: { "content-length": String(repackedArchive.byteLength) },
 				}),
 		});
-		expect(refetched.get("review-pr")?.archiveSha256).not.toBe(prepared?.archiveSha256);
-		expect(refetched.get("review-pr")?.sourceIdentity).toBe(prepared?.sourceIdentity);
+		expect(refetched.get("review-pr")?.identity.digest).not.toBe(prepared?.identity.digest);
+		expect(refetched.get("review-pr")?.identity.source).toEqual(prepared?.identity.source);
 
 		const cacheKeys = readdirSync(join(paths.cacheRoot, "workspace-skills"));
 		expect(cacheKeys).toHaveLength(1);
@@ -292,7 +299,13 @@ describe("hosted sourced Skill archives", () => {
 			join(paths.cacheRoot, "workspace-skills", cacheKeys[0] ?? "missing", "skill.tar.gz"),
 			"tampered",
 		);
-		await prepareHostedSourcedSkillArchives(manifest(commit), paths, { fetcher });
+		await prepareHostedSkillArchives(manifest(commit), paths, { fetcher });
 		expect(requestedUrls).toHaveLength(2);
+
+		const nextCommit = "b".repeat(40);
+		await prepareHostedSkillArchives(manifest(nextCommit), paths, { fetcher });
+		expect(readdirSync(join(paths.cacheRoot, "workspace-skills"))).toHaveLength(2);
+		gcHostedSkillArchives(manifest(nextCommit), paths);
+		expect(readdirSync(join(paths.cacheRoot, "workspace-skills"))).toHaveLength(1);
 	});
 });
