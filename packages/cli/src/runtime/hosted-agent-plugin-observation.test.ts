@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RuntimeAppliedState } from "./applied-state";
@@ -9,7 +9,6 @@ import {
 	hostedAgentPluginReceiptsPath,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
-import type { RuntimeManifest } from "./manifest-contract";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
@@ -71,27 +70,31 @@ function appliedState(): RuntimeAppliedState {
 }
 
 function writeAppliedManifest(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {
-	const manifest: RuntimeManifest = {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "deployment-agent-plugin-observation",
-		environmentId: "environment-agent-plugin-observation",
+	mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+	const bundle = JSON.parse(
+		readFileSync(
+			join(import.meta.dir, "../../../../test-fixtures/runtime-bundle-v2.golden.json"),
+			"utf8",
+		),
+	) as {
+		sourceRevision: string;
+		applyGeneration?: number;
+		secretValues: Record<string, string>;
+		manifest: Record<string, unknown>;
+	};
+	bundle.sourceRevision = sourceRevision;
+	bundle.applyGeneration = 7;
+	bundle.secretValues = {};
+	bundle.manifest = {
+		...bundle.manifest,
 		instanceId: "runtime-agent-plugin-observation",
 		generation: 3,
-		applyGeneration: 7,
-		issuedAt: "2026-08-15T00:00:00.000Z",
-		runtime: "openclaw",
-		controlPlane: { apiUrl: "https://runtime.test" },
-		runtimes: { openclaw: { enabled: true, services: {} } },
-		projection: {
-			agentPlugins: {
-				schemaVersion: 1,
-				installations: { clawdi: desired },
-			},
+		agentPlugins: {
+			schemaVersion: 1,
+			installations: { clawdi: desired },
 		},
-		recovery: {},
 	};
-	mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-	writeFileSync(paths.manifestLastGood, JSON.stringify(manifest));
+	writeFileSync(paths.manifestLastGood, JSON.stringify(bundle));
 }
 
 function writeReceipt(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {

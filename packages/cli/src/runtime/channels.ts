@@ -99,8 +99,9 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 	paths: RuntimePaths = getRuntimePaths({ mode: "hosted" }),
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
+	const { channelBindings, ...source } = load;
 	const secretValues = load.secretValues ?? {};
-	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
+	const links: ManagedChannelLink[] = channelBindings.map((binding) =>
 		managedBundleChannelLink(binding, secretValues),
 	);
 	const manifest = applyRuntimeChannelProjection(load.manifest, links, paths);
@@ -109,9 +110,8 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 		manifest.projection?.channelCredentials,
 	);
 	return {
-		...load,
+		...source,
 		manifest,
-		sourceManifest: load.sourceManifest ?? load.manifest,
 		secretValues: { ...secretValues, ...whatsappSecretValues },
 	};
 }

@@ -7,7 +7,7 @@ import {
 	reconcileHermesConfigValue,
 } from "./hermes-config";
 import { mergeRuntimeEnvWithProviderPlaceholders } from "./hosted-provider-resolution";
-import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import type { RuntimeName, RuntimeRunSettings, RuntimeServiceName } from "./run-config";
 import {
@@ -126,12 +126,9 @@ export function applyHostedRuntimeConfigProjection(
 	}
 	if (runtime === "hermes") {
 		const auth = manifest.hermesDashboardAuth;
-		const managesWorkspace =
-			manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
-		if (!auth && !locale && !managesWorkspace) return null;
 		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
-		if (managesWorkspace) reconcileHermesConfigValue(context, "terminal.cwd", workspaceRoot);
+		reconcileHermesConfigValue(context, "terminal.cwd", workspaceRoot);
 		if (auth) applyHermesDashboardConfig(context, auth);
 		if (locale) reconcileHermesConfigValue(context, "timezone", locale.timezone);
 		return locale

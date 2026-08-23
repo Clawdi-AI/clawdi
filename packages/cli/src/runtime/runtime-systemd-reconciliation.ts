@@ -15,7 +15,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifest } from "./manifest-contract";
 import {
 	runtimeCommandCurrentRevision,
 	runtimeCommandPath,
@@ -1172,7 +1172,6 @@ function writeRuntimeSystemdUserProgram(input: {
 	const isHermesDashboard = program.runtime === "hermes" && program.service === "dashboard";
 	const installerOnlySecretEnv =
 		descriptor?.runtime === "openclaw" &&
-		input.manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		input.manifest.openclawGatewayAuth?.activation.enabled === true
 			? (descriptor.installSecretEnv ?? [])
 			: [];

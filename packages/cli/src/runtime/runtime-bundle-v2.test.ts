@@ -40,7 +40,7 @@ import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest,
 	loadRuntimeManifest,
-	normalizeHostedRuntimeBundleV2,
+	parseHostedRuntimeBundleV2,
 	type RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -58,6 +58,10 @@ const roots: string[] = [];
 const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
 const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
 const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
+
+function parseHostedBundle(value: unknown): RuntimeManifestLoad {
+	return parseHostedRuntimeBundleV2(value, "test://runtime-bundle-v2");
+}
 
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
@@ -274,7 +278,7 @@ describe("hosted runtime bundle v2", () => {
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		delete raw.applyGeneration;
-		const load = normalizeHostedRuntimeBundleV2(raw);
+		const load = parseHostedBundle(raw);
 
 		expect(load.manifest.generation).toBe(2);
 		expect(load.manifest.applyGeneration).toBeUndefined();
@@ -283,7 +287,7 @@ describe("hosted runtime bundle v2", () => {
 
 	test("accepts the hosted-emitted gateway secret contract before projecting channels", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
-		const load = normalizeHostedRuntimeBundleV2(raw);
+		const load = parseHostedBundle(raw);
 		expect(load.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
@@ -368,7 +372,7 @@ describe("hosted runtime bundle v2", () => {
 			},
 		};
 
-		const loaded = normalizeHostedRuntimeBundleV2(bundle);
+		const loaded = parseHostedBundle(bundle);
 		const projected = applyRuntimeBundleChannelsToManifestLoadWithContext(loaded, paths);
 		const credentialProjection = z
 			.array(z.record(z.string(), z.unknown()))
@@ -423,7 +427,7 @@ describe("hosted runtime bundle v2", () => {
 
 		expect(() =>
 			applyRuntimeBundleChannelsToManifestLoadWithContext(
-				normalizeHostedRuntimeBundleV2({
+				parseHostedBundle({
 					...bundle,
 					secretValues: { ...bundle.secretValues, [capabilityRef]: `clawdi_${"0".repeat(32)}` },
 				}),
@@ -435,7 +439,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!binding) throw new Error("missing WhatsApp binding");
 		expect(() =>
 			applyRuntimeBundleChannelsToManifestLoadWithContext(
-				normalizeHostedRuntimeBundleV2({
+				parseHostedBundle({
 					...bundle,
 					channelBindings: [
 						{
@@ -453,7 +457,7 @@ describe("hosted runtime bundle v2", () => {
 		const incompleteCredential = z.record(z.string(), z.unknown()).parse(binding.credential);
 		delete incompleteCredential.credsSecretRef;
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...bundle,
 				channelBindings: [{ ...binding, credential: incompleteCredential }],
 			}),
@@ -465,7 +469,7 @@ describe("hosted runtime bundle v2", () => {
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const load = normalizeHostedRuntimeBundleV2({
+		const load = parseHostedBundle({
 			...raw,
 			manifest: {
 				...manifest,
@@ -542,7 +546,7 @@ describe("hosted runtime bundle v2", () => {
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const load = normalizeHostedRuntimeBundleV2({
+		const load = parseHostedBundle({
 			...raw,
 			manifest: {
 				...manifest,
@@ -566,7 +570,7 @@ describe("hosted runtime bundle v2", () => {
 			path: "",
 			commit: "a".repeat(40),
 		} as const;
-		const load = normalizeHostedRuntimeBundleV2({
+		const load = parseHostedBundle({
 			...raw,
 			manifest: {
 				...manifest,
@@ -593,7 +597,7 @@ describe("hosted runtime bundle v2", () => {
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -624,7 +628,7 @@ describe("hosted runtime bundle v2", () => {
 				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 			expect(() =>
-				normalizeHostedRuntimeBundleV2({
+				parseHostedBundle({
 					...raw,
 					manifest: {
 						...manifest,
@@ -643,7 +647,7 @@ describe("hosted runtime bundle v2", () => {
 				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 			expect(() =>
-				normalizeHostedRuntimeBundleV2({
+				parseHostedBundle({
 					...raw,
 					manifest: {
 						...manifest,
@@ -796,7 +800,7 @@ describe("hosted runtime bundle v2", () => {
 		};
 		raw.secretValues = { ...raw.secretValues, [mcpSecretRef]: mcpSecret };
 		raw.sourceRevision = "f".repeat(64);
-		const projected = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
+		const projected = applyRuntimeBundleChannelsToManifestLoad(parseHostedBundle(raw));
 		const openclaw = structuredClone(projected.manifest.runtimes.openclaw);
 		openclaw.providerMode = "unmanaged";
 		openclaw.provider_ids = [];
@@ -987,12 +991,10 @@ describe("hosted runtime bundle v2", () => {
 
 	test("rejects unknown fields and incomplete provider-swapped bindings", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as Record<string, unknown>;
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({ ...raw, rendererIdentity: "forbidden" }),
-		).toThrow();
+		expect(() => parseHostedBundle({ ...raw, rendererIdentity: "forbidden" })).toThrow();
 		const binding = (raw.channelBindings as Record<string, unknown>[])[0];
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				channelBindings: [{ ...binding, provider: "whatsapp" }],
 			}),
@@ -1005,19 +1007,19 @@ describe("hosted runtime bundle v2", () => {
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: { ...manifest, mcp: { future: true } },
 			}),
 		).toThrow();
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: { ...manifest, mcp: { servers: { future: true } } },
 			}),
 		).toThrow();
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1034,7 +1036,7 @@ describe("hosted runtime bundle v2", () => {
 			}),
 		).toThrow();
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1051,7 +1053,7 @@ describe("hosted runtime bundle v2", () => {
 			}),
 		).toThrow();
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1070,7 +1072,7 @@ describe("hosted runtime bundle v2", () => {
 			}),
 		).toThrow();
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1094,7 +1096,7 @@ describe("hosted runtime bundle v2", () => {
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1127,7 +1129,7 @@ describe("hosted runtime bundle v2", () => {
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1151,7 +1153,7 @@ describe("hosted runtime bundle v2", () => {
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1188,13 +1190,13 @@ describe("hosted runtime bundle v2", () => {
 		const placeholderValue = secretValues[canonicalPlaceholderRef];
 		if (!placeholderValue) throw new Error("golden bundle has no placeholder secret value");
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				channelBindings: [{ ...binding, agentTokenSecretRef: rawAgentRef }],
 			}),
 		).toThrow("must be a canonical non-empty secret:// reference");
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				secretValues: { ...secretValues, [rawPlaceholderRef]: placeholderValue },
 			}),
@@ -1206,7 +1208,7 @@ describe("hosted runtime bundle v2", () => {
 		};
 		expect(() =>
 			applyRuntimeBundleChannelsToManifestLoad(
-				normalizeHostedRuntimeBundleV2({
+				parseHostedBundle({
 					...raw,
 					channelBindings: [{ ...binding, agentTokenSecretRef: canonicalAgentRef }],
 					secretValues: emptyAgentValues,
@@ -1220,14 +1222,11 @@ describe("hosted runtime bundle v2", () => {
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const normalized = normalizeHostedRuntimeBundleV2(raw);
-		expect(normalized.manifest.projection?.sourceSchemaVersion).toBe(
-			"clawdi.hosted-runtime.manifest.v1",
-		);
+		const normalized = parseHostedBundle(raw);
 		expect(normalized.manifest.generation).toBe(2);
 		expect(normalized.manifest.applyGeneration).toBe(1);
 		expect(() =>
-			normalizeHostedRuntimeBundleV2({
+			parseHostedBundle({
 				...raw,
 				manifest: {
 					...manifest,
@@ -1238,8 +1237,8 @@ describe("hosted runtime bundle v2", () => {
 				},
 			}),
 		).toThrow();
-		expect(() => normalizeHostedRuntimeBundleV2({ ...raw, unexpectedApplyField: 1 })).toThrow();
-		const independentGenerations = normalizeHostedRuntimeBundleV2({
+		expect(() => parseHostedBundle({ ...raw, unexpectedApplyField: 1 })).toThrow();
+		const independentGenerations = parseHostedBundle({
 			...raw,
 			applyGeneration: 3,
 		});
@@ -1491,12 +1490,17 @@ describe("hosted runtime bundle v2", () => {
 		const paths = getRuntimePaths({ mode: "hosted" });
 		mkdirSync(paths.cacheRoot, { recursive: true });
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
-		const projected = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
+		const projected = applyRuntimeBundleChannelsToManifestLoad(parseHostedBundle(raw));
 
-		cacheRuntimeLastGoodManifest(projected.manifest, paths, projected.secretValues);
+		cacheRuntimeLastGoodManifest(
+			projected.sourceBundle,
+			paths,
+			projected.secretValues,
+			projected.manifest,
+		);
 		const manifestCache = readFileSync(paths.manifestLastGood, "utf-8");
 		const secretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
-		expect(manifestCache).toContain(
+		expect(manifestCache).not.toContain(
 			"CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000000000000000000000005_AGENT_TOKEN",
 		);
 		expect(manifestCache).not.toContain("telegram-agent-golden");
@@ -1517,16 +1521,23 @@ describe("hosted runtime bundle v2", () => {
 			applyReceiptId: "apply-receipt-golden-0001",
 			bootNonce: "boot-nonce-golden-000001",
 		});
-		if (!projected.manifest.projection) throw new Error("golden bundle projection is unavailable");
-		projected.manifest.projection.system = { openclawControlUiAllowedOrigins: [] };
-		cacheRuntimeLastGoodManifest(projected.manifest, paths, projected.secretValues);
+		const invalidSourceBundle = structuredClone(projected.sourceBundle) as {
+			manifest: { system: { openclawControlUiAllowedOrigins: string[] } };
+		};
+		invalidSourceBundle.manifest.system.openclawControlUiAllowedOrigins = [];
+		cacheRuntimeLastGoodManifest(
+			invalidSourceBundle,
+			paths,
+			projected.secretValues,
+			projected.manifest,
+		);
 		globalThis.fetch = Object.assign(async () => Promise.reject(new Error("offline")), {
 			preconnect: () => undefined,
 		});
 
 		const loaded = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
-			"cached OpenClaw v2 native Control UI requires an explicit public allowed origin",
+			"OpenClaw v2 native Control UI requires an explicit public allowed origin",
 		);
 	});
 
@@ -1664,7 +1675,7 @@ exit 0
 			expect(appliedStateStat.gid).toBe(0);
 		}
 		const canonicalContentSha = runtimeContentSha256({
-			manifest: onlineLoad.manifest,
+			manifest: onlineLoad.sourceBundle,
 			secretValues: cachedSecrets,
 		});
 		expect(applied.contentIdentity.sha256).toBe(canonicalContentSha);
@@ -1715,8 +1726,9 @@ exit 0
 			applyReceiptId: "apply-receipt-golden-0001",
 			bootNonce: "boot-nonce-golden-000001",
 		});
-		const offlineLoad = await loadRuntimeManifest(paths, { applyContext });
-		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
+		const offlineBase = await loadRuntimeManifest(paths, { applyContext });
+		if (!("manifest" in offlineBase)) throw new Error(JSON.stringify(offlineBase));
+		const offlineLoad = applyRuntimeBundleChannelsToManifestLoad(offlineBase);
 		expect(offlineLoad.source).toBe("last-good-cache");
 		expect(offlineLoad.offline).toBe(true);
 		expect(offlineLoad.manifest.generation).toBe(2);
@@ -1753,11 +1765,17 @@ exit 0
 		const committedManifest = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(manifestCacheText));
+		const committedWireManifest = z
+			.record(z.string(), z.unknown())
+			.parse(committedManifest.manifest);
 		writeFileSync(
 			paths.manifestLastGood,
 			`${JSON.stringify({
 				...committedManifest,
-				generation: onlineLoad.manifest.generation + 1,
+				manifest: {
+					...committedWireManifest,
+					generation: onlineLoad.manifest.generation + 1,
+				},
 			})}\n`,
 		);
 		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths, { applyContext });
@@ -1807,7 +1825,7 @@ exit 0
 		const missingLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in missingLoad).toBe(true);
 		if (!("errors" in missingLoad)) throw new Error("expected missing cache failure");
-		expect(missingLoad.errors.join("\n")).toContain("cached secret values are missing");
+		expect(missingLoad.errors.join("\n")).toContain(`runtime bundle is missing ${agentRef}`);
 
 		const staleSecrets = {
 			...cachedSecrets,
@@ -1838,8 +1856,8 @@ exit 0
 					"123456789:telegram-agent-rotated",
 			},
 		};
-		const before = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
-		const after = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(rotated));
+		const before = applyRuntimeBundleChannelsToManifestLoad(parseHostedBundle(raw));
+		const after = applyRuntimeBundleChannelsToManifestLoad(parseHostedBundle(rotated));
 
 		expect(after.manifest.generation).toBe(before.manifest.generation);
 		expect(after.sourceRevision).not.toBe(before.sourceRevision);

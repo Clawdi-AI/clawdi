@@ -62,8 +62,8 @@ import {
 	type RuntimeResourcePreparationFailures,
 	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
-import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
+	hostedRuntimeBundleV2Schema,
 	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
@@ -219,7 +219,8 @@ function readable(path: string): boolean {
 }
 
 function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePaths): string | null {
-	return cacheRuntimeLastGoodManifest(load.manifest, paths, load.secretValues);
+	if (load.sourceBundle === undefined) return null;
+	return cacheRuntimeLastGoodManifest(load.sourceBundle, paths, load.secretValues, load.manifest);
 }
 
 export function runtimeAppliedContentIdentity(
@@ -228,7 +229,7 @@ export function runtimeAppliedContentIdentity(
 	return {
 		sourcePath: load.sourcePath,
 		sha256: runtimeContentSha256({
-			manifest: load.manifest,
+			manifest: load.sourceBundle ?? load.manifest,
 			secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
 		}),
 	};
@@ -460,14 +461,14 @@ function readRuntimeWatchNotificationConfig(
 	const apiKey = readRuntimeAuthToken(paths);
 	if (!apiKey || !existsSync(paths.manifestLastGood)) return null;
 	try {
-		const parsed = runtimeDesiredStateSchema.safeParse(
+		const parsed = hostedRuntimeBundleV2Schema.safeParse(
 			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
 		);
 		if (!parsed.success) return null;
 		return {
-			apiUrl: parsed.data.controlPlane.apiUrl,
+			apiUrl: parsed.data.manifest.controlPlane.apiUrl,
 			apiKey,
-			environmentId: parsed.data.environmentId,
+			environmentId: parsed.data.manifest.environmentId,
 		};
 	} catch {
 		return null;
@@ -654,7 +655,7 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 	if (manifestCacheExists) {
 		try {
 			const raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
-			const parsed = runtimeDesiredStateSchema.safeParse(raw);
+			const parsed = hostedRuntimeBundleV2Schema.safeParse(raw);
 			if (!parsed.success) {
 				errors.push(`cached manifest parse failed: ${z.prettifyError(parsed.error)}`);
 			}

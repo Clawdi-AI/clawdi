@@ -16,13 +16,13 @@ import { runningAsRoot, runtimeEgressGid, runtimeEgressUid } from "./runtime-use
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
 export function writeLastGoodManifest(
-	manifest: RuntimeManifest,
+	manifest: unknown,
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
-	secretScopeManifest: RuntimeManifest = manifest,
+	secretScopeManifest: RuntimeManifest,
 	excludedSecretRefs: readonly string[] = egressSidecarOnlySecretRefs(secretScopeManifest),
 ): string | null {
-	if (manifest.recovery.cacheManifest === false) {
+	if (secretScopeManifest.recovery.cacheManifest === false) {
 		rmSync(paths.manifestLastGood, { force: true });
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return null;
@@ -32,13 +32,14 @@ export function writeLastGoodManifest(
 	return paths.manifestLastGood;
 }
 export function cacheRuntimeLastGoodManifest(
-	manifest: RuntimeManifest,
+	manifest: unknown,
 	paths: RuntimePaths,
-	secretValues?: Record<string, string>,
+	secretValues: Record<string, string> | undefined,
+	secretScopeManifest: RuntimeManifest,
 ): string | null {
 	// This runs only with successfully committed authority, so persist the full
 	// active consumer union needed for exact offline reconstruction.
-	return writeLastGoodManifest(manifest, paths, secretValues, manifest, []);
+	return writeLastGoodManifest(manifest, paths, secretValues, secretScopeManifest, []);
 }
 function writeLastGoodSecretValues(
 	manifest: RuntimeManifest,

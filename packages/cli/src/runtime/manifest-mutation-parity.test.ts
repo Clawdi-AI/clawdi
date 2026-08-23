@@ -172,11 +172,11 @@ exit 0
 			"secret://tool.codex.apiKey": "codex-provider-key-parity",
 		};
 
-		const { normalizeHostedRuntimeBundleV2 } = await import("./manifest-source");
+		const { parseHostedRuntimeBundleV2 } = await import("./manifest-source");
 		const { convergeRuntimeManifest } = await import("./manifest");
 		const { getRuntimePaths } = await import("./paths");
 		const { ensureRuntimeStateDirs } = await import("./state");
-		const load = normalizeHostedRuntimeBundleV2(fixture);
+		const load = parseHostedRuntimeBundleV2(fixture, "test://manifest-mutation-parity");
 		load.applyContext = {
 			kind: "context-file",
 			backend: "incus",

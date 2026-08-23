@@ -19,7 +19,7 @@ import {
 	hostedAiProviderCatalog,
 	hostedProviderRequiresApiKey,
 } from "./hosted-provider-resolution";
-import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, tail } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { hermesConfigContext } from "./manifest-runtime-config";
@@ -781,10 +781,8 @@ export function openClawGatewayHostedPatch(
 	const gatewayToken = manifest.openclawGatewayAuth
 		? runtimeSecretValue(secretValues ?? {}, manifest.openclawGatewayAuth.tokenRef)
 		: null;
-	const isHostedV2 =
-		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION;
-	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
-	if (isHostedV2 && nativeAuth?.activation.enabled !== true) {
+	const nativeAuth = manifest.openclawGatewayAuth;
+	if (nativeAuth?.activation.enabled !== true) {
 		throw new Error("OpenClaw native auth capability is unavailable");
 	}
 	if (manifest.openclawGatewayAuth && !gatewayToken) {

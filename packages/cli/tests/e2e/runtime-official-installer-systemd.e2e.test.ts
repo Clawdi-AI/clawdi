@@ -21,7 +21,7 @@ import {
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyRuntimeManifestLoad } from "../../src/commands/runtime";
 import {
 	resolveOpenClawSdkExport as resolveSdk,
@@ -35,10 +35,11 @@ import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
-import { manifestSchema, type RuntimeManifest } from "../../src/runtime/manifest-contract";
+import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
 import type { HostedSkillSource } from "../../src/runtime/manifest-resources";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+	hostedRuntimeBundleV2Schema,
 	type RuntimeManifestLoad,
 } from "../../src/runtime/manifest-source";
 import { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-managed-provider-plugin";
@@ -57,6 +58,9 @@ const FILE_BROWSER_AMD64_SHA256 =
 	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
 const FILE_BROWSER_ARM64_SHA256 =
 	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
+const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
+	new URL("../../src/test-support/hermes-config-cli-mock.ts", import.meta.url),
+);
 
 const OPENCLAW_PROVIDER_AUTH_E2E_HELPER = `
 import { pathToFileURL } from "node:url";
@@ -887,6 +891,12 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		generation: 1,
 		issuedAt: "2026-08-02T00:00:00.000Z",
 		workspaceRoot,
+		openclawGatewayAuth: {
+			mode: "token",
+			tokenRef: "secret://runtime/openclaw/gateway-token",
+			deviceAuthRequired: false,
+			activation: { enabled: true, capability: "openclaw-native-auth-v1" },
+		},
 		controlPlane: { apiUrl: "https://cloud-api.example.test" },
 		runtimes: {
 			openclaw: {
@@ -902,6 +912,9 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		source: "remote-datasource",
 		sourcePath: "real-openclaw-systemd-fixture",
 		offline: false,
+		secretValues: {
+			"secret://runtime/openclaw/gateway-token": "fixture-gateway-token",
+		},
 		applyContext: {
 			kind: "context-file",
 			backend: "incus",
@@ -1123,7 +1136,6 @@ test("projects a large OpenClaw provider model-list reduction through the public
 				activation: { enabled: true, capability: "openclaw-native-auth-v1" },
 			},
 			projection: {
-				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 				providers: {
 					clawdi: {
 						type: "custom_openai_compatible",
@@ -1426,7 +1438,6 @@ test("persists and serves the managed token through the real official OpenClaw g
 		issuedAt: "2026-08-11T00:00:00.000Z",
 		workspaceRoot,
 		projection: {
-			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 			system: {
 				openclawControlUiAllowedOrigins: ["https://agent.example.test"],
 			},
@@ -1700,7 +1711,6 @@ http.createServer((request, response) => {
 		issuedAt: "2026-08-06T00:00:00.000Z",
 		workspaceRoot: runtimeHome,
 		projection: {
-			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 			system: {
 				openclawControlUiAllowedOrigins: ["https://app-v2-18789.example.test"],
 			},
@@ -1892,7 +1902,6 @@ http.createServer((request, response) => {
 		candidatesRoot,
 		activeCandidate,
 		activeBinary,
-		paths.manifestLastGood,
 	]) {
 		expect(statSync(path).uid).toBe(0);
 		expect(statSync(path).gid).toBe(0);
@@ -1906,8 +1915,6 @@ http.createServer((request, response) => {
 	expect(statSync(paths.fileBrowserStateRoot).uid).toBe(runtimeUid);
 	expect(statSync(paths.fileBrowserStateRoot).gid).toBe(runtimeGid);
 	expect(statSync(paths.fileBrowserStateRoot).mode & 0o777).toBe(0o700);
-	expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
-	expect(readFileSync(paths.manifestLastGood, "utf8")).toContain(`"secret": "${"s".repeat(43)}"`);
 	const cache = join(paths.fileBrowserStateRoot, "cache");
 	const database = join(paths.fileBrowserStateRoot, "filebrowser.db");
 	for (const path of [cache, database]) {
@@ -1917,11 +1924,7 @@ http.createServer((request, response) => {
 	expect(statSync(cache).mode & 0o777).toBe(0o700);
 	expect(statSync(database).mode & 0o777).toBe(0o600);
 
-	for (const path of [
-		paths.fileBrowserConfigRoot,
-		paths.fileBrowserConfig,
-		paths.manifestLastGood,
-	]) {
+	for (const path of [paths.fileBrowserConfigRoot, paths.fileBrowserConfig]) {
 		const denied = spawnSync("runuser", ["-u", "clawdi", "--", "test", "!", "-r", path]);
 		expect(denied.status).toBe(0);
 	}
@@ -1931,7 +1934,6 @@ http.createServer((request, response) => {
 		activeCandidate,
 		activeBinary,
 		paths.fileBrowserConfig,
-		paths.manifestLastGood,
 		join(paths.systemdSystemRoot, "clawdi-files.service"),
 	]) {
 		const denied = spawnSync("runuser", ["-u", "clawdi", "--", "test", "!", "-w", path]);
@@ -2095,6 +2097,9 @@ set -eu
 case "$*" in
   "--version")
     printf '%s\\n' 'Hermes Agent v0.19.1'
+    ;;
+  "config path"|"config get "*|"config set "*|"config unset "*)
+	exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
     ;;
   "gateway install --force")
     printf '%s\\n' install >> ${JSON.stringify(installLog)}
@@ -2365,6 +2370,9 @@ case "$*" in
   "--version")
     printf '%s\\n' 'Hermes Agent v0.19.1'
     ;;
+  "config path"|"config get "*|"config set "*|"config unset "*)
+	exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+    ;;
   "gateway install --force")
     mkdir -p "$HOME/.config/systemd/user"
     cat > "$HOME/.config/systemd/user/hermes-gateway.service" <<'EOF'
@@ -2392,7 +2400,7 @@ EOF
     printf '%s\\n' "\${BEHAVIORAL_GUARD_MAIN:-missing}" > ${BEHAVIORAL_GUARD_MAIN_MARKER}
     exec /bin/sleep infinity
     ;;
-  "dashboard")
+  "dashboard"*)
     printf '%s\\n' "\${BEHAVIORAL_GUARD_DASHBOARD:-missing}" > ${BEHAVIORAL_GUARD_DASHBOARD_MARKER}
     exec /bin/sleep infinity
     ;;
@@ -2509,17 +2517,119 @@ function behavioralGuardManifest(input: {
 }
 
 function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
+	const sourceRevision = createHash("sha256")
+		.update(`behavioral-e2e-generation-${manifest.generation}`)
+		.digest("hex");
+	const dashboardPasswordRef = "secret://runtime/hermes/dashboard-password";
+	const dashboardSessionRef = "secret://runtime/hermes/dashboard-session-secret";
+	const codexApiKeyRef = "secret://tool.codex.apiKey";
+	const secretValues = {
+		[dashboardPasswordRef]: "behavioral-e2e-dashboard-password",
+		[dashboardSessionRef]: "behavioral-e2e-dashboard-session-secret",
+		[codexApiKeyRef]: "behavioral-e2e-codex-api-key",
+	};
+	const sourceBundle = hostedRuntimeBundleV2Schema.parse({
+		schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+		sourceRevision,
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			runtime: "hermes",
+			deploymentId: manifest.deploymentId,
+			environmentId: manifest.environmentId,
+			instanceId: manifest.instanceId,
+			generation: manifest.generation,
+			issuedAt: manifest.issuedAt,
+			locale: { language: "en", timezone: "UTC" },
+			system: {
+				hermesDashboardAuth: {
+					mode: "password",
+					provider: "basic",
+					username: "admin",
+					passwordSecretRef: dashboardPasswordRef,
+					sessionSecretRef: dashboardSessionRef,
+					sessionTtlSeconds: 43_200,
+					publicUrl: "https://agent.example.test/hermes",
+					activation: { enabled: true, capability: "hermes-basic-auth-v1" },
+				},
+			},
+			controlPlane: { cloudApiUrl: manifest.controlPlane.apiUrl },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: `clawdi@${getCliVersion()}`,
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: {
+				hermes: {
+					enabled: true,
+					providerMode: "unmanaged",
+					provider_ids: [],
+					install: { source: "official" },
+					run: { args: ["gateway", "run"] },
+					services: {
+						dashboard: {
+							args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+						},
+					},
+				},
+			},
+			providers: {},
+			terminalTooling: {
+				codex: {
+					enabled: true,
+					provider_id: "clawdi-terminal",
+					primary_model: { provider_id: "clawdi-terminal", model: "gpt-test" },
+					provider: {
+						kind: "openai-compatible",
+						type: "custom_openai_compatible",
+						baseUrl: "https://provider.example.test/v1",
+						apiMode: "openai_responses",
+						managed_by: "clawdi",
+						runtimeEnvName: "CLAWDI_AI_API_KEY",
+						apiKeySecretRef: codexApiKeyRef,
+					},
+				},
+			},
+			liveSync: { enabled: false, agents: [] },
+			...(manifest.projection?.skills ? { skills: manifest.projection.skills } : {}),
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		},
+		channelBindings: [],
+		secretValues,
+	}).sourceBundle;
+	const hermes = manifest.runtimes.hermes;
+	const dashboard = hermes?.services?.dashboard;
+	if (!hermes?.run || !dashboard) throw new Error("behavioral guard Hermes runtime is incomplete");
 	return {
-		manifest,
+		manifest: {
+			...manifest,
+			runtimes: {
+				hermes: {
+					...hermes,
+					services: {
+						dashboard: {
+							...dashboard,
+							secretEnv: {
+								BEHAVIORAL_GUARD_DASHBOARD_PASSWORD: dashboardPasswordRef,
+								BEHAVIORAL_GUARD_DASHBOARD_SESSION: dashboardSessionRef,
+								BEHAVIORAL_GUARD_CODEX_API_KEY: codexApiKeyRef,
+							},
+						},
+					},
+				},
+			},
+		},
+		sourceBundle,
 		source: "remote-datasource",
 		sourcePath: `behavioral-e2e-generation-${manifest.generation}`,
 		offline: false,
+		secretValues,
+		sourceRevision,
 		applyContext: {
 			kind: "context-file",
 			backend: "incus",
 			identity: {
 				generation: manifest.generation,
-				manifestETag: `"behavioral-e2e-generation-${manifest.generation}"`,
+				manifestETag: `"sha256:${sourceRevision}"`,
 				applyReceiptId: `behavioral-e2e-receipt-${manifest.generation}`,
 				bootNonce: `behavioral-e2e-boot-nonce-${manifest.generation}`,
 			},
@@ -2597,7 +2707,9 @@ function behavioralGuardObservableState(
 		),
 		environmentFiles: directoryFileDigests(paths.systemdEnvRoot),
 		skillTree: filesystemTreeIdentity(skillRoot),
-		lastGood: manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))),
+		lastGood: hostedRuntimeBundleV2Schema.parse(
+			JSON.parse(readFileSync(paths.manifestLastGood, "utf8")),
+		).sourceBundle.manifest,
 		appliedState: stableBehavioralGuardAppliedState(paths),
 		processMarkers: {
 			gateway: readFileSync(BEHAVIORAL_GUARD_MAIN_MARKER, "utf8"),
@@ -2694,7 +2806,8 @@ test("replays last-good declarative state after a failed candidate and advances 
 		expect([...repaired.installErrors, ...repaired.resourceProjectionErrors]).toEqual([]);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(3);
 		expect(
-			manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).generation,
+			hostedRuntimeBundleV2Schema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8")))
+				.manifest.generation,
 		).toBe(3);
 		expect(readFileSync(join(skillRoot, "SKILL.md"), "utf8")).toBe("generation three\n");
 		expect(
@@ -2844,7 +2957,8 @@ exec /usr/bin/systemctl "$@"
 		);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(2);
 		expect(
-			manifestSchema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).generation,
+			hostedRuntimeBundleV2Schema.parse(JSON.parse(readFileSync(paths.manifestLastGood, "utf8")))
+				.manifest.generation,
 		).toBe(2);
 	} finally {
 		if (child) {

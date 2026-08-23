@@ -60,22 +60,18 @@ import {
 	shouldIgnoreUserSkill,
 } from "./managed-skill-reservation";
 import {
-	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
 	planHostedAgentPluginConvergence,
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 	runtimeInstallerMutationTargets,
-	runtimeRecoverableSecretValues,
 	runtimeUserMutationTargets,
 } from "./manifest";
 import {
-	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
+	type HostedRuntimeBundleV2Manifest,
 	hostedRuntimeBundleV2ManifestSchema,
-	hostedRuntimeManifestSchema,
-	manifestSchema,
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
@@ -84,12 +80,7 @@ import {
 	type HostedAgentPluginsDesiredState,
 	type HostedSkillSource,
 } from "./manifest-resources";
-import {
-	hostedManifestToRuntimeManifest,
-	loadCommittedRuntimeManifest,
-	normalizeHostedRuntimeBundleV2,
-	type RuntimeManifestLoad,
-} from "./manifest-source";
+import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { planRuntimeMutationSystemdUserUnits } from "./runtime-systemd-reconciliation";
@@ -355,6 +346,7 @@ function baseManifest(
 	runtimes: RuntimeManifest["runtimes"],
 	overrides: Partial<RuntimeManifest> = {},
 ): RuntimeManifest {
+	const openclaw = runtimes.openclaw;
 	return {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		deploymentId: "hdep_reconcile",
@@ -364,7 +356,22 @@ function baseManifest(
 		issuedAt: "2026-07-01T00:00:00.000Z",
 		workspaceRoot: join(paths.userHome, "clawdi"),
 		controlPlane: { apiUrl: "https://cloud-api.example.test" },
-		runtimes,
+		runtimes: openclaw?.run
+			? {
+					...runtimes,
+					openclaw: {
+						...openclaw,
+						run: {
+							...openclaw.run,
+							secretEnv: {
+								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+								...openclaw.run.secretEnv,
+							},
+						},
+					},
+				}
+			: runtimes,
+		...(openclaw ? { openclawGatewayAuth: hostedOpenClawNativeAuth() } : {}),
 		recovery: {},
 		...overrides,
 	};
@@ -479,7 +486,6 @@ function egressRuntimeManifest(
 			issuedAt: `2026-07-01T00:0${input.generation}:00.000Z`,
 			openclawGatewayAuth: hostedOpenClawNativeAuth(),
 			projection: {
-				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 				system: hostedSystemFixture(),
 			},
 			...(input.engine ? { egressEngine: input.engine } : {}),
@@ -671,13 +677,16 @@ function normalizeHostedBundleFixture(
 	manifest: Record<string, unknown>,
 	secretValues: Record<string, string>,
 ): RuntimeManifestLoad {
-	return normalizeHostedRuntimeBundleV2({
-		schemaVersion: "clawdi.hosted-runtime.bundle.v2",
-		sourceRevision: "a".repeat(64),
-		manifest,
-		channelBindings: [],
-		secretValues,
-	});
+	return parseHostedRuntimeBundleV2(
+		{
+			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+			sourceRevision: "a".repeat(64),
+			manifest,
+			channelBindings: [],
+			secretValues,
+		},
+		"test://manifest-reconciliation",
+	);
 }
 
 function writeFakeGatewayCli(input: {
@@ -688,6 +697,7 @@ function writeFakeGatewayCli(input: {
 	failInstall?: boolean;
 	skillInstallSourceLog?: string;
 }): void {
+	const home = dirname(dirname(dirname(input.path)));
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
 		input.path,
@@ -701,7 +711,7 @@ case "$*" in
 		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
 		;;
 	"config path"|"config get "*|"config set "*|"config unset "*)
-		exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+		HOME='${home}' exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
@@ -849,7 +859,6 @@ function fileBrowserManifest(
 			issuedAt: `2026-08-05T00:00:${String(input.generation).padStart(2, "0")}.000Z`,
 			openclawGatewayAuth: hostedOpenClawNativeAuth(),
 			projection: {
-				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 				system: hostedSystemFixture(),
 			},
 			companions: { filebrowser: companion },
@@ -916,10 +925,8 @@ describe("runtime manifest reconciliation invariants", () => {
 	] as const)(
 		"rejects the removed bridge field in every hosted %s manifest schema",
 		(_name, valid) => {
-			expect(hostedRuntimeManifestSchema.safeParse(valid).success).toBe(true);
 			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
 			const withBridge = { ...valid, bridge: {} };
-			expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
 			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
 		},
 	);
@@ -1000,15 +1007,11 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("normalizes previous gateway args during the official-unit rollout", () => {
 		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
-		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacy).success).toBe(true);
 		const legacyHermes = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedHermesManifestFixture({}, ["gateway", "run", "--replace"]),
 		);
-		expect(hostedManifestToRuntimeManifest(legacyHermes).runtimes.hermes.run?.args).toEqual([
-			"gateway",
-			"run",
-		]);
+		expect(legacyHermes.runtimes.hermes.run?.args).toEqual(["gateway", "run"]);
 
 		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
@@ -1030,21 +1033,17 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(inactive).success).toBe(false);
 	});
 	test("accepts and preserves the exact hosted locale contract", () => {
-		const parsed = hostedRuntimeManifestSchema.parse(
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ locale: { language: "zh-CN", timezone: "Asia/Shanghai" } }),
 		);
 		expect(parsed.locale).toEqual({ language: "zh-CN", timezone: "Asia/Shanghai" });
-		expect(hostedManifestToRuntimeManifest(parsed).locale).toEqual(parsed.locale);
 	});
 
 	test("strictly parses and preserves the Agent Plugins desired-state contract", () => {
 		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
 		);
-		expect(parsed.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
-		expect(hostedManifestToRuntimeManifest(parsed).projection?.agentPlugins).toEqual(
-			TEST_AGENT_PLUGINS,
-		);
+		expect(parsed.projection?.agentPlugins).toEqual(TEST_AGENT_PLUGINS);
 		const maximumVersion = `1.2.3+${"a".repeat(250)}`;
 		const maximumLengthPlugins = {
 			...TEST_AGENT_PLUGINS,
@@ -1055,29 +1054,19 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.parse(
 				hostedManifestFixture({ agentPlugins: maximumLengthPlugins }),
-			).agentPlugins,
+			).projection?.agentPlugins,
 		).toEqual(maximumLengthPlugins);
 
 		const empty = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: { schemaVersion: 1, installations: {} } }),
 		);
-		expect(hostedManifestToRuntimeManifest(empty).projection?.agentPlugins).toEqual({
+		expect(empty.projection?.agentPlugins).toEqual({
 			schemaVersion: 1,
 			installations: {},
 		});
 		expect(
-			hostedManifestToRuntimeManifest(
-				hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture()),
-			).projection?.agentPlugins,
+			hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture()).projection?.agentPlugins,
 		).toBeUndefined();
-	});
-
-	test("rejects Agent Plugins on the legacy Hosted manifest v1 contract", () => {
-		expect(
-			hostedRuntimeManifestSchema.safeParse(
-				hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
-			).success,
-		).toBe(false);
 	});
 
 	test.each([
@@ -1140,29 +1129,13 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({ agentPlugins: TEST_AGENT_PLUGINS }),
 		);
-		const normalized = hostedManifestToRuntimeManifest(hosted);
 
 		expect(() =>
 			convergeRuntimeManifestWithContract(
-				manifestLoad(normalized, "inline-hosted-agent-plugins"),
+				manifestLoad(hosted, "inline-hosted-agent-plugins"),
 				paths,
 			),
 		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-
-		const desired = preparedTestAgentPlugin("acme.tools", "1.2.3", "a".repeat(64));
-		const nonHosted: RuntimeManifest = {
-			...normalized,
-			projection: { agentPlugins: testAgentPluginDesiredState(desired) },
-		};
-		expect(() =>
-			convergeRuntimeManifestWithContract(
-				manifestLoad(nonHosted, "inline-generic-agent-plugins"),
-				paths,
-				{
-					preparedHostedAgentPlugins: preparedTestAgentPluginState(desired),
-				},
-			),
-		).toThrow(AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR);
 	});
 
 	test("fails closed when native Agent Plugin lifecycle support is unavailable", () => {
@@ -1333,7 +1306,6 @@ chmod 0755 '${commandPath}'
 				runtime: "openclaw",
 				openclawGatewayAuth: hostedOpenClawNativeAuth(),
 				projection: {
-					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 					agentPlugins: testAgentPluginDesiredState(previous),
 				},
 			},
@@ -1415,7 +1387,6 @@ chmod 0755 '${commandPath}'
 			generation: 2,
 			issuedAt: "2026-07-01T00:02:00.000Z",
 			projection: {
-				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 				agentPlugins: testAgentPluginDesiredState(desired),
 			},
 		};
@@ -1458,9 +1429,9 @@ chmod 0755 '${commandPath}'
 		["unsupported language", { language: "en-US", timezone: "UTC" }],
 		["invalid timezone", { language: "en", timezone: "Mars/Olympus" }],
 	])("rejects hosted manifests with %s", (_name, locale) => {
-		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ locale })).success).toBe(
-			false,
-		);
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(hostedManifestFixture({ locale })).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -1475,12 +1446,12 @@ chmod 0755 '${commandPath}'
 		],
 	])("rejects hosted manifests with %s", (_name, providers) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ providers })).success,
+			hostedRuntimeBundleV2ManifestSchema.safeParse(hostedManifestFixture({ providers })).success,
 		).toBe(false);
 	});
 
 	test("accepts and preserves canonical hosted model capability fields", () => {
-		const parsed = hostedRuntimeManifestSchema.parse(
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				providers: {
 					default: {
@@ -1510,8 +1481,7 @@ chmod 0755 '${commandPath}'
 				},
 			}),
 		);
-		const manifest = hostedManifestToRuntimeManifest(parsed);
-		expect(manifest.projection?.providers?.default).toMatchObject({
+		expect(parsed.projection?.providers?.default).toMatchObject({
 			models: [
 				{
 					id: "k3",
@@ -1555,9 +1525,9 @@ chmod 0755 '${commandPath}'
 			{ enabled: true, agents: [{ agentType: "openclaw", environmentId: "e".repeat(201) }] },
 		],
 	])("rejects hosted live sync with %s", (_name, liveSync) => {
-		expect(hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ liveSync })).success).toBe(
-			false,
-		);
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(hostedManifestFixture({ liveSync })).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -1566,7 +1536,8 @@ chmod 0755 '${commandPath}'
 		["personality", "warm"],
 	])("rejects the top-level %s compatibility field", (field, value) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ [field]: value })).success,
+			hostedRuntimeBundleV2ManifestSchema.safeParse(hostedManifestFixture({ [field]: value }))
+				.success,
 		).toBe(false);
 	});
 
@@ -1593,14 +1564,14 @@ chmod 0755 '${commandPath}'
 		],
 	])("rejects noncanonical hosted runtime field %s", (_name, runtime) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(false);
 	});
 
 	test("copies canonical runtime provider bindings without backfill", () => {
-		const canonical = hostedRuntimeManifestSchema.parse(
+		const canonical = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				runtimes: {
 					openclaw: hostedRuntimeFixture({
@@ -1610,7 +1581,7 @@ chmod 0755 '${commandPath}'
 				},
 			}),
 		);
-		expect(hostedManifestToRuntimeManifest(canonical).runtimes.openclaw).toMatchObject({
+		expect(canonical.runtimes.openclaw).toMatchObject({
 			provider_ids: ["default"],
 			primary_model: { provider_id: "default", model: "gpt-test" },
 		});
@@ -1622,19 +1593,18 @@ chmod 0755 '${commandPath}'
 			provider_ids: [],
 		});
 		delete runtime.primary_model;
-		const parsed = hostedRuntimeManifestSchema.parse(
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				providers: {},
 				runtimes: { openclaw: runtime },
 			}),
 		);
-		const normalized = hostedManifestToRuntimeManifest(parsed);
-		expect(normalized.runtimes.openclaw).toMatchObject({
+		expect(parsed.runtimes.openclaw).toMatchObject({
 			providerMode: "unmanaged",
 			provider_ids: [],
 		});
-		expect(normalized.runtimes.openclaw.primary_model).toBeUndefined();
-		expect(normalized.projection?.providers).toEqual({});
+		expect(parsed.runtimes.openclaw.primary_model).toBeUndefined();
+		expect(parsed.projection?.providers).toEqual({});
 	});
 
 	test.each([
@@ -1660,7 +1630,7 @@ chmod 0755 '${commandPath}'
 		],
 	])("rejects mixed provider contract: %s", (_name, runtime) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(false);
@@ -1674,22 +1644,23 @@ chmod 0755 '${commandPath}'
 		};
 		const manifest = hostedManifestFixture({ providers: { default: provider } });
 
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test("rejects terminal Codex with a runtime-provider secret ref", () => {
 		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
 		terminalTooling.codex.provider.apiKeySecretRef = "secret://provider.codex-managed.apiKey";
 		const manifest = hostedManifestFixture({ terminalTooling });
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test("rejects retired terminal Codex provider shapes", () => {
 		const legacyEnv = structuredClone(TEST_HOSTED_CODEX_TOOLING);
 		legacyEnv.codex.provider.runtimeEnvName = "OPENAI_API_KEY";
 		expect(
-			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ terminalTooling: legacyEnv }))
-				.success,
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedManifestFixture({ terminalTooling: legacyEnv }),
+			).success,
 		).toBe(false);
 
 		const legacyCatalog: unknown = {
@@ -1703,7 +1674,7 @@ chmod 0755 '${commandPath}'
 			},
 		};
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ terminalTooling: legacyCatalog }),
 			).success,
 		).toBe(false);
@@ -1715,7 +1686,7 @@ chmod 0755 '${commandPath}'
 			const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
 			terminalTooling.codex.provider.apiMode = apiMode;
 			const manifest = hostedManifestFixture({ terminalTooling });
-			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 		},
 	);
 
@@ -1725,7 +1696,7 @@ chmod 0755 '${commandPath}'
 			codex: { ...TEST_HOSTED_CODEX_TOOLING.codex, provider },
 		};
 		const manifest = hostedManifestFixture({ terminalTooling });
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test.each(["secret://provider.stale.apiKey", "secret://provider.other.apiKey"])(
@@ -1772,7 +1743,7 @@ chmod 0755 '${commandPath}'
 	])("rejects hosted runtime with %s", (_name, overrides) => {
 		const runtime = hostedRuntimeFixture(overrides);
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(false);
@@ -1785,79 +1756,10 @@ chmod 0755 '${commandPath}'
 	])("rejects hosted runtime with %s", (_name, overrides) => {
 		const runtime = hostedRuntimeFixture(overrides);
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ runtimes: { openclaw: runtime } }),
 			).success,
 		).toBe(false);
-	});
-
-	test("preserves generic runtime install defaults and provider model projections", () => {
-		const parsed = manifestSchema.parse({
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "dep_generic",
-			environmentId: "env_generic",
-			instanceId: "iid_generic",
-			generation: 1,
-			issuedAt: "2026-07-12T00:00:00.000Z",
-			controlPlane: { apiUrl: "https://cloud-api.example.test" },
-			runtimes: {
-				custom: {
-					enabled: true,
-					updateChannel: "stable",
-					install: {
-						authority: "official",
-						method: "official-installer",
-						url: "https://runtime.example.test/install.sh",
-						home: "/home/runtime",
-					},
-				},
-			},
-			projection: { providers: { default: { model: "legacy-model" } } },
-			recovery: {},
-		});
-
-		expect(parsed.runtimes.custom.install?.args).toEqual([]);
-		expect("version" in (parsed.runtimes.custom.install ?? {})).toBe(false);
-		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
-		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
-	});
-
-	test("rejects rather than strips the removed bridge field in generic manifests", () => {
-		const paths = tempRuntimePaths();
-		const valid = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				run: runSettings("openclaw", ["gateway", "run"]),
-				services: {},
-			},
-		});
-		const result = manifestSchema.safeParse({ ...valid, bridge: {} });
-
-		expect(result.success).toBe(false);
-		if (result.success) throw new Error("expected removed bridge field rejection");
-		expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ["bridge"] }));
-	});
-
-	test("accepts independent positive checkpoint and apply generations at the shared boundary", () => {
-		const paths = tempRuntimePaths();
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				run: runSettings("openclaw", ["gateway", "run"]),
-				services: {},
-			},
-		});
-
-		const result = manifestSchema.safeParse({
-			...manifest,
-			generation: 2,
-			applyGeneration: 3,
-		});
-
-		expect(result.success).toBe(true);
-		if (!result.success) throw result.error;
-		expect(result.data.generation).toBe(2);
-		expect(result.data.applyGeneration).toBe(3);
 	});
 
 	test.each([
@@ -1877,7 +1779,7 @@ chmod 0755 '${commandPath}'
 		if (field === "system.persistentPaths") system.persistentPaths = [TEST_HOSTED_HOME];
 		if (field === "runtime.paths") runtime.paths = { home: TEST_HOSTED_HOME };
 
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test.each([
@@ -1887,7 +1789,7 @@ chmod 0755 '${commandPath}'
 		["api_key_secret_ref", { api_key_secret_ref: "secret://provider.default.apiKey" }],
 	])("rejects noncanonical hosted provider field %s", (_name, provider) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ providers: { default: provider } }),
 			).success,
 		).toBe(false);
@@ -1973,7 +1875,7 @@ chmod 0755 '${commandPath}'
 		],
 	])("rejects hosted manifests with %s", (_name, provider) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ providers: { default: provider } }),
 			).success,
 		).toBe(false);
@@ -2018,7 +1920,7 @@ chmod 0755 '${commandPath}'
 		],
 	])("accepts Cloud %s", (_name, provider) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({ providers: { default: provider } }),
 			).success,
 		).toBe(true);
@@ -2031,7 +1933,7 @@ chmod 0755 '${commandPath}'
 		"https://user@app-v2.example.test",
 	])("rejects invalid OpenClaw Control UI origin %s", (origin) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({
 					system: hostedSystemFixture({
 						openclawControlUiAllowedOrigins: [origin],
@@ -2070,7 +1972,7 @@ chmod 0755 '${commandPath}'
 		);
 		chmodSync(openclawBin, 0o700);
 
-		const hosted = hostedRuntimeManifestSchema.parse(
+		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				system: hostedSystemFixture({
 					openclawControlUiAllowedOrigins: allowedOrigins,
@@ -2081,10 +1983,16 @@ chmod 0755 '${commandPath}'
 			}),
 		);
 		const normalized: RuntimeManifest = {
-			...hostedManifestToRuntimeManifest(hosted),
+			...hosted,
 			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-control-ui"),
 		};
-		expect(normalized.projection?.system).toEqual(hosted.system);
+		expect(normalized.projection?.system).toEqual(
+			hostedManifestFixture({
+				system: hostedSystemFixture({
+					openclawControlUiAllowedOrigins: allowedOrigins,
+				}),
+			}).system,
+		);
 
 		const result = convergeRuntimeManifest(
 			manifestLoad(normalized, "inline-hosted-control-ui-origins"),
@@ -2155,16 +2063,11 @@ chmod 0755 '${commandPath}'
 		chmodSync(openclawBin, 0o700);
 
 		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
-		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(legacy);
-		const projected = hostedManifestToRuntimeManifest(hosted);
+		const projected = hostedRuntimeBundleV2ManifestSchema.parse(legacy);
 		expect(projected.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
 		const normalized: RuntimeManifest = {
 			...projected,
 			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-native-auth"),
-			projection: {
-				...projected.projection,
-				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
-			},
 		};
 		expect(() =>
 			convergeRuntimeManifest(
@@ -2219,7 +2122,7 @@ chmod 0755 '${commandPath}'
 
 	test("rejects hosted manifests without an explicit CLI package policy", () => {
 		expect(() =>
-			hostedRuntimeManifestSchema.parse({
+			hostedRuntimeBundleV2ManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				runtime: "openclaw",
 				deploymentId: "hdep_missing_cli_policy",
@@ -2240,18 +2143,18 @@ chmod 0755 '${commandPath}'
 	])("rejects hosted manifests with %s", (_name, identity) => {
 		const manifest = hostedManifestFixture(identity);
 		delete manifest.environmentId;
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(false);
 	});
 
 	test("uses only the hosted environmentId as the runtime environment identity", () => {
-		const parsed = hostedRuntimeManifestSchema.parse(
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				deploymentId: "hdep_distinct_identity",
 				environmentId: "env_canonical_identity",
 			}),
 		);
 
-		expect(hostedManifestToRuntimeManifest(parsed).environmentId).toBe("env_canonical_identity");
+		expect(parsed.environmentId).toBe("env_canonical_identity");
 	});
 
 	test.each([
@@ -2273,7 +2176,8 @@ chmod 0755 '${commandPath}'
 		["unknown key", { cloudApiUrl: "https://cloud-api.example.test", unknown: true }],
 	])("rejects hosted controlPlane with %s", (_name, controlPlane) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(hostedManifestFixture({ controlPlane })).success,
+			hostedRuntimeBundleV2ManifestSchema.safeParse(hostedManifestFixture({ controlPlane }))
+				.success,
 		).toBe(false);
 	});
 
@@ -2310,7 +2214,7 @@ chmod 0755 '${commandPath}'
 		},
 	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
 		expect(() =>
-			hostedRuntimeManifestSchema.parse({
+			hostedRuntimeBundleV2ManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				runtime: "openclaw",
 				deploymentId: "hdep_invalid_cli_policy",
@@ -2330,7 +2234,7 @@ chmod 0755 '${commandPath}'
 		"accepts exact hosted CLI package spec %s",
 		(packageSpec) => {
 			expect(
-				hostedRuntimeManifestSchema.safeParse(
+				hostedRuntimeBundleV2ManifestSchema.safeParse(
 					hostedManifestFixture({
 						clawdiCli: {
 							source: "npm:clawdi",
@@ -2358,7 +2262,7 @@ chmod 0755 '${commandPath}'
 				},
 			});
 			const expected = packageSpec === atLimit;
-			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(expected);
+			expect(hostedRuntimeBundleV2ManifestSchema.safeParse(manifest).success).toBe(expected);
 		}
 	});
 
@@ -2390,7 +2294,7 @@ chmod 0755 '${commandPath}'
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
 	])("rejects hosted CLI package spec %s", (packageSpec) => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
 				hostedManifestFixture({
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -2446,7 +2350,7 @@ chmod 0755 '${commandPath}'
 						apiMode: "openai_chat",
 						apiKeySecretRef: "secret://providers/default/api-key",
 					},
-				},
+				} satisfies HostedRuntimeBundleV2Manifest["providers"],
 				terminalTooling: TEST_HOSTED_CODEX_TOOLING,
 				liveSync: {
 					enabled: true,
@@ -2488,9 +2392,9 @@ chmod 0755 '${commandPath}'
 			},
 		};
 
-		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
+		const hostedManifest = hostedRuntimeBundleV2ManifestSchema.parse(hostedResponse.manifest);
 		const normalized = {
-			manifest: hostedManifestToRuntimeManifest(hostedManifest),
+			manifest: hostedManifest,
 			secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		};
 		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
@@ -2506,7 +2410,7 @@ chmod 0755 '${commandPath}'
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
-		expect(normalized.manifest.projection?.providers).toEqual(hostedManifest.providers);
+		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
 		);
@@ -2519,7 +2423,7 @@ chmod 0755 '${commandPath}'
 
 	test("rejects a missing explicit runtime even with one runtime entry", () => {
 		expect(
-			hostedRuntimeManifestSchema.safeParse({
+			hostedRuntimeBundleV2ManifestSchema.safeParse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				deploymentId: "hdep_infer_runtime",
 				environmentId: "env_infer_runtime",
@@ -2633,14 +2537,14 @@ chmod 0755 '${commandPath}'
 			},
 		};
 
-		expect(hostedRuntimeManifestSchema.safeParse(addUnknownField(cleanManifest)).success).toBe(
-			false,
-		);
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(addUnknownField(cleanManifest)).success,
+		).toBe(false);
 	});
 
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
-			hostedRuntimeManifestSchema.parse({
+			hostedRuntimeBundleV2ManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",
@@ -2764,7 +2668,7 @@ chmod 0755 '${commandPath}'
 			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
 			"utf8",
 		);
-		expect(envFile).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
+		expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 	});
 
 	test("keeps hosted managed provider key out of the agent env", () => {
@@ -2775,7 +2679,7 @@ chmod 0755 '${commandPath}'
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
-		const hosted = hostedRuntimeManifestSchema.parse(
+		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
 				providers: {
 					default: {
@@ -2792,7 +2696,7 @@ chmod 0755 '${commandPath}'
 			}),
 		);
 		const manifest = {
-			...hostedManifestToRuntimeManifest(hosted),
+			...hosted,
 			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
 		};
 		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
@@ -3105,7 +3009,6 @@ chmod 0755 '${commandPath}'
 				},
 				{
 					projection: {
-						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 						providers: {
 							[providerKey]: {
 								type: "custom_openai_compatible",
@@ -3137,7 +3040,6 @@ chmod 0755 '${commandPath}'
 			},
 			{
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					providers: {
 						default: {
 							type: "custom_openai_compatible",
@@ -3241,7 +3143,6 @@ chmod 0755 '${commandPath}'
 		expect(result.outputs.egressEngine).toEqual(expect.objectContaining({ status: "ready" }));
 		expect(commits).toBe(1);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
-		expect(existsSync(paths.manifestLastGood)).toBe(true);
 		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(true);
 	});
 
@@ -3380,11 +3281,10 @@ chmod 0755 '${commandPath}'
 		const signals: boolean[] = [];
 		const converge = (manifest: RuntimeManifest, secret: string | undefined) =>
 			convergeRuntimeManifest(
-				manifestLoad(
-					manifest,
-					"inline-egress-secret-lifecycle",
-					secret === undefined ? {} : { [secretRef]: secret },
-				),
+				manifestLoad(manifest, "inline-egress-secret-lifecycle", {
+					...TEST_HOSTED_SECRET_VALUES,
+					...(secret === undefined ? {} : { [secretRef]: secret }),
+				}),
 				paths,
 				{
 					cacheLastGood: false,
@@ -3492,676 +3392,6 @@ chmod 0755 '${commandPath}'
 		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
 		expect(signals.at(-1)).toBe(false);
 		expect(signals).toEqual([true, false, true, false, false, false, false, false]);
-	});
-
-	test("recovers committed egress secrets before retrying a crash-interrupted sidecar load", () => {
-		const paths = tempRuntimePaths();
-		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
-		const egressEngine = {
-			type: "mitmproxy" as const,
-			version: "12.2.3",
-			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
-			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
-		};
-		const engineBinary = join(
-			paths.egressEngineMaintainedRoot,
-			egressEngine.version,
-			egressEngine.sha256,
-			"mitmdump",
-		);
-		writeFakeGatewayCli({
-			path: commandPath,
-			runtime: "openclaw",
-			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
-		});
-		mkdirSync(dirname(engineBinary), { recursive: true });
-		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
-		chmodSync(engineBinary, 0o700);
-		const secretRef = "secret://providers/default/api-key";
-		const manifest = manifestSchema.parse(
-			baseManifest(
-				paths,
-				{
-					openclaw: {
-						enabled: true,
-						run: runSettings(commandPath, ["gateway", "run"]),
-						services: {},
-					},
-				},
-				{
-					egressEngine,
-					egressProfiles: {
-						profiles: [
-							{
-								id: "managed-provider",
-								enabled: true,
-								kind: "provider",
-								match: {
-									scheme: "https",
-									host: "provider.example.test",
-									headers: {},
-									query: {},
-								},
-								rewrite: {
-									preservePath: true,
-									setHeaders: {
-										authorization: {
-											type: "secretRef",
-											secretRef,
-											prefix: "Bearer ",
-										},
-									},
-								},
-								logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-								priority: 80,
-							},
-						],
-					},
-				},
-			),
-		);
-		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
-		const secrets = (value: string) => ({ [secretRef]: value });
-		const load = (value: string) =>
-			manifestLoad(manifest, "inline-egress-crash-recovery", secrets(value));
-		const writeAuthority = (value: string, egressSidecarSecretRevision?: string) => {
-			writeRuntimeAppliedState(
-				{
-					schemaVersion: "clawdi.runtimeAppliedState.v2",
-					appliedAt: "2026-07-28T00:00:00.000Z",
-					instanceId: manifest.instanceId,
-					etag: `"egress-${value}"`,
-					sourceRevision: runtimeContentSha256({ value }),
-					generation: manifest.generation,
-					contentIdentity: {
-						sourcePath: "inline-egress-crash-recovery",
-						sha256: runtimeContentSha256({
-							manifest,
-							secretValues: runtimeRecoverableSecretValues(manifest, secrets(value)),
-						}),
-					},
-					...(egressSidecarSecretRevision ? { egressSidecarSecretRevision } : {}),
-					providerIds: [],
-					projectedProviderIds: {},
-				},
-				paths,
-			);
-		};
-		const overwriteLiveSecret = (value: string) => {
-			const current = existsSync(secretFile)
-				? (JSON.parse(readFileSync(secretFile, "utf-8")) as Record<string, string>)
-				: { [secretRef]: value };
-			writeFileSync(
-				secretFile,
-				`${JSON.stringify(
-					Object.fromEntries(Object.keys(current).map((ref) => [ref, value])),
-					null,
-					2,
-				)}\n`,
-			);
-			chmodSync(secretFile, 0o600);
-		};
-		const commit = (value: string, egressSidecarSecretRevision?: string) => {
-			cacheRuntimeLastGoodManifest(manifest, paths, secrets(value));
-			writeAuthority(value, egressSidecarSecretRevision);
-		};
-
-		let revisionA: string | undefined;
-		const baseline = convergeRuntimeManifest(load("000000"), paths, {
-			commitAuthority: (_convergence, authority) => {
-				revisionA = authority.egressSidecarSecretRevision;
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
-				rollback: () => {},
-			},
-		});
-		expect(baseline.installErrors).toEqual([]);
-		expect(revisionA).toMatch(/^[a-f0-9]{64}$/);
-		commit("000000", revisionA);
-		const committedA = readFileSync(paths.appliedState, "utf-8");
-
-		// Simulate SIGKILL after the atomic A -> B file write but before restart.
-		overwriteLiveSecret("000001");
-		const recoverySignals: boolean[] = [];
-		let revisionB: string | undefined;
-		const recovered = convergeRuntimeManifest(load("000001"), paths, {
-			cacheLastGood: false,
-			commitAuthority: (_convergence, authority) => {
-				revisionB = authority.egressSidecarSecretRevision;
-				commit("000001", revisionB);
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					recoverySignals.push(restartEgressSidecar);
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: () => {
-					throw new Error("successful recovery must not roll back");
-				},
-			},
-		});
-		expect(recovered.installErrors).toEqual([]);
-		expect(recoverySignals).toEqual([true]);
-		expect(revisionB).toMatch(/^[a-f0-9]{64}$/);
-		expect(revisionB).not.toBe(revisionA);
-		expect(readFileSync(paths.appliedState, "utf-8")).not.toBe(committedA);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
-		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
-		expect(JSON.stringify(recovered)).not.toContain("egressSidecarSecretRevision");
-		expect(JSON.stringify(recovered)).not.toContain(revisionB ?? "missing-private-revision");
-
-		// A failed retry restores the verified committed B material before the
-		// rollback restart, even though the pre-apply live file already held C.
-		overwriteLiveSecret("000002");
-		let restartFailureRollbackSecret = "";
-		const restartFailed = convergeRuntimeManifest(load("000002"), paths, {
-			cacheLastGood: false,
-			commitAuthority: () => {
-				throw new Error("restart failure must not commit authority");
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					throw new Error("injected sidecar restart failure");
-				},
-				rollback: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					restartFailureRollbackSecret = readFileSync(secretFile, "utf-8");
-				},
-			},
-		});
-		expect(restartFailed.installErrors.join("\n")).toContain("injected sidecar restart failure");
-		expect(restartFailureRollbackSecret).toContain("000001");
-		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
-
-		// If activation succeeded but the atomic authority commit reports a
-		// failure, both authority files and loaded secret material return to B.
-		overwriteLiveSecret("000002");
-		const committedB = readFileSync(paths.appliedState, "utf-8");
-		const committedCacheB = readFileSync(paths.managedSecretCacheFile, "utf-8");
-		let commitFailureRollbackSecret = "";
-		const commitFailed = convergeRuntimeManifest(load("000002"), paths, {
-			cacheLastGood: false,
-			commitAuthority: (_convergence, authority) => {
-				commit("000002", authority.egressSidecarSecretRevision);
-				throw new Error("injected authority commit failure");
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					commitFailureRollbackSecret = readFileSync(secretFile, "utf-8");
-				},
-			},
-		});
-		expect(commitFailed.installErrors.join("\n")).toContain("injected authority commit failure");
-		expect(commitFailureRollbackSecret).toContain("000001");
-		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedB);
-		expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedCacheB);
-
-		// A crash may also advance the live file and cache while applied state
-		// remains at B. The desired C restart must run before rollback material
-		// is needed, and a successful restart may then commit C.
-		overwriteLiveSecret("000002");
-		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000002"));
-		let mixedSnapshotActivations = 0;
-		let revisionC: string | undefined;
-		const mixedSnapshot = convergeRuntimeManifest(load("000002"), paths, {
-			cacheLastGood: false,
-			commitAuthority: (_convergence, authority) => {
-				revisionC = authority.egressSidecarSecretRevision;
-				commit("000002", revisionC);
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					mixedSnapshotActivations++;
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: () => {
-					throw new Error("successful mixed-snapshot recovery must not roll back");
-				},
-			},
-		});
-		expect(mixedSnapshot.installErrors).toEqual([]);
-		expect(mixedSnapshotActivations).toBe(1);
-		expect(revisionC).toMatch(/^[a-f0-9]{64}$/);
-		expect(revisionC).not.toBe(revisionB);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
-
-		// If the restart from a mixed D/cache-D/applied-C snapshot fails, only
-		// the failure path attempts to recover C. The unverifiable cache then
-		// fails closed by removing the sidecar secret while the remaining units
-		// still reconcile to the restored filesystem authority.
-		overwriteLiveSecret("000003");
-		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000003"));
-		const committedC = readFileSync(paths.appliedState, "utf-8");
-		let mixedFailureCommits = 0;
-		let mixedFailureRollbacks = 0;
-		let mixedFailureRollbackSignal: {
-			restartEgressSidecar: boolean;
-		} | null = null;
-		const mixedFailure = convergeRuntimeManifest(load("000003"), paths, {
-			cacheLastGood: false,
-			commitAuthority: () => {
-				mixedFailureCommits++;
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					throw new Error("injected mixed-snapshot restart failure");
-				},
-				rollback: (signal) => {
-					mixedFailureRollbacks++;
-					mixedFailureRollbackSignal = signal;
-				},
-			},
-		});
-		expect(mixedFailure.installErrors.join("\n")).toContain(
-			"injected mixed-snapshot restart failure",
-		);
-		expect(mixedFailure.installErrors.join("\n")).toContain(
-			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
-		);
-		expect(mixedFailureCommits).toBe(0);
-		expect(mixedFailureRollbacks).toBe(1);
-		expect(mixedFailureRollbackSignal).toMatchObject({
-			restartEgressSidecar: false,
-		});
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedC);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
-		expect(existsSync(secretFile)).toBe(false);
-
-		// Legacy applied state can recover A from an exact content-identity
-		// match even when an interrupted write left unrelated live B bytes. A
-		// failed desired-C restart must load only the verified A material.
-		const legacyCommitted = "legacy-committed-a";
-		const legacyInterrupted = "legacy-live-b";
-		const legacyDesired = "legacy-desired-c";
-		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
-		writeAuthority(legacyCommitted);
-		overwriteLiveSecret(legacyInterrupted);
-		const legacyAppliedA = readFileSync(paths.appliedState, "utf-8");
-		let legacyFailureCommits = 0;
-		const legacyRollbackSecrets: string[] = [];
-		const legacyRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
-			cacheLastGood: false,
-			commitAuthority: () => {
-				legacyFailureCommits++;
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
-					throw new Error("injected legacy desired restart failure");
-				},
-				rollback: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					legacyRollbackSecrets.push(readFileSync(secretFile, "utf-8"));
-				},
-			},
-		});
-		expect(legacyRestartFailure.installErrors.join("\n")).toContain(
-			"injected legacy desired restart failure",
-		);
-		expect(legacyFailureCommits).toBe(0);
-		expect(legacyRollbackSecrets).toHaveLength(1);
-		expect(legacyRollbackSecrets[0]).toContain(legacyCommitted);
-		expect(legacyRollbackSecrets[0]).not.toContain(legacyInterrupted);
-		expect(readFileSync(secretFile, "utf-8")).toContain(legacyCommitted);
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyAppliedA);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
-		expect(JSON.stringify(legacyRestartFailure)).not.toContain("egressSidecarSecretRevision");
-
-		// A legacy cache without its active egress secret cannot prove A. The
-		// desired restart still runs, but its failure must remove the unverified
-		// snapshot B, stop the sidecar, and reconcile every independent unit.
-		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
-		rmSync(paths.managedSecretCacheFile);
-		writeAuthority(legacyCommitted);
-		overwriteLiveSecret(legacyInterrupted);
-		const legacyMissingCacheApplied = readFileSync(paths.appliedState, "utf-8");
-		let legacyMissingCacheRestartCommits = 0;
-		let legacyMissingCacheRestartRollbacks = 0;
-		let legacyMissingCacheRestartSignal: {
-			restartEgressSidecar: boolean;
-		} | null = null;
-		const legacyMissingCacheRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
-			cacheLastGood: false,
-			commitAuthority: () => {
-				legacyMissingCacheRestartCommits++;
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
-					throw new Error("injected legacy missing-cache restart failure");
-				},
-				rollback: (signal) => {
-					legacyMissingCacheRestartRollbacks++;
-					legacyMissingCacheRestartSignal = signal;
-				},
-			},
-		});
-		expect(legacyMissingCacheRestartFailure.installErrors[0]).toBe(
-			"runtime apply failed: injected legacy missing-cache restart failure",
-		);
-		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
-			"injected legacy missing-cache restart failure",
-		);
-		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
-			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
-		);
-		expect(legacyMissingCacheRestartCommits).toBe(0);
-		expect(legacyMissingCacheRestartRollbacks).toBe(1);
-		expect(legacyMissingCacheRestartSignal).toMatchObject({
-			restartEgressSidecar: false,
-		});
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
-		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
-		expect(existsSync(secretFile)).toBe(false);
-
-		// The same unverified legacy state also fails the sidecar closed if
-		// desired activation succeeds but the following authority commit fails.
-		let legacyMissingCacheCommits = 0;
-		let legacyMissingCacheRollbacks = 0;
-		let legacyMissingCacheSignal: {
-			restartEgressSidecar: boolean;
-		} | null = null;
-		const legacyMissingCacheActivationSecrets: string[] = [];
-		const legacyMissingCacheFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
-			cacheLastGood: false,
-			commitAuthority: (_convergence, authority) => {
-				legacyMissingCacheCommits++;
-				commit(legacyDesired, authority.egressSidecarSecretRevision);
-				throw new Error("injected legacy authority commit failure");
-			},
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					legacyMissingCacheActivationSecrets.push(readFileSync(secretFile, "utf-8"));
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: (signal) => {
-					legacyMissingCacheRollbacks++;
-					legacyMissingCacheSignal = signal;
-				},
-			},
-		});
-		expect(legacyMissingCacheFailure.installErrors[0]).toBe(
-			"runtime apply failed: injected legacy authority commit failure",
-		);
-		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
-			"injected legacy authority commit failure",
-		);
-		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
-			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
-		);
-		expect(legacyMissingCacheCommits).toBe(1);
-		expect(legacyMissingCacheRollbacks).toBe(1);
-		expect(legacyMissingCacheSignal).toMatchObject({
-			restartEgressSidecar: false,
-		});
-		expect(legacyMissingCacheActivationSecrets).toHaveLength(1);
-		expect(legacyMissingCacheActivationSecrets[0]).toContain(legacyDesired);
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
-		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
-		expect(existsSync(secretFile)).toBe(false);
-		expect(JSON.stringify(legacyMissingCacheFailure)).not.toContain("egressSidecarSecretRevision");
-
-		// Legacy v2 authority has no private revision. An active sidecar restarts
-		// once, commits it, and then an identical apply no longer forces restart.
-		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000001"));
-		overwriteLiveSecret("000001");
-		writeAuthority("000001");
-		const legacySignals: boolean[] = [];
-		const convergeLegacy = () =>
-			convergeRuntimeManifest(load("000001"), paths, {
-				cacheLastGood: false,
-				commitAuthority: (_convergence, authority) =>
-					writeAuthority("000001", authority.egressSidecarSecretRevision),
-				systemdApply: {
-					quiesce: () => {},
-					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: ({ restartEgressSidecar }) => {
-						legacySignals.push(restartEgressSidecar);
-						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-					},
-					rollback: () => {},
-				},
-			});
-		expect(convergeLegacy().installErrors).toEqual([]);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
-		expect(convergeLegacy().installErrors).toEqual([]);
-		expect(legacySignals).toEqual([true, false]);
-	});
-
-	test("replaces an unverifiable legacy secret cache after a successful online upgrade", () => {
-		const paths = tempRuntimePaths();
-		const engine = installCachedTestEgressEngine(paths, "12.2.3");
-		const canonicalSecretRef = "secret://tool.codex.apiKey";
-		const base = egressRuntimeManifest(paths, {
-			generation: 19,
-			engine,
-			profile: "enabled",
-		});
-		const profile = base.egressProfiles?.profiles[0];
-		if (!profile) throw new Error("expected enabled egress profile fixture");
-		const currentManifest = manifestSchema.parse({
-			...base,
-			issuedAt: "2026-07-01T00:19:00.000Z",
-			egressProfiles: {
-				profiles: [
-					{
-						...profile,
-						rewrite: {
-							...profile.rewrite,
-							setHeaders: {
-								authorization: {
-									type: "secretRef",
-									secretRef: canonicalSecretRef,
-									prefix: "Bearer ",
-								},
-							},
-						},
-					},
-				],
-			},
-		});
-		const retainedManifest = {
-			...currentManifest,
-			generation: 15,
-			issuedAt: "2026-07-01T00:15:00.000Z",
-			egressProfiles: {
-				profiles: [
-					profile,
-					{
-						...profile,
-						id: "legacy-env-ref",
-						rewrite: {
-							...profile.rewrite,
-							setHeaders: {
-								authorization: {
-									type: "secretRef",
-									secretRef: "env://REDACTED_LEGACY_NAME",
-									prefix: "Bearer ",
-								},
-							},
-						},
-					},
-				],
-			},
-		};
-		const retainedSecretValues = {
-			...TEST_HOSTED_SECRET_VALUES,
-			"clawdi/auth-token": TEST_HOSTED_SECRET_VALUES["secret://clawdi/auth-token"],
-			"runtime/openclaw/gateway-token":
-				TEST_HOSTED_SECRET_VALUES["secret://runtime/openclaw/gateway-token"],
-			"tool.codex.apiKey": TEST_HOSTED_SECRET_VALUES[canonicalSecretRef],
-		};
-		const currentSecretValues = {
-			"secret://clawdi/auth-token": "generation-19-auth-token",
-			"secret://runtime/openclaw/gateway-token": "canonical-generation-19-gateway",
-			[canonicalSecretRef]: "generation-19-egress-token",
-		};
-		const currentLoad = manifestLoad(
-			currentManifest,
-			"inline-generation-19-online-upgrade",
-			currentSecretValues,
-		);
-		if (!currentLoad.applyContext) throw new Error("expected apply context fixture");
-
-		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-		writeFileSync(paths.manifestLastGood, `${JSON.stringify(retainedManifest, null, 2)}\n`);
-		writeFileSync(
-			paths.managedSecretCacheFile,
-			`${JSON.stringify(retainedSecretValues, null, 2)}\n`,
-		);
-		writeRuntimeAppliedState(
-			{
-				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				appliedAt: "2026-07-01T00:15:00.000Z",
-				instanceId: currentManifest.instanceId,
-				etag: '"generation-15"',
-				sourceRevision: runtimeContentSha256({ generation: 15 }),
-				generation: 15,
-				contentIdentity: {
-					sourcePath: "retained-generation-15",
-					sha256: runtimeContentSha256({
-						manifest: retainedManifest,
-						secretValues: retainedSecretValues,
-					}),
-				},
-				providerIds: [],
-				projectedProviderIds: {},
-			},
-			paths,
-		);
-		expect(loadCommittedRuntimeManifest(paths, currentLoad.applyContext)).toHaveProperty("errors");
-
-		let activations = 0;
-		let rollbacks = 0;
-		const convergence = convergeRuntimeManifest(currentLoad, paths, {
-			cacheLastGood: false,
-			commitAuthority: (committedConvergence, authority) =>
-				commitTestRuntimeAuthority(currentLoad, paths, committedConvergence, authority),
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					expect(
-						readFileSync(join(paths.managedSecretRoot, "egress-secrets.json"), "utf-8"),
-					).toContain("generation-19-egress-token");
-					activations++;
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: () => {
-					rollbacks++;
-				},
-			},
-		});
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(activations).toBe(1);
-		expect(rollbacks).toBe(0);
-		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toEqual(currentManifest);
-		expect(JSON.parse(readFileSync(paths.managedSecretCacheFile, "utf-8"))).toEqual({
-			"secret://runtime/openclaw/gateway-token": "canonical-generation-19-gateway",
-			[canonicalSecretRef]: "generation-19-egress-token",
-		});
-		expect(readRuntimeAppliedState(paths)).toMatchObject({
-			generation: 19,
-			egressSidecarSecretRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
-		});
-		const committedSecretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
-		const committedCache = [
-			readFileSync(paths.manifestLastGood, "utf-8"),
-			committedSecretCache,
-		].join("\n");
-		expect(committedCache).not.toContain("env://");
-		expect(committedCache).not.toContain("legacy-env-ref");
-		expect(committedSecretCache).not.toContain(': "test-auth-token"');
-		expect(committedSecretCache).not.toContain(': "gateway-token"');
-		expect(committedSecretCache).not.toContain(': "test-codex-provider-key"');
-	});
-
-	test("advances last-good manifest only after a clean converge", () => {
-		const paths = tempRuntimePaths();
-		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
-		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				run: runSettings(openclawCommand, ["gateway", "run"]),
-				services: {},
-			},
-		});
-
-		writeFakeGatewayCli({ path: openclawCommand, runtime: "openclaw", unitPath });
-		const clean = convergeRuntimeManifest(manifestLoad(manifest, "inline-clean"), paths);
-		expect(clean.installErrors).toEqual([]);
-		expect(clean.outputs.manifestLastGood).toBe(paths.manifestLastGood);
-		expect(clean.outputs.appliedState).toBeNull();
-		expect(existsSync(paths.appliedState)).toBe(false);
-		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).toMatchObject({
-			generation: 1,
-		});
-
-		writeFakeGatewayCli({
-			path: openclawCommand,
-			runtime: "openclaw",
-			unitPath,
-			failInstall: true,
-		});
-		const failedManifest: RuntimeManifest = {
-			...manifest,
-			generation: 2,
-			issuedAt: "2026-07-01T00:02:00.000Z",
-		};
-		let authorityCommits = 0;
-		const failed = convergeRuntimeManifest(
-			manifestLoad(failedManifest, "inline-install-error"),
-			paths,
-			{
-				commitAuthority: () => authorityCommits++,
-				executeOfficialServiceInstallers: true,
-			},
-		);
-
-		expect(failed.installErrors.join("\n")).toContain(
-			"official openclaw-gateway service install failed",
-		);
-		expect(failed.outputs.manifestLastGood).toBeNull();
-		expect(authorityCommits).toBe(0);
-		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf8"))).toMatchObject({
-			generation: 1,
-		});
 	});
 
 	test("does not mutate live state when runtime planning fails", () => {
@@ -6046,15 +5276,20 @@ exit 42
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".local", "bin", "hermes"),
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		});
 		const initialManifest = baseManifest(paths, {
 			hermes: {
 				enabled: true,
-				run: runSettings("hermes", ["gateway", "run"]),
+				run: runSettings(join(paths.userHome, ".local", "bin", "hermes"), ["gateway", "run"]),
 				services: {},
 			},
 			openclaw: {
 				enabled: true,
-				run: runSettings("openclaw", ["gateway", "run"]),
+				run: runSettings(join(paths.userHome, ".local", "bin", "openclaw"), ["gateway", "run"]),
 				services: {},
 			},
 		});
@@ -6071,7 +5306,7 @@ exit 42
 			{
 				hermes: {
 					enabled: true,
-					run: runSettings("hermes", ["gateway", "run"]),
+					run: runSettings(join(paths.userHome, ".local", "bin", "hermes"), ["gateway", "run"]),
 					services: {},
 				},
 			},

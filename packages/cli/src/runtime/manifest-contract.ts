@@ -7,16 +7,14 @@ import {
 import { z } from "zod";
 import { egressEngineSchema } from "./egress-engine";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
+import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import {
 	hostedAgentPluginsDesiredStateSchema,
 	hostedMcpDesiredStateSchema,
 	hostedSkillsDesiredStateSchema,
 } from "./manifest-resources";
-import {
-	runtimeNameSchema,
-	runtimeRunSettingsSchema,
-	runtimeServiceNameSchema,
-} from "./run-config";
+import { getRuntimePaths } from "./paths";
+import { type RuntimeRunSettings, runtimeNameSchema, runtimeServiceNameSchema } from "./run-config";
 import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-values";
 
 export type { EgressEnginePin } from "./egress-engine";
@@ -165,38 +163,6 @@ export const runtimeLocaleSchema = z
 		timezone: z.string().min(1).refine(isValidIanaTimezone, "must be a valid IANA timezone"),
 	})
 	.strict();
-
-const installSchema = z.object({
-	authority: z.literal("official"),
-	method: z.literal("official-installer"),
-	url: z.string().url(),
-	home: z.string().min(1),
-	args: z.array(z.string()).default([]),
-});
-
-const runtimeSchema = z.object({
-	enabled: z.boolean(),
-	providerMode: z.enum(["configured", "unmanaged"]).optional(),
-	updateChannel: z.string().min(1).optional(),
-	install: installSchema.optional(),
-	run: runtimeRunSettingsSchema.optional(),
-	services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
-	provider_ids: z.array(z.string().min(1)).max(1).optional(),
-	primary_model: z
-		.object({
-			provider_id: z.string().min(1),
-			model: z.string().min(1),
-		})
-		.optional(),
-});
-
-const cliPayloadPolicySchema = z.object({
-	version: z.string().min(1).optional(),
-	channel: z.string().min(1).optional(),
-	source: z.string().min(1).optional(),
-	packageSpec: z.string().min(1).optional(),
-	registry: z.string().min(1).optional(),
-});
 
 function isHostedExactCliPackageSpec(value: string): boolean {
 	const npmVersion = /^clawdi@(.+)$/.exec(value)?.[1];
@@ -349,11 +315,6 @@ const runtimeCompanionsSchema = z
 const liveSyncAgentSchema = z.object({
 	agentType: runtimeNameSchema,
 	environmentId: z.string().min(1),
-});
-
-const liveSyncSchema = z.object({
-	enabled: z.boolean().optional(),
-	agents: z.array(liveSyncAgentSchema).default([]),
 });
 
 const hostedControlPlaneSchema = z
@@ -611,90 +572,6 @@ const hostedTerminalToolingSchema = z
 	})
 	.strict();
 
-const runtimeProjectionSchema = z.object({
-	sourceSchemaVersion: z.string().min(1).optional(),
-	sourceBundleVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION).optional(),
-	system: z.unknown().nullable().optional(),
-	providers: z
-		.record(
-			z.string().min(1),
-			hostedProviderBaseSchema.extend({ model: z.string().min(1) }).partial(),
-		)
-		.optional(),
-	channels: z.record(z.string().min(1), z.unknown()).optional(),
-	channelCredentials: z.array(z.unknown()).optional(),
-	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
-	mcp: hostedMcpDesiredStateSchema.optional(),
-	skills: hostedSkillsDesiredStateSchema.optional(),
-	agentPlugins: hostedAgentPluginsDesiredStateSchema.optional(),
-	tools: z.unknown().optional(),
-	terminalTooling: z.unknown().optional(),
-});
-
-const runtimeDesiredStateShape = {
-	deploymentId: z.string().min(1),
-	environmentId: z.string().min(1),
-	instanceId: z.string().min(1),
-	generation: z.number().int().nonnegative(),
-	applyGeneration: z.number().int().positive().safe().optional(),
-	issuedAt: z.string().min(1),
-	expiresAt: z.string().min(1).optional(),
-	locale: runtimeLocaleSchema.optional(),
-	workspaceRoot: z.string().min(1).optional(),
-	runtime: hostedRuntimeChoiceSchema.optional(),
-	controlPlane: z.object({
-		apiUrl: z.string().url(),
-	}),
-	clawdiCli: cliPayloadPolicySchema.optional(),
-	egressEngine: egressEngineSchema.optional(),
-	companions: runtimeCompanionsSchema.optional(),
-	runtimes: z.record(runtimeNameSchema, runtimeSchema),
-	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
-	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
-	projection: runtimeProjectionSchema.optional(),
-	egressProfiles: egressProfileInputBundleSchema.optional(),
-	liveSync: liveSyncSchema.optional(),
-	recovery: z
-		.object({
-			cacheManifest: z.boolean().optional(),
-			allowOfflineBoot: z.boolean().optional(),
-		})
-		.default({}),
-};
-
-function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: string): void {
-	ctx.addIssue({
-		code: "custom",
-		message: message ?? `Unrecognized key: "${field}"`,
-		path: [field],
-	});
-}
-
-const runtimeManifestSchema = z
-	.object({
-		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
-		...runtimeDesiredStateShape,
-		secrets: z.unknown().optional(),
-	})
-	.superRefine((manifest, ctx) => {
-		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
-	})
-	.transform(({ secrets: _secrets, ...manifest }) => manifest);
-
-export const manifestSchema = z
-	.unknown()
-	.superRefine((value, ctx) => {
-		if (
-			typeof value === "object" &&
-			value !== null &&
-			!Array.isArray(value) &&
-			Object.hasOwn(value, "bridge")
-		) {
-			addForbiddenFieldIssue(ctx, "bridge");
-		}
-	})
-	.pipe(runtimeManifestSchema);
-
 const hostedLiveSyncAgentSchema = liveSyncAgentSchema
 	.extend({
 		agentType: z.enum(["openclaw", "hermes", "codex"]),
@@ -732,6 +609,67 @@ const hostedLiveSyncSchema = z
 			});
 		}
 	});
+
+export interface RuntimeInstall {
+	authority: "official";
+	method: "official-installer";
+	url: string;
+	home: string;
+	args: string[];
+}
+
+interface RuntimeEntry {
+	enabled: boolean;
+	providerMode?: "configured" | "unmanaged";
+	updateChannel?: string;
+	install?: RuntimeInstall;
+	run?: RuntimeRunSettings;
+	services: Record<string, RuntimeRunSettings>;
+	provider_ids?: string[];
+	primary_model?: { provider_id: string; model: string };
+}
+
+export interface RuntimeManifest {
+	schemaVersion: typeof RUNTIME_DESIRED_STATE_SCHEMA_VERSION;
+	deploymentId: string;
+	environmentId: string;
+	instanceId: string;
+	generation: number;
+	applyGeneration?: number;
+	issuedAt: string;
+	expiresAt?: string;
+	locale?: z.infer<typeof runtimeLocaleSchema>;
+	workspaceRoot?: string;
+	runtime?: z.infer<typeof hostedRuntimeChoiceSchema>;
+	controlPlane: { apiUrl: string };
+	clawdiCli?: {
+		source?: string;
+		packageSpec?: string;
+		registry?: string;
+	};
+	egressEngine?: z.infer<typeof egressEngineSchema>;
+	companions?: z.infer<typeof runtimeCompanionsSchema>;
+	runtimes: Record<string, RuntimeEntry>;
+	openclawGatewayAuth?: z.infer<typeof openclawGatewayAuthSchema>;
+	hermesDashboardAuth?: z.infer<typeof hermesDashboardAuthSchema>;
+	projection?: {
+		system?: unknown;
+		providers?: Record<
+			string,
+			Partial<z.infer<typeof hostedProviderBaseSchema> & { model: string }>
+		>;
+		channels?: Record<string, unknown>;
+		channelCredentials?: unknown[];
+		mcp?: z.infer<typeof hostedMcpDesiredStateSchema>;
+		skills?: z.infer<typeof hostedSkillsDesiredStateSchema>;
+		agentPlugins?: z.infer<typeof hostedAgentPluginsDesiredStateSchema>;
+		tools?: unknown;
+		terminalTooling?: z.infer<typeof hostedTerminalToolingSchema>;
+	};
+	egressProfiles?: z.infer<typeof egressProfileInputBundleSchema>;
+	liveSync?: { enabled?: boolean; agents: z.infer<typeof liveSyncAgentSchema>[] };
+	recovery: { cacheManifest?: boolean; allowOfflineBoot?: boolean };
+}
 
 const hostedRuntimeManifestBaseSchema = z
 	.object({
@@ -775,67 +713,45 @@ const hostedRuntimeManifestBaseSchema = z
 	.strict();
 
 type HostedRuntimeManifestBase = z.infer<typeof hostedRuntimeManifestBaseSchema>;
+export type HostedRuntimeManifest = HostedRuntimeManifestBase;
 
-interface HostedRuntimeSemanticRun {
-	args?: readonly string[];
-	secretEnv?: Readonly<Record<string, string>>;
-}
-
-interface HostedRuntimeSemanticEntry {
-	enabled?: boolean;
-	run?: HostedRuntimeSemanticRun;
-	services?: Readonly<Record<string, HostedRuntimeSemanticRun>>;
-}
-
-export interface HostedRuntimeSemanticView {
-	hostedV2: boolean;
-	runtime: string;
-	runtimes: Readonly<Record<string, HostedRuntimeSemanticEntry | undefined>>;
-	openclawGatewayAuth?: {
-		tokenRef?: string;
-		activation: { enabled?: boolean };
-	};
-	hermesDashboardAuth?: { activation: { enabled?: boolean } };
-	openclawControlUiAllowedOrigins?: unknown;
-	providers?: Readonly<Record<string, { runtimeEnvName?: string }>>;
-}
-
-export interface HostedRuntimeSemanticIssue {
-	message: string;
-	path: string[];
-}
-
-export function hostedRuntimeSemanticIssues(
-	view: HostedRuntimeSemanticView,
-): HostedRuntimeSemanticIssue[] {
-	const issues: HostedRuntimeSemanticIssue[] = [];
+function validateHostedRuntimeManifest(
+	manifest: HostedRuntimeManifestBase,
+	ctx: z.RefinementCtx,
+): void {
 	const addIssue = (message: string, path: string[]): void => {
-		issues.push({ message, path });
+		ctx.addIssue({ code: "custom", message, path });
 	};
 	const systemPath = (...path: string[]): string[] => ["system", ...path];
-	const runtimePath = (...path: string[]): string[] => ["runtimes", view.runtime, ...path];
-	const runtimeKeys = Object.keys(view.runtimes);
-	const selectedRuntime = view.runtimes[view.runtime];
+	const runtimePath = (...path: string[]): string[] => ["runtimes", manifest.runtime, ...path];
+	const selectedRuntime = manifest.runtimes[manifest.runtime];
 	if (!selectedRuntime) {
-		addIssue(`runtimes.${view.runtime} must be present for selected runtime`, [
+		addIssue(`runtimes.${manifest.runtime} must be present for selected runtime`, [
 			"runtimes",
-			view.runtime,
+			manifest.runtime,
 		]);
 	}
-	for (const key of runtimeKeys) {
-		if (key === view.runtime) continue;
-		addIssue("hosted runtime manifests must declare exactly one selected runtime", [
-			"runtimes",
-			key,
-		]);
+	for (const runtime of Object.keys(manifest.runtimes)) {
+		if (runtime !== manifest.runtime) {
+			addIssue("hosted runtime manifests must declare exactly one selected runtime", [
+				"runtimes",
+				runtime,
+			]);
+		}
 	}
 	if (selectedRuntime?.enabled !== true) {
-		addIssue("selected runtime must be enabled", ["runtimes", view.runtime, "enabled"]);
+		addIssue("selected runtime must be enabled", ["runtimes", manifest.runtime, "enabled"]);
 	}
-	if (!view.hostedV2) return issues;
-
-	if (view.runtime === "openclaw") {
-		const auth = view.openclawGatewayAuth;
+	if (manifest.expiresAt) {
+		const expiresAt = Date.parse(manifest.expiresAt);
+		if (!Number.isFinite(expiresAt)) {
+			addIssue("manifest expiresAt is not a valid timestamp", ["expiresAt"]);
+		} else if (expiresAt <= Date.now()) {
+			addIssue(`manifest expired at ${manifest.expiresAt}`, ["expiresAt"]);
+		}
+	}
+	if (manifest.runtime === "openclaw") {
+		const auth = manifest.system.openclawGatewayAuth;
 		if (!auth) {
 			addIssue(
 				"OpenClaw v2 native Control UI requires official gateway token authentication",
@@ -847,16 +763,13 @@ export function hostedRuntimeSemanticIssues(
 				systemPath("openclawGatewayAuth", "activation", "enabled"),
 			);
 		}
-		if (
-			!Array.isArray(view.openclawControlUiAllowedOrigins) ||
-			view.openclawControlUiAllowedOrigins.length === 0
-		) {
+		if (!manifest.system.openclawControlUiAllowedOrigins?.length) {
 			addIssue(
 				"OpenClaw v2 native Control UI requires an explicit public allowed origin",
 				systemPath("openclawControlUiAllowedOrigins"),
 			);
 		}
-		const run = view.runtimes.openclaw?.run;
+		const run = manifest.runtimes.openclaw?.run;
 		if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
 			addIssue(
 				"OpenClaw v2 gateway must use the official gateway run command",
@@ -869,7 +782,7 @@ export function hostedRuntimeSemanticIssues(
 				runtimePath("run", "secretEnv", "OPENCLAW_GATEWAY_TOKEN"),
 			);
 		}
-		for (const [providerId, provider] of Object.entries(view.providers ?? {})) {
+		for (const [providerId, provider] of Object.entries(manifest.providers)) {
 			if (provider.runtimeEnvName === "OPENCLAW_GATEWAY_TOKEN") {
 				addIssue("OpenClaw v2 provider environment must not target native auth controls", [
 					"providers",
@@ -878,65 +791,38 @@ export function hostedRuntimeSemanticIssues(
 				]);
 			}
 		}
-	}
-
-	if (view.runtime === "hermes") {
-		if (!view.hermesDashboardAuth) {
+	} else {
+		if (!manifest.system.hermesDashboardAuth) {
 			addIssue(
 				"hermes direct dashboard requires official password authentication",
 				systemPath("hermesDashboardAuth"),
 			);
 		}
-		if (view.hermesDashboardAuth?.activation.enabled !== true) {
+		if (manifest.system.hermesDashboardAuth?.activation.enabled !== true) {
 			addIssue(
 				"hermes password authentication must be explicitly enabled",
 				systemPath("hermesDashboardAuth", "activation", "enabled"),
 			);
 		}
-		if (view.openclawGatewayAuth) {
+		if (manifest.system.openclawGatewayAuth) {
 			addIssue(
 				"OpenClaw gateway auth is only valid for the OpenClaw runtime",
 				systemPath("openclawGatewayAuth"),
 			);
 		}
-		if (!isHostedGatewayRunArgs("hermes", view.runtimes.hermes?.run?.args)) {
+		if (!isHostedGatewayRunArgs("hermes", manifest.runtimes.hermes?.run.args)) {
 			addIssue(
 				"Hermes gateway must use the official gateway run command",
 				runtimePath("run", "args"),
 			);
 		}
-		if (!isHostedHermesDashboardArgs(view.runtimes.hermes?.services?.dashboard?.args)) {
+		if (!isHostedHermesDashboardArgs(manifest.runtimes.hermes?.services.dashboard?.args)) {
 			addIssue(
 				"hermes dashboard must bind directly to 0.0.0.0:9119",
 				runtimePath("services", "dashboard", "args"),
 			);
 		}
 	}
-	return issues;
-}
-
-function hostedRuntimeManifestSemanticView(
-	manifest: HostedRuntimeManifestBase,
-): HostedRuntimeSemanticView {
-	return {
-		hostedV2: true,
-		runtime: manifest.runtime,
-		runtimes: manifest.runtimes,
-		openclawGatewayAuth: manifest.system.openclawGatewayAuth,
-		hermesDashboardAuth: manifest.system.hermesDashboardAuth,
-		openclawControlUiAllowedOrigins: manifest.system.openclawControlUiAllowedOrigins,
-		providers: manifest.providers,
-	};
-}
-
-function validateHostedRuntimeManifest(
-	manifest: HostedRuntimeManifestBase,
-	ctx: z.RefinementCtx,
-): void {
-	for (const issue of hostedRuntimeSemanticIssues(hostedRuntimeManifestSemanticView(manifest))) {
-		ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
-	}
-	const selectedRuntime = manifest.runtimes[manifest.runtime];
 	if (selectedRuntime) {
 		const providerIds = new Set(selectedRuntime.provider_ids);
 		for (const providerId of providerIds) {
@@ -994,15 +880,7 @@ function validateHostedRuntimeManifest(
 	}
 }
 
-export const hostedRuntimeManifestSchema = hostedRuntimeManifestBaseSchema
-	.safeExtend({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-		clawdiCli: hostedCliPayloadPolicySchema,
-	})
-	.strict()
-	.superRefine(validateHostedRuntimeManifest);
-
-export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSchema
+const hostedRuntimeBundleV2ManifestWireSchema = hostedRuntimeManifestBaseSchema
 	.safeExtend({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		clawdiCli: hostedCliPayloadPolicySchema,
@@ -1011,21 +889,114 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
 
+type HostedRuntimeBundleV2ManifestWire = z.infer<typeof hostedRuntimeBundleV2ManifestWireSchema>;
+type HostedRuntimeRunSettings = HostedRuntimeBundleV2ManifestWire["runtimes"][string]["run"];
+
+export const hostedRuntimeBundleV2ManifestSchema =
+	hostedRuntimeBundleV2ManifestWireSchema.transform((hosted): RuntimeManifest => {
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const selectedRuntime = hosted.runtime;
+		const runtime = hosted.runtimes[selectedRuntime];
+		if (!runtime) throw new Error(`missing selected runtime ${selectedRuntime}`);
+		return {
+			schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
+			deploymentId: hosted.deploymentId,
+			environmentId: hosted.environmentId,
+			instanceId: hosted.instanceId,
+			generation: hosted.generation,
+			issuedAt: hosted.issuedAt,
+			expiresAt: hosted.expiresAt,
+			locale: hosted.locale,
+			runtime: selectedRuntime,
+			controlPlane: { apiUrl: hosted.controlPlane.cloudApiUrl },
+			clawdiCli: { ...hosted.clawdiCli },
+			egressEngine: hosted.egressEngine,
+			companions: hosted.companions,
+			runtimes: {
+				[selectedRuntime]: {
+					enabled: runtime.enabled,
+					providerMode: runtime.providerMode,
+					install: {
+						authority: "official" as const,
+						method: "official-installer" as const,
+						url: OFFICIAL_INSTALL_URLS[selectedRuntime],
+						home: paths.userHome,
+						args: officialInstallArgs(selectedRuntime, paths.userHome),
+					},
+					run: hostedRuntimeRunSettings(selectedRuntime, runtime.run),
+					services: Object.fromEntries(
+						Object.entries(runtime.services).map(([service, run]) => [
+							service,
+							copyHostedRuntimeRunSettings(run),
+						]),
+					),
+					...hostedRuntimeProviderBinding(runtime),
+				},
+			},
+			openclawGatewayAuth: hosted.system.openclawGatewayAuth,
+			hermesDashboardAuth: hosted.system.hermesDashboardAuth,
+			projection: {
+				system: hosted.system,
+				providers: hosted.providers,
+				...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
+				...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
+				...(hosted.agentPlugins === undefined ? {} : { agentPlugins: hosted.agentPlugins }),
+				...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
+				...(hosted.terminalTooling === undefined
+					? {}
+					: { terminalTooling: hosted.terminalTooling }),
+			},
+			liveSync: hosted.liveSync,
+			egressProfiles: hostedManifestEgressProfiles(hosted),
+			recovery: { ...hosted.recovery },
+		};
+	});
+
+function hostedRuntimeProviderBinding(
+	runtime: HostedRuntimeBundleV2ManifestWire["runtimes"][string],
+):
+	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
+	| { provider_ids: [] } {
+	if (runtime.providerMode === "unmanaged") return { provider_ids: [] };
+	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
+}
+
+function hostedRuntimeRunSettings(
+	runtime: HostedRuntimeBundleV2ManifestWire["runtime"],
+	run: HostedRuntimeRunSettings,
+): ReturnType<typeof copyHostedRuntimeRunSettings> {
+	const settings = copyHostedRuntimeRunSettings(run);
+	if (isHostedGatewayRunArgs(runtime, run.args)) settings.args = ["gateway", "run"];
+	return settings;
+}
+
+function copyHostedRuntimeRunSettings(run: HostedRuntimeRunSettings): {
+	args: string[];
+	env: Record<string, string>;
+	prependPath: string[];
+	secretEnv?: Record<string, string>;
+} {
+	return {
+		args: [...run.args],
+		env: {},
+		prependPath: [],
+		...(run.secretEnv === undefined ? {} : { secretEnv: { ...run.secretEnv } }),
+	};
+}
+
 export function validateUnmanagedProviderSecretValues(
 	response: {
-		manifest: {
-			runtime: string;
-			runtimes: Readonly<Record<string, { providerMode?: "configured" | "unmanaged" } | undefined>>;
-			terminalTooling?: { codex: { provider: { apiKeySecretRef?: string | null } } };
-		};
+		manifest: Pick<RuntimeManifest, "runtime" | "runtimes" | "projection">;
 		secretValues: Readonly<Record<string, string>>;
 	},
 	ctx: z.RefinementCtx,
 ): void {
-	const runtime = response.manifest.runtimes[response.manifest.runtime];
+	const selectedRuntime = response.manifest.runtime;
+	if (!selectedRuntime) return;
+	const runtime = response.manifest.runtimes[selectedRuntime];
 	if (runtime?.providerMode !== "unmanaged") return;
 	const codexSecretRef = canonicalSecretRefName(
-		response.manifest.terminalTooling?.codex.provider.apiKeySecretRef,
+		response.manifest.projection?.terminalTooling?.codex.provider.apiKeySecretRef,
 	);
 	for (const rawSecretRef of Object.keys(response.secretValues)) {
 		const secretRef = canonicalSecretRefName(rawSecretRef);
@@ -1038,16 +1009,11 @@ export function validateUnmanagedProviderSecretValues(
 	}
 }
 
-export type RuntimeManifest = z.output<typeof manifestSchema>;
-export type RuntimeInstall = z.infer<typeof installSchema>;
-export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
-export type HostedRuntimeBundleV2Manifest = z.infer<typeof hostedRuntimeBundleV2ManifestSchema>;
+export type HostedRuntimeBundleV2Manifest = z.input<typeof hostedRuntimeBundleV2ManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
 
 export const AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR =
 	"Agent Plugin installations require a newer Clawdi runtime capability";
-export const AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR =
-	"Agent Plugin reconciliation requires a hosted v2 bundle";
 
 export function hasUnsupportedAgentPluginInstallations(
 	manifest: Pick<RuntimeManifest, "projection">,

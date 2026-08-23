@@ -46,15 +46,49 @@ function convergeRuntimeManifest(
 ) {
 	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
+	const openclaw = load.manifest.runtimes.openclaw;
+	const hostedLoad: RuntimeManifestLoad = openclaw
+		? {
+				...load,
+				manifest: {
+					...load.manifest,
+					openclawGatewayAuth: load.manifest.openclawGatewayAuth ?? {
+						mode: "token",
+						tokenRef: "secret://runtime/openclaw/gateway-token",
+						deviceAuthRequired: false,
+						activation: { enabled: true, capability: "openclaw-native-auth-v1" },
+					},
+					runtimes: {
+						...load.manifest.runtimes,
+						openclaw: {
+							...openclaw,
+							run: openclaw.run
+								? {
+										...openclaw.run,
+										secretEnv: {
+											OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
+											...openclaw.run.secretEnv,
+										},
+									}
+								: undefined,
+						},
+					},
+				},
+				secretValues: {
+					"secret://runtime/openclaw/gateway-token": "test-gateway-token",
+					...load.secretValues,
+				},
+			}
+		: load;
 	return convergeRuntimeManifestWithContext(
 		{
-			...load,
-			applyContext: load.applyContext ?? {
+			...hostedLoad,
+			applyContext: hostedLoad.applyContext ?? {
 				kind: "context-file",
 				backend: "incus",
 				identity: {
-					generation: load.manifest.applyGeneration ?? load.manifest.generation,
-					manifestETag: `"test-${load.manifest.generation}"`,
+					generation: hostedLoad.manifest.applyGeneration ?? hostedLoad.manifest.generation,
+					manifestETag: `"test-${hostedLoad.manifest.generation}"`,
 					applyReceiptId: "test-apply-receipt",
 					bootNonce: "test-boot-nonce",
 				},
@@ -140,6 +174,7 @@ function writeFakeGatewayCli(input: {
 }): void {
 	const version =
 		input.version ?? (input.runtime === "hermes" ? "Hermes Agent v0.18.0" : "OpenClaw 2026.7.29");
+	const home = dirname(dirname(dirname(input.path)));
 	const stateCheck = input.requiredSystemdState
 		? `test -f '${input.requiredSystemdState.envPath}'
     test -f '${input.requiredSystemdState.dropInPath}'
@@ -182,7 +217,7 @@ EOF
   "config patch --stdin") cat >/dev/null ;;
   "config path"|"config get "*|"config set "*|"config unset "*)
     printf '%s %s\n' '${input.runtime}' "$*" >> '${input.logPath}'
-    exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+    HOME='${home}' exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
     ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
@@ -218,8 +253,10 @@ function installGateManifest(
 		...(runtime === "openclaw"
 			? {
 					projection: {
-						system: { home: paths.userHome, workspace: join(paths.userHome, "workspace") },
-						channels: { discord: { token: "secret://channels/discord" } },
+						system: {
+							home: paths.userHome,
+							workspace: join(paths.userHome, "workspace"),
+						},
 					},
 				}
 			: {}),
@@ -266,7 +303,6 @@ function officialServiceHarness(
 		});
 	writeCli();
 	const manifest = installGateManifest(paths, runtime, command);
-	if (runtime === "openclaw") delete manifest.projection;
 	const load: RuntimeManifestLoad = {
 		manifest,
 		source: "remote-datasource",
@@ -338,18 +374,14 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
-	test("enables invalid-config repair only for the hosted v2 workspace probe", () => {
-		for (const [sourceBundleVersion, expected] of [
-			[undefined, false],
-			["clawdi.hosted-runtime.bundle.v2", true],
-		] as const) {
-			const paths = tempRuntimePaths();
-			const command = join(paths.userHome, ".local", "bin", "openclaw");
-			const commandLog = join(paths.userHome, "workspace-probe.log");
-			mkdirSync(dirname(command), { recursive: true });
-			writeFileSync(
-				command,
-				`#!/bin/sh
+	test("enables invalid-config repair for the hosted workspace probe", () => {
+		const paths = tempRuntimePaths();
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const commandLog = join(paths.userHome, "workspace-probe.log");
+		mkdirSync(dirname(command), { recursive: true });
+		writeFileSync(
+			command,
+			`#!/bin/sh
 printf '%s\n' "$*" >> '${commandLog}'
 case "$*" in
   "--version") printf '%s\n' 'OpenClaw test-version' ;;
@@ -362,27 +394,23 @@ case "$*" in
   *) exit 64 ;;
 esac
 `,
-			);
-			chmodSync(command, 0o700);
-			const manifest = installGateManifest(paths, "openclaw", command);
-			manifest.projection = {
-				...manifest.projection,
-				...(sourceBundleVersion ? { sourceBundleVersion } : {}),
-			};
-			expect(() =>
-				convergeRuntimeManifest(
-					{
-						manifest,
-						source: "remote-datasource",
-						sourcePath: "inline-workspace-repair-gate",
-						offline: false,
-					},
-					paths,
-				),
-			).toThrow("OpenClaw official agent workspace roster is unavailable");
-			const commands = readFileSync(commandLog, "utf8").trim().split("\n");
-			expect(commands.includes("config validate --json")).toBe(expected);
-		}
+		);
+		chmodSync(command, 0o700);
+		const manifest = installGateManifest(paths, "openclaw", command);
+
+		expect(() =>
+			convergeRuntimeManifest(
+				{
+					manifest,
+					source: "remote-datasource",
+					sourcePath: "inline-workspace-repair-gate",
+					offline: false,
+				},
+				paths,
+			),
+		).toThrow("OpenClaw official agent workspace roster is unavailable");
+		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
+		expect(commands).toContain("config validate --json");
 	});
 
 	test("restarts OpenClaw after repairing managed channel config drift", () => {
@@ -479,13 +507,30 @@ esac
 		writeFileSync(configPath, "{}\n");
 		expect(converge().installErrors).toEqual([]);
 		expect(restartSignals.at(-1)).toEqual([]);
-		expect(readFileSync(configPath, "utf8")).toBe("{}\n");
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+			gateway: {
+				mode: "local",
+				port: 18789,
+				bind: "lan",
+				auth: { mode: "token", token: "test-gateway-token" },
+			},
+		});
 	});
 
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
 		process.env.PATH = `${dirname(paths.cliManagedBin)}:${process.env.PATH ?? ""}`;
 		process.env.BYOK_RUNTIME_SECRET = "stale-watcher-value";
+		const runtimeCommandRoot = join(paths.userHome, ".upstream", "bin");
+		const fakeCommandLog = join(paths.runRoot, "runtime-command.log");
+		for (const runtime of ["hermes", "openclaw"] as const) {
+			writeFakeGatewayCli({
+				path: join(runtimeCommandRoot, runtime),
+				logPath: fakeCommandLog,
+				runtime,
+				unitPath: join(paths.systemdUserRoot, `${runtime}-gateway.service`),
+			});
+		}
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "hdep_test",
@@ -499,7 +544,7 @@ esac
 				openclaw: {
 					enabled: true,
 					run: {
-						...runSettings("openclaw", ["gateway", "run"]),
+						...runSettings(join(runtimeCommandRoot, "openclaw"), ["gateway", "run"]),
 						env: { NON_SECRET_RUNTIME_SETTING: "public-value" },
 						secretEnv: { BYOK_RUNTIME_SECRET: "secret://runtime/openclaw" },
 					},
@@ -507,7 +552,7 @@ esac
 				},
 				hermes: {
 					enabled: true,
-					run: runSettings("hermes", ["gateway", "run"]),
+					run: runSettings(join(runtimeCommandRoot, "hermes"), ["gateway", "run"]),
 					services: {
 						dashboard: {
 							...runSettings("hermes", [
@@ -573,7 +618,7 @@ esac
 			"utf8",
 		);
 		expect(dashboardUnit).toContain(
-			'ExecStart="hermes" "dashboard" "--host" "127.0.0.1" "--port" "9119" "--no-open"',
+			`ExecStart="${join(runtimeCommandRoot, "hermes")}" "dashboard" "--host" "127.0.0.1" "--port" "9119" "--no-open"`,
 		);
 		expect(dashboardUnit).not.toContain("--skip-build");
 		expect(dashboardUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
@@ -1105,11 +1150,21 @@ esac
 			secretValues: Record<string, string>,
 		) => {
 			const paths = tempRuntimePaths();
+			const commandRoot = join(paths.userHome, ".local", "bin");
+			const fakeCommandLog = join(paths.runRoot, "runtime-command.log");
+			for (const runtime of ["hermes", "openclaw"] as const) {
+				writeFakeGatewayCli({
+					path: join(commandRoot, runtime),
+					logPath: fakeCommandLog,
+					runtime,
+					unitPath: join(paths.systemdUserRoot, `${runtime}-gateway.service`),
+				});
+			}
 			const runtimeSettings: RuntimeManifest["runtimes"] = {
 				hermes: {
 					enabled: true,
 					run: {
-						...runSettings("hermes", ["gateway", "run"]),
+						...runSettings(join(commandRoot, "hermes"), ["gateway", "run"]),
 						secretEnv: { SHARED_RUNTIME_SECRET: "secret://runtime/hermes" },
 					},
 					services: {},
@@ -1117,7 +1172,7 @@ esac
 				openclaw: {
 					enabled: true,
 					run: {
-						...runSettings("openclaw", ["gateway", "run"]),
+						...runSettings(join(commandRoot, "openclaw"), ["gateway", "run"]),
 						secretEnv: { SHARED_RUNTIME_SECRET: "secret://runtime/openclaw" },
 					},
 					services: {},
@@ -1605,7 +1660,12 @@ cat > '${logPath}'
 		expect(result.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(logPath, "utf8"))).toEqual({
 			agents: { defaults: { userTimezone: "UTC" } },
-			gateway: { mode: "local" },
+			gateway: {
+				mode: "local",
+				port: 18789,
+				bind: "lan",
+				auth: { mode: "token", token: "test-gateway-token" },
+			},
 		});
 	});
 
@@ -1654,8 +1714,9 @@ cat > '${logPath}'
 			openclawCommand,
 			`#!/usr/bin/env bash
 set -euo pipefail
-case "$*" in
-  "gateway install --force --json")
+	case "$*" in
+	  "config patch --stdin") cat >/dev/null ;;
+	  "gateway install --force --json")
     printf '%s' '{"ok":false,"error":"official stdout marker official-installer-token-must-not-leak","manifest":{"secretValues":{"hidden":"manifest-secret-must-not-leak"}}}'
     printf 'discarded-stderr-prefix' >&2
     printf '%5000s' '' | tr ' ' x >&2
@@ -1736,7 +1797,6 @@ esac
 		expect(installed.installErrors).toEqual([]);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
-		const previousLastGood = readFileSync(paths.manifestLastGood, "utf-8");
 
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -1754,7 +1814,6 @@ esac
 		);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
-		expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(previousLastGood);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 
@@ -1828,9 +1887,6 @@ esac
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(disabledCommits).toBe(1);
-		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toMatchObject({
-			generation: 2,
-		});
 		expect(warnings.join("\n")).toContain("post-commit official runtime service cleanup deferred");
 		expect(disabled.outputs.systemdUserUnits).toEqual([]);
 		expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);

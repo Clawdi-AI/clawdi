@@ -13,7 +13,7 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
-import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifest } from "./manifest-contract";
 import {
 	executableExists,
 	runtimeUserDirectoryOwnership,
@@ -186,8 +186,7 @@ function resolveSdkExports(
 
 export function hostedOpenClawRuntimeUserOwnership(manifest: RuntimeManifest, home: string) {
 	const stateRoot = join(home, ".openclaw");
-	return manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
-		manifest.runtimes.openclaw?.enabled === true
+	return manifest.runtimes.openclaw?.enabled === true
 		? [
 				...runtimeUserDirectoryOwnership(stateRoot, { mode: 0o700 }),
 				...runtimeUserDirectoryOwnership(join(stateRoot, "tmp"), { mode: 0o700 }),
@@ -247,7 +246,6 @@ function hasManagedApiKeyProjection(manifest: RuntimeManifest): boolean {
 		(entry) => entry.id === CLAWDI_MANAGED_PROVIDER_ID,
 	);
 	return (
-		manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION &&
 		runtime?.enabled === true &&
 		runtime.providerMode === "configured" &&
 		sourceProvider?.managed_by === "clawdi" &&

@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifest";
-import { normalizeHostedRuntimeBundleV2 } from "./manifest-source";
+import { parseHostedRuntimeBundleV2 } from "./manifest-source";
 import type { RuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
 
@@ -103,7 +103,7 @@ exit 0
 			chmodSync(entry.path, entry.mode);
 		}
 
-		const load = normalizeHostedRuntimeBundleV2(fixture);
+		const load = parseHostedRuntimeBundleV2(fixture, "test://platform-root-modes");
 		const egressEngine = load.manifest.egressEngine;
 		if (!egressEngine) throw new Error("runtime bundle fixture must pin an egress engine");
 		const mitmdump = join(
@@ -148,7 +148,7 @@ exit 0
 		expect(result.installErrors).toEqual([]);
 		// The convergence loop just ran writeLastGoodSecretValues; the explicit
 		// call re-runs the secret cache writer.
-		cacheRuntimeLastGoodManifest(result.manifest, paths, load.secretValues);
+		cacheRuntimeLastGoodManifest(load.sourceBundle, paths, load.secretValues, result.manifest);
 
 		for (const entry of layout) {
 			const expected = before.get(entry.path);
