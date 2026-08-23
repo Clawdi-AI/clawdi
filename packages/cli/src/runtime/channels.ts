@@ -9,6 +9,8 @@ import { runtimeSecretValue } from "./secret-values";
 import { managedWhatsAppAuthCredentials } from "./whatsapp-credential-projection";
 import { buildManagedWhatsAppEgressProfiles } from "./whatsapp-egress";
 import {
+	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY,
+	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
 	type ManagedWhatsAppSocketMetadataJson,
@@ -748,6 +750,10 @@ function managedWhatsAppCreds(
 		additionalData: {
 			...additionalData,
 			[CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY]: metadata,
+			[CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY]: {
+				schemaVersion: CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
+				credentialId: material.credential.id,
+			},
 		},
 	};
 }

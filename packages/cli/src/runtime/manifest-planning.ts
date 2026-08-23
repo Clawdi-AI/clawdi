@@ -570,7 +570,7 @@ function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home:
 		}
 	}
 	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
-	if (hermesAuthDir && readManagedWhatsAppAuthMarker(hermesAuthDir)?.target === "hermes") {
+	if (hermesAuthDir && readManagedWhatsAppAuthMarker(hermesAuthDir)) {
 		targets.add(hermesAuthDir);
 	}
 	return [...targets];
