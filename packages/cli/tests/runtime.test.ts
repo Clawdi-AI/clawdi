@@ -318,7 +318,6 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
 	"CLAWDI_RUNTIME_TEST_CONTEXT_FILE",
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
-	"CLAWDI_RUNTIME_TEST_CLI_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_ENV_VARS_SDK",
@@ -11419,11 +11418,11 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it.each([
-		["upgrades", "1.2.3-test.1", "1.2.3-test.2", null],
-		["downgrades", "2.0.0-test.1", "1.2.3-test.2", "/fixtures/clawdi-local.tgz"],
+		["upgrades", "1.2.3-test.1", "1.2.3-test.2"],
+		["downgrades", "2.0.0-test.1", "1.2.3-test.2"],
 	])(
 		"hosted exact CLI desired state %s without npm view",
-		(_name, currentVersion, desiredVersion, testInstallSource) => {
+		(_name, currentVersion, desiredVersion) => {
 			const home = join(root, `home-${currentVersion}`, "clawdi");
 			const state = join(root, `state-${currentVersion}`);
 			const run = join(root, `run-${currentVersion}`);
@@ -11474,10 +11473,6 @@ chmod +x "$prefix/bin/clawdi"
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
 			process.env.CLAWDI_SERVICE_STATE_DIR = state;
 			process.env.CLAWDI_RUN_DIR = run;
-			if (testInstallSource) {
-				process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-				process.env.CLAWDI_RUNTIME_TEST_CLI_INSTALLER = testInstallSource;
-			}
 			const currentSpec = `clawdi@${currentVersion}`;
 			const desiredSpec = `clawdi@${desiredVersion}`;
 			seedCurrentCliInstall(state, currentSpec, currentVersion, "https://registry.npmjs.org");
@@ -11506,29 +11501,13 @@ chmod +x "$prefix/bin/clawdi"
 				expect(statSync(paths.cliUpgradeState).mode & 0o777).toBe(0o600);
 				const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 				expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
-				expect(npmCalls.some((call) => call.includes(testInstallSource ?? desiredSpec))).toBe(true);
+				expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
 			} finally {
 				if (previousPath === undefined) delete process.env.PATH;
 				else process.env.PATH = previousPath;
 			}
 		},
 	);
-
-	it("rejects a local CLI install source without the test installer gate", () => {
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state-cli-test-installer-gate");
-		process.env.CLAWDI_RUN_DIR = join(root, "run-cli-test-installer-gate");
-		process.env.CLAWDI_RUNTIME_TEST_CLI_INSTALLER = "/fixtures/clawdi-local.tgz";
-		seedCurrentCliInstall(
-			process.env.CLAWDI_SERVICE_STATE_DIR,
-			"clawdi@1.2.3-test.1",
-			"1.2.3-test.1",
-		);
-
-		expect(() =>
-			applyRuntimeCliDesiredState(cliManifest("1.2.3-test.2"), getRuntimePaths()),
-		).toThrow("CLAWDI_RUNTIME_TEST_CLI_INSTALLER requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1");
-	});
 
 	it("cancels a prepared CLI transaction while the previous target is still active", () => {
 		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(

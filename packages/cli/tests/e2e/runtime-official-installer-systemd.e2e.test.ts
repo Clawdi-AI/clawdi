@@ -29,7 +29,6 @@ import {
 } from "../../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../../src/lib/version";
 import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
-import { applyRuntimeCliDesiredState } from "../../src/runtime/cli-update";
 import { hostedOpenClawSkillDriver } from "../../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import { prepareHostedSourcedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
@@ -233,7 +232,6 @@ test.each(["hermes", "openclaw"] as const)(
 			"CLAWDI_RUNTIME_GID",
 			"CLAWDI_RUNTIME_HOME",
 			"CLAWDI_RUNTIME_MODE",
-			"CLAWDI_RUNTIME_TEST_CLI_INSTALLER",
 			"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 			"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 			"CLAWDI_RUNTIME_UID",
@@ -320,7 +318,6 @@ test.each(["hermes", "openclaw"] as const)(
 				CLAWDI_RUNTIME_GID: String(runtimeGid),
 				CLAWDI_RUNTIME_HOME: runtimeHome,
 				CLAWDI_RUNTIME_MODE: "hosted",
-				CLAWDI_RUNTIME_TEST_CLI_INSTALLER: "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
 				CLAWDI_RUNTIME_UID: String(runtimeUid),
 				CLAWDI_RUNTIME_USER: "clawdi",
 				CLAWDI_SERVICE_STATE_DIR: join(root, "var", "lib", "clawdi"),
@@ -374,32 +371,43 @@ exec /usr/bin/systemctl "$@"
 			chmodSync(systemctlLog, 0o666);
 
 			const cliVersion = getCliVersion();
-			const bootstrapManifest: RuntimeManifest = {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: `hdep_virgin_${runtime}_bootstrap`,
-				environmentId: `env_virgin_${runtime}_bootstrap`,
-				instanceId: `hri_virgin_${runtime}_bootstrap`,
-				generation: 1,
-				issuedAt: "2026-08-22T00:00:00.000Z",
-				controlPlane: { apiUrl: "https://cloud-api.example.test" },
-				clawdiCli: {
-					source: "npm:clawdi",
+			const cliPrefix = join(paths.cliNpmPrefix, "packages", cliVersion);
+			const cliInstall = spawnSync(
+				"npm",
+				[
+					"install",
+					"--global",
+					"--prefix",
+					cliPrefix,
+					"--ignore-scripts",
+					"--no-audit",
+					"--no-fund",
+					"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
+				],
+				{ encoding: "utf8" },
+			);
+			expect(cliInstall.status, cliInstall.stderr).toBe(0);
+			const cliTarget = join(cliPrefix, "bin", "clawdi");
+			mkdirSync(dirname(paths.cliManagedBin), { recursive: true, mode: 0o755 });
+			symlinkSync(cliTarget, paths.cliManagedBin);
+			writeFileSync(
+				paths.cliBootstrapStatus,
+				`${JSON.stringify({
+					schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+					generatedAt: new Date().toISOString(),
+					status: "installed",
+					source: "npm",
 					packageSpec: `clawdi@${cliVersion}`,
 					registry: "https://registry.npmjs.org",
-				},
-				runtimes: {
-					hermes: { enabled: false },
-					openclaw: { enabled: false },
-				},
-				recovery: {},
-			};
-			const bootstrap = applyRuntimeCliDesiredState(bootstrapManifest, paths, {
-				runningVersion: cliVersion,
-			});
-			expect(bootstrap.status).toBe("installed");
-			expect(bootstrap.selfReexec).toBe(true);
-			expect(bootstrap.version).toBe(cliVersion);
-			expect(lstatSync(paths.cliManagedBin).isSymbolicLink()).toBe(true);
+					npmPrefix: cliPrefix,
+					npmCache: paths.cliNpmCache,
+					activePath: paths.cliManagedBin,
+					activeTarget: cliTarget,
+					version: cliVersion,
+					error: null,
+				})}\n`,
+				{ mode: 0o600 },
+			);
 
 			const gatewayToken = `virgin-${runtime}-gateway-token`;
 			const sourceRevision = createHash("sha256").update(`virgin-${runtime}-bundle`).digest("hex");
