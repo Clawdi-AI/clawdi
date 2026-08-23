@@ -303,7 +303,6 @@ export function runtimeConvergenceWithoutApply(input: {
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
-	const instanceRoot = join(input.paths.instanceRoot, input.load.manifest.instanceId);
 	return {
 		manifest: input.load.manifest,
 		source: input.load.source,
@@ -318,14 +317,8 @@ export function runtimeConvergenceWithoutApply(input: {
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot: input.workspaceRoot,
-			managedConfig: input.paths.managedConfig,
-			syncState: input.paths.syncState,
-			instanceData: input.paths.instanceData,
-			sensitiveInstanceData: input.paths.sensitiveInstanceData,
 			manifestLastGood: null,
 			appliedState: null,
-			installInventory: [],
-			projections: [],
 			managedLocaleFiles: [],
 			runConfigs: [],
 			systemdSystemUnitRoot: input.paths.systemdSystemRoot,
@@ -339,7 +332,6 @@ export function runtimeConvergenceWithoutApply(input: {
 			egressAddon: null,
 			liveSyncEnvironments: [],
 			daemonAuthTokenFile: null,
-			bootFinished: join(instanceRoot, "boot-finished"),
 		},
 	};
 }
@@ -712,7 +704,7 @@ export function runtimeManagedMutationPlan(input: {
 		snapshot: {
 			rootTargets: rootTargetsList,
 			trustedRootDirectories: [
-				...runtimeRootLiveMutationDirectories(input.manifest, input.paths),
+				...runtimeRootLiveMutationDirectories(input.paths),
 				...fileBrowserMutation.rootTrustedRoots,
 			],
 			runtimeUserTargets,

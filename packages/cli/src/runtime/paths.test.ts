@@ -26,8 +26,6 @@ describe("runtime paths", () => {
 		expect(paths.cacheRoot).toBe("/var/cache/clawdi");
 		expect(paths.runRoot).toBe("/run/clawdi");
 		expect(paths.bootStatus).toBe("/var/lib/clawdi/status/boot-status.json");
-		expect(paths.cloudStatus).toBe("/var/lib/clawdi/status/cloud-status.json");
-		expect(paths.cloudResult).toBe("/var/lib/clawdi/status/cloud-result.json");
 		expect(paths.cliManagedBin).toBe("/var/lib/clawdi/maintained/clawdi/bin/clawdi");
 		expect(paths.cliNpmPrefix).toBe("/var/lib/clawdi/maintained/clawdi/npm");
 		expect(paths.cliNpmCache).toBe("/var/cache/clawdi/npm");

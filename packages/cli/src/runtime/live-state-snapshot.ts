@@ -51,9 +51,7 @@ export function runtimeRootLiveMutationTargets(
 	paths: RuntimePaths,
 ): string[] {
 	const result = new Set<string>([
-		paths.managedConfig,
-		paths.syncState,
-		paths.egressEngineStatus,
+		paths.providerHealthStatus,
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,
 		paths.appliedState,
@@ -61,18 +59,12 @@ export function runtimeRootLiveMutationTargets(
 		runtimeInstallReceiptsPath(paths),
 		paths.runConfigRoot,
 		paths.egressProfileBundle,
-		paths.installInventory,
 		paths.managedResourceRoot,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
 		paths.daemonAuthToken,
 		join(paths.managedSecretRoot, "egress-secrets.json"),
-		paths.instanceData,
-		paths.sensitiveInstanceData,
 		paths.egressAddon,
 		paths.egressTransparentEnv,
 		paths.egressSystemCaFile,
-		paths.liveSyncEnvironmentIndex,
 	]);
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		const unitName = `${name}.service`;
@@ -171,18 +163,12 @@ function assertRuntimeUserMutationPathsTrusted(
 	}
 }
 
-export function runtimeRootLiveMutationDirectories(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-): string[] {
+export function runtimeRootLiveMutationDirectories(paths: RuntimePaths): string[] {
 	return [
 		paths.runConfigRoot,
 		paths.systemdEnvRoot,
-		paths.installInventory,
 		paths.oauthCredentialRoot,
 		paths.managedResourceRoot,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
 	];
 }
 

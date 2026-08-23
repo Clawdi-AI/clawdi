@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { runtimeContentSha256 } from "./applied-state";
@@ -14,15 +14,13 @@ import type { LiveSyncAgent, RuntimeManifest } from "./manifest-contract";
 import { hostedMcpIntent } from "./manifest-mcp";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
-	liveSyncEnvironmentIndexSchema,
 	managedLocaleBlock,
 	mergeRuntimeSecretEnv,
 	resolvedRuntimeSettings,
 } from "./manifest-runtime-config";
 import { makeManagedSecretRoot, scopedSecretValues } from "./manifest-secrets";
-import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
-import { type RuntimeName, runtimeNameSchema, runtimeServiceNameSchema } from "./run-config";
+import { runtimeNameSchema, runtimeServiceNameSchema } from "./run-config";
 import { runtimeProgramRevision } from "./runtime-impact-revision";
 import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 
@@ -61,15 +59,11 @@ export function writeLiveSyncEnvironmentFiles(
 ): string[] {
 	const agents = desiredLiveSyncAgents(manifest);
 	const desiredTypes = new Set(agents.map((agent) => agent.agentType));
-	const staleCandidates = new Set<RuntimeName>([
-		...readLiveSyncEnvironmentIndex(paths),
-		...MANAGED_LIVE_SYNC_AGENTS,
-	] as RuntimeName[]);
 	const written = withRuntimeUserFileAccess(() => {
 		const envDir = paths.localEnvironments;
 		mkdirSync(envDir, { recursive: true });
 		makeRuntimeUserOwned(envDir);
-		for (const agentType of staleCandidates) {
+		for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
 			if (!desiredTypes.has(agentType)) {
 				rmSync(join(envDir, `${agentType}.json`), { force: true });
 			}
@@ -97,41 +91,7 @@ export function writeLiveSyncEnvironmentFiles(
 		}
 		return outputs;
 	});
-	writeLiveSyncEnvironmentIndex(desiredTypes, paths);
 	return written;
-}
-function liveSyncEnvironmentIndexPath(paths: RuntimePaths): string {
-	return paths.liveSyncEnvironmentIndex;
-}
-function readLiveSyncEnvironmentIndex(paths: RuntimePaths): RuntimeName[] {
-	const path = liveSyncEnvironmentIndexPath(paths);
-	if (!existsSync(path)) return [];
-	try {
-		const parsed = liveSyncEnvironmentIndexSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
-		return parsed.agentTypes;
-	} catch {
-		return [];
-	}
-}
-function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: RuntimePaths): void {
-	writeRuntimePrivateFileAtomic(
-		paths,
-		liveSyncEnvironmentIndexPath(paths),
-		`${JSON.stringify(
-			{
-				schemaVersion: "clawdi.liveSyncEnvironments.v1",
-				agentTypes: [...agentTypes].sort(),
-			},
-			null,
-			2,
-		)}\n`,
-		{
-			mode: 0o644,
-			// The parent is the configuration platform root; its mode is owned
-			// by the systemd ConfigurationDirectory directive, never by this
-			// writer.
-		},
-	);
 }
 export function writeDaemonAuthToken(
 	paths: RuntimePaths,

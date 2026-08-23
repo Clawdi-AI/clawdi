@@ -624,13 +624,6 @@ exec /usr/bin/systemctl "$@"
 				0o750,
 			]);
 
-			const inventory = JSON.parse(
-				readFileSync(join(paths.installInventory, `${runtime}.json`), "utf8"),
-			) as Record<string, unknown>;
-			expect(inventory.status).toBe("installed");
-			expect(inventory.executionUser).toBe("clawdi");
-			expect(inventory.executedInstallerUrl).toBe(stockInstaller);
-
 			const unitNames =
 				runtime === "hermes"
 					? ["hermes-gateway.service", "clawdi-hermes-dashboard.service"]
@@ -955,13 +948,7 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
 	expect(statSync(openClawConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
-	for (const path of [
-		`${unitPath}.bak`,
-		dropInPath,
-		enablementPath,
-		paths.managedConfig,
-		paths.manifestLastGood,
-	]) {
+	for (const path of [`${unitPath}.bak`, dropInPath, enablementPath, paths.manifestLastGood]) {
 		expect(existsSync(path)).toBe(false);
 	}
 	expect(existsSync(workspaceRoot)).toBe(false);

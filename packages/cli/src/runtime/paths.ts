@@ -32,8 +32,6 @@ export interface RuntimePaths {
 	serviceStateRoot: string;
 	statusRoot: string;
 	oauthCredentialRoot: string;
-	managedConfig: string;
-	syncState: string;
 	maintainedRoot: string;
 	managedCliRoot: string;
 	cliManagedBin: string;
@@ -42,7 +40,7 @@ export interface RuntimePaths {
 	userNpmPrefix: string;
 	cliBootstrapStatus: string;
 	cliUpgradeState: string;
-	egressEngineStatus: string;
+	providerHealthStatus: string;
 	egressEngineMaintainedRoot: string;
 	fileBrowserInstallRoot: string;
 	fileBrowserConfigRoot: string;
@@ -51,14 +49,12 @@ export interface RuntimePaths {
 	fileBrowserConfig: string;
 	cacheRoot: string;
 	hostedSkillArchiveRoot: string;
-	channelsEtag: string;
 	manifestLastGood: string;
 	appliedState: string;
 	managedSecretCacheFile: string;
 	runConfigRoot: string;
 	egressProfileRoot: string;
 	egressProfileBundle: string;
-	liveSyncEnvironmentIndex: string;
 	systemdSystemRoot: string;
 	systemdUserRoot: string;
 	systemdRuntimeRoot: string;
@@ -66,13 +62,8 @@ export interface RuntimePaths {
 	bootStatus: string;
 	runtimeWatchStatus: string;
 	runtimeHeartbeatRoot: string;
-	cloudStatus: string;
-	cloudResult: string;
-	instanceRoot: string;
-	installInventory: string;
 	installReceipts: string;
 	managedResourceRoot: string;
-	projectionRoot: string;
 	runRoot: string;
 	convergeLock: string;
 	managedSecretRoot: string;
@@ -86,8 +77,6 @@ export interface RuntimePaths {
 	egressSystemCaFile: string;
 	egressServiceBinary: string;
 	daemonAuthToken: string;
-	instanceData: string;
-	sensitiveInstanceData: string;
 	workspaceRoot: string;
 }
 
@@ -185,8 +174,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const maintainedRoot = join(serviceStateRoot, "maintained");
 	const managedCliRoot = join(maintainedRoot, "clawdi");
 	const npmRoot = join(managedCliRoot, "npm");
-	const instanceRoot = join(serviceStateRoot, "instances");
-
 	return {
 		mode,
 		userHome,
@@ -203,8 +190,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		serviceStateRoot,
 		statusRoot,
 		oauthCredentialRoot: join(serviceStateRoot, "oauth-credentials"),
-		managedConfig: join(configurationRoot, "clawdi.json"),
-		syncState: join(serviceStateRoot, "sync", "runtimes.json"),
 		maintainedRoot,
 		managedCliRoot,
 		cliManagedBin: join(managedCliRoot, "bin", "clawdi"),
@@ -213,7 +198,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		userNpmPrefix: userLocalRoot,
 		cliBootstrapStatus: join(statusRoot, "cli-bootstrap.json"),
 		cliUpgradeState: join(statusRoot, "cli-upgrade-state.json"),
-		egressEngineStatus: join(statusRoot, "egress-engine.json"),
+		providerHealthStatus: join(statusRoot, "provider-health.json"),
 		egressEngineMaintainedRoot: join(maintainedRoot, "egress-engine", "mitmproxy"),
 		fileBrowserInstallRoot: join(maintainedRoot, "filebrowser"),
 		fileBrowserConfigRoot,
@@ -222,14 +207,12 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		fileBrowserConfig: join(fileBrowserConfigRoot, "filebrowser.yaml"),
 		cacheRoot,
 		hostedSkillArchiveRoot: join(cacheRoot, "workspace-skills"),
-		channelsEtag: join(cacheRoot, "channels.etag"),
 		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
 		appliedState: join(statusRoot, "runtime-applied.json"),
 		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(configurationRoot, "run"),
 		egressProfileRoot: join(runRoot, "egress"),
 		egressProfileBundle: join(runRoot, "egress", "profiles.json"),
-		liveSyncEnvironmentIndex: join(configurationRoot, "runtime-live-sync-agents.json"),
 		systemdSystemRoot:
 			envPath("CLAWDI_SYSTEMD_SYSTEM_ROOT") ?? defaultSystemdSystemRoot(mode, runRoot),
 		systemdUserRoot: join(userHome, ".config", "systemd", "user"),
@@ -238,13 +221,8 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		bootStatus: join(statusRoot, "boot-status.json"),
 		runtimeWatchStatus: join(statusRoot, "runtime-watch.json"),
 		runtimeHeartbeatRoot: join(serviceStateRoot, "heartbeat"),
-		cloudStatus: join(statusRoot, "cloud-status.json"),
-		cloudResult: join(statusRoot, "cloud-result.json"),
-		instanceRoot,
-		installInventory: join(serviceStateRoot, "install-inventory"),
 		installReceipts: join(statusRoot, "runtime-install-receipts.json"),
 		managedResourceRoot: join(serviceStateRoot, "managed-resources"),
-		projectionRoot: join(configurationRoot, "projections"),
 		runRoot,
 		convergeLock: join(runRoot, "locks", "converge.lock"),
 		managedSecretRoot: join(runRoot, "secrets"),
@@ -258,8 +236,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressSystemCaFile: join(runRoot, "egress", "systemd", "ca.pem"),
 		egressServiceBinary: join(runRoot, "egress", "systemd", "mitmdump"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
-		instanceData: join(runRoot, "instance-data.json"),
-		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),
 		workspaceRoot: mode === "hosted" ? userHome : join(userHome, "clawdi"),
 	};
 }

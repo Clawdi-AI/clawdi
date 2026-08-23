@@ -149,7 +149,8 @@ describe("hosted runtime observation producer", () => {
 			abort: new AbortController().signal,
 			paths,
 			contextPath: runtimeContextPath(paths),
-			submit: async (_environmentId, event) => {
+			submit: async (environmentId, event) => {
+				expect(environmentId).toBe("env_producer");
 				submitted = event;
 				return "accepted";
 			},

@@ -1896,7 +1896,6 @@ esac
 		expect(firstInstallError).not.toContain("discarded-stderr-prefix");
 		expect(firstInstallError).not.toContain("\u001b");
 		expect(firstInstallError.length).toBeLessThan(5000);
-		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
 		expect(existsSync(dropInPath)).toBe(false);
 		expect(authorityCommits).toBe(0);
@@ -1917,7 +1916,7 @@ esac
 		expect(installed.installErrors).toEqual([]);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
-		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
+		const previousLastGood = readFileSync(paths.manifestLastGood, "utf-8");
 
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -1934,7 +1933,7 @@ esac
 		);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
-		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
+		expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(previousLastGood);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 
@@ -2008,7 +2007,7 @@ esac
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(disabledCommits).toBe(1);
-		expect(JSON.parse(readFileSync(paths.managedConfig, "utf-8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toMatchObject({
 			generation: 2,
 		});
 		expect(warnings.join("\n")).toContain("post-commit official runtime service cleanup deferred");

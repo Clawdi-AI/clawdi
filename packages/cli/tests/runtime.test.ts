@@ -2579,14 +2579,11 @@ describe("runtime paths", () => {
 		expect(paths.mode).toBe("hosted");
 		expect(paths.userHome).toBe(home);
 		expect(paths.workspaceRoot).toBe(home);
-		expect(paths.managedConfig).toBe(join(root, "etc", "clawdi", "clawdi.json"));
-		expect(paths.syncState).toBe(join(state, "sync", "runtimes.json"));
 		expect(paths.cliManagedBin).toBe(join(state, "maintained", "clawdi", "bin", "clawdi"));
 		expect(paths.cliNpmPrefix).toBe(join(state, "maintained", "clawdi", "npm"));
 		expect(paths.cliNpmCache).toBe(join(root, "var", "cache", "clawdi", "npm"));
 		expect(paths.egressProfileRoot).toBe(join(run, "egress"));
 		expect(paths.egressProfileBundle).toBe(join(run, "egress", "profiles.json"));
-		expect(paths.instanceData).toBe(join(run, "instance-data.json"));
 	});
 
 	it("reclaims a stale converge lock whose owner process is gone", () => {
@@ -4511,8 +4508,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
 		const paths = getRuntimePaths();
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		];
@@ -4764,7 +4759,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			const egressSecrets = readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8");
 			expect(egressSecrets).toContain("secret://tool.codex.apiKey");
 			expect(egressSecrets).toContain("sk-codex-tool");
-			expect(existsSync(join(getRuntimePaths().projectionRoot, "clawdi-mcp.json"))).toBe(false);
 			const applied = JSON.parse(readFileSync(paths.appliedState, "utf-8"));
 			expect(applied.providerIds).toEqual([]);
 			expect(applied.projectedProviderIds[runtimeName]).toEqual([]);
@@ -7395,7 +7389,6 @@ exit 64
 			"10-clawdi-hosted.conf",
 		);
 		const preImage = {
-			managedConfig: readFileSync(paths.managedConfig, "utf8"),
 			gatewayEnv: readFileSync(gatewayEnvPath, "utf8"),
 			gatewayDropIn: readFileSync(gatewayDropInPath, "utf8"),
 			appliedState: readFileSync(paths.appliedState, "utf8"),
@@ -7432,7 +7425,6 @@ exit 64
 		expect(event.error).toContain(
 			"could not prove active runtime revision for managed systemd unit openclaw-gateway.service",
 		);
-		expect(readFileSync(paths.managedConfig, "utf8")).toBe(preImage.managedConfig);
 		expect(readFileSync(gatewayEnvPath, "utf8")).toBe(preImage.gatewayEnv);
 		expect(readFileSync(gatewayDropInPath, "utf8")).toBe(preImage.gatewayDropIn);
 		expect(readFileSync(paths.appliedState, "utf8")).toBe(preImage.appliedState);
@@ -7926,7 +7918,6 @@ exit 64
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			expect(existsSync(getRuntimePaths().channelsEtag)).toBe(false);
 			const appliedState = readRuntimeAppliedState(getRuntimePaths());
 			expect(appliedState).toMatchObject({
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -8399,12 +8390,11 @@ fi
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		const targetConfig = join(home, ".openclaw", "openclaw.json");
 		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
-		const rollbackFixtures = [paths.managedConfig];
+		const rollbackFixtures = [paths.egressProfileBundle];
 		const previousUserUnit = join(paths.systemdUserRoot, "clawdi-previous.service");
 		const forwardOnlyFixtures = [previousUserUnit, targetConfig, forwardRunConfig];
 		const seededFixtures = [...rollbackFixtures, ...forwardOnlyFixtures];
@@ -11469,7 +11459,6 @@ exit 64
 				generation: 7,
 			});
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			expect(existsSync(getRuntimePaths().channelsEtag)).toBe(false);
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
@@ -11971,17 +11960,11 @@ exit 64
 		const paths = getRuntimePaths();
 		const retiredWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
 		const retiredWhatsAppAuthReceipts = join(paths.managedResourceRoot, "whatsapp-auth");
-		const retiredBaileysCompatInventory = join(
-			paths.installInventory,
-			"managed-baileys-compat.json",
-		);
 		const retiredWhatsAppReceiptContent = '{"schemaVersion":"clawdi.managedHermesWhatsApp.v1"}\n';
 		mkdirSync(dirname(retiredWhatsAppReceipt), { recursive: true });
 		writeFileSync(retiredWhatsAppReceipt, retiredWhatsAppReceiptContent);
 		mkdirSync(retiredWhatsAppAuthReceipts, { recursive: true });
 		writeFileSync(join(retiredWhatsAppAuthReceipts, "openclaw.json"), "{}\n");
-		mkdirSync(dirname(retiredBaileysCompatInventory), { recursive: true });
-		writeFileSync(retiredBaileysCompatInventory, "{}\n");
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -12101,7 +12084,6 @@ exit 64
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
 		expect(existsSync(retiredWhatsAppAuthReceipts)).toBe(false);
-		expect(existsSync(retiredBaileysCompatInventory)).toBe(false);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
@@ -12419,8 +12401,6 @@ exit 0
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		const paths = getRuntimePaths();
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
 			join(paths.runConfigRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdUserRoot, "openclaw-gateway.service"),
@@ -13561,81 +13541,42 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search.proxy");
 	});
 
-	it("ignores a retired projection-root v1 MCP ledger", () => {
+	it("removes retired hosted state on first convergence", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "workspace");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
-		const legacyLedgerPath = join(paths.projectionRoot, "managed-mcp-servers.json");
-		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
-		const hermesConfigPath = join(home, ".hermes", "config.yaml");
-		const legacyServer = {
-			url: "https://legacy.example.test/mcp",
-			transport: "streamable-http",
-			headers: {
-				Authorization: { secretRef: "env://REDACTED_LEGACY_NAME", prefix: "Bearer " },
-			},
-		};
-		const retainedV1Ledger = {
-			schemaVersion: "clawdi.hostedManagedMcpServers.v1",
-			runtimes: { hermes: { clawdi: legacyServer } },
-		};
-		writeHermesVersionBinary(home, "0.18.0");
-		mkdirSync(dirname(hermesConfigPath), { recursive: true });
-		writeFileSync(
-			hermesConfigPath,
-			`${JSON.stringify({ mcp_servers: { clawdi: legacyServer } }, null, 2)}\n`,
-		);
-		mkdirSync(dirname(legacyLedgerPath), { recursive: true });
-		const legacyLedger = `${JSON.stringify(retainedV1Ledger, null, 2)}\n`;
-		writeFileSync(legacyLedgerPath, legacyLedger);
+		const retiredFiles = [
+			join(paths.configurationRoot, "clawdi.json"),
+			join(paths.configurationRoot, "runtime-live-sync-agents.json"),
+			join(paths.statusRoot, "cloud-status.json"),
+			join(paths.statusRoot, "cloud-result.json"),
+			join(paths.statusRoot, "egress-engine.json"),
+			join(paths.cacheRoot, "channels.etag"),
+		];
+		const retiredDirectories = [
+			join(paths.configurationRoot, "projections"),
+			join(paths.serviceStateRoot, "sync"),
+			join(paths.serviceStateRoot, "install-inventory"),
+		];
+		for (const path of retiredFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, "retired\n");
+		}
+		for (const path of retiredDirectories) {
+			mkdirSync(path, { recursive: true });
+			writeFileSync(join(path, "retired.json"), "{}\n");
+		}
 
-		const result = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_retired_mcp_ledger",
-					environmentId: "env_retired_mcp_ledger",
-					instanceId: "iid_retired_mcp_ledger",
-					generation: 1,
-					issuedAt: "2026-07-31T00:00:00Z",
-					workspaceRoot: workspace,
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						hermes: {
-							enabled: true,
-							install: {
-								authority: "official",
-								method: "official-installer",
-								url: "https://hermes-agent.nousresearch.com/install.sh",
-								home,
-								args: [],
-							},
-						},
-					},
-					projection: {
-						system: { home, workspace },
-						mcp: { servers: {} },
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://retired-mcp-ledger",
-				offline: false,
-				secretValues: {},
-			},
-			getRuntimePaths(),
-		);
+		ensureRuntimeStateDirs(paths);
 
-		expect(result.installErrors).toEqual([]);
-		expect(readHermesConfigYaml(home).mcp_servers).toEqual({ clawdi: legacyServer });
-		expect(readFileSync(legacyLedgerPath, "utf-8")).toBe(legacyLedger);
-		expect(existsSync(ledgerPath)).toBe(false);
+		for (const path of [...retiredFiles, ...retiredDirectories]) {
+			expect(existsSync(path)).toBe(false);
+		}
 	});
 
 	it.each([
@@ -14423,6 +14364,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const paths = getRuntimePaths();
 		const cachePath = paths.manifestLastGood;
 		mkdirSync(dirname(cachePath), { recursive: true });
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		const previousManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_last_good_floor",
@@ -14436,9 +14378,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		};
 		writeFileSync(cachePath, JSON.stringify(previousManifest));
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
-			join(paths.projectionRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),

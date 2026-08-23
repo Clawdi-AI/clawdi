@@ -21,14 +21,8 @@ export interface RuntimeConvergenceResult {
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;
-		managedConfig: string;
-		syncState: string;
-		instanceData: string;
-		sensitiveInstanceData: string;
 		manifestLastGood: string | null;
 		appliedState: string | null;
-		installInventory: string[];
-		projections: string[];
 		managedLocaleFiles: string[];
 		runConfigs: string[];
 		systemdSystemUnitRoot: string;
@@ -42,7 +36,6 @@ export interface RuntimeConvergenceResult {
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
-		bootFinished: string;
 	};
 }
 type RuntimeSystemdApplyResult = {

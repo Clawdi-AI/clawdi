@@ -377,11 +377,7 @@ describe("runtime handoff filesystem access contract", () => {
 	test("the tenant workload user (uid 10001) cannot read any platform-rendered file", () => {
 		const { paths, root } = convergeHostedEgressFixture();
 		const labels = new Map<string, string>([
-			[paths.managedConfig, "hosted managed config"],
 			[paths.runtimeContextFile, "runtime context"],
-			[paths.syncState, "sync state"],
-			[paths.instanceData, "instance data"],
-			[paths.sensitiveInstanceData, "sensitive instance data"],
 			[paths.manifestLastGood, "last-good manifest cache"],
 			[paths.appliedState, "applied state"],
 			[paths.managedSecretCacheFile, "runtime secrets cache"],
@@ -392,10 +388,6 @@ describe("runtime handoff filesystem access contract", () => {
 			[join(paths.managedSecretRoot, "egress-secrets.json"), "egress sidecar secrets"],
 			[paths.daemonAuthToken, "daemon auth token"],
 			[paths.bootStatus, "boot status"],
-			[paths.cloudStatus, "cloud status"],
-			[paths.cloudResult, "cloud result"],
-			[paths.liveSyncEnvironmentIndex, "live-sync environment index"],
-			[paths.channelsEtag, "channels etag cache"],
 			[paths.runtimeWatchStatus, "runtime watch status"],
 		]);
 

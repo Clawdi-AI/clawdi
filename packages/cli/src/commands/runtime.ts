@@ -2026,11 +2026,6 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 		runtimeMode: paths.mode,
 		paths: {
 			bootStatus: paths.bootStatus,
-			cloudStatus: paths.cloudStatus,
-			cloudResult: paths.cloudResult,
-			installInventory: paths.installInventory,
-			syncState: paths.syncState,
-			instanceData: paths.instanceData,
 		},
 		...read,
 	};
@@ -2134,9 +2129,9 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 			hint: "The runtime tmpfs path should be recreated on each boot and owned by the system boundary.",
 		},
 		{
-			name: "Sensitive instance data",
-			ok: !existsSync(paths.sensitiveInstanceData) || readable(paths.sensitiveInstanceData),
-			detail: existsSync(paths.sensitiveInstanceData) ? "present" : "absent",
+			name: "Runtime auth token",
+			ok: !existsSync(paths.daemonAuthToken) || readable(paths.daemonAuthToken),
+			detail: existsSync(paths.daemonAuthToken) ? "present" : "absent",
 		},
 		{
 			name: "Last boot status",

@@ -4191,20 +4191,17 @@ echo spawned > '${installerLog}'
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
 		mkdirSync(openClawWorkspaceRoot, { recursive: true });
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(soulPath, "<!-- >>> clawdi managed locale >>>\nmalformed\n");
-		writeFileSync(paths.managedConfig, '{"generation":1}\n');
 		writeFileSync(staleRunConfig, '{"generation":1}\n');
 		writeFileSync(systemdUnit, "old unit\n");
 		writeFileSync(paths.manifestLastGood, '{"generation":1}\n');
 		writeFileSync(paths.appliedState, '{"generation":1}\n');
 		const preservedPaths = [
 			soulPath,
-			paths.managedConfig,
 			staleRunConfig,
 			systemdUnit,
 			paths.manifestLastGood,
@@ -4464,8 +4461,6 @@ echo spawned > '${installerLog}'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 
 		chmodSync(fixtureRoot, 0o755);
-		mkdirSync(paths.projectionRoot, { recursive: true });
-		chmodSync(paths.projectionRoot, 0o755);
 		mkdirSync(paths.clawdiHome, { recursive: true });
 		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
 		mkdirSync(dirname(hermesCommand), { recursive: true });
@@ -4513,8 +4508,6 @@ echo spawned > '${installerLog}'
 			expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toContain("# Clawdi");
 			expect(statSync(skillDir).uid).toBe(runtimeUid);
 			expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
-			expect(statSync(paths.projectionRoot).uid).toBe(0);
-			expect(statSync(paths.projectionRoot).mode & 0o777).toBe(0o755);
 			expect(statSync(paths.managedResourceRoot).uid).toBe(0);
 			expect(statSync(paths.managedResourceRoot).mode & 0o777).toBe(0o755);
 			expect(statSync(ledger).uid).toBe(0);
@@ -5009,7 +5002,6 @@ installReservedManagedSkill(${JSON.stringify({
 		const unmanagedFifo = join(paths.runRoot, "unmanaged.fifo");
 		mkdirSync(dirname(commandPath), { recursive: true });
 		mkdirSync(workspaceRoot, { recursive: true });
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdEnvRoot, { recursive: true });
 		mkdirSync(paths.managedSecretRoot, { recursive: true });
@@ -5042,7 +5034,7 @@ installReservedManagedSkill(${JSON.stringify({
 				readFileSync(path),
 			]),
 		);
-		const rootManagedPaths = [paths.managedConfig];
+		const rootManagedPaths = [paths.egressProfileBundle];
 		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
 		const userEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
@@ -5058,8 +5050,8 @@ installReservedManagedSkill(${JSON.stringify({
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `old-${index}\n`);
 		}
-		chmodSync(paths.managedConfig, 0o640);
-		const previousManagedStat = statSync(paths.managedConfig);
+		chmodSync(paths.egressProfileBundle, 0o640);
+		const previousManagedStat = statSync(paths.egressProfileBundle);
 		const previous = new Map(rootManagedPaths.map((path) => [path, readFileSync(path)]));
 		const previousSystemEnvironment = readFileSync(systemEnvironment);
 		const manifest = baseManifest(
@@ -5103,7 +5095,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(readFileSync(staleUserUnit, "utf-8")).toContain("old-");
 		expect(readFileSync(managedUserDropIn)).toEqual(previousManagedUserDropIn);
 		expect(readFileSync(siblingUserDropIn)).toEqual(previousSiblingUserDropIn);
-		const restoredManagedStat = statSync(paths.managedConfig);
+		const restoredManagedStat = statSync(paths.egressProfileBundle);
 		expect(restoredManagedStat.mode & 0o777).toBe(previousManagedStat.mode & 0o777);
 		expect(restoredManagedStat.uid).toBe(previousManagedStat.uid);
 		expect(restoredManagedStat.gid).toBe(previousManagedStat.gid);
@@ -5226,9 +5218,7 @@ installReservedManagedSkill(${JSON.stringify({
 
 		expect(snapshotPaths).toEqual(
 			[
-				paths.managedConfig,
-				paths.syncState,
-				paths.egressEngineStatus,
+				paths.providerHealthStatus,
 				paths.manifestLastGood,
 				paths.managedSecretCacheFile,
 				paths.appliedState,
@@ -5236,21 +5226,15 @@ installReservedManagedSkill(${JSON.stringify({
 				paths.installReceipts,
 				paths.runConfigRoot,
 				paths.egressProfileBundle,
-				paths.installInventory,
 				paths.managedResourceRoot,
-				paths.projectionRoot,
-				join(paths.instanceRoot, manifest.instanceId),
 				paths.daemonAuthToken,
 				join(paths.managedSecretRoot, "egress-secrets.json"),
 				join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
 				join(paths.systemdEnvRoot, "clawdi-daemon.service.env"),
 				join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
-				paths.instanceData,
-				paths.sensitiveInstanceData,
 				paths.egressAddon,
 				paths.egressTransparentEnv,
 				paths.egressSystemCaFile,
-				paths.liveSyncEnvironmentIndex,
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 				join(paths.systemdSystemRoot, "clawdi-daemon.service"),
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
@@ -5295,15 +5279,6 @@ installReservedManagedSkill(${JSON.stringify({
 				expect(other.startsWith(`${path}/`) || path.startsWith(`${other}/`)).toBe(false);
 			}
 		}
-
-		mkdirSync(paths.projectionRoot, { recursive: true });
-		chmodSync(paths.projectionRoot, 0o777);
-		expect(
-			convergeRuntimeManifest(
-				manifestLoad(baseManifest(paths, {}), "inline-writable-private-root"),
-				paths,
-			).installErrors,
-		).toEqual([]);
 
 		for (const key of ["runConfigRoot", "systemdEnvRoot"] as const) {
 			const unsafePaths = tempRuntimePaths();
@@ -5584,11 +5559,6 @@ cp '${commandFixturePath}' '${commandPath}'
 			String(expectedArgs.length),
 			...expectedArgs,
 		]);
-		const inventory = JSON.parse(
-			readFileSync(join(paths.installInventory, "openclaw.json"), "utf8"),
-		) as Record<string, unknown>;
-		expect(inventory.installerArgs).toEqual(expectedArgs);
-		expect(inventory).not.toHaveProperty("command");
 		expect(expectedArgs).not.toContain("--version");
 	});
 
@@ -6018,11 +5988,8 @@ exit 42
 			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
 		});
 		mkdirSync(dirname(hermesConfig), { recursive: true });
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		writeFileSync(hermesConfig, "mcp_servers: []\n");
-		writeFileSync(paths.managedConfig, '{"generation":1}\n');
 		const previousConfig = readFileSync(hermesConfig);
-		const previousManaged = readFileSync(paths.managedConfig);
 		const manifest = baseManifest(
 			paths,
 			{
@@ -6043,7 +6010,6 @@ exit 42
 			convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-patch-failure"), paths),
 		).toThrow(/config field mcp_servers must be an object/);
 		expect(readFileSync(hermesConfig)).toEqual(previousConfig);
-		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
 	});
 
 	test("rolls back managed state when the authority commit fails", () => {
@@ -6053,14 +6019,14 @@ exit 42
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
+		mkdirSync(dirname(paths.egressProfileBundle), { recursive: true });
 		mkdirSync(dirname(paths.appliedState), { recursive: true });
-		writeFileSync(paths.managedConfig, "old-managed\n");
+		writeFileSync(paths.egressProfileBundle, "old-managed\n");
 		writeFileSync(paths.appliedState, "old-applied\n");
-		chmodSync(paths.managedConfig, 0o640);
-		const previousManaged = readFileSync(paths.managedConfig);
+		chmodSync(paths.egressProfileBundle, 0o640);
+		const previousManaged = readFileSync(paths.egressProfileBundle);
 		const previousApplied = readFileSync(paths.appliedState);
-		const previousStat = statSync(paths.managedConfig);
+		const previousStat = statSync(paths.egressProfileBundle);
 		const manifest = baseManifest(paths, {
 			openclaw: {
 				enabled: true,
@@ -6075,16 +6041,16 @@ exit 42
 			{
 				cacheLastGood: false,
 				commitAuthority: () => {
-					writeFileSync(paths.managedConfig, "authority-mutated\n");
+					writeFileSync(paths.egressProfileBundle, "authority-mutated\n");
 					throw new Error("authority commit failed");
 				},
 			},
 		);
 
 		expect(result.installErrors.join("\n")).toContain("authority commit failed");
-		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
+		expect(readFileSync(paths.egressProfileBundle)).toEqual(previousManaged);
 		expect(readFileSync(paths.appliedState)).toEqual(previousApplied);
-		const restoredStat = statSync(paths.managedConfig);
+		const restoredStat = statSync(paths.egressProfileBundle);
 		expect(restoredStat.mode & 0o777).toBe(previousStat.mode & 0o777);
 		expect(restoredStat.uid).toBe(previousStat.uid);
 		expect(restoredStat.gid).toBe(previousStat.gid);
