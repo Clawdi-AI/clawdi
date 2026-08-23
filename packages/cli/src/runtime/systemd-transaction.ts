@@ -51,7 +51,7 @@ interface SystemdUnitManagerState {
 	activeState: string;
 	mainPid: number;
 	needDaemonReload: boolean;
-	enabledState?: string;
+	enabled?: boolean;
 }
 
 interface CommandResult {
@@ -65,6 +65,7 @@ export const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 export const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 export const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const RUNTIME_REVISION_RE = /^[a-f0-9]{32}$/;
+const NON_TRANSACTIONAL_SYSTEM_UNITS = new Set([RUNTIME_WATCH_SYSTEM_UNIT]);
 
 const SYSTEMD_ACTIVATION_STAGES = new Set<SystemdRuntimeMutationStage>([
 	"egress-prerequisite",
@@ -235,8 +236,6 @@ export function applySystemdRuntimeUpdate(
 		transaction: SystemdRuntimeTransaction;
 		stage: Extract<SystemdRuntimeMutationStage, "egress-prerequisite" | "final-activation">;
 		forceRestartSystemUnits?: readonly string[];
-		forceStopSystemUnits?: readonly string[];
-		forceReloadUserUnits?: readonly string[];
 		forceRestartUserUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
 		activationScope?: {
@@ -254,7 +253,7 @@ export function applySystemdRuntimeUpdate(
 	const allUser = changedSystemdUnits(before.user, after.user);
 	const filterChanges = (
 		changes: ReturnType<typeof changedSystemdUnits>,
-		units: readonly string[],
+		units: Iterable<string>,
 	): ReturnType<typeof changedSystemdUnits> => {
 		const selected = new Set(units);
 		return {
@@ -264,25 +263,24 @@ export function applySystemdRuntimeUpdate(
 			present: changes.present.filter((unit) => selected.has(unit)),
 		};
 	};
-	const system = opts.activationScope
-		? filterChanges(allSystem, opts.activationScope.systemUnits)
-		: allSystem;
+	const systemScope = new Set(
+		opts.activationScope?.systemUnits ?? [...allSystem.present, ...allSystem.removed],
+	);
+	const scopedSystem = filterChanges(allSystem, systemScope);
+	const system = {
+		...scopedSystem,
+		changed: scopedSystem.changed.filter((unit) => !NON_TRANSACTIONAL_SYSTEM_UNITS.has(unit)),
+		removed: scopedSystem.removed.filter((unit) => !NON_TRANSACTIONAL_SYSTEM_UNITS.has(unit)),
+	};
 	const user = opts.activationScope
 		? filterChanges(allUser, opts.activationScope.userUnits)
 		: allUser;
 	const systemUnitsChanged = new Set([...system.added, ...system.removed]);
 	const userUnitsChanged = new Set([...user.added, ...user.removed]);
-	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
-		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
-	);
-	const forcedSystemStops = (opts.forceStopSystemUnits ?? []).filter(
-		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
+		(unit) => after.system.has(unit) && systemScope.has(unit),
 	);
 	const scopedUserUnits = opts.activationScope ? new Set(opts.activationScope.userUnits) : null;
-	const forcedUserReloads = (opts.forceReloadUserUnits ?? []).filter(
-		(unit) => !scopedUserUnits || scopedUserUnits.has(unit),
-	);
 	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter(
 		(unit) => after.user.has(unit) && (!scopedUserUnits || scopedUserUnits.has(unit)),
 	);
@@ -295,10 +293,7 @@ export function applySystemdRuntimeUpdate(
 		user.changed.length > 0 ||
 		user.removed.length > 0 ||
 		forcedSystemRestarts.length > 0 ||
-		forcedSystemStops.length > 0 ||
-		forcedUserReloads.length > 0 ||
 		forcedUserRestarts.length > 0;
-	for (const unit of forcedUserReloads) userUnitsChanged.add(unit);
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
 		return {
 			applied: !activationChanged,
@@ -309,17 +304,18 @@ export function applySystemdRuntimeUpdate(
 	const systemStates = preflightSystemdRuntimeUnits(paths, transaction, "system", [
 		...system.present,
 		...system.removed,
-		...forcedSystemStops,
 	]);
 	const userStates = preflightSystemdRuntimeUnits(paths, transaction, "user", [
 		...user.present,
 		...user.removed,
 	]);
 	const systemManagerNeedsReload = new Set(
-		system.present.filter((unit) => systemStates.get(unit)?.needDaemonReload),
+		[...system.present, ...system.removed].filter(
+			(unit) => systemStates.get(unit)?.needDaemonReload,
+		),
 	);
 	const userManagerNeedsReload = new Set(
-		user.present.filter((unit) => userStates.get(unit)?.needDaemonReload),
+		[...user.present, ...user.removed].filter((unit) => userStates.get(unit)?.needDaemonReload),
 	);
 	const changedSystemUnits = new Set(system.changed);
 	const changedUserUnits = new Set(user.changed);
@@ -361,7 +357,6 @@ export function applySystemdRuntimeUpdate(
 
 	for (const unit of system.removed) {
 		const state = requiredSystemdUnitState(systemStates, "system", unit);
-		if (unit === RUNTIME_WATCH_SYSTEM_UNIT && !systemdUnitAbsentOrInactive(state)) continue;
 		if (!systemdUnitAbsentOrInactive(state)) {
 			runJournaledSystemdMutation(transaction, stage, "system", "stop", [unit], () =>
 				systemctl(["stop", unit]),
@@ -376,48 +371,35 @@ export function applySystemdRuntimeUpdate(
 			);
 		}
 	}
-	for (const unit of forcedSystemStops) {
-		const state = requiredSystemdUnitState(systemStates, "system", unit);
-		if (!systemdUnitAbsentOrInactive(state)) {
-			runJournaledSystemdMutation(transaction, stage, "system", "stop", [unit], () =>
-				systemctl(["stop", unit]),
-			);
-			systemUnitsChanged.add(unit);
-		}
-	}
-
-	if (
-		system.added.length > 0 ||
-		system.changed.length > 0 ||
-		system.removed.length > 0 ||
-		systemManagerNeedsReload.size > 0
-	) {
-		runJournaledSystemdMutation(transaction, stage, "system", "daemon-reload", [], () =>
-			systemctl(["daemon-reload"]),
+	if (systemManagerNeedsReload.size > 0) {
+		runJournaledSystemdMutation(
+			transaction,
+			stage,
+			"system",
+			"daemon-reload",
+			[...systemManagerNeedsReload],
+			() => systemctl(["daemon-reload"]),
 		);
 	}
-	if (
-		user.added.length > 0 ||
-		user.changed.length > 0 ||
-		user.removed.length > 0 ||
-		forcedUserReloads.length > 0 ||
-		userManagerNeedsReload.size > 0
-	) {
-		runJournaledSystemdMutation(transaction, stage, "user", "daemon-reload", [], () =>
-			runtimeUserSystemctl(paths, ["daemon-reload"]),
+	if (userManagerNeedsReload.size > 0) {
+		runJournaledSystemdMutation(
+			transaction,
+			stage,
+			"user",
+			"daemon-reload",
+			[...userManagerNeedsReload],
+			() => runtimeUserSystemctl(paths, ["daemon-reload"]),
 		);
 	}
 
 	const addedSystemUnits = new Set(system.added);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
-	const forcedStopUnits = new Set(forcedSystemStops);
 	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
 	const resetFailedSystemUnits: string[] = [];
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
 		const state = requiredSystemdUnitState(systemStates, "system", unit);
-		if (forcedStopUnits.has(unit)) continue;
 		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
@@ -432,7 +414,6 @@ export function applySystemdRuntimeUpdate(
 		}
 		if (
 			state.activeState === "active" &&
-			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
 			((changedSystemUnits.has(unit) && !opts.preserveActiveUnits) ||
 				(forcedRestartUnits.has(unit) &&
 					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
@@ -516,7 +497,6 @@ export function applySystemdRuntimeUpdate(
 
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
-		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
 		return (
 			state.loadState !== "not-found" && state.activeState === "active" && !state.needDaemonReload
 		);
@@ -539,10 +519,8 @@ export function applySystemdRuntimeUpdate(
 				alias.processRevision === revisions.processRevision)
 		);
 	});
-	const removedSystemConverged = system.removed.every(
-		(unit) =>
-			unit === RUNTIME_WATCH_SYSTEM_UNIT ||
-			systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
+	const removedSystemConverged = system.removed.every((unit) =>
+		systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
 	);
 	const removedUserConverged = user.removed.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);
@@ -565,9 +543,7 @@ function quiesceSystemdRuntimeCandidate(
 ): void {
 	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
 	const candidateUnits = systemdRuntimeCandidateUnits(transaction);
-	const userUnits = [...new Set([...candidateUnits.user, ...affectedUserUnits])]
-		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
-		.sort();
+	const userUnits = [...new Set([...candidateUnits.user, ...affectedUserUnits])].sort();
 	const userStates = preflightSystemdRuntimeUnits(paths, transaction, "user", userUnits);
 	for (const unit of userUnits) {
 		const state = requiredSystemdUnitState(userStates, "user", unit);
@@ -576,9 +552,7 @@ function quiesceSystemdRuntimeCandidate(
 			runtimeUserSystemctl(paths, ["stop", unit]),
 		);
 	}
-	const systemUnits = [...candidateUnits.system]
-		.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT)
-		.sort();
+	const systemUnits = [...candidateUnits.system].sort();
 	for (const unit of systemUnits) {
 		const state = systemdUnitManagerState(paths, "system", unit);
 		if (systemdUnitAbsentOrInactive(state)) continue;
@@ -598,7 +572,11 @@ function systemdRuntimeCandidateUnits(transaction: SystemdRuntimeTransaction): {
 		if (!SYSTEMD_ACTIVATION_STAGES.has(entry.stage) || !candidateActions.has(entry.action)) {
 			continue;
 		}
-		for (const unit of entry.units) candidateUnits[entry.scope].add(unit);
+		for (const unit of entry.units) {
+			if (entry.scope !== "system" || !NON_TRANSACTIONAL_SYSTEM_UNITS.has(unit)) {
+				candidateUnits[entry.scope].add(unit);
+			}
+		}
 	}
 	return candidateUnits;
 }
@@ -611,21 +589,41 @@ function rollbackSystemdRuntimeTransaction(
 		SYSTEMD_ACTIVATION_STAGES.has(entry.stage),
 	);
 	const touched = systemdRuntimeTransactionTouchedUnits(transaction);
-	const reloadSystem = activationJournal.some(
-		(entry) => entry.scope === "system" && entry.action === "daemon-reload",
-	);
-	const reloadUser = activationJournal.some(
-		(entry) =>
-			entry.scope === "user" && (entry.action === "daemon-reload" || entry.action === "install"),
-	);
-	if (reloadSystem) {
-		runJournaledSystemdMutation(transaction, "rollback", "system", "daemon-reload", [], () =>
-			systemctl(["daemon-reload"]),
+	const reloadSystemUnits = activationJournal
+		.filter((entry) => entry.scope === "system" && entry.action === "daemon-reload")
+		.flatMap((entry) => entry.units);
+	const reloadUserUnits = activationJournal
+		.filter(
+			(entry) =>
+				entry.scope === "user" && (entry.action === "daemon-reload" || entry.action === "install"),
+		)
+		.flatMap((entry) => entry.units);
+	if (
+		[...new Set(reloadSystemUnits)].some(
+			(unit) => systemdUnitManagerState(paths, "system", unit).needDaemonReload,
+		)
+	) {
+		runJournaledSystemdMutation(
+			transaction,
+			"rollback",
+			"system",
+			"daemon-reload",
+			reloadSystemUnits,
+			() => systemctl(["daemon-reload"]),
 		);
 	}
-	if (reloadUser) {
-		runJournaledSystemdMutation(transaction, "rollback", "user", "daemon-reload", [], () =>
-			runtimeUserSystemctl(paths, ["daemon-reload"]),
+	if (
+		[...new Set(reloadUserUnits)].some(
+			(unit) => systemdUnitManagerState(paths, "user", unit).needDaemonReload,
+		)
+	) {
+		runJournaledSystemdMutation(
+			transaction,
+			"rollback",
+			"user",
+			"daemon-reload",
+			reloadUserUnits,
+			() => runtimeUserSystemctl(paths, ["daemon-reload"]),
 		);
 	}
 	for (const unit of touched.systemUnits) {
@@ -809,14 +807,12 @@ function systemdUnitManagerState(
 	};
 	if (scope === "system") return managerState;
 
-	const enabledArgs = ["is-enabled", unit];
+	const enabledArgs = ["is-enabled", "--quiet", unit];
 	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
-	const enabledState = enabled.stdout.trim().split(/\s+/)[0] ?? "";
-	if (!SYSTEMD_ENABLED_STATES.has(enabledState) && !SYSTEMD_DISABLED_STATES.has(enabledState)) {
+	if (enabled.status === null || enabled.error) {
 		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
-		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
 	}
-	return { ...managerState, enabledState };
+	return { ...managerState, enabled: enabled.status === 0 };
 }
 
 function systemdProcessRevisionMatches(
@@ -905,25 +901,8 @@ function runtimeRevisionFromProcessEnvironment(environment: Buffer): string {
 	return revisions[0];
 }
 
-const SYSTEMD_ENABLED_STATES = new Set([
-	"enabled",
-	"enabled-runtime",
-	"linked",
-	"linked-runtime",
-	"alias",
-]);
-const SYSTEMD_DISABLED_STATES = new Set([
-	"disabled",
-	"not-found",
-	"static",
-	"indirect",
-	"masked",
-	"generated",
-	"transient",
-]);
-
 function systemdUnitEnabled(state: SystemdUnitManagerState): boolean {
-	return state.enabledState !== undefined && SYSTEMD_ENABLED_STATES.has(state.enabledState);
+	return state.enabled === true;
 }
 
 function systemdUnitAbsentOrInactive(state: SystemdUnitManagerState): boolean {
@@ -931,11 +910,7 @@ function systemdUnitAbsentOrInactive(state: SystemdUnitManagerState): boolean {
 }
 
 function systemdUnitAbsentOrDisabled(state: SystemdUnitManagerState): boolean {
-	return (
-		state.loadState === "not-found" ||
-		state.enabledState === "not-found" ||
-		state.enabledState === "disabled"
-	);
+	return state.loadState === "not-found" || state.enabled === false;
 }
 
 function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {

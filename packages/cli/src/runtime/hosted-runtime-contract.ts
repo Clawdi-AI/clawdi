@@ -32,7 +32,6 @@ export interface HostedRuntimeIdentityInspection {
 
 export interface HostedRuntimeContract {
 	identity: HostedRuntimeIdentityExpectation;
-	assertPlatformRoots(): void;
 }
 
 const PRODUCTION_IDENTITY: HostedRuntimeIdentityExpectation = {
@@ -145,6 +144,5 @@ export function assertHostedRuntimeContract(
 	if (options.platformRoots !== "deferred") assertRuntimePlatformRoots(paths);
 	return {
 		identity: options.expectedIdentity ?? PRODUCTION_IDENTITY,
-		assertPlatformRoots: () => assertRuntimePlatformRoots(paths),
 	};
 }

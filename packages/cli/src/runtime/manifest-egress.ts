@@ -13,7 +13,7 @@ import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import type { EgressProfileBundle } from "./egress-profiles";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import { makeEgressIdentityOwned } from "./manifest-secrets";
-import { writeJsonFile, writeRuntimePrivateFileAtomic } from "./manifest-shared";
+import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import { RUNTIME_USER_CLI_STATE_ROOT_MODE, type RuntimePaths } from "./paths";
 import type { RuntimeEgressSystemdProgram } from "./runtime-systemd-reconciliation";
@@ -55,17 +55,6 @@ export function makeEgressIdentityPrivateDir(path: string): void {
 export function clearEgressProfileBundle(paths: RuntimePaths): null {
 	rmSync(paths.egressProfileBundle, { force: true });
 	return null;
-}
-export function writeEgressEngineStatus(
-	result: RuntimeMitmproxyEnsureResult | null,
-	paths: RuntimePaths,
-): RuntimeMitmproxyEnsureResult | null {
-	if (!result) {
-		rmSync(paths.egressEngineStatus, { force: true });
-		return null;
-	}
-	writeJsonFile(paths.egressEngineStatus, result, paths);
-	return result;
 }
 export function requireV2EgressEngineReady(
 	manifest: RuntimeManifest,

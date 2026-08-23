@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { log, toErrorMessage } from "../serve/log";
 import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
 import {
 	type RuntimeApplyIdentity,
-	readRuntimeApplyIdentity,
+	readRuntimeApplyContext,
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
 import {
@@ -18,13 +16,6 @@ const OBSERVATION_INTERVAL_MS = 60_000;
 const CONVERGENCE_OBSERVATION_INTERVAL_MS = 5_000;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
-
-const runtimeInstanceIdentitySchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.runtimeInstanceData.v1"),
-		environmentId: z.string().min(1).max(200),
-	})
-	.passthrough();
 
 type ObservationSubmitResult = "accepted" | "terminal-rejected";
 type RuntimeObservedStatus = HostedRuntimeObservedEvent["status"];
@@ -151,14 +142,18 @@ export class HostedRuntimeObservationProducer {
 	}
 
 	private readAttestedContext(): AttestedRuntimeObservationContext | null {
-		const expectedApplyIdentity = readRuntimeApplyIdentity(this.contextPath);
+		const runtimeContext = readRuntimeApplyContext(this.contextPath);
+		const expectedApplyIdentity = runtimeContext.identity;
 		const appliedState = readRuntimeAppliedState(this.paths);
 		const appliedIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (!runtimeApplyIdentitiesEqual(appliedIdentity, expectedApplyIdentity)) {
 			return null;
 		}
-		const environmentId = readRuntimeObservationEnvironmentId(this.paths);
-		if (!environmentId) return null;
+		const environmentId = process.env.CLAWDI_ENVIRONMENT_ID;
+		if (environmentId === undefined) return null;
+		if (!environmentId || environmentId !== environmentId.trim()) {
+			throw new Error("CLAWDI_ENVIRONMENT_ID must be a non-empty canonical identity");
+		}
 		return {
 			environmentId,
 			expectedApplyIdentity,
@@ -224,23 +219,6 @@ export async function runRuntimeObservationProducer(
 			log.info("daemon.runtime_observation_failed", { error: toErrorMessage(error) });
 		}
 		await delay(IDLE_RETRY_INTERVAL_MS, options.abort);
-	}
-}
-
-export function readRuntimeObservationEnvironmentId(paths: RuntimePaths): string | null {
-	const fromEnvironment = process.env.CLAWDI_ENVIRONMENT_ID;
-	if (fromEnvironment !== undefined) {
-		const normalized = fromEnvironment.trim();
-		if (!normalized || normalized !== fromEnvironment) {
-			throw new Error("CLAWDI_ENVIRONMENT_ID must be a non-empty canonical identity");
-		}
-		return normalized;
-	}
-	try {
-		const value: unknown = JSON.parse(readFileSync(paths.instanceData, "utf-8"));
-		return runtimeInstanceIdentitySchema.parse(value).environmentId;
-	} catch {
-		return null;
 	}
 }
 

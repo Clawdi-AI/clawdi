@@ -12,10 +12,8 @@ import {
 import { join, resolve } from "node:path";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { runtimeContentSha256 } from "./applied-state";
 import { type HermesConfigCommandContext, reconcileHermesConfigValue } from "./hermes-config";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
-import type { RuntimeInstallReceipts } from "./install-receipts";
 import {
 	buildHermesManagedChannelsPatch,
 	managedChannelHasAccounts,
@@ -23,11 +21,8 @@ import {
 import type { RuntimeManifest } from "./manifest-contract";
 import {
 	type RuntimeInstallObservation,
-	type RuntimeInstallReceiptTarget,
-	type RuntimeInstallReceiptTargets,
 	runtimeCommandCurrentRevision,
 	runtimeFileCurrentRevision,
-	verifiedReceiptCurrentRevision,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
 import { hermesConfigContext } from "./manifest-runtime-config";
@@ -457,8 +452,6 @@ export function installHostedChannelProjectionDependencies(
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-	previousReceipts: RuntimeInstallReceipts | null,
-	receiptTargets: RuntimeInstallReceiptTargets,
 ): void {
 	if (name !== "openclaw") return;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -471,8 +464,6 @@ export function installHostedChannelProjectionDependencies(
 		channels,
 		home,
 		workspaceRoot,
-		previousReceipts,
-		receiptTargets,
 	});
 }
 function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknown>): boolean {
@@ -535,43 +526,23 @@ function installOpenClawChannelPlugins(input: {
 	channels: Record<string, unknown>;
 	home: string;
 	workspaceRoot: string;
-	previousReceipts: RuntimeInstallReceipts | null;
-	receiptTargets: RuntimeInstallReceiptTargets;
 }): void {
 	for (const channel of Object.keys(input.channels).sort()) {
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
-		const key = `openclaw:${channel}`;
-		const desiredRevision = channelPluginDesiredRevision({
-			channel,
-			specs,
-		});
-		const currentRevision = () =>
-			channelPluginCurrentRevision({
+		const isCurrent = () =>
+			channelPluginIsCurrent({
 				channel,
 				specs,
 				commandPath: input.commandPath,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
 			});
-		const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
-			input.previousReceipts?.channelPlugins[key],
-			desiredRevision,
-			currentRevision,
-		);
-		const target: RuntimeInstallReceiptTarget = {
-			desiredRevision,
-			currentRevision,
-			expectedCurrentRevision: verifiedCurrentRevision,
-		};
-		input.receiptTargets.channelPlugins.set(key, target);
-		if (verifiedCurrentRevision !== null) continue;
+		if (isCurrent()) continue;
 		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
-		const installedRevision = currentRevision();
-		if (!installedRevision) {
+		if (!isCurrent()) {
 			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
 		}
-		target.expectedCurrentRevision = installedRevision;
 	}
 }
 function runPluginInstallWithFallback(
@@ -607,43 +578,32 @@ function channelPluginEntries(
 	}
 	return entries;
 }
-function channelPluginDesiredRevision(input: {
-	channel: string;
-	specs: readonly string[];
-}): string {
-	return runtimeContentSha256({
-		runtime: "openclaw",
-		pluginIdentity: input.channel,
-		installerCommand: ["plugins", "install", "--force"],
-		specs: input.specs,
-	});
-}
-function channelPluginCurrentRevision(input: {
+function channelPluginIsCurrent(input: {
 	channel: string;
 	specs: readonly string[];
 	commandPath: string;
 	home: string;
 	workspaceRoot: string;
-}): string | null {
+}): boolean {
 	const commandRevision = runtimeCommandCurrentRevision(
 		input.commandPath,
 		input.home,
 		input.workspaceRoot,
 	);
-	if (!commandRevision) return null;
+	if (!commandRevision) return false;
 	const inspect = spawnRuntimeUserCommand(
 		input.commandPath,
 		["plugins", "inspect", input.channel, "--json"],
 		input.home,
 		input.workspaceRoot,
 	);
-	if (inspect.status !== 0) return null;
+	if (inspect.status !== 0) return false;
 	try {
 		const stdout = Buffer.isBuffer(inspect.stdout)
 			? inspect.stdout.toString("utf8")
 			: inspect.stdout;
 		const parsed = openClawPluginInspectSchema.safeParse(JSON.parse(stdout) as unknown);
-		if (!parsed.success) return null;
+		if (!parsed.success) return false;
 		const { plugin, install } = parsed.data;
 		const version = plugin.version ?? install.resolvedVersion ?? install.version;
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
@@ -655,40 +615,11 @@ function channelPluginCurrentRevision(input: {
 			!version ||
 			!sourceRevision
 		) {
-			return null;
+			return false;
 		}
-		return runtimeContentSha256({
-			commandRevision,
-			plugin: {
-				id: plugin.id,
-				source: plugin.source,
-				sourceRevision,
-				origin: plugin.origin,
-				status: plugin.status,
-				version,
-				enabled: plugin.enabled === true,
-			},
-			install: {
-				source: install.source,
-				spec: install.spec,
-				sourcePath: install.sourcePath,
-				installPath: install.installPath,
-				version: install.version,
-				resolvedName: install.resolvedName,
-				resolvedVersion: install.resolvedVersion,
-				resolvedSpec: install.resolvedSpec,
-				integrity: install.integrity,
-				shasum: install.shasum,
-				npmIntegrity: install.npmIntegrity,
-				npmShasum: install.npmShasum,
-				clawpackSha256: install.clawpackSha256,
-				gitUrl: install.gitUrl,
-				gitRef: install.gitRef,
-				gitCommit: install.gitCommit,
-			},
-		});
+		return true;
 	} catch {
-		return null;
+		return false;
 	}
 }
 function openClawPluginInstallMatchesSpec(

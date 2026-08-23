@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import {
 	getHermesRawConfigValue,
@@ -10,45 +9,13 @@ import {
 import { mergeRuntimeEnvWithProviderPlaceholders } from "./hosted-provider-resolution";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
-import {
-	type RuntimeName,
-	type RuntimeRunSettings,
-	type RuntimeServiceName,
-	runtimeNameSchema,
-} from "./run-config";
+import type { RuntimeName, RuntimeRunSettings, RuntimeServiceName } from "./run-config";
 import {
 	executableExists,
 	makeRuntimeUserOwned,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
-export const liveSyncEnvironmentIndexSchema = z
-	.object({
-		schemaVersion: z.literal("clawdi.liveSyncEnvironments.v1"),
-		agentTypes: z.array(runtimeNameSchema).default([]),
-	})
-	.strict();
-export function projectionPayload(name: string, manifest: RuntimeManifest): unknown {
-	const projection =
-		typeof manifest.projection === "object" && manifest.projection !== null
-			? manifest.projection
-			: undefined;
-	return {
-		schemaVersion: "clawdi.runtimeProjection.v1",
-		runtime: name,
-		generation: manifest.generation,
-		instanceId: manifest.instanceId,
-		locale: manifest.locale ?? null,
-		managedBy: "clawdi runtime init",
-		target:
-			name === "openclaw"
-				? "openclaw config patch --stdin"
-				: name === "hermes"
-					? "official Hermes user config"
-					: "managed runtime integration config",
-		projection: projection ?? null,
-	};
-}
 const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
 const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
 export function managedLocaleBlock(locale: NonNullable<RuntimeManifest["locale"]>): string {

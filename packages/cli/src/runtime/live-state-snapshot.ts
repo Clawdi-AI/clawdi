@@ -13,7 +13,6 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { runningAsRoot } from "./runtime-user-command";
@@ -51,28 +50,19 @@ export function runtimeRootLiveMutationTargets(
 	paths: RuntimePaths,
 ): string[] {
 	const result = new Set<string>([
-		paths.managedConfig,
-		paths.syncState,
-		paths.egressEngineStatus,
+		paths.providerHealthStatus,
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,
 		paths.appliedState,
 		paths.oauthCredentialRoot,
-		runtimeInstallReceiptsPath(paths),
 		paths.runConfigRoot,
 		paths.egressProfileBundle,
-		paths.installInventory,
 		paths.managedResourceRoot,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
 		paths.daemonAuthToken,
 		join(paths.managedSecretRoot, "egress-secrets.json"),
-		paths.instanceData,
-		paths.sensitiveInstanceData,
 		paths.egressAddon,
 		paths.egressTransparentEnv,
 		paths.egressSystemCaFile,
-		paths.liveSyncEnvironmentIndex,
 	]);
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		const unitName = `${name}.service`;
@@ -171,18 +161,12 @@ function assertRuntimeUserMutationPathsTrusted(
 	}
 }
 
-export function runtimeRootLiveMutationDirectories(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-): string[] {
+export function runtimeRootLiveMutationDirectories(paths: RuntimePaths): string[] {
 	return [
 		paths.runConfigRoot,
 		paths.systemdEnvRoot,
-		paths.installInventory,
 		paths.oauthCredentialRoot,
 		paths.managedResourceRoot,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
 	];
 }
 

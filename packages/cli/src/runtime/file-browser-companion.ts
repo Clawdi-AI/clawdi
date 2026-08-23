@@ -21,7 +21,6 @@ import {
 	type FileBrowserServiceIdentity,
 	type FileBrowserServiceIsolation,
 } from "./file-browser-isolation";
-import type { RuntimeInstallReceiptEntry } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeSystemdUserProgram } from "./runtime-systemd-reconciliation";
@@ -29,18 +28,11 @@ import { runningAsRoot } from "./runtime-user-command";
 
 const FILE_BROWSER_BINARY = "filebrowser";
 const FILE_BROWSER_CANDIDATES = "candidates";
-const FILE_BROWSER_RECEIPT = "filebrowser";
 const FILE_BROWSER_CONFIG_ROOT_MODE = 0o700;
 const FILE_BROWSER_CONFIG_MODE = 0o440;
 
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 type FileBrowserAsset = FileBrowserCompanion["assets"][keyof FileBrowserCompanion["assets"]];
-
-export interface FileBrowserInstallReceiptTarget {
-	desiredRevision: string;
-	currentRevision: () => string | null;
-	expectedCurrentRevision: string | null;
-}
 
 export interface FileBrowserCompanionInstallOptions {
 	arch?: NodeJS.Architecture;
@@ -50,8 +42,6 @@ export interface FileBrowserCompanionInstallOptions {
 }
 
 export interface FileBrowserCompanionInstallResult {
-	receiptKey: typeof FILE_BROWSER_RECEIPT;
-	receiptTarget: FileBrowserInstallReceiptTarget;
 	activeBinary: string;
 	installed: boolean;
 }
@@ -359,7 +349,6 @@ function currentRevision(
 export function ensureFileBrowserCompanion(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
-	previousReceipt: RuntimeInstallReceiptEntry | undefined,
 	options: FileBrowserCompanionInstallOptions = {},
 ): FileBrowserCompanionInstallResult | null {
 	const companion = fileBrowser(manifest);
@@ -373,8 +362,6 @@ export function ensureFileBrowserCompanion(
 	);
 	const before = currentRevision(companion, paths, asset.sha256, config, identity);
 	const candidateWasValid = candidateIsValid(paths, asset.sha256);
-	const verifiedReceipt =
-		previousReceipt?.desiredRevision === desired && previousReceipt.currentRevision === before;
 	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
 	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
 	ensureOwnedDirectory(
@@ -383,7 +370,7 @@ export function ensureFileBrowserCompanion(
 		FILE_BROWSER_CONFIG_ROOT_MODE,
 	);
 	cleanStaleStaging(paths);
-	if (!verifiedReceipt || before === null) {
+	if (before === null) {
 		installCandidate(companion, paths, asset, options);
 		writePrivateFileAtomic(paths.fileBrowserConfig, config, {
 			mode: FILE_BROWSER_CONFIG_MODE,
@@ -396,12 +383,6 @@ export function ensureFileBrowserCompanion(
 	if (expected !== desired)
 		throw new Error("Files companion candidate did not pass activation verification");
 	return {
-		receiptKey: FILE_BROWSER_RECEIPT,
-		receiptTarget: {
-			desiredRevision: desired,
-			currentRevision: current,
-			expectedCurrentRevision: expected,
-		},
 		activeBinary: candidateBinary(paths, asset.sha256),
 		installed: !candidateWasValid,
 	};

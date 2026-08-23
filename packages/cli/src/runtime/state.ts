@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
+import { log, toErrorMessage } from "../serve/log";
 import type { HostPolicyReadResult } from "./host-policy";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
@@ -35,14 +36,8 @@ export interface RuntimeBootStatus {
 	};
 	convergence?: {
 		workspaceRoot: string;
-		managedConfig: string;
-		syncState: string;
-		instanceData: string;
-		sensitiveInstanceData: string;
 		manifestLastGood: string | null;
 		appliedState: string | null;
-		installInventory: string[];
-		projections: string[];
 		runConfigs: string[];
 		processManager: "systemd";
 		systemdSystemUnitRoot: string;
@@ -56,7 +51,6 @@ export interface RuntimeBootStatus {
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
-		bootFinished: string;
 	};
 	error?: string;
 	errors: string[];
@@ -75,8 +69,6 @@ export interface RuntimeBootStatus {
 	paths: {
 		hostPolicy: string;
 		serviceStateRoot: string;
-		managedConfig: string;
-		syncState: string;
 		manifestLastGood: string;
 		appliedState: string;
 		managedSecretCacheFile: string;
@@ -92,14 +84,9 @@ export interface RuntimeBootStatus {
 		cliUpgradeState: string;
 		bootStatus: string;
 		runtimeWatchStatus: string;
-		cloudStatus: string;
-		cloudResult: string;
 		runRoot: string;
 		managedSecretRoot: string;
 		daemonAuthToken: string;
-		instanceData: string;
-		sensitiveInstanceData: string;
-		projectionRoot: string;
 		userHome: string;
 		workspaceRoot: string;
 	};
@@ -109,8 +96,6 @@ export interface RuntimeStatusRead {
 	exists: boolean;
 	source?: string;
 	status?: RuntimeBootStatus;
-	cloudStatus?: unknown;
-	cloudResult?: unknown;
 	error?: string;
 }
 
@@ -118,8 +103,6 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 	return {
 		hostPolicy: paths.hostPolicy,
 		serviceStateRoot: paths.serviceStateRoot,
-		managedConfig: paths.managedConfig,
-		syncState: paths.syncState,
 		manifestLastGood: paths.manifestLastGood,
 		appliedState: paths.appliedState,
 		managedSecretCacheFile: paths.managedSecretCacheFile,
@@ -135,14 +118,9 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cliUpgradeState: paths.cliUpgradeState,
 		bootStatus: paths.bootStatus,
 		runtimeWatchStatus: paths.runtimeWatchStatus,
-		cloudStatus: paths.cloudStatus,
-		cloudResult: paths.cloudResult,
 		runRoot: paths.runRoot,
 		managedSecretRoot: paths.managedSecretRoot,
 		daemonAuthToken: paths.daemonAuthToken,
-		instanceData: paths.instanceData,
-		sensitiveInstanceData: paths.sensitiveInstanceData,
-		projectionRoot: paths.projectionRoot,
 		userHome: paths.userHome,
 		workspaceRoot: paths.workspaceRoot,
 	};
@@ -230,6 +208,14 @@ export function writeRuntimePlatformFileAtomic(
 	writePrivateFileAtomic(path, content, { ...options, trustedRoot });
 }
 
+function removeRetiredRuntimeState(path: string): void {
+	try {
+		rmSync(path, { force: true, recursive: true });
+	} catch (error) {
+		log.warn("runtime.retired_state_cleanup_failed", { path, error: toErrorMessage(error) });
+	}
+}
+
 export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 	for (const [path, systemdPath, mode] of [
 		[paths.configurationRoot, DEFAULT_CONFIGURATION_ROOT, 0o700],
@@ -253,11 +239,22 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 			chmodSync(path, mode);
 		}
 	}
+	// SUNSET: remove state written before 0.14.14 once the fleet has upgraded.
+	for (const path of [
+		join(paths.configurationRoot, "clawdi.json"),
+		join(paths.configurationRoot, "runtime-live-sync-agents.json"),
+		join(paths.configurationRoot, "projections"),
+		join(paths.serviceStateRoot, "sync"),
+		join(paths.serviceStateRoot, "install-inventory"),
+		join(paths.statusRoot, "cloud-status.json"),
+		join(paths.statusRoot, "cloud-result.json"),
+		join(paths.statusRoot, "egress-engine.json"),
+		join(paths.statusRoot, "runtime-install-receipts.json"),
+		join(paths.cacheRoot, "channels.etag"),
+	])
+		removeRetiredRuntimeState(path);
 	for (const [dir, mode] of [
 		[paths.statusRoot, 0o755],
-		[paths.instanceRoot, 0o755],
-		[paths.installInventory, 0o755],
-		[paths.projectionRoot, 0o755],
 		[paths.runConfigRoot, 0o755],
 		// Egress profile bundle handoff dir under the traversable run root:
 		// 0711 lets the sidecar identity reach the named bundle without letting
@@ -265,7 +262,6 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		[paths.egressProfileRoot, 0o711],
 		[paths.systemdSystemRoot, 0o755],
 		[paths.systemdEnvRoot, 0o711],
-		[dirname(paths.syncState), 0o755],
 		[paths.managedSecretRoot, 0o711],
 	] as const) {
 		const platformRoot = runtimePlatformRootForPath(paths, dir);
@@ -278,41 +274,6 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 
 export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRuntimePaths()): void {
 	writeJson(paths, paths.bootStatus, status, 0o644);
-	writeJson(
-		paths,
-		paths.cloudStatus,
-		{
-			v1: {
-				datasource: status.datasource,
-				status: status.status,
-				extended_status: status.mode,
-				stage: status.stage,
-				boot_id: status.bootId,
-				timestamp: status.timestamp,
-				errors: status.errors,
-			},
-		},
-		0o644,
-	);
-	writeJson(
-		paths,
-		paths.cloudResult,
-		{
-			v1: {
-				datasource: status.datasource,
-				status: status.status,
-				mode: status.mode,
-				stage: status.stage,
-				exit_code: status.exitCode,
-				boot_id: status.bootId,
-				active_generation: status.activeGeneration,
-				rejected_generation: status.rejectedGeneration ?? null,
-				instance_id: status.instanceId ?? null,
-				errors: status.errors,
-			},
-		},
-		0o644,
-	);
 }
 
 export function writeRuntimeWatchStatus(
@@ -351,26 +312,5 @@ export function readRuntimeBootStatus(paths = getRuntimePaths()): RuntimeStatusR
 			};
 		}
 	}
-
-	if (existsSync(paths.cloudStatus)) {
-		try {
-			read.exists = true;
-			read.cloudStatus = readJson<unknown>(paths.cloudStatus);
-		} catch (e) {
-			read.error = e instanceof Error ? e.message : String(e);
-			read.source = paths.cloudStatus;
-		}
-	}
-
-	if (existsSync(paths.cloudResult)) {
-		try {
-			read.exists = true;
-			read.cloudResult = readJson<unknown>(paths.cloudResult);
-		} catch (e) {
-			read.error = e instanceof Error ? e.message : String(e);
-			read.source = paths.cloudResult;
-		}
-	}
-
 	return read;
 }

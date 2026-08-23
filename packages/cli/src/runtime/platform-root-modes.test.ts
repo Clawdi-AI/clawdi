@@ -146,9 +146,8 @@ exit 0
 			},
 		});
 		expect(result.installErrors).toEqual([]);
-		// The convergence loop just ran writeLiveSyncEnvironmentIndex (into
-		// the configuration root) and writeLastGoodSecretValues (into the
-		// cache root); the explicit call re-runs the secret cache writer.
+		// The convergence loop just ran writeLastGoodSecretValues; the explicit
+		// call re-runs the secret cache writer.
 		cacheRuntimeLastGoodManifest(result.manifest, paths, load.secretValues);
 
 		for (const entry of layout) {
@@ -158,7 +157,6 @@ exit 0
 			expect(statSummary(entry.path).mode).toBe(entry.mode);
 			expect(statSummary(entry.path).uid).toBe(runtimeUid);
 		}
-		expect(statSync(paths.liveSyncEnvironmentIndex).mode & 0o777).toBe(0o644);
 		expect(statSync(paths.managedSecretCacheFile).mode & 0o777).toBe(0o600);
 	} finally {
 		for (const key of Object.keys(process.env)) {

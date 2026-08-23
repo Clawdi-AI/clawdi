@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { detectRuntimeMode, getRuntimePaths, type RuntimeMode } from "./paths";
 
 export interface DeniedCommand {
@@ -49,7 +48,7 @@ function hostedPolicy(): HostPolicy {
 			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
 			{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
 		],
-		managedState: [paths.configurationRoot, dirname(paths.syncState), paths.runRoot],
+		managedState: [paths.serviceStateRoot, paths.runRoot],
 		systemWritableState: [
 			paths.configurationRoot,
 			paths.serviceStateRoot,

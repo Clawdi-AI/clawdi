@@ -21,14 +21,8 @@ export interface RuntimeConvergenceResult {
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;
-		managedConfig: string;
-		syncState: string;
-		instanceData: string;
-		sensitiveInstanceData: string;
 		manifestLastGood: string | null;
 		appliedState: string | null;
-		installInventory: string[];
-		projections: string[];
 		managedLocaleFiles: string[];
 		runConfigs: string[];
 		systemdSystemUnitRoot: string;
@@ -42,7 +36,6 @@ export interface RuntimeConvergenceResult {
 		egressAddon: string | null;
 		liveSyncEnvironments: string[];
 		daemonAuthTokenFile: string | null;
-		bootFinished: string;
 	};
 }
 type RuntimeSystemdApplyResult = {
@@ -55,9 +48,6 @@ interface RuntimeSystemdApplySignal {
 	// status, diagnostics, logs, or any generated public artifact.
 	restartDaemon: boolean;
 	restartEgressSidecar: boolean;
-	stopEgressSidecar: boolean;
-	reconcileUserUnits: string[];
-	reloadUserUnits: string[];
 	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];
@@ -77,6 +67,7 @@ export interface RuntimePrivateAppliedAuthority {
 	daemonProgramRevision?: string;
 	egressSidecarSecretRevision?: string;
 	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
+	officialServiceCommandRevisions: Record<string, string>;
 }
 export function writeRuntimePrivateFileAtomic(
 	paths: RuntimePaths,

@@ -112,8 +112,6 @@ export function configPaths(opts: { json?: boolean } = {}) {
 		hosted: {
 			hostPolicy: hostedPaths.hostPolicy,
 			serviceStateRoot: hostedPaths.serviceStateRoot,
-			managedConfig: hostedPaths.managedConfig,
-			syncState: hostedPaths.syncState,
 			managedCliBin: hostedPaths.cliManagedBin,
 			cliNpmPrefix: hostedPaths.cliNpmPrefix,
 			cliBootstrapStatus: hostedPaths.cliBootstrapStatus,
@@ -139,7 +137,6 @@ export function configPaths(opts: { json?: boolean } = {}) {
 	console.log(chalk.bold("  Hosted"));
 	console.log(chalk.gray(`    policy:     ${payload.hosted.hostPolicy}`));
 	console.log(chalk.gray(`    state:      ${payload.hosted.serviceStateRoot}`));
-	console.log(chalk.gray(`    config:     ${payload.hosted.managedConfig}`));
 	console.log(chalk.gray(`    run:        ${payload.hosted.runRoot}`));
 	console.log(chalk.gray(`    home:       ${payload.hosted.persistentHome}`));
 	console.log();

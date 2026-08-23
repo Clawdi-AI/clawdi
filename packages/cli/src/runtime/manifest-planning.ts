@@ -25,7 +25,6 @@ import {
 } from "./hosted-provider-resolution";
 import type { HostedRuntimeContractOptions } from "./hosted-runtime-contract";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
-import { runtimeInstallReceiptsPath } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
 	type RuntimeLiveSnapshot,
@@ -303,7 +302,6 @@ export function runtimeConvergenceWithoutApply(input: {
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames?: string[];
 }): RuntimeConvergenceResult {
-	const instanceRoot = join(input.paths.instanceRoot, input.load.manifest.instanceId);
 	return {
 		manifest: input.load.manifest,
 		source: input.load.source,
@@ -318,14 +316,8 @@ export function runtimeConvergenceWithoutApply(input: {
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot: input.workspaceRoot,
-			managedConfig: input.paths.managedConfig,
-			syncState: input.paths.syncState,
-			instanceData: input.paths.instanceData,
-			sensitiveInstanceData: input.paths.sensitiveInstanceData,
 			manifestLastGood: null,
 			appliedState: null,
-			installInventory: [],
-			projections: [],
 			managedLocaleFiles: [],
 			runConfigs: [],
 			systemdSystemUnitRoot: input.paths.systemdSystemRoot,
@@ -339,7 +331,6 @@ export function runtimeConvergenceWithoutApply(input: {
 			egressAddon: null,
 			liveSyncEnvironments: [],
 			daemonAuthTokenFile: null,
-			bootFinished: join(instanceRoot, "boot-finished"),
 		},
 	};
 }
@@ -650,7 +641,6 @@ export function runtimeManagedMutationPlan(input: {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
 	const fileBrowserMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
 	for (const target of fileBrowserMutation.rootTargets) rootTargets.add(target);
-	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
 	const egressPin = input.manifest.egressEngine;
 	if (egressPin?.type === "mitmproxy") {
@@ -712,7 +702,7 @@ export function runtimeManagedMutationPlan(input: {
 		snapshot: {
 			rootTargets: rootTargetsList,
 			trustedRootDirectories: [
-				...runtimeRootLiveMutationDirectories(input.manifest, input.paths),
+				...runtimeRootLiveMutationDirectories(input.paths),
 				...fileBrowserMutation.rootTrustedRoots,
 			],
 			runtimeUserTargets,

@@ -56,7 +56,10 @@ import {
 	evaluateHostPolicyForCommand,
 	readHostPolicy,
 } from "../src/runtime/host-policy";
-import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
+import {
+	hostedManifestEgressProfiles,
+	managedMcpHeaderPlaceholder,
+} from "../src/runtime/hosted-egress-profiles";
 import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
@@ -259,6 +262,24 @@ function convergeRuntimeManifest(
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
+}
+
+function convergeAndCommitTestRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts: Omit<TestConvergeOptions, "commitAuthority"> = {},
+) {
+	let officialServiceCommandRevisions: Record<string, string> = {};
+	const convergence = convergeRuntimeManifest(load, paths, {
+		...opts,
+		commitAuthority: (_committed, authority) => {
+			officialServiceCommandRevisions = authority.officialServiceCommandRevisions;
+		},
+	});
+	if (convergence.installErrors.length === 0) {
+		writeTestRuntimeAppliedState(paths, load, convergence, { officialServiceCommandRevisions });
+	}
+	return convergence;
 }
 
 function hermesManagedBaileysRoot(home: string): string {
@@ -477,12 +498,14 @@ case "$command" in
     printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
     ;;
 	  is-enabled)
+	    quiet=0
+	    if [ "\${1:-}" = "--quiet" ]; then quiet=1; shift; fi
 	    unit="\${1:-}"
 	    if [ -f "$(state_path "$unit" enabled)" ] || [ -L "$HOME/.config/systemd/user/default.target.wants/$unit" ]; then
-      printf 'enabled\\n'
-    else
-      printf 'disabled\\n'
-      exit 1
+	      if [ "$quiet" = "0" ]; then printf 'enabled\\n'; fi
+	    else
+	      if [ "$quiet" = "0" ]; then printf 'disabled\\n'; fi
+	      exit 1
     fi
     ;;
   start)
@@ -1803,6 +1826,26 @@ function readOpenClawMcpServers(home: string): Record<string, unknown> {
 	return expectRecord(mcp.servers, "OpenClaw MCP servers");
 }
 
+function managedRemoteMcpServer(serverName: string, revision: string) {
+	return {
+		url: `https://mcp.clawdi.test/${serverName}/${revision}`,
+		transport: "streamable-http" as const,
+		headers: {
+			Authorization: { secretRef: `secret://mcp/${serverName}`, prefix: "Bearer " },
+		},
+	};
+}
+
+function nativeManagedRemoteMcpServer(serverName: string, revision: string) {
+	const server = managedRemoteMcpServer(serverName, revision);
+	return {
+		...server,
+		headers: {
+			Authorization: `Bearer ${managedMcpHeaderPlaceholder(serverName, "Authorization")}`,
+		},
+	};
+}
+
 function writeFakeOpenClawMcpBinary(
 	home: string,
 	options: {
@@ -2424,6 +2467,7 @@ function writeTestRuntimeAppliedState(
 		etag?: string;
 		sourceRevision?: string;
 		egressSidecarSecretRevision?: string;
+		officialServiceCommandRevisions?: Record<string, string>;
 	} = {},
 ): void {
 	const applyContext = load.applyContext;
@@ -2466,6 +2510,7 @@ function writeTestRuntimeAppliedState(
 			...(input.egressSidecarSecretRevision
 				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
 				: {}),
+			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
 		},
@@ -2579,14 +2624,11 @@ describe("runtime paths", () => {
 		expect(paths.mode).toBe("hosted");
 		expect(paths.userHome).toBe(home);
 		expect(paths.workspaceRoot).toBe(home);
-		expect(paths.managedConfig).toBe(join(root, "etc", "clawdi", "clawdi.json"));
-		expect(paths.syncState).toBe(join(state, "sync", "runtimes.json"));
 		expect(paths.cliManagedBin).toBe(join(state, "maintained", "clawdi", "bin", "clawdi"));
 		expect(paths.cliNpmPrefix).toBe(join(state, "maintained", "clawdi", "npm"));
 		expect(paths.cliNpmCache).toBe(join(root, "var", "cache", "clawdi", "npm"));
 		expect(paths.egressProfileRoot).toBe(join(run, "egress"));
 		expect(paths.egressProfileBundle).toBe(join(run, "egress", "profiles.json"));
-		expect(paths.instanceData).toBe(join(run, "instance-data.json"));
 	});
 
 	it("reclaims a stale converge lock whose owner process is gone", () => {
@@ -3205,9 +3247,6 @@ describe("runtime manifest datasource", () => {
 								},
 							},
 							terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
-							mcp: {
-								servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
-							},
 							skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 							tools: { catalog: "clawdi-default" },
 						},
@@ -3236,9 +3275,6 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
 			expect(loaded.manifest.clawdiCli?.packageSpec).toBe(TEST_RUNNING_CLI_SPEC);
-			expect(loaded.manifest.projection?.mcp).toEqual({
-				servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
-			});
 			expect(loaded.manifest.projection?.skills).toEqual({
 				entries: { clawdi: { enabled: true, version: 1 } },
 			});
@@ -4511,8 +4547,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
 		const paths = getRuntimePaths();
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		];
@@ -4764,7 +4798,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			const egressSecrets = readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8");
 			expect(egressSecrets).toContain("secret://tool.codex.apiKey");
 			expect(egressSecrets).toContain("sk-codex-tool");
-			expect(existsSync(join(getRuntimePaths().projectionRoot, "clawdi-mcp.json"))).toBe(false);
 			const applied = JSON.parse(readFileSync(paths.appliedState, "utf-8"));
 			expect(applied.providerIds).toEqual([]);
 			expect(applied.projectedProviderIds[runtimeName]).toEqual([]);
@@ -5079,7 +5112,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		};
 
 		writeFileSync(configPatchFailure, "fail\n");
-		const failedConfigPatch = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const failedConfigPatch = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(failedConfigPatch.installErrors).toContainEqual(
@@ -5095,7 +5128,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(existsSync(gatewayEnvPath)).toBe(false);
 		rmSync(configPatchFailure);
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const convergence = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 
@@ -5147,7 +5180,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const configMtime = statSync(openclawConfig).mtimeMs;
 		const envMtime = statSync(gatewayEnvPath).mtimeMs;
 		const commandsAfterConvergence = readFileSync(openclawCommand, "utf8");
-		const idempotent = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const idempotent = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(idempotent.installErrors).toEqual([]);
@@ -5156,7 +5189,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
 
 		rmSync(unitPath, { force: true });
-		const reinstalled = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const reinstalled = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(reinstalled.installErrors).toEqual([]);
@@ -5172,7 +5205,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 
 		if (!loaded.secretValues) throw new Error("expected runtime secret fixture");
 		loaded.secretValues["secret://runtime/openclaw/gateway-token"] = "rotated-gateway-token";
-		const rotated = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+		const rotated = convergeAndCommitTestRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(rotated.installErrors).toEqual([]);
@@ -6236,14 +6269,11 @@ cp '${sdkSource}' '${sdkTarget}'
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const hermesBin = join(home, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(hermesBin, "#!/bin/sh\nexit 0\n");
-		chmodSync(hermesBin, 0o700);
+		writeHermesVersionBinary(home, "0.20.1");
 
 		const loaded: RuntimeManifestLoad = {
 			source: "remote-datasource",
@@ -7300,7 +7330,6 @@ exit 64
 			).toBe(testBundleEtag("manifest-locale-1"));
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
-			expect(systemctlCalls).toContain("--user reset-failed openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
 			expect(systemctlCalls).toContain("start clawdi-runtime-sidecar.service");
 			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
@@ -7395,7 +7424,6 @@ exit 64
 			"10-clawdi-hosted.conf",
 		);
 		const preImage = {
-			managedConfig: readFileSync(paths.managedConfig, "utf8"),
 			gatewayEnv: readFileSync(gatewayEnvPath, "utf8"),
 			gatewayDropIn: readFileSync(gatewayDropInPath, "utf8"),
 			appliedState: readFileSync(paths.appliedState, "utf8"),
@@ -7432,7 +7460,6 @@ exit 64
 		expect(event.error).toContain(
 			"could not prove active runtime revision for managed systemd unit openclaw-gateway.service",
 		);
-		expect(readFileSync(paths.managedConfig, "utf8")).toBe(preImage.managedConfig);
 		expect(readFileSync(gatewayEnvPath, "utf8")).toBe(preImage.gatewayEnv);
 		expect(readFileSync(gatewayDropInPath, "utf8")).toBe(preImage.gatewayDropIn);
 		expect(readFileSync(paths.appliedState, "utf8")).toBe(preImage.appliedState);
@@ -7926,7 +7953,6 @@ exit 64
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			expect(existsSync(getRuntimePaths().channelsEtag)).toBe(false);
 			const appliedState = readRuntimeAppliedState(getRuntimePaths());
 			expect(appliedState).toMatchObject({
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -8399,12 +8425,11 @@ fi
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		const targetConfig = join(home, ".openclaw", "openclaw.json");
 		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
-		const rollbackFixtures = [paths.managedConfig];
+		const rollbackFixtures = [paths.egressProfileBundle];
 		const previousUserUnit = join(paths.systemdUserRoot, "clawdi-previous.service");
 		const forwardOnlyFixtures = [previousUserUnit, targetConfig, forwardRunConfig];
 		const seededFixtures = [...rollbackFixtures, ...forwardOnlyFixtures];
@@ -9569,7 +9594,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			userUnitsChanged: [],
 		});
 		const calls = readFileSync(systemctlLog, "utf-8");
-		expect(calls).toContain("daemon-reload");
+		expect(calls).not.toContain("daemon-reload");
 		expect(calls).toContain("restart clawdi-daemon.service");
 		expect(calls).not.toContain("restart clawdi-runtime-watch.service");
 		expect(calls).not.toContain("restart hermes-gateway.service");
@@ -9784,25 +9809,18 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				stage: "final-activation",
 				scope: "user",
 				action: "daemon-reload",
-				units: [],
-				outcome: "succeeded",
-			},
-			{
-				sequence: 2,
-				stage: "rollback",
-				scope: "user",
-				action: "daemon-reload",
-				units: [],
+				units: ["openclaw-gateway.service"],
 				outcome: "succeeded",
 			},
 		]);
 		expect(readFileSync(systemctlLog, "utf8").trim().split("\n")).toEqual([
 			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled openclaw-gateway.service",
+			"--user is-enabled --quiet openclaw-gateway.service",
 			"--user daemon-reload",
 			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled openclaw-gateway.service",
-			"--user daemon-reload",
+			"--user is-enabled --quiet openclaw-gateway.service",
+			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
+			"--user is-enabled --quiet openclaw-gateway.service",
 		]);
 		expect(
 			existsSync(
@@ -9828,68 +9846,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled"),
 			),
 		).toBe(true);
-	});
-
-	it("stops the egress sidecar while proving independent system units ready", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const systemctlPath = join(root, "bin", "systemctl");
-		const systemctlLog = join(root, "systemctl.log");
-		const sidecarState = join(root, "sidecar.state");
-		mkdirSync(dirname(systemctlPath), { recursive: true });
-		writeFileSync(sidecarState, "active\n");
-		writeFileSync(
-			systemctlPath,
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "show" ]; then
-	  printf 'LoadState=loaded\\nMainPID=0\\nNeedDaemonReload=no\\n'
-  if [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
-    printf 'ActiveState=%s\\n' "$(tr -d '\\n' < '${sidecarState}')"
-  else
-    printf 'ActiveState=active\\n'
-  fi
-elif [ "\${1:-}" = "stop" ] && [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
-  printf 'inactive\\n' > '${sidecarState}'
-fi
-`,
-		);
-		chmodSync(systemctlPath, 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		const paths = getRuntimePaths();
-		const units = {
-			system: new Map([
-				["clawdi-daemon.service", "daemon"],
-				["clawdi-runtime-sidecar.service", "sidecar"],
-			]),
-			user: new Map<string, string>(),
-		};
-
-		const applied = applySystemdRuntimeUpdate(paths, units, units, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
-			forceRestartSystemUnits: ["clawdi-daemon.service"],
-			forceStopSystemUnits: ["clawdi-runtime-sidecar.service"],
-		});
-
-		expect(applied).toEqual({
-			applied: true,
-			systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-sidecar.service"],
-			userUnitsChanged: [],
-		});
-		const calls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-		expect(calls).toContain("stop clawdi-runtime-sidecar.service");
-		expect(calls).toContain("restart clawdi-daemon.service");
-		expect(calls).not.toContain("start clawdi-runtime-sidecar.service");
-		expect(calls).not.toContain("restart clawdi-runtime-sidecar.service");
-		expect(readFileSync(sidecarState, "utf-8")).toBe("inactive\n");
 	});
 
 	it("hands off a CLI-only checkpoint by restarting only the daemon once", async () => {
@@ -10121,11 +10077,7 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual([
-				"daemon-reload",
-				"--user daemon-reload",
-				"restart clawdi-daemon.service",
-			]);
+			expect(activationCalls).toEqual(["restart clawdi-daemon.service"]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
@@ -11469,7 +11421,6 @@ exit 64
 				generation: 7,
 			});
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			expect(existsSync(getRuntimePaths().channelsEtag)).toBe(false);
 			const patchText = readFileSync(openclawPatch, "utf-8");
 			expect(patchText).not.toContain('"$patch"');
 			expect(patchText).toContain('"telegram"');
@@ -11971,17 +11922,11 @@ exit 64
 		const paths = getRuntimePaths();
 		const retiredWhatsAppReceipt = join(paths.managedResourceRoot, "hermes-whatsapp.json");
 		const retiredWhatsAppAuthReceipts = join(paths.managedResourceRoot, "whatsapp-auth");
-		const retiredBaileysCompatInventory = join(
-			paths.installInventory,
-			"managed-baileys-compat.json",
-		);
 		const retiredWhatsAppReceiptContent = '{"schemaVersion":"clawdi.managedHermesWhatsApp.v1"}\n';
 		mkdirSync(dirname(retiredWhatsAppReceipt), { recursive: true });
 		writeFileSync(retiredWhatsAppReceipt, retiredWhatsAppReceiptContent);
 		mkdirSync(retiredWhatsAppAuthReceipts, { recursive: true });
 		writeFileSync(join(retiredWhatsAppAuthReceipts, "openclaw.json"), "{}\n");
-		mkdirSync(dirname(retiredBaileysCompatInventory), { recursive: true });
-		writeFileSync(retiredBaileysCompatInventory, "{}\n");
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
@@ -12101,7 +12046,6 @@ exit 64
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
 		expect(existsSync(retiredWhatsAppAuthReceipts)).toBe(false);
-		expect(existsSync(retiredBaileysCompatInventory)).toBe(false);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
@@ -12419,8 +12363,6 @@ exit 0
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		const paths = getRuntimePaths();
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
 			join(paths.runConfigRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdUserRoot, "openclaw-gateway.service"),
@@ -12884,7 +12826,7 @@ exit 64
 		);
 	});
 
-	it("reconciles an already-installed OpenClaw channel plugin with forced provenance", () => {
+	it("keeps an already-installed OpenClaw channel plugin with verified provenance", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12968,9 +12910,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-			"plugins install @openclaw/discord --force\n",
-		);
+		expect(existsSync(openclawPluginInstalls)).toBe(false);
 		const patchText = readFileSync(openclawPatch, "utf-8");
 		expect(patchText).toContain('"discord"');
 		expect(patchText).toContain('"plugins"');
@@ -13215,7 +13155,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		const load = (
 			generation: number,
-			command: string,
+			revision: string,
 			install: RuntimeManifest["runtimes"][string]["install"],
 		): RuntimeManifestLoad => ({
 			manifest: {
@@ -13230,14 +13170,14 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 				runtimes: { openclaw: { enabled: true, install } },
 				projection: {
 					system: { home, workspace },
-					mcp: { servers: { clawdi: { command, args: ["mcp"] } } },
+					mcp: { servers: { clawdi: managedRemoteMcpServer("clawdi", revision) } },
 				},
 				recovery: {},
 			},
 			source: "remote-datasource",
 			sourcePath: `test://cold-mcp-${generation}`,
 			offline: false,
-			secretValues: {},
+			secretValues: { "secret://mcp/clawdi": "deploy-key-secret" },
 		});
 		const officialInstall = {
 			authority: "official" as const,
@@ -13247,28 +13187,29 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			args: officialInstallArgs("openclaw", home),
 		};
 
-		const installed = convergeRuntimeManifest(
-			load(1, "clawdi", officialInstall),
+		const installed = convergeAndCommitTestRuntimeManifest(
+			load(1, "v1", officialInstall),
 			getRuntimePaths(),
 		);
 
 		expect(installed.installErrors).toEqual([]);
 		expect(readFileSync(installerLog, "utf-8")).toBe("installed\n");
-		expect(readOpenClawMcpServers(home).clawdi).toEqual({
-			command: "clawdi",
-			args: ["mcp"],
-		});
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(
+			nativeManagedRemoteMcpServer("clawdi", "v1"),
+		);
 
 		rmSync(commandPath);
-		const unavailable = convergeRuntimeManifest(load(2, "missing", undefined), getRuntimePaths());
+		const unavailable = convergeAndCommitTestRuntimeManifest(
+			load(2, "v2", undefined),
+			getRuntimePaths(),
+		);
 
 		expect(unavailable.installErrors.join("\n")).toContain(
 			"could not mutate managed OpenClaw MCP servers: runtime is unavailable",
 		);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual({
-			command: "clawdi",
-			args: ["mcp"],
-		});
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(
+			nativeManagedRemoteMcpServer("clawdi", "v1"),
+		);
 	});
 
 	it("reconciles generic MCP maps and cleans the previously managed runtime on switch", () => {
@@ -13295,7 +13236,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
-		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
 		mkdirSync(dirname(hermesBin), { recursive: true });
 		mkdirSync(dirname(openclawUserSkill), { recursive: true });
 		writeFileSync(
@@ -13321,7 +13261,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const load = (
 			generation: number,
 			selectedRuntime: "openclaw" | "hermes",
-			servers: Record<string, { command: string; args: string[] }>,
+			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
 			skillEnabled = true,
 		): RuntimeManifestLoad => ({
 			manifest: {
@@ -13365,15 +13305,18 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			source: "remote-datasource",
 			sourcePath: `test://generic-mcp-${generation}`,
 			offline: false,
-			secretValues: {},
+			secretValues: {
+				"secret://mcp/clawdi": "deploy-key-secret",
+				"secret://mcp/search.proxy": "search-proxy-secret",
+			},
 		});
 		const initialServers = {
-			clawdi: { command: "clawdi", args: ["mcp"] },
-			"search.proxy": { command: "searchctl", args: ["serve", "v1"] },
+			clawdi: managedRemoteMcpServer("clawdi", "v1"),
+			"search.proxy": managedRemoteMcpServer("search.proxy", "v1"),
 		};
 		const updatedServers = {
 			...initialServers,
-			"search.proxy": { command: "searchctl", args: ["serve", "v2"] },
+			"search.proxy": managedRemoteMcpServer("search.proxy", "v2"),
 		};
 		const loadWithSkillEntry = (
 			skillId: string,
@@ -13392,7 +13335,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			};
 		};
 
-		const unknownSkill = convergeRuntimeManifest(
+		const unknownSkill = convergeAndCommitTestRuntimeManifest(
 			loadWithSkillEntry("unknown", { enabled: true, version: 1 }),
 			getRuntimePaths(),
 		);
@@ -13400,7 +13343,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(unknownSkill.resourceProjectionErrors.join("\n")).toContain(
 			"no bundled hosted skill is registered for unknown",
 		);
-		const unknownSkillVersion = convergeRuntimeManifest(
+		const unknownSkillVersion = convergeAndCommitTestRuntimeManifest(
 			loadWithSkillEntry("clawdi", { enabled: true, version: 2 }),
 			getRuntimePaths(),
 		);
@@ -13408,10 +13351,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(unknownSkillVersion.resourceProjectionErrors.join("\n")).toContain(
 			"no bundled hosted skill clawdi version 2 is registered",
 		);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
-			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-			runtimes: { openclaw: ["clawdi", "search.proxy"] },
-		});
 
 		const openclawSkill = join(home, ".openclaw", "workspace", "skills", "clawdi");
 		mkdirSync(openclawSkill, { recursive: true });
@@ -13423,7 +13362,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			digest: "a".repeat(64),
 			manager: "local-setup",
 		});
-		const collision = convergeRuntimeManifest(
+		const collision = convergeAndCommitTestRuntimeManifest(
 			load(1, "openclaw", initialServers),
 			getRuntimePaths(),
 		);
@@ -13439,17 +13378,20 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			removeTarget: () => rmSync(openclawSkill, { recursive: true, force: true }),
 		});
 
-		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
+		const initial = convergeAndCommitTestRuntimeManifest(
+			load(1, "openclaw", initialServers),
+			getRuntimePaths(),
+		);
 		expect(initial.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
-		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(initialServers["search.proxy"]);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(
+			nativeManagedRemoteMcpServer("clawdi", "v1"),
+		);
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(
+			nativeManagedRemoteMcpServer("search.proxy", "v1"),
+		);
 		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
 			command: "user-owned",
 			args: ["keep"],
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
-			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-			runtimes: { openclaw: ["clawdi", "search.proxy"] },
 		});
 		expect(
 			JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf-8")).reservations[
@@ -13460,28 +13402,38 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const installedSkill = readFileSync(join(openclawSkill, "SKILL.md"), "utf-8");
 		writeFileSync(join(openclawSkill, "SKILL.md"), "tenant mutation before restart\n");
 		rmSync(paths.configurationRoot, { recursive: true, force: true });
-		const restarted = convergeRuntimeManifest(load(1, "openclaw", initialServers), paths);
+		const restarted = convergeAndCommitTestRuntimeManifest(
+			load(1, "openclaw", initialServers),
+			paths,
+		);
 		expect(restarted.installErrors).toEqual([]);
 		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).toBe(installedSkill);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
-		expect(existsSync(ledgerPath)).toBe(true);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(
+			nativeManagedRemoteMcpServer("clawdi", "v1"),
+		);
 
-		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
+		const updated = convergeAndCommitTestRuntimeManifest(
+			load(2, "openclaw", updatedServers),
+			getRuntimePaths(),
+		);
 		expect(updated.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(updatedServers["search.proxy"]);
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(
+			nativeManagedRemoteMcpServer("search.proxy", "v2"),
+		);
 		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
-		const updatedLedger = readFileSync(ledgerPath, "utf-8");
 		const callsBeforeIdempotent = readFileSync(openclawCalls, "utf-8");
-		const idempotent = convergeRuntimeManifest(
+		const idempotent = convergeAndCommitTestRuntimeManifest(
 			load(2, "openclaw", updatedServers),
 			getRuntimePaths(),
 		);
 		expect(idempotent.installErrors).toEqual([]);
 		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(updatedConfig);
-		expect(readFileSync(ledgerPath, "utf-8")).toBe(updatedLedger);
 		expect(readFileSync(openclawCalls, "utf-8")).toBe(callsBeforeIdempotent);
 
-		const switched = convergeRuntimeManifest(load(3, "hermes", updatedServers), getRuntimePaths());
+		const switched = convergeAndCommitTestRuntimeManifest(
+			load(3, "hermes", updatedServers),
+			getRuntimePaths(),
+		);
 		expect(switched.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
 		expect(readOpenClawMcpServers(home)["search.proxy"]).toBeUndefined();
@@ -13499,11 +13451,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			command: "user-owned",
 			args: ["keep"],
 		});
-		expect(hermesAfterSwitch.clawdi).toEqual(initialServers.clawdi);
-		expect(hermesAfterSwitch["search.proxy"]).toEqual(updatedServers["search.proxy"]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			hermes: ["clawdi", "search.proxy"],
-		});
+		expect(hermesAfterSwitch.clawdi).toEqual(nativeManagedRemoteMcpServer("clawdi", "v1"));
+		expect(hermesAfterSwitch["search.proxy"]).toEqual(
+			nativeManagedRemoteMcpServer("search.proxy", "v2"),
+		);
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		const hermesSkillReservation = JSON.parse(
 			readFileSync(managedSkillReservationLedgerPath(), "utf-8"),
@@ -13515,13 +13466,16 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		process.env.CLAWDI_RUNTIME_MODE = "local";
 		expect(() =>
-			convergeRuntimeManifest(load(4, "hermes", updatedServers, true), getRuntimePaths()),
+			convergeAndCommitTestRuntimeManifest(
+				load(4, "hermes", updatedServers, true),
+				getRuntimePaths(),
+			),
 		).toThrow("hosted convergence requires CLAWDI_RUNTIME_MODE=hosted explicitly");
 		expect(existsSync(hermesSkill)).toBe(true);
 		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 
-		const removedGeneric = convergeRuntimeManifest(
+		const removedGeneric = convergeAndCommitTestRuntimeManifest(
 			load(5, "hermes", { clawdi: initialServers.clawdi }, false),
 			getRuntimePaths(),
 		);
@@ -13531,19 +13485,19 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			"Hermes MCP servers",
 		);
 		expect(hermesAfterRemoval["search.proxy"]).toBeUndefined();
-		expect(hermesAfterRemoval.clawdi).toEqual(initialServers.clawdi);
+		expect(hermesAfterRemoval.clawdi).toEqual(nativeManagedRemoteMcpServer("clawdi", "v1"));
 		expect(hermesAfterRemoval["user-entry"]).toEqual({
 			command: "user-owned",
 			args: ["keep"],
-		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			hermes: ["clawdi"],
 		});
 		expect(existsSync(hermesSkill)).toBe(false);
 		mkdirSync(hermesSkill, { recursive: true });
 		writeFileSync(join(hermesSkill, "SKILL.md"), "user-owned canonical skill\n");
 
-		const disabled = convergeRuntimeManifest(load(6, "hermes", {}, false), getRuntimePaths());
+		const disabled = convergeAndCommitTestRuntimeManifest(
+			load(6, "hermes", {}, false),
+			getRuntimePaths(),
+		);
 		expect(disabled.installErrors).toEqual([]);
 		const hermesAfterDisable = expectRecord(
 			readHermesConfigYaml(home).mcp_servers,
@@ -13554,168 +13508,126 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			command: "user-owned",
 			args: ["keep"],
 		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({});
 		expect(readFileSync(join(hermesSkill, "SKILL.md"), "utf-8")).toBe(
 			"user-owned canonical skill\n",
 		);
 		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search.proxy");
 	});
 
-	it("ignores a retired projection-root v1 MCP ledger", () => {
+	it("removes retired hosted state on first convergence", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "workspace");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
-		const legacyLedgerPath = join(paths.projectionRoot, "managed-mcp-servers.json");
-		const ledgerPath = join(paths.managedResourceRoot, "managed-mcp-servers.json");
-		const hermesConfigPath = join(home, ".hermes", "config.yaml");
-		const legacyServer = {
-			url: "https://legacy.example.test/mcp",
-			transport: "streamable-http",
-			headers: {
-				Authorization: { secretRef: "env://REDACTED_LEGACY_NAME", prefix: "Bearer " },
-			},
-		};
-		const retainedV1Ledger = {
-			schemaVersion: "clawdi.hostedManagedMcpServers.v1",
-			runtimes: { hermes: { clawdi: legacyServer } },
-		};
-		writeHermesVersionBinary(home, "0.18.0");
-		mkdirSync(dirname(hermesConfigPath), { recursive: true });
-		writeFileSync(
-			hermesConfigPath,
-			`${JSON.stringify({ mcp_servers: { clawdi: legacyServer } }, null, 2)}\n`,
-		);
-		mkdirSync(dirname(legacyLedgerPath), { recursive: true });
-		const legacyLedger = `${JSON.stringify(retainedV1Ledger, null, 2)}\n`;
-		writeFileSync(legacyLedgerPath, legacyLedger);
+		const retiredFiles = [
+			join(paths.configurationRoot, "clawdi.json"),
+			join(paths.configurationRoot, "runtime-live-sync-agents.json"),
+			join(paths.statusRoot, "cloud-status.json"),
+			join(paths.statusRoot, "cloud-result.json"),
+			join(paths.statusRoot, "egress-engine.json"),
+			join(paths.statusRoot, "runtime-install-receipts.json"),
+			join(paths.cacheRoot, "channels.etag"),
+		];
+		const retiredDirectories = [
+			join(paths.configurationRoot, "projections"),
+			join(paths.serviceStateRoot, "sync"),
+			join(paths.serviceStateRoot, "install-inventory"),
+		];
+		for (const path of retiredFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, "retired\n");
+		}
+		for (const path of retiredDirectories) {
+			mkdirSync(path, { recursive: true });
+			writeFileSync(join(path, "retired.json"), "{}\n");
+		}
 
-		const result = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_retired_mcp_ledger",
-					environmentId: "env_retired_mcp_ledger",
-					instanceId: "iid_retired_mcp_ledger",
-					generation: 1,
-					issuedAt: "2026-07-31T00:00:00Z",
-					workspaceRoot: workspace,
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						hermes: {
-							enabled: true,
-							install: {
-								authority: "official",
-								method: "official-installer",
-								url: "https://hermes-agent.nousresearch.com/install.sh",
-								home,
-								args: [],
-							},
-						},
-					},
-					projection: {
-						system: { home, workspace },
-						mcp: { servers: {} },
-					},
-					recovery: {},
-				},
-				source: "remote-datasource",
-				sourcePath: "test://retired-mcp-ledger",
-				offline: false,
-				secretValues: {},
-			},
-			getRuntimePaths(),
-		);
+		ensureRuntimeStateDirs(paths);
 
-		expect(result.installErrors).toEqual([]);
-		expect(readHermesConfigYaml(home).mcp_servers).toEqual({ clawdi: legacyServer });
-		expect(readFileSync(legacyLedgerPath, "utf-8")).toBe(legacyLedger);
-		expect(existsSync(ledgerPath)).toBe(false);
+		for (const path of [...retiredFiles, ...retiredDirectories]) {
+			expect(existsSync(path)).toBe(false);
+		}
 	});
 
-	it.each([
-		[
-			"unsupported schema",
-			{ schemaVersion: "clawdi.hostedManagedMcpServers.v3", runtimes: {} },
-			"unsupported schema",
-		],
-		[
-			"unsupported runtime",
-			{ schemaVersion: "clawdi.hostedManagedMcpServers.v2", runtimes: { codex: ["clawdi"] } },
-			"invalid runtimes",
-		],
-		[
-			"retired v1 schema",
-			{
-				schemaVersion: "clawdi.hostedManagedMcpServers.v1",
-				runtimes: {
-					hermes: {
-						"Invalid Name": {
-							url: "https://legacy.example.test/mcp",
-							transport: "streamable-http",
-							headers: {
-								Authorization: {
-									secretRef: "env://REDACTED_LEGACY_NAME",
-									prefix: "Bearer ",
-								},
-							},
-						},
-					},
-				},
-			},
-			"unsupported schema",
-		],
-		[
-			"invalid v2 server name",
-			{
-				schemaVersion: "clawdi.hostedManagedMcpServers.v2",
-				runtimes: { hermes: ["Invalid Name"] },
-			},
-			"invalid hermes server name",
-		],
-	] as const)("rejects an MCP ownership ledger with %s", (_case, ledger, expectedError) => {
+	it("upgrades header-owned MCP state without a ledger and rejects an unmarked collision", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
-		const originalLedger = `${JSON.stringify(ledger, null, 2)}\n`;
-		mkdirSync(dirname(ledgerPath), { recursive: true });
-		writeFileSync(ledgerPath, originalLedger);
-		expect(() =>
-			convergeRuntimeManifest(
-				{
-					manifest: {
-						schemaVersion: "clawdi.runtimeDesiredState.v1",
-						deploymentId: "dep_invalid_mcp_ledger",
-						environmentId: "env_invalid_mcp_ledger",
-						instanceId: "iid_invalid_mcp_ledger",
-						generation: 1,
-						issuedAt: "2026-07-31T00:00:00Z",
-						workspaceRoot: workspace,
-						controlPlane: { apiUrl: "https://cloud-api.test" },
-						runtimes: {},
-						projection: { system: { home, workspace }, mcp: { servers: {} } },
-						recovery: {},
+		const paths = getRuntimePaths();
+		const desiredServer = managedRemoteMcpServer("clawdi", "v2");
+		writeFileSync(
+			openclawConfigPath,
+			`${JSON.stringify({ mcp: { servers: { clawdi: nativeManagedRemoteMcpServer("clawdi", "v1") } } }, null, 2)}\n`,
+		);
+		ensureRuntimeStateDirs(paths);
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: "2026-07-28T00:00:00.000Z",
+				instanceId: "iid_mcp_ownership",
+				etag: '"legacy-applied"',
+				sourceRevision: "a".repeat(64),
+				generation: 0,
+				contentIdentity: { sourcePath: "legacy://0.13.x", sha256: "b".repeat(64) },
+				providerIds: [],
+				projectedProviderIds: {},
+			},
+			paths,
+		);
+		const load = (generation: number): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_mcp_ownership",
+				environmentId: "env_mcp_ownership",
+				instanceId: "iid_mcp_ownership",
+				generation,
+				issuedAt: "2026-07-28T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
 					},
-					source: "remote-datasource",
-					sourcePath: "test://invalid-mcp-ledger",
-					offline: false,
-					secretValues: {},
 				},
-				getRuntimePaths(),
-			),
-		).toThrow(expectedError);
-		expect(readFileSync(ledgerPath, "utf-8")).toBe(originalLedger);
+				projection: { system: { home, workspace }, mcp: { servers: { clawdi: desiredServer } } },
+				recovery: {},
+			},
+			source: "remote-datasource",
+			sourcePath: `test://mcp-ownership-${generation}`,
+			offline: false,
+			secretValues: { "secret://mcp/clawdi": "deploy-key-secret" },
+		});
+
+		const upgraded = convergeAndCommitTestRuntimeManifest(load(1), paths);
+		expect(upgraded.installErrors).toEqual([]);
+		expect(readOpenClawMcpServers(home).clawdi).toMatchObject({
+			url: desiredServer.url,
+		});
+
+		writeFileSync(
+			openclawConfigPath,
+			'{"mcp":{"servers":{"clawdi":{"url":"https://user.test","transport":"streamable-http","headers":{"Authorization":"user-token"}}}}}\n',
+		);
+		expect(() => convergeRuntimeManifest(load(2), paths)).toThrow(
+			/refusing to replace unmanaged openclaw MCP server clawdi/,
+		);
 	});
 
 	it("claims MCP ownership only after successful mutations and retries failed cleanup", () => {
@@ -13735,7 +13647,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		writeFileSync(
 			openclawConfigPath,
 			`${JSON.stringify(
@@ -13747,11 +13658,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 				2,
 			)}\n`,
 		);
-		process.env.CLAWDI_AUTH_TOKEN = "deploy-key-secret";
 
 		const load = (
 			generation: number,
-			servers: Record<string, { command: string; args: string[] }>,
+			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
 		): RuntimeManifestLoad => ({
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -13780,80 +13690,62 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			source: "remote-datasource",
 			sourcePath: `test://mcp-ownership-${generation}`,
 			offline: false,
-			secretValues: {},
+			secretValues: Object.fromEntries(
+				Object.keys(servers).map((serverName) => [
+					`secret://mcp/${serverName}`,
+					`${serverName}-secret`,
+				]),
+			),
 		});
 
 		const beforeCollision = readFileSync(openclawConfigPath, "utf-8");
 		expect(() =>
 			convergeRuntimeManifest(
-				load(1, { "user-owned": { command: "platform-command", args: [] } }),
+				load(1, { "user-owned": managedRemoteMcpServer("user-owned", "v1") }),
 				getRuntimePaths(),
 			),
 		).toThrow(/refusing to replace unmanaged openclaw MCP server user-owned/);
 		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
-		expect(existsSync(ledgerPath)).toBe(false);
 		expect(existsSync(calls)).toBe(false);
 
 		writeFileSync(failSet, "fail\n");
 		const failedSet = convergeRuntimeManifest(
-			load(2, { "failed-new": { command: "platform-command", args: [] } }),
+			load(2, { "failed-new": managedRemoteMcpServer("failed-new", "v1") }),
 			getRuntimePaths(),
 		);
 		expect(failedSet.installErrors.join("\n")).toContain("runtime MCP projection failed");
-		expect(existsSync(ledgerPath)).toBe(false);
 		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
 		rmSync(failSet);
 
 		const omittedAfterFailure = convergeRuntimeManifest(load(3, {}), getRuntimePaths());
 		expect(omittedAfterFailure.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
-			command: "user",
-			args: ["keep"],
-		});
 		expect(readFileSync(calls, "utf-8")).not.toContain("unset failed-new");
 
 		const managed = convergeRuntimeManifest(
-			load(4, { "owned-server": { command: "owned", args: ["serve"] } }),
+			load(4, { "owned-server": managedRemoteMcpServer("owned-server", "v1") }),
 			getRuntimePaths(),
 		);
 		expect(managed.installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			openclaw: ["owned-server"],
-		});
-		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
-			command: "owned",
-			args: ["serve"],
-		});
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual(
+			nativeManagedRemoteMcpServer("owned-server", "v1"),
+		);
+
 		writeFileSync(failUnset, "fail\n");
 		const failedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
 		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			openclaw: ["owned-server"],
-		});
-		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
-			command: "owned",
-			args: ["serve"],
-		});
-
-		const driftedConfig = expectRecord(
-			JSON.parse(readFileSync(openclawConfigPath, "utf-8")),
-			"drifted OpenClaw config",
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual(
+			nativeManagedRemoteMcpServer("owned-server", "v1"),
 		);
-		const driftedMcp = expectRecord(driftedConfig.mcp, "drifted OpenClaw MCP config");
-		const driftedServers = expectRecord(driftedMcp.servers, "drifted OpenClaw MCP servers");
-		delete driftedServers["owned-server"];
-		writeFileSync(openclawConfigPath, `${JSON.stringify(driftedConfig, null, 2)}\n`);
-		const callsBeforeDriftReconcile = readFileSync(calls, "utf-8");
+
+		rmSync(failUnset);
 		const retriedRemoval = convergeRuntimeManifest(load(6, {}), getRuntimePaths());
 		expect(retriedRemoval.installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({});
 		expect(readOpenClawMcpServers(home)["owned-server"]).toBeUndefined();
 		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
 			command: "user",
 			args: ["keep"],
 		});
-		expect(readFileSync(calls, "utf-8")).toBe(callsBeforeDriftReconcile);
-		rmSync(failUnset);
+		expect(readFileSync(calls, "utf-8").match(/unset owned-server/g)).toHaveLength(2);
 	});
 
 	it("restores live MCP config after a partial native projection", () => {
@@ -13866,7 +13758,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			callsPath: calls,
 			failSetServer: "second",
 		});
-		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
 		const originalConfig = `${JSON.stringify(
 			{
 				custom: "keep",
@@ -13880,6 +13771,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
 
 		const failed = convergeRuntimeManifest(
 			{
@@ -13908,8 +13800,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 						system: { home, workspace },
 						mcp: {
 							servers: {
-								first: { command: "first", args: [] },
-								second: { command: "second", args: [] },
+								first: managedRemoteMcpServer("first", "v1"),
+								second: managedRemoteMcpServer("second", "v1"),
 							},
 						},
 					},
@@ -13918,7 +13810,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 				source: "remote-datasource",
 				sourcePath: "test://partial-mcp",
 				offline: false,
-				secretValues: {},
+				secretValues: {
+					"secret://mcp/first": "first-secret",
+					"secret://mcp/second": "second-secret",
+				},
 			},
 			getRuntimePaths(),
 		);
@@ -13928,7 +13823,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readOpenClawMcpServers(home)).toEqual({
 			"user-entry": { command: "user-owned", args: ["keep"] },
 		});
-		expect(existsSync(ledgerPath)).toBe(false);
+		expect(readRuntimeAppliedState(paths)).toBeNull();
 	});
 
 	it("restores prior MCP authority when a forward projection is partial", () => {
@@ -13948,12 +13843,15 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const ledgerPath = join(getRuntimePaths().managedResourceRoot, "managed-mcp-servers.json");
+		const paths = getRuntimePaths();
 		const hermesConfig = join(home, ".hermes", "config.yaml");
+		const ownedV1 = managedRemoteMcpServer("owned", "v1");
+		const ownedV2 = managedRemoteMcpServer("owned", "v2");
+		const second = managedRemoteMcpServer("second", "v1");
 
 		const load = (
 			generation: number,
-			servers: Record<string, { command: string; args: string[] }>,
+			servers: Record<string, ReturnType<typeof managedRemoteMcpServer>>,
 		): RuntimeManifestLoad => ({
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -13992,35 +13890,35 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			source: "remote-datasource",
 			sourcePath: `test://existing-managed-mcp-${generation}`,
 			offline: false,
-			secretValues: {},
+			secretValues: {
+				"secret://mcp/owned": "owned-secret",
+				"secret://mcp/second": "second-secret",
+			},
 		});
 
-		const initial = convergeRuntimeManifest(
-			load(1, { owned: { command: "owned", args: ["v1"] } }),
-			getRuntimePaths(),
-		);
+		const initial = convergeAndCommitTestRuntimeManifest(load(1, { owned: ownedV1 }), paths);
 		expect(initial.installErrors).toEqual([]);
-		const previousLedger = readFileSync(ledgerPath);
+		const previousAppliedState = readFileSync(paths.appliedState);
 		const previousOpenClawStat = statSync(openclawConfig);
 		const previousHermesStat = statSync(hermesConfig);
 
-		const failed = convergeRuntimeManifest(
+		const failed = convergeAndCommitTestRuntimeManifest(
 			load(2, {
-				owned: { command: "owned", args: ["v2"] },
-				second: { command: "second", args: [] },
+				owned: ownedV2,
+				second,
 			}),
-			getRuntimePaths(),
+			paths,
 		);
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
 		expect(readOpenClawMcpServers(home)).toEqual({
-			owned: { command: "owned", args: ["v1"] },
+			owned: nativeManagedRemoteMcpServer("owned", "v1"),
 		});
 		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
-			owned: { command: "owned", args: ["v1"] },
+			owned: nativeManagedRemoteMcpServer("owned", "v1"),
 		});
-		expect(readFileSync(ledgerPath)).toEqual(previousLedger);
+		expect(readFileSync(paths.appliedState)).toEqual(previousAppliedState);
 		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
 		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
 		expect(statSync(openclawConfig).gid).toBe(previousOpenClawStat.gid);
@@ -14423,6 +14321,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const paths = getRuntimePaths();
 		const cachePath = paths.manifestLastGood;
 		mkdirSync(dirname(cachePath), { recursive: true });
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		const previousManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_last_good_floor",
@@ -14436,9 +14335,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		};
 		writeFileSync(cachePath, JSON.stringify(previousManifest));
 		const liveFiles = [
-			paths.managedConfig,
-			paths.syncState,
-			join(paths.projectionRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "stale-runtime.json"),
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
@@ -14494,7 +14390,9 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		const convergence = convergeRuntimeManifest(loaded, paths);
 
-		expect(convergence.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
+		expect(convergence.installErrors.join("\n")).toContain(
+			`runtime openclaw installer failed or did not create ${join(home, ".local", "bin", "openclaw")}; see ${join(paths.statusRoot, "installer-logs", "openclaw.log")}`,
+		);
 		expect(convergence.outputs.manifestLastGood).toBeNull();
 		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
 		expect(convergence.outputs.systemdSystemUnits).toEqual([]);

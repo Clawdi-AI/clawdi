@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
-import { RUNTIME_AUTH_TOKEN_SECRET_REF, readRuntimeAuthToken } from "./auth-token";
+import { readRuntimeAuthToken } from "./auth-token";
 import { removeHostedCliPathExposure } from "./cli-update";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
 import {
@@ -24,7 +24,6 @@ import {
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
-import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
 import { captureRuntimeLiveSnapshot, type RuntimeLiveSnapshot } from "./live-state-snapshot";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
@@ -47,20 +46,17 @@ import {
 	makeEgressIdentityPrivateDir,
 	requireV2EgressEngineReady,
 	writeEgressAddon,
-	writeEgressEngineStatus,
 	writeEgressProfileBundle,
 	writeTransparentEgressEnvFile,
 } from "./manifest-egress";
 import {
-	commitRuntimeInstallReceipts,
 	observeRuntimeInstall,
 	planRuntimeInstallObservation,
 	type RuntimeInstallObservation,
-	type RuntimeInstallReceiptTargets,
 	runtimeColdInstallMutationPlan,
 	runtimeCommandPath,
 } from "./manifest-install";
-import { applyHostedMcpProjections, hostedMcpProjectionDeclared } from "./manifest-mcp";
+import { applyHostedMcpProjections } from "./manifest-mcp";
 import {
 	discoverOpenClawManagedProviderAuthAgentDirs,
 	ensureHostedOpenClawProviderAuthCapability,
@@ -90,7 +86,7 @@ import {
 	hostedCodexManagedProvider,
 	previewHostedAiProviderProjectionRevision,
 } from "./manifest-providers";
-import { applyHostedRuntimeConfigProjection, projectionPayload } from "./manifest-runtime-config";
+import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 import {
 	daemonAuthTokenRevision,
 	removeStaleRuntimeRunConfigs,
@@ -107,12 +103,7 @@ import {
 	writeEgressSecretMaterial,
 	writeLastGoodManifest,
 } from "./manifest-secrets";
-import {
-	mutationAncestorMetadataTargets,
-	type RuntimeConvergenceResult,
-	writeJsonFile,
-	writeRuntimePrivateFileAtomic,
-} from "./manifest-shared";
+import { mutationAncestorMetadataTargets, type RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
@@ -145,7 +136,6 @@ import {
 	runtimeUserExistingOwnership,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
-import { runtimeSecretValue } from "./secret-values";
 import { ensureRuntimePlatformDirectory } from "./state";
 
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
@@ -168,7 +158,6 @@ interface RuntimeConvergenceContext {
 	generatedAt: string;
 	egressProfileBundle: ReturnType<typeof buildEgressProfileBundle>;
 	plannedEgressProfileBundlePath: string | null;
-	instanceRoot: string;
 	appliedState: ReturnType<typeof readRuntimeAppliedState>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	runtimeEntries: RuntimeEntry[];
@@ -189,14 +178,11 @@ interface RuntimeConvergenceState {
 	agentPluginRestartUserUnits: string[];
 	runtimeProjectionMutationRuntimes: Set<string>;
 	runtimeProjectionRestartUserUnits: string[];
-	installInventory: string[];
-	projections: string[];
 	managedLocaleFiles: string[];
 	runConfigs: string[];
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
 	installErrors: string[];
 	resourceProjectionErrors: string[];
-	installReceiptTargets: RuntimeInstallReceiptTargets;
 	projectedProviderIds: Record<string, string[]>;
 	observations: Map<string, RuntimeInstallObservation>;
 	openClawOwnerBrowserBootstrapSupported: boolean;
@@ -207,6 +193,7 @@ interface RuntimeConvergenceState {
 	desiredDaemonProgramRevision?: string;
 	restartEgressSidecar: boolean;
 	desiredEgressSidecarSecretRevision?: string;
+	officialServiceCommandRevisions: Record<string, string>;
 	rollbackEgressSecretOverride?: RuntimeEgressSecretMaterial;
 	rollbackEgressSecretRevision?: string;
 	egressRollbackAuthorityVerified: boolean;
@@ -214,7 +201,6 @@ interface RuntimeConvergenceState {
 }
 
 interface RuntimeInstallStage {
-	previousInstallReceipts: RuntimeInstallReceipts | null;
 	coldInstallPlan: ReturnType<typeof runtimeColdInstallMutationPlan>;
 	pluginBootstrapPlan: ReturnType<typeof managedOpenClawPluginBootstrapMutationPlan>;
 }
@@ -279,10 +265,13 @@ function initializeRuntimeConvergence(
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
-	enforceRuntimeUserOwnership([
-		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
-		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
-	]);
+	enforceRuntimeUserOwnership(
+		[
+			...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
+			...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
+		],
+		hostedRuntimeContract.identity,
+	);
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
@@ -309,7 +298,6 @@ function initializeRuntimeConvergence(
 	const plannedEgressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
 		? paths.egressProfileBundle
 		: null;
-	const instanceRoot = join(paths.instanceRoot, manifest.instanceId);
 	const appliedState = readRuntimeAppliedState(paths);
 	const previousProjectedProviderIds = appliedState?.projectedProviderIds ?? {};
 	const retainPreviousProjectedProviderIds = () =>
@@ -332,18 +320,11 @@ function initializeRuntimeConvergence(
 		agentPluginRestartUserUnits: [],
 		runtimeProjectionMutationRuntimes: new Set(),
 		runtimeProjectionRestartUserUnits: [],
-		installInventory: [],
-		projections: [],
 		managedLocaleFiles: [],
 		runConfigs: [],
 		runtimeSystemdUserPrograms: [],
 		installErrors: [],
 		resourceProjectionErrors: [],
-		installReceiptTargets: {
-			officialServices: new Map(),
-			channelPlugins: new Map(),
-			companions: new Map(),
-		},
 		projectedProviderIds: {},
 		observations: new Map(),
 		openClawOwnerBrowserBootstrapSupported: false,
@@ -351,6 +332,7 @@ function initializeRuntimeConvergence(
 		systemdActivationApplied: false,
 		restartDaemon: false,
 		restartEgressSidecar: false,
+		officialServiceCommandRevisions: {},
 		egressRollbackAuthorityVerified: true,
 		staleSystemdFiles: { files: [], systemUnits: [], userUnits: [] },
 	};
@@ -381,7 +363,6 @@ function initializeRuntimeConvergence(
 			generatedAt,
 			egressProfileBundle,
 			plannedEgressProfileBundlePath,
-			instanceRoot,
 			appliedState,
 			previousProjectedProviderIds,
 			runtimeEntries,
@@ -428,21 +409,19 @@ function prepareRuntimeInstallStage(
 ): { stage: RuntimeInstallStage } | { result: RuntimeConvergenceResult } {
 	const { manifest, paths, projectionHome, runtimeEntries, hostedRuntimeContract } = context;
 	for (const [name, runtime] of runtimeEntries) {
-		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
+		const observation = planRuntimeInstallObservation(
+			name,
+			runtime,
+			projectionHome,
+			paths,
+			hostedRuntimeContract.identity,
+		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
 	}
 	if (state.installErrors.length > 0) {
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	let previousInstallReceipts: RuntimeInstallReceipts | null;
-	try {
-		previousInstallReceipts = readRuntimeInstallReceipts(paths);
-	} catch (error) {
-		state.installErrors.push(error instanceof Error ? error.message : String(error));
-		return { result: runtimeConvergenceFailure(context, state) };
-	}
-
 	const coldInstallPlan = runtimeColdInstallMutationPlan(manifest, paths, state.observations);
 	if (coldInstallPlan) {
 		state.rollbackSnapshots.capture("runtime installer rollback failed", coldInstallPlan.snapshot);
@@ -453,11 +432,19 @@ function prepareRuntimeInstallStage(
 	);
 	try {
 		if (coldInstallPlan) {
-			hostedRuntimeContract.assertPlatformRoots();
-			enforceRuntimeUserOwnership(coldInstallPlan.runtimeUserOwnership);
+			enforceRuntimeUserOwnership(
+				coldInstallPlan.runtimeUserOwnership,
+				hostedRuntimeContract.identity,
+			);
 		}
 		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(name, runtime, projectionHome);
+			const observation = observeRuntimeInstall(
+				name,
+				runtime,
+				projectionHome,
+				paths,
+				hostedRuntimeContract.identity,
+			);
 			state.observations.set(name, observation);
 			if (observation.error) state.installErrors.push(observation.error);
 			if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
@@ -478,12 +465,13 @@ function prepareRuntimeInstallStage(
 					...pluginBootstrapPlan.metadataTargets,
 					...pluginBootstrapPlan.runtimeUserTargets,
 				]),
+				hostedRuntimeContract.identity,
 			);
 		}
 	} catch (error) {
 		return { result: rollbackRuntimeInstallFailure(context, state, error) };
 	}
-	return { stage: { previousInstallReceipts, coldInstallPlan, pluginBootstrapPlan } };
+	return { stage: { coldInstallPlan, pluginBootstrapPlan } };
 }
 
 function prepareRuntimeConvergencePlan(
@@ -568,7 +556,10 @@ function prepareRuntimeConvergencePlan(
 		state.installErrors.push(...mutationPlan.systemdDriftErrors);
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(() => existsSync(workspaceRoot));
+	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(
+		() => existsSync(workspaceRoot),
+		context.hostedRuntimeContract.identity,
+	);
 	let liveSnapshot: RuntimeLiveSnapshot;
 	try {
 		liveSnapshot = state.rollbackSnapshots.capture(
@@ -608,30 +599,19 @@ function prepareRuntimeApplyDependencies(
 		projectionHome,
 		openClawContext,
 		workspaceRoot,
-		instanceRoot,
 		runtimeEntries,
 	} = context;
-	hostedRuntimeContract.assertPlatformRoots();
 	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
 	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
-	rmSync(join(paths.installInventory, "managed-baileys-compat.json"), { force: true });
 	// Runtime-user targets and their ancestor metadata are already in the
 	// exact pre-image snapshot. Establish their positive ownership boundary
 	// before any official installer or CLI command drops privilege. Modes are
 	// intentionally preserved, so private runtime state stays private.
-	enforceRuntimeUserOwnership(plan.mutationPlan.runtimeUserOwnership);
-	const fileBrowserInstall = ensureFileBrowserCompanion(
-		manifest,
-		paths,
-		plan.previousInstallReceipts?.companions.filebrowser,
-		opts.fileBrowserInstallOptions,
+	enforceRuntimeUserOwnership(
+		plan.mutationPlan.runtimeUserOwnership,
+		hostedRuntimeContract.identity,
 	);
-	if (fileBrowserInstall) {
-		state.installReceiptTargets.companions.set(
-			fileBrowserInstall.receiptKey,
-			fileBrowserInstall.receiptTarget,
-		);
-	}
+	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
 	const openClawObservation = state.observations.get("openclaw");
 	if (openClawObservation) {
 		try {
@@ -668,7 +648,10 @@ function prepareRuntimeApplyDependencies(
 			for (const [path, node] of supplementalSnapshot.entries) {
 				if (!plan.liveSnapshot.entries.has(path)) plan.liveSnapshot.entries.set(path, node);
 			}
-			enforceRuntimeUserOwnership(runtimeUserExistingOwnership(supplementalTargets));
+			enforceRuntimeUserOwnership(
+				runtimeUserExistingOwnership(supplementalTargets),
+				hostedRuntimeContract.identity,
+			);
 		}
 	}
 	if (opts.preparedHostedAgentPlugins) {
@@ -700,7 +683,6 @@ function prepareRuntimeApplyDependencies(
 		}
 	}
 
-	hostedRuntimeContract.assertPlatformRoots();
 	let codexCli: Record<string, string> | null = null;
 	if (
 		hostedCodexManagedProvider(manifest) ||
@@ -724,8 +706,6 @@ function prepareRuntimeApplyDependencies(
 				manifest,
 				projectionHome,
 				paths.userHome,
-				plan.previousInstallReceipts,
-				state.installReceiptTargets,
 			);
 		} catch (error) {
 			state.installErrors.push(
@@ -761,16 +741,15 @@ function prepareRuntimeApplyDependencies(
 	}
 	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 
-	hostedRuntimeContract.assertPlatformRoots();
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(paths.userHome));
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(paths.userHome),
+		hostedRuntimeContract.identity,
+	);
 	ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 	withRuntimeUserFileAccess(() => {
 		mkdirSync(workspaceRoot, { recursive: true });
 		makeRuntimeUserOwned(workspaceRoot);
-	});
-	for (const directory of [paths.installInventory, paths.projectionRoot, instanceRoot]) {
-		ensureRuntimePlatformDirectory(paths, directory, { mode: 0o755 });
-	}
+	}, hostedRuntimeContract.identity);
 	ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	ensureRuntimePlatformDirectory(paths, paths.egressRoot, { mode: 0o711 });
@@ -780,84 +759,14 @@ function prepareRuntimeApplyDependencies(
 	chmodSync(dirname(paths.egressSystemCaFile), 0o711);
 	enforceRuntimeUserOwnership(
 		runtimeUserDirectoryOwnership(paths.egressScratchRoot, { mode: 0o700 }),
+		hostedRuntimeContract.identity,
 	);
 	return codexCli;
 }
 
-function writeRuntimeManifestState(context: RuntimeConvergenceContext): void {
-	const { load, manifest, paths, generatedAt, workspaceRoot } = context;
-	writeJsonFile(
-		paths.managedConfig,
-		{
-			schemaVersion: "clawdi.hostedManagedConfig.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			controlPlane: manifest.controlPlane,
-			egressEngine: manifest.egressEngine ?? null,
-			auth: { source: "runtime-instance-data", token: "<redacted>" },
-			workspaceRoot,
-		},
-		paths,
-	);
-	writeJsonFile(
-		paths.syncState,
-		{
-			schemaVersion: "clawdi.runtimeSyncState.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			runtimes: Object.fromEntries(
-				Object.entries(manifest.runtimes).map(([name, runtime]) => [
-					name,
-					{
-						enabled: runtime.enabled,
-						updateChannel: runtime.updateChannel ?? null,
-						workspaceRoot,
-					},
-				]),
-			),
-		},
-		paths,
-	);
-	writeJsonFile(
-		paths.instanceData,
-		{
-			schemaVersion: "clawdi.runtimeInstanceData.v1",
-			generatedAt,
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			locale: manifest.locale ?? null,
-			controlPlane: manifest.controlPlane,
-			workspaceRoot,
-		},
-		paths,
-	);
-	writeJsonFile(
-		paths.sensitiveInstanceData,
-		{
-			schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
-			generatedAt,
-			tokenSource: runtimeSecretValue(context.secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF)
-				? "CLAWDI_AUTH_TOKEN"
-				: load.source,
-			token: "<redacted>",
-		},
-		paths,
-	);
-}
-
 interface RuntimeEgressProjection {
 	egressProfileBundlePath: ReturnType<typeof writeEgressProfileBundle> | null;
-	egressEngine: ReturnType<typeof writeEgressEngineStatus>;
+	egressEngine: ReturnType<typeof ensureRuntimeMitmproxy> | null;
 	egressAddon: ReturnType<typeof writeEgressAddon> | null;
 	daemonAuthTokenFile: ReturnType<typeof writeDaemonAuthToken>;
 	egressSecretFile: ReturnType<typeof writeEgressSecretFile>["path"];
@@ -879,6 +788,7 @@ function prepareRuntimeEgressProjection(
 		opts,
 		secretValues,
 		applyContext,
+		hostedRuntimeContract,
 		projectionHome,
 		workspaceRoot,
 		generatedAt,
@@ -888,12 +798,9 @@ function prepareRuntimeEgressProjection(
 	const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
 		? writeEgressProfileBundle(egressProfileBundle, paths)
 		: clearEgressProfileBundle(paths);
-	const egressEngine = writeEgressEngineStatus(
-		egressProfileBundlePath
-			? ensureRuntimeMitmproxy(manifest.egressEngine, paths, opts.egressEngineEnsureOptions)
-			: null,
-		paths,
-	);
+	const egressEngine = egressProfileBundlePath
+		? ensureRuntimeMitmproxy(manifest.egressEngine, paths, opts.egressEngineEnsureOptions)
+		: null;
 	requireV2EgressEngineReady(manifest, egressProfileBundlePath, egressEngine);
 	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths, secretValues);
@@ -906,8 +813,9 @@ function prepareRuntimeEgressProjection(
 			state.desiredDaemonProgramRevision !== appliedState?.daemonProgramRevision;
 	}
 	try {
-		withRuntimeUserFileAccess(() =>
-			materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
+		withRuntimeUserFileAccess(
+			() => materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
+			hostedRuntimeContract.identity,
 		);
 	} catch (error) {
 		state.installErrors.push(
@@ -925,7 +833,7 @@ function prepareRuntimeEgressProjection(
 		secretFilePath: egressSecretFile,
 		engine: egressEngine,
 		addon: egressAddon,
-		runtimeUser,
+		runtimeIdentity: hostedRuntimeContract.identity,
 	});
 	const egressSystemdProgram = resolvedSystemdIdentity.egressProgram;
 	const egressIdentity = resolvedSystemdIdentity.identity;
@@ -1050,8 +958,9 @@ function applyRuntimeResourceProjections(
 		);
 	}
 	try {
-		const codexProjection = withRuntimeUserFileAccess(() =>
-			applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
+		const codexProjection = withRuntimeUserFileAccess(
+			() => applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
+			context.hostedRuntimeContract.identity,
 		);
 		providerProjectionRevisions.codex = codexProjection.revision;
 		state.projectedProviderIds.codex = codexProjection.providerIds;
@@ -1161,45 +1070,11 @@ function applyRuntimeEntryProjections(
 		generatedAt,
 		previousProjectedProviderIds,
 		runtimeEntries,
-		hostedRuntimeContract,
 	} = context;
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = state.observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 
-		const inventoryPath = join(paths.installInventory, `${name}.json`);
-		writeJsonFile(
-			inventoryPath,
-			{
-				schemaVersion: "clawdi.runtimeInstallInventory.v1",
-				generatedAt,
-				runtime: name,
-				enabled: runtime.enabled,
-				updateChannel: runtime.updateChannel ?? null,
-				simulation: false,
-				status: observation.status,
-				executionUser: observation.executionUser,
-				install: observation.install,
-				installerArgs: runtime.install?.args ?? [],
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-				installerUrl: observation.installerUrl,
-				executedInstallerUrl: observation.executedInstallerUrl,
-				installStartedAt: observation.installStartedAt ?? null,
-				installFinishedAt: observation.installFinishedAt ?? null,
-				installDurationMs: observation.installDurationMs ?? null,
-				resultExitCode: observation.exitCode,
-				stdoutTail: observation.stdoutTail,
-				stderrTail: observation.stderrTail,
-				error: observation.error,
-			},
-			paths,
-		);
-		state.installInventory.push(inventoryPath);
-
-		const projectionPath = join(paths.projectionRoot, `${name}.json`);
-		writeJsonFile(projectionPath, projectionPayload(name, manifest), paths);
-		state.projections.push(projectionPath);
 		if (name === "hermes" || name === "openclaw") {
 			try {
 				reconcileHostedRuntimeOAuthCredentials({
@@ -1297,15 +1172,6 @@ function applyRuntimeEntryProjections(
 			);
 		}
 	}
-
-	const mcpProjection = join(paths.projectionRoot, "clawdi-mcp.json");
-	if (hostedMcpProjectionDeclared(manifest) || manifest.projection?.skills !== undefined) {
-		writeJsonFile(mcpProjection, projectionPayload("clawdi-mcp", manifest), paths);
-		state.projections.push(mcpProjection);
-	} else {
-		rmSync(mcpProjection, { force: true });
-	}
-	hostedRuntimeContract.assertPlatformRoots();
 }
 
 interface RuntimeActivationPlan {
@@ -1316,7 +1182,6 @@ interface RuntimeActivationPlan {
 function prepareRuntimeActivation(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	egressProjection: RuntimeEgressProjection,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 ): RuntimeActivationPlan {
@@ -1334,6 +1199,7 @@ function prepareRuntimeActivation(
 		runtimePrograms: state.runtimeSystemdUserPrograms,
 		egressProgram: egressProjection.egressSystemdProgram,
 		egressIdentity: egressProjection.egressIdentity,
+		runtimeIdentity: context.hostedRuntimeContract.identity,
 		manifest,
 		paths,
 		workspaceRoot,
@@ -1358,11 +1224,13 @@ function prepareRuntimeActivation(
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
 	state.staleSystemdFiles = systemdUnits.staleFiles;
+	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
+	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
 	const officialServicePlan = planOfficialRuntimeServices(
 		state.runtimeSystemdUserPrograms,
 		paths,
-		plan.previousInstallReceipts,
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
+		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
 	const pendingOfficialUnits = new Set(officialServicePlan.pending.map((item) => item.unitName));
 	state.runtimeProjectionRestartUserUnits = [
@@ -1379,7 +1247,6 @@ function prepareRuntimeActivation(
 	]
 		.filter((unitName) => !pendingOfficialUnits.has(unitName))
 		.sort();
-	state.installReceiptTargets.officialServices = officialServicePlan.targets;
 	// Agent Plugin mutations must precede every native service installer.
 	// The final activation below restarts the affected runtime units.
 	const appliedAgentPluginTransaction = state.agentPluginTransaction;
@@ -1456,25 +1323,14 @@ function prepareRuntimeActivation(
 
 interface RuntimeActivationOutputs {
 	manifestLastGood: string | null;
-	bootFinished: string;
 }
 
 function activateRuntimeServices(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	activationPlan: RuntimeActivationPlan,
 ): RuntimeActivationOutputs {
-	const {
-		load,
-		manifest,
-		paths,
-		opts,
-		hostedRuntimeContract,
-		instanceRoot,
-		generatedAt,
-		platformEnclaves,
-	} = context;
+	const { load, manifest, paths, opts, hostedRuntimeContract, platformEnclaves } = context;
 	const { officialServicePlan, systemdUnits } = activationPlan;
 	if (
 		officialServicePlan.pending.length > 0 &&
@@ -1485,9 +1341,6 @@ function activateRuntimeServices(
 		const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,
-			stopEgressSidecar: false,
-			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-			reloadUserUnits: [],
 			restartUserUnits: [],
 			staleSystemUnits: [],
 			staleUserUnits: [],
@@ -1499,7 +1352,6 @@ function activateRuntimeServices(
 
 	if (officialServicePlan.pending.length > 0) state.agentPluginUnitsQuiesced = false;
 	for (const item of officialServicePlan.pending) {
-		hostedRuntimeContract.assertPlatformRoots();
 		const unitPath = join(paths.systemdUserRoot, item.unitName);
 		const installerOwnership = [
 			...runtimeUserDirectoryOwnership(paths.systemdUserRoot),
@@ -1513,39 +1365,38 @@ function activateRuntimeServices(
 		];
 		let error: string | null;
 		try {
-			enforceRuntimeUserOwnership(installerOwnership);
-			const install = () => installOfficialRuntimeService(item, paths);
+			enforceRuntimeUserOwnership(installerOwnership, hostedRuntimeContract.identity);
+			const install = () =>
+				installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
 			error = opts.systemdApply
 				? opts.systemdApply.installOfficialService(item.unitName, install)
 				: install();
 		} finally {
 			enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
-			enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
+			enforceRuntimeUserOwnership(
+				runtimePlatformEnclaveOwnership(platformEnclaves),
+				hostedRuntimeContract.identity,
+			);
 		}
 		if (error) throw new Error(error);
+		if (!item.commandRevision) {
+			throw new Error(`official ${item.unitName} command revision could not be verified`);
+		}
+		officialServicePlan.commandRevisions[item.unitName] = item.commandRevision;
 	}
+	state.officialServiceCommandRevisions = officialServicePlan.commandRevisions;
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
-	enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
-	for (const item of officialServicePlan.pending) {
-		const currentRevision = item.target.currentRevision();
-		if (!currentRevision) {
-			throw new Error(`official ${item.unitName} service install could not be verified`);
-		}
-		item.target.expectedCurrentRevision = currentRevision;
-	}
-	hostedRuntimeContract.assertPlatformRoots();
-	const bootFinished = join(instanceRoot, "boot-finished");
-	writeRuntimePrivateFileAtomic(paths, bootFinished, `${generatedAt}\n`);
+	enforceRuntimeUserOwnership(
+		runtimePlatformEnclaveOwnership(platformEnclaves),
+		hostedRuntimeContract.identity,
+	);
 	if (opts.systemdApply) {
 		state.agentPluginUnitsQuiesced = false;
 		const activation = opts.systemdApply.activate({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,
-			stopEgressSidecar: false,
-			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-			reloadUserUnits: systemdUnits.userEnablementChangedUnits,
 			restartUserUnits: [
 				...new Set([
 					...state.agentPluginRestartUserUnits,
@@ -1570,7 +1421,7 @@ function activateRuntimeServices(
 			manifest,
 		);
 	}
-	return { manifestLastGood, bootFinished };
+	return { manifestLastGood };
 }
 
 function buildRuntimeConvergenceResult(
@@ -1595,14 +1446,8 @@ function buildRuntimeConvergenceResult(
 		outputs: {
 			processManager: "systemd",
 			workspaceRoot,
-			managedConfig: paths.managedConfig,
-			syncState: paths.syncState,
-			instanceData: paths.instanceData,
-			sensitiveInstanceData: paths.sensitiveInstanceData,
 			manifestLastGood: activationOutputs.manifestLastGood,
 			appliedState: null,
-			installInventory: state.installInventory,
-			projections: state.projections,
 			managedLocaleFiles: state.managedLocaleFiles,
 			runConfigs: state.runConfigs,
 			systemdSystemUnitRoot: paths.systemdSystemRoot,
@@ -1616,7 +1461,6 @@ function buildRuntimeConvergenceResult(
 			egressAddon: egressProjection.egressAddon?.path ?? null,
 			liveSyncEnvironments: egressProjection.liveSyncEnvironments,
 			daemonAuthTokenFile: egressProjection.daemonAuthTokenFile,
-			bootFinished: activationOutputs.bootFinished,
 		},
 	};
 }
@@ -1626,12 +1470,10 @@ function commitRuntimeConvergence(
 	state: RuntimeConvergenceState,
 	plan: RuntimeConvergencePlan,
 	egressProjection: RuntimeEgressProjection,
-	activationPlan: RuntimeActivationPlan,
 	convergence: RuntimeConvergenceResult,
 ): void {
-	const { manifest, paths, opts, hostedRuntimeContract, workspaceRoot, appliedState } = context;
+	const { manifest, paths, opts, workspaceRoot, appliedState } = context;
 	if (state.installErrors.length > 0) return;
-	hostedRuntimeContract.assertPlatformRoots();
 	const daemonAuthTokenRevisionPreviouslyCommitted =
 		state.desiredDaemonAuthTokenRevision !== undefined &&
 		state.desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
@@ -1641,7 +1483,6 @@ function commitRuntimeConvergence(
 	const egressRevisionPreviouslyCommitted =
 		state.desiredEgressSidecarSecretRevision !== undefined &&
 		state.desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
-	commitRuntimeInstallReceipts(state.installReceiptTargets, paths);
 	opts.commitAuthority?.(convergence, {
 		...(state.desiredDaemonAuthTokenRevision !== undefined &&
 		(state.systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
@@ -1655,6 +1496,7 @@ function commitRuntimeConvergence(
 		(state.systemdActivationApplied || egressRevisionPreviouslyCommitted)
 			? { egressSidecarSecretRevision: state.desiredEgressSidecarSecretRevision }
 			: {}),
+		officialServiceCommandRevisions: state.officialServiceCommandRevisions,
 	});
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);
@@ -1666,12 +1508,6 @@ function commitRuntimeConvergence(
 		);
 	}
 	try {
-		for (const cleanupError of removeStaleRuntimeSystemdFiles(
-			paths,
-			activationPlan.systemdUnits.staleFiles,
-		)) {
-			console.warn(`post-commit systemd file cleanup deferred: ${cleanupError}`);
-		}
 		removeStaleRuntimeRunConfigs(egressProjection.writtenRunConfigIds, paths);
 	} catch (cleanupError) {
 		console.warn(
@@ -1725,7 +1561,6 @@ function rollbackRuntimeApply(
 		);
 		state.installErrors.push(...resourceSnapshotRollbackErrors);
 		try {
-			hostedRuntimeContract.assertPlatformRoots();
 			const snapshotRollbackErrors = state.rollbackSnapshots.restore();
 			state.installErrors.push(...snapshotRollbackErrors);
 			if (state.rollbackEgressSecretOverride) {
@@ -1759,14 +1594,14 @@ function rollbackRuntimeApply(
 		filesystemRollbackSucceeded &&
 		!plan.workspaceExistedBeforeApply &&
 		resolve(workspaceRoot) !== resolve(paths.userHome) &&
-		withRuntimeUserFileAccess(() => existsSync(workspaceRoot))
+		withRuntimeUserFileAccess(() => existsSync(workspaceRoot), hostedRuntimeContract.identity)
 	) {
 		try {
 			withRuntimeUserFileAccess(() => {
 				if (readdirSync(workspaceRoot).length === 0) {
 					rmSync(workspaceRoot, { recursive: true });
 				}
-			});
+			}, hostedRuntimeContract.identity);
 		} catch (rollbackError) {
 			state.installErrors.push(
 				`runtime workspace rollback failed: ${
@@ -1780,9 +1615,6 @@ function rollbackRuntimeApply(
 			opts.systemdApply.rollback({
 				restartDaemon: state.restartDaemon,
 				restartEgressSidecar: state.restartEgressSidecar && state.egressRollbackAuthorityVerified,
-				stopEgressSidecar: state.restartEgressSidecar && !state.egressRollbackAuthorityVerified,
-				reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-				reloadUserUnits: [],
 				restartUserUnits: [
 					...new Set([
 						...state.agentPluginRestartUserUnits,
@@ -1830,7 +1662,6 @@ export function convergeRuntimeManifest(
 	const plan = planResult.plan;
 	try {
 		const codexCli = prepareRuntimeApplyDependencies(context, state, plan);
-		writeRuntimeManifestState(context);
 		const egressProjection = prepareRuntimeEgressProjection(context, state);
 		const providerProjectionRevisions = applyRuntimeResourceProjections(
 			context,
@@ -1843,11 +1674,10 @@ export function convergeRuntimeManifest(
 		const activationPlan = prepareRuntimeActivation(
 			context,
 			state,
-			plan,
 			egressProjection,
 			providerProjectionRevisions,
 		);
-		const activationOutputs = activateRuntimeServices(context, state, plan, activationPlan);
+		const activationOutputs = activateRuntimeServices(context, state, activationPlan);
 		const convergence = buildRuntimeConvergenceResult(
 			context,
 			state,
@@ -1855,7 +1685,7 @@ export function convergeRuntimeManifest(
 			activationPlan,
 			activationOutputs,
 		);
-		commitRuntimeConvergence(context, state, plan, egressProjection, activationPlan, convergence);
+		commitRuntimeConvergence(context, state, plan, egressProjection, convergence);
 		state.rollbackSnapshots.pop();
 		return convergence;
 	} catch (error) {

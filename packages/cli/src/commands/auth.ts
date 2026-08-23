@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { readJson } from "../lib/api-client";
@@ -442,13 +442,21 @@ export async function authLogout() {
 	p.log.success("Logged out. Credentials and cached environments removed.");
 }
 
-type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-instance-data" | "none";
+type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-auth-token" | "none";
 
-function detectAuthSource(): AuthStatusSource {
-	const paths = getRuntimePaths();
+function readable(path: string): boolean {
+	try {
+		accessSync(path, constants.R_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function detectAuthSource(paths: ReturnType<typeof getRuntimePaths>): AuthStatusSource {
 	if (process.env.CLAWDI_AUTH_TOKEN) return "CLAWDI_AUTH_TOKEN";
 	if (existsSync(paths.localAuth)) return "auth.json";
-	if (existsSync(paths.sensitiveInstanceData)) return "runtime-instance-data";
+	if (readable(paths.daemonAuthToken)) return "runtime-auth-token";
 	return "none";
 }
 
@@ -457,8 +465,8 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 	const config = getConfig();
 	const mode = detectRuntimeMode();
 	const paths = getRuntimePaths({ mode });
-	const source = detectAuthSource();
-	const authenticated = Boolean(auth) || source === "runtime-instance-data";
+	const source = detectAuthSource(paths);
+	const authenticated = Boolean(auth) || source === "runtime-auth-token";
 	let safeApiUrl = "<invalid>";
 	try {
 		safeApiUrl = normalizeCloudApiBaseUrl(config.apiUrl);
@@ -479,9 +487,8 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 		paths: {
 			clawdiHome: paths.clawdiHome,
 			auth: source === "auth.json" ? paths.localAuth : undefined,
-			managedConfig: mode === "hosted" ? paths.managedConfig : undefined,
-			sensitiveInstanceDataPresent: existsSync(paths.sensitiveInstanceData),
-			sensitiveInstanceData: "<redacted>",
+			runtimeAuthTokenReadable: readable(paths.daemonAuthToken),
+			runtimeAuthToken: "<redacted>",
 		},
 	};
 

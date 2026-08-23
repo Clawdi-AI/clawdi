@@ -316,7 +316,6 @@ function hostedGenericRunInvocation(
 		args: commandArgs,
 		cwd: process.cwd(),
 		env,
-		configPath: egressProfileBundle ?? paths.managedConfig,
 	};
 }
 
