@@ -95,9 +95,7 @@ function hostedSkillProjectionDrivers(input: {
 			name: "hermes",
 			enabled: input.manifest.runtimes.hermes?.enabled === true,
 			skillsRoot: hermesSkillsRoot,
-			target: (skill) =>
-				input.hermesDriver.target?.({ home: input.home, skill }) ??
-				join(hermesSkillsRoot, skill.skillId),
+			target: (skill) => input.hermesDriver.target({ home: input.home, skill }),
 			install: (skill, targetDir) =>
 				input.hermesDriver.install({
 					home: input.home,
@@ -303,9 +301,6 @@ function applyHostedSkills(
 			installReservedManagedSkill(
 				{
 					targetDir,
-					...(reservation && reservation.targetDir !== targetDir
-						? { previousTargetDir: reservation.targetDir }
-						: {}),
 					id: skillId,
 					manager: "hosted-manifest",
 					...preparedReservationIdentity(prepared),

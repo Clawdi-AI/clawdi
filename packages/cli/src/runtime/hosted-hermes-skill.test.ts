@@ -141,11 +141,12 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			detail:
 				"Blocked (community source + dangerous verdict, 3 findings). --force does not override a dangerous verdict.",
 		});
-		expect(hostedHermesSkillExactSourceDriver.target?.({ home, skill })).toBe(target);
+		expect(hostedHermesSkillExactSourceDriver.target({ home, skill })).toBe(target);
 		expect(
 			hostedHermesSkillExactSourceDriver.install({
 				home,
 				skill,
+				targetDir: target,
 			}),
 		).toBe("installed");
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(dangerousSkill);
@@ -178,7 +179,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		const skill = sourcedSkill(skillId, archiveV1);
 		const updatedSkill = sourcedSkill(skillId, archiveV2, "b".repeat(40));
 		const target = join(home, ".hermes", "skills", skillId);
-		const input = { home, skill };
+		const input = { home, skill, targetDir: target };
 
 		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		writeFileSync(join(target, "SKILL.md"), "tenant drift\n");
@@ -204,7 +205,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		};
 		const archive = archiveSkill(root, skillId, skillFiles);
 		const skill = sourcedSkill(skillId, archive);
-		const input = { home, skill };
+		const input = { home, skill, targetDir: join(home, ".hermes", "skills", skillId) };
 
 		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
 		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");

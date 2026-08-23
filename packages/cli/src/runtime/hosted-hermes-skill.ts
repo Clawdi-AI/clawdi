@@ -8,11 +8,11 @@ import {
 import { replaceManagedSkillDirectoryAtomic } from "./managed-skill-reservation";
 
 export interface HostedHermesSkillExactSourceDriver {
-	target?(input: { home: string; skill: PreparedHostedSourcedSkill }): string;
+	target(input: { home: string; skill: PreparedHostedSourcedSkill }): string;
 	install(input: {
 		home: string;
 		skill: PreparedHostedSourcedSkill;
-		targetDir?: string;
+		targetDir: string;
 	}): "installed" | "unchanged";
 }
 
@@ -34,7 +34,7 @@ export const hostedHermesSkillExactSourceDriver: HostedHermesSkillExactSourceDri
 		return targetDir(input.home, input.skill.skillId);
 	},
 	install(input) {
-		const target = resolve(input.targetDir ?? targetDir(input.home, input.skill.skillId));
+		const target = resolve(input.targetDir);
 		return withStagedManagedSkill(input.skill, (sourceDir) => {
 			replaceManagedSkillDirectoryAtomic(sourceDir, target, {
 				afterActivate: () => assertActivationMatchesSource(sourceDir, target),

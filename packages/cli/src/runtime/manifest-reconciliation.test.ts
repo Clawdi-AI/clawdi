@@ -4614,6 +4614,8 @@ echo spawned > '${installerLog}'
 		const preparedSkills = new Map([[prepared.skillId, prepared]]);
 		let installs = 0;
 		const driver = {
+			target: ({ skill }: { skill: PreparedHostedSourcedSkill }) =>
+				join(paths.userHome, ".hermes", "skills", skill.skillId),
 			install: () => {
 				installs += 1;
 				mkdirSync(skillDir, { recursive: true });
@@ -4787,6 +4789,7 @@ installReservedManagedSkill(${JSON.stringify({
 			{
 				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
 				hostedHermesSkillExactSourceDriver: {
+					target: () => target,
 					install: () => {
 						installs += 1;
 						const installingLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
@@ -4841,61 +4844,6 @@ installReservedManagedSkill(${JSON.stringify({
 		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
 		expect(managedSkillReservationState(target, skillId)).toBe("unreserved");
 		expect(existsSync(target)).toBe(false);
-	});
-
-	test("moves an enabled stale reservation to the Hermes native target", () => {
-		const paths = tempRuntimePaths();
-		ensureRuntimeStateDirs(paths);
-		mkdirSync(paths.managedResourceRoot, { recursive: true });
-		const skillId = "phala-cloud-template-workflows";
-		const source = {
-			type: "project" as const,
-			projectId: "22222222-2222-4222-8222-222222222222",
-			contentHash: "a".repeat(64),
-			archiveUrl: "https://cloud-api.example.test/project-skill.tar.gz",
-			installUrl: "https://cloud-api.example.test/project-skill/SKILL.md",
-		};
-		const prepared = preparedTestSourcedSkill(skillId, source, "native projection\n");
-		const sourceIdentity = prepared.sourceIdentity;
-		const staleTarget = join(paths.userHome, ".hermes", "skills", skillId);
-		const nativeTarget = join(paths.userHome, ".hermes", "skills", "phala-workflows");
-		reserveManagedSkill({
-			targetDir: staleTarget,
-			id: skillId,
-			manager: "hosted-manifest",
-			sourceIdentity,
-		});
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		const manifest = baseManifest(
-			paths,
-			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
-			{ projection: { skills: { entries: { [skillId]: { enabled: true, source } } } } },
-		);
-
-		const result = convergeRuntimeManifest(
-			manifestLoad(manifest, "stale-enabled-hermes-skill"),
-			paths,
-			{
-				preparedHostedSourcedSkills: new Map([[skillId, prepared]]),
-				hostedHermesSkillExactSourceDriver: {
-					target: () => nativeTarget,
-					install: (input) => {
-						expect(input.targetDir).toBe(nativeTarget);
-						mkdirSync(nativeTarget, { recursive: true });
-						writeFileSync(join(nativeTarget, "SKILL.md"), "native projection\n");
-						return "installed";
-					},
-				},
-			},
-		);
-
-		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
-		expect(managedSkillReservationState(staleTarget, skillId)).toBe("unreserved");
-		expect(managedSkillReservationState(nativeTarget, skillId)).toBe("reserved");
-		expect(shouldIgnoreUserSkill(nativeTarget, "phala-workflows")).toBe(true);
-		expect(readFileSync(join(nativeTarget, "SKILL.md"), "utf8")).toBe("native projection\n");
 	});
 
 	test("isolates per-Skill resource failures without starving later Skills", () => {
@@ -4999,6 +4947,8 @@ installReservedManagedSkill(${JSON.stringify({
 			{
 				preparedHostedSourcedSkills: preparedSkills,
 				hostedHermesSkillExactSourceDriver: {
+					target: ({ skill }) =>
+						join(paths.userHome, ".hermes", "skills", skill.skillId),
 					install: ({ skill }) => {
 						attempted.push(skill.skillId);
 						return "installed";

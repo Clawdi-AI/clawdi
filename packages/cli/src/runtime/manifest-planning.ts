@@ -622,21 +622,17 @@ export function hostedSkillMutationTargets(
 	const addSkillTarget = (skillsRoot: string, skillId: string) => {
 		runtimeUserTargets.add(join(skillsRoot, skillId));
 	};
-	let managesHermesSourcedSkill = false;
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		addSkillTarget(hermesSkillsRoot, skillId);
 		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
 		if ("source" in desired && manifest.runtimes.hermes?.enabled === true) {
-			managesHermesSourcedSkill = true;
 			const prepared = preparedSourcedSkills.get(skillId);
 			if (prepared?.skillId === skillId) {
-				let target: string | undefined;
 				try {
-					target = hermesDriver.target?.({ home, skill: prepared });
+					runtimeUserTargets.add(hermesDriver.target({ home, skill: prepared }));
 				} catch (error) {
 					if (!(error instanceof ManagedSkillResourceError)) throw error;
 				}
-				if (target) runtimeUserTargets.add(target);
 			}
 		}
 	}
@@ -646,14 +642,12 @@ export function hostedSkillMutationTargets(
 	}
 	for (const reservation of managedSkillReservations("hosted-manifest")) {
 		if (dirname(reservation.targetDir) === hermesSkillsRoot) {
-			if (reservation.sourceIdentity) managesHermesSourcedSkill = true;
 			runtimeUserTargets.add(reservation.targetDir);
 		}
 		if (openClawSkillsRoot && dirname(reservation.targetDir) === openClawSkillsRoot) {
 			runtimeUserTargets.add(reservation.targetDir);
 		}
 	}
-	if (managesHermesSourcedSkill) runtimeUserTargets.add(join(hermesSkillsRoot, ".hub"));
 	return [...runtimeUserTargets].sort();
 }
 export function runtimeManagedMutationPlan(input: {
