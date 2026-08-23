@@ -1688,7 +1688,6 @@ exit 0
 			for (const unitPath of generatedUnitPaths) {
 				expect(readFileSync(unitPath, "utf-8")).not.toContain(secret);
 			}
-			expect(readFileSync(paths.providerHealthStatus, "utf-8")).not.toContain(secret);
 		}
 
 		rmSync(egressSecretFile);

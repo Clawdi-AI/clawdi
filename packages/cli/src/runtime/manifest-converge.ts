@@ -88,7 +88,6 @@ import {
 	ensureHostedCodexCli,
 	hostedCodexManagedProvider,
 	previewHostedAiProviderProjectionRevision,
-	writeProviderHealthStatus,
 } from "./manifest-providers";
 import { applyHostedRuntimeConfigProjection, projectionPayload } from "./manifest-runtime-config";
 import {
@@ -868,7 +867,6 @@ function prepareRuntimeEgressProjection(
 	state: RuntimeConvergenceState,
 ): RuntimeEgressProjection {
 	const {
-		load,
 		manifest,
 		paths,
 		opts,
@@ -937,7 +935,6 @@ function prepareRuntimeEgressProjection(
 		egressUid,
 		egressGid,
 	});
-	writeProviderHealthStatus(manifest, load.secretValues, paths);
 	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
 	state.runtimeSystemdUserPrograms.push(

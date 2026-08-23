@@ -24,13 +24,7 @@ import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from ".
 import { type RuntimeInstallObservation, tail } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { hermesConfigContext } from "./manifest-runtime-config";
-import {
-	canonicalJsonEqual,
-	isPlainRecord,
-	recordValue,
-	stringValue,
-	writeRuntimePrivateFileAtomic,
-} from "./manifest-shared";
+import { canonicalJsonEqual, isPlainRecord, recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
@@ -47,64 +41,7 @@ import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
 
-export function writeProviderHealthStatus(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
-	paths: RuntimePaths,
-): string | null {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers || Object.keys(providers).length === 0) {
-		rmSync(paths.providerHealthStatus, { force: true });
-		return null;
-	}
-
-	const observed: Record<string, unknown> = {};
-	for (const providerId of Object.keys(providers).sort()) {
-		const provider = recordValue(providers[providerId]);
-		if (!provider) continue;
-		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
-		const secretAvailable =
-			apiKeySecretRef === null
-				? null
-				: providerSecretAvailable(secretValues ?? {}, apiKeySecretRef);
-		const reasons = providerHealthReasons(provider, secretAvailable);
-		observed[providerId] = {
-			status: reasons.length > 0 ? "error" : "ok",
-			configured: true,
-			kind: stringValue(provider.kind),
-			baseUrl: stringValue(provider.baseUrl),
-			model: stringValue(provider.model),
-			models: Array.isArray(provider.models) ? provider.models : undefined,
-			apiKeySecretRef,
-			secretAvailable,
-			reasons,
-		};
-	}
-
-	if (Object.keys(observed).length === 0) {
-		rmSync(paths.providerHealthStatus, { force: true });
-		return null;
-	}
-	writeRuntimePrivateFileAtomic(
-		paths,
-		paths.providerHealthStatus,
-		`${JSON.stringify(
-			{
-				schemaVersion: "clawdi.hostedRuntimeProviderHealth.v1",
-				generatedAt: new Date().toISOString(),
-				providers: observed,
-			},
-			null,
-			2,
-		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
-	);
-	return paths.providerHealthStatus;
-}
-function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
-	return runtimeSecretValue(secretValues, ref) !== null;
-}
-function providerHealthReasons(
+export function providerHealthReasons(
 	provider: Record<string, unknown>,
 	secretAvailable: boolean | null,
 ): string[] {

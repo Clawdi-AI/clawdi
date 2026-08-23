@@ -2847,15 +2847,6 @@ chmod 0755 '${commandPath}'
 		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
 		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
 		expect(envFile).not.toContain("sk-managed");
-		expect(JSON.parse(readFileSync(paths.providerHealthStatus, "utf8"))).toMatchObject({
-			providers: {
-				default: {
-					status: "ok",
-					models: [{ id: "gpt-test" }],
-					reasons: [],
-				},
-			},
-		});
 	});
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
@@ -5254,7 +5245,6 @@ installReservedManagedSkill(${JSON.stringify({
 			[
 				paths.managedConfig,
 				paths.syncState,
-				paths.providerHealthStatus,
 				paths.egressEngineStatus,
 				paths.manifestLastGood,
 				paths.managedSecretCacheFile,

@@ -42,7 +42,6 @@ export interface RuntimePaths {
 	userNpmPrefix: string;
 	cliBootstrapStatus: string;
 	cliUpgradeState: string;
-	providerHealthStatus: string;
 	egressEngineStatus: string;
 	egressEngineMaintainedRoot: string;
 	fileBrowserInstallRoot: string;
@@ -214,7 +213,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		userNpmPrefix: userLocalRoot,
 		cliBootstrapStatus: join(statusRoot, "cli-bootstrap.json"),
 		cliUpgradeState: join(statusRoot, "cli-upgrade-state.json"),
-		providerHealthStatus: join(statusRoot, "provider-health.json"),
 		egressEngineStatus: join(statusRoot, "egress-engine.json"),
 		egressEngineMaintainedRoot: join(maintainedRoot, "egress-engine", "mitmproxy"),
 		fileBrowserInstallRoot: join(maintainedRoot, "filebrowser"),

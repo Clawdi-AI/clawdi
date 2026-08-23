@@ -53,7 +53,6 @@ export function runtimeRootLiveMutationTargets(
 	const result = new Set<string>([
 		paths.managedConfig,
 		paths.syncState,
-		paths.providerHealthStatus,
 		paths.egressEngineStatus,
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,

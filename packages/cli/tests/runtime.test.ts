@@ -6931,13 +6931,11 @@ exit 64
 		);
 
 		expect(convergence.installErrors).toEqual([]);
-		const providerHealth = JSON.parse(
-			readFileSync(getRuntimePaths().providerHealthStatus, "utf-8"),
-		);
-		expect(providerHealth.providers.openclaw.status).toBe("error");
-		expect(providerHealth.providers.openclaw.reasons).toContain("provider_error");
-		expect(providerHealth.providers.openclaw.reasons).toContain("provider_secret_unavailable");
-		expect(providerHealth.providers.openclaw.reasons).toContain("api_key_secret_ref_missing");
+		const providerHealth = readHostedRuntimeObserved(getRuntimePaths())?.providers?.openclaw;
+		expect(providerHealth?.status).toBe("error");
+		expect(providerHealth?.reasons).toContain("provider_error");
+		expect(providerHealth?.reasons).toContain("provider_secret_unavailable");
+		expect(providerHealth?.reasons).toContain("api_key_secret_ref_missing");
 	});
 
 	it("loads only the selected hosted runtime entry", async () => {
@@ -7289,7 +7287,6 @@ exit 64
 				);
 			}
 			expect(readFileSync(paths.appliedState, "utf-8")).not.toContain(runtimeAuthToken);
-			expectExistingFileNotToContain(paths.providerHealthStatus, runtimeAuthToken);
 			expect(JSON.stringify(convergence)).not.toContain(runtimeAuthToken);
 			expect(JSON.stringify(watchedConvergence)).not.toContain(runtimeAuthToken);
 		} finally {
@@ -17220,10 +17217,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(getRuntimePaths().manifestLastGood, "utf-8")).not.toContain("sk-runtime");
-			const providerHealth = JSON.parse(
-				readFileSync(getRuntimePaths().providerHealthStatus, "utf-8"),
-			);
-			expect(providerHealth.providers["clawdi-managed-v2"]).toEqual({
+			const providerHealth = readHostedRuntimeObserved(paths)?.providers;
+			expect(providerHealth?.["clawdi-managed-v2"]).toEqual({
 				status: "ok",
 				configured: true,
 				kind: "openai-compatible",
