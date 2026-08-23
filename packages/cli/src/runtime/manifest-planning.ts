@@ -24,7 +24,7 @@ import {
 	hostedProviderEnvironment,
 } from "./hosted-provider-resolution";
 import type { HostedRuntimeContractOptions } from "./hosted-runtime-contract";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { runtimeInstallReceiptsPath } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
@@ -119,7 +119,7 @@ export interface RuntimeConvergenceOptions {
 	executeOfficialServiceInstallers?: boolean;
 	fileBrowserInstallOptions?: FileBrowserCompanionInstallOptions;
 	fileBrowserReadinessProbe?: (url: string) => boolean;
-	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSkill>;
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
 	resourcePreparationFailures?: RuntimeResourcePreparationFailures;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;

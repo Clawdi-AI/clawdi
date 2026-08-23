@@ -30,7 +30,7 @@ import {
 import { getCliVersion } from "../../src/lib/version";
 import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
-import { prepareHostedSourcedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
+import { prepareHostedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
 import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
@@ -481,6 +481,7 @@ exec /usr/bin/systemctl "$@"
 								: {},
 					},
 				},
+				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 				providers: {},
 				terminalTooling: {
 					codex: {
@@ -591,6 +592,31 @@ exec /usr/bin/systemctl "$@"
 			expect(firstStatus.exitCode).toBe(0);
 			const firstAppliedState = readRuntimeAppliedState(paths);
 			expect(firstAppliedState).not.toBeNull();
+			const bundledSource = join(
+				cliPrefix,
+				"lib",
+				"node_modules",
+				"clawdi",
+				"skills",
+				"hosted-versions",
+				"1",
+				"clawdi",
+				"SKILL.md",
+			);
+			const bundledTarget = join(
+				runtimeHome,
+				runtime === "hermes" ? ".hermes/skills/clawdi" : ".openclaw/workspace/skills/clawdi",
+				"SKILL.md",
+			);
+			expect(statSync(paths.serviceStateRoot).mode & 0o777).toBe(0o700);
+			expect(
+				spawnSync("runuser", ["-u", "clawdi", "--", "test", "-r", bundledSource]).status,
+			).not.toBe(0);
+			expect(readFileSync(bundledTarget)).toEqual(readFileSync(bundledSource));
+			expect([statSync(bundledTarget).uid, statSync(bundledTarget).gid]).toEqual([
+				runtimeUid,
+				runtimeGid,
+			]);
 			const clawdiHome = lstatSync(paths.clawdiHome);
 			expect([clawdiHome.uid, clawdiHome.gid, clawdiHome.mode & 0o777]).toEqual([
 				runtimeUid,
@@ -2501,24 +2527,6 @@ function behavioralGuardSkill(
 	};
 }
 
-async function prepareBehavioralGuardSkill(
-	load: RuntimeManifestLoad,
-	paths: ReturnType<typeof getRuntimePaths>,
-	fixture: ReturnType<typeof behavioralGuardSkill>,
-) {
-	return prepareHostedSourcedSkillArchives(load.manifest, paths, {
-		fetcher: async (input) => {
-			if (String(input) !== fixture.archiveUrl) {
-				throw new Error(`unexpected behavioral guard Skill request: ${String(input)}`);
-			}
-			return new Response(Uint8Array.from(fixture.archive), {
-				status: 200,
-				headers: { "content-length": String(fixture.archive.byteLength) },
-			});
-		},
-	});
-}
-
 function behavioralGuardManifest(input: {
 	generation: number;
 	command: string;
@@ -2595,8 +2603,22 @@ function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 async function convergeBehavioralGuard(
 	load: RuntimeManifestLoad,
 	paths: ReturnType<typeof getRuntimePaths>,
+	fixture: ReturnType<typeof behavioralGuardSkill> | null,
 ) {
-	const result = await applyRuntimeManifestLoad(load, paths);
+	const preparedHostedSourcedSkills = fixture
+		? await prepareHostedSkillArchives(load.manifest, paths, {
+				fetcher: async (input) => {
+					if (String(input) !== fixture.archiveUrl) {
+						throw new Error(`unexpected behavioral guard Skill request: ${String(input)}`);
+					}
+					return new Response(Uint8Array.from(fixture.archive), {
+						status: 200,
+						headers: { "content-length": String(fixture.archive.byteLength) },
+					});
+				},
+			})
+		: undefined;
+	const result = await applyRuntimeManifestLoad(load, paths, { preparedHostedSourcedSkills });
 	if (result.kind !== "converged") {
 		throw new Error(`unexpected behavioral guard apply result: ${result.kind}`);
 	}
@@ -2705,16 +2727,13 @@ test("replays last-good declarative state after a failed candidate and advances 
 		rmSync(skillRoot, { recursive: true, force: true });
 		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
 		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
-		await prepareBehavioralGuardSkill(generationOne, paths, generationOneSkill);
-		await prepareBehavioralGuardSkill(generationTwo, paths, generationTwoSkill);
-		await prepareBehavioralGuardSkill(generationThree, paths, generationThreeSkill);
-		const initial = await convergeBehavioralGuard(generationOne, paths);
+		const initial = await convergeBehavioralGuard(generationOne, paths, generationOneSkill);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 
-		const failed = await convergeBehavioralGuard(generationTwo, paths);
+		const failed = await convergeBehavioralGuard(generationTwo, paths, generationTwoSkill);
 		expect(failed.installErrors.length).toBeGreaterThan(0);
 		const failedFinalState = behavioralGuardObservableState(paths, skillRoot);
 		expect(failedFinalState.appliedState.generation).toBe(1);
@@ -2735,11 +2754,11 @@ test("replays last-good declarative state after a failed candidate and advances 
 		expect(failedFinalState.services.gateway.ActiveState).toBe("active");
 		expect(failedFinalState.services.dashboard.ActiveState).toBe("active");
 
-		const replayed = await convergeBehavioralGuard(generationOne, paths);
+		const replayed = await convergeBehavioralGuard(generationOne, paths, generationOneSkill);
 		expect([...replayed.installErrors, ...replayed.resourceProjectionErrors]).toEqual([]);
 		expect(failedFinalState).toEqual(behavioralGuardObservableState(paths, skillRoot));
 
-		const repaired = await convergeBehavioralGuard(generationThree, paths);
+		const repaired = await convergeBehavioralGuard(generationThree, paths, generationThreeSkill);
 		expect([...repaired.installErrors, ...repaired.resourceProjectionErrors]).toEqual([]);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(3);
 		expect(
@@ -2819,7 +2838,7 @@ exec /usr/bin/systemctl "$@"
 		cleanBehavioralGuardUnits(paths);
 		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
 		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
-		const initial = await convergeBehavioralGuard(generationOne, paths);
+		const initial = await convergeBehavioralGuard(generationOne, paths, null);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		const gatewayBefore = behavioralGuardUnitState("hermes-gateway.service");
 		const dashboardBefore = behavioralGuardUnitState("clawdi-hermes-dashboard.service");
@@ -2880,7 +2899,7 @@ exec /usr/bin/systemctl "$@"
 		expect(childStatus).not.toBe(0);
 		child = null;
 
-		const recovered = await convergeBehavioralGuard(generationTwo, paths);
+		const recovered = await convergeBehavioralGuard(generationTwo, paths, null);
 		expect([...recovered.installErrors, ...recovered.resourceProjectionErrors]).toEqual([]);
 		const gatewayAfter = behavioralGuardUnitState("hermes-gateway.service");
 		const dashboardAfter = behavioralGuardUnitState("clawdi-hermes-dashboard.service");

@@ -15,7 +15,6 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-	HostedAgentPluginReceipt,
 	HostedAgentPluginRuntime,
 	PreparedHostedAgentPlugin,
 	PreparedHostedAgentPlugins,
@@ -57,7 +56,6 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	failProbeInstallName: string | null = null;
 	failLiveHermesScanPolicy = false;
 	failLiveEnableVersion: string | null = null;
-	failLiveInstallVersion: string | null = null;
 	openClawMcpServersOverride: Array<{
 		name: string;
 		hasStdioTransport: boolean;
@@ -280,10 +278,6 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			if (input.home !== this.liveHome && manifest.name === this.failProbeInstallName) {
 				return { status: 42, stdout: "", stderr: "probe failure" };
 			}
-			if (input.home === this.liveHome && manifest.version === this.failLiveInstallVersion) {
-				this.failLiveInstallVersion = null;
-				return { status: 43, stdout: "", stderr: "live install failure" };
-			}
 			const nativeId = runtime === "openclaw" ? manifest.name.replaceAll(".", "-") : manifest.name;
 			const target = this.installPath(input.home, runtime, nativeId);
 			rmSync(target, { recursive: true, force: true });
@@ -407,7 +401,6 @@ function plugin(
 			contentDigest: `sha256-tree-v1:${treeDigest.digest("hex")}`,
 			ownershipIdentity,
 		},
-		receiptNativeId: null,
 		mcpServerNames: [...mcpServerNames].sort(),
 		hasStreamableHttpMcp: remote,
 		tree,
@@ -430,23 +423,22 @@ function desiredState(
 	desired: PreparedHostedAgentPlugin,
 	previous?: { runtime: HostedAgentPluginRuntime; plugin: PreparedHostedAgentPlugin },
 ): PreparedHostedAgentPlugins {
-	const previousReceipt: HostedAgentPluginReceipt | null = previous
-		? {
-				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-				runtime: previous.runtime,
-				installations: {
-					[previous.plugin.name]: {
-						...previous.plugin.installation,
-						nativeId: previous.plugin.name.replaceAll(".", "-"),
-					},
-				},
-			}
-		: null;
 	return {
 		runtime,
 		desired: new Map([[desired.name, desired]]),
-		previousReceipt,
-		rollback: previous ? new Map([[previous.plugin.name, previous.plugin]]) : new Map(),
+		previous: previous
+			? new Map([
+					[
+						previous.plugin.name,
+						{
+							runtime: previous.runtime,
+							name: previous.plugin.name,
+							installation: previous.plugin.installation,
+							nativeId: previous.plugin.name.replaceAll(".", "-"),
+						},
+					],
+				])
+			: new Map(),
 		transientCacheOwnerships: new Set(),
 	};
 }
@@ -562,22 +554,20 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			HERMES_CONFIG: undefined,
 			HERMES_ENV: undefined,
 		});
-		first.apply();
+		const receipt = first.apply();
 		expect(runner.get("openclaw", desired.name)).toMatchObject({
 			version: desired.installation.version,
 			enabled: true,
 		});
-		const receipt = first.nextReceipt;
-		if (!receipt) throw new Error("missing receipt fixture");
+		expect(receipt?.installations).toEqual({
+			"acme.tools": {
+				...desired.installation,
+				nativeId: "acme-tools",
+			},
+		});
 		const liveMutations = runner.liveMutations().length;
 		const repeat = prepareTransaction(
-			{
-				runtime: "openclaw",
-				desired: new Map([[desired.name, desired]]),
-				previousReceipt: receipt,
-				rollback: new Map([[desired.name, desired]]),
-				transientCacheOwnerships: new Set(),
-			},
+			desiredState("openclaw", desired, { runtime: "openclaw", plugin: desired }),
 			runner,
 		);
 		repeat.apply();
@@ -699,11 +689,6 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			"message",
 			"OpenClaw did not report the installed Agent Plugin",
 		);
-		expect(liveTransaction.rollback()).toEqual([]);
-		expect(liveRunner.get("openclaw", previous.name)).toMatchObject({
-			version: previous.installation.version,
-			enabled: true,
-		});
 	});
 
 	test("persistently disables an unset Hermes install scan before managed installation", () => {
@@ -896,40 +881,6 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		expect(runner.get("openclaw", desired.name)?.version).toBe("9.9.9");
 	});
 
-	test("restores the previous native package and leaves authority uncommitted after replacement failure", () => {
-		const runner = new FakeNativeRunner();
-		const previous = plugin("acme.tools", "1.2.3", "e".repeat(64));
-		const desired = plugin("acme.tools", "2.0.0", "f".repeat(64));
-		runner.seed(
-			"openclaw",
-			{
-				name: previous.name,
-				nativeId: "acme-tools",
-				version: previous.installation.version,
-				enabled: true,
-				compatible: true,
-			},
-			previous,
-		);
-		runner.failLiveEnableVersion = desired.installation.version;
-		const transaction = prepareTransaction(
-			desiredState("openclaw", desired, { runtime: "openclaw", plugin: previous }),
-			runner,
-		);
-		let authorityCommitted = false;
-		try {
-			transaction.apply();
-			authorityCommitted = true;
-		} catch {
-			expect(transaction.rollback()).toEqual([]);
-		}
-		expect(authorityCommitted).toBe(false);
-		expect(runner.get("openclaw", previous.name)).toMatchObject({
-			version: previous.installation.version,
-			enabled: true,
-		});
-	});
-
 	test("proves every package before any live mutation", () => {
 		const runner = new FakeNativeRunner();
 		const first = plugin("acme.first", "1.0.0", "2".repeat(64));
@@ -941,8 +892,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				[first.name, first],
 				[second.name, second],
 			]),
-			previousReceipt: null,
-			rollback: new Map(),
+			previous: new Map(),
 			transientCacheOwnerships: new Set(),
 		};
 
@@ -1039,8 +989,7 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				[dotted.name, dotted],
 				[dashed.name, dashed],
 			]),
-			previousReceipt: null,
-			rollback: new Map(),
+			previous: new Map(),
 			transientCacheOwnerships: new Set(),
 		};
 
@@ -1048,33 +997,5 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			"same native identity",
 		);
 		expect(runner.liveMutations()).toEqual([]);
-	});
-
-	test("reports native rollback failure for filesystem snapshot recovery", () => {
-		const runner = new FakeNativeRunner();
-		const previous = plugin("acme.tools", "1.2.3", "8".repeat(64));
-		const desired = plugin("acme.tools", "2.0.0", "9".repeat(64));
-		runner.seed(
-			"openclaw",
-			{
-				name: previous.name,
-				nativeId: "acme-tools",
-				version: previous.installation.version,
-				enabled: true,
-				compatible: true,
-			},
-			previous,
-		);
-		runner.failLiveEnableVersion = desired.installation.version;
-		runner.failLiveInstallVersion = previous.installation.version;
-		const transaction = prepareTransaction(
-			desiredState("openclaw", desired, { runtime: "openclaw", plugin: previous }),
-			runner,
-		);
-
-		expect(() => transaction.apply()).toThrow("state change failed");
-		expect(transaction.rollback()).toEqual([
-			"runtime openclaw Agent Plugin acme.tools rollback failed",
-		]);
 	});
 });

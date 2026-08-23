@@ -47,7 +47,7 @@ import {
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { readRuntimeInstallReceipts } from "./install-receipts";
 import {
 	captureRuntimeLiveSnapshot,
@@ -187,7 +187,6 @@ function preparedTestAgentPlugin(
 			contentDigest: `sha256-tree-v1:${treeDigest}`,
 			ownershipIdentity,
 		},
-		receiptNativeId: null,
 		mcpServerNames: [],
 		hasStreamableHttpMcp: false,
 		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
@@ -208,21 +207,21 @@ function preparedTestAgentPluginState(
 	desired: PreparedHostedAgentPlugin,
 	previous?: PreparedHostedAgentPlugin,
 ): PreparedHostedAgentPlugins {
-	const previousNativeId = previous?.name.replaceAll(".", "-") ?? "";
 	return {
 		runtime: "openclaw",
 		desired: new Map([[desired.name, desired]]),
-		previousReceipt: previous
-			? {
-					schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-					runtime: "openclaw",
-					installations: {
-						[previous.name]: { ...previous.installation, nativeId: previousNativeId },
-					},
-				}
-			: null,
-		rollback: previous
-			? new Map([[previous.name, { ...previous, receiptNativeId: previousNativeId }]])
+		previous: previous
+			? new Map([
+					[
+						previous.name,
+						{
+							runtime: "openclaw" as const,
+							name: previous.name,
+							installation: previous.installation,
+							nativeId: previous.name.replaceAll(".", "-"),
+						},
+					],
+				])
 			: new Map(),
 		transientCacheOwnerships: new Set(),
 	};
@@ -270,7 +269,10 @@ function preparedTestSourcedSkill(
 	skillId: string,
 	source: HostedSkillSource,
 	skillMd: string,
-): PreparedHostedSourcedSkill {
+): PreparedHostedSkill & {
+	identity: { source: HostedSkillSource; sourceIdentity: string; digest: string };
+	tarBytes: Buffer;
+} {
 	const fixtureRoot = mkdtempSync(join(tmpdir(), "clawdi-prepared-skill-test-"));
 	tempRoots.push(fixtureRoot);
 	const sourceRoot = join(fixtureRoot, "source");
@@ -285,10 +287,12 @@ function preparedTestSourcedSkill(
 			? ["github", skillId, source.url, source.path, source.commit].join("\0")
 			: ["project", skillId, source.projectId, source.contentHash].join("\0");
 	return {
-		skillId,
-		source,
-		sourceIdentity,
-		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
+		id: skillId,
+		identity: {
+			source,
+			sourceIdentity,
+			digest: createHash("sha256").update(tarBytes).digest("hex"),
+		},
 		tarBytes,
 	};
 }
@@ -1173,7 +1177,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow("Agent Plugin capability probe runtime command is unavailable");
 	});
 
-	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {
+	test("orders cold native plugin activation and restores the full preimage after failure", () => {
 		const paths = tempRuntimePaths();
 		const eventLog = join(dirname(paths.userHome), "agent-plugin-order.log");
 		const installerPath = join(dirname(paths.userHome), "openclaw-agent-plugin-installer.sh");
@@ -1251,10 +1255,6 @@ case "\${1:-}" in
 	        plugin_root="$HOME/.openclaw/extensions/$plugin_native_id"
 	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
 	        if [[ "$HOME" == '${paths.userHome}' ]]; then
-	          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then
-	            printf '%s\\n' native-rollback >> '${eventLog}'
-	            exit 9
-	          fi
 	          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
         else
           printf 'probe-install:%s\\n' "$version" >> '${eventLog}'
@@ -1440,60 +1440,6 @@ chmod 0755 '${commandPath}'
 		expect(isolatedAuthorityCommits).toBe(1);
 		expect(isolatedActivations).toBe(1);
 		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-
-		writeFileSync(eventLog, "");
-		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");
-		const rollbackLifecycle: string[] = [];
-		const failed = convergeRuntimeManifest(
-			manifestLoad(nextManifest, "agent-plugin-authority-failure"),
-			paths,
-			{
-				cacheLastGood: false,
-				preparedHostedAgentPlugins: preparedTestAgentPluginState(desired, previous),
-				commitAuthority: () => {
-					throw new Error("failed Agent Plugin apply must not commit authority");
-				},
-				systemdApply: {
-					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: () => {
-						throw new Error("failed Agent Plugin apply must not reach activation");
-					},
-					quiesce: (affectedUserUnits) => {
-						expect(affectedUserUnits).toEqual(["openclaw-gateway.service"]);
-						rollbackLifecycle.push("quiesce");
-						writeFileSync(eventLog, "quiesce\n", { flag: "a" });
-						writeFileSync(pluginDatabasePath, "quiesced-preimage\n");
-						preimage.set(pluginDatabasePath, readFileSync(pluginDatabasePath));
-					},
-					rollback: () => {
-						for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-						writeFileSync(eventLog, "snapshot-restored\n", { flag: "a" });
-						rollbackLifecycle.push("systemd rollback");
-					},
-				},
-			},
-		);
-
-		expect(failed.installErrors.join("\n")).toContain(
-			"OpenClaw native Agent Plugin state change failed",
-		);
-		expect(failed.installErrors.join("\n")).toContain(
-			"runtime openclaw Agent Plugin acme.tools rollback failed",
-		);
-		expect(failed.agentPluginFailedNames).toEqual(["acme.tools"]);
-		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
-		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
-			"probe-install:1.0.0",
-			"probe-install:1.0.0",
-			"probe-install:2.0.0",
-			"quiesce",
-			"plugin-apply:2.0.0",
-			"native-enable-failure",
-			"native-rollback",
-			"snapshot-restored",
-		]);
-		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-		expect(readFileSync(join(pluginRoot, "plugin.json"), "utf8")).toContain('"version":"1.0.0"');
 	});
 
 	test.each([
@@ -2551,7 +2497,7 @@ chmod 0755 '${commandPath}'
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
-		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
+		expect(normalized.manifest.projection?.providers).toEqual(hostedManifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
 		);
@@ -2934,9 +2880,9 @@ chmod 0755 '${commandPath}'
 				runtimeEnvName: "ANTHROPIC_TEST_API_KEY",
 				apiKeySecretRef: "secret://providers/anthropic/api-key",
 			},
-		};
+		} satisfies NonNullable<NonNullable<RuntimeManifest["projection"]>["providers"]>;
 		const manifestFor = (
-			providers: Record<string, unknown>,
+			providers: NonNullable<NonNullable<RuntimeManifest["projection"]>["providers"]>,
 			primaryModel: { provider_id: string; model: string } | undefined,
 			generation: number,
 		): RuntimeManifest =>
@@ -4422,7 +4368,7 @@ echo spawned > '${installerLog}'
 			targetDir: openClawEnabledSourcedTarget,
 			id: enabledSourcedId,
 			manager: "hosted-manifest",
-			sourceIdentity: enabledSourced.sourceIdentity,
+			sourceIdentity: enabledSourced.identity.sourceIdentity,
 		});
 		const manifest = baseManifest(
 			paths,
@@ -4476,8 +4422,8 @@ echo spawned > '${installerLog}'
 		);
 		expect(ledger.reservations[openClawEnabledSourcedTarget]).toMatchObject({
 			id: enabledSourcedId,
-			digest: enabledSourced.archiveSha256,
-			sourceIdentity: enabledSourced.sourceIdentity,
+			digest: enabledSourced.identity.digest,
+			sourceIdentity: enabledSourced.identity.sourceIdentity,
 			manager: "hosted-manifest",
 		});
 		expect(existsSync(disabledTarget)).toBe(false);
@@ -4631,7 +4577,7 @@ echo spawned > '${installerLog}'
 		const userOwnedSibling = join(paths.userHome, ".hermes", "skills", "user-owned");
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(join(skillDir, "SKILL.md"), "user-owned collision\n");
-		const preparedSkills = new Map([[prepared.skillId, prepared]]);
+		const preparedSkills = new Map([[prepared.id, prepared]]);
 
 		const collision = convergeRuntimeManifest(
 			manifestLoad(manifest, "skill-ledger-collision"),
@@ -4656,8 +4602,8 @@ echo spawned > '${installerLog}'
 		const ledger = JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8"));
 		expect(ledger.reservations[skillDir]).toMatchObject({
 			id: "review-pr",
-			digest: prepared.archiveSha256,
-			sourceIdentity: prepared.sourceIdentity,
+			digest: prepared.identity.digest,
+			sourceIdentity: prepared.identity.sourceIdentity,
 			manager: "hosted-manifest",
 		});
 
@@ -4672,10 +4618,13 @@ echo spawned > '${installerLog}'
 		const movedSource = { ...source, commit: "c".repeat(40) };
 		const movedPrepared = {
 			...prepared,
-			source: movedSource,
-			sourceIdentity:
-				"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
-				movedSource.commit,
+			identity: {
+				...prepared.identity,
+				source: movedSource,
+				sourceIdentity:
+					"github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0" +
+					movedSource.commit,
+			},
 		};
 		const moved = convergeRuntimeManifest(
 			manifestLoad(
@@ -4689,14 +4638,14 @@ echo spawned > '${installerLog}'
 				"skill-ledger-source-moved",
 			),
 			paths,
-			{ preparedHostedSourcedSkills: new Map([[movedPrepared.skillId, movedPrepared]]) },
+			{ preparedHostedSourcedSkills: new Map([[movedPrepared.id, movedPrepared]]) },
 		);
 		expect([...moved.installErrors, ...moved.resourceProjectionErrors]).toEqual([]);
 		expect(statSync(skillDir).ino).toBe(stableInode);
 		expect(
 			JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8")).reservations[skillDir]
 				.sourceIdentity,
-		).toBe(movedPrepared.sourceIdentity);
+		).toBe(movedPrepared.identity.sourceIdentity);
 
 		const removed = convergeRuntimeManifest(
 			manifestLoad(
@@ -4722,7 +4671,7 @@ echo spawned > '${installerLog}'
 			commit: "a".repeat(40),
 		};
 		const prepared = preparedTestSourcedSkill(skillId, source, "verified tree\n");
-		const sourceIdentity = prepared.sourceIdentity;
+		const sourceIdentity = prepared.identity.sourceIdentity;
 		const target = join(paths.userHome, ".hermes", "skills", skillId);
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "old committed tree\n");
@@ -4744,7 +4693,7 @@ const { installReservedManagedSkill } = await import(${JSON.stringify(moduleUrl)
 installReservedManagedSkill(${JSON.stringify({
 					targetDir: target,
 					id: skillId,
-					digest: prepared.archiveSha256,
+					digest: prepared.identity.digest,
 					sourceIdentity,
 					manager: "hosted-manifest",
 				})}, () => {
@@ -4793,7 +4742,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("verified tree\n");
 		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
 		const committedLedger = JSON.parse(readFileSync(ledgerPath, "utf8"));
-		expect(committedLedger.reservations[target].digest).toBe(prepared.archiveSha256);
+		expect(committedLedger.reservations[target].digest).toBe(prepared.identity.digest);
 		expect(committedLedger.pendingReservations).toEqual({});
 	});
 
@@ -4838,7 +4787,7 @@ installReservedManagedSkill(${JSON.stringify({
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 		const skillIds = ["a-fail", "b-ready", "c-ready"];
-		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
 		for (const skillId of skillIds) {
 			const source = {
@@ -4852,8 +4801,9 @@ installReservedManagedSkill(${JSON.stringify({
 		}
 		const failed = preparedSkills.get("a-fail");
 		if (!failed) throw new Error("missing failing Skill fixture");
+		if (!("tarBytes" in failed)) throw new Error("failing Skill fixture is not sourced");
 		failed.tarBytes = Buffer.from("invalid archive");
-		failed.archiveSha256 = createHash("sha256").update(failed.tarBytes).digest("hex");
+		failed.identity.digest = createHash("sha256").update(failed.tarBytes).digest("hex");
 		const manifest = baseManifest(
 			paths,
 			{
@@ -4887,7 +4837,7 @@ installReservedManagedSkill(${JSON.stringify({
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 		const skillIds = ["a-unmanaged", "b-ready", "c-ready"];
-		const preparedSkills = new Map<string, PreparedHostedSourcedSkill>();
+		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
 		for (const skillId of skillIds) {
 			const source = {
@@ -4965,6 +4915,8 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(readFileSync(join(target, "SKILL.md"))).toEqual(
 			readFileSync(join(packageSource, "SKILL.md")),
 		);
+		expect(statSync(target).mode & 0o777).toBe(0o755);
+		expect(statSync(join(target, "SKILL.md")).mode & 0o777).toBe(0o644);
 		expect(existsSync(join(target, ".clawdi-managed.json"))).toBe(false);
 		expect(shouldIgnoreUserSkill(target, "clawdi")).toBe(true);
 

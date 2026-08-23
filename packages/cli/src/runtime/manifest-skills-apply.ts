@@ -5,13 +5,13 @@ import { hostedBundledSkillIds, resolveHostedBundledSkill } from "./hosted-bundl
 import { activateHostedHermesSkill } from "./hosted-hermes-skill";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 import {
-	type PreparedHostedSourcedSkill,
-	prepareHostedBundledSkillArchive,
+	type PreparedHostedSkill,
+	prepareHostedBundledSkill,
 } from "./hosted-sourced-skill-archive";
 import {
 	installedTreeMatches,
 	ManagedSkillResourceError,
-	withStagedManagedSkill,
+	withPreparedHostedSkill,
 } from "./managed-skill-delivery";
 import {
 	installReservedManagedSkill,
@@ -40,34 +40,35 @@ interface HostedSkillProjectionDriver {
 type HostedSkillRuntime = "hermes" | "openclaw";
 
 function preparedSkillMatchesDesired(
-	prepared: PreparedHostedSourcedSkill | undefined,
+	prepared: PreparedHostedSkill | undefined,
 	desired: HostedSkillDesired,
 	skillId: string,
-): prepared is PreparedHostedSourcedSkill {
-	if (!prepared || prepared.skillId !== skillId) return false;
+): prepared is PreparedHostedSkill {
+	if (!prepared || prepared.id !== skillId) return false;
+	const source = prepared.identity.source;
 	if ("source" in desired) {
-		return prepared.source.type !== "bundled" && isDeepStrictEqual(prepared.source, desired.source);
+		return source.type !== "bundled" && isDeepStrictEqual(source, desired.source);
 	}
 	const catalogEntry = resolveHostedBundledSkill(skillId, desired.version);
 	return (
-		prepared.source.type === "bundled" &&
-		prepared.source.version === desired.version &&
-		prepared.source.digest === catalogEntry.digest &&
-		prepared.source.assetDirectory === catalogEntry.assetDirectory
+		source.type === "bundled" &&
+		source.version === desired.version &&
+		source.digest === catalogEntry.digest &&
+		source.assetDirectory === catalogEntry.assetDirectory
 	);
 }
 
 function requirePreparedSkillTarget(
 	skillsRoot: string,
-	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSkill>,
 	desired: HostedSkillDesired,
 	skillId: string,
-): readonly [PreparedHostedSourcedSkill, string] {
+): readonly [PreparedHostedSkill, string] {
 	const prepared = preparedSkills.get(skillId);
 	if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
 		throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
 	}
-	const targetDir = join(skillsRoot, prepared.skillId);
+	const targetDir = join(skillsRoot, prepared.id);
 	if (
 		withRuntimeUserFileAccess(() => existsSync(targetDir)) &&
 		managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
@@ -83,25 +84,25 @@ function openClawWorkspaceUnavailable(): never {
 
 function completePreparedHostedSkills(
 	manifest: RuntimeManifest,
-	prepared: ReadonlyMap<string, PreparedHostedSourcedSkill>,
-): ReadonlyMap<string, PreparedHostedSourcedSkill> {
+	prepared: ReadonlyMap<string, PreparedHostedSkill>,
+): ReadonlyMap<string, PreparedHostedSkill> {
 	const complete = new Map(prepared);
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		if (!desired.enabled || "source" in desired) continue;
 		const existing = complete.get(skillId);
 		if (preparedSkillMatchesDesired(existing, desired, skillId)) continue;
-		complete.set(skillId, prepareHostedBundledSkillArchive(skillId, desired.version));
+		complete.set(skillId, prepareHostedBundledSkill(skillId, desired.version));
 	}
 	return complete;
 }
-function preparedReservationIdentity(skill: PreparedHostedSourcedSkill): {
+function preparedReservationIdentity(skill: PreparedHostedSkill): {
 	version?: number;
 	digest?: string;
 	sourceIdentity?: string;
 } {
-	return skill.source.type === "bundled"
-		? { version: skill.source.version, digest: skill.source.digest }
-		: { sourceIdentity: skill.sourceIdentity, digest: skill.archiveSha256 };
+	return "version" in skill.identity
+		? { version: skill.identity.version, digest: skill.identity.digest }
+		: { sourceIdentity: skill.identity.sourceIdentity, digest: skill.identity.digest };
 }
 function hostedSkillProjectionDrivers(input: {
 	home: string;
@@ -144,11 +145,11 @@ function runtimeEnabled(manifest: RuntimeManifest, runtime: HostedSkillRuntime):
 
 function pendingReservationMatchesPrepared(
 	reservation: PendingManagedSkillReservationSnapshot,
-	skill: PreparedHostedSourcedSkill,
+	skill: PreparedHostedSkill,
 ): boolean {
 	const identity = preparedReservationIdentity(skill);
 	return (
-		reservation.id === skill.skillId &&
+		reservation.id === skill.id &&
 		reservation.version === identity.version &&
 		reservation.digest === identity.digest &&
 		reservation.sourceIdentity === identity.sourceIdentity
@@ -163,7 +164,7 @@ function recoverPendingHostedSkillInstallations(
 	runtime: HostedSkillRuntime,
 	driver: HostedSkillProjectionDriver,
 	manifest: RuntimeManifest,
-	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSkill>,
 ): void {
 	if (!driver.skillsRoot) return;
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
@@ -197,7 +198,7 @@ function validateHostedSkillsPlan(
 	runtime: HostedSkillRuntime,
 	driver: HostedSkillProjectionDriver,
 	manifest: RuntimeManifest,
-	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSkill>,
 ): void {
 	if (runtimeEnabled(manifest, runtime) && !driver.skillsRoot) {
 		openClawWorkspaceUnavailable();
@@ -216,7 +217,7 @@ function applyHostedSkills(
 	driver: HostedSkillProjectionDriver,
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
-	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSkill>,
 ): string[] {
 	if (!driver.skillsRoot) return [];
 	const failures: string[] = [];
@@ -295,7 +296,7 @@ function applyHostedSkills(
 					...preparedReservationIdentity(prepared),
 				},
 				() =>
-					withStagedManagedSkill(prepared, (sourceDir) => driver.activate(sourceDir, targetDir)),
+					withPreparedHostedSkill(prepared, (sourceDir) => driver.activate(sourceDir, targetDir)),
 				{
 					verify: () =>
 						installedTreeMatches(prepared, targetDir, {
@@ -326,7 +327,7 @@ export function reconcileHostedSkillProjection(input: {
 	home: string;
 	managedResourceRoot: string;
 	openClawWorkspaceRoot: string | null;
-	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSkill>;
 }): string[] {
 	const {
 		manifest,

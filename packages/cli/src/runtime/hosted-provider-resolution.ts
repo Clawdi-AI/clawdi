@@ -1,15 +1,8 @@
-import type {
-	AiProviderApiMode,
-	AiProviderAuth,
-	AiProviderCatalog,
-	AiProviderType,
-} from "@clawdi/shared";
+import type { AiProviderAuth, AiProviderCatalog } from "@clawdi/shared";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_API_MODE,
-	isAiProviderApiMode,
-	isAiProviderType,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
@@ -22,6 +15,10 @@ export type HostedAiProviderProjectionInput = {
 	catalog: AiProviderCatalog;
 	primaryModel: AgentPrimaryModel;
 };
+
+type HostedProviderProjection = NonNullable<
+	NonNullable<RuntimeManifest["projection"]>["providers"]
+>[string];
 
 export function agentTargetProjectionInput(
 	input: HostedAiProviderProjectionInput | null,
@@ -60,19 +57,16 @@ export function hostedAiProviderCatalog(
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
-	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
+	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest);
 	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName);
 	if (!primaryModel) return null;
-	const entries = rawEntries
-		.map(([id, raw]) => {
-			if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
-			const input = raw as Record<string, unknown>;
-			const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl : undefined;
+	const entries = providerEntries
+		.map(([id, input]) => {
+			const baseUrl = input.baseUrl;
 			const apiMode = hostedProviderApiMode(input);
-			const apiKeySecretRef =
-				typeof input.apiKeySecretRef === "string" ? input.apiKeySecretRef : undefined;
+			const apiKeySecretRef = input.apiKeySecretRef ?? undefined;
 			const runtimeEnvName = hostedProviderRuntimeEnvName(id, input, runtimeName);
-			if (hostedProviderUnhealthy(input)) return null;
+			if (input.status === "error") return null;
 			if (!baseUrl) return null;
 			const auth = hostedProviderAuth(input, Boolean(apiKeySecretRef));
 			if (!auth) return null;
@@ -85,7 +79,7 @@ export function hostedAiProviderCatalog(
 				type: hostedProviderType(input),
 				base_url: baseUrl,
 				api_mode: apiMode,
-				managed_by: hostedProviderManagedBy(input),
+				managed_by: input.managed_by,
 				auth,
 				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
 				models,
@@ -103,18 +97,11 @@ export function hostedAiProviderCatalog(
 	};
 }
 
-function hostedProviderManagedBy(
-	input: Record<string, unknown>,
-): AiProviderCatalog["providers"][number]["managed_by"] {
-	const value = input.managed_by;
-	return value === "clawdi" || value === "user" ? value : undefined;
-}
-
 function hostedProviderEntries(
-	providers: Record<string, unknown>,
+	providers: Record<string, HostedProviderProjection>,
 	runtimeName?: string,
 	manifest?: RuntimeManifest,
-): Array<[string, unknown]> {
+): Array<[string, HostedProviderProjection]> {
 	if (!runtimeName) {
 		return Object.entries(providers).sort(([left], [right]) => left.localeCompare(right));
 	}
@@ -133,33 +120,16 @@ function hostedRuntimePrimaryModel(
 }
 
 function hostedProviderModels(
-	input: Record<string, unknown>,
+	input: HostedProviderProjection,
 	primaryModel: AgentPrimaryModel | null,
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
 	const providerApiMode = hostedProviderApiMode(input);
-	// Hosted wire rejects singular model; this fallback serves generic provider projections only.
-	const singularModel = stringValue(input.model);
-	const rawModels = Array.isArray(input.models) ? input.models : [];
-	const manifestModels = rawModels
-		.map((model) => (recordValue(model) ? (model as Record<string, unknown>) : null))
-		.filter((model): model is Record<string, unknown> => model !== null)
-		.map((model) => {
-			const id = stringValue(model.id);
-			if (!id) return null;
-			const apiMode = stringValue(model.api_mode);
-			return {
-				...model,
-				id,
-				...(apiMode && isAiProviderApiMode(apiMode) ? { api_mode: apiMode } : {}),
-			};
-		})
-		.filter((model): model is NonNullable<typeof model> => model !== null);
 	// The manifest is the only source: the hosted control plane already
 	// intersected curation with Sub2API inventory and froze the result with its
 	// facts. Anything not in it is not offered.
-	const models = manifestModels;
-	if (singularModel && !models.some((model) => model.id === singularModel)) {
-		models.unshift({ id: singularModel, api_mode: providerApiMode });
+	const models = [...(input.models ?? [])];
+	if (input.model && !models.some((model) => model.id === input.model)) {
+		models.unshift({ id: input.model, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
 		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });
@@ -169,38 +139,34 @@ function hostedProviderModels(
 	);
 }
 
-function hostedProviderApiMode(input: Record<string, unknown>): AiProviderApiMode {
-	const raw = input.apiMode;
-	if (typeof raw === "string" && isAiProviderApiMode(raw)) {
-		return raw;
-	}
-	return "openai_chat";
+function hostedProviderApiMode(
+	input: HostedProviderProjection,
+): AiProviderCatalog["providers"][number]["api_mode"] {
+	return input.apiMode ?? "openai_chat";
 }
 
-function hostedProviderType(input: Record<string, unknown>): AiProviderType {
-	const type = stringValue(input.type);
-	return type && isAiProviderType(type) ? type : "custom_openai_compatible";
+function hostedProviderType(
+	input: HostedProviderProjection,
+): AiProviderCatalog["providers"][number]["type"] {
+	return input.type ?? "custom_openai_compatible";
 }
 
 function hostedProviderAuth(
-	input: Record<string, unknown>,
+	input: HostedProviderProjection,
 	hasApiKeySecretRef: boolean,
 ): AiProviderAuth | null {
-	const auth = recordValue(input.auth);
+	const auth = input.auth;
 	if (auth) {
-		const type = stringValue(auth.type);
-		const tool = stringValue(auth.tool);
-		const profile = stringValue(auth.profile);
-		if (type === "agent_profile" && tool === "codex" && profile) {
-			return { type: "agent_profile", tool: "codex", profile };
+		if (auth.type === "agent_profile" && auth.tool === "codex" && auth.profile) {
+			return { type: "agent_profile", tool: "codex", profile: auth.profile };
 		}
-		if (type === "api_key" || type === "secret_ref") {
+		if (auth.type === "api_key" || auth.type === "secret_ref") {
 			if (hasApiKeySecretRef) {
 				return { type: "api_key", source: "managed" };
 			}
 			return null;
 		}
-		if (type && type !== "none") return null;
+		if (auth.type !== "none") return null;
 	}
 	if (hasApiKeySecretRef) {
 		return { type: "api_key", source: "managed" };
@@ -211,21 +177,15 @@ function hostedProviderAuth(
 	return { type: "none" };
 }
 
-function hostedProviderUnhealthy(input: Record<string, unknown>): boolean {
-	const status = stringValue(input.status);
-	return Boolean(status && status !== "ok");
-}
-
 export function hostedProviderRequiresApiKey(input: Record<string, unknown>): boolean {
 	if (input.apiKeyRequired === true) return true;
 	const auth = recordValue(input.auth);
-	const type = auth ? stringValue(auth.type) : null;
-	return type === "api_key" || type === "secret_ref";
+	return auth?.type === "api_key" || auth?.type === "secret_ref";
 }
 
 function hostedProviderRuntimeEnvName(
 	providerId: string,
-	input: Record<string, unknown>,
+	input: HostedProviderProjection,
 	runtimeName?: string,
 ): string {
 	if (
@@ -234,49 +194,9 @@ function hostedProviderRuntimeEnvName(
 	) {
 		return MANAGED_AI_PROVIDER_RUNTIME_ENV;
 	}
-	const raw = typeof input.runtimeEnvName === "string" ? input.runtimeEnvName : null;
+	const raw = input.runtimeEnvName;
 	if (raw && isEnvKey(raw)) return raw;
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
-}
-
-function hostedProviderPlaceholderEnv(
-	manifest: RuntimeManifest,
-	runtimeName?: string,
-): Record<string, string> {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers) return {};
-	const env: Record<string, string> = {};
-	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
-		const provider = recordValue(raw);
-		if (!provider) continue;
-		if (!isClawdiManagedProviderProjection(provider)) continue;
-		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
-		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
-		if (!isEnvKey(runtimeEnvName)) continue;
-		env[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
-	}
-	return env;
-}
-
-function hostedProviderSecretEnv(
-	manifest: RuntimeManifest,
-	runtimeName?: string,
-): Record<string, string> {
-	const providers = recordValue(manifest.projection?.providers);
-	if (!providers) return {};
-	const secretEnv: Record<string, string> = {};
-	for (const [providerId, raw] of hostedProviderEntries(providers, runtimeName, manifest)) {
-		const provider = recordValue(raw);
-		if (!provider) continue;
-		if (isClawdiManagedProviderProjection(provider)) continue;
-		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
-		if (!apiKeySecretRef) continue;
-		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
-		if (!isEnvKey(runtimeEnvName)) continue;
-		secretEnv[runtimeEnvName] = apiKeySecretRef;
-	}
-	return secretEnv;
 }
 
 interface HostedProviderEnvironment {
@@ -289,8 +209,22 @@ export function hostedProviderEnvironment(
 	runtimeName?: string,
 	options: { validateOverlap?: boolean } = {},
 ): HostedProviderEnvironment {
-	const placeholderEnv = hostedProviderPlaceholderEnv(manifest, runtimeName);
-	const secretEnv = hostedProviderSecretEnv(manifest, runtimeName);
+	const placeholderEnv: Record<string, string> = {};
+	const secretEnv: Record<string, string> = {};
+	for (const [providerId, provider] of hostedProviderEntries(
+		manifest.projection?.providers ?? {},
+		runtimeName,
+		manifest,
+	)) {
+		if (!provider.apiKeySecretRef) continue;
+		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
+		if (!isEnvKey(runtimeEnvName)) continue;
+		if (isClawdiManagedProviderProjection(provider)) {
+			placeholderEnv[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
+		} else {
+			secretEnv[runtimeEnvName] = provider.apiKeySecretRef;
+		}
+	}
 	if (options.validateOverlap) {
 		assertNoProviderEnvOverlap(runtimeName ?? "default", placeholderEnv, secretEnv);
 	}
@@ -352,10 +286,6 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: null;
-}
-
-function stringValue(value: unknown): string | null {
-	return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function isEnvKey(value: string): boolean {

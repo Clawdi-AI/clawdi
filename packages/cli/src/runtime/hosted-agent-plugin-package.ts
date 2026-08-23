@@ -5,7 +5,6 @@ import {
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
-	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
@@ -14,16 +13,22 @@ import { validateHeaderName, validateHeaderValue } from "node:http";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createGunzip } from "node:zlib";
-import * as tar from "tar";
 import { parseDocument } from "yaml";
 import { z } from "zod";
+import {
+	collectRegularFileTree,
+	type RegularFileTreeEntry,
+	sha256TreeDigest,
+} from "../lib/file-tree";
 import type { GithubArchiveFetcher } from "../lib/github-skill-archive";
 import {
+	githubCodeloadArchiveUrl,
 	hasAsciiControlCharacter,
 	parseCanonicalGithubRepositoryUrl,
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
+import { extractTarGz } from "../lib/tar";
+import { archiveCache, gcArchiveCache } from "./archive-cache";
 import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
@@ -63,7 +68,6 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_PATH_BYTES = 512;
 const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
-const MAX_CACHE_RECEIPT_BYTES = 4 * 1024;
 const PLACEHOLDER_PREFIX = "$";
 const PLUGIN_ROOT = `${PLACEHOLDER_PREFIX}{PLUGIN_ROOT}`;
 const PLUGIN_DATA = `${PLACEHOLDER_PREFIX}{PLUGIN_DATA}`;
@@ -89,44 +93,49 @@ const hostedAgentPluginReceiptSchema = z
 		installations: z.record(agentPluginNameSchema, receiptInstallationSchema),
 	})
 	.strict();
+const cacheReceiptSchema = z
+	.object({
+		schemaVersion: z.literal(CACHE_SCHEMA),
+		ownershipIdentity: z.string().regex(/^[a-f0-9]{64}$/),
+		archiveSha256: z.string().regex(/^[a-f0-9]{64}$/),
+	})
+	.strict();
+const cacheReceiptReader = {
+	parse(value: unknown) {
+		const receipt = cacheReceiptSchema.parse(value);
+		return { key: receipt.ownershipIdentity, archiveSha256: receipt.archiveSha256 };
+	},
+};
 
 export type HostedAgentPluginReceipt = z.infer<typeof hostedAgentPluginReceiptSchema>;
 export type HostedAgentPluginReceiptInstallation = z.infer<typeof receiptInstallationSchema>;
 export type PreparedHostedAgentPluginInstallation = z.infer<typeof preparedInstallationSchema>;
 
-export interface PreparedAgentPluginTreeFile {
-	path: string;
-	mode: 0o100644 | 0o100755;
-	bytes: Buffer;
-}
+export type PreparedAgentPluginTreeFile = RegularFileTreeEntry;
 
 export function hostedAgentPluginTreeDigest(tree: readonly PreparedAgentPluginTreeFile[]): string {
-	const digest = createHash("sha256");
-	for (const file of [...tree].sort((left, right) =>
-		Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
-	)) {
-		digest.update(
-			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.length}\0${sha256(file.bytes)}\n`,
-			"utf8",
-		);
-	}
-	return `sha256-tree-v1:${digest.digest("hex")}`;
+	return sha256TreeDigest(tree);
 }
 
 export interface PreparedHostedAgentPlugin {
 	name: string;
 	installation: PreparedHostedAgentPluginInstallation;
-	receiptNativeId: string | null;
 	mcpServerNames: readonly string[];
 	hasStreamableHttpMcp: boolean;
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
+export interface HostedAgentPluginOwnership {
+	runtime: HostedAgentPluginRuntime;
+	name: string;
+	installation: PreparedHostedAgentPluginInstallation;
+	nativeId: string;
+}
+
 export interface PreparedHostedAgentPlugins {
 	runtime: HostedAgentPluginRuntime;
 	desired: ReadonlyMap<string, PreparedHostedAgentPlugin>;
-	previousReceipt: HostedAgentPluginReceipt | null;
-	rollback: ReadonlyMap<string, PreparedHostedAgentPlugin>;
+	previous: ReadonlyMap<string, HostedAgentPluginOwnership>;
 	transientCacheOwnerships: ReadonlySet<string>;
 }
 
@@ -136,13 +145,6 @@ interface PackageDescriptor {
 	installation: PreparedHostedAgentPluginInstallation;
 }
 
-const cacheReceiptSchema = z
-	.object({
-		schemaVersion: z.literal(CACHE_SCHEMA),
-		ownershipIdentity: z.string().regex(/^[a-f0-9]{64}$/),
-		archiveSha256: z.string().regex(/^[a-f0-9]{64}$/),
-	})
-	.strict();
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 const pluginManifestSchema = z
 	.object({
@@ -277,7 +279,10 @@ function sha256(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function ownershipIdentity(name: string, installation: HostedAgentPluginInstallation): string {
+export function hostedAgentPluginOwnershipIdentity(
+	name: string,
+	installation: HostedAgentPluginInstallation,
+): string {
 	const sourceIdentity =
 		installation.source.type === "github"
 			? [
@@ -305,7 +310,7 @@ function preparedInstallation(
 ): PreparedHostedAgentPluginInstallation {
 	return preparedInstallationSchema.parse({
 		...installation,
-		ownershipIdentity: ownershipIdentity(name, installation),
+		ownershipIdentity: hostedAgentPluginOwnershipIdentity(name, installation),
 	});
 }
 
@@ -350,8 +355,9 @@ export function writeHostedAgentPluginReceipt(
 	}
 	const parsed = hostedAgentPluginReceiptSchema.parse(receipt);
 	const current = readHostedAgentPluginReceipt(paths);
-	if (current && JSON.stringify(current) === JSON.stringify(parsed)) return;
-	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(parsed, null, 2)}\n`, {
+	const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+	if (current && readFileSync(path, "utf8") === serialized) return;
+	writeRuntimePlatformFileAtomic(paths, path, serialized, {
 		mode: 0o600,
 		dirMode: 0o755,
 	});
@@ -361,68 +367,19 @@ export function writeHostedAgentPluginReceipt(
 	}
 }
 
-function cachePaths(paths: RuntimePaths, ownership: string) {
-	const root = join(paths.cacheRoot, "agent-plugins", ownership);
-	return { archive: join(root, "source.tar.gz"), receipt: join(root, "receipt.json") };
-}
-
 function cacheContainer(paths: RuntimePaths): string {
 	return join(paths.cacheRoot, "agent-plugins");
 }
 
-function cacheOwnershipExists(paths: RuntimePaths, ownership: string): boolean {
-	try {
-		lstatSync(dirname(cachePaths(paths, ownership).archive));
-		return true;
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-		throw error;
-	}
-}
-
-function removeCacheOwnership(
-	paths: RuntimePaths,
-	ownership: string,
-	options: { allowIncomplete?: boolean } = {},
-): boolean {
-	if (!/^[a-f0-9]{64}$/.test(ownership)) return false;
-	const container = cacheContainer(paths);
-	const target = join(container, ownership);
-	if (dirname(target) !== container) return false;
-	try {
-		const containerStat = lstatSync(container);
-		if (!containerStat.isDirectory() || containerStat.isSymbolicLink()) return false;
-		const targetStat = lstatSync(target);
-		if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return false;
-		const entries = readdirSync(target);
-		if (options.allowIncomplete !== true && readCachedArchive(paths, ownership) === null) {
-			return false;
-		}
-		for (const entry of entries) {
-			if (entry !== "source.tar.gz" && entry !== "receipt.json") return false;
-			const entryStat = lstatSync(join(target, entry));
-			if (!entryStat.isFile() || entryStat.isSymbolicLink()) return false;
-		}
-		rmSync(target, { recursive: true });
-		return true;
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-		throw error;
-	}
-}
-
-function assertCacheOwnershipWritable(paths: RuntimePaths, ownership: string): void {
-	const { archive } = cachePaths(paths, ownership);
-	const target = dirname(archive);
-	try {
-		const stat = lstatSync(target);
-		if (!stat.isDirectory() || stat.isSymbolicLink()) {
-			throw new Error("Agent Plugin cache ownership path is not a trusted directory");
-		}
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-		throw error;
-	}
+function pluginArchiveCache(paths: RuntimePaths, ownership: string) {
+	return archiveCache(
+		paths,
+		cacheContainer(paths),
+		ownership,
+		"source.tar.gz",
+		cacheReceiptReader,
+		MAX_ARCHIVE_BYTES,
+	);
 }
 
 export function cleanupHostedAgentPluginTransientArchives(
@@ -431,7 +388,7 @@ export function cleanupHostedAgentPluginTransientArchives(
 ): void {
 	if (!prepared) return;
 	for (const ownership of prepared.transientCacheOwnerships) {
-		removeCacheOwnership(paths, ownership, { allowIncomplete: true });
+		pluginArchiveCache(paths, ownership).remove({ allowIncomplete: true });
 	}
 }
 
@@ -446,72 +403,14 @@ export function gcHostedAgentPluginArchives(
 		),
 	);
 	for (const ownership of additionalOwnerships) keep.add(ownership);
-	const container = cacheContainer(paths);
-	let entries: string[];
-	try {
-		const stat = lstatSync(container);
-		if (!stat.isDirectory() || stat.isSymbolicLink()) return;
-		entries = readdirSync(container);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-		throw error;
-	}
-	for (const entry of entries) {
-		if (/^[a-f0-9]{64}$/.test(entry) && !keep.has(entry)) removeCacheOwnership(paths, entry);
-	}
-}
-
-function readCachedArchive(paths: RuntimePaths, ownership: string): Buffer | null {
-	const cache = cachePaths(paths, ownership);
-	try {
-		const archiveStat = lstatSync(cache.archive);
-		const receiptStat = lstatSync(cache.receipt);
-		if (
-			!archiveStat.isFile() ||
-			archiveStat.isSymbolicLink() ||
-			archiveStat.size > MAX_ARCHIVE_BYTES ||
-			(archiveStat.mode & 0o777) !== 0o600 ||
-			!receiptStat.isFile() ||
-			receiptStat.isSymbolicLink() ||
-			receiptStat.size > MAX_CACHE_RECEIPT_BYTES ||
-			(receiptStat.mode & 0o777) !== 0o600 ||
-			(typeof process.getuid === "function" &&
-				(archiveStat.uid !== process.getuid() || receiptStat.uid !== process.getuid()))
-		) {
-			return null;
-		}
-		const parsed: unknown = JSON.parse(readFileSync(cache.receipt, "utf8"));
-		const receipt = cacheReceiptSchema.parse(parsed);
-		const archive = readFileSync(cache.archive);
-		if (receipt.ownershipIdentity !== ownership || sha256(archive) !== receipt.archiveSha256) {
-			return null;
-		}
-		return archive;
-	} catch {
-		return null;
-	}
-}
-
-function writeCachedArchive(paths: RuntimePaths, ownership: string, archive: Buffer): void {
-	assertCacheOwnershipWritable(paths, ownership);
-	const cache = cachePaths(paths, ownership);
-	const archiveSha256 = sha256(archive);
-	try {
-		writeRuntimePlatformFileAtomic(paths, cache.archive, archive, { mode: 0o600, dirMode: 0o700 });
-		writeRuntimePlatformFileAtomic(
-			paths,
-			cache.receipt,
-			`${JSON.stringify(
-				{ schemaVersion: CACHE_SCHEMA, ownershipIdentity: ownership, archiveSha256 },
-				null,
-				2,
-			)}\n`,
-			{ mode: 0o600, dirMode: 0o700 },
-		);
-	} catch (error) {
-		removeCacheOwnership(paths, ownership, { allowIncomplete: true });
-		throw error;
-	}
+	gcArchiveCache(
+		paths,
+		cacheContainer(paths),
+		keep,
+		"source.tar.gz",
+		cacheReceiptReader,
+		MAX_ARCHIVE_BYTES,
+	);
 }
 
 function safeRelativePath(path: string): boolean {
@@ -525,106 +424,56 @@ function safeRelativePath(path: string): boolean {
 	);
 }
 
-function isRegularTarEntry(type: string | undefined): boolean {
-	return type === "File" || type === "OldFile" || type === "ContiguousFile";
-}
-
-async function assertExpandedArchiveLimit(bytes: Buffer): Promise<void> {
-	await new Promise<void>((resolvePromise, reject) => {
-		let expanded = 0;
-		let settled = false;
-		const gunzip = createGunzip();
-		const fail = (error: Error) => {
-			if (settled) return;
-			settled = true;
-			gunzip.destroy();
-			reject(error);
-		};
-		gunzip.on("error", fail);
-		gunzip.on("data", (chunk: Buffer) => {
-			expanded += chunk.length;
-			if (expanded > MAX_EXPANDED_ARCHIVE_BYTES) {
-				fail(new Error("Agent Plugin repository archive exceeds the expansion limit"));
-			}
-		});
-		gunzip.on("end", () => {
-			if (settled) return;
-			settled = true;
-			resolvePromise();
-		});
-		gunzip.end(bytes);
-	});
-}
-
 async function extractPackageArchive(
 	root: string,
 	archive: Buffer,
 	sourcePath: string,
 ): Promise<string> {
-	await assertExpandedArchiveLimit(archive);
 	let archiveRoot: string | null = null;
-	let entries = 0;
-	let files = 0;
-	let totalBytes = 0;
-	await new Promise<void>((resolvePromise, reject) => {
-		const stream = tar.extract({
-			cwd: root,
-			gzip: true,
-			filter: (archivePath, entry) => {
-				const segments = archivePath.replace(/\/$/, "").split("/");
-				if (
-					archivePath.startsWith("/") ||
-					archivePath.includes("\\") ||
-					segments.some(
-						(segment) => segment === "." || segment === ".." || hasAsciiControlCharacter(segment),
-					)
-				) {
-					throw new Error("Agent Plugin repository archive contains an unsafe path");
-				}
-				const rootSegment = segments[0];
-				if (!rootSegment) return false;
-				if (archiveRoot === null) archiveRoot = rootSegment;
-				if (archiveRoot !== rootSegment) {
-					throw new Error("Agent Plugin repository archive has multiple roots");
-				}
-				const repositoryPath = segments.slice(1).join("/");
-				if (
-					sourcePath !== "" &&
-					repositoryPath !== sourcePath &&
-					!repositoryPath.startsWith(`${sourcePath}/`)
-				) {
-					return false;
-				}
-				const relative =
-					sourcePath === ""
-						? repositoryPath
-						: repositoryPath.slice(sourcePath.length).replace(/^\//, "");
-				if (relative && !safeRelativePath(relative)) {
-					throw new Error("Agent Plugin package contains an unsafe path");
-				}
-				entries += 1;
-				if (entries > MAX_ENTRIES) throw new Error("Agent Plugin package exceeds 2000 entries");
-				const type = "type" in entry ? entry.type : undefined;
-				if (type !== "Directory" && !isRegularTarEntry(type)) {
-					throw new Error("Agent Plugin package contains a non-regular entry");
-				}
-				if (isRegularTarEntry(type)) {
-					files += 1;
-					if (files > MAX_FILES) throw new Error("Agent Plugin package exceeds 1000 files");
-					if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_FILE_BYTES) {
-						throw new Error("Agent Plugin package file exceeds 10 MiB");
-					}
-					totalBytes += entry.size;
-					if (totalBytes > MAX_TOTAL_FILE_BYTES) {
-						throw new Error("Agent Plugin package exceeds 50 MiB");
-					}
-				}
-				return true;
-			},
-		});
-		stream.on("close", resolvePromise);
-		stream.on("error", reject);
-		stream.end(archive);
+	await extractTarGz(root, archive, {
+		resourceLabel: "Agent Plugin package",
+		allowReservedManagementPaths: true,
+		limits: {
+			entryCount: MAX_ENTRIES,
+			fileCount: MAX_FILES,
+			entryBytes: MAX_FILE_BYTES,
+			totalEntryBytes: MAX_TOTAL_FILE_BYTES,
+			expandedTarBytes: MAX_EXPANDED_ARCHIVE_BYTES,
+		},
+		filter: (archivePath) => {
+			const segments = archivePath.replace(/\/$/, "").split("/");
+			if (
+				archivePath.startsWith("/") ||
+				archivePath.includes("\\") ||
+				segments.some(
+					(segment) => segment === "." || segment === ".." || hasAsciiControlCharacter(segment),
+				)
+			) {
+				throw new Error("Agent Plugin repository archive contains an unsafe path");
+			}
+			const rootSegment = segments[0];
+			if (!rootSegment) return false;
+			if (archiveRoot === null) archiveRoot = rootSegment;
+			if (archiveRoot !== rootSegment) {
+				throw new Error("Agent Plugin repository archive has multiple roots");
+			}
+			const repositoryPath = segments.slice(1).join("/");
+			if (
+				sourcePath !== "" &&
+				repositoryPath !== sourcePath &&
+				!repositoryPath.startsWith(`${sourcePath}/`)
+			) {
+				return false;
+			}
+			const relative =
+				sourcePath === ""
+					? repositoryPath
+					: repositoryPath.slice(sourcePath.length).replace(/^\//, "");
+			if (relative && !safeRelativePath(relative)) {
+				throw new Error("Agent Plugin package contains an unsafe path");
+			}
+			return true;
+		},
 	});
 	if (!archiveRoot) throw new Error("Agent Plugin repository archive is empty");
 	const packageRoot = join(root, archiveRoot, ...sourcePath.split("/"));
@@ -641,55 +490,21 @@ function collectPackageTree(
 	digest: string;
 	tree: PreparedAgentPluginTreeFile[];
 } {
-	const packageRootStat = lstatSync(packageRoot);
-	if (!packageRootStat.isDirectory() || packageRootStat.isSymbolicLink()) {
-		throw new Error("Agent Plugin package root is not a trusted directory");
-	}
-	const tree: PreparedAgentPluginTreeFile[] = [];
-	const foldedPaths = new Set<string>();
-	let entries = 0;
-	let totalBytes = 0;
-	const visit = (directory: string, prefix: string): void => {
-		for (const name of readdirSync(directory).sort((left, right) =>
-			Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
-		)) {
-			if (options.ignoreTopLevelGitMetadata && prefix === "" && name === ".git") continue;
-			const relative = prefix ? `${prefix}/${name}` : name;
-			if (!safeRelativePath(relative))
-				throw new Error("Agent Plugin package contains an unsafe path");
-			const folded = unicodeCaseFold(relative);
-			if (foldedPaths.has(folded)) {
-				throw new Error("Agent Plugin package contains a case-fold path collision");
-			}
-			foldedPaths.add(folded);
-			entries += 1;
-			if (entries > MAX_ENTRIES) throw new Error("Agent Plugin package exceeds 2000 entries");
-			const path = join(directory, name);
-			const stat = lstatSync(path);
-			if (stat.isDirectory() && !stat.isSymbolicLink()) {
-				visit(path, relative);
-				continue;
-			}
-			if (!stat.isFile() || stat.isSymbolicLink()) {
-				throw new Error("Agent Plugin package contains a non-regular entry");
-			}
-			if (tree.length >= MAX_FILES) throw new Error("Agent Plugin package exceeds 1000 files");
-			if (stat.size > MAX_FILE_BYTES) throw new Error("Agent Plugin package file exceeds 10 MiB");
-			totalBytes += stat.size;
-			if (totalBytes > MAX_TOTAL_FILE_BYTES) throw new Error("Agent Plugin package exceeds 50 MiB");
-			const bytes = readFileSync(path);
-			if (bytes.length !== stat.size) throw new Error("Agent Plugin package changed while reading");
-			tree.push({
-				path: relative,
-				mode: (stat.mode & 0o111) !== 0 ? 0o100755 : 0o100644,
-				bytes,
-			});
-		}
-	};
-	visit(packageRoot, "");
-	tree.sort((left, right) =>
-		Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")),
-	);
+	const tree = collectRegularFileTree(packageRoot, {
+		limits: {
+			entries: MAX_ENTRIES,
+			files: MAX_FILES,
+			fileBytes: MAX_FILE_BYTES,
+			totalBytes: MAX_TOTAL_FILE_BYTES,
+		},
+		exclude: (path) => options.ignoreTopLevelGitMetadata === true && path === ".git",
+		validatePath: (path) => {
+			if (!safeRelativePath(path)) throw new Error("Agent Plugin package contains an unsafe path");
+		},
+		collisionKey: unicodeCaseFold,
+		collisionError: "Agent Plugin package contains a case-fold path collision",
+		resourceLabel: "Agent Plugin package",
+	});
 	return { digest: hostedAgentPluginTreeDigest(tree), tree };
 }
 
@@ -1065,7 +880,6 @@ async function validateArchive(
 		return {
 			name: descriptor.name,
 			installation: descriptor.installation,
-			receiptNativeId: null,
 			mcpServerNames: mcp.serverNames,
 			hasStreamableHttpMcp: mcp.hasStreamableHttp,
 			tree: collected.tree,
@@ -1084,9 +898,7 @@ async function fetchArchive(
 		source.type === "github"
 			? (() => {
 					const repository = parseCanonicalGithubRepositoryUrl(source.url);
-					return new URL(
-						`https://codeload.github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/tar.gz/${encodeURIComponent(source.commit)}`,
-					);
+					return githubCodeloadArchiveUrl(repository.owner, repository.repo, source.commit);
 				})()
 			: new URL(source.url);
 	const response = await fetcher(url, {
@@ -1109,7 +921,8 @@ async function preparePackage(
 	offline: boolean,
 	receiptOwned: boolean,
 ): Promise<{ plugin: PreparedHostedAgentPlugin; cacheCreated: boolean }> {
-	const cached = readCachedArchive(paths, descriptor.installation.ownershipIdentity);
+	const cache = pluginArchiveCache(paths, descriptor.installation.ownershipIdentity);
+	const cached = cache.read();
 	if (cached) {
 		try {
 			return { plugin: await validateArchive(cached, descriptor), cacheCreated: false };
@@ -1120,26 +933,49 @@ async function preparePackage(
 	}
 	if (offline) {
 		throw new Error(
-			cacheOwnershipExists(paths, descriptor.installation.ownershipIdentity)
+			cache.exists()
 				? "offline Agent Plugin cache is invalid"
 				: "offline Agent Plugin cache is missing",
 		);
 	}
-	if (
-		cacheOwnershipExists(paths, descriptor.installation.ownershipIdentity) &&
-		!removeCacheOwnership(paths, descriptor.installation.ownershipIdentity)
-	) {
+	if (cache.exists() && !cache.remove({ allowIncomplete: true })) {
 		throw new Error("Agent Plugin cache ownership path is not a managed cache entry");
 	}
 	const archive = await fetchArchive(descriptor, fetcher);
 	const prepared = await validateArchive(archive, descriptor);
-	writeCachedArchive(paths, descriptor.installation.ownershipIdentity, archive);
+	cache.write(archive, (archiveSha256) => ({
+		schemaVersion: CACHE_SCHEMA,
+		ownershipIdentity: descriptor.installation.ownershipIdentity,
+		archiveSha256,
+	}));
 	return { plugin: prepared, cacheCreated: true };
 }
 
 function selectedAgentPluginRuntime(manifest: RuntimeManifest): HostedAgentPluginRuntime {
 	if (manifest.runtime === "openclaw" || manifest.runtime === "hermes") return manifest.runtime;
 	throw new Error("Agent Plugins require a selected OpenClaw or Hermes runtime");
+}
+
+function previousAgentPluginOwnerships(
+	receipt: HostedAgentPluginReceipt | null,
+): Map<string, HostedAgentPluginOwnership> {
+	if (!receipt) return new Map();
+	const previous = new Map<string, HostedAgentPluginOwnership>();
+	for (const [name, installation] of Object.entries(receipt.installations).sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		const { nativeId, ...descriptor } = installation;
+		if (hostedAgentPluginOwnershipIdentity(name, descriptor) !== installation.ownershipIdentity) {
+			throw new Error("Agent Plugin receipt ownership identity is invalid");
+		}
+		previous.set(name, {
+			runtime: receipt.runtime,
+			name,
+			installation: preparedInstallationSchema.parse(descriptor),
+			nativeId,
+		});
+	}
+	return previous;
 }
 
 export async function prepareHostedAgentPluginPackages(
@@ -1158,6 +994,7 @@ export async function prepareHostedAgentPluginPackages(
 	}
 	const previousReceipt = readHostedAgentPluginReceipt(paths);
 	if (Object.keys(desiredInstallations).length === 0 && !previousReceipt) return null;
+	const previous = previousAgentPluginOwnerships(previousReceipt);
 	const runtime =
 		Object.keys(desiredInstallations).length > 0
 			? selectedAgentPluginRuntime(manifest)
@@ -1199,31 +1036,10 @@ export async function prepareHostedAgentPluginPackages(
 			const descriptor = preparedInstallation(name, installation);
 			desired.set(name, await load({ name, runtime, installation: descriptor }));
 		}
-		const rollback = new Map<string, PreparedHostedAgentPlugin>();
-		if (previousReceipt) {
-			for (const [name, installation] of Object.entries(previousReceipt.installations).sort(
-				([left], [right]) => left.localeCompare(right),
-			)) {
-				const { ownershipIdentity: persistedOwnership, nativeId, ...descriptor } = installation;
-				if (persistedOwnership !== ownershipIdentity(name, descriptor)) {
-					throw new Error("Agent Plugin receipt ownership identity is invalid");
-				}
-				const plugin = await load({
-					name,
-					runtime: previousReceipt.runtime,
-					installation: preparedInstallationSchema.parse({
-						...descriptor,
-						ownershipIdentity: persistedOwnership,
-					}),
-				});
-				rollback.set(name, { ...plugin, receiptNativeId: nativeId });
-			}
-		}
 		return {
 			runtime,
 			desired,
-			previousReceipt,
-			rollback,
+			previous,
 			transientCacheOwnerships: new Set(
 				[...createdOwnerships].filter((ownership) => !previousOwnerships.has(ownership)),
 			),
@@ -1231,7 +1047,7 @@ export async function prepareHostedAgentPluginPackages(
 	} catch (error) {
 		for (const ownership of createdOwnerships) {
 			if (!previousOwnerships.has(ownership)) {
-				removeCacheOwnership(paths, ownership, { allowIncomplete: true });
+				pluginArchiveCache(paths, ownership).remove({ allowIncomplete: true });
 			}
 		}
 		throw error;

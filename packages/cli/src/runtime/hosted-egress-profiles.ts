@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import { CLAWDI_MANAGED_PROVIDER_ID, isClawdiManagedV2ProviderId } from "@clawdi/shared";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
-import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
-import { hostedMcpDesiredStateSchema } from "./manifest-resources";
+import type { EgressProfileInputBundle } from "./egress-profiles";
+import type { HostedRuntimeManifest } from "./manifest-contract";
 
 type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 
 interface HostedRuntimeManifestProjection {
-	egressProfiles?: unknown;
-	providers?: unknown;
-	terminalTooling?: unknown;
-	mcp?: unknown;
+	egressProfiles?: EgressProfileInputBundle;
+	providers?: Record<string, HostedProviderProjection>;
+	terminalTooling?: {
+		codex?: { provider_id?: string; provider?: HostedProviderProjection };
+	};
+	mcp?: HostedRuntimeManifest["mcp"];
 }
 
 interface HostedProviderProjection {
@@ -24,10 +26,7 @@ interface HostedProviderProjection {
 export function hostedManifestEgressProfiles(
 	hosted: HostedRuntimeManifestProjection,
 ): EgressProfileInputBundle {
-	const explicit =
-		hosted.egressProfiles !== undefined
-			? egressProfileInputBundleSchema.parse(hosted.egressProfiles)
-			: { profiles: [] };
+	const explicit = hosted.egressProfiles ?? { profiles: [] };
 	return mergeGeneratedProfiles(explicit, [
 		...managedProviderEgressProfiles(hosted),
 		...managedMcpEgressProfiles(hosted),
@@ -37,17 +36,9 @@ export function hostedManifestEgressProfiles(
 export function managedMcpEgressProfiles(
 	hosted: HostedRuntimeManifestProjection,
 ): HostedEgressProfile[] {
-	if (
-		typeof hosted.mcp !== "object" ||
-		hosted.mcp === null ||
-		Array.isArray(hosted.mcp) ||
-		!Object.hasOwn(hosted.mcp, "servers")
-	) {
-		return [];
-	}
-	const parsed = hostedMcpDesiredStateSchema.parse(hosted.mcp);
+	if (!hosted.mcp) return [];
 	const profiles: HostedEgressProfile[] = [];
-	for (const [name, server] of Object.entries(parsed.servers)) {
+	for (const [name, server] of Object.entries(hosted.mcp.servers)) {
 		if (!("url" in server)) continue;
 		const secretHeaders = Object.entries(server.headers).filter(
 			(entry): entry is [string, { secretRef: string; prefix: string }] =>
@@ -134,12 +125,13 @@ export function managedProviderEgressProfiles(
 function managedProviderProjectionEntries(
 	hosted: HostedRuntimeManifestProjection,
 ): Array<[string, HostedProviderProjection]> {
-	const entries = providerProjectionEntries(hosted.providers);
-	const terminalTooling = recordValue(hosted.terminalTooling);
-	const codex = recordValue(terminalTooling?.codex);
-	const provider = providerProjectionValue(codex?.provider);
-	const providerId = cleanString(typeof codex?.provider_id === "string" ? codex.provider_id : null);
-	if (providerId && provider) entries.push([providerId, provider]);
+	const entries = Object.entries(hosted.providers ?? {}).sort(([left], [right]) => {
+		if (left === "default") return -1;
+		if (right === "default") return 1;
+		return left.localeCompare(right);
+	});
+	const codex = hosted.terminalTooling?.codex;
+	if (codex?.provider_id && codex.provider) entries.push([codex.provider_id, codex.provider]);
 	return entries;
 }
 
@@ -158,7 +150,7 @@ function managedProviderEgressProfileForProvider(
 	) {
 		return null;
 	}
-	if (cleanString(provider.status) && cleanString(provider.status) !== "ok") return null;
+	if (provider.status && provider.status !== "ok") return null;
 	const parsed = new URL(providerBaseUrl);
 	const profileProviderId = isClawdiManagedV2ProviderId(providerId)
 		? CLAWDI_MANAGED_PROVIDER_ID
@@ -213,50 +205,9 @@ export function isClawdiManagedProviderProjection(provider: { managed_by?: unkno
 	return provider.managed_by === "clawdi";
 }
 
-function providerProjectionEntries(value: unknown): Array<[string, HostedProviderProjection]> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-	return Object.entries(value)
-		.filter((entry): entry is [string, HostedProviderProjection] => {
-			const [providerId, provider] = entry;
-			return (
-				providerId.trim().length > 0 &&
-				typeof provider === "object" &&
-				provider !== null &&
-				!Array.isArray(provider)
-			);
-		})
-		.sort(([left], [right]) => {
-			if (left === "default") return -1;
-			if (right === "default") return 1;
-			return left.localeCompare(right);
-		});
-}
-
-function providerProjectionValue(value: unknown): HostedProviderProjection | null {
-	const provider = recordValue(value);
-	if (!provider) return null;
-	return {
-		baseUrl: nullableString(provider.baseUrl),
-		apiMode: nullableString(provider.apiMode),
-		apiKeySecretRef: nullableString(provider.apiKeySecretRef),
-		managed_by: nullableString(provider.managed_by),
-		status: nullableString(provider.status),
-	};
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function cleanString(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
 	return trimmed || null;
-}
-
-function nullableString(value: unknown): string | null | undefined {
-	return value === null || typeof value === "string" ? value : undefined;
 }
 
 function cleanBaseUrl(value: string | null | undefined): string | null {

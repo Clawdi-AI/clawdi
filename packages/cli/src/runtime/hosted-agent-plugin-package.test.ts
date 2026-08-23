@@ -16,7 +16,6 @@ import * as tar from "tar";
 import {
 	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
-	HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR,
 	type PreparedHostedAgentPluginInstallation,
 	type PreparedHostedAgentPlugins,
 	prepareHostedAgentPluginPackages,
@@ -657,50 +656,6 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(fetches).toBe(0);
 	});
 
-	test("preserves receipt-owned cache when another runtime rejects its package policy", async () => {
-		const runtimePaths = paths();
-		const files = {
-			...pluginFiles(),
-			".gitattributes": Buffer.from("* text=auto\n"),
-		};
-		const bytes = await archive(files);
-		const openClawManifest = manifest("openclaw", treeDigest(files));
-		const prepared = await prepareHostedAgentPluginPackages(openClawManifest, runtimePaths, {
-			fetcher: async () => archiveResponse(bytes),
-		});
-		const installation = prepared?.desired.get("acme.tools")?.installation;
-		if (!installation) throw new Error("missing prepared Agent Plugin fixture");
-		writeHostedAgentPluginReceipt(
-			{
-				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-				runtime: "openclaw",
-				installations: {
-					"acme.tools": { ...installation, nativeId: "acme-tools" },
-				},
-			},
-			runtimePaths,
-		);
-		let fetches = 0;
-		const unexpectedFetcher = async (): Promise<Response> => {
-			fetches += 1;
-			throw new Error("receipt-owned cache must not be refetched");
-		};
-
-		await expect(
-			prepareHostedAgentPluginPackages(manifest("hermes", treeDigest(files)), runtimePaths, {
-				fetcher: unexpectedFetcher,
-			}),
-		).rejects.toThrow(HERMES_AGENT_PLUGIN_GIT_TRANSPORT_UNSUPPORTED_ERROR);
-		const rollback = await prepareHostedAgentPluginPackages(openClawManifest, runtimePaths, {
-			offline: true,
-			fetcher: unexpectedFetcher,
-		});
-		expect(rollback?.rollback.get("acme.tools")?.installation.ownershipIdentity).toBe(
-			installation.ownershipIdentity,
-		);
-		expect(fetches).toBe(0);
-	});
-
 	test("garbage collection removes stale owned archives without touching unknown or symlink entries", async () => {
 		const runtimePaths = paths();
 		const previousFiles = pluginFiles(undefined, "1.2.2");
@@ -746,7 +701,12 @@ describe("Hosted Agent Plugin package preparation", () => {
 			{
 				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
 				runtime: "openclaw",
-				installations: { "acme.tools": { ...currentInstallation, nativeId: "acme-tools" } },
+				installations: {
+					"acme.tools": {
+						...currentInstallation,
+						nativeId: "acme-tools",
+					},
+				},
 			},
 			runtimePaths,
 		);
@@ -764,30 +724,37 @@ describe("Hosted Agent Plugin package preparation", () => {
 		const runtimePaths = paths();
 		const previousFiles = pluginFiles(undefined, "1.2.2");
 		const previousBytes = await archive(previousFiles);
-		const previous = await prepareHostedAgentPluginPackages(
-			manifest("openclaw", treeDigest(previousFiles), "plugins/acme.tools", {
-				commit: "b".repeat(40),
-				installationId: "install_acme_tools_previous",
-				version: "1.2.2",
-			}),
-			runtimePaths,
-			{ fetcher: async () => archiveResponse(previousBytes) },
-		);
+		const previousManifest = manifest("openclaw", treeDigest(previousFiles), "plugins/acme.tools", {
+			commit: "b".repeat(40),
+			installationId: "install_acme_tools_previous",
+			version: "1.2.2",
+		});
+		const previous = await prepareHostedAgentPluginPackages(previousManifest, runtimePaths, {
+			fetcher: async () => archiveResponse(previousBytes),
+		});
 		const previousInstallation = previous?.desired.get("acme.tools")?.installation;
 		if (!previousInstallation) throw new Error("missing previous Agent Plugin fixture");
+		const desiredFiles = pluginFiles(undefined, "1.2.3");
+		const desiredBytes = await archive(desiredFiles);
+		mkdirSync(dirname(runtimePaths.manifestLastGood), { recursive: true });
+		writeFileSync(
+			runtimePaths.manifestLastGood,
+			JSON.stringify(manifest("openclaw", treeDigest(desiredFiles))),
+		);
 		writeHostedAgentPluginReceipt(
 			{
 				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
 				runtime: "openclaw",
 				installations: {
-					"acme.tools": { ...previousInstallation, nativeId: "acme-tools" },
+					"acme.tools": {
+						...previousInstallation,
+						nativeId: "acme-tools",
+					},
 				},
 			},
 			runtimePaths,
 		);
 
-		const desiredFiles = pluginFiles(undefined, "1.2.3");
-		const desiredBytes = await archive(desiredFiles);
 		let prepared: PreparedHostedAgentPlugins | null = null;
 		let liveCommands = 0;
 		const runner: HostedAgentPluginCommandRunner = {

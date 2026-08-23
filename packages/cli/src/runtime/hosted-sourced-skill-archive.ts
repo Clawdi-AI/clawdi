@@ -1,8 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { z } from "zod";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import type { GithubArchiveFetcher } from "../lib/github-skill-archive";
 import {
@@ -11,38 +11,32 @@ import {
 	readBoundedResponseBytes,
 } from "../lib/github-skill-archive";
 import { extractTarGz, snapshotSkillArchive } from "../lib/tar";
+import { archiveCache, gcArchiveCache } from "./archive-cache";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
 import type { RuntimeManifest } from "./manifest-contract";
-import type { HostedSkillSource } from "./manifest-resources";
+import { type HostedSkillSource, hostedSkillSourceSchema } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
-import { writeRuntimePlatformFileAtomic } from "./state";
 
-// Legacy compatibility: persisted receipts keep their original schema identifier.
 const CACHE_SCHEMA = "clawdi.hostedCatalogSkillArchive.v1";
 const MAX_CACHED_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
-interface HostedSourcedSkillArchiveReceipt {
-	schemaVersion: typeof CACHE_SCHEMA;
-	skillId: string;
-	source: HostedSkillSource;
-	sha256: string;
-}
+type BundledSkillSource = {
+	type: "bundled";
+	version: number;
+	digest: string;
+	assetDirectory: string;
+};
 
-export interface PreparedHostedSourcedSkill {
-	skillId: string;
-	source:
-		| HostedSkillSource
-		| { type: "bundled"; version: number; digest: string; assetDirectory: string };
-	/** Canonical manifest source identity persisted in sourced Skill reservations. */
-	sourceIdentity: string;
-	/** SHA-256 of tarBytes; also the sourced Skill reservation payload digest. */
-	archiveSha256: string;
-	tarBytes: Buffer;
-}
+export type PreparedHostedSkill = {
+	id: string;
+	identity:
+		| { source: BundledSkillSource; version: number; digest: string }
+		| { source: HostedSkillSource; sourceIdentity: string; digest: string };
+} & ({ sourceDir: string } | { tarBytes: Buffer });
 
 function sha256(bytes: Uint8Array | string): string {
 	return createHash("sha256").update(bytes).digest("hex");
@@ -54,103 +48,49 @@ function sourceIdentity(skillId: string, source: HostedSkillSource): string {
 		: ["project", skillId, source.projectId, source.contentHash].join("\0");
 }
 
-export function prepareHostedBundledSkillArchive(
-	skillId: string,
-	version: number,
-): PreparedHostedSourcedSkill {
+function sourceCacheKey(skillId: string, source: HostedSkillSource): string {
+	return sha256(sourceIdentity(skillId, source));
+}
+
+const cacheReceiptSchema = z
+	.object({
+		schemaVersion: z.literal(CACHE_SCHEMA),
+		skillId: z.string(),
+		source: hostedSkillSourceSchema,
+		sha256: z.string().regex(/^[a-f0-9]{64}$/),
+	})
+	.strict();
+const cacheReceiptReader = {
+	parse(value: unknown) {
+		const receipt = cacheReceiptSchema.parse(value);
+		return {
+			key: sourceCacheKey(receipt.skillId, receipt.source),
+			archiveSha256: receipt.sha256,
+		};
+	},
+};
+
+export function prepareHostedBundledSkill(skillId: string, version: number): PreparedHostedSkill {
 	const catalogEntry = resolveHostedBundledSkill(skillId, version);
 	const sourceDir = resolve(resolveCurrentCliResourceRoot(), "skills", catalogEntry.assetDirectory);
 	if (basename(sourceDir) !== skillId || !existsSync(join(sourceDir, "SKILL.md"))) {
 		throw new Error(`bundled hosted skill asset ${catalogEntry.assetDirectory} is unavailable`);
 	}
 	assertHostedBundledSkillCatalogDigest(catalogEntry, sourceDir);
-	const packed = spawnSync("tar", ["-czf", "-", "-C", dirname(sourceDir), skillId], {
-		stdio: ["ignore", "pipe", "pipe"],
-		maxBuffer: MAX_CACHED_ARCHIVE_BYTES,
-	});
-	if (packed.status !== 0 || !Buffer.isBuffer(packed.stdout)) {
-		throw new Error(`bundled hosted skill ${skillId} could not be archived`);
-	}
-	const tarBytes = packed.stdout;
 	return {
-		skillId,
-		source: {
-			type: "bundled",
+		id: skillId,
+		identity: {
+			source: {
+				type: "bundled",
+				version,
+				digest: catalogEntry.digest,
+				assetDirectory: catalogEntry.assetDirectory,
+			},
 			version,
 			digest: catalogEntry.digest,
-			assetDirectory: catalogEntry.assetDirectory,
 		},
-		sourceIdentity: `content-sha256\0${catalogEntry.digest}`,
-		archiveSha256: sha256(tarBytes),
-		tarBytes,
+		sourceDir,
 	};
-}
-
-function cachePaths(paths: RuntimePaths, skillId: string, source: HostedSkillSource) {
-	const key = sha256(sourceIdentity(skillId, source));
-	const root = join(paths.hostedSkillArchiveRoot, key);
-	return { archive: join(root, "skill.tar.gz"), receipt: join(root, "receipt.json") };
-}
-
-function readCachedArchive(
-	paths: RuntimePaths,
-	skillId: string,
-	source: HostedSkillSource,
-): { archiveSha256: string; tarBytes: Buffer } | null {
-	const cache = cachePaths(paths, skillId, source);
-	if (!existsSync(cache.archive) || !existsSync(cache.receipt)) return null;
-	try {
-		const archiveStat = lstatSync(cache.archive);
-		const receiptStat = lstatSync(cache.receipt);
-		if (
-			!archiveStat.isFile() ||
-			archiveStat.isSymbolicLink() ||
-			archiveStat.size > MAX_CACHED_ARCHIVE_BYTES ||
-			!receiptStat.isFile() ||
-			receiptStat.isSymbolicLink()
-		) {
-			return null;
-		}
-		const receipt = JSON.parse(readFileSync(cache.receipt, "utf8")) as unknown;
-		if (!isReceipt(receipt)) return null;
-		if (
-			receipt.skillId !== skillId ||
-			sourceIdentity(receipt.skillId, receipt.source) !== sourceIdentity(skillId, source)
-		) {
-			return null;
-		}
-		const tarBytes = readFileSync(cache.archive);
-		if (sha256(tarBytes) !== receipt.sha256) return null;
-		return { archiveSha256: receipt.sha256, tarBytes };
-	} catch {
-		return null;
-	}
-}
-
-function isReceipt(value: unknown): value is HostedSourcedSkillArchiveReceipt {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-	const receipt = value as Record<string, unknown>;
-	if (
-		receipt.schemaVersion !== CACHE_SCHEMA ||
-		typeof receipt.skillId !== "string" ||
-		typeof receipt.sha256 !== "string" ||
-		!/^[a-f0-9]{64}$/.test(receipt.sha256) ||
-		typeof receipt.source !== "object" ||
-		receipt.source === null ||
-		Array.isArray(receipt.source)
-	) {
-		return false;
-	}
-	const source = receipt.source as Record<string, unknown>;
-	return source.type === "github"
-		? typeof source.url === "string" &&
-				typeof source.path === "string" &&
-				typeof source.commit === "string"
-		: source.type === "project" &&
-				typeof source.projectId === "string" &&
-				typeof source.contentHash === "string" &&
-				typeof source.archiveUrl === "string" &&
-				typeof source.installUrl === "string";
 }
 
 function assertProjectSkillOrigin(
@@ -206,92 +146,87 @@ async function fetchProjectSkillArchive(
 	}
 }
 
-function writeCachedArchive(
-	paths: RuntimePaths,
-	skillId: string,
-	source: HostedSkillSource,
-	tarBytes: Buffer,
-): string {
-	const digest = sha256(tarBytes);
-	const cache = cachePaths(paths, skillId, source);
-	writeRuntimePlatformFileAtomic(paths, cache.archive, tarBytes, {
-		mode: 0o600,
-		dirMode: 0o700,
-	});
-	writeRuntimePlatformFileAtomic(
-		paths,
-		cache.receipt,
-		`${JSON.stringify(
-			{
-				schemaVersion: CACHE_SCHEMA,
-				skillId,
-				source,
-				sha256: digest,
-			} satisfies HostedSourcedSkillArchiveReceipt,
-			null,
-			2,
-		)}\n`,
-		{ mode: 0o600, dirMode: 0o700 },
-	);
-	return digest;
-}
-
-export async function prepareHostedSourcedSkillArchives(
+export async function prepareHostedSkillArchives(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	options: { authToken?: string; fetcher?: GithubArchiveFetcher } = {},
-): Promise<ReadonlyMap<string, PreparedHostedSourcedSkill>> {
-	const prepared = new Map<string, PreparedHostedSourcedSkill>();
-	if (manifest.runtimes.hermes?.enabled !== true && manifest.runtimes.openclaw?.enabled !== true)
+): Promise<ReadonlyMap<string, PreparedHostedSkill>> {
+	const prepared = new Map<string, PreparedHostedSkill>();
+	if (manifest.runtimes.hermes?.enabled !== true && manifest.runtimes.openclaw?.enabled !== true) {
 		return prepared;
+	}
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {}).sort(
 		([left], [right]) => left.localeCompare(right),
 	)) {
 		if (!desired.enabled) continue;
 		if (!("source" in desired)) {
-			prepared.set(skillId, prepareHostedBundledSkillArchive(skillId, desired.version));
+			prepared.set(skillId, prepareHostedBundledSkill(skillId, desired.version));
 			continue;
 		}
 		if (desired.source.type === "project") {
 			assertProjectSkillOrigin(manifest, skillId, desired.source);
 		}
-		const cached = readCachedArchive(paths, skillId, desired.source);
-		if (cached) {
-			prepared.set(skillId, {
+		const identity = sourceIdentity(skillId, desired.source);
+		const cacheKey = sourceCacheKey(skillId, desired.source);
+		const cache = archiveCache(
+			paths,
+			paths.hostedSkillArchiveRoot,
+			cacheKey,
+			"skill.tar.gz",
+			cacheReceiptReader,
+			MAX_CACHED_ARCHIVE_BYTES,
+		);
+		let tarBytes = cache.read();
+		if (!tarBytes) {
+			if (desired.source.type === "github") {
+				const repository = parseCanonicalGithubRepositoryUrl(desired.source.url);
+				const downloaded = await fetchGithubSkillArchive(
+					{
+						...repository,
+						path: desired.source.path,
+						ref: desired.source.commit,
+					},
+					{ skillKey: skillId, fetcher: options.fetcher },
+				);
+				if (downloaded.skillKey !== skillId) {
+					throw new Error(`downloaded Skill identity does not match manifest entry ${skillId}`);
+				}
+				tarBytes = downloaded.tarBytes;
+			} else {
+				tarBytes = await fetchProjectSkillArchive(skillId, desired.source, options);
+			}
+			if (cache.exists() && !cache.remove({ allowIncomplete: true })) {
+				throw new Error("Skill archive cache path is not a managed cache entry");
+			}
+			cache.write(tarBytes, (archiveSha256) => ({
+				schemaVersion: CACHE_SCHEMA,
 				skillId,
 				source: desired.source,
-				sourceIdentity: sourceIdentity(skillId, desired.source),
-				archiveSha256: cached.archiveSha256,
-				tarBytes: cached.tarBytes,
-			});
-			continue;
+				sha256: archiveSha256,
+			}));
 		}
-		let tarBytes: Buffer;
-		if (desired.source.type === "github") {
-			const repository = parseCanonicalGithubRepositoryUrl(desired.source.url);
-			const downloaded = await fetchGithubSkillArchive(
-				{
-					...repository,
-					path: desired.source.path,
-					ref: desired.source.commit,
-				},
-				{ skillKey: skillId, fetcher: options.fetcher },
-			);
-			if (downloaded.skillKey !== skillId) {
-				throw new Error(`downloaded Skill identity does not match manifest entry ${skillId}`);
-			}
-			tarBytes = downloaded.tarBytes;
-		} else {
-			tarBytes = await fetchProjectSkillArchive(skillId, desired.source, options);
-		}
-		const archiveSha256 = writeCachedArchive(paths, skillId, desired.source, tarBytes);
 		prepared.set(skillId, {
-			skillId,
-			source: desired.source,
-			sourceIdentity: sourceIdentity(skillId, desired.source),
-			archiveSha256,
+			id: skillId,
+			identity: { source: desired.source, sourceIdentity: identity, digest: sha256(tarBytes) },
 			tarBytes,
 		});
 	}
 	return prepared;
+}
+
+export function gcHostedSkillArchives(manifest: RuntimeManifest, paths: RuntimePaths): void {
+	const keep = new Set<string>();
+	if (manifest.runtimes.hermes?.enabled === true || manifest.runtimes.openclaw?.enabled === true) {
+		for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
+			if (desired.enabled && "source" in desired) keep.add(sourceCacheKey(skillId, desired.source));
+		}
+	}
+	gcArchiveCache(
+		paths,
+		paths.hostedSkillArchiveRoot,
+		keep,
+		"skill.tar.gz",
+		cacheReceiptReader,
+		MAX_CACHED_ARCHIVE_BYTES,
+	);
 }

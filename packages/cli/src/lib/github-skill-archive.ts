@@ -13,6 +13,12 @@ export interface GithubSkillArchiveSource {
 	path?: string;
 }
 
+export function githubCodeloadArchiveUrl(owner: string, repo: string, ref: string): URL {
+	return new URL(
+		`https://codeload.github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tar.gz/${encodeURIComponent(ref)}`,
+	);
+}
+
 export type GithubArchiveFetcher = (
 	input: URL | RequestInfo,
 	init?: RequestInit,
@@ -117,9 +123,7 @@ export async function fetchGithubSkillArchive(
 	options: { skillKey?: string; fetcher?: GithubArchiveFetcher } = {},
 ): Promise<{ skillKey: string; tarBytes: Buffer }> {
 	if (source.path) assertSafeRepositoryPath(source.path);
-	const archiveUrl = new URL(
-		`https://codeload.github.com/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/tar.gz/${encodeURIComponent(source.ref ?? "HEAD")}`,
-	);
+	const archiveUrl = githubCodeloadArchiveUrl(source.owner, source.repo, source.ref ?? "HEAD");
 	const response = await (options.fetcher ?? fetch)(archiveUrl, {
 		headers: { Accept: "application/vnd.github+json" },
 		redirect: "follow",

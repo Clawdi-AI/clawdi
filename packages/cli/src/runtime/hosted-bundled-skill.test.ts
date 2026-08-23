@@ -5,18 +5,17 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
-	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
-import { prepareHostedBundledSkillArchive } from "./hosted-sourced-skill-archive";
-import { withStagedManagedSkill } from "./managed-skill-delivery";
+import { prepareHostedBundledSkill } from "./hosted-sourced-skill-archive";
+import { withPreparedHostedSkill } from "./managed-skill-delivery";
 
 const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 const bundledSourceDir = resolve(import.meta.dir, "../../skills/hosted-versions/1/clawdi");
@@ -29,30 +28,28 @@ afterEach(() => {
 
 describe("hosted bundled Skill preparation", () => {
 	test("captures the immutable catalog tree as a prepared bundled source", () => {
-		const prepared = prepareHostedBundledSkillArchive("clawdi", 1);
-		expect(prepared.source).toEqual({
-			type: "bundled",
+		const prepared = prepareHostedBundledSkill("clawdi", 1);
+		expect(prepared.identity).toEqual({
+			source: {
+				type: "bundled",
+				version: 1,
+				digest: catalogEntry.digest,
+				assetDirectory: catalogEntry.assetDirectory,
+			},
 			version: 1,
 			digest: catalogEntry.digest,
-			assetDirectory: catalogEntry.assetDirectory,
 		});
-		expect(prepared.sourceIdentity).toBe(`content-sha256\0${catalogEntry.digest}`);
-		expect(prepared.archiveSha256).toMatch(/^[a-f0-9]{64}$/);
+		expect("sourceDir" in prepared && prepared.sourceDir).toBe(bundledSourceDir);
 
-		let stagingRoot = "";
 		expect(
-			withStagedManagedSkill(prepared, (sourceDir) => {
-				stagingRoot = dirname(sourceDir);
+			withPreparedHostedSkill(prepared, (sourceDir) => {
 				expect(readFileSync(join(sourceDir, "SKILL.md"))).toEqual(
 					readFileSync(join(bundledSourceDir, "SKILL.md")),
 				);
-				expect(statSync(sourceDir).mode & 0o777).toBe(0o755);
-				expect(statSync(join(sourceDir, "SKILL.md")).mode & 0o777).toBe(0o644);
 				expect(existsSync(join(sourceDir, ".clawdi-managed.json"))).toBe(false);
-				return "staged" as const;
+				return "prepared" as const;
 			}),
-		).toBe("staged");
-		expect(existsSync(stagingRoot)).toBe(false);
+		).toBe("prepared");
 	});
 
 	test("fails closed for unknown catalog entries and source drift", () => {
@@ -86,7 +83,7 @@ describe("hosted bundled Skill preparation", () => {
 		writeFileSync(outside, "outside\n");
 		symlinkSync(outside, join(copied, "linked"));
 		expect(() => assertHostedBundledSkillCatalogDigest(catalogEntry, copied)).toThrow(
-			"symbolic links are not supported",
+			"non-regular entry",
 		);
 	});
 });

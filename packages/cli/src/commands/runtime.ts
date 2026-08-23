@@ -50,8 +50,9 @@ import {
 	inspectHostedRuntimeIdentity,
 } from "../runtime/hosted-runtime-contract";
 import {
-	type PreparedHostedSourcedSkill,
-	prepareHostedSourcedSkillArchives,
+	gcHostedSkillArchives,
+	type PreparedHostedSkill,
+	prepareHostedSkillArchives,
 } from "../runtime/hosted-sourced-skill-archive";
 import {
 	cacheRuntimeLastGoodManifest,
@@ -175,7 +176,7 @@ interface RuntimeApplyOptions {
 	deferCliInstallReason?: string;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
-	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSourcedSkill>;
+	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSkill>;
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
@@ -1329,13 +1330,9 @@ async function applyRuntimeDesiredState(
 		let preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills;
 		if (preparedHostedSourcedSkills === undefined) {
 			try {
-				preparedHostedSourcedSkills = await prepareHostedSourcedSkillArchives(
-					load.manifest,
-					paths,
-					{
-						authToken: load.applyContext?.manifestSource.auth.token,
-					},
-				);
+				preparedHostedSourcedSkills = await prepareHostedSkillArchives(load.manifest, paths, {
+					authToken: load.applyContext?.manifestSource.auth.token,
+				});
 			} catch (error) {
 				resourcePreparationFailures.sourcedSkills = `runtime sourced Skill archive preparation failed: ${toErrorMessage(error)}`;
 			}
@@ -1487,6 +1484,11 @@ async function applyRuntimeDesiredState(
 		});
 		if (convergence.installErrors.length === 0) {
 			preservePreparedAgentPluginArchives = true;
+			try {
+				gcHostedSkillArchives(load.manifest, paths);
+			} catch (error) {
+				console.warn(`post-commit Skill archive cleanup deferred: ${toErrorMessage(error)}`);
+			}
 			try {
 				gcHostedAgentPluginArchives(
 					readHostedAgentPluginReceipt(paths),

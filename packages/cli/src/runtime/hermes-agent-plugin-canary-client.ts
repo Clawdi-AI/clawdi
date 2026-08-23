@@ -123,7 +123,6 @@ function hermesCanaryPackage(input: {
 			contentDigest: hostedAgentPluginTreeDigest(tree),
 			ownershipIdentity: createHash("sha256").update(`canary:${input.nonce}`).digest("hex"),
 		},
-		receiptNativeId: null,
 		mcpServerNames: [publicServerName],
 		hasStreamableHttpMcp: true,
 		tree,

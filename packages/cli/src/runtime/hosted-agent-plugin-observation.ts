@@ -3,12 +3,15 @@ import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import type { RuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
-import { readHostedAgentPluginReceipt } from "./hosted-agent-plugin-package";
-import type { RuntimeManifest } from "./manifest-contract";
+import {
+	type HostedAgentPluginReceipt,
+	readHostedAgentPluginReceipt,
+} from "./hosted-agent-plugin-package";
+import { manifestSchema, type RuntimeManifest } from "./manifest-contract";
 import {
 	agentPluginNameSchema,
+	type HostedAgentPluginInstallation,
 	hostedAgentPluginInstallationSchema,
-	hostedAgentPluginsDesiredStateSchema,
 } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
 
@@ -67,102 +70,46 @@ export const agentPluginsObservationSchema: z.ZodType<AgentPluginsObservation> =
 		}
 	});
 
-const appliedManifestPluginsSchema = z
-	.object({
-		instanceId: z.string().min(1),
-		generation: z.number().int().nonnegative(),
-		applyGeneration: z.number().int().positive().safe().optional(),
-		projection: z
-			.object({ agentPlugins: hostedAgentPluginsDesiredStateSchema.optional() })
-			.passthrough()
-			.optional(),
-	})
-	.passthrough();
-
-interface InstallationIdentity {
-	installationId: string;
-	name: string;
-	version: string;
-	contentDigest: string;
-}
-
 type ReceiptRead =
-	| { status: "ok"; installations: Map<string, InstallationIdentity> }
-	| { status: "missing" | "unreadable"; installations: Map<string, InstallationIdentity> };
-
-function installationIdentity(
-	name: string,
-	installation: {
-		installationId: string;
-		version: string;
-		contentDigest: string;
-	},
-): InstallationIdentity {
-	return {
-		installationId: installation.installationId,
-		name,
-		version: installation.version,
-		contentDigest: installation.contentDigest,
-	};
-}
+	| { status: "ok"; receipt: HostedAgentPluginReceipt }
+	| { status: "missing" | "unreadable"; receipt: null };
 
 function readReceipt(paths: RuntimePaths): ReceiptRead {
 	try {
 		const receipt = readHostedAgentPluginReceipt(paths);
-		if (!receipt) return { status: "missing", installations: new Map() };
-		return {
-			status: "ok",
-			installations: new Map(
-				Object.entries(receipt.installations).map(([name, installation]) => [
-					name,
-					installationIdentity(name, installation),
-				]),
-			),
-		};
+		return receipt ? { status: "ok", receipt } : { status: "missing", receipt: null };
 	} catch {
-		return { status: "unreadable", installations: new Map() };
+		return { status: "unreadable", receipt: null };
 	}
 }
 
-function readAppliedInstallations(
+function readAppliedManifest(
 	paths: RuntimePaths,
 	applied: RuntimeAppliedState,
-): Map<string, InstallationIdentity> | null {
+): RuntimeManifest | null {
 	try {
-		const manifest = appliedManifestPluginsSchema.parse(
+		const manifest = manifestSchema.parse(
 			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
 		);
-		if (
-			manifest.instanceId !== applied.instanceId ||
-			resolveRuntimeApplyGeneration(manifest) !== resolveRuntimeApplyGeneration(applied)
-		) {
-			return null;
-		}
-		return new Map(
-			Object.entries(manifest.projection?.agentPlugins?.installations ?? {}).map(
-				([name, installation]) => [name, installationIdentity(name, installation)],
-			),
-		);
+		return manifest.instanceId === applied.instanceId &&
+			resolveRuntimeApplyGeneration(manifest) === resolveRuntimeApplyGeneration(applied)
+			? manifest
+			: null;
 	} catch {
 		return null;
 	}
 }
 
-function sameIdentity(left: InstallationIdentity, right: InstallationIdentity): boolean {
-	return (
-		left.installationId === right.installationId &&
-		left.name === right.name &&
-		left.version === right.version &&
-		left.contentDigest === right.contentDigest
-	);
-}
-
 function installedObservation(
-	identity: InstallationIdentity,
+	name: string,
+	installation: HostedAgentPluginInstallation,
 	applied: RuntimeAppliedState,
 ): AgentPluginObservation {
 	return agentPluginObservationSchema.parse({
-		...identity,
+		installationId: installation.installationId,
+		name,
+		version: installation.version,
+		contentDigest: installation.contentDigest,
 		sourceRevision: applied.sourceRevision,
 		generation: resolveRuntimeApplyGeneration(applied),
 		status: "installed",
@@ -170,12 +117,16 @@ function installedObservation(
 }
 
 function unknownObservation(
-	identity: InstallationIdentity,
+	name: string,
+	installation: HostedAgentPluginInstallation,
 	applied: RuntimeAppliedState,
 	errorCode: "receipt_missing" | "receipt_unreadable" | "receipt_mismatch",
 ): AgentPluginObservation {
 	return agentPluginObservationSchema.parse({
-		...identity,
+		installationId: installation.installationId,
+		name,
+		version: installation.version,
+		contentDigest: installation.contentDigest,
 		sourceRevision: applied.sourceRevision,
 		generation: resolveRuntimeApplyGeneration(applied),
 		status: "unknown",
@@ -201,39 +152,21 @@ function observationsForAppliedState(
 	applied: RuntimeAppliedState,
 	receipt: ReceiptRead,
 ): AgentPluginsObservation | null {
-	const desired = readAppliedInstallations(paths, applied);
-	if (desired === null) {
-		if (receipt.status !== "ok" || receipt.installations.size === 0) return null;
-		return agentPluginsObservationSchema.parse({
-			schemaVersion: 1,
-			installations: [...receipt.installations.values()]
-				.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-				.map((identity) => unknownObservation(identity, applied, "receipt_mismatch")),
-		});
-	}
-	if (desired.size === 0 && receipt.installations.size === 0) return null;
-
-	const receiptMatchesDesired =
-		receipt.status === "ok" &&
-		receipt.installations.size === desired.size &&
-		[...desired].every(([name, identity]) => {
-			const receiptIdentity = receipt.installations.get(name);
-			return receiptIdentity !== undefined && sameIdentity(identity, receiptIdentity);
-		});
-	const unknownCode =
-		receipt.status === "missing"
-			? "receipt_missing"
-			: receipt.status === "unreadable"
-				? "receipt_unreadable"
-				: "receipt_mismatch";
+	const installations =
+		receipt.status === "ok"
+			? Object.entries(receipt.receipt.installations)
+			: Object.entries(
+					readAppliedManifest(paths, applied)?.projection?.agentPlugins?.installations ?? {},
+				);
+	if (installations.length === 0) return null;
 	return agentPluginsObservationSchema.parse({
 		schemaVersion: 1,
-		installations: [...desired.values()]
-			.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-			.map((identity) =>
-				receiptMatchesDesired
-					? installedObservation(identity, applied)
-					: unknownObservation(identity, applied, unknownCode),
+		installations: installations
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([name, installation]) =>
+				receipt.status === "ok"
+					? installedObservation(name, installation, applied)
+					: unknownObservation(name, installation, applied, `receipt_${receipt.status}`),
 			),
 	});
 }
@@ -273,7 +206,10 @@ export function failedHostedAgentPluginsObservation(
 		.filter(([name]) => names.has(name))
 		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 		.map(([name, installation]) => ({
-			...installationIdentity(name, installation),
+			installationId: installation.installationId,
+			name,
+			version: installation.version,
+			contentDigest: installation.contentDigest,
 			sourceRevision,
 			generation: resolveRuntimeApplyGeneration(manifest),
 			status: "failed" as const,
