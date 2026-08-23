@@ -1,10 +1,6 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { EventEmitter } from "node:events";
-import { accessSync, chmodSync, chownSync, constants, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
-import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
@@ -33,7 +29,6 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
-import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
@@ -47,7 +42,6 @@ import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plu
 import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
-	inspectHostedRuntimeIdentity,
 } from "../runtime/hosted-runtime-contract";
 import {
 	gcHostedSkillArchives,
@@ -70,15 +64,12 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
-import { buildNumericUserCommand, runningAsRoot } from "../runtime/runtime-user-command";
 import {
-	assertRuntimePlatformRoots,
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
 	hostPolicySummary,
 	type RuntimeBootStage,
 	type RuntimeBootStatus,
-	readRuntimeBootStatus,
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
@@ -92,12 +83,6 @@ import {
 	SystemdRuntimeTransaction,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
-import {
-	applyTransparentEgressNftRulesFromEnv,
-	cleanupTransparentEgressNftRulesFromEnv,
-	loadTransparentEgressEnvConfig,
-	type TransparentEgressEnvConfig,
-} from "../runtime/transparent-egress";
 import { log, toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
@@ -120,10 +105,6 @@ interface RuntimeWatchOptions {
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
-interface RuntimeVerifyOptions {
-	json?: boolean;
-}
-
 // The image bootstrap is a RemainAfterExit oneshot with Restart=on-failure.
 // A dedicated temporary-failure exit makes it start the newly activated CLI;
 // runtime watch instead exits cleanly because its unit uses Restart=always.
@@ -133,16 +114,6 @@ const RUNTIME_WATCH_INTERVAL_MS = 15_000;
 const RUNTIME_WATCH_SELF_HEAL_MS = 300_000;
 const RUNTIME_WATCH_INITIAL_BACKOFF_MS = 60_000;
 const RUNTIME_WATCH_MAX_BACKOFF_MS = 300_000;
-const EGRESS_LISTEN_TIMEOUT_MS = 15_000;
-const EGRESS_CA_TIMEOUT_MS = 10_000;
-const EGRESS_READY_POLL_MS = 100;
-
-interface RuntimeDoctorCheck {
-	name: string;
-	ok: boolean;
-	detail?: string;
-	hint?: string;
-}
 
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
@@ -261,24 +232,6 @@ type RuntimeWatchEventPayload = {
 			error: string | undefined;
 	  }
 );
-
-function writable(path: string): boolean {
-	try {
-		accessSync(path, constants.W_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function readable(path: string): boolean {
-	try {
-		accessSync(path, constants.R_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
 
 function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePaths): string | null {
 	if (load.sourceBundle === undefined) return null;
@@ -750,42 +703,6 @@ function finishRuntimeInitCliHandoff(input: {
 			chalk.green,
 		),
 	});
-}
-
-export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
-	const paths = getRuntimePaths();
-	const manifestCacheExists = existsSync(paths.manifestLastGood);
-	const errors: string[] = [];
-	if (manifestCacheExists) {
-		try {
-			const raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
-			const parsed = hostedRuntimeBundleV2Schema.safeParse(raw);
-			if (!parsed.success) {
-				errors.push(`cached manifest parse failed: ${z.prettifyError(parsed.error)}`);
-			}
-		} catch (error) {
-			errors.push(`cached manifest parse failed: ${toErrorMessage(error)}`);
-		}
-	}
-	const result = {
-		schemaVersion: "clawdi.runtimeVerify.v1",
-		status: errors.length === 0 ? "ok" : "error",
-		cliVersion: ACTIVE_CLI_VERSION,
-		manifestCache: {
-			path: paths.manifestLastGood,
-			exists: manifestCacheExists,
-			valid: manifestCacheExists ? errors.length === 0 : null,
-		},
-		errors,
-	};
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(result, null, 2));
-	} else if (errors.length === 0) {
-		console.log(chalk.green("runtime verify ok"));
-	} else {
-		console.log(chalk.red(errors[0]));
-	}
-	if (errors.length > 0) process.exitCode = 1;
 }
 
 export async function runtimeInit(opts: RuntimeInitOptions = {}) {
@@ -1724,430 +1641,4 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 function nextBoundedBackoffMs(previousMs: number): number {
 	if (previousMs <= 0) return RUNTIME_WATCH_INITIAL_BACKOFF_MS;
 	return Math.min(previousMs * 2, RUNTIME_WATCH_MAX_BACKOFF_MS);
-}
-
-export async function runtimeSidecar(): Promise<void> {
-	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime sidecar is only available in hosted runtime mode");
-	}
-	const shouldStartEgress = Boolean(process.env.CLAWDI_EGRESS_ENV_FILE?.trim());
-	if (!shouldStartEgress) {
-		throw new Error("runtime sidecar requires egress configuration.");
-	}
-
-	let egress: RuntimeEgressModule | null = null;
-	try {
-		if (shouldStartEgress) {
-			egress = await startRuntimeEgress();
-			console.error(`runtime sidecar egress module listening on 127.0.0.1:${egress.port}`);
-		}
-		notifySystemdReady("runtime sidecar ready");
-	} catch (error) {
-		egress?.close();
-		throw error;
-	}
-
-	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
-	const egressExit = egress?.wait().then(() => ({ kind: "egress-exit" as const }));
-	try {
-		await (egressExit ? Promise.race([shutdown, egressExit]) : shutdown);
-	} finally {
-		egress?.close();
-		await egressExit?.catch(() => undefined);
-	}
-}
-
-interface RuntimeEgressModule {
-	port: number;
-	close: () => void;
-	wait: () => Promise<void>;
-}
-
-async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
-	const config = loadTransparentEgressEnvConfig(process.env);
-	const mitmdump = startMitmdump(config);
-	const mitmdumpExit = waitForChildExit(mitmdump);
-	let redirectApplied = false;
-	let closeRequested = false;
-	const cleanup = () => {
-		if (!redirectApplied) return;
-		try {
-			cleanupTransparentEgressNftRulesFromEnv(process.env);
-		} catch (error) {
-			console.error(`transparent egress nft cleanup failed: ${toErrorMessage(error)}`);
-		}
-		redirectApplied = false;
-	};
-	const close = () => {
-		closeRequested = true;
-		cleanup();
-		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
-	};
-	try {
-		await waitForTcpPort("127.0.0.1", config.transparentPort, EGRESS_LISTEN_TIMEOUT_MS, () =>
-			childHasExited(mitmdump),
-		);
-		await waitForFile(config.caCertPath, EGRESS_CA_TIMEOUT_MS, () => childHasExited(mitmdump));
-		publishEgressSystemCaBundle(config);
-		applyTransparentEgressNftRulesFromEnv(process.env);
-		redirectApplied = true;
-		return {
-			port: config.transparentPort,
-			close,
-			wait: async () => {
-				const exit = await mitmdumpExit;
-				cleanup();
-				if (!closeRequested) {
-					const reason = exit.signal === null ? `status ${exit.code}` : `signal ${exit.signal}`;
-					throw new Error(`egress engine exited unexpectedly with ${reason}`);
-				}
-			},
-		};
-	} catch (error) {
-		close();
-		throw error;
-	}
-}
-
-function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
-	if (!existsSync(config.engineBinaryPath)) {
-		throw new Error(`egress engine binary is missing: ${config.engineBinaryPath}`);
-	}
-	if (!existsSync(config.addonPath)) {
-		throw new Error(`egress addon is missing: ${config.addonPath}`);
-	}
-	const mitmdumpArgs = [
-		"--mode",
-		"transparent",
-		"--listen-host",
-		"127.0.0.1",
-		"--listen-port",
-		String(config.transparentPort),
-		"--set",
-		`confdir=${config.caDir}`,
-		"--set",
-		"stream_large_bodies=1",
-		"--set",
-		"termlog_verbosity=info",
-		"-s",
-		config.addonPath,
-	];
-	const childEnv = buildEgressEngineEnv(process.env, {
-		envFile: config.envFile,
-		home: config.caDir,
-	});
-	const command = config.engineBinaryPath;
-	const args = mitmdumpArgs;
-	const child = runningAsRoot()
-		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
-		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
-	child.stdout?.pipe(process.stdout);
-	child.stderr?.pipe(process.stderr);
-	return child;
-}
-
-export function assertCurrentEgressIdentity(
-	currentUid: number | undefined,
-	currentGid: number | undefined,
-	configuredUid: number,
-	configuredGid: number,
-): void {
-	if (currentUid === undefined || currentGid === undefined) {
-		throw new Error("cannot verify non-root egress engine UID/GID on this platform");
-	}
-	if (currentUid === 0 || currentGid === 0) {
-		throw new Error("egress engine identity must be non-root");
-	}
-	if (currentUid !== configuredUid || currentGid !== configuredGid) {
-		throw new Error(
-			`current egress engine identity ${currentUid}:${currentGid} does not match configured ${configuredUid}:${configuredGid}`,
-		);
-	}
-}
-
-function spawnWithCurrentEgressIdentity(
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-): ChildProcess {
-	assertCurrentEgressIdentity(process.getuid?.(), process.getgid?.(), uid, gid);
-	return spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
-}
-
-function spawnWithNumericIdentity(
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-): ChildProcess {
-	const child = buildNumericUserCommand(uid, gid, command, args);
-	return spawn(child.command, child.args, {
-		env,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-}
-
-function waitForChildExit(
-	child: ChildProcess,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-	return new Promise((resolve) => {
-		child.once("exit", (code, signal) => resolve({ code, signal }));
-	});
-}
-
-function childHasExited(child: ChildProcess): boolean {
-	return child.exitCode !== null || child.signalCode !== null;
-}
-
-function waitForTcpPort(
-	host: string,
-	port: number,
-	timeoutMs: number,
-	hasExited: () => boolean,
-): Promise<void> {
-	const startedAt = Date.now();
-	return new Promise((resolve, reject) => {
-		const attempt = () => {
-			if (hasExited()) {
-				reject(new Error(`egress engine exited before listening on ${host}:${port}`));
-				return;
-			}
-			if (tcpPortIsListening(host, port)) {
-				resolve();
-				return;
-			}
-			if (Date.now() - startedAt >= timeoutMs) {
-				reject(new Error(`timed out waiting for egress engine on ${host}:${port}`));
-				return;
-			}
-			setTimeout(attempt, EGRESS_READY_POLL_MS);
-		};
-		attempt();
-	});
-}
-
-function tcpPortIsListening(host: string, port: number): boolean {
-	const portHex = port.toString(16).toUpperCase().padStart(4, "0");
-	const allowedHosts =
-		host === "127.0.0.1" ? new Set(["0100007F"]) : new Set(["00000000", "0100007F"]);
-	try {
-		for (const raw of readFileSync("/proc/net/tcp", "utf-8").split(/\r?\n/).slice(1)) {
-			const fields = raw.trim().split(/\s+/);
-			const localAddress = fields[1] ?? "";
-			const state = fields[3] ?? "";
-			const [address, localPort] = localAddress.split(":");
-			if (state === "0A" && localPort === portHex && address && allowedHosts.has(address)) {
-				return true;
-			}
-		}
-	} catch {
-		return false;
-	}
-	return false;
-}
-
-function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean): Promise<void> {
-	const startedAt = Date.now();
-	return new Promise((resolve, reject) => {
-		const attempt = () => {
-			if (hasExited()) {
-				reject(new Error(`egress engine exited before writing ${path}`));
-				return;
-			}
-			if (existsSync(path)) {
-				resolve();
-				return;
-			}
-			if (Date.now() - startedAt >= timeoutMs) {
-				reject(new Error(`timed out waiting for ${path}`));
-				return;
-			}
-			setTimeout(attempt, EGRESS_READY_POLL_MS);
-		};
-		attempt();
-	});
-}
-
-export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
-	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
-		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
-	}
-	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
-	const egressCa = readFileSync(config.caCertPath, "utf-8");
-	writePrivateFileAtomic(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
-		mode: 0o640,
-		dirMode: 0o711,
-	});
-	if (runningAsRoot()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
-	chmodSync(config.systemCaBundle, 0o640);
-}
-
-function waitForShutdownSignal(): Promise<void> {
-	const processEvents: EventEmitter = process;
-	return new Promise((resolve) => {
-		const done = () => {
-			processEvents.removeListener("SIGTERM", done);
-			processEvents.removeListener("SIGINT", done);
-			resolve();
-		};
-		processEvents.once("SIGTERM", done);
-		processEvents.once("SIGINT", done);
-	});
-}
-
-function notifySystemdReady(status: string): void {
-	if (!process.env.NOTIFY_SOCKET) return;
-	spawnSync("systemd-notify", ["--ready", `--status=${status}`], {
-		stdio: "ignore",
-		env: process.env,
-	});
-}
-
-export async function runtimeStatus(opts: { json?: boolean } = {}) {
-	const paths = getRuntimePaths();
-	const read = readRuntimeBootStatus(paths);
-	const payload = {
-		schemaVersion: "clawdi.runtimeStatus.v1",
-		runtimeMode: paths.mode,
-		paths: {
-			bootStatus: paths.bootStatus,
-		},
-		...read,
-	};
-	if (read.error || read.status?.status === "error") process.exitCode = 1;
-
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(payload, null, 2));
-		return;
-	}
-
-	console.log(chalk.bold("clawdi runtime status"));
-	console.log();
-	if (!read.exists) {
-		console.log(chalk.gray("  No runtime boot status has been written yet."));
-		return;
-	}
-	if (read.error) {
-		console.log(chalk.red(`  Could not read ${read.source}: ${read.error}`));
-		return;
-	}
-	if (!read.status) {
-		console.log(chalk.yellow("  Runtime status files exist, but boot-status.json is missing."));
-		return;
-	}
-	console.log(`  Mode: ${read.status?.mode ?? "unknown"}`);
-	console.log(`  Status: ${read.status?.status ?? "unknown"}`);
-	console.log(`  Stage: ${read.status?.stage ?? "unknown"}`);
-	console.log(chalk.gray(`  Source: ${read.source}`));
-	if (read.status?.error) console.log(chalk.yellow(`  Error: ${read.status.error}`));
-}
-
-export async function runtimeDoctor(opts: { json?: boolean } = {}) {
-	const paths = getRuntimePaths();
-	const policy = readHostPolicy(paths.hostPolicy);
-	const lastStatus = readRuntimeBootStatus(paths);
-	const identity = inspectHostedRuntimeIdentity(paths);
-	let runtimeContextDetail: string;
-	let runtimeContextOk = false;
-	try {
-		const context = readRuntimeApplyContext();
-		runtimeContextOk = context.backend === "incus";
-		runtimeContextDetail = context.backend;
-	} catch (error) {
-		runtimeContextDetail = toErrorMessage(error);
-	}
-	let platformRootsOk = true;
-	let platformRootsDetail = "trusted";
-	try {
-		assertRuntimePlatformRoots(paths);
-	} catch (error) {
-		platformRootsOk = false;
-		platformRootsDetail = toErrorMessage(error);
-	}
-	const checks: RuntimeDoctorCheck[] = [
-		{
-			name: "Runtime mode",
-			ok: identity.mode.ok,
-			detail: identity.mode.error ?? identity.mode.detail,
-			hint: "Set CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode.",
-		},
-		{
-			name: "Hosted policy",
-			ok: policy.exists && policy.valid,
-			detail: policy.valid ? policy.source : (policy.error ?? "missing"),
-			hint: "Hosted mode uses the built-in policy; policy files are ignored.",
-		},
-		{
-			name: "Runtime identity",
-			ok: identity.user.ok,
-			detail: identity.user.error ?? identity.user.detail,
-			hint: "The hosted tenant must run as clawdi with the expected non-root UID and GID.",
-		},
-		{
-			name: "Runtime context backend",
-			ok: runtimeContextOk,
-			detail: runtimeContextDetail,
-			hint: "Hosted v2 requires a valid runtime context attested with backend=incus.",
-		},
-		{
-			name: "Platform roots",
-			ok: platformRootsOk,
-			detail: platformRootsDetail,
-			hint: "Platform roots must remain real directories owned by the system boundary.",
-		},
-		{
-			name: "Service state",
-			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
-			detail: paths.serviceStateRoot,
-			hint: "The hosted service-state directory must be writable by the platform service.",
-		},
-		{
-			name: "Runtime HOME",
-			ok: identity.home.ok && existsSync(paths.userHome) && writable(paths.userHome),
-			detail: identity.home.error ?? paths.userHome,
-			hint: "Hosted HOME must resolve to /home/clawdi and be a writable persistent volume.",
-		},
-		{
-			name: "Ephemeral runtime state",
-			ok: existsSync(paths.runRoot),
-			detail: paths.runRoot,
-			hint: "The runtime tmpfs path should be recreated on each boot and owned by the system boundary.",
-		},
-		{
-			name: "Runtime auth token",
-			ok: !existsSync(paths.daemonAuthToken) || readable(paths.daemonAuthToken),
-			detail: existsSync(paths.daemonAuthToken) ? "present" : "absent",
-		},
-		{
-			name: "Last boot status",
-			ok:
-				!lastStatus.exists ||
-				(lastStatus.status?.status === "ok" && lastStatus.status.errors.length === 0),
-			detail: !lastStatus.exists
-				? "none"
-				: (lastStatus.error ??
-					`${lastStatus.status?.status ?? "unknown"} / ${lastStatus.status?.mode ?? "unknown"}`),
-			hint: "Run `clawdi runtime status` for the last boot result.",
-		},
-	];
-	const failed = checks.filter((check) => !check.ok).length;
-
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(checks, null, 2));
-		if (failed > 0) process.exitCode = 1;
-		return;
-	}
-
-	console.log(chalk.bold("clawdi runtime doctor"));
-	console.log();
-	for (const check of checks) {
-		const icon = check.ok ? chalk.green("✓") : chalk.red("✗");
-		const detail = check.detail ? chalk.gray(` — ${check.detail}`) : "";
-		console.log(`  ${icon} ${check.name}${detail}`);
-		if (!check.ok && check.hint) console.log(chalk.gray(`     ${check.hint}`));
-	}
-	if (failed > 0) process.exitCode = 1;
 }

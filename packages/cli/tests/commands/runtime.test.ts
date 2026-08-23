@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import {
 	assertCurrentEgressIdentity,
 	publishEgressSystemCaBundle,
-} from "../../src/commands/runtime";
+} from "../../src/runtime/egress-sidecar";
 import { runtimeUserUid } from "../../src/runtime/runtime-user-command";
 
 describe("runtime sidecar egress privilege drop", () => {

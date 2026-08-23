@@ -744,7 +744,7 @@ runtimeCmd
 	.description("Validate hosted runtime CLI modules and cached manifest")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { json?: boolean }) => {
-		const { runtimeVerify } = await import("./commands/runtime.js");
+		const { runtimeVerify } = await import("./commands/runtime-doctor.js");
 		await runtimeVerify(opts);
 	});
 
@@ -752,7 +752,7 @@ runtimeCmd
 	.command("sidecar", { hidden: true })
 	.description("Run the hosted runtime egress sidecar")
 	.action(async () => {
-		const { runtimeSidecar } = await import("./commands/runtime.js");
+		const { runtimeSidecar } = await import("./runtime/egress-sidecar.js");
 		await runtimeSidecar();
 	});
 
@@ -774,7 +774,7 @@ runtimeCmd
 	.description("Show managed Hosted runtime boot status")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { json?: boolean }) => {
-		const { runtimeStatus } = await import("./commands/runtime.js");
+		const { runtimeStatus } = await import("./commands/runtime-doctor.js");
 		await runtimeStatus(opts);
 	});
 
@@ -783,7 +783,7 @@ runtimeCmd
 	.description("Diagnose hosted runtime policy, paths, and last boot state")
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
-		const { runtimeDoctor } = await import("./commands/runtime.js");
+		const { runtimeDoctor } = await import("./commands/runtime-doctor.js");
 		await runtimeDoctor(opts);
 	});
 
