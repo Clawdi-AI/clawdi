@@ -110,6 +110,7 @@ describe("hosted runtime observed v2", () => {
 		const observed = readHostedRuntimeObserved(paths);
 		expect(observed?.schemaVersion).toBe("clawdi.hostedRuntimeObserved.v2");
 		expect(observed?.activeCliVersion).toBe(getCliVersion());
+		expect(observed?.cli?.version).toBe(getCliVersion());
 		expect(observed?.applied).toEqual({
 			etag: '"bundle-applied"',
 			sourceRevision: "a".repeat(64),

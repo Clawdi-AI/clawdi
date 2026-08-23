@@ -38,7 +38,6 @@ import {
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
 import {
-	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	manifestSchema,
 	type RuntimeManifest,
 } from "../../src/runtime/manifest-contract";
@@ -386,7 +385,7 @@ exec /usr/bin/systemctl "$@"
 				controlPlane: { apiUrl: "https://cloud-api.example.test" },
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
+					packageSpec: `clawdi@${cliVersion}`,
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {

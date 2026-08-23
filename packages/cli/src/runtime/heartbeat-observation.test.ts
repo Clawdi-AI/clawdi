@@ -322,56 +322,6 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("advertises a successor before rotating legacy durable state", () => {
-		const paths = tempRuntimePaths();
-		writeRuntimeAppliedState(companionAppliedState(7), paths);
-		const statePath = runtimeHeartbeatObservationStatePath(paths, "env_legacy_handoff");
-		mkdirSync(dirname(statePath), { recursive: true });
-		writeFileSync(
-			statePath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.runtimeHeartbeatObservation.v1",
-				environmentId: "env_legacy_handoff",
-				bootIdentity: {
-					generation: 7,
-					manifestETag: '"frozen-manifest-7"',
-					applyReceiptId: "apply-receipt-0007",
-					bootNonce: "boot-nonce-000007",
-					bootSessionId: "boot-session-legacy",
-				},
-				nextSequence: 4,
-				lastCapturedAt: "2026-07-16T02:00:00.000Z",
-				pending: null,
-			})}\n`,
-		);
-		const session = new HostedRuntimeHeartbeatSession({
-			environmentId: "env_legacy_handoff",
-			paths,
-			now: clockSequence(["2026-07-16T02:01:00.000Z", "2026-07-16T02:02:00.000Z"]),
-			createId: idSequence(["event-prepare-handoff", "event-successor"]),
-			createSuccessorId: idSequence(["boot-session-successor", "boot-session-next"]),
-		});
-
-		const preparation = session.nextEvent();
-		if (!preparation) throw new Error("expected successor preparation event");
-		expect(preparation.event).toMatchObject({
-			bootSessionId: "boot-session-legacy",
-			successorBootSessionId: "boot-session-successor",
-			sequence: 4,
-		});
-		expect(preparation.event.predecessorBootSessionId).toBeUndefined();
-		expect(session.acknowledge(preparation.event.eventId)).toBe(true);
-
-		const successor = session.nextEvent();
-		if (!successor) throw new Error("expected causally fenced successor event");
-		expect(successor.event).toMatchObject({
-			bootSessionId: "boot-session-successor",
-			predecessorBootSessionId: "boot-session-legacy",
-			successorBootSessionId: "boot-session-next",
-			sequence: 1,
-		});
-	});
-
 	test("clamps capture time to the durable boot-session high-water", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);

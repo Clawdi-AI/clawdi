@@ -76,7 +76,6 @@ import {
 	AGENT_PLUGIN_HOSTED_V2_REQUIRED_ERROR,
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
-	hostedFixtureCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	hostedRuntimeManifestSchema,
 	manifestSchema,
@@ -128,9 +127,6 @@ const FILE_BROWSER_AMD64_SHA256 =
 	"8d51d1718d576d22e73e1f41a5194b451d152ddab0df97697cabe839cf59524e";
 const FILE_BROWSER_ARM64_SHA256 =
 	"3e18838ae33750a25da434dc6156a359968bf7935e01bdd884711f47f08ad92f";
-const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestSchema.safeExtend({
-	clawdiCli: hostedFixtureCliPayloadPolicySchema,
-});
 const TEST_HOSTED_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-auth-token",
 	"secret://runtime/openclaw/gateway-token": "gateway-token",
@@ -643,7 +639,6 @@ const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
 	"lan",
 	"--force",
 ];
-const LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS = ["gateway", "run", "--replace"];
 
 function hostedOpenClawV2ManifestFixture(
 	overrides: Record<string, unknown> = {},
@@ -964,13 +959,11 @@ describe("runtime manifest reconciliation invariants", () => {
 		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
 		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacy).success).toBe(true);
-		const legacyHermes = hostedRuntimeBundleV2ManifestSchema.parse(
-			hostedHermesManifestFixture({}, LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS),
-		);
-		expect(hostedManifestToRuntimeManifest(legacyHermes).runtimes.hermes.run?.args).toEqual([
-			"gateway",
-			"run",
-		]);
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedHermesManifestFixture({}, ["gateway", "run", "--replace"]),
+			).success,
+		).toBe(false);
 
 		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
@@ -2363,7 +2356,7 @@ chmod 0755 '${commandPath}'
 		},
 	);
 
-	test("enforces the Cloud package spec length limit for remote and fixture Hosted schemas", () => {
+	test("enforces the Cloud package spec length limit", () => {
 		const atLimit = `clawdi@1.2.3-${"a".repeat(187)}`;
 		const overLimit = `clawdi@1.2.3-${"a".repeat(188)}`;
 		expect(atLimit).toHaveLength(200);
@@ -2379,7 +2372,6 @@ chmod 0755 '${commandPath}'
 			});
 			const expected = packageSpec === atLimit;
 			expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(expected);
-			expect(hostedRuntimeManifestFixtureSchema.safeParse(manifest).success).toBe(expected);
 		}
 	});
 

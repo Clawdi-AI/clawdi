@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
+import { toErrorMessage } from "../serve/log";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
@@ -178,7 +179,7 @@ export function readRuntimeRunConfigForCommand(
 			status: "invalid",
 			runtime,
 			path,
-			error: error instanceof Error ? error.message : String(error),
+			error: toErrorMessage(error),
 		};
 	}
 }
@@ -208,7 +209,7 @@ export function readRuntimeServiceRunConfig(
 			status: "invalid",
 			runtime: parsedRuntime.data,
 			path,
-			error: error instanceof Error ? error.message : String(error),
+			error: toErrorMessage(error),
 		};
 	}
 }
@@ -272,14 +273,12 @@ function runtimeSecretEnv(
 		try {
 			rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));
 		} catch (error) {
-			throw new Error(
-				`Runtime secret file is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			throw new Error(`Runtime secret file is unavailable: ${toErrorMessage(error)}`);
 		}
 		if (!rawSecrets || typeof rawSecrets !== "object" || Array.isArray(rawSecrets)) {
 			throw new Error("Runtime secret file must contain a JSON object.");
 		}
-		secrets = rawSecrets as Record<string, unknown>;
+		secrets = z.record(z.string(), z.unknown()).parse(rawSecrets);
 	}
 	const env: Record<string, string> = {};
 	for (const [envName, ref] of entries) {
