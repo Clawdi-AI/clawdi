@@ -16,11 +16,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	ensureTestOpenClawWorkspaceCli,
 	type TestConvergeOptions,
 	withTestSystemdTransaction,
 } from "../test-support/systemd-apply";
 import { runtimeContentSha256 } from "./applied-state";
-import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import { readRuntimeInstallReceipts, writeRuntimeInstallReceipts } from "./install-receipts";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
@@ -47,6 +47,7 @@ function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts: TestConvergeOptions = {},
 ) {
+	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContext(
 		{
@@ -71,10 +72,6 @@ function convergeRuntimeManifest(
 		{
 			...opts,
 			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
-			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
-				...hostedOpenClawSkillDriver,
-				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
-			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
 				expectedIdentity: {
 					home: paths.userHome,
@@ -478,16 +475,30 @@ describe("runtime manifest services", () => {
 		] as const) {
 			const paths = tempRuntimePaths();
 			const command = join(paths.userHome, ".local", "bin", "openclaw");
+			const commandLog = join(paths.userHome, "workspace-probe.log");
 			mkdirSync(dirname(command), { recursive: true });
-			writeFileSync(command, "#!/bin/sh\nexit 0\n");
+			writeFileSync(
+				command,
+				`#!/bin/sh
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "--version") printf '%s\n' 'OpenClaw test-version' ;;
+  "agents list --json") exit 2 ;;
+  "config validate --json")
+    printf '%s\n' '{"valid":false,"path":"/tmp/openclaw.json","issues":[{"path":"x","message":"x"}]}'
+    exit 1
+    ;;
+  "doctor --fix --non-interactive") exit 0 ;;
+  *) exit 64 ;;
+esac
+`,
+			);
 			chmodSync(command, 0o700);
 			const manifest = installGateManifest(paths, "openclaw", command);
 			manifest.projection = {
 				...manifest.projection,
 				...(sourceBundleVersion ? { sourceBundleVersion } : {}),
 			};
-			let repairInvalidConfig: boolean | undefined;
-
 			expect(() =>
 				convergeRuntimeManifest(
 					{
@@ -497,18 +508,10 @@ describe("runtime manifest services", () => {
 						offline: false,
 					},
 					paths,
-					{
-						hostedOpenClawSkillDriver: {
-							...hostedOpenClawSkillDriver,
-							resolveWorkspace: (input) => {
-								repairInvalidConfig = input.repairInvalidConfig;
-								throw new Error("workspace probe captured");
-							},
-						},
-					},
 				),
-			).toThrow("workspace probe captured");
-			expect(repairInvalidConfig).toBe(expected);
+			).toThrow("OpenClaw official agent workspace roster is unavailable");
+			const commands = readFileSync(commandLog, "utf8").trim().split("\n");
+			expect(commands.includes("config validate --json")).toBe(expected);
 		}
 	});
 

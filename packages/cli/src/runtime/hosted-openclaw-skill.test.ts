@@ -1,6 +1,4 @@
 import { afterEach, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -12,7 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
+import {
+	activateHostedOpenClawSkill,
+	resolveHostedOpenClawWorkspace,
+} from "./hosted-openclaw-skill";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
@@ -52,7 +53,7 @@ printf '%s\n' 'LoadState=loaded' 'ActiveState=deactivating'
 	chmodSync(systemctl, 0o755);
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 
-	expect(hostedOpenClawSkillDriver.resolveWorkspace({ home })).toBe(workspaceRoot);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(attempts, "utf8")).toBe("2\n");
 });
 
@@ -85,7 +86,7 @@ exit ${scenario.exitCode}
 		chmodSync(systemctl, 0o755);
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 
-		expect(() => hostedOpenClawSkillDriver.resolveWorkspace({ home })).toThrow(
+		expect(() => resolveHostedOpenClawWorkspace(home)).toThrow(
 			"official agent workspace roster is unavailable",
 		);
 		expect(readFileSync(attempts, "utf8")).toBe("agents list --json\n");
@@ -162,9 +163,7 @@ esac
 	);
 	chmodSync(command, 0o755);
 
-	expect(hostedOpenClawSkillDriver.resolveWorkspace({ home, repairInvalidConfig: true })).toBe(
-		workspaceRoot,
-	);
+	expect(resolveHostedOpenClawWorkspace(home, true)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 		"agents list --json",
 		"config validate --json",
@@ -226,12 +225,9 @@ exit 2
 		);
 		chmodSync(command, 0o755);
 
-		expect(() =>
-			hostedOpenClawSkillDriver.resolveWorkspace({
-				home,
-				repairInvalidConfig: scenario.repairInvalidConfig,
-			}),
-		).toThrow("official agent workspace roster is unavailable");
+		expect(() => resolveHostedOpenClawWorkspace(home, scenario.repairInvalidConfig)).toThrow(
+			"official agent workspace roster is unavailable",
+		);
 		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 			...scenario.expectedCommands,
 		]);
@@ -282,61 +278,26 @@ if test "\${FAKE_OPENCLAW_DRIFT_AFTER_WRITE:-}" = "1"; then touch '${workspaceDr
 	const sourceDir = join(root, "source", "review-pr");
 	mkdirSync(sourceDir, { recursive: true });
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
-	const archive = join(root, "review-pr.tar.gz");
-	const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review-pr"]);
-	if (packed.status !== 0) throw new Error("test tar creation failed");
-	const tarBytes = readFileSync(archive);
-	const skill = {
-		skillId: "review-pr",
-		source: {
-			type: "github" as const,
-			url: "https://github.com/Clawdi-AI/store",
-			path: "skills/review-pr",
-			commit: "a".repeat(40),
-		},
-		sourceIdentity: `github\0review-pr\0https://github.com/Clawdi-AI/store\0skills/review-pr\0${"a".repeat(40)}`,
-		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
-		tarBytes,
-	};
+	const target = join(workspaceRoot, "skills", "review-pr");
+	const activate = () =>
+		activateHostedOpenClawSkill({ home, workspaceRoot, sourceDir, targetDir: target });
 
 	expect(existsSync(workspaceRoot)).toBe(false);
-	expect(hostedOpenClawSkillDriver.install({ home, workspaceRoot, skill })).toBe("installed");
+	activate();
 	expect(readFileSync(installCwdLog, "utf8")).toBe(`${home}\n`);
 	expect(readFileSync(installLog, "utf8")).toMatch(
 		/^skills install .* --agent main --as review-pr --force\n$/,
 	);
-	const target = join(workspaceRoot, "skills", "review-pr");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	expect(
-		hostedOpenClawSkillDriver.installDirectory({
-			home,
-			workspaceRoot,
-			skillId: "review-pr",
-			sourceDir,
-		}),
-	).toBe("installed");
+	activate();
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
 	process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE = "1";
-	expect(() =>
-		hostedOpenClawSkillDriver.installDirectory({
-			home,
-			workspaceRoot,
-			skillId: "review-pr",
-			sourceDir,
-		}),
-	).toThrow("official Skill install failed: exit code 45 without output");
+	expect(activate).toThrow("official Skill install failed: exit code 45 without output");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
 	process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE = "1";
-	expect(() =>
-		hostedOpenClawSkillDriver.installDirectory({
-			home,
-			workspaceRoot,
-			skillId: "review-pr",
-			sourceDir,
-		}),
-	).toThrow("changed during Skill reconciliation");
+	expect(activate).toThrow("changed during Skill reconciliation");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
 	delete process.env.FAKE_OPENCLAW_DRIFT_AFTER_WRITE;
 	rmSync(workspaceDriftMarker);
@@ -366,11 +327,11 @@ exit 0
 	mkdirSync(sourceDir, { recursive: true });
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
 	expect(() =>
-		hostedOpenClawSkillDriver.installDirectory({
+		activateHostedOpenClawSkill({
 			home,
 			workspaceRoot,
-			skillId: "review-pr",
 			sourceDir,
+			targetDir: join(workspaceRoot, "skills", "review-pr"),
 		}),
 	).toThrow("changed during Skill reconciliation");
 	expect(existsSync(installMarker)).toBe(false);
@@ -400,11 +361,11 @@ exit 64
 	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
 	let message = "";
 	try {
-		hostedOpenClawSkillDriver.installDirectory({
+		activateHostedOpenClawSkill({
 			home,
 			workspaceRoot,
-			skillId: "review-pr",
 			sourceDir,
+			targetDir: join(workspaceRoot, "skills", "review-pr"),
 		});
 	} catch (error) {
 		message = error instanceof Error ? error.message : String(error);

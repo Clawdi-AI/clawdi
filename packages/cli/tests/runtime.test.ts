@@ -58,7 +58,6 @@ import {
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-context";
-import { hostedOpenClawSkillDriver } from "../src/runtime/hosted-openclaw-skill";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
 import {
@@ -107,6 +106,7 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-us
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import {
+	ensureTestOpenClawWorkspaceCli,
 	type TestConvergeOptions,
 	withTestSystemdTransaction,
 } from "../src/test-support/systemd-apply";
@@ -237,6 +237,7 @@ function convergeRuntimeManifest(
 ) {
 	if (!process.env.CLAWDI_RUNTIME_MODE) process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
 	const requiredSecretRefs = new Set(manifestSecretRefs(load.manifest));
 	const defaultSecretValues = Object.fromEntries(
@@ -254,10 +255,6 @@ function convergeRuntimeManifest(
 		{
 			...opts,
 			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
-			hostedOpenClawSkillDriver: opts?.hostedOpenClawSkillDriver ?? {
-				...hostedOpenClawSkillDriver,
-				resolveWorkspace: () => join(paths.userHome, ".openclaw", "workspace"),
-			},
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
@@ -4072,9 +4069,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const loaded = hostedManagedOpenClawV2Load(home, 1);
 		loaded.manifest.egressEngine = seedMitmproxyCache(paths);
 
-		const convergence = convergeRuntimeManifest(loaded, paths, {
-			hostedOpenClawSkillDriver,
-		});
+		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors).toEqual([]);
 		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
@@ -4095,7 +4090,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		writeFileSync(configPath, '{"legacyInvalidConfig":true}\n');
 		writeFileSync(database, "preserve\n");
 		convergeRuntimeManifest(loaded, paths, {
-			hostedOpenClawSkillDriver,
 			commitAuthority: () => {
 				throw new Error("late authority failure");
 			},
@@ -16472,7 +16466,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const mitmproxy = seedMitmproxyCache();
@@ -16568,11 +16562,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
-		expect(runtimeSidecarUnit).toContain("Before=user@10001.service");
+		expect(runtimeSidecarUnit).toContain(`Before=user@${TEST_PROCESS_UID}.service`);
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_USER="${TEST_PROCESS_USER}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_UID="${TEST_PROCESS_UID}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_GID="${TEST_PROCESS_GID}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
@@ -16672,7 +16666,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		const mitmproxy = seedMitmproxyCache();
@@ -16723,7 +16717,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(sidecarUnit).toContain("Type=notify");
-		expect(sidecarUnit).toContain("Before=user@10001.service");
+		expect(sidecarUnit).toContain(`Before=user@${TEST_PROCESS_UID}.service`);
 		expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
@@ -16733,8 +16727,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			`CLAWDI_EGRESS_TRANSPARENT_PORT="${TRANSPARENT_EGRESS_PORT}"`,
 		);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
-		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_UID="${TEST_PROCESS_UID}"`);
+		expect(transparentEgressEnv).toContain(`CLAWDI_RUNTIME_GID="${TEST_PROCESS_GID}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(sidecarEnv).toContain(

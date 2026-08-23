@@ -17,9 +17,7 @@ import {
 	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import { hostedBundledSkillIds } from "./hosted-bundled-skill";
-import type { HostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 import { createOpenClawHostedContext, type OpenClawHostedContext } from "./hosted-openclaw-context";
-import type { HostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
 import {
 	agentTargetProjectionInput,
 	hostedAiProviderCatalog,
@@ -42,7 +40,6 @@ import {
 	managedBaileysCompatSnapshotRuntimes,
 } from "./managed-baileys-compat";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
-import { ManagedSkillResourceError } from "./managed-skill-delivery";
 import { managedSkillReservations } from "./managed-skill-reservation";
 import {
 	hostedChannelCredentialsDeclared,
@@ -126,8 +123,6 @@ export interface RuntimeConvergenceOptions {
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins;
 	resourcePreparationFailures?: RuntimeResourcePreparationFailures;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
-	hostedHermesSkillExactSourceDriver?: HostedHermesSkillExactSourceDriver;
-	hostedOpenClawSkillDriver?: HostedOpenClawSkillDriver;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
@@ -613,8 +608,6 @@ export function hostedSkillMutationTargets(
 	manifest: RuntimeManifest,
 	home: string,
 	openClawWorkspaceRoot: string | null,
-	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
-	hermesDriver: HostedHermesSkillExactSourceDriver,
 ): string[] {
 	const runtimeUserTargets = new Set<string>();
 	const hermesSkillsRoot = join(home, ".hermes", "skills");
@@ -622,19 +615,9 @@ export function hostedSkillMutationTargets(
 	const addSkillTarget = (skillsRoot: string, skillId: string) => {
 		runtimeUserTargets.add(join(skillsRoot, skillId));
 	};
-	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
+	for (const skillId of Object.keys(manifest.projection?.skills?.entries ?? {})) {
 		addSkillTarget(hermesSkillsRoot, skillId);
 		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
-		if ("source" in desired && manifest.runtimes.hermes?.enabled === true) {
-			const prepared = preparedSourcedSkills.get(skillId);
-			if (prepared?.skillId === skillId) {
-				try {
-					runtimeUserTargets.add(hermesDriver.target({ home, skill: prepared }));
-				} catch (error) {
-					if (!(error instanceof ManagedSkillResourceError)) throw error;
-				}
-			}
-		}
 	}
 	for (const skillId of hostedBundledSkillIds()) {
 		addSkillTarget(hermesSkillsRoot, skillId);

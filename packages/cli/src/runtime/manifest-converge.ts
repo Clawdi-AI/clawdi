@@ -17,12 +17,11 @@ import {
 	type HostedAgentPluginTransaction,
 	hostedAgentPluginCommands,
 } from "./hosted-agent-plugin-runtime";
-import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
 import {
 	createOpenClawHostedContext,
 	hostedOpenClawRuntimeUserOwnership,
 } from "./hosted-openclaw-context";
-import { hostedOpenClawSkillDriver } from "./hosted-openclaw-skill";
+import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-skill";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import { type RuntimeInstallReceipts, readRuntimeInstallReceipts } from "./install-receipts";
 import { captureRuntimeLiveSnapshot, type RuntimeLiveSnapshot } from "./live-state-snapshot";
@@ -177,10 +176,6 @@ interface RuntimeConvergenceContext {
 		RuntimeConvergenceOptions["preparedHostedSourcedSkills"]
 	>;
 	sourcedSkillsPrepared: boolean;
-	hermesSkillNativeReconciler: NonNullable<
-		RuntimeConvergenceOptions["hostedHermesSkillExactSourceDriver"]
-	>;
-	openClawSkillDriver: NonNullable<RuntimeConvergenceOptions["hostedOpenClawSkillDriver"]>;
 	retainPreviousProjectedProviderIds: () => Record<string, string[]>;
 }
 
@@ -315,9 +310,6 @@ function initializeRuntimeConvergence(
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
-	const hermesSkillNativeReconciler =
-		opts.hostedHermesSkillExactSourceDriver ?? hostedHermesSkillExactSourceDriver;
-	const openClawSkillDriver = opts.hostedOpenClawSkillDriver ?? hostedOpenClawSkillDriver;
 	const state: RuntimeConvergenceState = {
 		agentPluginTransaction: null,
 		agentPluginFailedNames: new Set(),
@@ -383,8 +375,6 @@ function initializeRuntimeConvergence(
 			runtimeEntries,
 			preparedHostedSourcedSkills,
 			sourcedSkillsPrepared,
-			hermesSkillNativeReconciler,
-			openClawSkillDriver,
 			retainPreviousProjectedProviderIds,
 		},
 		state,
@@ -494,7 +484,6 @@ function prepareRuntimeConvergencePlan(
 		paths,
 		projectionHome,
 		openClawContext,
-		openClawSkillDriver,
 		secretValues,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
@@ -511,11 +500,10 @@ function prepareRuntimeConvergencePlan(
 			manifest.runtimes.openclaw?.enabled === true ||
 			Boolean(openClawCommand && executableExists(openClawCommand));
 		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? openClawSkillDriver.resolveWorkspace({
-					home: projectionHome,
-					repairInvalidConfig:
-						manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
-				})
+			? resolveHostedOpenClawWorkspace(
+					projectionHome,
+					manifest.projection?.sourceBundleVersion === HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
+				)
 			: null;
 		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 			manifest,
@@ -607,7 +595,6 @@ function prepareRuntimeApplyDependencies(
 		hostedRuntimeContract,
 		projectionHome,
 		openClawContext,
-		openClawSkillDriver,
 		workspaceRoot,
 		instanceRoot,
 		runtimeEntries,
@@ -674,8 +661,7 @@ function prepareRuntimeApplyDependencies(
 	}
 	if (
 		plan.openClawWorkspaceRoot &&
-		resolve(openClawSkillDriver.resolveWorkspace({ home: projectionHome })) !==
-			resolve(plan.openClawWorkspaceRoot)
+		resolve(resolveHostedOpenClawWorkspace(projectionHome)) !== resolve(plan.openClawWorkspaceRoot)
 	) {
 		throw new Error("OpenClaw official agent workspace changed during runtime reconciliation");
 	}
@@ -1034,8 +1020,6 @@ function applyRuntimeResourceProjections(
 		runtimeEntries,
 		preparedHostedSourcedSkills,
 		sourcedSkillsPrepared,
-		hermesSkillNativeReconciler,
-		openClawSkillDriver,
 	} = context;
 	// Capability repair and managed auth-target discovery can change the plan;
 	// this second validation is an intentional post-repair revalidation.
@@ -1083,8 +1067,6 @@ function applyRuntimeResourceProjections(
 				manifest,
 				projectionHome,
 				plan.openClawWorkspaceRoot,
-				preparedHostedSourcedSkills,
-				hermesSkillNativeReconciler,
 			);
 			skillProjectionScope = state.rollbackSnapshots.captureScoped(
 				"runtime Skill filesystem rollback failed",
@@ -1108,8 +1090,6 @@ function applyRuntimeResourceProjections(
 					managedResourceRoot: paths.managedResourceRoot,
 					openClawWorkspaceRoot: plan.openClawWorkspaceRoot,
 					preparedSourcedSkills: preparedHostedSourcedSkills,
-					hermesDriver: hermesSkillNativeReconciler,
-					openClawDriver: openClawSkillDriver,
 				}),
 			);
 		} catch (error) {

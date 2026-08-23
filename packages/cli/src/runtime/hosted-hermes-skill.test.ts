@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
@@ -12,8 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { hostedHermesSkillExactSourceDriver } from "./hosted-hermes-skill";
-import type { PreparedHostedSourcedSkill } from "./hosted-sourced-skill-archive";
+import { activateHostedHermesSkill } from "./hosted-hermes-skill";
 
 let root: string | null = null;
 
@@ -23,17 +20,7 @@ afterEach(() => {
 	root = null;
 });
 
-function preparedArchive(
-	archive: string,
-): Pick<PreparedHostedSourcedSkill, "archiveSha256" | "tarBytes"> {
-	const tarBytes = readFileSync(archive);
-	return {
-		archiveSha256: createHash("sha256").update(tarBytes).digest("hex"),
-		tarBytes,
-	};
-}
-
-function archiveSkill(
+function writeSkill(
 	fixtureRoot: string,
 	skillId: string,
 	files: Readonly<Record<string, string>>,
@@ -45,34 +32,7 @@ function archiveSkill(
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, content);
 	}
-	const archive = join(fixtureRoot, `${skillId}${suffix}.tar.gz`);
-	const packed = spawnSync("tar", ["-czf", archive, "-C", dirname(sourceDir), skillId]);
-	if (packed.status !== 0) throw new Error("test tar creation failed");
-	return archive;
-}
-
-function sourcedSkill(
-	skillId: string,
-	archive: string,
-	revision = "a".repeat(40),
-): PreparedHostedSourcedSkill {
-	return {
-		skillId,
-		source: {
-			type: "github",
-			url: "https://github.com/Clawdi-AI/store",
-			path: `skills/${skillId}`,
-			commit: revision,
-		},
-		sourceIdentity: [
-			"github",
-			skillId,
-			"https://github.com/Clawdi-AI/store",
-			`skills/${skillId}`,
-			revision,
-		].join("\0"),
-		...preparedArchive(archive),
-	};
+	return sourceDir;
 }
 
 function fakeHubInstallVerdict(
@@ -112,7 +72,7 @@ function fakeHermesLocalSkills(home: string): Array<{
 		});
 }
 
-describe("Hermes exact-source Workspace Skill driver", () => {
+describe("Hermes exact-source Workspace Skill activation", () => {
 	test("places a hub-blocked dangerous source on the official local discovery surface", () => {
 		root = mkdtempSync(join(tmpdir(), "hosted-hermes-dangerous-local-"));
 		const home = join(root, "home");
@@ -132,8 +92,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 				'import os\nimport subprocess\nsubprocess.run(input(), shell=True)\neval(os.environ["RECOVERY_EXPRESSION"])\n',
 			"skill.json": '{"catalog_only":true}\n',
 		};
-		const archive = archiveSkill(root, skillId, dangerousFiles);
-		const skill = sourcedSkill(skillId, archive);
+		const sourceDir = writeSkill(root, skillId, dangerousFiles);
 		const target = join(home, ".hermes", "skills", skillId);
 
 		expect(fakeHubInstallVerdict(dangerousFiles, true)).toEqual({
@@ -141,14 +100,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			detail:
 				"Blocked (community source + dangerous verdict, 3 findings). --force does not override a dangerous verdict.",
 		});
-		expect(hostedHermesSkillExactSourceDriver.target({ home, skill })).toBe(target);
-		expect(
-			hostedHermesSkillExactSourceDriver.install({
-				home,
-				skill,
-				targetDir: target,
-			}),
-		).toBe("installed");
+		activateHostedHermesSkill(sourceDir, target);
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(dangerousSkill);
 		expect(readFileSync(join(target, "references", "policy.md"), "utf8")).toBe(
 			"Verified support file\n",
@@ -174,24 +126,16 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 		const skillId = "review-pr";
 		const skillV1 = "---\nname: native-review-pr\n---\n# Review PR v1\n";
 		const skillV2 = "---\nname: native-review-pr\n---\n# Review PR v2\n";
-		const archiveV1 = archiveSkill(root, skillId, { "SKILL.md": skillV1 });
-		const archiveV2 = archiveSkill(root, skillId, { "SKILL.md": skillV2 }, "-v2");
-		const skill = sourcedSkill(skillId, archiveV1);
-		const updatedSkill = sourcedSkill(skillId, archiveV2, "b".repeat(40));
+		const sourceV1 = writeSkill(root, skillId, { "SKILL.md": skillV1 });
+		const sourceV2 = writeSkill(root, skillId, { "SKILL.md": skillV2 }, "-v2");
 		const target = join(home, ".hermes", "skills", skillId);
-		const input = { home, skill, targetDir: target };
 
-		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
+		activateHostedHermesSkill(sourceV1, target);
 		writeFileSync(join(target, "SKILL.md"), "tenant drift\n");
-		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
+		activateHostedHermesSkill(sourceV1, target);
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
 
-		expect(
-			hostedHermesSkillExactSourceDriver.install({
-				...input,
-				skill: updatedSkill,
-			}),
-		).toBe("installed");
+		activateHostedHermesSkill(sourceV2, target);
 		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
 	});
 
@@ -203,11 +147,10 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			"SKILL.md": "---\nname: review-pr\n---\n# Review PR\n",
 			"references/guide.md": "Pinned guide bytes\n",
 		};
-		const archive = archiveSkill(root, skillId, skillFiles);
-		const skill = sourcedSkill(skillId, archive);
-		const input = { home, skill, targetDir: join(home, ".hermes", "skills", skillId) };
+		const sourceDir = writeSkill(root, skillId, skillFiles);
+		const target = join(home, ".hermes", "skills", skillId);
 
-		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
+		activateHostedHermesSkill(sourceDir, target);
 		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
 		mkdirSync(dirname(lockPath), { recursive: true });
 		const externalEntry = {
@@ -230,7 +173,7 @@ Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate t
 			})}\n`,
 		);
 		const lockBefore = readFileSync(lockPath);
-		expect(hostedHermesSkillExactSourceDriver.install(input)).toBe("installed");
+		activateHostedHermesSkill(sourceDir, target);
 		expect(readFileSync(lockPath)).toEqual(lockBefore);
 		expect(JSON.parse(readFileSync(lockPath, "utf8")).installed).toEqual({
 			[skillId]: {
