@@ -1169,35 +1169,15 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		const projectionInput = hostedAiProviderCatalog(manifest, "openclaw");
 		if (!projectionInput) throw new Error("expected OpenClaw provider projection");
 		const intendedPatch = buildOpenClawHostedProviderPatch(projectionInput, ["clawdi"]);
-		expect(intendedPatch.args).toEqual(["--replace-path", 'models.providers["clawdi"]']);
-		const rejected = spawnSync(
-			"runuser",
-			[
-				"-u",
-				"clawdi",
-				"--",
-				"env",
-				`HOME=${runtimeHome}`,
-				`OPENCLAW_CONFIG_PATH=${configPath}`,
-				"CLAWDI_AI_API_KEY=clawdi-egress-placeholder",
-				commandPath,
-				"config",
-				"patch",
-				"--stdin",
-				...intendedPatch.args,
-			],
-			{ encoding: "utf8", input: intendedPatch.content },
+		const configMutationSdkPath = resolveSdk(
+			runtimeHome,
+			[commandPath],
+			SDK_EXPORTS.configMutation,
 		);
-		expect(rejected.status).not.toBe(0);
-		const rejectedOutput = `${rejected.stdout}\n${rejected.stderr}`;
-		const sizeDrop = rejectedOutput.match(/size-drop:(\d+)->(\d+)/);
-		expect(sizeDrop).not.toBeNull();
-		if (!sizeDrop) throw new Error(rejectedOutput);
-		const beforeBytes = Number(sizeDrop[1]);
-		const rejectedBytes = Number(sizeDrop[2]);
-		expect(beforeBytes).toBeGreaterThan(5_000);
-		expect(rejectedBytes).toBeLessThan(Math.floor(beforeBytes * 0.5));
-		expect(readFileSync(configPath, "utf8")).toBe(originalConfig);
+		expect(configMutationSdkPath).not.toBeNull();
+		if (!configMutationSdkPath) {
+			throw new Error("official OpenClaw config-mutation SDK is unavailable");
+		}
 		writeFileSync(
 			configPath,
 			`${JSON.stringify(
@@ -1214,6 +1194,8 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			{ mode: 0o600 },
 		);
 		chownSync(configPath, runtimeUid, runtimeGid);
+		const beforeBytes = Buffer.byteLength(readFileSync(configPath, "utf8"));
+		expect(beforeBytes).toBeGreaterThan(5_000);
 
 		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 		expect(convergence.installErrors).toEqual([]);

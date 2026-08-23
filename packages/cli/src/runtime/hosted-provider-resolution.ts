@@ -310,50 +310,41 @@ function assertNoProviderEnvOverlap(
 	}
 }
 
+type RuntimeProviderSettings = RuntimeManifest["runtimes"][string]["run"];
+type RuntimeServiceProviderSettings = NonNullable<
+	RuntimeManifest["runtimes"][string]["services"]
+>[string];
+
 export function mergeRuntimeEnvWithProviderPlaceholders(
 	runtimeName: string,
-	settings: RuntimeManifest["runtimes"][string]["run"],
+	settings: RuntimeServiceProviderSettings,
 	providerEnv: Record<string, string>,
-): RuntimeManifest["runtimes"][string]["run"] {
+	serviceName: string,
+): RuntimeServiceProviderSettings;
+export function mergeRuntimeEnvWithProviderPlaceholders(
+	runtimeName: string,
+	settings: RuntimeProviderSettings,
+	providerEnv: Record<string, string>,
+): RuntimeProviderSettings;
+export function mergeRuntimeEnvWithProviderPlaceholders(
+	runtimeName: string,
+	settings: RuntimeProviderSettings | RuntimeServiceProviderSettings,
+	providerEnv: Record<string, string>,
+	serviceName?: string,
+): RuntimeProviderSettings | RuntimeServiceProviderSettings {
 	if (Object.keys(providerEnv).length === 0) return settings;
 	const userEnv = settings?.env ?? {};
 	for (const envName of Object.keys(providerEnv)) {
 		if (settings?.secretEnv?.[envName] !== undefined) {
 			throw new Error(
-				`runtime ${runtimeName} provider placeholder ${envName} conflicts with secretEnv`,
+				`runtime ${runtimeName}${serviceName ? ` service ${serviceName}` : ""} provider placeholder ${envName} conflicts with secretEnv`,
 			);
 		}
 	}
 	return {
 		...(settings ?? {}),
 		prependPath: settings?.prependPath ?? [],
-		env: {
-			...userEnv,
-			...providerEnv,
-		},
-	};
-}
-
-export function mergeRuntimeServiceEnvWithProviderPlaceholders(
-	runtimeName: string,
-	serviceName: string,
-	settings: NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string],
-	providerEnv: Record<string, string>,
-): NonNullable<RuntimeManifest["runtimes"][string]["services"]>[string] {
-	if (Object.keys(providerEnv).length === 0) return settings;
-	for (const envName of Object.keys(providerEnv)) {
-		if (settings.secretEnv?.[envName] !== undefined) {
-			throw new Error(
-				`runtime ${runtimeName} service ${serviceName} provider placeholder ${envName} conflicts with secretEnv`,
-			);
-		}
-	}
-	return {
-		...settings,
-		env: {
-			...(settings.env ?? {}),
-			...providerEnv,
-		},
+		env: { ...userEnv, ...providerEnv },
 	};
 }
 

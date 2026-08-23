@@ -66,7 +66,6 @@ import {
 	reserveManagedSkill,
 } from "../src/runtime/managed-skill-reservation";
 import {
-	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
 	materializeHostedChannelCredentials,
@@ -1302,6 +1301,7 @@ fi`;
 }
 
 function seedOpenClawBinary(home: string): void {
+	writeOpenClawConfigMutationFixture(home);
 	const openclawBin = join(home, ".local", "bin", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
 	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
@@ -2641,27 +2641,6 @@ function writeOfflineStrictAppliedState(
 	);
 }
 
-function applyOpenClawProviderPatchLog(
-	patchLog: string,
-	initialProviders: Record<string, unknown>,
-): Record<string, unknown> {
-	const providers = { ...initialProviders };
-	const patchText = existsSync(patchLog) ? readFileSync(patchLog, "utf-8") : "";
-	for (const rawPatch of patchText.split("\n---\n")) {
-		const trimmed = rawPatch.trim();
-		if (!trimmed) continue;
-		const patch = JSON.parse(trimmed);
-		if (!isRecord(patch)) continue;
-		const models = isRecord(patch.models) ? patch.models : {};
-		const patchProviders = isRecord(models.providers) ? models.providers : {};
-		for (const [providerId, providerPatch] of Object.entries(patchProviders)) {
-			if (providerPatch === null) delete providers[providerId];
-			else providers[providerId] = providerPatch;
-		}
-	}
-	return providers;
-}
-
 describe("runtime paths", () => {
 	it("uses ~/.clawdi in local mode", () => {
 		const home = join(root, "home", "alice");
@@ -3896,8 +3875,8 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-provider-patch.json");
-		const openclawOriginsPatch = join(root, "openclaw-origins-patch.json");
 		const openclawCommand = join(root, "openclaw-provider-command.txt");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -3909,11 +3888,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				"#!/bin/sh",
 				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  if [ ! -f '${openclawPatch}' ]; then`,
-				`    cat > '${openclawPatch}'`,
-				"  else",
-				`    cat > '${openclawOriginsPatch}'`,
-				"  fi",
+				`  cat > '${openclawPatch}'`,
 				"  exit 0",
 				"fi",
 				"printf 'unexpected openclaw command: %s\\n' \"$*\" >&2",
@@ -3988,10 +3963,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
-			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
-		]);
+		expect(readFileSync(openclawCommand, "utf-8").trim()).toBe("config patch --stdin");
 		expect(JSON.parse(readFileSync(openclawPatch, "utf-8"))).toEqual({
 			agents: {
 				defaults: {
@@ -4009,7 +3981,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				},
 			},
 		});
-		const patch = JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
 		expect(patch.secrets).toEqual({
 			providers: {
@@ -4486,173 +4458,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(readFileSync(configPath, "utf-8")).not.toMatch(/managed/i);
 	});
 
-	it("migrates the legacy Codex shim before bootstrapping the user npm prefix", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const binDir = join(root, "fake-bin");
-		const npmArgsPath = join(root, "npm-args.txt");
-		const userCodexConfig = join(home, ".codex", "config.toml");
-		const legacyCodexMarker = join(home, ".local", "share", "clawdi", "codex", "user-data");
-		const legacyCodexCommand = join(home, ".local", "bin", "codex");
-		const legacyCodexRealBin = join(home, ".local", "share", "clawdi", "codex", "bin", "codex");
-		const partialPackageJson = join(
-			home,
-			".local",
-			"lib",
-			"node_modules",
-			"@openai",
-			"codex",
-			"package.json",
-		);
-		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
-		const previousPath = process.env.PATH;
-		const previousUmask = process.umask(0o077);
-		mkdirSync(binDir, { recursive: true });
-		mkdirSync(dirname(userCodexConfig), { recursive: true });
-		mkdirSync(dirname(legacyCodexMarker), { recursive: true });
-		mkdirSync(dirname(legacyCodexCommand), { recursive: true });
-		mkdirSync(dirname(partialPackageJson), { recursive: true });
-		writeFileSync(userCodexConfig, userConfigBytes);
-		writeFileSync(legacyCodexMarker, "preserve\n");
-		writeFileSync(partialPackageJson, '{"version":"0.147.0"}\n');
-		writeFileSync(
-			legacyCodexCommand,
-			[
-				"#!/usr/bin/env sh",
-				"export CLAWDI_AI_API_KEY='clawdi-egress-placeholder'",
-				`exec '${legacyCodexRealBin}' "$@"`,
-				"",
-			].join("\n"),
-		);
-		chmodSync(legacyCodexCommand, 0o755);
-		writeFileSync(
-			join(binDir, "npm"),
-			[
-				"#!/usr/bin/env bash",
-				"set -euo pipefail",
-				`printf '%s\\n' "$@" > '${npmArgsPath}'`,
-				"prefix=''",
-				'while [ "$#" -gt 0 ]; do',
-				'  case "$1" in',
-				"    --prefix)",
-				'      prefix="$2"',
-				"      shift 2",
-				"      ;;",
-				"    *)",
-				"      shift",
-				"      ;;",
-				"  esac",
-				"done",
-				'test ! -e "$prefix/bin/codex"',
-				'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
-				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
-				"cat > \"$prefix/bin/codex\" <<'SH'",
-				"#!/usr/bin/env sh",
-				'for arg in "$@"; do printf \'arg=<%s>\\n\' "$arg"; done',
-				"SH",
-				'chmod 755 "$prefix/bin/codex"',
-				"",
-			].join("\n"),
-		);
-		chmodSync(join(binDir, "npm"), 0o755);
-		delete process.env.CLAWDI_CODEX_INSTALL_DISABLED;
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.PATH = [binDir, previousPath].filter(Boolean).join(":");
-		const paths = getRuntimePaths();
-
-		try {
-			const convergence = convergeRuntimeManifest(
-				{
-					source: "remote-datasource",
-					sourcePath: "https://runtime-source.test/desired-state",
-					offline: false,
-					manifest: {
-						schemaVersion: "clawdi.runtimeDesiredState.v1",
-						deploymentId: "dep_codex_addon",
-						environmentId: "env_codex_addon",
-						instanceId: "iid_codex_addon",
-						generation: 1,
-						issuedAt: "2026-07-10T00:00:00Z",
-						workspaceRoot: join(home, "clawdi"),
-						controlPlane: { apiUrl: "https://cloud-api.test" },
-						runtimes: {
-							openclaw: { enabled: false },
-						},
-						projection: {
-							system: { home },
-							providers: {},
-							terminalTooling: {
-								codex: {
-									enabled: true,
-									provider_id: "codex-managed",
-									primary_model: {
-										provider_id: "codex-managed",
-										model: "gpt-5.5",
-									},
-									provider: {
-										kind: "openai-compatible",
-										baseUrl: "https://managed-provider.example.test/v1",
-										apiMode: "openai_responses",
-										managed_by: "clawdi",
-										runtimeEnvName: "CLAWDI_AI_API_KEY",
-										apiKeySecretRef: "secret://tool.codex.apiKey",
-									},
-								},
-							},
-						},
-						egressProfiles: { profiles: [] },
-						recovery: { cacheManifest: true, allowOfflineBoot: true },
-					},
-				},
-				paths,
-			);
-
-			expect(convergence.installErrors).toEqual([]);
-		} finally {
-			process.umask(previousUmask);
-			if (previousPath === undefined) delete process.env.PATH;
-			else process.env.PATH = previousPath;
-			process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-		}
-
-		const npmArgs = readFileSync(npmArgsPath, "utf-8");
-		expect(npmArgs).toContain("@openai/codex@0.146.0");
-		expect(npmArgs).toContain(`${paths.userNpmPrefix}\n`);
-		expect(npmArgs).not.toContain("--force\n");
-		expect(npmArgs).not.toContain("--cache\n");
-		const realBin = join(paths.userNpmPrefix, "bin", "codex");
-		const packageJson = join(paths.userNpmPrefix, "lib/node_modules/@openai/codex/package.json");
-		expect(statSync(paths.userNpmPrefix).mode & 0o777).toBe(0o700);
-		expect(statSync(dirname(realBin)).mode & 0o777).toBe(0o700);
-		expect(statSync(realBin).mode & 0o777).toBe(0o755);
-		expect(statSync(packageJson).mode & 0o777).toBe(0o600);
-		expect(readFileSync(userCodexConfig, "utf8")).toContain('env_key = "CLAWDI_AI_API_KEY"');
-		expect(readFileSync(legacyCodexMarker, "utf8")).toBe("preserve\n");
-
-		const runCodex = (args: string[]) => {
-			const result = spawnSync(realBin, args, {
-				encoding: "utf8",
-			});
-			expect(result.status).toBe(0);
-			return result.stdout.trimEnd().split("\n");
-		};
-		expect(runCodex(["exec", "quoted arg", ""])).toEqual([
-			"arg=<exec>",
-			"arg=<quoted arg>",
-			"arg=<>",
-		]);
-		for (const args of [
-			["resume", "session id", "--flag=value"],
-			["exec", "", "'quoted'", '"double quoted"'],
-		]) {
-			expect(runCodex(args)).toEqual(args.map((arg) => `arg=<${arg}>`));
-		}
-	});
-
 	it("preserves a healthy user-upgraded Hosted Codex package", () => {
 		const home = join(root, "codex-user-upgraded", "home", "clawdi");
 		const state = join(root, "codex-user-upgraded", "var", "lib", "clawdi");
@@ -4902,35 +4707,20 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			const run = join(caseRoot, "run", "clawdi");
 			const workspace = join(home, "clawdi");
 			const openclawBin = join(home, ".local", "bin", "openclaw");
-			const openclawPatchLog = join(caseRoot, "openclaw-provider-patches.jsonl");
-			const publicSdkConfig =
-				providerCase.id === "managed-to-managed"
-					? writeOpenClawConfigMutationFixture(home, {
-							models: {
-								providers: {
-									"user-local": {
-										baseUrl: "http://127.0.0.1:11434/v1",
-										models: [{ id: "local-model" }],
-									},
-								},
-							},
-						})
-					: null;
+			const publicSdkConfig = writeOpenClawConfigMutationFixture(home, {
+				models: {
+					providers: {
+						"user-local": {
+							baseUrl: "http://127.0.0.1:11434/v1",
+							models: [{ id: "local-model" }],
+						},
+					},
+				},
+			});
 			mkdirSync(dirname(openclawBin), { recursive: true });
 			mkdirSync(join(home, ".hermes"), { recursive: true });
 			mkdirSync(workspace, { recursive: true });
-			writeFileSync(
-				openclawBin,
-				`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatchLog}'
-  printf '\\n---\\n' >> '${openclawPatchLog}'
-  exit 0
-fi
-exit 0
-`,
-			);
+			writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
 			chmodSync(openclawBin, 0o700);
 			writeHermesVersionBinary(home, "0.18.0");
 			writeFileSync(
@@ -4947,7 +4737,7 @@ exit 0
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
 			process.env.CLAWDI_SERVICE_STATE_DIR = state;
 			process.env.CLAWDI_RUN_DIR = run;
-			if (publicSdkConfig) {
+			if (providerCase.id === "managed-to-managed") {
 				process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 				process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK =
 					writeFakeOpenClawProviderAuthSdk(
@@ -4967,38 +4757,13 @@ exit 0
 			const secondLoad = hostedProviderSwitchLoad(home, providerCase.second, 2);
 			const second = convergeRuntimeManifest(secondLoad, paths);
 			expect(second.installErrors).toEqual([]);
-			if (providerCase.id === "byok-to-byok") {
-				const projectionInput = hostedAiProviderCatalog(secondLoad.manifest, "openclaw");
-				expect(projectionInput).not.toBeNull();
-				if (!projectionInput) throw new Error("expected OpenClaw provider projection input");
-				const sharedPatch = buildOpenClawHostedProviderPatch(projectionInput, [firstAgentProvider]);
-				const appliedProviderPatches = readFileSync(openclawPatchLog, "utf-8")
-					.split("\n---\n")
-					.map((content) => content.trim())
-					.filter(Boolean)
-					.map((content) => JSON.parse(content) as unknown)
-					.filter((patch): patch is Record<string, unknown> => {
-						if (!isRecord(patch)) return false;
-						const models = patch.models;
-						return isRecord(models) && isRecord(models.providers);
-					});
-				expect(appliedProviderPatches.at(-1)).toEqual(JSON.parse(sharedPatch.content));
-			}
-
-			const openclawProviders = publicSdkConfig
-				? expectRecord(
-						expectRecord(
-							JSON.parse(readFileSync(publicSdkConfig.configPath, "utf8")).models,
-							"OpenClaw models config",
-						).providers,
-						"OpenClaw providers config",
-					)
-				: applyOpenClawProviderPatchLog(openclawPatchLog, {
-						"user-local": {
-							baseUrl: "http://127.0.0.1:11434/v1",
-							models: [{ id: "local-model" }],
-						},
-					});
+			const openclawProviders = expectRecord(
+				expectRecord(
+					JSON.parse(readFileSync(publicSdkConfig.configPath, "utf8")).models,
+					"OpenClaw models config",
+				).providers,
+				"OpenClaw providers config",
+			);
 			expect(Object.keys(openclawProviders).sort()).toEqual(
 				["user-local", secondAgentProvider].sort(),
 			);
@@ -5219,22 +4984,20 @@ exit 0
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatchLog = join(root, "openclaw-provider-patches.jsonl");
+		const { configPath } = writeOpenClawConfigMutationFixture(home, {
+			models: {
+				providers: {
+					orphaned: {
+						baseUrl: "https://orphaned.example.test/v1",
+						models: [{ id: "orphaned-model" }],
+					},
+				},
+			},
+		});
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatchLog}'
-  printf '\\n---\\n' >> '${openclawPatchLog}'
-  exit 0
-fi
-exit 0
-`,
-		);
+		writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 		writeHermesVersionBinary(home, "0.18.0");
 		writeFileSync(
@@ -5257,12 +5020,11 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(existsSync(paths.appliedState)).toBe(false);
-		const openclawProviders = applyOpenClawProviderPatchLog(openclawPatchLog, {
-			orphaned: {
-				baseUrl: "https://orphaned.example.test/v1",
-				models: [{ id: "orphaned-model" }],
-			},
-		});
+		const openclawProviders = expectRecord(
+			expectRecord(JSON.parse(readFileSync(configPath, "utf8")).models, "OpenClaw models config")
+				.providers,
+			"OpenClaw providers config",
+		);
 		expect(openclawProviders.orphaned).toBeDefined();
 		expect(openclawProviders["byok-b"]).toBeDefined();
 		const hermesProviders = expectRecord(
@@ -5287,6 +5049,7 @@ exit 0
 		const patchCount = join(root, "openclaw-patch-count");
 		const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 		const gatewayEnvPath = join(run, "systemd", "env", "openclaw-gateway.service.env");
+		writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -5433,7 +5196,6 @@ exit 0
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
 			"gateway install --force --json",
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
@@ -5477,13 +5239,12 @@ exit 0
 		utimesSync(gatewayEnvPath, fixedCredentialTime, fixedCredentialTime);
 		const configMtime = statSync(openclawConfig).mtimeMs;
 		const envMtime = statSync(gatewayEnvPath).mtimeMs;
+		const commandsAfterConvergence = readFileSync(openclawCommand, "utf8");
 		const idempotent = convergeRuntimeManifest(loaded, getRuntimePaths(), {
 			executeOfficialServiceInstallers: true,
 		});
 		expect(idempotent.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"]',
-		]);
+		expect(readFileSync(openclawCommand, "utf8")).toBe(commandsAfterConvergence);
 		expect(statSync(openclawConfig).mtimeMs).toBe(configMtime);
 		expect(statSync(gatewayEnvPath).mtimeMs).toBe(envMtime);
 
@@ -5492,8 +5253,7 @@ exit 0
 			executeOfficialServiceInstallers: true,
 		});
 		expect(reinstalled.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
-			'config patch --stdin --replace-path models.providers["default"]',
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
 			"gateway install --force --json",
 		]);
 		expect(readFileSync(installerToken, "utf8")).toBe("gateway-token\n");
@@ -5509,9 +5269,8 @@ exit 0
 			executeOfficialServiceInstallers: true,
 		});
 		expect(rotated.installErrors).toEqual([]);
-		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-2)).toEqual([
+		expect(readFileSync(openclawCommand, "utf8").trim().split("\n").slice(-1)).toEqual([
 			"config patch --stdin",
-			'config patch --stdin --replace-path models.providers["default"]',
 		]);
 		expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
 			"rotated-gateway-token",
@@ -5530,24 +5289,13 @@ exit 0
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-runtime-provider-patch.json");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			openclawBin,
-			[
-				"#!/bin/sh",
-				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  cat > '${openclawPatch}'`,
-				"  exit 0",
-				"fi",
-				"exit 2",
-				"",
-			].join("\n"),
-		);
+		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 		writeHermesVersionBinary(home, "0.18.0");
 
@@ -5649,7 +5397,7 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("openclaw/gpt-5.5");
 		expect(patch.models.providers.openclaw.baseUrl).toBe(
 			"https://openclaw-provider.example.test/v1",
@@ -6503,24 +6251,13 @@ cp '${sdkSource}' '${sdkTarget}'
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-codex-oauth-patch.json");
+		const { configPath } = writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		writeFileSync(
-			openclawBin,
-			[
-				"#!/bin/sh",
-				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-				`  cat > '${openclawPatch}'`,
-				"  exit 0",
-				"fi",
-				"exit 2",
-				"",
-			].join("\n"),
-		);
+		writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 		chmodSync(openclawBin, 0o700);
 
 		const loaded: RuntimeManifestLoad = {
@@ -6577,7 +6314,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+		const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 		expect(patch.plugins.entries.codex.enabled).toBe(true);
 		expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.5");
 		expect(patch.models).toBeUndefined();
@@ -6682,24 +6419,13 @@ cp '${sdkSource}' '${sdkTarget}'
 			const state = join(caseRoot, "var", "lib", "clawdi");
 			const run = join(caseRoot, "run", "clawdi");
 			const openclawBin = join(home, ".local", "bin", "openclaw");
-			const openclawPatch = join(caseRoot, "openclaw-provider-patch.json");
+			const { configPath } = writeOpenClawConfigMutationFixture(home);
 			mkdirSync(dirname(openclawBin), { recursive: true });
 			process.env.HOME = home;
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
 			process.env.CLAWDI_SERVICE_STATE_DIR = state;
 			process.env.CLAWDI_RUN_DIR = run;
-			writeFileSync(
-				openclawBin,
-				[
-					"#!/bin/sh",
-					'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
-					`  cat > '${openclawPatch}'`,
-					"  exit 0",
-					"fi",
-					"exit 2",
-					"",
-				].join("\n"),
-			);
+			writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
 			chmodSync(openclawBin, 0o700);
 
 			const loaded: RuntimeManifestLoad = {
@@ -6757,7 +6483,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 			expect(convergence.installErrors).toEqual([]);
-			const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+			const patch = JSON.parse(readFileSync(configPath, "utf-8"));
 			expect(patch.models.providers.openclaw.api).toBe(providerCase.expectedOpenClawApi);
 			expect(patch.models.providers.openclaw.api).not.toBeUndefined();
 		}
@@ -8134,6 +7860,7 @@ exit 64
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
+		writeOpenClawConfigMutationFixture(home);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -10553,6 +10280,7 @@ chmod +x "$prefix/bin/clawdi"
 			let runtimeExitCode: number | undefined;
 			const logs: string[] = [];
 			mkdirSync(join(run, "secrets"), { recursive: true });
+			if (runtime === "openclaw") writeOpenClawConfigMutationFixture(home);
 			mkdirSync(dirname(runtimeBin), { recursive: true });
 			mkdirSync(bin, { recursive: true });
 			process.env.HOME = home;
@@ -17107,7 +16835,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		writeOpenClawConfigMutationFixture(home);
 		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";

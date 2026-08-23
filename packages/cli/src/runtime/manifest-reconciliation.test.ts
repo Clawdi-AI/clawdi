@@ -742,6 +742,38 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
+function writeFakeOpenClawConfigMutationSdk(home: string): string {
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	mkdirSync(packageRoot, { recursive: true });
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, "{}\n");
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
+		}),
+	);
+	writeFileSync(
+		join(packageRoot, "config-mutation.mjs"),
+		`import { readFileSync, writeFileSync } from "node:fs";
+const configPath = ${JSON.stringify(configPath)};
+export async function readConfigFileSnapshotForWrite() {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  return { snapshot: { valid: true, config, sourceConfig: structuredClone(config) } };
+}
+export async function mutateConfigFile(options) {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
+}
+`,
+	);
+	return configPath;
+}
+
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
 
 function fileBrowserCompanion(accessRevision = "a".repeat(64)): FileBrowserCompanion {
@@ -2782,12 +2814,11 @@ chmod 0755 '${commandPath}'
 
 	test("keeps hosted managed provider key out of the agent env", () => {
 		const paths = tempRuntimePaths();
-		const providerPatchPath = join(paths.serviceStateRoot, "openclaw-provider-patch.json");
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
 		writeFakeGatewayCli({
 			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
-			configPatchPath: providerPatchPath,
 		});
 		const hosted = hostedRuntimeManifestSchema.parse(
 			hostedManifestFixture({
@@ -2822,7 +2853,7 @@ chmod 0755 '${commandPath}'
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
-		expect(JSON.parse(readFileSync(providerPatchPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
 			models: {
 				providers: {
 					"clawdi-managed": {
