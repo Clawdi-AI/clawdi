@@ -1,10 +1,6 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { EventEmitter } from "node:events";
-import { accessSync, chmodSync, chownSync, constants, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import chalk from "chalk";
-import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
@@ -33,7 +29,6 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
-import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
@@ -47,7 +42,6 @@ import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plu
 import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
-	inspectHostedRuntimeIdentity,
 } from "../runtime/hosted-runtime-contract";
 import {
 	gcHostedSkillArchives,
@@ -70,15 +64,12 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
-import { buildNumericUserCommand, runningAsRoot } from "../runtime/runtime-user-command";
 import {
-	assertRuntimePlatformRoots,
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
 	hostPolicySummary,
 	type RuntimeBootStage,
 	type RuntimeBootStatus,
-	readRuntimeBootStatus,
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
@@ -92,12 +83,6 @@ import {
 	SystemdRuntimeTransaction,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
-import {
-	applyTransparentEgressNftRulesFromEnv,
-	cleanupTransparentEgressNftRulesFromEnv,
-	loadTransparentEgressEnvConfig,
-	type TransparentEgressEnvConfig,
-} from "../runtime/transparent-egress";
 import { log, toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
@@ -120,10 +105,6 @@ interface RuntimeWatchOptions {
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
-interface RuntimeVerifyOptions {
-	json?: boolean;
-}
-
 // The image bootstrap is a RemainAfterExit oneshot with Restart=on-failure.
 // A dedicated temporary-failure exit makes it start the newly activated CLI;
 // runtime watch instead exits cleanly because its unit uses Restart=always.
@@ -133,16 +114,6 @@ const RUNTIME_WATCH_INTERVAL_MS = 15_000;
 const RUNTIME_WATCH_SELF_HEAL_MS = 300_000;
 const RUNTIME_WATCH_INITIAL_BACKOFF_MS = 60_000;
 const RUNTIME_WATCH_MAX_BACKOFF_MS = 300_000;
-const EGRESS_LISTEN_TIMEOUT_MS = 15_000;
-const EGRESS_CA_TIMEOUT_MS = 10_000;
-const EGRESS_READY_POLL_MS = 100;
-
-interface RuntimeDoctorCheck {
-	name: string;
-	ok: boolean;
-	detail?: string;
-	hint?: string;
-}
 
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
@@ -200,23 +171,67 @@ interface RuntimeWatchTickOptions {
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
 }
 
-function writable(path: string): boolean {
-	try {
-		accessSync(path, constants.W_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
+type ConvergeLoadResult =
+	| { kind: "ready"; load: RuntimeManifestLoad }
+	| {
+			kind: "not_modified";
+			sourcePath: string;
+			etag: string | null;
+			applied: NonNullable<ReturnType<typeof readRuntimeAppliedState>>;
+	  }
+	| { kind: "failed"; failure: RuntimeManifestFailure }
+	| { kind: "error"; error: string; etag?: string }
+	| { kind: "idle" };
 
-function readable(path: string): boolean {
-	try {
-		accessSync(path, constants.R_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
+type ConvergeOutcome =
+	| { kind: "idle" }
+	| { kind: "reconciliation_error"; error: string }
+	| {
+			kind: "cli_handoff";
+			detail:
+				| { kind: "reconciliation"; reconciliation: RuntimeCliReconciliationResult }
+				| { kind: "update"; load: RuntimeManifestLoad; cliUpdate: RuntimeCliUpdateResult };
+	  }
+	| { kind: "load_failed"; failure: RuntimeManifestFailure }
+	| ({ kind: "not_modified"; selfReexec: boolean } & Extract<
+			ConvergeLoadResult,
+			{ kind: "not_modified" }
+	  >)
+	| { kind: "apply_error"; error: string; load?: RuntimeManifestLoad; etag?: string }
+	| { kind: "cli_update_failed"; load: RuntimeManifestLoad; cliUpdate: RuntimeCliUpdateResult }
+	| {
+			kind: "converged";
+			load: RuntimeManifestLoad;
+			convergence: RuntimeApplyConvergedResult["convergence"];
+			cliUpdate: RuntimeCliUpdateResult;
+			systemdApply: RuntimeApplyConvergedResult["systemdApply"];
+			runtimeErrors: string[];
+			resourceProjectionErrors: string[];
+			cliRollback: RuntimeCliRollbackResult | null;
+			cliRollbackErrors: string[];
+			selfReexec: boolean;
+	  };
+
+type ConvergePolicy = RuntimeManifestApplyOptions & {
+	requireAppliedAuthority?: boolean;
+};
+
+type RuntimeWatchEventPayload = {
+	cliUpdate?: RuntimeCliUpdateResult;
+	etag?: string | null;
+	selfReexec?: boolean;
+	stage?: RuntimeBootStage | "cli-update" | "watch";
+} & (
+	| { status: "applied"; generation: number }
+	| { status: "not_modified" }
+	| { status: "cli_handoff"; stage: "cli-update"; selfReexec: true }
+	| {
+			status: "error";
+			stage: RuntimeBootStage | "cli-update" | "watch";
+			errors: string[];
+			error: string | undefined;
+	  }
+);
 
 function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePaths): string | null {
 	if (load.sourceBundle === undefined) return null;
@@ -524,18 +539,33 @@ function ensureRuntimeWatchNotificationSubscription(
 	return subscription;
 }
 
-function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void {
+function runtimeWatchEvent<T extends RuntimeWatchEventPayload>(
+	payload: T,
+): { schemaVersion: "clawdi.runtimeWatchEvent.v1" } & T {
+	return { schemaVersion: "clawdi.runtimeWatchEvent.v1", ...payload };
+}
+
+type RuntimeWatchEvent = ReturnType<typeof runtimeWatchEvent>;
+
+function runtimeWatchError<T extends object>(
+	stage: Extract<RuntimeWatchEventPayload, { status: "error" }>["stage"],
+	errors: string[],
+	detail?: T,
+): RuntimeWatchEvent {
+	return runtimeWatchEvent({ ...detail, status: "error", stage, errors, error: errors[0] });
+}
+
+const NO_SYSTEMD_APPLY = {
+	applied: false,
+	systemUnitsChanged: [],
+	userUnitsChanged: [],
+} as const;
+
+function emitRuntimeWatchEvent(event: RuntimeWatchEvent, json: boolean | undefined): void {
 	if (json) {
-		console.log(JSON.stringify(value));
+		console.log(JSON.stringify(event));
 		return;
 	}
-	if (!value || typeof value !== "object") return;
-	const event = value as {
-		status?: string;
-		generation?: number;
-		error?: string;
-		errors?: string[];
-	};
 	if (event.status === "applied") {
 		console.log(`runtime watch applied generation ${event.generation ?? "unknown"}`);
 		return;
@@ -569,15 +599,31 @@ function emitRuntimeInitStatus(input: {
 	process.exitCode = status.exitCode;
 }
 
+function renderRuntimeInit(
+	paths: RuntimePaths,
+	message: string,
+	color: (value: string) => string,
+): () => void {
+	return () => {
+		console.log(chalk.bold("clawdi runtime init"));
+		console.log(color(`  ${message}`));
+		console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+	};
+}
+
 function emitRuntimeInitRepair(
 	input: Pick<RuntimeBootStatus, "bootId" | "stage" | "runtimeMode" | "errors" | "exitCode"> & {
 		opts: RuntimeInitOptions;
 		paths: RuntimePaths;
 		persist?: boolean;
 		render?: (status: RuntimeBootStatus) => void;
+		active?: ReturnType<typeof runtimeAppliedStatus>;
+		rejectedGeneration?: number | null;
+		manifestLoad?: RuntimeManifestLoad;
 	},
 ): void {
-	const { opts, paths, persist, render, ...repair } = input;
+	const { opts, paths, persist, render, active, rejectedGeneration, manifestLoad, ...repair } =
+		input;
 	emitRuntimeInitStatus({
 		opts,
 		paths,
@@ -585,11 +631,22 @@ function emitRuntimeInitRepair(
 			...repair,
 			mode: "repair",
 			status: "error",
-			activeGeneration: null,
+			activeGeneration: active?.activeGeneration ?? null,
+			...(rejectedGeneration === undefined ? {} : { rejectedGeneration }),
+			...(active ? { instanceId: active.instanceId } : {}),
 			enabledRuntimes: [],
 			error: repair.errors[0],
 			datasource: "RuntimeSource",
 			hostPolicy: hostPolicySummary(readHostPolicy(paths.hostPolicy)),
+			...(manifestLoad
+				? {
+						manifestSource: {
+							type: manifestLoad.source,
+							path: manifestLoad.sourcePath,
+							offline: manifestLoad.offline,
+						},
+					}
+				: {}),
 		},
 		persist,
 		render,
@@ -640,48 +697,12 @@ function finishRuntimeInitCliHandoff(input: {
 			...input.detail,
 			selfReexec: true,
 		},
-		render: () => {
-			console.log(chalk.bold("clawdi runtime init"));
-			console.log(chalk.green("  CLI activated; restarting under the managed binary"));
-			console.log(chalk.gray(`  status: ${input.paths.bootStatus}`));
-		},
+		render: renderRuntimeInit(
+			input.paths,
+			"CLI activated; restarting under the managed binary",
+			chalk.green,
+		),
 	});
-}
-
-export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
-	const paths = getRuntimePaths();
-	const manifestCacheExists = existsSync(paths.manifestLastGood);
-	const errors: string[] = [];
-	if (manifestCacheExists) {
-		try {
-			const raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
-			const parsed = hostedRuntimeBundleV2Schema.safeParse(raw);
-			if (!parsed.success) {
-				errors.push(`cached manifest parse failed: ${z.prettifyError(parsed.error)}`);
-			}
-		} catch (error) {
-			errors.push(`cached manifest parse failed: ${toErrorMessage(error)}`);
-		}
-	}
-	const result = {
-		schemaVersion: "clawdi.runtimeVerify.v1",
-		status: errors.length === 0 ? "ok" : "error",
-		cliVersion: ACTIVE_CLI_VERSION,
-		manifestCache: {
-			path: paths.manifestLastGood,
-			exists: manifestCacheExists,
-			valid: manifestCacheExists ? errors.length === 0 : null,
-		},
-		errors,
-	};
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(result, null, 2));
-	} else if (errors.length === 0) {
-		console.log(chalk.green("runtime verify ok"));
-	} else {
-		console.log(chalk.red(errors[0]));
-	}
-	if (errors.length > 0) process.exitCode = 1;
 }
 
 export async function runtimeInit(opts: RuntimeInitOptions = {}) {
@@ -756,280 +777,256 @@ async function runtimeInitLocked(
 	bootId: string,
 ): Promise<void> {
 	const hostPolicy = readHostPolicy(paths.hostPolicy);
-	try {
-		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
-		if (reconciliation.selfReexec) {
-			finishRuntimeInitCliHandoff({
-				opts,
-				paths,
-				mode,
-				bootId,
-				hostPolicy,
-				detail: { reconciliation },
-			});
-			return;
-		}
-	} catch (error) {
-		const message = toErrorMessage(error);
+	const repair = (stage: RuntimeBootStage, errors: string[], exitCode = 23, prefix = ""): void =>
 		emitRuntimeInitRepair({
 			opts,
 			paths,
 			bootId,
 			runtimeMode: mode,
-			stage: "local",
-			exitCode: 23,
-			errors: [message],
-			render: () => console.log(chalk.red(message)),
+			stage,
+			exitCode,
+			errors,
+			render: (status) =>
+				console.log((exitCode === 20 ? chalk.yellow : chalk.red)(`${prefix}${status.error}`)),
 		});
+	if (opts.nonInteractive !== true) {
+		repair("detect", ["runtime init requires --non-interactive in hosted mode"], 20, "  repair: ");
 		return;
 	}
 
-	const nonInteractiveOk = opts.nonInteractive === true;
-	const errors: string[] = [];
-	let stage: RuntimeBootStage = "detect";
-	let exitCode = 20;
-	if (!nonInteractiveOk) {
-		errors.push("runtime init requires --non-interactive in hosted mode");
-	}
-	if (errors.length === 0) {
-		stage = "local";
-		const loaded = await loadRuntimeManifest(paths, { applyContext: opts.applyContext });
-		if ("errors" in loaded) {
-			stage = loaded.stage;
-			exitCode = loaded.mode === "manifest-rejected" ? 22 : 21;
-			errors.push(...loaded.errors);
-			emitRuntimeInitStatus({
-				opts,
-				paths,
-				status: {
-					mode: loaded.mode,
-					status: "error",
-					stage,
-					bootId,
-					runtimeMode: mode,
-					activeGeneration: loaded.activeGeneration ?? null,
-					rejectedGeneration: loaded.rejectedGeneration ?? null,
-					enabledRuntimes: [],
-					error: errors[0],
-					errors,
-					exitCode,
-					datasource: "RuntimeSource",
-					hostPolicy: hostPolicySummary(hostPolicy),
-				},
-				render: () => {
-					console.log(chalk.bold("clawdi runtime init"));
-					console.log(chalk.yellow(`  ${loaded.mode}: ${errors[0]}`));
-					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-				},
-			});
-			return;
-		}
+	const outcome = await convergeOnce(
+		async () => {
+			const loaded = await loadRuntimeManifest(paths, { applyContext: opts.applyContext });
+			return "errors" in loaded
+				? { kind: "failed" as const, failure: loaded }
+				: { kind: "ready" as const, load: loaded };
+		},
+		paths,
+		{ hostedRuntimeContract: opts.hostedRuntimeContract },
+	);
 
-		let convergenceLoad = loaded;
-		let applyResult: RuntimeApplyResult;
-		try {
-			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
-			applyResult = await applyRuntimeManifestLoad(convergenceLoad, paths, {
-				hostedRuntimeContract: opts.hostedRuntimeContract,
-			});
-		} catch (error) {
-			const message = toErrorMessage(error);
-			const applied = runtimeAppliedStatus(paths);
-			emitRuntimeInitStatus({
-				opts,
-				paths,
-				status: {
-					mode: "repair",
-					status: "error",
-					stage: "final",
-					bootId,
-					runtimeMode: mode,
-					activeGeneration: applied.activeGeneration,
-					rejectedGeneration: convergenceLoad.manifest.generation,
-					instanceId: applied.instanceId,
-					enabledRuntimes: [],
-					error: message,
-					errors: [message],
-					exitCode: 23,
-					datasource: "RuntimeSource",
-					hostPolicy: hostPolicySummary(hostPolicy),
-					manifestSource: {
-						type: convergenceLoad.source,
-						path: convergenceLoad.sourcePath,
-						offline: convergenceLoad.offline,
-					},
-				},
-				render: () => {
-					console.log(chalk.bold("clawdi runtime init"));
-					console.log(chalk.red(`  repair: ${message}`));
-					console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-				},
-			});
-			return;
-		}
-		if (applyResult.kind === "cli_update_failed") {
-			const message = applyResult.cliUpdate.error ?? "CLI update failed";
-			const applied = runtimeAppliedStatus(paths);
-			emitRuntimeInitStatus({
-				opts,
-				paths,
-				status: {
-					mode: "repair",
-					status: "error",
-					stage: "config",
-					bootId,
-					runtimeMode: mode,
-					activeGeneration: applied.activeGeneration,
-					rejectedGeneration: convergenceLoad.manifest.generation,
-					instanceId: applied.instanceId,
-					enabledRuntimes: [],
-					error: message,
-					errors: [message],
-					exitCode: 23,
-					datasource: "RuntimeSource",
-					hostPolicy: hostPolicySummary(hostPolicy),
-				},
-			});
-			return;
-		}
-		if (applyResult.kind === "cli_handoff") {
-			finishRuntimeInitCliHandoff({
-				opts,
-				paths,
-				mode,
+	if (outcome.kind === "reconciliation_error") {
+		repair("local", [outcome.error]);
+		return;
+	}
+	if (outcome.kind === "cli_handoff") {
+		finishRuntimeInitCliHandoff({
+			opts,
+			paths,
+			mode,
+			bootId,
+			hostPolicy,
+			...(outcome.detail.kind === "update" ? { manifestLoad: outcome.detail.load } : {}),
+			detail:
+				outcome.detail.kind === "update"
+					? { cliUpdate: outcome.detail.cliUpdate }
+					: { reconciliation: outcome.detail.reconciliation },
+		});
+		return;
+	}
+	if (outcome.kind === "load_failed") {
+		const { failure } = outcome;
+		emitRuntimeInitStatus({
+			opts,
+			paths,
+			status: {
+				mode: failure.mode,
+				status: "error",
+				stage: failure.stage,
 				bootId,
-				hostPolicy,
-				manifestLoad: convergenceLoad,
-				detail: { cliUpdate: applyResult.cliUpdate },
-			});
-			return;
-		}
-		const { convergence } = applyResult;
-		const runtimeErrors = [...convergence.installErrors];
+				runtimeMode: mode,
+				activeGeneration: failure.activeGeneration ?? null,
+				rejectedGeneration: failure.rejectedGeneration ?? null,
+				enabledRuntimes: [],
+				error: failure.errors[0],
+				errors: failure.errors,
+				exitCode: failure.mode === "manifest-rejected" ? 22 : 21,
+				datasource: "RuntimeSource",
+				hostPolicy: hostPolicySummary(hostPolicy),
+			},
+			render: renderRuntimeInit(paths, `${failure.mode}: ${failure.errors[0]}`, chalk.yellow),
+		});
+		return;
+	}
+	if (outcome.kind === "apply_error" || outcome.kind === "cli_update_failed") {
+		const message =
+			outcome.kind === "apply_error"
+				? outcome.error
+				: (outcome.cliUpdate.error ?? "CLI update failed");
+		const load = outcome.load;
+		const applied = runtimeAppliedStatus(paths);
+		emitRuntimeInitRepair({
+			opts,
+			paths,
+			stage: outcome.kind === "cli_update_failed" ? "config" : "final",
+			bootId,
+			runtimeMode: mode,
+			errors: [message],
+			exitCode: 23,
+			active: applied,
+			rejectedGeneration: load?.manifest.generation ?? null,
+			...(outcome.kind === "apply_error" && load ? { manifestLoad: load } : {}),
+			render: renderRuntimeInit(paths, `repair: ${message}`, chalk.red),
+		});
+		return;
+	}
+	if (outcome.kind === "converged") {
+		const runtimeErrors = [...outcome.runtimeErrors, ...outcome.cliRollbackErrors];
 		const runtimeReady = runtimeErrors.length === 0;
-		if (runtimeReady) {
-			completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
-		} else {
-			maybeRollbackFailedCliUpgrade(paths, runtimeErrors);
-		}
 		const applied = runtimeAppliedStatus(paths);
 		emitRuntimeInitStatus({
 			opts,
 			paths,
 			status: {
-				mode: convergence.mode,
+				mode: outcome.convergence.mode,
 				status: runtimeReady ? "ok" : "error",
 				stage: "final",
 				bootId,
 				runtimeMode: mode,
 				activeGeneration: applied.activeGeneration,
-				rejectedGeneration: runtimeReady ? null : convergence.manifest.generation,
+				rejectedGeneration: runtimeReady ? null : outcome.convergence.manifest.generation,
 				instanceId: applied.instanceId,
-				enabledRuntimes: convergence.enabledRuntimes,
+				enabledRuntimes: outcome.convergence.enabledRuntimes,
 				error: runtimeErrors[0],
 				errors: runtimeErrors,
-				...(convergence.resourceProjectionErrors.length > 0
-					? { resourceProjectionErrors: convergence.resourceProjectionErrors }
+				...(outcome.resourceProjectionErrors.length > 0
+					? { resourceProjectionErrors: outcome.resourceProjectionErrors }
 					: {}),
 				exitCode: runtimeReady ? 0 : 23,
 				datasource: "RuntimeSource",
 				hostPolicy: hostPolicySummary(hostPolicy),
 				manifestSource: {
-					type: convergence.source,
-					path: convergence.sourcePath,
-					offline: convergence.offline,
+					type: outcome.convergence.source,
+					path: outcome.convergence.sourcePath,
+					offline: outcome.convergence.offline,
 				},
-				convergence: convergence.outputs,
+				convergence: outcome.convergence.outputs,
 			},
-			render: () => {
-				console.log(chalk.bold("clawdi runtime init"));
-				console.log(
-					chalk.green(`  ${convergence.mode}: generation ${convergence.manifest.generation}`),
-				);
-				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-			},
+			render: renderRuntimeInit(
+				paths,
+				`${outcome.convergence.mode}: generation ${outcome.convergence.manifest.generation}`,
+				chalk.green,
+			),
 		});
 		return;
 	}
 
-	emitRuntimeInitStatus({
-		opts,
-		paths,
-		status: {
-			mode: "repair",
-			status: "error",
-			stage,
-			bootId,
-			runtimeMode: mode,
-			activeGeneration: null,
-			enabledRuntimes: [],
-			error: errors[0],
-			errors,
-			exitCode,
-			datasource: "RuntimeSource",
-			hostPolicy: hostPolicySummary(hostPolicy),
-		},
-		render: () => {
-			console.log(chalk.bold("clawdi runtime init"));
-			console.log(chalk.yellow(`  repair: ${errors[0]}`));
-			console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-		},
-	});
+	const message = "runtime init manifest loader returned no desired state";
+	repair("local", [message]);
 }
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: RuntimeWatchTickOptions,
-): Promise<Record<string, unknown> | null> {
-	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
+): Promise<RuntimeWatchEvent | null> {
+	return withRuntimeConvergeLockAsync(paths, async () =>
+		runtimeWatchEventForOutcome(
+			await convergeOnce(() => loadRuntimeManifestForWatch(paths, opts), paths, {
+				continueOnCliUpdateError: true,
+				recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
+				hostedRuntimeContract: opts.hostedRuntimeContract,
+				requireAppliedAuthority: true,
+			}),
+			paths,
+		),
+	);
 }
 
-async function runtimeWatchTickLocked(
-	paths: ReturnType<typeof getRuntimePaths>,
-	opts: RuntimeWatchTickOptions,
-): Promise<Record<string, unknown> | null> {
+async function convergeOnce(
+	load: () => Promise<ConvergeLoadResult>,
+	paths: RuntimePaths,
+	policy: ConvergePolicy,
+): Promise<ConvergeOutcome> {
+	const { requireAppliedAuthority, ...apply } = policy;
 	let reconciliation: RuntimeCliReconciliationResult;
 	try {
 		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
 	} catch (error) {
-		const message = toErrorMessage(error);
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "cli-update",
-			errors: [message],
-			error: message,
-			selfReexec: false,
-		};
+		return { kind: "reconciliation_error", error: toErrorMessage(error) };
 	}
 	if (reconciliation.selfReexec) {
+		return { kind: "cli_handoff", detail: { kind: "reconciliation", reconciliation } };
+	}
+
+	const requested = await load();
+	if (requested.kind === "idle") return requested;
+	if (requested.kind === "failed") return { kind: "load_failed", failure: requested.failure };
+	if (requested.kind === "error") return { ...requested, kind: "apply_error" };
+	if (requested.kind === "not_modified") {
+		const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
+		return { ...requested, selfReexec: completion.selfReexec };
+	}
+
+	let convergenceLoad = requested.load;
+	let applyResult: RuntimeApplyResult;
+	try {
+		convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(convergenceLoad, paths);
+		if (requireAppliedAuthority && (!convergenceLoad.etag || !convergenceLoad.sourceRevision)) {
+			throw new Error("runtime bundle is missing applied authority identity");
+		}
+		applyResult = await applyRuntimeManifestLoad(convergenceLoad, paths, apply);
+	} catch (error) {
 		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "cli_handoff",
-			stage: "cli-update",
-			handoff: "cli_reexec",
-			reconciliation,
-			selfReexec: true,
+			kind: "apply_error",
+			error: toErrorMessage(error),
+			load: convergenceLoad,
+			...(convergenceLoad.etag ? { etag: convergenceLoad.etag } : {}),
 		};
 	}
-	if (opts.failureBackoff?.etag === null && opts.now < opts.failureBackoff.nextRetryAt) {
-		return null;
+	if (applyResult.kind === "cli_handoff") {
+		return {
+			kind: "cli_handoff",
+			detail: { kind: "update", load: convergenceLoad, cliUpdate: applyResult.cliUpdate },
+		};
 	}
-	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
-	if (event === null) return null;
+	if (applyResult.kind === "cli_update_failed") {
+		return { kind: "cli_update_failed", load: convergenceLoad, cliUpdate: applyResult.cliUpdate };
+	}
+
+	const cliUpdateError =
+		applyResult.cliUpdate.status === "error"
+			? (applyResult.cliUpdate.error ?? "CLI update failed")
+			: null;
+	const runtimeErrors = [
+		...(cliUpdateError ? [cliUpdateError] : []),
+		...applyResult.convergence.installErrors,
+	];
+	const resourceProjectionErrors = [...applyResult.convergence.resourceProjectionErrors];
+	let selfReexec = applyResult.cliUpdate.selfReexec;
+	let cliRollback: RuntimeCliRollbackResult | null = null;
+	let cliRollbackErrors: string[] = [];
+	if (runtimeErrors.length > 0) {
+		const rollbackErrors = [...runtimeErrors, ...resourceProjectionErrors];
+		const errorCount = rollbackErrors.length;
+		cliRollback = maybeRollbackFailedCliUpgrade(paths, rollbackErrors);
+		cliRollbackErrors = rollbackErrors.slice(errorCount);
+		if (cliRollback.status === "rolled_back") selfReexec = true;
+	} else {
+		const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
+		selfReexec = selfReexec || completion.selfReexec;
+	}
 	return {
-		...event,
-		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
+		kind: "converged",
+		load: convergenceLoad,
+		convergence: applyResult.convergence,
+		cliUpdate: applyResult.cliUpdate,
+		systemdApply: applyResult.systemdApply,
+		runtimeErrors,
+		resourceProjectionErrors,
+		cliRollback,
+		cliRollbackErrors,
+		selfReexec,
 	};
 }
 
-async function runtimeWatchTickAfterCliReconciliation(
-	paths: ReturnType<typeof getRuntimePaths>,
+async function loadRuntimeManifestForWatch(
+	paths: RuntimePaths,
 	opts: RuntimeWatchTickOptions,
-): Promise<Record<string, unknown> | null> {
-	const activeAppliedState = readRuntimeAppliedState(paths);
-	let failureEtag: string | null = null;
-	let agentPluginFailure: ReturnType<typeof failedHostedAgentPluginsObservation> = null;
+): Promise<ConvergeLoadResult> {
+	if (opts.failureBackoff?.etag === null && opts.now < opts.failureBackoff.nextRetryAt) {
+		return { kind: "idle" };
+	}
+	const active = readRuntimeAppliedState(paths);
 	const retryDeferred =
 		opts.failureBackoff !== undefined && opts.now < opts.failureBackoff.nextRetryAt;
 	const manifestEtag =
@@ -1037,218 +1034,188 @@ async function runtimeWatchTickAfterCliReconciliation(
 			? opts.failureBackoff.etag
 			: opts.forceRefresh
 				? undefined
-				: (activeAppliedState?.etag ?? undefined);
-	const manifestLoad = await loadRemoteRuntimeManifest(paths, {
+				: (active?.etag ?? undefined);
+	const conditional = await loadRemoteRuntimeManifest(paths, {
 		ifNoneMatch: manifestEtag,
 		applyContext: opts.applyContext,
 	});
-	if ("errors" in manifestLoad) {
-		if (
-			retryDeferred &&
+	if ("errors" in conditional) {
+		return retryDeferred &&
 			opts.failureBackoff &&
-			(!manifestLoad.etag || manifestLoad.etag === opts.failureBackoff.etag)
-		) {
-			return null;
-		}
-		return runtimeManifestFailureWatchEvent(manifestLoad);
+			(!conditional.etag || conditional.etag === opts.failureBackoff.etag)
+			? { kind: "idle" }
+			: { kind: "failed", failure: conditional };
 	}
-	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
-	failureEtag = responseManifestEtag;
-	if (retryDeferred && opts.failureBackoff?.etag === responseManifestEtag) {
-		return null;
-	}
+	const responseEtag = conditional.etag ?? manifestEtag ?? null;
+	if (retryDeferred && opts.failureBackoff?.etag === responseEtag) return { kind: "idle" };
 	if (
-		"notModified" in manifestLoad &&
-		activeAppliedState !== null &&
-		activeAppliedState.etag === responseManifestEtag &&
+		"notModified" in conditional &&
+		active !== null &&
+		active.etag === responseEtag &&
 		runtimeApplyIdentitiesEqual(
-			manifestLoad.applyContext?.identity ?? null,
-			runtimeAppliedApplyIdentity(activeAppliedState),
+			conditional.applyContext?.identity ?? null,
+			runtimeAppliedApplyIdentity(active),
 		)
 	) {
-		const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
 		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "not_modified",
-			sourcePath: manifestLoad.sourcePath,
-			etag: responseManifestEtag,
-			sourceRevision: activeAppliedState.sourceRevision,
-			generation: activeAppliedState.generation,
-			instanceId: activeAppliedState.instanceId,
-			selfReexec: completion.selfReexec,
+			kind: "not_modified",
+			sourcePath: conditional.sourcePath,
+			etag: responseEtag,
+			applied: active,
 		};
 	}
 
 	try {
 		const fresh =
-			"notModified" in manifestLoad
-				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
-				: manifestLoad;
-		if ("errors" in fresh) {
-			return runtimeManifestFailureWatchEvent(fresh);
+			"notModified" in conditional
+				? await loadRemoteRuntimeManifest(paths, { applyContext: opts.applyContext })
+				: conditional;
+		if ("notModified" in fresh) {
+			throw new Error("runtime manifest datasource returned 304 without If-None-Match");
 		}
-		failureEtag = fresh.etag ?? failureEtag;
-		if (retryDeferred && opts.failureBackoff && opts.failureBackoff.etag === fresh.etag) {
-			return null;
-		}
-		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
-		const bundleEtag = loaded.etag;
-		const sourceRevision = loaded.sourceRevision;
-		if (!bundleEtag || !sourceRevision) {
-			throw new Error("runtime bundle is missing applied authority identity");
-		}
-		failureEtag = bundleEtag;
-		const applyResult = await applyRuntimeManifestLoad(loaded, paths, {
-			continueOnCliUpdateError: true,
-			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
-			hostedRuntimeContract: opts.hostedRuntimeContract,
-		});
-		if (applyResult.kind === "cli_handoff") {
-			const applied = runtimeAppliedStatus(paths);
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "cli_handoff",
-				stage: "cli-update",
-				handoff: "cli_reexec",
-				activeGeneration: applied.activeGeneration,
-				desiredGeneration: loaded.manifest.generation,
-				instanceId: applied.instanceId,
-				cliUpdate: applyResult.cliUpdate,
-				selfReexec: true,
-				systemdUnitsChanged: false,
-				systemdApply: {
-					applied: false,
-					systemUnitsChanged: [],
-					userUnitsChanged: [],
-				},
-			};
-		}
-		if (applyResult.kind === "cli_update_failed") {
-			const error = applyResult.cliUpdate.error ?? "CLI update failed";
-			const applied = runtimeAppliedStatus(paths);
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				stage: "cli-update",
-				errors: [error],
-				error,
-				activeGeneration: applied.activeGeneration,
-				rejectedGeneration: loaded.manifest.generation,
-				instanceId: applied.instanceId,
-				etag: bundleEtag,
-				cliUpdate: applyResult.cliUpdate,
-				selfReexec: applyResult.cliUpdate.selfReexec,
-				systemdUnitsChanged: false,
-				systemdApply: {
-					applied: false,
-					systemUnitsChanged: [],
-					userUnitsChanged: [],
-				},
-			};
-		}
-		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
-		const cliUpdateError =
-			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
-		const runtimeErrors = [
-			...(cliUpdateError ? [cliUpdateError] : []),
-			...convergence.installErrors,
-		];
-		const resourceProjectionErrors = [...convergence.resourceProjectionErrors];
-		const errors = [...runtimeErrors, ...resourceProjectionErrors];
-		const resourceProjectionOnly =
-			runtimeErrors.length === 0 && resourceProjectionErrors.length > 0;
-		let selfReexec = cliUpdate.selfReexec;
-		const systemdUnitsChanged =
-			systemdApplyResult.systemUnitsChanged.length > 0 ||
-			systemdApplyResult.userUnitsChanged.length > 0;
-		if (errors.length > 0) {
-			agentPluginFailure = failedHostedAgentPluginsObservation(
-				loaded.manifest,
-				sourceRevision,
-				convergence.agentPluginFailedNames,
-			);
-			const cliRollback = resourceProjectionOnly
-				? null
-				: maybeRollbackFailedCliUpgrade(paths, errors);
-			if (cliRollback?.status === "rolled_back") selfReexec = true;
-			if (resourceProjectionOnly) {
-				const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
-				selfReexec = selfReexec || completion.selfReexec;
-			}
-			const applied = runtimeAppliedStatus(paths);
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				stage: cliUpdateError ? "cli-update" : "final",
-				errors,
-				error: errors[0],
-				activeGeneration: applied.activeGeneration,
-				rejectedGeneration: resourceProjectionOnly ? null : convergence.manifest.generation,
-				instanceId: applied.instanceId,
-				etag: bundleEtag,
-				cliUpdate,
-				...(cliRollback ? { cliRollback } : {}),
-				selfReexec,
-				systemdUnitsChanged,
-				systemdApply: systemdApplyResult,
-				convergence: convergence.outputs,
-				...(resourceProjectionOnly ? { healthImpact: "resource_projection" } : {}),
-				...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
-			};
-		}
-		const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
-		selfReexec = selfReexec || completion.selfReexec;
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "applied",
-			sourcePath: loaded.sourcePath,
-			etag: loaded.etag,
-			sourceRevision: loaded.sourceRevision,
-			generation: convergence.manifest.generation,
-			instanceId: convergence.manifest.instanceId,
-			enabledRuntimes: convergence.enabledRuntimes,
-			cliUpdate,
-			selfReexec,
-			systemdUnitsChanged,
-			systemdApply: systemdApplyResult,
-			convergence: convergence.outputs,
-		};
+		if ("errors" in fresh) return { kind: "failed", failure: fresh };
+		if (retryDeferred && opts.failureBackoff?.etag === fresh.etag) return { kind: "idle" };
+		return { kind: "ready", load: fresh };
 	} catch (error) {
-		const message = toErrorMessage(error);
 		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "final",
-			errors: [message],
-			error: message,
-			...(failureEtag ? { etag: failureEtag } : {}),
-			...(agentPluginFailure ? { agentPlugins: agentPluginFailure } : {}),
+			kind: "error",
+			error: toErrorMessage(error),
+			...(responseEtag ? { etag: responseEtag } : {}),
 		};
 	}
 }
 
-function runtimeManifestFailureWatchEvent(
-	failure: RuntimeManifestFailure,
-): Record<string, unknown> {
-	return {
-		schemaVersion: "clawdi.runtimeWatchEvent.v1",
-		status: "error",
-		mode: failure.mode,
-		stage: failure.stage,
-		errors: failure.errors,
-		error: failure.errors[0],
-		activeGeneration: failure.activeGeneration ?? null,
-		rejectedGeneration: failure.rejectedGeneration ?? null,
-		...(failure.etag ? { etag: failure.etag } : {}),
-	};
+function runtimeWatchEventForOutcome(
+	outcome: ConvergeOutcome,
+	paths: RuntimePaths,
+): RuntimeWatchEvent | null {
+	if (outcome.kind === "idle") return null;
+	if (outcome.kind === "reconciliation_error") {
+		return runtimeWatchError("cli-update", [outcome.error], { selfReexec: false });
+	}
+	if (outcome.kind === "cli_handoff") {
+		if (outcome.detail.kind === "reconciliation") {
+			return runtimeWatchEvent({
+				status: "cli_handoff",
+				stage: "cli-update",
+				handoff: "cli_reexec",
+				reconciliation: outcome.detail.reconciliation,
+				selfReexec: true,
+			});
+		}
+		const applied = runtimeAppliedStatus(paths);
+		return runtimeWatchEvent({
+			status: "cli_handoff",
+			stage: "cli-update",
+			handoff: "cli_reexec",
+			activeGeneration: applied.activeGeneration,
+			desiredGeneration: outcome.detail.load.manifest.generation,
+			instanceId: applied.instanceId,
+			cliUpdate: outcome.detail.cliUpdate,
+			selfReexec: true,
+			systemdUnitsChanged: false,
+			systemdApply: NO_SYSTEMD_APPLY,
+		});
+	}
+	if (outcome.kind === "load_failed") {
+		return runtimeWatchError(outcome.failure.stage, outcome.failure.errors, {
+			mode: outcome.failure.mode,
+			activeGeneration: outcome.failure.activeGeneration ?? null,
+			rejectedGeneration: outcome.failure.rejectedGeneration ?? null,
+			...(outcome.failure.etag ? { etag: outcome.failure.etag } : {}),
+		});
+	}
+	if (outcome.kind === "not_modified") {
+		return runtimeWatchEvent({
+			status: "not_modified",
+			sourcePath: outcome.sourcePath,
+			etag: outcome.etag,
+			sourceRevision: outcome.applied.sourceRevision,
+			generation: outcome.applied.generation,
+			instanceId: outcome.applied.instanceId,
+			selfReexec: outcome.selfReexec,
+		});
+	}
+	if (outcome.kind === "apply_error") {
+		return runtimeWatchError("final", [outcome.error], {
+			...(outcome.etag ? { etag: outcome.etag } : {}),
+		});
+	}
+	if (outcome.kind === "cli_update_failed") {
+		const error = outcome.cliUpdate.error ?? "CLI update failed";
+		const applied = runtimeAppliedStatus(paths);
+		return runtimeWatchError("cli-update", [error], {
+			activeGeneration: applied.activeGeneration,
+			rejectedGeneration: outcome.load.manifest.generation,
+			instanceId: applied.instanceId,
+			etag: outcome.load.etag,
+			cliUpdate: outcome.cliUpdate,
+			selfReexec: outcome.cliUpdate.selfReexec,
+			systemdUnitsChanged: false,
+			systemdApply: NO_SYSTEMD_APPLY,
+		});
+	}
+
+	const resourceProjectionOnly =
+		outcome.runtimeErrors.length === 0 && outcome.resourceProjectionErrors.length > 0;
+	const errors = [
+		...outcome.runtimeErrors,
+		...outcome.resourceProjectionErrors,
+		...outcome.cliRollbackErrors,
+	];
+	const systemdUnitsChanged =
+		outcome.systemdApply.systemUnitsChanged.length > 0 ||
+		outcome.systemdApply.userUnitsChanged.length > 0;
+	if (errors.length > 0) {
+		const agentPlugins = outcome.load.sourceRevision
+			? failedHostedAgentPluginsObservation(
+					outcome.load.manifest,
+					outcome.load.sourceRevision,
+					outcome.convergence.agentPluginFailedNames,
+				)
+			: null;
+		const applied = runtimeAppliedStatus(paths);
+		return runtimeWatchError(
+			outcome.cliUpdate.status === "error" ? "cli-update" : "final",
+			errors,
+			{
+				activeGeneration: applied.activeGeneration,
+				rejectedGeneration: resourceProjectionOnly ? null : outcome.convergence.manifest.generation,
+				instanceId: applied.instanceId,
+				etag: outcome.load.etag,
+				cliUpdate: outcome.cliUpdate,
+				...(outcome.cliRollback ? { cliRollback: outcome.cliRollback } : {}),
+				selfReexec: outcome.selfReexec,
+				systemdUnitsChanged,
+				systemdApply: outcome.systemdApply,
+				convergence: outcome.convergence.outputs,
+				...(resourceProjectionOnly ? { healthImpact: "resource_projection" } : {}),
+				...(agentPlugins ? { agentPlugins } : {}),
+			},
+		);
+	}
+	return runtimeWatchEvent({
+		status: "applied",
+		sourcePath: outcome.load.sourcePath,
+		etag: outcome.load.etag,
+		sourceRevision: outcome.load.sourceRevision,
+		generation: outcome.convergence.manifest.generation,
+		instanceId: outcome.convergence.manifest.instanceId,
+		enabledRuntimes: outcome.convergence.enabledRuntimes,
+		cliUpdate: outcome.cliUpdate,
+		selfReexec: outcome.selfReexec,
+		systemdUnitsChanged,
+		systemdApply: outcome.systemdApply,
+		convergence: outcome.convergence.outputs,
+	});
 }
 
 function runtimeWatchFailureBackoff(
 	previous: RuntimeWatchFailureBackoff | null,
-	event: Record<string, unknown>,
+	event: RuntimeWatchEvent,
 	now: number,
 ): RuntimeWatchFailureBackoff {
-	const etag = typeof event.etag === "string" ? event.etag : null;
+	const etag = event.etag ?? null;
 	const backoffMs = nextBoundedBackoffMs(previous?.etag === etag ? previous.backoffMs : 0);
 	return {
 		backoffMs,
@@ -1548,17 +1515,6 @@ function maybeRollbackFailedCliUpgrade(
 	return rollback;
 }
 
-async function loadFullRuntimeManifestForWatch(
-	paths: ReturnType<typeof getRuntimePaths>,
-	applyContext?: RuntimeApplyContext,
-): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
-	const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
-	if ("notModified" in loaded) {
-		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
-	}
-	return loaded;
-}
-
 export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const paths = getRuntimePaths();
 	const mode = detectRuntimeMode();
@@ -1570,13 +1526,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
 
 	if (mode !== "hosted") {
-		const event = {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "detect",
-			error: "runtime watch requires hosted runtime mode",
-			errors: ["runtime watch requires hosted runtime mode"],
-		};
+		const event = runtimeWatchError("detect", ["runtime watch requires hosted runtime mode"]);
 		emitRuntimeWatchEvent(event, opts.json);
 		process.exitCode = 2;
 		return;
@@ -1590,13 +1540,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		});
 	} catch (error) {
 		const message = toErrorMessage(error);
-		const event = {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "detect",
-			error: message,
-			errors: [message],
-		};
+		const event = runtimeWatchError("detect", [message]);
 		emitRuntimeWatchEvent(event, opts.json);
 		process.exitCode = 20;
 		return;
@@ -1606,13 +1550,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 		ensureRuntimeStateDirs(paths);
 	} catch (error) {
 		const message = `could not create runtime state directories: ${toErrorMessage(error)}`;
-		const event = {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "detect",
-			error: message,
-			errors: [message],
-		};
+		const event = runtimeWatchError("detect", [message]);
 		emitRuntimeWatchEvent(event, opts.json);
 		process.exitCode = 20;
 		return;
@@ -1639,7 +1577,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				tickNow - lastFullFetchAt >= selfHealMs || cliInstallRetryDue || failureRetryDue;
 			const fullFetchAttempted =
 				forceRefresh && (!failureBackoff || tickNow >= failureBackoff.nextRetryAt);
-			let event: Record<string, unknown> | null;
+			let event: RuntimeWatchEvent | null;
 			try {
 				event = await runtimeWatchTick(paths, {
 					forceRefresh,
@@ -1653,17 +1591,13 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				});
 			} catch (error) {
 				const message = toErrorMessage(error);
-				event = {
-					schemaVersion: "clawdi.runtimeWatchEvent.v1",
-					status: "error",
-					stage: "watch",
-					errors: [message],
-					error: message,
-				};
+				event = runtimeWatchError("watch", [message]);
 			}
 			if (event !== null) {
-				const cliUpdateStatus = runtimeWatchCliUpdateStatus(event);
-				const cliRetryAt = runtimeWatchCliRetryAt(event);
+				const cliUpdateStatus = event.cliUpdate?.status;
+				const retryAt = event.cliUpdate?.retryAt;
+				const parsedRetryAt = retryAt === null || retryAt === undefined ? NaN : Date.parse(retryAt);
+				const cliRetryAt = Number.isFinite(parsedRetryAt) ? parsedRetryAt : null;
 				if (cliRetryAt !== null) {
 					nextCliInstallRetryAt = cliRetryAt;
 				} else if (
@@ -1704,460 +1638,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	}
 }
 
-function runtimeWatchCliUpdateStatus(
-	event: Record<string, unknown>,
-): RuntimeCliUpdateResult["status"] | null {
-	const cliUpdate = event.cliUpdate;
-	if (!cliUpdate || typeof cliUpdate !== "object" || Array.isArray(cliUpdate)) return null;
-	const status = (cliUpdate as Record<string, unknown>).status;
-	if (
-		status === "not_requested" ||
-		status === "current" ||
-		status === "installed" ||
-		status === "deferred" ||
-		status === "error"
-	) {
-		return status;
-	}
-	return null;
-}
-
-function runtimeWatchCliRetryAt(event: Record<string, unknown>): number | null {
-	const cliUpdate = event.cliUpdate;
-	if (!cliUpdate || typeof cliUpdate !== "object" || Array.isArray(cliUpdate)) return null;
-	const retryAt = (cliUpdate as Record<string, unknown>).retryAt;
-	if (typeof retryAt !== "string") return null;
-	const timestamp = Date.parse(retryAt);
-	return Number.isFinite(timestamp) ? timestamp : null;
-}
-
 function nextBoundedBackoffMs(previousMs: number): number {
 	if (previousMs <= 0) return RUNTIME_WATCH_INITIAL_BACKOFF_MS;
 	return Math.min(previousMs * 2, RUNTIME_WATCH_MAX_BACKOFF_MS);
-}
-
-export async function runtimeSidecar(): Promise<void> {
-	if (detectRuntimeMode() !== "hosted") {
-		throw new Error("runtime sidecar is only available in hosted runtime mode");
-	}
-	const shouldStartEgress = Boolean(process.env.CLAWDI_EGRESS_ENV_FILE?.trim());
-	if (!shouldStartEgress) {
-		throw new Error("runtime sidecar requires egress configuration.");
-	}
-
-	let egress: RuntimeEgressModule | null = null;
-	try {
-		if (shouldStartEgress) {
-			egress = await startRuntimeEgress();
-			console.error(`runtime sidecar egress module listening on 127.0.0.1:${egress.port}`);
-		}
-		notifySystemdReady("runtime sidecar ready");
-	} catch (error) {
-		egress?.close();
-		throw error;
-	}
-
-	const shutdown = waitForShutdownSignal().then(() => ({ kind: "shutdown" as const }));
-	const egressExit = egress?.wait().then(() => ({ kind: "egress-exit" as const }));
-	try {
-		await (egressExit ? Promise.race([shutdown, egressExit]) : shutdown);
-	} finally {
-		egress?.close();
-		await egressExit?.catch(() => undefined);
-	}
-}
-
-interface RuntimeEgressModule {
-	port: number;
-	close: () => void;
-	wait: () => Promise<void>;
-}
-
-async function startRuntimeEgress(): Promise<RuntimeEgressModule> {
-	const config = loadTransparentEgressEnvConfig(process.env);
-	const mitmdump = startMitmdump(config);
-	const mitmdumpExit = waitForChildExit(mitmdump);
-	let redirectApplied = false;
-	let closeRequested = false;
-	const cleanup = () => {
-		if (!redirectApplied) return;
-		try {
-			cleanupTransparentEgressNftRulesFromEnv(process.env);
-		} catch (error) {
-			console.error(`transparent egress nft cleanup failed: ${toErrorMessage(error)}`);
-		}
-		redirectApplied = false;
-	};
-	const close = () => {
-		closeRequested = true;
-		cleanup();
-		if (!mitmdump.killed) mitmdump.kill("SIGTERM");
-	};
-	try {
-		await waitForTcpPort("127.0.0.1", config.transparentPort, EGRESS_LISTEN_TIMEOUT_MS, () =>
-			childHasExited(mitmdump),
-		);
-		await waitForFile(config.caCertPath, EGRESS_CA_TIMEOUT_MS, () => childHasExited(mitmdump));
-		publishEgressSystemCaBundle(config);
-		applyTransparentEgressNftRulesFromEnv(process.env);
-		redirectApplied = true;
-		return {
-			port: config.transparentPort,
-			close,
-			wait: async () => {
-				const exit = await mitmdumpExit;
-				cleanup();
-				if (!closeRequested) {
-					const reason = exit.signal === null ? `status ${exit.code}` : `signal ${exit.signal}`;
-					throw new Error(`egress engine exited unexpectedly with ${reason}`);
-				}
-			},
-		};
-	} catch (error) {
-		close();
-		throw error;
-	}
-}
-
-function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
-	if (!existsSync(config.engineBinaryPath)) {
-		throw new Error(`egress engine binary is missing: ${config.engineBinaryPath}`);
-	}
-	if (!existsSync(config.addonPath)) {
-		throw new Error(`egress addon is missing: ${config.addonPath}`);
-	}
-	const mitmdumpArgs = [
-		"--mode",
-		"transparent",
-		"--listen-host",
-		"127.0.0.1",
-		"--listen-port",
-		String(config.transparentPort),
-		"--set",
-		`confdir=${config.caDir}`,
-		"--set",
-		"stream_large_bodies=1",
-		"--set",
-		"termlog_verbosity=info",
-		"-s",
-		config.addonPath,
-	];
-	const childEnv = buildEgressEngineEnv(process.env, {
-		envFile: config.envFile,
-		home: config.caDir,
-	});
-	const command = config.engineBinaryPath;
-	const args = mitmdumpArgs;
-	const child = runningAsRoot()
-		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
-		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
-	child.stdout?.pipe(process.stdout);
-	child.stderr?.pipe(process.stderr);
-	return child;
-}
-
-export function assertCurrentEgressIdentity(
-	currentUid: number | undefined,
-	currentGid: number | undefined,
-	configuredUid: number,
-	configuredGid: number,
-): void {
-	if (currentUid === undefined || currentGid === undefined) {
-		throw new Error("cannot verify non-root egress engine UID/GID on this platform");
-	}
-	if (currentUid === 0 || currentGid === 0) {
-		throw new Error("egress engine identity must be non-root");
-	}
-	if (currentUid !== configuredUid || currentGid !== configuredGid) {
-		throw new Error(
-			`current egress engine identity ${currentUid}:${currentGid} does not match configured ${configuredUid}:${configuredGid}`,
-		);
-	}
-}
-
-function spawnWithCurrentEgressIdentity(
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-): ChildProcess {
-	assertCurrentEgressIdentity(process.getuid?.(), process.getgid?.(), uid, gid);
-	return spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
-}
-
-function spawnWithNumericIdentity(
-	uid: number,
-	gid: number,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-): ChildProcess {
-	const child = buildNumericUserCommand(uid, gid, command, args);
-	return spawn(child.command, child.args, {
-		env,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-}
-
-function waitForChildExit(
-	child: ChildProcess,
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-	return new Promise((resolve) => {
-		child.once("exit", (code, signal) => resolve({ code, signal }));
-	});
-}
-
-function childHasExited(child: ChildProcess): boolean {
-	return child.exitCode !== null || child.signalCode !== null;
-}
-
-function waitForTcpPort(
-	host: string,
-	port: number,
-	timeoutMs: number,
-	hasExited: () => boolean,
-): Promise<void> {
-	const startedAt = Date.now();
-	return new Promise((resolve, reject) => {
-		const attempt = () => {
-			if (hasExited()) {
-				reject(new Error(`egress engine exited before listening on ${host}:${port}`));
-				return;
-			}
-			if (tcpPortIsListening(host, port)) {
-				resolve();
-				return;
-			}
-			if (Date.now() - startedAt >= timeoutMs) {
-				reject(new Error(`timed out waiting for egress engine on ${host}:${port}`));
-				return;
-			}
-			setTimeout(attempt, EGRESS_READY_POLL_MS);
-		};
-		attempt();
-	});
-}
-
-function tcpPortIsListening(host: string, port: number): boolean {
-	const portHex = port.toString(16).toUpperCase().padStart(4, "0");
-	const allowedHosts =
-		host === "127.0.0.1" ? new Set(["0100007F"]) : new Set(["00000000", "0100007F"]);
-	try {
-		for (const raw of readFileSync("/proc/net/tcp", "utf-8").split(/\r?\n/).slice(1)) {
-			const fields = raw.trim().split(/\s+/);
-			const localAddress = fields[1] ?? "";
-			const state = fields[3] ?? "";
-			const [address, localPort] = localAddress.split(":");
-			if (state === "0A" && localPort === portHex && address && allowedHosts.has(address)) {
-				return true;
-			}
-		}
-	} catch {
-		return false;
-	}
-	return false;
-}
-
-function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean): Promise<void> {
-	const startedAt = Date.now();
-	return new Promise((resolve, reject) => {
-		const attempt = () => {
-			if (hasExited()) {
-				reject(new Error(`egress engine exited before writing ${path}`));
-				return;
-			}
-			if (existsSync(path)) {
-				resolve();
-				return;
-			}
-			if (Date.now() - startedAt >= timeoutMs) {
-				reject(new Error(`timed out waiting for ${path}`));
-				return;
-			}
-			setTimeout(attempt, EGRESS_READY_POLL_MS);
-		};
-		attempt();
-	});
-}
-
-export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
-	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
-		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
-	}
-	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
-	const egressCa = readFileSync(config.caCertPath, "utf-8");
-	writePrivateFileAtomic(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
-		mode: 0o640,
-		dirMode: 0o711,
-	});
-	if (runningAsRoot()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
-	chmodSync(config.systemCaBundle, 0o640);
-}
-
-function waitForShutdownSignal(): Promise<void> {
-	const processEvents: EventEmitter = process;
-	return new Promise((resolve) => {
-		const done = () => {
-			processEvents.removeListener("SIGTERM", done);
-			processEvents.removeListener("SIGINT", done);
-			resolve();
-		};
-		processEvents.once("SIGTERM", done);
-		processEvents.once("SIGINT", done);
-	});
-}
-
-function notifySystemdReady(status: string): void {
-	if (!process.env.NOTIFY_SOCKET) return;
-	spawnSync("systemd-notify", ["--ready", `--status=${status}`], {
-		stdio: "ignore",
-		env: process.env,
-	});
-}
-
-export async function runtimeStatus(opts: { json?: boolean } = {}) {
-	const paths = getRuntimePaths();
-	const read = readRuntimeBootStatus(paths);
-	const payload = {
-		schemaVersion: "clawdi.runtimeStatus.v1",
-		runtimeMode: paths.mode,
-		paths: {
-			bootStatus: paths.bootStatus,
-		},
-		...read,
-	};
-	if (read.error || read.status?.status === "error") process.exitCode = 1;
-
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(payload, null, 2));
-		return;
-	}
-
-	console.log(chalk.bold("clawdi runtime status"));
-	console.log();
-	if (!read.exists) {
-		console.log(chalk.gray("  No runtime boot status has been written yet."));
-		return;
-	}
-	if (read.error) {
-		console.log(chalk.red(`  Could not read ${read.source}: ${read.error}`));
-		return;
-	}
-	if (!read.status) {
-		console.log(chalk.yellow("  Runtime status files exist, but boot-status.json is missing."));
-		return;
-	}
-	console.log(`  Mode: ${read.status?.mode ?? "unknown"}`);
-	console.log(`  Status: ${read.status?.status ?? "unknown"}`);
-	console.log(`  Stage: ${read.status?.stage ?? "unknown"}`);
-	console.log(chalk.gray(`  Source: ${read.source}`));
-	if (read.status?.error) console.log(chalk.yellow(`  Error: ${read.status.error}`));
-}
-
-export async function runtimeDoctor(opts: { json?: boolean } = {}) {
-	const paths = getRuntimePaths();
-	const policy = readHostPolicy(paths.hostPolicy);
-	const lastStatus = readRuntimeBootStatus(paths);
-	const identity = inspectHostedRuntimeIdentity(paths);
-	let runtimeContextDetail: string;
-	let runtimeContextOk = false;
-	try {
-		const context = readRuntimeApplyContext();
-		runtimeContextOk = context.backend === "incus";
-		runtimeContextDetail = context.backend;
-	} catch (error) {
-		runtimeContextDetail = toErrorMessage(error);
-	}
-	let platformRootsOk = true;
-	let platformRootsDetail = "trusted";
-	try {
-		assertRuntimePlatformRoots(paths);
-	} catch (error) {
-		platformRootsOk = false;
-		platformRootsDetail = toErrorMessage(error);
-	}
-	const checks: RuntimeDoctorCheck[] = [
-		{
-			name: "Runtime mode",
-			ok: identity.mode.ok,
-			detail: identity.mode.error ?? identity.mode.detail,
-			hint: "Set CLAWDI_RUNTIME_MODE=hosted explicitly; host policy files do not select runtime mode.",
-		},
-		{
-			name: "Hosted policy",
-			ok: policy.exists && policy.valid,
-			detail: policy.valid ? policy.source : (policy.error ?? "missing"),
-			hint: "Hosted mode uses the built-in policy; policy files are ignored.",
-		},
-		{
-			name: "Runtime identity",
-			ok: identity.user.ok,
-			detail: identity.user.error ?? identity.user.detail,
-			hint: "The hosted tenant must run as clawdi with the expected non-root UID and GID.",
-		},
-		{
-			name: "Runtime context backend",
-			ok: runtimeContextOk,
-			detail: runtimeContextDetail,
-			hint: "Hosted v2 requires a valid runtime context attested with backend=incus.",
-		},
-		{
-			name: "Platform roots",
-			ok: platformRootsOk,
-			detail: platformRootsDetail,
-			hint: "Platform roots must remain real directories owned by the system boundary.",
-		},
-		{
-			name: "Service state",
-			ok: existsSync(paths.serviceStateRoot) && writable(paths.serviceStateRoot),
-			detail: paths.serviceStateRoot,
-			hint: "The hosted service-state directory must be writable by the platform service.",
-		},
-		{
-			name: "Runtime HOME",
-			ok: identity.home.ok && existsSync(paths.userHome) && writable(paths.userHome),
-			detail: identity.home.error ?? paths.userHome,
-			hint: "Hosted HOME must resolve to /home/clawdi and be a writable persistent volume.",
-		},
-		{
-			name: "Ephemeral runtime state",
-			ok: existsSync(paths.runRoot),
-			detail: paths.runRoot,
-			hint: "The runtime tmpfs path should be recreated on each boot and owned by the system boundary.",
-		},
-		{
-			name: "Runtime auth token",
-			ok: !existsSync(paths.daemonAuthToken) || readable(paths.daemonAuthToken),
-			detail: existsSync(paths.daemonAuthToken) ? "present" : "absent",
-		},
-		{
-			name: "Last boot status",
-			ok:
-				!lastStatus.exists ||
-				(lastStatus.status?.status === "ok" && lastStatus.status.errors.length === 0),
-			detail: !lastStatus.exists
-				? "none"
-				: (lastStatus.error ??
-					`${lastStatus.status?.status ?? "unknown"} / ${lastStatus.status?.mode ?? "unknown"}`),
-			hint: "Run `clawdi runtime status` for the last boot result.",
-		},
-	];
-	const failed = checks.filter((check) => !check.ok).length;
-
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(checks, null, 2));
-		if (failed > 0) process.exitCode = 1;
-		return;
-	}
-
-	console.log(chalk.bold("clawdi runtime doctor"));
-	console.log();
-	for (const check of checks) {
-		const icon = check.ok ? chalk.green("✓") : chalk.red("✗");
-		const detail = check.detail ? chalk.gray(` — ${check.detail}`) : "";
-		console.log(`  ${icon} ${check.name}${detail}`);
-		if (!check.ok && check.hint) console.log(chalk.gray(`     ${check.hint}`));
-	}
-	if (failed > 0) process.exitCode = 1;
 }

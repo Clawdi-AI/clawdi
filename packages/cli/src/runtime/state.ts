@@ -276,10 +276,7 @@ export function writeRuntimeBootStatus(status: RuntimeBootStatus, paths = getRun
 	writeJson(paths, paths.bootStatus, status, 0o644);
 }
 
-export function writeRuntimeWatchStatus(
-	event: Record<string, unknown>,
-	paths = getRuntimePaths(),
-): void {
+export function writeRuntimeWatchStatus(event: object, paths = getRuntimePaths()): void {
 	writeJson(
 		paths,
 		paths.runtimeWatchStatus,
