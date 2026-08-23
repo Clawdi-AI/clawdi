@@ -5,9 +5,11 @@ import { dirname, join } from "node:path";
 import type { RuntimeAppliedState } from "./applied-state";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import {
+	hostedAgentPluginOwnershipIdentity,
 	hostedAgentPluginReceiptsPath,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
+import type { RuntimeManifest } from "./manifest-contract";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
@@ -69,21 +71,27 @@ function appliedState(): RuntimeAppliedState {
 }
 
 function writeAppliedManifest(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {
-	mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-	writeFileSync(
-		paths.manifestLastGood,
-		JSON.stringify({
-			instanceId: "runtime-agent-plugin-observation",
-			generation: 3,
-			applyGeneration: 7,
-			projection: {
-				agentPlugins: {
-					schemaVersion: 1,
-					installations: { clawdi: desired },
-				},
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "deployment-agent-plugin-observation",
+		environmentId: "environment-agent-plugin-observation",
+		instanceId: "runtime-agent-plugin-observation",
+		generation: 3,
+		applyGeneration: 7,
+		issuedAt: "2026-08-15T00:00:00.000Z",
+		runtime: "openclaw",
+		controlPlane: { apiUrl: "https://runtime.test" },
+		runtimes: { openclaw: { enabled: true, services: {} } },
+		projection: {
+			agentPlugins: {
+				schemaVersion: 1,
+				installations: { clawdi: desired },
 			},
-		}),
-	);
+		},
+		recovery: {},
+	};
+	mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+	writeFileSync(paths.manifestLastGood, JSON.stringify(manifest));
 }
 
 function writeReceipt(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {
@@ -94,7 +102,7 @@ function writeReceipt(paths: RuntimePaths, desired: ReturnType<typeof installati
 			installations: {
 				clawdi: {
 					...desired,
-					ownershipIdentity: "f".repeat(64),
+					ownershipIdentity: hostedAgentPluginOwnershipIdentity("clawdi", desired),
 					nativeId: "clawdi",
 				},
 			},
@@ -176,21 +184,21 @@ describe("hosted Agent Plugin heartbeat observation", () => {
 		]);
 	});
 
-	test("does not promote a failed revision when rollback left its candidate receipt", () => {
+	test("reports the rolled-back receipt after last-good advances", () => {
 		const paths = tempPaths();
 		const previous = installation("1.0.0", "d");
 		const desired = installation("1.1.0", "e");
-		writeAppliedManifest(paths, previous);
-		writeReceipt(paths, desired);
+		writeAppliedManifest(paths, desired);
+		writeReceipt(paths, previous);
 
 		const observed = readHostedAgentPluginsObservation({
 			paths,
 			applied: appliedState(),
-			watchStatus: failedWatchStatus(desired, 8),
+			watchStatus: null,
 		});
 
-		expect(observed?.installations[0]?.status).toBe("failed");
-		expect(observed?.installations[0]?.generation).toBe(8);
+		expect(observed?.installations[0]?.version).toBe("1.0.0");
+		expect(observed?.installations[0]?.status).toBe("installed");
 	});
 
 	test("ignores failure evidence older than the applied receipt identity", () => {

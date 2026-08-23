@@ -6,6 +6,7 @@ import { z } from "zod";
 import { runHermesAgentPluginCanary } from "./hermes-agent-plugin-canary-client";
 import { getHermesRawConfigFileValue } from "./hermes-config";
 import {
+	type HostedAgentPluginOwnership,
 	type HostedAgentPluginReceipt,
 	type HostedAgentPluginRuntime,
 	hostedAgentPluginDirectoryDigest,
@@ -671,15 +672,6 @@ function capabilityProbePackages(prepared: PreparedHostedAgentPlugins): Capabili
 			prepared: plugin,
 		});
 	}
-	const previousRuntime = prepared.previousReceipt?.runtime;
-	if (previousRuntime) {
-		for (const plugin of prepared.rollback.values()) {
-			packages.set(packageProofKey(previousRuntime, plugin.installation.ownershipIdentity), {
-				runtime: previousRuntime,
-				prepared: plugin,
-			});
-		}
-	}
 	return [...packages.values()].sort((left, right) =>
 		`${left.runtime}\0${left.prepared.installation.ownershipIdentity}`.localeCompare(
 			`${right.runtime}\0${right.prepared.installation.ownershipIdentity}`,
@@ -709,6 +701,21 @@ function observationMatches(
 			observation.nativeId === nativeId &&
 			observation.version === prepared.installation.version &&
 			observation.contentDigest === prepared.installation.contentDigest,
+	);
+}
+
+function observationMatchesOwnership(
+	observation: NativePluginObservation | null,
+	ownership: HostedAgentPluginOwnership,
+): observation is NativePluginObservation {
+	return Boolean(
+		observation?.compatible &&
+			observation.formatSupported &&
+			observation.runtime === ownership.runtime &&
+			observation.name === ownership.name &&
+			observation.nativeId === ownership.nativeId &&
+			observation.version === ownership.installation.version &&
+			observation.contentDigest === ownership.installation.contentDigest,
 	);
 }
 
@@ -926,9 +933,6 @@ function assertCapabilityProof(input: {
 			throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 		}
 		assertNativeId(proof.nativeId);
-		if (item.prepared.receiptNativeId && item.prepared.receiptNativeId !== proof.nativeId) {
-			throw new Error("Agent Plugin native identity no longer matches its ownership receipt");
-		}
 	}
 	assertNoNativeIdentityCollisions(input.proof.packages.values());
 }
@@ -956,7 +960,10 @@ function desiredReceipt(
 		installations: Object.fromEntries(
 			[...prepared.desired].map(([name, plugin]) => [
 				name,
-				{ ...plugin.installation, nativeId: proofFor(proof, prepared.runtime, plugin).nativeId },
+				{
+					...plugin.installation,
+					nativeId: proofFor(proof, prepared.runtime, plugin).nativeId,
+				},
 			]),
 		),
 	};
@@ -968,19 +975,17 @@ interface PlannedMutation {
 	nativeId: string;
 	driver: NativeAgentPluginDriver;
 	desired: PreparedHostedAgentPlugin | null;
-	previous: PreparedHostedAgentPlugin | null;
+	previous: HostedAgentPluginOwnership | null;
 	before: NativePluginObservation | null;
 	action: "enable" | "install" | "replace" | "remove";
 }
 
 export interface HostedAgentPluginTransaction {
-	readonly nextReceipt: HostedAgentPluginReceipt | null;
 	readonly mutationNames: readonly string[];
 	readonly snapshotTargets: readonly string[];
 	readonly mutationRuntimes: ReadonlySet<HostedAgentPluginRuntime>;
 	readonly hasMutations: boolean;
-	apply(): boolean;
-	rollback(): string[];
+	apply(): HostedAgentPluginReceipt | null;
 }
 
 export function prepareHostedAgentPluginTransaction(input: {
@@ -1016,14 +1021,16 @@ export function prepareHostedAgentPluginTransaction(input: {
 			runtime: HostedAgentPluginRuntime;
 			name: string;
 			desired: PreparedHostedAgentPlugin | null;
-			previous: PreparedHostedAgentPlugin | null;
+			previous: HostedAgentPluginOwnership | null;
 		}
 	>();
-	if (input.prepared.previousReceipt) {
-		for (const [name, previous] of input.prepared.rollback) {
-			const runtime = input.prepared.previousReceipt.runtime;
-			slots.set(`${runtime}\0${name}`, { runtime, name, desired: null, previous });
-		}
+	for (const [name, previous] of input.prepared.previous) {
+		slots.set(`${previous.runtime}\0${name}`, {
+			runtime: previous.runtime,
+			name,
+			desired: null,
+			previous,
+		});
 	}
 	for (const [name, desired] of input.prepared.desired) {
 		const key = `${input.prepared.runtime}\0${name}`;
@@ -1042,10 +1049,14 @@ export function prepareHostedAgentPluginTransaction(input: {
 		`${left.runtime}\0${left.name}`.localeCompare(`${right.runtime}\0${right.name}`),
 	)) {
 		const driver = driverFor(slot.runtime);
-		const preparedPackage = slot.desired ?? slot.previous;
-		if (!preparedPackage) throw new Error("Agent Plugin transaction slot is empty");
-		const packageProof = proofFor(input.capabilityProof, slot.runtime, preparedPackage);
-		const nativeId = packageProof.nativeId;
+		const packageProof = slot.desired
+			? proofFor(input.capabilityProof, slot.runtime, slot.desired)
+			: null;
+		if (slot.previous && packageProof && slot.previous.nativeId !== packageProof.nativeId) {
+			throw new Error("Agent Plugin native identity no longer matches its ownership receipt");
+		}
+		const nativeId = slot.previous?.nativeId ?? packageProof?.nativeId;
+		if (!nativeId) throw new Error("Agent Plugin transaction slot is empty");
 		const installTarget = driver.installTarget(nativeId);
 		snapshotTargets.add(installTarget);
 		for (const target of driver.mutationStateTargets()) snapshotTargets.add(target);
@@ -1054,7 +1065,7 @@ export function prepareHostedAgentPluginTransaction(input: {
 			throw new Error("refusing to replace an unmanaged native Agent Plugin target");
 		}
 		if (slot.previous) {
-			if (before && !observationMatches(before, slot.previous, nativeId)) {
+			if (before && !observationMatchesOwnership(before, slot.previous)) {
 				throw new Error(
 					"refusing to mutate an Agent Plugin that no longer matches its ownership receipt",
 				);
@@ -1085,9 +1096,7 @@ export function prepareHostedAgentPluginTransaction(input: {
 		});
 	}
 
-	const touched: PlannedMutation[] = [];
 	return {
-		nextReceipt: desiredReceipt(input.prepared, input.capabilityProof),
 		mutationNames: [...new Set(mutations.map((mutation) => mutation.name))].sort(),
 		snapshotTargets: [...snapshotTargets].sort(),
 		mutationRuntimes: new Set(mutations.map((mutation) => mutation.runtime)),
@@ -1102,7 +1111,6 @@ export function prepareHostedAgentPluginTransaction(input: {
 				) {
 					throw new Error("native Agent Plugin changed after ownership was verified");
 				}
-				touched.push(mutation);
 				if ((mutation.action === "remove" || mutation.action === "replace") && mutation.before) {
 					mutation.driver.remove(mutation.before);
 				}
@@ -1130,49 +1138,14 @@ export function prepareHostedAgentPluginTransaction(input: {
 					throw new Error("native Agent Plugin uninstall did not converge");
 				}
 			}
-			return mutations.length > 0;
-		},
-		rollback() {
-			const errors: string[] = [];
-			for (const mutation of [...touched].reverse()) {
-				try {
-					const current = mutation.driver.observe(mutation.name, mutation.nativeId);
-					if (mutation.previous && mutation.before) {
-						if (observationMatches(current, mutation.previous, mutation.nativeId)) {
-							if (current.enabled !== mutation.before.enabled) {
-								mutation.driver.setEnabled(current, mutation.before.enabled);
-							}
-							continue;
-						}
-						if (current) {
-							if (
-								!mutation.desired ||
-								!observationMatches(current, mutation.desired, mutation.nativeId)
-							) {
-								throw new Error("refusing to replace an unknown Agent Plugin during rollback");
-							}
-							mutation.driver.remove(current);
-						}
-						const restored = mutation.driver.install(nativePackage(mutation.previous));
-						if (!observationMatches(restored, mutation.previous, mutation.nativeId)) {
-							throw new Error("native Agent Plugin rollback restored an unexpected package");
-						}
-						mutation.driver.setEnabled(restored, mutation.before.enabled);
-					} else if (current) {
-						if (
-							!mutation.desired ||
-							!observationMatches(current, mutation.desired, mutation.nativeId)
-						) {
-							throw new Error("refusing to remove an unknown Agent Plugin during rollback");
-						}
-						mutation.driver.remove(current);
-					}
-				} catch {
-					errors.push(`runtime ${mutation.runtime} Agent Plugin ${mutation.name} rollback failed`);
+			for (const plugin of input.prepared.desired.values()) {
+				const proof = proofFor(input.capabilityProof, input.prepared.runtime, plugin);
+				const observed = driverFor(input.prepared.runtime).observe(plugin.name, proof.nativeId);
+				if (!observationMatches(observed, plugin, proof.nativeId) || !observed.enabled) {
+					throw new Error("native Agent Plugin did not converge to the desired state");
 				}
 			}
-			touched.length = 0;
-			return errors;
+			return desiredReceipt(input.prepared, input.capabilityProof);
 		},
 	};
 }

@@ -120,17 +120,22 @@ export function hostedAgentPluginTreeDigest(tree: readonly PreparedAgentPluginTr
 export interface PreparedHostedAgentPlugin {
 	name: string;
 	installation: PreparedHostedAgentPluginInstallation;
-	receiptNativeId: string | null;
 	mcpServerNames: readonly string[];
 	hasStreamableHttpMcp: boolean;
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
+export interface HostedAgentPluginOwnership {
+	runtime: HostedAgentPluginRuntime;
+	name: string;
+	installation: PreparedHostedAgentPluginInstallation;
+	nativeId: string;
+}
+
 export interface PreparedHostedAgentPlugins {
 	runtime: HostedAgentPluginRuntime;
 	desired: ReadonlyMap<string, PreparedHostedAgentPlugin>;
-	previousReceipt: HostedAgentPluginReceipt | null;
-	rollback: ReadonlyMap<string, PreparedHostedAgentPlugin>;
+	previous: ReadonlyMap<string, HostedAgentPluginOwnership>;
 	transientCacheOwnerships: ReadonlySet<string>;
 }
 
@@ -274,7 +279,10 @@ function sha256(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function ownershipIdentity(name: string, installation: HostedAgentPluginInstallation): string {
+export function hostedAgentPluginOwnershipIdentity(
+	name: string,
+	installation: HostedAgentPluginInstallation,
+): string {
 	const sourceIdentity =
 		installation.source.type === "github"
 			? [
@@ -302,7 +310,7 @@ function preparedInstallation(
 ): PreparedHostedAgentPluginInstallation {
 	return preparedInstallationSchema.parse({
 		...installation,
-		ownershipIdentity: ownershipIdentity(name, installation),
+		ownershipIdentity: hostedAgentPluginOwnershipIdentity(name, installation),
 	});
 }
 
@@ -347,8 +355,9 @@ export function writeHostedAgentPluginReceipt(
 	}
 	const parsed = hostedAgentPluginReceiptSchema.parse(receipt);
 	const current = readHostedAgentPluginReceipt(paths);
-	if (current && JSON.stringify(current) === JSON.stringify(parsed)) return;
-	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(parsed, null, 2)}\n`, {
+	const serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+	if (current && readFileSync(path, "utf8") === serialized) return;
+	writeRuntimePlatformFileAtomic(paths, path, serialized, {
 		mode: 0o600,
 		dirMode: 0o755,
 	});
@@ -871,7 +880,6 @@ async function validateArchive(
 		return {
 			name: descriptor.name,
 			installation: descriptor.installation,
-			receiptNativeId: null,
 			mcpServerNames: mcp.serverNames,
 			hasStreamableHttpMcp: mcp.hasStreamableHttp,
 			tree: collected.tree,
@@ -948,6 +956,28 @@ function selectedAgentPluginRuntime(manifest: RuntimeManifest): HostedAgentPlugi
 	throw new Error("Agent Plugins require a selected OpenClaw or Hermes runtime");
 }
 
+function previousAgentPluginOwnerships(
+	receipt: HostedAgentPluginReceipt | null,
+): Map<string, HostedAgentPluginOwnership> {
+	if (!receipt) return new Map();
+	const previous = new Map<string, HostedAgentPluginOwnership>();
+	for (const [name, installation] of Object.entries(receipt.installations).sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		const { nativeId, ...descriptor } = installation;
+		if (hostedAgentPluginOwnershipIdentity(name, descriptor) !== installation.ownershipIdentity) {
+			throw new Error("Agent Plugin receipt ownership identity is invalid");
+		}
+		previous.set(name, {
+			runtime: receipt.runtime,
+			name,
+			installation: preparedInstallationSchema.parse(descriptor),
+			nativeId,
+		});
+	}
+	return previous;
+}
+
 export async function prepareHostedAgentPluginPackages(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
@@ -964,6 +994,7 @@ export async function prepareHostedAgentPluginPackages(
 	}
 	const previousReceipt = readHostedAgentPluginReceipt(paths);
 	if (Object.keys(desiredInstallations).length === 0 && !previousReceipt) return null;
+	const previous = previousAgentPluginOwnerships(previousReceipt);
 	const runtime =
 		Object.keys(desiredInstallations).length > 0
 			? selectedAgentPluginRuntime(manifest)
@@ -1005,31 +1036,10 @@ export async function prepareHostedAgentPluginPackages(
 			const descriptor = preparedInstallation(name, installation);
 			desired.set(name, await load({ name, runtime, installation: descriptor }));
 		}
-		const rollback = new Map<string, PreparedHostedAgentPlugin>();
-		if (previousReceipt) {
-			for (const [name, installation] of Object.entries(previousReceipt.installations).sort(
-				([left], [right]) => left.localeCompare(right),
-			)) {
-				const { ownershipIdentity: persistedOwnership, nativeId, ...descriptor } = installation;
-				if (persistedOwnership !== ownershipIdentity(name, descriptor)) {
-					throw new Error("Agent Plugin receipt ownership identity is invalid");
-				}
-				const plugin = await load({
-					name,
-					runtime: previousReceipt.runtime,
-					installation: preparedInstallationSchema.parse({
-						...descriptor,
-						ownershipIdentity: persistedOwnership,
-					}),
-				});
-				rollback.set(name, { ...plugin, receiptNativeId: nativeId });
-			}
-		}
 		return {
 			runtime,
 			desired,
-			previousReceipt,
-			rollback,
+			previous,
 			transientCacheOwnerships: new Set(
 				[...createdOwnerships].filter((ownership) => !previousOwnerships.has(ownership)),
 			),

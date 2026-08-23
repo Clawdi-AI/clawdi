@@ -187,7 +187,6 @@ function preparedTestAgentPlugin(
 			contentDigest: `sha256-tree-v1:${treeDigest}`,
 			ownershipIdentity,
 		},
-		receiptNativeId: null,
 		mcpServerNames: [],
 		hasStreamableHttpMcp: false,
 		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
@@ -208,21 +207,21 @@ function preparedTestAgentPluginState(
 	desired: PreparedHostedAgentPlugin,
 	previous?: PreparedHostedAgentPlugin,
 ): PreparedHostedAgentPlugins {
-	const previousNativeId = previous?.name.replaceAll(".", "-") ?? "";
 	return {
 		runtime: "openclaw",
 		desired: new Map([[desired.name, desired]]),
-		previousReceipt: previous
-			? {
-					schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-					runtime: "openclaw",
-					installations: {
-						[previous.name]: { ...previous.installation, nativeId: previousNativeId },
-					},
-				}
-			: null,
-		rollback: previous
-			? new Map([[previous.name, { ...previous, receiptNativeId: previousNativeId }]])
+		previous: previous
+			? new Map([
+					[
+						previous.name,
+						{
+							runtime: "openclaw" as const,
+							name: previous.name,
+							installation: previous.installation,
+							nativeId: previous.name.replaceAll(".", "-"),
+						},
+					],
+				])
 			: new Map(),
 		transientCacheOwnerships: new Set(),
 	};
@@ -1178,7 +1177,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow("Agent Plugin capability probe runtime command is unavailable");
 	});
 
-	test("orders cold native plugin activation and restores the full preimage after rollback failure", () => {
+	test("orders cold native plugin activation and restores the full preimage after failure", () => {
 		const paths = tempRuntimePaths();
 		const eventLog = join(dirname(paths.userHome), "agent-plugin-order.log");
 		const installerPath = join(dirname(paths.userHome), "openclaw-agent-plugin-installer.sh");
@@ -1256,10 +1255,6 @@ case "\${1:-}" in
 	        plugin_root="$HOME/.openclaw/extensions/$plugin_native_id"
 	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
 	        if [[ "$HOME" == '${paths.userHome}' ]]; then
-	          if [[ -f "$HOME/.openclaw/fail-rollback" && "$version" == 1.0.0 ]]; then
-	            printf '%s\\n' native-rollback >> '${eventLog}'
-	            exit 9
-	          fi
 	          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
         else
           printf 'probe-install:%s\\n' "$version" >> '${eventLog}'
@@ -1445,60 +1440,6 @@ chmod 0755 '${commandPath}'
 		expect(isolatedAuthorityCommits).toBe(1);
 		expect(isolatedActivations).toBe(1);
 		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-
-		writeFileSync(eventLog, "");
-		writeFileSync(join(paths.userHome, ".openclaw", "fail-rollback"), "1\n");
-		const rollbackLifecycle: string[] = [];
-		const failed = convergeRuntimeManifest(
-			manifestLoad(nextManifest, "agent-plugin-authority-failure"),
-			paths,
-			{
-				cacheLastGood: false,
-				preparedHostedAgentPlugins: preparedTestAgentPluginState(desired, previous),
-				commitAuthority: () => {
-					throw new Error("failed Agent Plugin apply must not commit authority");
-				},
-				systemdApply: {
-					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: () => {
-						throw new Error("failed Agent Plugin apply must not reach activation");
-					},
-					quiesce: (affectedUserUnits) => {
-						expect(affectedUserUnits).toEqual(["openclaw-gateway.service"]);
-						rollbackLifecycle.push("quiesce");
-						writeFileSync(eventLog, "quiesce\n", { flag: "a" });
-						writeFileSync(pluginDatabasePath, "quiesced-preimage\n");
-						preimage.set(pluginDatabasePath, readFileSync(pluginDatabasePath));
-					},
-					rollback: () => {
-						for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-						writeFileSync(eventLog, "snapshot-restored\n", { flag: "a" });
-						rollbackLifecycle.push("systemd rollback");
-					},
-				},
-			},
-		);
-
-		expect(failed.installErrors.join("\n")).toContain(
-			"OpenClaw native Agent Plugin state change failed",
-		);
-		expect(failed.installErrors.join("\n")).toContain(
-			"runtime openclaw Agent Plugin acme.tools rollback failed",
-		);
-		expect(failed.agentPluginFailedNames).toEqual(["acme.tools"]);
-		expect(rollbackLifecycle).toEqual(["quiesce", "systemd rollback"]);
-		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
-			"probe-install:1.0.0",
-			"probe-install:1.0.0",
-			"probe-install:2.0.0",
-			"quiesce",
-			"plugin-apply:2.0.0",
-			"native-enable-failure",
-			"native-rollback",
-			"snapshot-restored",
-		]);
-		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
-		expect(readFileSync(join(pluginRoot, "plugin.json"), "utf8")).toContain('"version":"1.0.0"');
 	});
 
 	test.each([

@@ -1409,28 +1409,25 @@ function prepareRuntimeActivation(
 				},
 			);
 		}
-		appliedAgentPluginTransaction?.apply();
-		agentPluginApplyCompleted = true;
 		if (appliedAgentPluginTransaction) {
-			writeHostedAgentPluginReceipt(appliedAgentPluginTransaction.nextReceipt, paths);
+			const receipt = appliedAgentPluginTransaction.apply();
+			agentPluginApplyCompleted = true;
+			writeHostedAgentPluginReceipt(receipt, paths);
 		}
 	} catch (error) {
 		const failedNames = agentPluginApplyCompleted
 			? opts.preparedHostedAgentPlugins?.desired.keys()
 			: appliedAgentPluginTransaction?.mutationNames;
 		for (const name of failedNames ?? []) state.agentPluginFailedNames.add(name);
-		const rollbackErrors = appliedAgentPluginTransaction?.rollback() ?? [];
-		if (agentPluginSnapshotScope) {
-			rollbackErrors.push(
-				...state.rollbackSnapshots.restore(
+		const rollbackErrors = agentPluginSnapshotScope
+			? state.rollbackSnapshots.restore(
 					agentPluginSnapshotScope,
 					(_failure, rollbackError) =>
 						`runtime Agent Plugin snapshot rollback failed: ${
 							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
 						}`,
-				),
-			);
-		}
+				)
+			: [];
 		if (rollbackErrors.length > 0) {
 			throw new Error(
 				`runtime Agent Plugin projection failed and could not be rolled back: ${[
@@ -1716,9 +1713,6 @@ function rollbackRuntimeApply(
 	}
 	let filesystemRollbackSucceeded = false;
 	if (candidateQuiesced) {
-		if (state.agentPluginTransaction) {
-			state.installErrors.push(...state.agentPluginTransaction.rollback());
-		}
 		const resourceSnapshotRollbackErrors = state.rollbackSnapshots.restore(
 			plan.resourceRollbackScope,
 		);
