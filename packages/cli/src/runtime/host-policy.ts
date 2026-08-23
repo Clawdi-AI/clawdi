@@ -48,7 +48,7 @@ function hostedPolicy(): HostPolicy {
 			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
 			{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
 		],
-		managedState: [paths.configurationRoot, paths.runRoot],
+		managedState: [paths.serviceStateRoot, paths.runRoot],
 		systemWritableState: [
 			paths.configurationRoot,
 			paths.serviceStateRoot,

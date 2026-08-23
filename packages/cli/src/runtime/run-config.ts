@@ -79,7 +79,6 @@ export interface RuntimeRunInvocation {
 	args: string[];
 	cwd?: string;
 	env: NodeJS.ProcessEnv;
-	configPath: string;
 }
 
 export function isSupportedRuntimeName(name: string): name is SupportedRuntimeName {
@@ -242,7 +241,6 @@ export function buildRuntimeRunInvocation(
 		args: args.length > 1 ? args.slice(1) : read.config.defaultArgs,
 		cwd: read.config.cwd,
 		env,
-		configPath: read.path,
 	};
 }
 

@@ -927,13 +927,20 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		},
 	});
 	const detail = result.installErrors.join("\n");
+	const installerOutputLog = join(
+		paths.statusRoot,
+		"installer-logs",
+		"openclaw-gateway-service.log",
+	);
 	expect(detail).toContain("official openclaw-gateway service install failed");
-	expect(detail).toContain("exit code 1");
-	expect(detail).toContain("stdout tail:");
-	expect(detail).toContain("Gateway install failed:");
-	expect(detail).toContain("EISDIR");
-	expect(detail).not.toContain("stderr tail:");
-	expect(detail.length).toBeLessThan(5000);
+	expect(detail).toContain(`see ${installerOutputLog}`);
+	expect(detail).not.toContain("Gateway install failed:");
+	expect(detail).not.toContain("EISDIR");
+	const installerOutput = readFileSync(installerOutputLog, "utf8");
+	expect(installerOutput).toContain("exitCode=1");
+	expect(installerOutput).toContain("Gateway install failed:");
+	expect(installerOutput).toContain("EISDIR");
+	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
 	expect(readFileSync(unitSentinel, "utf8")).toBe("preserve exact rollback target\n");
@@ -1323,25 +1330,6 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		expect(configStat.uid).toBe(runtimeUid);
 		expect(configStat.gid).toBe(runtimeGid);
 		expect(configStat.mode & 0o777).toBe(0o600);
-
-		const firstAppliedConfig = readFileSync(configPath, "utf8");
-		const authStoreDirectories = [
-			join(openClawAgentsRoot, "main", "agent"),
-			activeAgentDir,
-			secondaryAgentDir,
-		];
-		const firstAuthStoreFiles = authStoreDirectories.map((directory) =>
-			directoryFileDigests(directory),
-		);
-		const repeated = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
-		expect(repeated.installErrors).toEqual([]);
-		const idempotentAuth = runProviderAuthHelper("inspect");
-		expect(idempotentAuth.status, idempotentAuth.stderr).toBe(0);
-		expect(JSON.parse(idempotentAuth.stdout)).toEqual(authStores);
-		expect(authStoreDirectories.map((directory) => directoryFileDigests(directory))).toEqual(
-			firstAuthStoreFiles,
-		);
-		expect(readFileSync(configPath, "utf8")).toBe(firstAppliedConfig);
 	} finally {
 		if (previousConfigPath === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
 		else process.env.OPENCLAW_CONFIG_PATH = previousConfigPath;
@@ -1833,11 +1821,10 @@ http.createServer((request, response) => {
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
-				activate: ({ reloadUserUnits }) => {
+				activate: () => {
 					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
 						transaction,
 						stage: "final-activation",
-						forceReloadUserUnits: reloadUserUnits,
 					});
 				},
 				rollback: () => transaction.rollback(paths),

@@ -48,9 +48,6 @@ interface RuntimeSystemdApplySignal {
 	// status, diagnostics, logs, or any generated public artifact.
 	restartDaemon: boolean;
 	restartEgressSidecar: boolean;
-	stopEgressSidecar: boolean;
-	reconcileUserUnits: string[];
-	reloadUserUnits: string[];
 	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];

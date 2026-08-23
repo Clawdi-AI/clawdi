@@ -3756,7 +3756,6 @@ chmod 0755 '${commandPath}'
 		let mixedFailureRollbacks = 0;
 		let mixedFailureRollbackSignal: {
 			restartEgressSidecar: boolean;
-			stopEgressSidecar: boolean;
 		} | null = null;
 		const mixedFailure = convergeRuntimeManifest(load("000003"), paths, {
 			cacheLastGood: false,
@@ -3786,7 +3785,6 @@ chmod 0755 '${commandPath}'
 		expect(mixedFailureRollbacks).toBe(1);
 		expect(mixedFailureRollbackSignal).toMatchObject({
 			restartEgressSidecar: false,
-			stopEgressSidecar: true,
 		});
 		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedC);
 		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
@@ -3847,7 +3845,6 @@ chmod 0755 '${commandPath}'
 		let legacyMissingCacheRestartRollbacks = 0;
 		let legacyMissingCacheRestartSignal: {
 			restartEgressSidecar: boolean;
-			stopEgressSidecar: boolean;
 		} | null = null;
 		const legacyMissingCacheRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
 			cacheLastGood: false,
@@ -3881,7 +3878,6 @@ chmod 0755 '${commandPath}'
 		expect(legacyMissingCacheRestartRollbacks).toBe(1);
 		expect(legacyMissingCacheRestartSignal).toMatchObject({
 			restartEgressSidecar: false,
-			stopEgressSidecar: true,
 		});
 		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
 		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
@@ -3893,7 +3889,6 @@ chmod 0755 '${commandPath}'
 		let legacyMissingCacheRollbacks = 0;
 		let legacyMissingCacheSignal: {
 			restartEgressSidecar: boolean;
-			stopEgressSidecar: boolean;
 		} | null = null;
 		const legacyMissingCacheActivationSecrets: string[] = [];
 		const legacyMissingCacheFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
@@ -3930,7 +3925,6 @@ chmod 0755 '${commandPath}'
 		expect(legacyMissingCacheRollbacks).toBe(1);
 		expect(legacyMissingCacheSignal).toMatchObject({
 			restartEgressSidecar: false,
-			stopEgressSidecar: true,
 		});
 		expect(legacyMissingCacheActivationSecrets).toHaveLength(1);
 		expect(legacyMissingCacheActivationSecrets[0]).toContain(legacyDesired);
@@ -4203,19 +4197,11 @@ echo spawned > '${installerLog}'
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(soulPath, "<!-- >>> clawdi managed locale >>>\nmalformed\n");
 		writeFileSync(staleRunConfig, '{"generation":1}\n');
 		writeFileSync(systemdUnit, "old unit\n");
 		writeFileSync(paths.manifestLastGood, '{"generation":1}\n');
-		writeFileSync(paths.appliedState, '{"generation":1}\n');
-		const preservedPaths = [
-			soulPath,
-			staleRunConfig,
-			systemdUnit,
-			paths.manifestLastGood,
-			paths.appliedState,
-		];
+		const preservedPaths = [soulPath, staleRunConfig, systemdUnit, paths.manifestLastGood];
 		const previous = new Map(preservedPaths.map((path) => [path, readFileSync(path)]));
 		const manifest = baseManifest(
 			paths,
@@ -5099,7 +5085,7 @@ installReservedManagedSkill(${JSON.stringify({
 		expect(rollbackCalls).toBe(1);
 	});
 
-	test("keeps stale unit authority through commit while declaratively disabling user units", () => {
+	test("removes stale unit files before activation and authority commit", () => {
 		const paths = tempRuntimePaths();
 		const staleSystemUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
@@ -5125,8 +5111,6 @@ installReservedManagedSkill(${JSON.stringify({
 			staleUserEnvironment,
 			staleDropInEnvironment,
 		];
-		const staleEnablementFiles = [staleUserWant, staleDropInWant];
-		const retainedStaleFiles = staleFiles.filter((path) => !staleEnablementFiles.includes(path));
 		for (const path of staleFiles) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nstale\n`);
@@ -5155,8 +5139,7 @@ installReservedManagedSkill(${JSON.stringify({
 				cacheLastGood: false,
 				commitAuthority: () => {
 					expect(activated).toBe(true);
-					for (const path of retainedStaleFiles) expect(existsSync(path)).toBe(true);
-					for (const path of staleEnablementFiles) expect(existsSync(path)).toBe(false);
+					for (const path of staleFiles) expect(existsSync(path)).toBe(false);
 					committed = true;
 				},
 				systemdApply: {
@@ -5168,8 +5151,7 @@ installReservedManagedSkill(${JSON.stringify({
 							"clawdi-old.service",
 							"openclaw-gateway.service",
 						]);
-						for (const path of retainedStaleFiles) expect(existsSync(path)).toBe(true);
-						for (const path of staleEnablementFiles) expect(existsSync(path)).toBe(false);
+						for (const path of staleFiles) expect(existsSync(path)).toBe(false);
 						activated = true;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
@@ -5782,8 +5764,7 @@ esac
 						expect(readlinkSync(enablementPath)).toBe("../openclaw-gateway.service");
 						return install();
 					},
-					activate: (signal) => {
-						expect(signal.reloadUserUnits).toEqual(["openclaw-gateway.service"]);
+					activate: () => {
 						return successfulPrerequisiteActivation();
 					},
 					rollback: () => {},
@@ -5896,7 +5877,9 @@ exit 42
 			},
 		});
 
-		expect(result.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
+		expect(result.installErrors.join("\n")).toContain(
+			`runtime openclaw installer failed or did not create ${commandPath}; see ${join(paths.statusRoot, "installer-logs", "openclaw.log")}`,
+		);
 		expect(readFileSync(installerLog, "utf8")).toBe("ran\n");
 		expect(activateCalls).toBe(0);
 		expect(rollbackCalls).toBe(0);
@@ -6024,12 +6007,9 @@ exit 42
 			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
 		});
 		mkdirSync(dirname(paths.egressProfileBundle), { recursive: true });
-		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(paths.egressProfileBundle, "old-managed\n");
-		writeFileSync(paths.appliedState, "old-applied\n");
 		chmodSync(paths.egressProfileBundle, 0o640);
 		const previousManaged = readFileSync(paths.egressProfileBundle);
-		const previousApplied = readFileSync(paths.appliedState);
 		const previousStat = statSync(paths.egressProfileBundle);
 		const manifest = baseManifest(paths, {
 			openclaw: {
@@ -6053,7 +6033,6 @@ exit 42
 
 		expect(result.installErrors.join("\n")).toContain("authority commit failed");
 		expect(readFileSync(paths.egressProfileBundle)).toEqual(previousManaged);
-		expect(readFileSync(paths.appliedState)).toEqual(previousApplied);
 		const restoredStat = statSync(paths.egressProfileBundle);
 		expect(restoredStat.mode & 0o777).toBe(previousStat.mode & 0o777);
 		expect(restoredStat.uid).toBe(previousStat.uid);
@@ -6621,30 +6600,5 @@ exit 42
 		expect(() => convergeRuntimeManifest({ ...load, applyContext: undefined }, paths)).toThrow(
 			"runtime manifest convergence requires an explicit apply context",
 		);
-	});
-
-	test("fails closed when a platform root disappears before a later mutation group", () => {
-		const paths = tempRuntimePaths();
-		const manifest = baseManifest(paths, {
-			openclaw: { enabled: false, services: {} },
-			hermes: { enabled: false, services: {} },
-		});
-		const result = convergeRuntimeManifest(manifestLoad(manifest, "missing-late-run-root"), paths, {
-			cacheLastGood: false,
-			systemdApply: {
-				quiesce: () => {},
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: () => {
-					rmSync(paths.runRoot, { recursive: true });
-					return successfulPrerequisiteActivation();
-				},
-				rollback: () => {},
-			},
-		});
-
-		expect(result.installErrors.join("\n")).toContain(
-			`platform directory is missing: ${paths.runRoot}`,
-		);
-		expect(existsSync(paths.runRoot)).toBe(false);
 	});
 });

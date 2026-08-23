@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmodSync, chownSync, existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, chownSync, readFileSync, statSync } from "node:fs";
 import { z } from "zod";
+import { log, toErrorMessage } from "../serve/log";
 import {
 	type RuntimeApplyIdentity,
 	resolveRuntimeApplyGeneration,
@@ -131,13 +132,20 @@ export function runtimeContentSha256(value: unknown): string {
 }
 
 export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedState | null {
-	if (!existsSync(paths.appliedState)) return null;
+	let content: string;
 	try {
-		secureRuntimeAppliedStateFile(paths.appliedState);
-		const raw = JSON.parse(readFileSync(paths.appliedState, "utf-8")) as unknown;
-		const parsed = runtimeAppliedStateSchema.safeParse(raw);
-		return parsed.success ? parsed.data : null;
-	} catch {
+		content = readFileSync(paths.appliedState, "utf-8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+	try {
+		return runtimeAppliedStateSchema.parse(JSON.parse(content) as unknown);
+	} catch (error) {
+		log.warn("runtime.applied_state_invalid", {
+			path: paths.appliedState,
+			error: toErrorMessage(error),
+		});
 		return null;
 	}
 }

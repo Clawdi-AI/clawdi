@@ -32,6 +32,7 @@ import {
 	runtimeUserExistingOwnership,
 	spawnRuntimeUserCommand,
 } from "./runtime-user-command";
+import { writeRuntimePlatformFileAtomic } from "./state";
 
 export interface RuntimeInstallObservation {
 	runtime: string;
@@ -47,8 +48,6 @@ export interface RuntimeInstallObservation {
 	installStartedAt?: string;
 	installFinishedAt?: string;
 	installDurationMs?: number;
-	stdoutTail: string | null;
-	stderrTail: string | null;
 	error: string | null;
 }
 function runtimeInstallObservation(
@@ -63,8 +62,6 @@ function runtimeInstallObservation(
 		installerUrl: null,
 		executedInstallerUrl: null,
 		exitCode: null,
-		stdoutTail: null,
-		stderrTail: null,
 		error: null,
 		...observation,
 	};
@@ -129,6 +126,7 @@ function runtimeInstallerExecution(
 	runtime: string,
 	install: RuntimeInstall,
 	installerPath: string,
+	identity: { uid: number; gid: number },
 	extraArgs: string[] = [],
 ): {
 	command: string;
@@ -147,11 +145,13 @@ function runtimeInstallerExecution(
 		};
 	}
 
-	const child = buildRuntimeUserCommand(runtimeUser, install.home, "bash", [
-		installerPath,
-		...install.args,
-		...extraArgs,
-	]);
+	const child = buildRuntimeUserCommand(
+		runtimeUser,
+		install.home,
+		"bash",
+		[installerPath, ...install.args, ...extraArgs],
+		{ runtimeUid: identity.uid, runtimeGid: identity.gid },
+	);
 	return {
 		command: child.command,
 		args: child.args,
@@ -212,6 +212,7 @@ function executionInstallerUrl(name: string, officialUrl: string): string {
 function materializeInstaller(
 	name: string,
 	installerUrl: string,
+	paths: RuntimePaths,
 ): { path: string; cleanup?: string } {
 	if (installerUrl.startsWith("file://")) {
 		return { path: fileURLToPath(installerUrl) };
@@ -232,14 +233,18 @@ function materializeInstaller(
 	);
 	if (curl.status !== 0) {
 		rmSync(dir, { recursive: true, force: true });
-		throw new Error(
-			`could not download ${name} official installer: ${tail(curl.stderr) ?? "curl failed"}`,
-		);
+		const logPath = writeRuntimeInstallerLog(paths, `${name}-download`, curl);
+		throw new Error(`could not download ${name} official installer; see ${logPath}`);
 	}
 	chmodSync(path, 0o755);
 	return { path, cleanup: dir };
 }
-function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeInstallObservation {
+function runOfficialInstaller(
+	name: string,
+	install: RuntimeInstall,
+	paths: RuntimePaths,
+	identity: { uid: number; gid: number },
+): RuntimeInstallObservation {
 	const installStartedAt = new Date().toISOString();
 	const installStartedMs = Date.now();
 	const finish = (observation: RuntimeInstallObservation): RuntimeInstallObservation => ({
@@ -278,17 +283,18 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 		);
 	}
 
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home));
+	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home), identity);
 	const url = executionInstallerUrl(name, install.url);
-	const materialized = materializeInstaller(name, url);
+	const materialized = materializeInstaller(name, url, paths);
 	try {
-		const execution = runtimeInstallerExecution(name, install, materialized.path);
+		const execution = runtimeInstallerExecution(name, install, materialized.path, identity);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,
 			encoding: "utf8",
 			timeout: runtimeInstallTimeoutMs(),
 		});
+		const logPath = writeRuntimeInstallerLog(paths, name, result);
 		const exitCode = result.status ?? 1;
 		const installed = exitCode === 0 && executableExists(commandPath);
 		return finish(
@@ -303,14 +309,13 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 				installerUrl: install.url,
 				executedInstallerUrl: url === install.url ? install.url : url,
 				exitCode,
-				stdoutTail: tail(result.stdout),
-				stderrTail: tail(result.stderr),
 				error: installed
 					? null
-					: `runtime ${name} installer exited ${exitCode} or did not create ${commandPath}`,
+					: `runtime ${name} installer failed or did not create ${commandPath}; see ${logPath}`,
 			}),
 		);
 	} catch (error) {
+		const logPath = writeRuntimeInstallerLog(paths, name, { error });
 		return finish(
 			runtimeInstallObservation({
 				runtime: name,
@@ -321,7 +326,7 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 				install,
 				installerUrl: install.url,
 				executedInstallerUrl: url,
-				error: error instanceof Error ? error.message : String(error),
+				error: `runtime ${name} installer failed; see ${logPath}`,
 			}),
 		);
 	} finally {
@@ -332,6 +337,8 @@ export function observeRuntimeInstall(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
 	home: string,
+	paths: RuntimePaths,
+	identity: { uid: number; gid: number },
 ) {
 	if (!runtime.enabled) {
 		return runtimeInstallObservation({
@@ -364,7 +371,7 @@ export function observeRuntimeInstall(
 			error: `runtime ${name} is enabled but missing install metadata`,
 		});
 	}
-	const observation = runOfficialInstaller(name, runtime.install);
+	const observation = runOfficialInstaller(name, runtime.install, paths, identity);
 	if (observation.error) return observation;
 	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return capabilityError
@@ -375,9 +382,11 @@ export function planRuntimeInstallObservation(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
 	home: string,
+	paths: RuntimePaths,
+	identity: { uid: number; gid: number },
 ): RuntimeInstallObservation {
-	if (!runtime.install) return observeRuntimeInstall(name, runtime, home);
-	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
+	if (!runtime.install) return observeRuntimeInstall(name, runtime, home, paths, identity);
+	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home, paths, identity);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
 	return runtimeInstallObservation({
@@ -390,6 +399,41 @@ export function planRuntimeInstallObservation(
 		installerUrl: runtime.install.url,
 		error: commandPath && appRoot ? null : `unsupported runtime ${name}`,
 	});
+}
+
+export function writeRuntimeInstallerLog(
+	paths: RuntimePaths,
+	name: string,
+	result: {
+		status?: number | null;
+		signal?: NodeJS.Signals | null;
+		stdout?: string | Buffer | null;
+		stderr?: string | Buffer | null;
+		error?: unknown;
+	},
+): string {
+	const path = join(paths.statusRoot, "installer-logs", `${name}.log`);
+	const error = result.error
+		? result.error instanceof Error
+			? result.error.message
+			: String(result.error)
+		: "";
+	writeRuntimePlatformFileAtomic(
+		paths,
+		path,
+		[
+			`exitCode=${result.status ?? "unavailable"}`,
+			`signal=${result.signal ?? "none"}`,
+			`spawnError=${error}`,
+			"--- stdout ---",
+			String(result.stdout ?? ""),
+			"--- stderr ---",
+			String(result.stderr ?? ""),
+			"",
+		].join("\n"),
+		{ mode: 0o600, dirMode: 0o700 },
+	);
+	return path;
 }
 export function runtimeFileCurrentRevision(path: string): string | null {
 	if (!isAbsolute(path)) return null;

@@ -319,20 +319,12 @@ const installGateHarnesses = [
 	["OpenClaw official service", () => officialServiceHarness("openclaw")],
 ] as const;
 
-function writeFakeSystemctl(input: {
-	path: string;
-	logPath: string;
-	exitCode?: number;
-	resetFailedExitCode?: number;
-}): void {
+function writeFakeSystemctl(input: { path: string; logPath: string; exitCode?: number }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
 		input.path,
 		`#!/usr/bin/env bash
 printf 'systemctl %s\\n' "$*" >> '${input.logPath}'
-if [[ "$*" == "--user reset-failed "* ]]; then
-  exit ${input.resetFailedExitCode ?? input.exitCode ?? 0}
-fi
 exit ${input.exitCode ?? 0}
 `,
 	);
@@ -1267,11 +1259,9 @@ esac
 		expect(result.installErrors).toEqual([]);
 		expect(prerequisiteActivations).toBe(0);
 		expect(finalActivations).toBe(1);
-		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-6)).toEqual([
+		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-4)).toEqual([
 			"hermes systemd state ready",
 			"hermes gateway install --force",
-			"systemctl --user daemon-reload",
-			"systemctl --user reset-failed openclaw-gateway.service",
 			"openclaw systemd state ready",
 			"openclaw gateway install --force --json",
 		]);
@@ -1399,7 +1389,7 @@ esac
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
-		writeFakeSystemctl({ path: systemctlCommand, logPath, resetFailedExitCode: 37 });
+		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		writeFakeGatewayCli({
 			path: openclawCommand,
 			logPath,
@@ -1699,22 +1689,33 @@ esac
 			},
 		});
 		const firstInstallError = failedFirstInstall.installErrors.join("\n");
+		const installerOutputLog = join(
+			paths.statusRoot,
+			"installer-logs",
+			"openclaw-gateway-service.log",
+		);
 		expect(firstInstallError).toContain("official openclaw-gateway service install failed");
-		expect(firstInstallError).toContain("exit code 41");
-		expect(firstInstallError).toContain("stdout tail:");
-		expect(firstInstallError).toContain("official stdout marker <redacted>");
-		expect(firstInstallError).toContain("stderr tail:");
-		expect(firstInstallError).toContain("official stderr marker");
-		expect(firstInstallError).toContain("OFFICIAL_INSTALLER_TEST_TOKEN=<redacted>");
-		expect(firstInstallError).toContain("VISIBLE_ENV=<redacted>");
+		expect(firstInstallError).toContain(`see ${installerOutputLog}`);
 		expect(firstInstallError).not.toContain(installerToken);
 		expect(firstInstallError).not.toContain("manifest-secret-must-not-leak");
 		expect(firstInstallError).not.toContain("environment-value-must-not-leak");
 		expect(firstInstallError).not.toContain("url-password-must-not-leak");
 		expect(firstInstallError).not.toContain("query-token-must-not-leak");
 		expect(firstInstallError).not.toContain("discarded-stderr-prefix");
-		expect(firstInstallError).not.toContain("\u001b");
-		expect(firstInstallError.length).toBeLessThan(5000);
+		const installerOutput = readFileSync(installerOutputLog, "utf8");
+		expect(installerOutput).toContain("exitCode=41");
+		expect(installerOutput).toContain(installerToken);
+		expect(installerOutput).toContain("manifest-secret-must-not-leak");
+		expect(installerOutput).toContain("environment-value-must-not-leak");
+		expect(installerOutput).toContain("url-password-must-not-leak");
+		expect(installerOutput).toContain("query-token-must-not-leak");
+		expect(installerOutput).toContain("discarded-stderr-prefix");
+		const installerLogStat = statSync(installerOutputLog);
+		expect(installerLogStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(installerLogStat.uid).toBe(0);
+			expect(installerLogStat.gid).toBe(0);
+		}
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
 		expect(existsSync(dropInPath)).toBe(false);
 		expect(authorityCommits).toBe(0);

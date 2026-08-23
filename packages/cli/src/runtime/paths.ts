@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getClawdiDir } from "../lib/config";
+import { runningAsRoot } from "./runtime-user-command";
 
 export type RuntimeMode = "local" | "hosted";
 
@@ -115,10 +116,6 @@ function defaultClawdiHome(mode: RuntimeMode, serviceStateRoot: string): string 
 		return join(dirname(serviceStateRoot), `${basename(serviceStateRoot)}-user`);
 	}
 	return getClawdiDir();
-}
-
-function runningAsRoot(): boolean {
-	return typeof process.getuid === "function" && process.getuid() === 0;
 }
 
 function defaultSystemdSystemRoot(mode: RuntimeMode, runRoot: string): string {

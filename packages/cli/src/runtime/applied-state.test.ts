@@ -4,9 +4,9 @@ import {
 	chownSync,
 	mkdirSync,
 	mkdtempSync,
-	readFileSync,
 	rmSync,
 	statSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -225,25 +225,25 @@ describe("runtime applied state", () => {
 		expect(paths.appliedState).toBe(join(root, "state", "status", "runtime-applied.json"));
 		expect(writeRuntimeAppliedState(state, paths)).toBe(paths.appliedState);
 		expect(readRuntimeAppliedState(paths)).toEqual(state);
-		expect(JSON.parse(readFileSync(paths.appliedState, "utf-8"))).toEqual(state);
 		const appliedStat = statSync(paths.appliedState);
 		expect(appliedStat.mode & 0o777).toBe(0o600);
-		if (typeof process.getuid === "function" && process.getuid() === 0) {
-			expect(appliedStat.uid).toBe(0);
-			expect(appliedStat.gid).toBe(0);
-		}
 
 		chmodSync(paths.appliedState, 0o644);
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
 			chownSync(paths.appliedState, 65534, 65534);
 		}
 		expect(readRuntimeAppliedState(paths)).toEqual(state);
-		const repairedStat = statSync(paths.appliedState);
-		expect(repairedStat.mode & 0o777).toBe(0o600);
+		const unchangedStat = statSync(paths.appliedState);
+		expect(unchangedStat.mode & 0o777).toBe(0o644);
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
-			expect(repairedStat.uid).toBe(0);
-			expect(repairedStat.gid).toBe(0);
+			expect(unchangedStat.uid).toBe(65534);
+			expect(unchangedStat.gid).toBe(65534);
 		}
+
+		writeFileSync(paths.appliedState, "not-json\n");
+		expect(readRuntimeAppliedState(paths)).toBeNull();
+		writeFileSync(paths.appliedState, `${JSON.stringify({ ...state, futureField: true })}\n`);
+		expect(readRuntimeAppliedState(paths)).toBeNull();
 	});
 
 	test("hashes canonical JSON content independently of object key order", () => {

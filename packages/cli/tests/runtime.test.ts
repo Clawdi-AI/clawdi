@@ -498,12 +498,14 @@ case "$command" in
     printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
     ;;
 	  is-enabled)
+	    quiet=0
+	    if [ "\${1:-}" = "--quiet" ]; then quiet=1; shift; fi
 	    unit="\${1:-}"
 	    if [ -f "$(state_path "$unit" enabled)" ] || [ -L "$HOME/.config/systemd/user/default.target.wants/$unit" ]; then
-      printf 'enabled\\n'
-    else
-      printf 'disabled\\n'
-      exit 1
+	      if [ "$quiet" = "0" ]; then printf 'enabled\\n'; fi
+	    else
+	      if [ "$quiet" = "0" ]; then printf 'disabled\\n'; fi
+	      exit 1
     fi
     ;;
   start)
@@ -7328,7 +7330,6 @@ exit 64
 			).toBe(testBundleEtag("manifest-locale-1"));
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
-			expect(systemctlCalls).toContain("--user reset-failed openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
 			expect(systemctlCalls).toContain("start clawdi-runtime-sidecar.service");
 			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
@@ -9593,7 +9594,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			userUnitsChanged: [],
 		});
 		const calls = readFileSync(systemctlLog, "utf-8");
-		expect(calls).toContain("daemon-reload");
+		expect(calls).not.toContain("daemon-reload");
 		expect(calls).toContain("restart clawdi-daemon.service");
 		expect(calls).not.toContain("restart clawdi-runtime-watch.service");
 		expect(calls).not.toContain("restart hermes-gateway.service");
@@ -9808,25 +9809,18 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				stage: "final-activation",
 				scope: "user",
 				action: "daemon-reload",
-				units: [],
-				outcome: "succeeded",
-			},
-			{
-				sequence: 2,
-				stage: "rollback",
-				scope: "user",
-				action: "daemon-reload",
-				units: [],
+				units: ["openclaw-gateway.service"],
 				outcome: "succeeded",
 			},
 		]);
 		expect(readFileSync(systemctlLog, "utf8").trim().split("\n")).toEqual([
 			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled openclaw-gateway.service",
+			"--user is-enabled --quiet openclaw-gateway.service",
 			"--user daemon-reload",
 			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled openclaw-gateway.service",
-			"--user daemon-reload",
+			"--user is-enabled --quiet openclaw-gateway.service",
+			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
+			"--user is-enabled --quiet openclaw-gateway.service",
 		]);
 		expect(
 			existsSync(
@@ -9852,68 +9846,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled"),
 			),
 		).toBe(true);
-	});
-
-	it("stops the egress sidecar while proving independent system units ready", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const systemctlPath = join(root, "bin", "systemctl");
-		const systemctlLog = join(root, "systemctl.log");
-		const sidecarState = join(root, "sidecar.state");
-		mkdirSync(dirname(systemctlPath), { recursive: true });
-		writeFileSync(sidecarState, "active\n");
-		writeFileSync(
-			systemctlPath,
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "\${1:-}" = "show" ]; then
-	  printf 'LoadState=loaded\\nMainPID=0\\nNeedDaemonReload=no\\n'
-  if [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
-    printf 'ActiveState=%s\\n' "$(tr -d '\\n' < '${sidecarState}')"
-  else
-    printf 'ActiveState=active\\n'
-  fi
-elif [ "\${1:-}" = "stop" ] && [ "\${2:-}" = "clawdi-runtime-sidecar.service" ]; then
-  printf 'inactive\\n' > '${sidecarState}'
-fi
-`,
-		);
-		chmodSync(systemctlPath, 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		const paths = getRuntimePaths();
-		const units = {
-			system: new Map([
-				["clawdi-daemon.service", "daemon"],
-				["clawdi-runtime-sidecar.service", "sidecar"],
-			]),
-			user: new Map<string, string>(),
-		};
-
-		const applied = applySystemdRuntimeUpdate(paths, units, units, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
-			forceRestartSystemUnits: ["clawdi-daemon.service"],
-			forceStopSystemUnits: ["clawdi-runtime-sidecar.service"],
-		});
-
-		expect(applied).toEqual({
-			applied: true,
-			systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-sidecar.service"],
-			userUnitsChanged: [],
-		});
-		const calls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-		expect(calls).toContain("stop clawdi-runtime-sidecar.service");
-		expect(calls).toContain("restart clawdi-daemon.service");
-		expect(calls).not.toContain("start clawdi-runtime-sidecar.service");
-		expect(calls).not.toContain("restart clawdi-runtime-sidecar.service");
-		expect(readFileSync(sidecarState, "utf-8")).toBe("inactive\n");
 	});
 
 	it("hands off a CLI-only checkpoint by restarting only the daemon once", async () => {
@@ -10145,11 +10077,7 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual([
-				"daemon-reload",
-				"--user daemon-reload",
-				"restart clawdi-daemon.service",
-			]);
+			expect(activationCalls).toEqual(["restart clawdi-daemon.service"]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
@@ -14462,7 +14390,9 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		const convergence = convergeRuntimeManifest(loaded, paths);
 
-		expect(convergence.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
+		expect(convergence.installErrors.join("\n")).toContain(
+			`runtime openclaw installer failed or did not create ${join(home, ".local", "bin", "openclaw")}; see ${join(paths.statusRoot, "installer-logs", "openclaw.log")}`,
+		);
 		expect(convergence.outputs.manifestLastGood).toBeNull();
 		expect(JSON.parse(readFileSync(cachePath, "utf-8")).generation).toBe(1);
 		expect(convergence.outputs.systemdSystemUnits).toEqual([]);

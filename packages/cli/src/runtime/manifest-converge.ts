@@ -265,10 +265,13 @@ function initializeRuntimeConvergence(
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
-	enforceRuntimeUserOwnership([
-		...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
-		...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
-	]);
+	enforceRuntimeUserOwnership(
+		[
+			...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
+			...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
+		],
+		hostedRuntimeContract.identity,
+	);
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
@@ -406,7 +409,13 @@ function prepareRuntimeInstallStage(
 ): { stage: RuntimeInstallStage } | { result: RuntimeConvergenceResult } {
 	const { manifest, paths, projectionHome, runtimeEntries, hostedRuntimeContract } = context;
 	for (const [name, runtime] of runtimeEntries) {
-		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
+		const observation = planRuntimeInstallObservation(
+			name,
+			runtime,
+			projectionHome,
+			paths,
+			hostedRuntimeContract.identity,
+		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
 	}
@@ -423,11 +432,19 @@ function prepareRuntimeInstallStage(
 	);
 	try {
 		if (coldInstallPlan) {
-			hostedRuntimeContract.assertPlatformRoots();
-			enforceRuntimeUserOwnership(coldInstallPlan.runtimeUserOwnership);
+			enforceRuntimeUserOwnership(
+				coldInstallPlan.runtimeUserOwnership,
+				hostedRuntimeContract.identity,
+			);
 		}
 		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(name, runtime, projectionHome);
+			const observation = observeRuntimeInstall(
+				name,
+				runtime,
+				projectionHome,
+				paths,
+				hostedRuntimeContract.identity,
+			);
 			state.observations.set(name, observation);
 			if (observation.error) state.installErrors.push(observation.error);
 			if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
@@ -448,6 +465,7 @@ function prepareRuntimeInstallStage(
 					...pluginBootstrapPlan.metadataTargets,
 					...pluginBootstrapPlan.runtimeUserTargets,
 				]),
+				hostedRuntimeContract.identity,
 			);
 		}
 	} catch (error) {
@@ -538,7 +556,10 @@ function prepareRuntimeConvergencePlan(
 		state.installErrors.push(...mutationPlan.systemdDriftErrors);
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(() => existsSync(workspaceRoot));
+	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(
+		() => existsSync(workspaceRoot),
+		context.hostedRuntimeContract.identity,
+	);
 	let liveSnapshot: RuntimeLiveSnapshot;
 	try {
 		liveSnapshot = state.rollbackSnapshots.capture(
@@ -580,14 +601,16 @@ function prepareRuntimeApplyDependencies(
 		workspaceRoot,
 		runtimeEntries,
 	} = context;
-	hostedRuntimeContract.assertPlatformRoots();
 	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
 	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
 	// Runtime-user targets and their ancestor metadata are already in the
 	// exact pre-image snapshot. Establish their positive ownership boundary
 	// before any official installer or CLI command drops privilege. Modes are
 	// intentionally preserved, so private runtime state stays private.
-	enforceRuntimeUserOwnership(plan.mutationPlan.runtimeUserOwnership);
+	enforceRuntimeUserOwnership(
+		plan.mutationPlan.runtimeUserOwnership,
+		hostedRuntimeContract.identity,
+	);
 	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
 	const openClawObservation = state.observations.get("openclaw");
 	if (openClawObservation) {
@@ -625,7 +648,10 @@ function prepareRuntimeApplyDependencies(
 			for (const [path, node] of supplementalSnapshot.entries) {
 				if (!plan.liveSnapshot.entries.has(path)) plan.liveSnapshot.entries.set(path, node);
 			}
-			enforceRuntimeUserOwnership(runtimeUserExistingOwnership(supplementalTargets));
+			enforceRuntimeUserOwnership(
+				runtimeUserExistingOwnership(supplementalTargets),
+				hostedRuntimeContract.identity,
+			);
 		}
 	}
 	if (opts.preparedHostedAgentPlugins) {
@@ -657,7 +683,6 @@ function prepareRuntimeApplyDependencies(
 		}
 	}
 
-	hostedRuntimeContract.assertPlatformRoots();
 	let codexCli: Record<string, string> | null = null;
 	if (
 		hostedCodexManagedProvider(manifest) ||
@@ -716,13 +741,15 @@ function prepareRuntimeApplyDependencies(
 	}
 	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 
-	hostedRuntimeContract.assertPlatformRoots();
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(paths.userHome));
+	enforceRuntimeUserOwnership(
+		runtimeUserDirectoryOwnership(paths.userHome),
+		hostedRuntimeContract.identity,
+	);
 	ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 	withRuntimeUserFileAccess(() => {
 		mkdirSync(workspaceRoot, { recursive: true });
 		makeRuntimeUserOwned(workspaceRoot);
-	});
+	}, hostedRuntimeContract.identity);
 	ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	ensureRuntimePlatformDirectory(paths, paths.egressRoot, { mode: 0o711 });
@@ -732,6 +759,7 @@ function prepareRuntimeApplyDependencies(
 	chmodSync(dirname(paths.egressSystemCaFile), 0o711);
 	enforceRuntimeUserOwnership(
 		runtimeUserDirectoryOwnership(paths.egressScratchRoot, { mode: 0o700 }),
+		hostedRuntimeContract.identity,
 	);
 	return codexCli;
 }
@@ -760,6 +788,7 @@ function prepareRuntimeEgressProjection(
 		opts,
 		secretValues,
 		applyContext,
+		hostedRuntimeContract,
 		projectionHome,
 		workspaceRoot,
 		generatedAt,
@@ -784,8 +813,9 @@ function prepareRuntimeEgressProjection(
 			state.desiredDaemonProgramRevision !== appliedState?.daemonProgramRevision;
 	}
 	try {
-		withRuntimeUserFileAccess(() =>
-			materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
+		withRuntimeUserFileAccess(
+			() => materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
+			hostedRuntimeContract.identity,
 		);
 	} catch (error) {
 		state.installErrors.push(
@@ -803,7 +833,7 @@ function prepareRuntimeEgressProjection(
 		secretFilePath: egressSecretFile,
 		engine: egressEngine,
 		addon: egressAddon,
-		runtimeUser,
+		runtimeIdentity: hostedRuntimeContract.identity,
 	});
 	const egressSystemdProgram = resolvedSystemdIdentity.egressProgram;
 	const egressIdentity = resolvedSystemdIdentity.identity;
@@ -928,8 +958,9 @@ function applyRuntimeResourceProjections(
 		);
 	}
 	try {
-		const codexProjection = withRuntimeUserFileAccess(() =>
-			applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
+		const codexProjection = withRuntimeUserFileAccess(
+			() => applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
+			context.hostedRuntimeContract.identity,
 		);
 		providerProjectionRevisions.codex = codexProjection.revision;
 		state.projectedProviderIds.codex = codexProjection.providerIds;
@@ -1039,7 +1070,6 @@ function applyRuntimeEntryProjections(
 		generatedAt,
 		previousProjectedProviderIds,
 		runtimeEntries,
-		hostedRuntimeContract,
 	} = context;
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = state.observations.get(name);
@@ -1142,7 +1172,6 @@ function applyRuntimeEntryProjections(
 			);
 		}
 	}
-	hostedRuntimeContract.assertPlatformRoots();
 }
 
 interface RuntimeActivationPlan {
@@ -1170,6 +1199,7 @@ function prepareRuntimeActivation(
 		runtimePrograms: state.runtimeSystemdUserPrograms,
 		egressProgram: egressProjection.egressSystemdProgram,
 		egressIdentity: egressProjection.egressIdentity,
+		runtimeIdentity: context.hostedRuntimeContract.identity,
 		manifest,
 		paths,
 		workspaceRoot,
@@ -1194,6 +1224,8 @@ function prepareRuntimeActivation(
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
 	state.staleSystemdFiles = systemdUnits.staleFiles;
+	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
+	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
 	const officialServicePlan = planOfficialRuntimeServices(
 		state.runtimeSystemdUserPrograms,
 		paths,
@@ -1296,7 +1328,6 @@ interface RuntimeActivationOutputs {
 function activateRuntimeServices(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	activationPlan: RuntimeActivationPlan,
 ): RuntimeActivationOutputs {
 	const { load, manifest, paths, opts, hostedRuntimeContract, platformEnclaves } = context;
@@ -1310,9 +1341,6 @@ function activateRuntimeServices(
 		const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,
-			stopEgressSidecar: false,
-			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-			reloadUserUnits: [],
 			restartUserUnits: [],
 			staleSystemUnits: [],
 			staleUserUnits: [],
@@ -1324,7 +1352,6 @@ function activateRuntimeServices(
 
 	if (officialServicePlan.pending.length > 0) state.agentPluginUnitsQuiesced = false;
 	for (const item of officialServicePlan.pending) {
-		hostedRuntimeContract.assertPlatformRoots();
 		const unitPath = join(paths.systemdUserRoot, item.unitName);
 		const installerOwnership = [
 			...runtimeUserDirectoryOwnership(paths.systemdUserRoot),
@@ -1338,14 +1365,18 @@ function activateRuntimeServices(
 		];
 		let error: string | null;
 		try {
-			enforceRuntimeUserOwnership(installerOwnership);
-			const install = () => installOfficialRuntimeService(item, paths);
+			enforceRuntimeUserOwnership(installerOwnership, hostedRuntimeContract.identity);
+			const install = () =>
+				installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
 			error = opts.systemdApply
 				? opts.systemdApply.installOfficialService(item.unitName, install)
 				: install();
 		} finally {
 			enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
-			enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
+			enforceRuntimeUserOwnership(
+				runtimePlatformEnclaveOwnership(platformEnclaves),
+				hostedRuntimeContract.identity,
+			);
 		}
 		if (error) throw new Error(error);
 		if (!item.commandRevision) {
@@ -1357,15 +1388,15 @@ function activateRuntimeServices(
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
-	enforceRuntimeUserOwnership(runtimePlatformEnclaveOwnership(platformEnclaves));
+	enforceRuntimeUserOwnership(
+		runtimePlatformEnclaveOwnership(platformEnclaves),
+		hostedRuntimeContract.identity,
+	);
 	if (opts.systemdApply) {
 		state.agentPluginUnitsQuiesced = false;
 		const activation = opts.systemdApply.activate({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,
-			stopEgressSidecar: false,
-			reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-			reloadUserUnits: systemdUnits.userEnablementChangedUnits,
 			restartUserUnits: [
 				...new Set([
 					...state.agentPluginRestartUserUnits,
@@ -1439,12 +1470,10 @@ function commitRuntimeConvergence(
 	state: RuntimeConvergenceState,
 	plan: RuntimeConvergencePlan,
 	egressProjection: RuntimeEgressProjection,
-	activationPlan: RuntimeActivationPlan,
 	convergence: RuntimeConvergenceResult,
 ): void {
-	const { manifest, paths, opts, hostedRuntimeContract, workspaceRoot, appliedState } = context;
+	const { manifest, paths, opts, workspaceRoot, appliedState } = context;
 	if (state.installErrors.length > 0) return;
-	hostedRuntimeContract.assertPlatformRoots();
 	const daemonAuthTokenRevisionPreviouslyCommitted =
 		state.desiredDaemonAuthTokenRevision !== undefined &&
 		state.desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
@@ -1479,12 +1508,6 @@ function commitRuntimeConvergence(
 		);
 	}
 	try {
-		for (const cleanupError of removeStaleRuntimeSystemdFiles(
-			paths,
-			activationPlan.systemdUnits.staleFiles,
-		)) {
-			console.warn(`post-commit systemd file cleanup deferred: ${cleanupError}`);
-		}
 		removeStaleRuntimeRunConfigs(egressProjection.writtenRunConfigIds, paths);
 	} catch (cleanupError) {
 		console.warn(
@@ -1538,7 +1561,6 @@ function rollbackRuntimeApply(
 		);
 		state.installErrors.push(...resourceSnapshotRollbackErrors);
 		try {
-			hostedRuntimeContract.assertPlatformRoots();
 			const snapshotRollbackErrors = state.rollbackSnapshots.restore();
 			state.installErrors.push(...snapshotRollbackErrors);
 			if (state.rollbackEgressSecretOverride) {
@@ -1572,14 +1594,14 @@ function rollbackRuntimeApply(
 		filesystemRollbackSucceeded &&
 		!plan.workspaceExistedBeforeApply &&
 		resolve(workspaceRoot) !== resolve(paths.userHome) &&
-		withRuntimeUserFileAccess(() => existsSync(workspaceRoot))
+		withRuntimeUserFileAccess(() => existsSync(workspaceRoot), hostedRuntimeContract.identity)
 	) {
 		try {
 			withRuntimeUserFileAccess(() => {
 				if (readdirSync(workspaceRoot).length === 0) {
 					rmSync(workspaceRoot, { recursive: true });
 				}
-			});
+			}, hostedRuntimeContract.identity);
 		} catch (rollbackError) {
 			state.installErrors.push(
 				`runtime workspace rollback failed: ${
@@ -1593,9 +1615,6 @@ function rollbackRuntimeApply(
 			opts.systemdApply.rollback({
 				restartDaemon: state.restartDaemon,
 				restartEgressSidecar: state.restartEgressSidecar && state.egressRollbackAuthorityVerified,
-				stopEgressSidecar: state.restartEgressSidecar && !state.egressRollbackAuthorityVerified,
-				reconcileUserUnits: plan.mutationPlan.systemdUserUnits,
-				reloadUserUnits: [],
 				restartUserUnits: [
 					...new Set([
 						...state.agentPluginRestartUserUnits,
@@ -1658,7 +1677,7 @@ export function convergeRuntimeManifest(
 			egressProjection,
 			providerProjectionRevisions,
 		);
-		const activationOutputs = activateRuntimeServices(context, state, plan, activationPlan);
+		const activationOutputs = activateRuntimeServices(context, state, activationPlan);
 		const convergence = buildRuntimeConvergenceResult(
 			context,
 			state,
@@ -1666,7 +1685,7 @@ export function convergeRuntimeManifest(
 			activationPlan,
 			activationOutputs,
 		);
-		commitRuntimeConvergence(context, state, plan, egressProjection, activationPlan, convergence);
+		commitRuntimeConvergence(context, state, plan, egressProjection, convergence);
 		state.rollbackSnapshots.pop();
 		return convergence;
 	} catch (error) {

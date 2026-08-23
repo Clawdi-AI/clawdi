@@ -369,14 +369,12 @@ export function clearTenantToolLocationOverrides(env: NodeJS.ProcessEnv): void {
 }
 
 export function runtimeUserGid(runtimeUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_GID?.trim() ?? "", 10);
-	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
-		return explicit;
-	}
+	const explicit = linuxUid(process.env.CLAWDI_RUNTIME_GID?.trim() ?? "");
+	if (explicit !== null) return explicit;
 	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
 	if (resolved.status === 0) {
-		const gid = Number.parseInt(resolved.stdout.trim(), 10);
-		if (Number.isInteger(gid) && gid >= 0 && gid <= 4_294_967_295) return gid;
+		const gid = linuxUid(resolved.stdout.trim());
+		if (gid !== null) return gid;
 	}
 	if (runtimeUser === "clawdi") return 10_001;
 	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
@@ -497,9 +495,12 @@ function runtimeUserOwnershipRules(
 		}));
 }
 
-export function enforceRuntimeUserOwnership(rules: readonly RuntimeUserOwnershipRule[]): void {
+export function enforceRuntimeUserOwnership(
+	rules: readonly RuntimeUserOwnershipRule[],
+	identity?: RuntimeUserIdentity,
+): void {
 	if (rules.length === 0) return;
-	const runtimeIdentity = runtimeFilesystemIdentity();
+	const runtimeIdentity = runningAsRoot() ? (identity ?? runtimeFilesystemIdentity()) : null;
 	const rootIdentity = runningAsRoot() ? { uid: 0, gid: 0 } : null;
 	for (const rule of rules) {
 		if (rule.kind === "directory") mkdirSync(rule.path, { recursive: true });
@@ -614,22 +615,19 @@ function enforceRuntimeUserNodeOwnership(
 export function makeRuntimeUserOwned(path: string): void {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() ?? "";
 	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") return;
-	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
-	const group = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
-	if (resolved.status !== 0 || group.status !== 0) return;
-	const uid = Number.parseInt(resolved.stdout.trim(), 10);
-	const gid = Number.parseInt(group.stdout.trim(), 10);
-	if (!Number.isFinite(uid) || !Number.isFinite(gid)) return;
-	chownSync(path, uid, gid);
+	chownSync(path, runtimeUserUid(runtimeUser), runtimeUserGid(runtimeUser));
 }
 
 export function withRuntimeUserFileAccess<T>(
 	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
+	identity?: RuntimeUserIdentity,
 ): T {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") return operation();
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
+	const { uid, gid } = identity ?? {
+		uid: runtimeUserUid(runtimeUser),
+		gid: runtimeUserGid(runtimeUser),
+	};
 	if ((uid === 0 || gid === 0) && runtimeUser !== "0") {
 		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
 	}

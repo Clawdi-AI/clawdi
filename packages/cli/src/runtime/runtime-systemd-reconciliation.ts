@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
 	chmodSync,
 	chownSync,
@@ -14,11 +13,14 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { stripTerminalEscapes } from "../lib/sanitize";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION, type RuntimeManifest } from "./manifest-contract";
-import { runtimeCommandCurrentRevision, runtimeCommandPath } from "./manifest-install";
+import {
+	runtimeCommandCurrentRevision,
+	runtimeCommandPath,
+	writeRuntimeInstallerLog,
+} from "./manifest-install";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
 	DEFAULT_RUN_ROOT,
@@ -48,8 +50,6 @@ import {
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
-	runtimeUserGid,
-	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
@@ -58,7 +58,6 @@ import {
 	isGeneratedRuntimeSystemdPath,
 	managedRuntimeSystemdUnitEntries,
 	RUNTIME_SYSTEMD_DROP_IN_FILE,
-	systemctlPath,
 } from "./systemd";
 import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
@@ -148,7 +147,7 @@ export function resolveRuntimeSystemdIdentity(input: {
 	secretFilePath: string | null;
 	engine: RuntimeMitmproxyEnsureResult | null;
 	addon: { path: string; sha256: string } | null;
-	runtimeUser: string;
+	runtimeIdentity: { uid: number; gid: number };
 }): {
 	egressProgram: RuntimeEgressSystemdProgram | null;
 	identity: RuntimeEgressIdentity | null;
@@ -164,8 +163,8 @@ export function resolveRuntimeSystemdIdentity(input: {
 	return {
 		egressProgram,
 		identity: {
-			runtimeUid: runtimeUserUid(input.runtimeUser),
-			runtimeGid: runtimeUserGid(input.runtimeUser),
+			runtimeUid: input.runtimeIdentity.uid,
+			runtimeGid: input.runtimeIdentity.gid,
 			egressUid: runtimeEgressUid(),
 			egressGid: runtimeEgressGid(),
 		},
@@ -520,7 +519,6 @@ export function planOfficialRuntimeServices(
 
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
-const RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS = 15_000;
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -778,102 +776,11 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 }
 
 const OFFICIAL_INSTALLER_MAX_BUFFER_BYTES = 64 * 1024;
-const OFFICIAL_INSTALLER_OUTPUT_TAIL_CHARACTERS = 4000;
-const SENSITIVE_ENV_KEY_SEGMENT =
-	/(?:^|_)(?:API_KEY|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|PRIVATE_KEY|SECRET|SESSION|TOKEN)(?:$|_)/i;
-const ENV_ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s]+)/g;
-const BEARER_CREDENTIAL = /\b(Bearer)\s+[^\s,"'}\]]+/gi;
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi;
-const SENSITIVE_URL_VALUE =
-	/([?&#](?:access_token|api_key|auth|authorization|client_secret|credential|key|password|refresh_token|secret|token)=)[^&#\s]+/gi;
-const SENSITIVE_STRUCTURED_VALUE =
-	/((?:["']?(?:access[_-]?token|api[_-]?key|auth(?:orization)?|credential|password|private[_-]?key|secret|token)["']?)\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi;
-
-function officialInstallerSecretValues(program: RuntimeSystemdUserProgram): string[] {
-	const values = new Set(Object.values(program.resolvedSecretEnv).filter(Boolean));
-	for (const [key, value] of Object.entries(program.env)) {
-		if (value && SENSITIVE_ENV_KEY_SEGMENT.test(key)) values.add(value);
-	}
-	for (const [key, value] of Object.entries(process.env)) {
-		if (value && value.length >= 8 && SENSITIVE_ENV_KEY_SEGMENT.test(key)) values.add(value);
-	}
-	return [...values].sort((left, right) => right.length - left.length);
-}
-
-function officialInstallerJsonDiagnostic(value: string): string | null | undefined {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(value);
-	} catch {
-		return undefined;
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-	const record = parsed as Record<string, unknown>;
-	const diagnostic: Record<string, unknown> = {};
-	for (const key of ["error", "message"] as const) {
-		if (typeof record[key] === "string" && record[key]) diagnostic[key] = record[key];
-	}
-	for (const key of ["hints", "warnings"] as const) {
-		if (!Array.isArray(record[key])) continue;
-		const strings = record[key]
-			.filter((item): item is string => typeof item === "string")
-			.slice(-10);
-		if (strings.length > 0) diagnostic[key] = strings;
-	}
-	return Object.keys(diagnostic).length > 0 ? JSON.stringify(diagnostic) : null;
-}
-
-function redactOfficialInstallerOutput(value: string, secrets: readonly string[]): string {
-	let redacted = stripTerminalEscapes(value);
-	for (const secret of secrets) redacted = redacted.replaceAll(secret, "<redacted>");
-	return redacted
-		.replace(ENV_ASSIGNMENT, "$1=<redacted>")
-		.replace(BEARER_CREDENTIAL, "$1 <redacted>")
-		.replace(URL_USERINFO, "$1<redacted>@")
-		.replace(SENSITIVE_URL_VALUE, "$1<redacted>")
-		.replace(SENSITIVE_STRUCTURED_VALUE, '$1"<redacted>"');
-}
-
-function officialInstallerOutputTail(
-	value: string | Buffer | null | undefined,
-	secrets: readonly string[],
-	options: { requireJson?: boolean } = {},
-): string | null {
-	const raw = String(value ?? "").trim();
-	if (!raw) return null;
-	const jsonDiagnostic = officialInstallerJsonDiagnostic(raw);
-	const diagnostic =
-		jsonDiagnostic === undefined ? (options.requireJson ? null : raw) : jsonDiagnostic;
-	if (!diagnostic) return null;
-	const redacted = redactOfficialInstallerOutput(diagnostic, secrets).trim();
-	return redacted ? redacted.slice(-OFFICIAL_INSTALLER_OUTPUT_TAIL_CHARACTERS) : null;
-}
-
-function officialInstallerFailureDetail(
-	program: RuntimeSystemdUserProgram,
-	result: ReturnType<typeof spawnRuntimeUserCommand>,
-): string {
-	const secrets = officialInstallerSecretValues(program);
-	const spawnError = result.error
-		? officialInstallerOutputTail(result.error.message, secrets)
-		: null;
-	const stdout = officialInstallerOutputTail(result.stdout, secrets, {
-		requireJson: officialRuntimeServiceInstallArgs(program)?.includes("--json") === true,
-	});
-	const stderr = officialInstallerOutputTail(result.stderr, secrets);
-	const details = [
-		`exit code ${result.status ?? "unavailable"}`,
-		result.signal ? `signal ${result.signal}` : null,
-		result.error ? `spawn error: ${spawnError ?? "unknown"}` : null,
-		stdout ? `stdout tail: ${stdout}` : null,
-		stderr ? `stderr tail: ${stderr}` : null,
-	].filter((detail): detail is string => detail !== null);
-	return details.join("; ");
-}
 
 function installOfficialRuntimeUserService(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
 ): string | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
@@ -882,7 +789,6 @@ function installOfficialRuntimeUserService(
 		return `official ${runtimeSystemdProgramName(program)} service installer command is unavailable: ${program.command}`;
 	}
 	try {
-		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
 		const environment = Object.fromEntries(
 			(descriptor.installSecretEnv ?? []).flatMap((name) => {
 				const value = program.resolvedSecretEnv[name];
@@ -900,32 +806,38 @@ function installOfficialRuntimeUserService(
 						}
 					: undefined,
 			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+			runtimeGid: runtimeIdentity.gid,
+			runtimeUid: runtimeIdentity.uid,
 			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 		});
-		if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
-			return `official ${runtimeSystemdProgramName(program)} service install timed out after ${OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS}ms`;
-		}
+		const logPath = writeRuntimeInstallerLog(
+			paths,
+			`${runtimeSystemdProgramName(program)}-service`,
+			result,
+		);
 		return result.status === 0 && !result.error
 			? null
-			: `official ${runtimeSystemdProgramName(program)} service install failed: ${officialInstallerFailureDetail(program, result)}`;
+			: `official ${runtimeSystemdProgramName(program)} service install failed; see ${logPath}`;
 	} catch (error) {
-		const secrets = officialInstallerSecretValues(program);
-		const detail = officialInstallerOutputTail(
-			error instanceof Error ? error.message : String(error),
-			secrets,
+		const logPath = writeRuntimeInstallerLog(
+			paths,
+			`${runtimeSystemdProgramName(program)}-service`,
+			{ error },
 		);
-		return `official ${runtimeSystemdProgramName(program)} service install failed: ${
-			detail ?? "unknown error"
-		}`;
+		return `official ${runtimeSystemdProgramName(program)} service install failed; see ${logPath}`;
 	}
 }
 
 export function installOfficialRuntimeService(
 	item: OfficialRuntimeServicePlan["pending"][number],
 	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
 ): string | null {
-	reloadRuntimeUserManager(paths, paths.userHome);
-	const error = installOfficialRuntimeUserService({ ...item.program, cwd: paths.userHome }, paths);
+	const error = installOfficialRuntimeUserService(
+		{ ...item.program, cwd: paths.userHome },
+		paths,
+		runtimeIdentity,
+	);
 	if (error) return error;
 	if (!officialServiceBaseUnitIsCurrent(item.program, paths)) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
@@ -935,33 +847,6 @@ export function installOfficialRuntimeService(
 		return `official ${runtimeSystemdProgramName(item.program)} command revision could not be verified`;
 	}
 	return null;
-}
-
-function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: string): void {
-	try {
-		runRuntimeUserCommand(
-			systemctlPath(),
-			["--user", "reset-failed", systemdUnitFileName(name)],
-			"",
-			paths.userHome,
-			cwd,
-			{ timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS },
-		);
-	} catch {
-		// The unit may not exist yet; reset-failed must never block convergence.
-	}
-}
-
-function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
-	try {
-		runRuntimeUserCommand(systemctlPath(), ["--user", "daemon-reload"], "", paths.userHome, cwd, {
-			timeoutMs: RUNTIME_SYSTEMCTL_MAINTENANCE_TIMEOUT_MS,
-		});
-	} catch {
-		// Best-effort: environments without a reachable user manager (unit tests,
-		// non-hosted hosts) must not fail convergence, and official installers
-		// perform their own daemon-reload after writing the base unit.
-	}
 }
 
 function uninstallOfficialRuntimeUserService(input: {
@@ -1193,10 +1078,7 @@ function planStaleRuntimeSystemdFiles(
 	};
 }
 
-export function removeStaleRuntimeSystemdFiles(
-	paths: RuntimePaths,
-	plan: RuntimeSystemdStaleFilePlan,
-): string[] {
+export function removeStaleRuntimeSystemdFiles(plan: RuntimeSystemdStaleFilePlan): string[] {
 	const errors: string[] = [];
 	for (const path of plan.files) {
 		try {
@@ -1208,28 +1090,6 @@ export function removeStaleRuntimeSystemdFiles(
 			errors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
-	const systemctl = systemctlPath();
-	if (plan.systemUnits.length > 0) {
-		const result = spawnSync(systemctl, ["daemon-reload"], { encoding: "utf8" });
-		if (result.status !== 0) errors.push("system systemd daemon-reload failed after stale file GC");
-	}
-	if (plan.userUnits.length > 0) {
-		try {
-			runRuntimeUserCommand(
-				systemctl,
-				["--user", "daemon-reload"],
-				"",
-				paths.userHome,
-				paths.userHome,
-			);
-		} catch (error) {
-			errors.push(
-				`user systemd daemon-reload failed after stale file GC: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-	}
 	return errors;
 }
 
@@ -1237,17 +1097,16 @@ function materializeRuntimeSystemdUserEnablement(
 	paths: RuntimePaths,
 	desiredUnits: readonly string[],
 	staleUnits: readonly string[],
-): string[] {
+): void {
 	const desired = new Set(desiredUnits);
 	const units = [...new Set([...desiredUnits, ...staleUnits])].sort();
-	if (units.length === 0) return [];
+	if (units.length === 0) return;
 
 	const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
 	ensureDirectoryWithinTrustedRoot(paths.systemdUserRoot, wantsRoot, { mode: 0o755 });
 	chmodSync(wantsRoot, 0o755);
 	if (runningAsRoot()) chownSync(wantsRoot, 0, 0);
 
-	const changed: string[] = [];
 	for (const unitName of units) {
 		const path = join(wantsRoot, unitName);
 		const target = `../${unitName}`;
@@ -1264,7 +1123,6 @@ function materializeRuntimeSystemdUserEnablement(
 				throw new Error(`managed systemd enablement path is a directory: ${path}`);
 			}
 			rmSync(path, { force: true });
-			changed.push(unitName);
 			continue;
 		}
 
@@ -1280,9 +1138,7 @@ function materializeRuntimeSystemdUserEnablement(
 		}
 		symlinkSync(target, path);
 		if (runningAsRoot()) lchownSync(path, 0, 0);
-		changed.push(unitName);
 	}
-	return changed;
 }
 
 export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<string, string> {
@@ -1370,6 +1226,7 @@ function writeFileBrowserSystemdUnit(input: {
 	program: RuntimeSystemdUserProgram;
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
+	runtimeIdentity: { uid: number; gid: number };
 }): string {
 	const companion = input.manifest.companions?.filebrowser;
 	if (!companion) throw new Error("Files systemd unit requires a companion manifest");
@@ -1396,7 +1253,7 @@ function writeFileBrowserSystemdUnit(input: {
 		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],
 		extraServiceLines: [
 			`User=${runtimeUser}`,
-			`Group=${runtimeUserGid(runtimeUser)}`,
+			`Group=${input.runtimeIdentity.gid}`,
 			// Publish only this verified executable into the component service's
 			// private runtime directory; the platform state root stays untraversable.
 			`BindReadOnlyPaths=${systemdPath(input.program.command)}:${systemdPath(input.paths.fileBrowserServiceBinary)}:norbind`,
@@ -1492,6 +1349,7 @@ export function writeRuntimeSystemdState(input: {
 	runtimePrograms: RuntimeSystemdUserProgram[];
 	egressProgram: RuntimeEgressSystemdProgram | null;
 	egressIdentity: RuntimeEgressIdentity | null;
+	runtimeIdentity: { uid: number; gid: number };
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 	workspaceRoot: string;
@@ -1503,7 +1361,6 @@ export function writeRuntimeSystemdState(input: {
 }): {
 	systemUnits: string[];
 	userUnits: string[];
-	userEnablementChangedUnits: string[];
 	egressSidecarActive: boolean;
 	staleFiles: RuntimeSystemdStaleFilePlan;
 } {
@@ -1511,6 +1368,7 @@ export function writeRuntimeSystemdState(input: {
 		runtimePrograms,
 		egressProgram,
 		egressIdentity,
+		runtimeIdentity,
 		manifest,
 		paths,
 		workspaceRoot,
@@ -1605,6 +1463,7 @@ export function writeRuntimeSystemdState(input: {
 					program,
 					manifest,
 					paths,
+					runtimeIdentity,
 				}),
 			);
 			continue;
@@ -1621,16 +1480,11 @@ export function writeRuntimeSystemdState(input: {
 			}),
 		);
 	}
-	const userEnablementChangedUnits = materializeRuntimeSystemdUserEnablement(
-		paths,
-		desiredUserUnitNames,
-		staleFiles.userUnits,
-	);
+	materializeRuntimeSystemdUserEnablement(paths, desiredUserUnitNames, staleFiles.userUnits);
 
 	return {
 		systemUnits,
 		userUnits,
-		userEnablementChangedUnits,
 		egressSidecarActive: shouldRunEgress,
 		staleFiles,
 	};

@@ -118,7 +118,6 @@ describe("run command project folder selection", () => {
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					CLAWDI_PROVIDER_PLACEHOLDER_TOKEN: "clawdi-egress-placeholder",
 				},
-				configPath: "/etc/clawdi/run/openclaw.json",
 			},
 			{
 				currentUid: 0,
@@ -173,7 +172,6 @@ describe("run command project folder selection", () => {
 					HTTPS_PROXY: "http://127.0.0.1:19090",
 					SSL_CERT_FILE: "/run/clawdi/egress-scratch/sidecars/test/ca.pem",
 				},
-				configPath: "/etc/clawdi/run/hermes.json",
 			},
 			{
 				currentUid: 0,
@@ -215,7 +213,6 @@ describe("run command project folder selection", () => {
 					args: [],
 					cwd: "/home/clawdi",
 					env: { CLAWDI_RUNTIME_USER: "clawdi" },
-					configPath: "/etc/clawdi/run/openclaw.json",
 				},
 				{
 					currentUid: 0,

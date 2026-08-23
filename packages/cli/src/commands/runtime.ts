@@ -70,7 +70,7 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
-import { buildNumericUserCommand } from "../runtime/runtime-user-command";
+import { buildNumericUserCommand, runningAsRoot } from "../runtime/runtime-user-command";
 import {
 	assertRuntimePlatformRoots,
 	buildRuntimeBootStatus,
@@ -1411,7 +1411,6 @@ async function applyRuntimeDesiredState(
 				activate: ({
 					restartDaemon,
 					restartEgressSidecar,
-					reloadUserUnits,
 					restartUserUnits,
 					staleSystemUnits,
 					staleUserUnits,
@@ -1436,7 +1435,6 @@ async function applyRuntimeDesiredState(
 									...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
 								],
-								forceReloadUserUnits: reloadUserUnits,
 								forceRestartUserUnits: restartUserUnits,
 								preserveActiveUnits,
 								previousUserDesiredRevisions,
@@ -1849,7 +1847,7 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 	});
 	const command = config.engineBinaryPath;
 	const args = mitmdumpArgs;
-	const child = runningAsRootCommand()
+	const child = runningAsRoot()
 		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
 		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
 	child.stdout?.pipe(process.stdout);
@@ -1992,12 +1990,8 @@ export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig):
 		mode: 0o640,
 		dirMode: 0o711,
 	});
-	if (runningAsRootCommand()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
+	if (runningAsRoot()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
 	chmodSync(config.systemCaBundle, 0o640);
-}
-
-function runningAsRootCommand(): boolean {
-	return typeof process.getuid === "function" && process.getuid() === 0;
 }
 
 function waitForShutdownSignal(): Promise<void> {
