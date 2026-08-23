@@ -16,7 +16,7 @@ import {
 	symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { log, toErrorMessage } from "../serve/log";
 import { HOSTED_RUNTIME_HOME, HOSTED_RUNTIME_USER } from "./hosted-runtime-contract";
@@ -75,7 +75,7 @@ const runtimeCliBootstrapStatusSchema = z
 		verification: runtimeCliVerificationSchema.optional(),
 		error: z.string().nullable().optional(),
 	})
-	.strict();
+	.loose();
 
 export type RuntimeCliBootstrapStatus = z.infer<typeof runtimeCliBootstrapStatusSchema>;
 
@@ -665,10 +665,23 @@ function cliInstallPlan(
 	const version = exactNpmPackageVersion(packageSpec);
 	if (!version) throw new Error(`clawdi CLI packageSpec must be exact: ${packageSpec}`);
 	return {
-		installPackageSpec: `clawdi@${version}`,
+		installPackageSpec: cliInstallSource(`clawdi@${version}`),
 		npmPrefix: cliPackagePrefix(paths, version),
 		version,
 	};
+}
+
+function cliInstallSource(packageSpec: string): string {
+	const envName = "CLAWDI_RUNTIME_TEST_CLI_INSTALLER";
+	const override = process.env[envName]?.trim();
+	if (!override) return packageSpec;
+	if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
+		throw new Error(`${envName} requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`);
+	}
+	if (!isAbsolute(override)) {
+		throw new Error(`${envName} must be an absolute test package path`);
+	}
+	return override;
 }
 
 function cliPackagePrefix(paths: RuntimePaths, version: string): string {

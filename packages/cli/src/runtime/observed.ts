@@ -69,7 +69,7 @@ export function readHostedRuntimeObserved(
 		activeCliVersion,
 		applied: appliedAuthority,
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
-		cli: observedCli(cliBootstrap, activeCliVersion),
+		cli: observedCli(cliBootstrap),
 	};
 	if (systemd) {
 		observed.systemd = systemd;
@@ -147,10 +147,7 @@ function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 	);
 }
 
-function observedCli(
-	value: RuntimeCliBootstrapStatus | null,
-	activeCliVersion: string,
-): HostedRuntimeObservedCli | null {
+function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObservedCli | null {
 	if (!value) return null;
 	return {
 		status: value.status ?? null,
@@ -159,7 +156,7 @@ function observedCli(
 		registry: value.registry ?? null,
 		activePath: value.activePath ?? null,
 		activeTarget: value.activeTarget ?? null,
-		version: activeCliVersion,
+		version: value.version ?? null,
 	};
 }
 

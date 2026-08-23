@@ -37,6 +37,7 @@ const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
 	"lan",
 	"--force",
 ] as const;
+const LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS = ["gateway", "run", "--replace"] as const;
 const HOSTED_HERMES_DASHBOARD_ARGS = [
 	"dashboard",
 	"--host",
@@ -59,7 +60,9 @@ export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: un
 	// that leaves command ownership with the official gateway unit.
 	return (
 		exactStringArray(value, HOSTED_GATEWAY_RUN_ARGS) ||
-		(runtime === "openclaw" && exactStringArray(value, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS))
+		(runtime === "openclaw" && exactStringArray(value, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS)) ||
+		// SUNSET: remove once every hosted Hermes host has converged on CLI >= 0.14.14 (last-good rewritten canonical).
+		(runtime === "hermes" && exactStringArray(value, LEGACY_HOSTED_HERMES_GATEWAY_RUN_ARGS))
 	);
 }
 

@@ -37,10 +37,7 @@ import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
-import {
-	manifestSchema,
-	type RuntimeManifest,
-} from "../../src/runtime/manifest-contract";
+import { manifestSchema, type RuntimeManifest } from "../../src/runtime/manifest-contract";
 import type { HostedSkillSource } from "../../src/runtime/manifest-resources";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -236,6 +233,7 @@ test.each(["hermes", "openclaw"] as const)(
 			"CLAWDI_RUNTIME_GID",
 			"CLAWDI_RUNTIME_HOME",
 			"CLAWDI_RUNTIME_MODE",
+			"CLAWDI_RUNTIME_TEST_CLI_INSTALLER",
 			"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 			"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 			"CLAWDI_RUNTIME_UID",
@@ -322,6 +320,7 @@ test.each(["hermes", "openclaw"] as const)(
 				CLAWDI_RUNTIME_GID: String(runtimeGid),
 				CLAWDI_RUNTIME_HOME: runtimeHome,
 				CLAWDI_RUNTIME_MODE: "hosted",
+				CLAWDI_RUNTIME_TEST_CLI_INSTALLER: "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
 				CLAWDI_RUNTIME_UID: String(runtimeUid),
 				CLAWDI_RUNTIME_USER: "clawdi",
 				CLAWDI_SERVICE_STATE_DIR: join(root, "var", "lib", "clawdi"),

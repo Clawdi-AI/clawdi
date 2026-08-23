@@ -959,11 +959,13 @@ describe("runtime manifest reconciliation invariants", () => {
 		const legacy = hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS);
 		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacy).success).toBe(true);
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse(
-				hostedHermesManifestFixture({}, ["gateway", "run", "--replace"]),
-			).success,
-		).toBe(false);
+		const legacyHermes = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedHermesManifestFixture({}, ["gateway", "run", "--replace"]),
+		);
+		expect(hostedManifestToRuntimeManifest(legacyHermes).runtimes.hermes.run?.args).toEqual([
+			"gateway",
+			"run",
+		]);
 
 		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
