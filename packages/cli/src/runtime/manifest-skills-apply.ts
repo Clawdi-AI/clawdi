@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { hostedBundledSkillIds, resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { activateHostedHermesSkill } from "./hosted-hermes-skill";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
@@ -26,12 +27,8 @@ import {
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import type { HostedSkillSource } from "./manifest-resources";
-import { detectRuntimeMode } from "./paths";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
-function hostedBundledSkillsEnabled(): boolean {
-	return detectRuntimeMode() === "hosted";
-}
 type HostedSkillDesired =
 	| { enabled: boolean; version: number }
 	| { enabled: boolean; source: HostedSkillSource };
@@ -41,6 +38,7 @@ interface HostedSkillProjectionDriver {
 	exclude?: ReadonlySet<string>;
 }
 type HostedSkillRuntime = "hermes" | "openclaw";
+
 function preparedSkillMatchesDesired(
 	prepared: PreparedHostedSourcedSkill | undefined,
 	desired: HostedSkillDesired,
@@ -48,7 +46,7 @@ function preparedSkillMatchesDesired(
 ): prepared is PreparedHostedSourcedSkill {
 	if (!prepared || prepared.skillId !== skillId) return false;
 	if ("source" in desired) {
-		return JSON.stringify(prepared.source) === JSON.stringify(desired.source);
+		return prepared.source.type !== "bundled" && isDeepStrictEqual(prepared.source, desired.source);
 	}
 	const catalogEntry = resolveHostedBundledSkill(skillId, desired.version);
 	return (
@@ -58,11 +56,35 @@ function preparedSkillMatchesDesired(
 		prepared.source.assetDirectory === catalogEntry.assetDirectory
 	);
 }
+
+function requirePreparedSkillTarget(
+	skillsRoot: string,
+	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
+	desired: HostedSkillDesired,
+	skillId: string,
+): readonly [PreparedHostedSourcedSkill, string] {
+	const prepared = preparedSkills.get(skillId);
+	if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
+		throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
+	}
+	const targetDir = join(skillsRoot, prepared.skillId);
+	if (
+		withRuntimeUserFileAccess(() => existsSync(targetDir)) &&
+		managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
+	) {
+		throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
+	}
+	return [prepared, targetDir];
+}
+
+function openClawWorkspaceUnavailable(): never {
+	throw new Error("OpenClaw official agent workspace is unavailable");
+}
+
 function completePreparedHostedSkills(
 	manifest: RuntimeManifest,
 	prepared: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): ReadonlyMap<string, PreparedHostedSourcedSkill> {
-	if (!hostedBundledSkillsEnabled()) return prepared;
 	const complete = new Map(prepared);
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		if (!desired.enabled || "source" in desired) continue;
@@ -103,9 +125,7 @@ function hostedSkillProjectionDrivers(input: {
 				skillsRoot: openClawSkillsRoot,
 				exclude: new Set([".openclaw/source-origin.json"]),
 				activate: (sourceDir, targetDir) => {
-					if (!input.openClawWorkspaceRoot) {
-						throw new Error("OpenClaw official agent workspace is unavailable");
-					}
+					if (!input.openClawWorkspaceRoot) openClawWorkspaceUnavailable();
 					activateHostedOpenClawSkill({
 						home: input.home,
 						workspaceRoot: input.openClawWorkspaceRoot,
@@ -145,7 +165,7 @@ function recoverPendingHostedSkillInstallations(
 	manifest: RuntimeManifest,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
-	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return;
+	if (!driver.skillsRoot) return;
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const pendingReservations = pendingManagedSkillReservations("hosted-manifest").filter(
 		(reservation) => dirname(reservation.targetDir) === driver.skillsRoot,
@@ -179,9 +199,8 @@ function validateHostedSkillsPlan(
 	manifest: RuntimeManifest,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): void {
-	if (!hostedBundledSkillsEnabled()) return;
 	if (runtimeEnabled(manifest, runtime) && !driver.skillsRoot) {
-		throw new Error("OpenClaw official agent workspace is unavailable");
+		openClawWorkspaceUnavailable();
 	}
 	for (const [skillId, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
 		if ("source" in desired && hostedBundledSkillIds().includes(skillId)) {
@@ -189,17 +208,7 @@ function validateHostedSkillsPlan(
 		}
 		if (!("source" in desired)) resolveHostedBundledSkill(skillId, desired.version);
 		if (!runtimeEnabled(manifest, runtime) || !driver.skillsRoot || !desired.enabled) continue;
-		const prepared = preparedSkills.get(skillId);
-		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
-			throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
-		}
-		const targetDir = join(driver.skillsRoot, prepared.skillId);
-		if (
-			withRuntimeUserFileAccess(() => existsSync(targetDir)) &&
-			managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
-		) {
-			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
-		}
+		requirePreparedSkillTarget(driver.skillsRoot, preparedSkills, desired, skillId);
 	}
 }
 function applyHostedSkills(
@@ -209,7 +218,7 @@ function applyHostedSkills(
 	manifest: RuntimeManifest,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSourcedSkill>,
 ): string[] {
-	if (!hostedBundledSkillsEnabled() || !driver.skillsRoot) return [];
+	if (!driver.skillsRoot) return [];
 	const failures: string[] = [];
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const reservations = managedSkillReservations("hosted-manifest").filter(
@@ -250,15 +259,12 @@ function applyHostedSkills(
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
-		const prepared = preparedSkills.get(skillId);
-		if (!preparedSkillMatchesDesired(prepared, desired, skillId)) {
-			throw new Error(`pinned archive for hosted Skill ${skillId} is unavailable`);
-		}
-		const targetDir = join(driver.skillsRoot, prepared.skillId);
-		const owner = managedSkillReservationOwner(targetDir, skillId);
-		if (withRuntimeUserFileAccess(() => existsSync(targetDir)) && owner !== "hosted-manifest") {
-			throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
-		}
+		const [prepared, targetDir] = requirePreparedSkillTarget(
+			driver.skillsRoot,
+			preparedSkills,
+			desired,
+			skillId,
+		);
 		const reservationIdentity = preparedReservationIdentity(prepared);
 		if (
 			reservation?.targetDir === targetDir &&

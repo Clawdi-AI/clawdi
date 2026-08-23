@@ -14,7 +14,7 @@ import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { withRuntimeConvergeLock } from "./converge-lock";
 import { ManagedSkillResourceError, withManagedTargetRollback } from "./managed-skill-delivery";
-import { getRuntimePaths } from "./paths";
+import { detectRuntimeMode, getRuntimePaths } from "./paths";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
@@ -73,9 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function ledgerPath(): string {
-	const root = process.env.CLAWDI_SERVICE_STATE_DIR?.trim();
-	const mode = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
-	if (mode === "hosted" || root) {
+	if (detectRuntimeMode() === "hosted") {
 		return join(getRuntimePaths({ mode: "hosted" }).managedResourceRoot, LEDGER_FILE);
 	}
 	return join(getClawdiDir(), "managed-resources", LEDGER_FILE);
@@ -94,10 +92,7 @@ function emptyLedger(): ManagedSkillReservationLedger {
 	};
 }
 
-function reservationTargetMatchesIdentity(
-	target: string,
-	value: { id?: unknown },
-): boolean {
+function reservationTargetMatchesIdentity(target: string, value: { id?: unknown }): boolean {
 	return basename(target) === value.id;
 }
 
@@ -312,10 +307,7 @@ export function mutateUserSkillTarget<T>(targetDir: string, skillId: string, mut
 		assertUserSkillTargetMutable(targetDir, skillId);
 		return mutation();
 	};
-	if (
-		process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted" ||
-		process.env.CLAWDI_SERVICE_STATE_DIR?.trim()
-	) {
+	if (detectRuntimeMode() === "hosted") {
 		return withRuntimeConvergeLock(getRuntimePaths({ mode: "hosted" }), commit);
 	}
 	return withPrivateDirectoryLockSync(join(getClawdiDir(), "locks", "managed-skills.lock"), commit);
@@ -327,8 +319,7 @@ export function migrateLegacyLocalSetupSkill(input: {
 	version: number;
 	digest: (targetDir: string) => string;
 }): "adopted" | "already_migrated" | "absent" | "unmanaged" | "hosted" {
-	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") return "hosted";
-	if (process.env.CLAWDI_SERVICE_STATE_DIR?.trim()) return "hosted";
+	if (detectRuntimeMode() === "hosted") return "hosted";
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
 	if (

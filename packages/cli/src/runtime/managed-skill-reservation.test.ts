@@ -222,6 +222,7 @@ describe("managed Skill reservations", () => {
 	it("records legacy migration independently for each canonical target", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "service-state");
 		const existing = join(root, "one", "skills", "clawdi");
 		const absent = join(root, "two", "skills", "clawdi");
 		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), existing, { recursive: true });
