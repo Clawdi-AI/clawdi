@@ -21,25 +21,7 @@ const mcpSecretHeaderSchema = z
 	})
 	.strict();
 
-const hostedStdioMcpServerDesiredStateSchema = z
-	.object({
-		command: z
-			.string()
-			.min(1)
-			.max(200)
-			.refine((value) => value === value.trim(), "command must not have surrounding whitespace"),
-		args: z
-			.array(
-				z
-					.string()
-					.min(1)
-					.refine((value) => value === value.trim(), "args must be canonical strings"),
-			)
-			.max(32),
-	})
-	.strict();
-
-const hostedRemoteMcpServerDesiredStateSchema = z
+export const hostedMcpServerDesiredStateSchema = z
 	.object({
 		url: z
 			.string()
@@ -61,6 +43,9 @@ const hostedRemoteMcpServerDesiredStateSchema = z
 	})
 	.strict()
 	.superRefine((server, ctx) => {
+		if (!Object.values(server.headers).some((value) => typeof value !== "string")) {
+			ctx.addIssue({ code: "custom", message: "at least one MCP header must use secretRef" });
+		}
 		const seen = new Set<string>();
 		for (const header of Object.keys(server.headers)) {
 			const normalized = header.toLowerCase();
@@ -81,11 +66,6 @@ const hostedRemoteMcpServerDesiredStateSchema = z
 			seen.add(normalized);
 		}
 	});
-
-export const hostedMcpServerDesiredStateSchema = z.union([
-	hostedStdioMcpServerDesiredStateSchema,
-	hostedRemoteMcpServerDesiredStateSchema,
-]);
 export type HostedMcpServerDesiredState = z.infer<typeof hostedMcpServerDesiredStateSchema>;
 
 export const hostedMcpDesiredStateSchema = z

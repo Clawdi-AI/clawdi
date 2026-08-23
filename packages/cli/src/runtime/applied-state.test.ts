@@ -39,6 +39,9 @@ function appliedStateFixture() {
 			hermes: ["clawdi-default"],
 			openclaw: ["default"],
 		},
+		officialServiceCommandRevisions: {
+			"openclaw-gateway.service": "b".repeat(64),
+		},
 	};
 }
 
@@ -66,6 +69,12 @@ describe("runtime applied state", () => {
 			runtimeAppliedStateSchema.safeParse({
 				...state,
 				projectedProviderIds: { openclaw: ["default", "default"] },
+			}).success,
+		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				officialServiceCommandRevisions: { "openclaw-gateway.service": "invalid" },
 			}).success,
 		).toBe(false);
 		expect(

@@ -17,7 +17,11 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
-import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
+import {
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+	writeRuntimeAppliedState,
+} from "./applied-state";
 import {
 	type RuntimeApplyContext,
 	readRuntimeApplyContext,
@@ -482,7 +486,6 @@ describe("hosted runtime bundle v2", () => {
 								},
 							},
 						},
-						"search-proxy": { command: "searchctl", args: ["serve"] },
 					},
 				},
 				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
@@ -500,7 +503,6 @@ describe("hosted runtime bundle v2", () => {
 						},
 					},
 				},
-				"search-proxy": { command: "searchctl", args: ["serve"] },
 			},
 		});
 		expect(load.manifest.projection?.skills).toEqual({
@@ -816,6 +818,21 @@ describe("hosted runtime bundle v2", () => {
 		const result = convergeRuntimeManifest(load, paths, {});
 
 		expect(result.installErrors).toEqual([]);
+		if (!load.sourceRevision) throw new Error("expected runtime source revision");
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: new Date().toISOString(),
+				instanceId: load.manifest.instanceId,
+				etag: load.etag ?? `"sha256:${load.sourceRevision}"`,
+				sourceRevision: load.sourceRevision,
+				generation: load.manifest.generation,
+				contentIdentity: runtimeAppliedContentIdentity(load),
+				providerIds: [],
+				projectedProviderIds: result.projectedProviderIds,
+			},
+			paths,
+		);
 		const egressSecretPath = join(paths.managedSecretRoot, "egress-secrets.json");
 		const profileBundle = JSON.parse(readFileSync(paths.egressProfileBundle, "utf-8")) as {
 			profiles: Array<{
@@ -1059,19 +1076,6 @@ describe("hosted runtime bundle v2", () => {
 					...manifest,
 					mcp: {
 						servers: {
-							clawdi: { command: "clawdi", args: ["mcp"], token: "secret" },
-						},
-					},
-				},
-			}),
-		).toThrow();
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({
-				...raw,
-				manifest: {
-					...manifest,
-					mcp: {
-						servers: {
 							clawdi: {
 								url: "https://cloud-api.test/v1/mcp/clawdi",
 								transport: "streamable-http",
@@ -1082,18 +1086,30 @@ describe("hosted runtime bundle v2", () => {
 				},
 			}),
 		).toThrow();
+	});
+
+	test("rejects remote MCP servers without a secretRef header", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({
 				...raw,
 				manifest: {
 					...manifest,
-					skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 					mcp: {
-						servers: { clawdi: { command: " clawdi", args: ["mcp"] } },
+						servers: {
+							remote: {
+								url: "https://mcp.example.test/server",
+								transport: "streamable-http",
+								headers: { Accept: "application/json" },
+							},
+						},
 					},
 				},
 			}),
-		).toThrow();
+		).toThrow(/at least one MCP header must use secretRef/);
 	});
 
 	test.each([

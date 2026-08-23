@@ -857,6 +857,16 @@ function fileBrowserManifest(
 	);
 }
 
+function writeFakeHermesCli(paths: RuntimePaths): string {
+	const path = join(paths.userHome, ".local", "bin", "hermes");
+	writeFakeGatewayCli({
+		path,
+		runtime: "hermes",
+		unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+	});
+	return path;
+}
+
 function fileBrowserManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 	const load = manifestLoad(manifest, `files-generation-${manifest.generation}`);
 	if (!load.applyContext) throw new Error("Files test apply context is missing");
@@ -4255,11 +4265,8 @@ echo spawned > '${installerLog}'
 		process.env.CLAWDI_RUNTIME_USER = runtimeUser;
 		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
 		process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const hermesCommand = writeFakeHermesCli(paths);
 		const openClawCommand = join(paths.userHome, ".local", "bin", "openclaw");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
-		chmodSync(hermesCommand, 0o755);
 		writeFakeGatewayCli({
 			path: openClawCommand,
 			runtime: "openclaw",
@@ -4433,7 +4440,7 @@ echo spawned > '${installerLog}'
 		if (process.geteuid?.() !== 0) return;
 		const paths = tempRuntimePaths();
 		const fixtureRoot = dirname(paths.serviceStateRoot);
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const hermesCommand = writeFakeHermesCli(paths);
 		const skillDir = join(paths.userHome, ".hermes", "skills", "clawdi");
 		const ledger = join(paths.managedResourceRoot, "managed-skills.json");
 		const cliRoot = resolve(import.meta.dir, "../..");
@@ -4462,10 +4469,6 @@ echo spawned > '${installerLog}'
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.clawdiHome, { recursive: true });
 		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
-		chmodSync(hermesCommand, 0o755);
-
 		const manifest = baseManifest(
 			paths,
 			{
@@ -4550,9 +4553,7 @@ echo spawned > '${installerLog}'
 	test("reconciles exact-source Hermes Workspace Skills through the reservation ledger", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const hermesCommand = writeFakeHermesCli(paths);
 		const source = {
 			type: "github" as const,
 			url: "https://github.com/Clawdi-AI/store",
@@ -4716,9 +4717,7 @@ installReservedManagedSkill(${JSON.stringify({
 			}),
 		).toThrow("pending installation that requires recovery");
 
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const hermesCommand = writeFakeHermesCli(paths);
 		const manifest = baseManifest(
 			paths,
 			{ hermes: { enabled: true, run: runSettings(hermesCommand, ["gateway"]), services: {} } },
@@ -4745,9 +4744,7 @@ installReservedManagedSkill(${JSON.stringify({
 		const skillId = "attio-composio-client-updates";
 		const sourceIdentity = `github\0${skillId}\0https://github.com/Clawdi-AI/store\0skills/${skillId}\0${"a".repeat(40)}`;
 		const target = join(paths.userHome, ".hermes", "skills", skillId);
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const hermesCommand = writeFakeHermesCli(paths);
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "historical test Skill\n");
 		reserveManagedSkill({
@@ -4775,9 +4772,7 @@ installReservedManagedSkill(${JSON.stringify({
 
 	test("isolates per-Skill resource failures without starving later Skills", () => {
 		const paths = tempRuntimePaths();
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const hermesCommand = writeFakeHermesCli(paths);
 		const skillIds = ["a-fail", "b-ready", "c-ready"];
 		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
@@ -4825,9 +4820,7 @@ installReservedManagedSkill(${JSON.stringify({
 
 	test("keeps unmanaged Skill rejection fail-closed across the Skill domain", () => {
 		const paths = tempRuntimePaths();
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		mkdirSync(dirname(hermesCommand), { recursive: true });
-		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const hermesCommand = writeFakeHermesCli(paths);
 		const skillIds = ["a-unmanaged", "b-ready", "c-ready"];
 		const preparedSkills = new Map<string, PreparedHostedSkill>();
 		const entries: NonNullable<RuntimeManifest["projection"]>["skills"] = { entries: {} };
@@ -5999,7 +5992,20 @@ exit 42
 			},
 			{
 				projection: {
-					mcp: { servers: { clawdi: { command: "clawdi", args: ["mcp"] } } },
+					mcp: {
+						servers: {
+							clawdi: {
+								url: "https://mcp.example.test/clawdi",
+								transport: "streamable-http",
+								headers: {
+									Authorization: {
+										secretRef: "secret://clawdi/auth-token",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		);

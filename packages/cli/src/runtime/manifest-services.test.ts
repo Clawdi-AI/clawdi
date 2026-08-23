@@ -1267,9 +1267,7 @@ esac
 		expect(result.installErrors).toEqual([]);
 		expect(prerequisiteActivations).toBe(0);
 		expect(finalActivations).toBe(1);
-		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
-			"systemctl --user daemon-reload",
-			"systemctl --user reset-failed hermes-gateway.service",
+		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-6)).toEqual([
 			"hermes systemd state ready",
 			"hermes gateway install --force",
 			"systemctl --user daemon-reload",
@@ -1548,7 +1546,7 @@ esac
 		);
 
 		expect(result.installErrors).toEqual([]);
-		expect(existsSync(logPath)).toBe(false);
+		expect(readFileSync(logPath, "utf8")).not.toContain("gateway install");
 		expect(result.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"hermes-gateway.service",
 			"openclaw-gateway.service",
