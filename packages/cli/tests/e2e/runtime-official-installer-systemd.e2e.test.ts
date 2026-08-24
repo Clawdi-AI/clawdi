@@ -203,6 +203,47 @@ async function waitForTcpPort(port: number): Promise<void> {
 	throw new Error(`port ${port} did not begin listening`);
 }
 
+function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
+	const version = getCliVersion();
+	const prefix = join(paths.cliNpmPrefix, "packages", version);
+	const install = spawnSync(
+		"npm",
+		[
+			"install",
+			"--global",
+			`--prefix=${prefix}`,
+			"--ignore-scripts",
+			"--no-audit",
+			"--no-fund",
+			"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
+		],
+		{ encoding: "utf8" },
+	);
+	expect(install.status, install.stderr).toBe(0);
+	const activeTarget = join(prefix, "bin", "clawdi");
+	mkdirSync(dirname(paths.cliManagedBin), { recursive: true, mode: 0o755 });
+	symlinkSync(activeTarget, paths.cliManagedBin);
+	writeFileSync(
+		paths.cliBootstrapStatus,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+			generatedAt: new Date().toISOString(),
+			status: "installed",
+			source: "npm",
+			packageSpec: `clawdi@${version}`,
+			registry: "https://registry.npmjs.org",
+			npmPrefix: prefix,
+			npmCache: paths.cliNpmCache,
+			activePath: paths.cliManagedBin,
+			activeTarget,
+			version,
+			error: null,
+		})}\n`,
+		{ mode: 0o600 },
+	);
+	return prefix;
+}
+
 test.each(["hermes", "openclaw"] as const)(
 	"runs the complete virgin %s first boot from a cold user manager",
 	async (runtime) => {
@@ -377,44 +418,7 @@ exec /usr/bin/systemctl "$@"
 			writeFileSync(systemctlLog, "", { mode: 0o666 });
 			chmodSync(systemctlLog, 0o666);
 
-			const cliVersion = getCliVersion();
-			const cliPrefix = join(paths.cliNpmPrefix, "packages", cliVersion);
-			const cliInstall = spawnSync(
-				"npm",
-				[
-					"install",
-					"--global",
-					"--prefix",
-					cliPrefix,
-					"--ignore-scripts",
-					"--no-audit",
-					"--no-fund",
-					"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
-				],
-				{ encoding: "utf8" },
-			);
-			expect(cliInstall.status, cliInstall.stderr).toBe(0);
-			const cliTarget = join(cliPrefix, "bin", "clawdi");
-			mkdirSync(dirname(paths.cliManagedBin), { recursive: true, mode: 0o755 });
-			symlinkSync(cliTarget, paths.cliManagedBin);
-			writeFileSync(
-				paths.cliBootstrapStatus,
-				`${JSON.stringify({
-					schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
-					generatedAt: new Date().toISOString(),
-					status: "installed",
-					source: "npm",
-					packageSpec: `clawdi@${cliVersion}`,
-					registry: "https://registry.npmjs.org",
-					npmPrefix: cliPrefix,
-					npmCache: paths.cliNpmCache,
-					activePath: paths.cliManagedBin,
-					activeTarget: cliTarget,
-					version: cliVersion,
-					error: null,
-				})}\n`,
-				{ mode: 0o600 },
-			);
+			const cliPrefix = seedLocalCli(paths);
 
 			const gatewayToken = `virgin-${runtime}-gateway-token`;
 			const sourceRevision = createHash("sha256").update(`virgin-${runtime}-bundle`).digest("hex");
@@ -460,7 +464,7 @@ exec /usr/bin/systemctl "$@"
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: `clawdi@${cliVersion}`,
+					packageSpec: `clawdi@${getCliVersion()}`,
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
@@ -2688,6 +2692,7 @@ exec /usr/bin/systemctl "$@"
 	const restoreEnvironment = configureBehavioralGuardEnvironment(root, systemctlWrapper);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
+	seedLocalCli(paths);
 	ensureBehavioralGuardUserManager();
 	installBehavioralGuardHermesRuntime();
 	const skillRoot = join("/home/clawdi", ".hermes", "skills", "lean-replay-guard");
@@ -2809,6 +2814,7 @@ exec /usr/bin/systemctl "$@"
 	const restoreEnvironment = configureBehavioralGuardEnvironment(root, systemctlWrapper);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
+	seedLocalCli(paths);
 	ensureBehavioralGuardUserManager();
 	installBehavioralGuardHermesRuntime();
 	const generationOne = behavioralGuardLoad({
