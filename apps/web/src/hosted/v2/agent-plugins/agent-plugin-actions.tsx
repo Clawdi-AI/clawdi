@@ -35,6 +35,14 @@ export function AgentPluginActions({
 
 	return (
 		<>
+			<AgentPluginPrimaryButton
+				item={item}
+				state={state}
+				pendingAction={pendingAction}
+				mutationsBlocked={mutationsBlocked}
+				onInstall={onInstall}
+				onRetry={onRetry}
+			/>
 			{item.desired ? (
 				<ConfirmAction
 					title={`Remove ${title}?`}
@@ -55,14 +63,6 @@ export function AgentPluginActions({
 					</Button>
 				</ConfirmAction>
 			) : null}
-			<AgentPluginPrimaryButton
-				item={item}
-				state={state}
-				pendingAction={pendingAction}
-				mutationsBlocked={mutationsBlocked}
-				onInstall={onInstall}
-				onRetry={onRetry}
-			/>
 		</>
 	);
 }

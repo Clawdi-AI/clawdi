@@ -447,7 +447,10 @@ export function planOfficialRuntimeServices(
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
 		const serviceRevision = officialRuntimeServiceRevision(program, paths);
 		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
-		if (!serviceRevision || committedServiceRevisions[unitName] !== serviceRevision) {
+		if (
+			!serviceRevision ||
+			(committedServiceRevisions[unitName] ?? serviceRevision) !== serviceRevision
+		) {
 			pending.push({ unitName, program, serviceRevision });
 		}
 	}
