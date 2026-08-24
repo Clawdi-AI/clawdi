@@ -248,6 +248,7 @@ function preparedTestAgentPluginState(
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+		openclawGatewayTrustedProxies: ["10.173.0.1"],
 		openclawControlUiBasePath: "/control",
 		openclawGatewayAuth: hostedOpenClawNativeAuth(),
 		...overrides,
@@ -2088,6 +2089,22 @@ chmod 0755 '${commandPath}'
 		).toBe(false);
 	});
 
+	test.each([
+		{ trustedProxies: ["10.173.0.0/20"] },
+		{ trustedProxies: ["incusbr0"] },
+		{ trustedProxies: ["10.173.0.1", "10.173.0.1"] },
+	])("rejects non-exact OpenClaw trusted proxy IPs $trustedProxies", ({ trustedProxies }) => {
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedManifestFixture({
+					system: hostedSystemFixture({
+						openclawGatewayTrustedProxies: trustedProxies,
+					}),
+				}),
+			).success,
+		).toBe(false);
+	});
+
 	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
@@ -2149,6 +2166,7 @@ chmod 0755 '${commandPath}'
 			gateway: {
 				port: 18789,
 				bind: "lan",
+				trustedProxies: ["10.173.0.1"],
 				auth: { mode: "token", token: "gateway-token" },
 				controlUi: {
 					allowedOrigins,

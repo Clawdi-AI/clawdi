@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { join } from "node:path";
 import {
 	AI_PROVIDER_API_MODES,
@@ -83,6 +84,10 @@ export function officialInstallArgs(runtime: string, home: string): string[] {
 }
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
+const trustedProxyIpSchema = z
+	.string()
+	.max(64)
+	.refine((value) => isIP(value) !== 0, "must be an exact IPv4 or IPv6 address");
 
 function cleanHttpsUrl(value: string): URL | null {
 	try {
@@ -684,6 +689,12 @@ const hostedRuntimeManifestBaseSchema = z
 		system: z
 			.object({
 				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
+				openclawGatewayTrustedProxies: z
+					.array(trustedProxyIpSchema)
+					.min(1)
+					.max(16)
+					.refine((values) => new Set(values).size === values.length, "must not contain duplicates")
+					.optional(),
 				openclawControlUiBasePath: z
 					.string()
 					.regex(/^\/(?:[^/?#]+(?:\/[^/?#]+)*)?$/)
@@ -769,6 +780,12 @@ function validateHostedRuntimeManifest(
 				systemPath("openclawControlUiAllowedOrigins"),
 			);
 		}
+		if (!manifest.system.openclawGatewayTrustedProxies?.length) {
+			addIssue(
+				"OpenClaw v2 reverse proxy requires explicit trusted proxy IPs",
+				systemPath("openclawGatewayTrustedProxies"),
+			);
+		}
 		const run = manifest.runtimes.openclaw?.run;
 		if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
 			addIssue(
@@ -808,6 +825,12 @@ function validateHostedRuntimeManifest(
 			addIssue(
 				"OpenClaw gateway auth is only valid for the OpenClaw runtime",
 				systemPath("openclawGatewayAuth"),
+			);
+		}
+		if (manifest.system.openclawGatewayTrustedProxies) {
+			addIssue(
+				"OpenClaw trusted proxies are only valid for the OpenClaw runtime",
+				systemPath("openclawGatewayTrustedProxies"),
 			);
 		}
 		if (!isHostedGatewayRunArgs("hermes", manifest.runtimes.hermes?.run.args)) {

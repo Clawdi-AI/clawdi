@@ -2069,6 +2069,12 @@ async def test_admin_runtime_state_rejects_noncanonical_runtime_entries(
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["ftp://cloud.test"]},
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["https://cloud.test/path"]},
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["https://cloud.test/"]},
+        {**TEST_SYSTEM, "openclawGatewayTrustedProxies": ["10.173.0.0/20"]},
+        {**TEST_SYSTEM, "openclawGatewayTrustedProxies": ["incusbr0"]},
+        {
+            **TEST_SYSTEM,
+            "openclawGatewayTrustedProxies": ["10.173.0.1", "10.173.0.1"],
+        },
     ],
 )
 async def test_admin_runtime_state_requires_canonical_system(

@@ -778,6 +778,7 @@ export function openClawGatewayHostedPatch(
 	ownerBrowserBootstrapSupported: boolean,
 ): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
+	const trustedProxies = openClawGatewayTrustedProxies(manifest);
 	const gatewayToken = manifest.openclawGatewayAuth
 		? runtimeSecretValue(secretValues ?? {}, manifest.openclawGatewayAuth.tokenRef)
 		: null;
@@ -801,6 +802,7 @@ export function openClawGatewayHostedPatch(
 			: {}),
 		gateway: {
 			mode: "local",
+			trustedProxies,
 			...(gatewayToken || allowedOrigins.length > 0
 				? {
 						...(nativeAuth ? { port: 18789, bind: "lan" } : {}),
@@ -904,4 +906,12 @@ function openClawControlUiAllowedOrigins(manifest: RuntimeManifest): string[] {
 		origins.push(origin);
 	}
 	return origins;
+}
+function openClawGatewayTrustedProxies(manifest: RuntimeManifest): string[] {
+	const system = manifest.projection?.system;
+	if (!isPlainRecord(system)) return [];
+	const raw = system.openclawGatewayTrustedProxies;
+	return Array.isArray(raw)
+		? raw.filter((value): value is string => typeof value === "string")
+		: [];
 }
