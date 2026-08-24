@@ -391,9 +391,7 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
 
     assert initial.source_revision == irrelevant.source_revision
     assert initial.source_revision != rotated.source_revision
-    assert initial.manifest["system"]["openclawGatewayTrustedProxies"] == [
-        "10.173.0.1"
-    ]
+    assert initial.manifest["system"]["openclawGatewayTrustedProxies"] == ["10.173.0.1"]
     assert initial.manifest["skills"] == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert initial.secret_values == {}
     assert initial.channel_bindings == [

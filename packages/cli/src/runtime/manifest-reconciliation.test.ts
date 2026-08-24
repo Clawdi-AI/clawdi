@@ -71,6 +71,7 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
+import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
 	type HostedAgentPluginsDesiredState,
@@ -2103,6 +2104,17 @@ chmod 0755 '${commandPath}'
 				}),
 			).success,
 		).toBe(false);
+	});
+
+	test("accepts legacy OpenClaw manifests without trusted proxies and omits the patch", () => {
+		const system = hostedSystemFixture();
+		delete system.openclawGatewayTrustedProxies;
+		const manifest = hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture({ system }));
+
+		const patch = openClawGatewayHostedPatch(manifest, TEST_HOSTED_SECRET_VALUES, false);
+
+		expect(patch).not.toBeNull();
+		expect(patch).not.toHaveProperty("gateway.trustedProxies");
 	});
 
 	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {

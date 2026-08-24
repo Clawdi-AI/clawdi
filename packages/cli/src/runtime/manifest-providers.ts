@@ -802,7 +802,7 @@ export function openClawGatewayHostedPatch(
 			: {}),
 		gateway: {
 			mode: "local",
-			trustedProxies,
+			...(trustedProxies.length > 0 ? { trustedProxies } : {}),
 			...(gatewayToken || allowedOrigins.length > 0
 				? {
 						...(nativeAuth ? { port: 18789, bind: "lan" } : {}),

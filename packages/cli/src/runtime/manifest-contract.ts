@@ -780,12 +780,6 @@ function validateHostedRuntimeManifest(
 				systemPath("openclawControlUiAllowedOrigins"),
 			);
 		}
-		if (!manifest.system.openclawGatewayTrustedProxies?.length) {
-			addIssue(
-				"OpenClaw v2 reverse proxy requires explicit trusted proxy IPs",
-				systemPath("openclawGatewayTrustedProxies"),
-			);
-		}
 		const run = manifest.runtimes.openclaw?.run;
 		if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
 			addIssue(
