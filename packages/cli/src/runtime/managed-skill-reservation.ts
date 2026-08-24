@@ -15,7 +15,6 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { withRuntimeConvergeLock } from "./converge-lock";
 import { ManagedSkillResourceError, withManagedTargetRollback } from "./managed-skill-delivery";
 import { detectRuntimeMode, getRuntimePaths } from "./paths";
-import { withRuntimeUserFileAccess } from "./runtime-user-command";
 import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 const LEDGER_FILE = "managed-skills.json";
@@ -532,13 +531,11 @@ export function replaceManagedSkillDirectoryAtomic(
 	options: ManagedSkillDirectoryActivationOptions = {},
 ): void {
 	const parent = dirname(targetDir);
-	const stagingRoot = withRuntimeUserFileAccess(() => {
-		mkdirSync(parent, { recursive: true });
-		return mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
-	});
+	mkdirSync(parent, { recursive: true });
+	const stagingRoot = mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
 	const stagedTarget = join(stagingRoot, basename(targetDir));
 	try {
-		withRuntimeUserFileAccess(() => cpSync(sourceDir, stagedTarget, { recursive: true }));
+		cpSync(sourceDir, stagedTarget, { recursive: true });
 		withManagedTargetRollback({
 			target: targetDir,
 			beforeRestore: options.beforeRestore,
@@ -554,15 +551,13 @@ export function replaceManagedSkillDirectoryAtomic(
 				);
 			},
 			operation: () => {
-				withRuntimeUserFileAccess(() => {
-					options.beforeActivate?.();
-					renameSync(stagedTarget, targetDir);
-				});
+				options.beforeActivate?.();
+				renameSync(stagedTarget, targetDir);
 				options.afterActivate?.();
 			},
 		});
 	} finally {
-		withRuntimeUserFileAccess(() => rmSync(stagingRoot, { recursive: true, force: true }));
+		rmSync(stagingRoot, { recursive: true, force: true });
 	}
 }
 

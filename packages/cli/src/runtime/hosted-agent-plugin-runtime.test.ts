@@ -25,8 +25,7 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 import {
-	enforceRuntimeUserOwnership,
-	runtimeUserExistingOwnership,
+	ensureRuntimeUserHomeOwnership,
 	runtimeUserGid,
 	runtimeUserUid,
 } from "./runtime-user-command";
@@ -458,7 +457,10 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				}),
 			).toThrow();
 
-			enforceRuntimeUserOwnership(runtimeUserExistingOwnership([stateRoot], { recursive: true }));
+			ensureRuntimeUserHomeOwnership(stateRoot, {
+				uid: runtimeUserUid("nobody"),
+				gid: runtimeUserGid("nobody"),
+			});
 			expect(() =>
 				prepareHostedAgentPluginTransaction({
 					prepared,

@@ -21,7 +21,6 @@ import { makeManagedSecretRoot, scopedSecretValues } from "./manifest-secrets";
 import type { RuntimePaths } from "./paths";
 import { runtimeNameSchema, runtimeServiceNameSchema } from "./run-config";
 import { runtimeProgramRevision } from "./runtime-impact-revision";
-import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 export function removeStaleRuntimeRunConfigs(
 	writtenRunConfigIds: Set<string>,
@@ -58,39 +57,34 @@ export function writeLiveSyncEnvironmentFiles(
 ): string[] {
 	const agents = desiredLiveSyncAgents(manifest);
 	const desiredTypes = new Set(agents.map((agent) => agent.agentType));
-	const written = withRuntimeUserFileAccess(() => {
-		const envDir = paths.localEnvironments;
-		mkdirSync(envDir, { recursive: true });
-		makeRuntimeUserOwned(envDir);
-		for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
-			if (!desiredTypes.has(agentType)) {
-				rmSync(join(envDir, `${agentType}.json`), { force: true });
-			}
+	const envDir = paths.localEnvironments;
+	mkdirSync(envDir, { recursive: true });
+	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
+		if (!desiredTypes.has(agentType)) {
+			rmSync(join(envDir, `${agentType}.json`), { force: true });
 		}
-		const outputs: string[] = [];
-		for (const agent of agents) {
-			const path = join(envDir, `${agent.agentType}.json`);
-			writePrivateFileAtomic(
-				path,
-				`${JSON.stringify(
-					{
-						id: agent.environmentId,
-						agentType: agent.agentType,
-						managedBy: "clawdi runtime init",
-						deploymentId: manifest.deploymentId,
-						instanceId: manifest.instanceId,
-					},
-					null,
-					2,
-				)}\n`,
-				{ mode: 0o600, dirMode: 0o700 },
-			);
-			makeRuntimeUserOwned(path);
-			outputs.push(path);
-		}
-		return outputs;
-	});
-	return written;
+	}
+	const outputs: string[] = [];
+	for (const agent of agents) {
+		const path = join(envDir, `${agent.agentType}.json`);
+		writePrivateFileAtomic(
+			path,
+			`${JSON.stringify(
+				{
+					id: agent.environmentId,
+					agentType: agent.agentType,
+					managedBy: "clawdi runtime init",
+					deploymentId: manifest.deploymentId,
+					instanceId: manifest.instanceId,
+				},
+				null,
+				2,
+			)}\n`,
+			{ mode: 0o600, dirMode: 0o700 },
+		);
+		outputs.push(path);
+	}
+	return outputs;
 }
 export function writeDaemonAuthToken(
 	paths: RuntimePaths,

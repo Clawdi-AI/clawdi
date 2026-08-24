@@ -69,7 +69,6 @@ export interface RuntimePaths {
 	managedSecretRoot: string;
 	daemonStateRoot: string;
 	egressRoot: string;
-	egressScratchRoot: string;
 	egressTransparentEnv: string;
 	egressAddon: string;
 	egressCaDir: string;
@@ -78,19 +77,6 @@ export interface RuntimePaths {
 	egressServiceBinary: string;
 	daemonAuthToken: string;
 	workspaceRoot: string;
-}
-
-export function runtimeSystemdPlatformEnclaves(
-	paths: Pick<RuntimePaths, "systemdUserRoot" | "userHome">,
-): Array<{ path: string; owner: "runtime-user" | "root" }> {
-	return [
-		// systemd requires user units below HOME. This root contains base units and
-		// Clawdi drop-ins under generated-file authority.
-		{ path: paths.systemdUserRoot, owner: "root" },
-		{ path: join(paths.systemdUserRoot, "default.target.wants"), owner: "runtime-user" },
-		// OpenClaw's installer writes this private environment file in HOME.
-		{ path: join(paths.userHome, ".openclaw", "gateway.systemd.env"), owner: "root" },
-	];
 }
 
 function envPath(name: string): string | undefined {
@@ -222,7 +208,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		managedSecretRoot: join(runRoot, "secrets"),
 		daemonStateRoot: join(serviceStateRoot, "daemon"),
 		egressRoot: join(runRoot, "egress"),
-		egressScratchRoot: join(runRoot, "egress-scratch"),
 		egressTransparentEnv: join(runRoot, "egress", "transparent-egress.env"),
 		egressAddon: join(runRoot, "egress", "clawdi_egress_addon.py"),
 		egressCaDir: join(runRoot, "egress", "ca"),

@@ -167,18 +167,16 @@ function expectManagedSystemdTreeOwnership(
 	runtimeUid: number,
 	runtimeGid: number,
 ): void {
-	const enablementRoot = join(root, "default.target.wants");
 	const visit = (path: string): void => {
 		const node = lstatSync(path);
-		const runtimeOwned = path === enablementRoot || path.startsWith(`${enablementRoot}/`);
-		expect([node.uid, node.gid]).toEqual(runtimeOwned ? [runtimeUid, runtimeGid] : [0, 0]);
+		expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		if (node.isSymbolicLink()) return;
 		if (node.isDirectory()) {
-			expect(node.mode & 0o555).toBe(0o555);
+			expect(node.mode & 0o500).toBe(0o500);
 			for (const entry of readdirSync(path)) visit(join(path, entry));
 			return;
 		}
-		if (node.isFile()) expect(node.mode & 0o444).toBe(0o444);
+		if (node.isFile()) expect(node.mode & 0o400).toBe(0o400);
 	};
 	visit(root);
 }
@@ -958,8 +956,8 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(readFileSync(openClawConfig, "utf8")).not.toBe(initialOpenClawConfig);
 	for (const path of [unitPath, gatewayEnvironment]) {
 		const stat = statSync(path);
-		expect(stat.uid).toBe(0);
-		expect(stat.gid).toBe(0);
+		expect(stat.uid).toBe(runtimeUid);
+		expect(stat.gid).toBe(runtimeGid);
 	}
 	expect(statSync(openClawConfig).uid).toBe(runtimeUid);
 	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
@@ -1606,24 +1604,17 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
-	const rootOwnedControl = join(paths.systemdUserRoot, "files-root-owned-control");
+	const rootOwnedControl = join(paths.statusRoot, "files-root-owned-control");
 	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
-	const platformDriftUnit = join(paths.systemdUserRoot, "legacy-platform-control.service");
-	const platformDriftDropIn = join(`${platformDriftUnit}.d`, "10-legacy.conf");
-	const platformDriftEnvironment = join(openClawStateDir, "gateway.systemd.env");
-	mkdirSync(dirname(platformDriftDropIn), { recursive: true });
-	writeFileSync(platformDriftUnit, "[Service]\nExecStart=/bin/true\n");
-	writeFileSync(platformDriftDropIn, "[Service]\nEnvironment=LEGACY=1\n");
-	writeFileSync(platformDriftEnvironment, "LEGACY_PLATFORM_ENV=1\n", { mode: 0o600 });
-	for (const path of [
-		paths.systemdUserRoot,
-		platformDriftUnit,
-		dirname(platformDriftDropIn),
-		platformDriftDropIn,
-		platformDriftEnvironment,
-	]) {
-		chownSync(path, runtimeUid, runtimeGid);
-	}
+	const legacyRootOwnedUnit = join(paths.systemdUserRoot, "legacy-root-owned.service");
+	const legacyRootOwnedDropIn = join(`${legacyRootOwnedUnit}.d`, "10-legacy.conf");
+	const legacyRootOwnedEnvironment = join(openClawStateDir, "gateway.systemd.env");
+	mkdirSync(dirname(legacyRootOwnedDropIn), { recursive: true });
+	writeFileSync(legacyRootOwnedUnit, "[Service]\nExecStart=/bin/true\n");
+	writeFileSync(legacyRootOwnedDropIn, "[Service]\nEnvironment=LEGACY=1\n");
+	writeFileSync(legacyRootOwnedEnvironment, "LEGACY_ROOT_OWNED_ENV=1\n", { mode: 0o600 });
+	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, 0, 0);
+	chownSync(legacyRootOwnedEnvironment, 0, 0);
 	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
 	const legacyEnvironmentPath = join(legacyEnvironmentRoot, "openclaw.json");
 	const legacyEnvironmentContent = `${JSON.stringify({
@@ -1862,13 +1853,14 @@ http.createServer((request, response) => {
 	]);
 	for (const path of [
 		paths.systemdUserRoot,
-		platformDriftUnit,
-		dirname(platformDriftDropIn),
-		platformDriftDropIn,
-		platformDriftEnvironment,
+		legacyRootOwnedUnit,
+		dirname(legacyRootOwnedDropIn),
+		legacyRootOwnedDropIn,
+		legacyRootOwnedEnvironment,
 	]) {
-		expect([statSync(path).uid, statSync(path).gid]).toEqual([0, 0]);
+		expect([statSync(path).uid, statSync(path).gid]).toEqual([runtimeUid, runtimeGid]);
 	}
+	expect([statSync(rootOwnedControl).uid, statSync(rootOwnedControl).gid]).toEqual([0, 0]);
 	const tenantClawdiAfterConverge = tenantClawdi();
 	expect(tenantClawdiAfterConverge.status).not.toBe(0);
 	expect(tenantClawdiAfterConverge.stdout).toBe("");
@@ -2052,14 +2044,14 @@ http.createServer((request, response) => {
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
 }, 120_000);
 
-test("repairs a live Hermes user-service ownership enclave without losing the unit", async () => {
+test("migrates a legacy root-owned Hermes user-service tree without losing the unit", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
 	const runtimeHome = "/home/clawdi";
 	const runtimeUid = 10_001;
 	const runtimeGid = 10_001;
-	const root = mkdtempSync(join(tmpdir(), "clawdi-live-hermes-enclave-"));
+	const root = mkdtempSync(join(tmpdir(), "clawdi-live-hermes-ownership-"));
 	chmodSync(root, 0o755);
 	const hermesCommand = join(runtimeHome, ".local", "bin", "hermes");
 	const installLog = join(root, "hermes-installer.log");
@@ -2194,6 +2186,31 @@ esac
 		if (result.kind !== "converged") throw new Error(`unexpected apply result: ${result.kind}`);
 		return result.convergence;
 	};
+	mkdirSync(dropInRoot, { recursive: true });
+	mkdirSync(dirname(enablementPath), { recursive: true });
+	writeFileSync(
+		unitPath,
+		`[Unit]
+Description=Legacy Hermes Gateway
+
+[Service]
+Type=simple
+ExecStart=${hermesCommand} gateway run
+Restart=always
+
+[Install]
+WantedBy=default.target
+`,
+		{ mode: 0o600 },
+	);
+	writeFileSync(join(dropInRoot, "10-clawdi-hosted.conf"), "[Service]\nEnvironment=LEGACY=1\n", {
+		mode: 0o600,
+	});
+	symlinkSync("../hermes-gateway.service", enablementPath);
+	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, 0, 0);
+	for (const path of [paths.systemdUserRoot, dropInRoot, dirname(enablementPath)]) {
+		chmodSync(path, 0o700);
+	}
 
 	try {
 		expect((await converge()).installErrors).toEqual([]);
@@ -2213,50 +2230,70 @@ esac
 		);
 		expect(initialPid).toBeGreaterThan(1);
 		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
-		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([0, 0]);
-		}
-		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
-			runtimeUid,
-			runtimeGid,
-		]);
-
-		chmodSync(unitPath, 0o600);
-		chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
 		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
+		const declaredUnit = readFileSync(unitPath, "utf8");
+		expect(declaredUnit).not.toContain("Legacy Hermes Gateway");
 
-		const repaired = await converge();
-		expect(repaired.installErrors).toEqual([]);
+		const idempotent = await converge();
+		expect(idempotent.installErrors).toEqual([]);
 		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
-		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot]) {
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
 			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([0, 0]);
+			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
-		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
-			runtimeUid,
-			runtimeGid,
-		]);
-		const repairedState = runUserSystemctl(
+		const idempotentState = runUserSystemctl(
 			"show",
 			unitName,
 			"--property=LoadState",
 			"--property=ActiveState",
 			"--property=MainPID",
 		);
-		expect(repairedState.status, repairedState.stderr).toBe(0);
-		expect(repairedState.stdout).toContain("LoadState=loaded");
+		expect(idempotentState.status, idempotentState.stderr).toBe(0);
+		expect(idempotentState.stdout).toContain("LoadState=loaded");
+		expect(idempotentState.stdout).toContain("ActiveState=active");
+		const idempotentPid = Number.parseInt(
+			idempotentState.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0",
+			10,
+		);
+		expect(idempotentPid).toBe(initialPid);
+		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
+
+		const tamper = spawnSync(
+			"runuser",
+			["-u", "clawdi", "--", "sh", "-c", 'printf "\\n# tenant drift\\n" >> "$1"', "sh", unitPath],
+			{ encoding: "utf8" },
+		);
+		expect(tamper.status, tamper.stderr).toBe(0);
+		expect(runUserSystemctl("daemon-reload").status).toBe(0);
+		expect(runUserSystemctl("restart", unitName).status).toBe(0);
+		const tamperedState = runUserSystemctl("show", unitName, "--property=MainPID");
+		const tamperedPid = Number.parseInt(
+			tamperedState.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0",
+			10,
+		);
+		expect(tamperedPid).toBeGreaterThan(1);
+		expect(tamperedPid).not.toBe(initialPid);
+
+		const repaired = await converge();
+		expect(repaired.installErrors).toEqual([]);
+		expect(readFileSync(unitPath, "utf8")).toBe(declaredUnit);
+		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install", "install"]);
+		const repairedState = runUserSystemctl(
+			"show",
+			unitName,
+			"--property=ActiveState",
+			"--property=MainPID",
+		);
 		expect(repairedState.stdout).toContain("ActiveState=active");
 		const repairedPid = Number.parseInt(
 			repairedState.stdout.match(/^MainPID=(\d+)$/m)?.[1] ?? "0",
 			10,
 		);
-		expect(repairedPid).toBe(initialPid);
-		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
-		expect(runUserSystemctl("enable", unitName).status).toBe(0);
+		expect(repairedPid).toBeGreaterThan(1);
+		expect(repairedPid).not.toBe(tamperedPid);
 	} finally {
 		runUserSystemctl("disable", "--now", unitName);
 		rmSync(unitPath, { force: true });

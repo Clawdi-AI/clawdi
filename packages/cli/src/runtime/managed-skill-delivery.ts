@@ -15,7 +15,6 @@ import { collectRegularFileTree } from "../lib/file-tree";
 import { extractTarGzSync } from "../lib/tar";
 import { MANAGED_SKILL_TREE_LIMITS, managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
-import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 export class ManagedSkillResourceError extends Error {}
 
@@ -60,13 +59,6 @@ export function collectManagedSkillTree(
 	}
 }
 
-export function collectRuntimeUserManagedSkillTree(
-	root: string,
-	options: { exclude?: ReadonlySet<string> } = {},
-): ManagedSkillTreeCollection {
-	return withRuntimeUserFileAccess(() => collectManagedSkillTree(root, options));
-}
-
 export function managedSkillTreesEqual(left: ManagedSkillTree, right: ManagedSkillTree): boolean {
 	if (left.size !== right.size) return false;
 	for (const [name, bytes] of left) if (!right.get(name)?.equals(bytes)) return false;
@@ -79,7 +71,7 @@ export function managedSkillTargetMatchesSource(
 	options: { exclude?: ReadonlySet<string> } = {},
 ): boolean {
 	const source = collectManagedSkillTree(sourceDir);
-	const installed = collectRuntimeUserManagedSkillTree(targetDir, options);
+	const installed = collectManagedSkillTree(targetDir, options);
 	return (
 		source.status === "collected" &&
 		installed.status === "collected" &&
@@ -161,26 +153,26 @@ export function withManagedTargetRollback<T>(input: {
 	const targetBackup =
 		input.targetBackup ??
 		join(dirname(input.target), `.${basename(input.target)}-clawdi-rollback-${suffix}`);
-	const hadTarget = withRuntimeUserFileAccess(() => existsSync(input.target));
+	const hadTarget = existsSync(input.target);
 	let targetMoved = false;
 	try {
 		if (hadTarget) {
-			withRuntimeUserFileAccess(() => rename(input.target, targetBackup));
+			rename(input.target, targetBackup);
 			targetMoved = true;
 		}
 	} catch (error) {
-		if (targetMoved) withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
+		if (targetMoved) rename(targetBackup, input.target);
 		throw error;
 	}
 	let result: T;
 	try {
 		result = input.operation();
 	} catch (error) {
-		withRuntimeUserFileAccess(() => remove(input.target, { recursive: true, force: true }));
+		remove(input.target, { recursive: true, force: true });
 		try {
 			if (hadTarget) {
 				input.beforeRestore?.();
-				withRuntimeUserFileAccess(() => rename(targetBackup, input.target));
+				rename(targetBackup, input.target);
 			}
 		} catch (restoreError) {
 			if (input.restoreFailure) throw input.restoreFailure(error, restoreError);
@@ -192,7 +184,7 @@ export function withManagedTargetRollback<T>(input: {
 	// must never roll back a live target.
 	try {
 		if (hadTarget) input.beforeCleanup?.();
-		withRuntimeUserFileAccess(() => remove(targetBackup, { recursive: true, force: true }));
+		remove(targetBackup, { recursive: true, force: true });
 	} catch {}
 	return result;
 }

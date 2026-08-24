@@ -1394,24 +1394,21 @@ esac
 	test.each([
 		["Hermes", "hermes"],
 		["OpenClaw", "openclaw"],
-	] as const)("reports foreign %s gateway drop-ins without deleting them", (_name, runtime) => {
-		const harness = officialServiceHarness(runtime);
-		expect(harness.converge().installErrors).toEqual([]);
-		const foreignDropIn = harness.addForeignDropIn();
-		const foreignContents = readFileSync(foreignDropIn, "utf8");
+	] as const)(
+		"preserves foreign %s gateway drop-ins while reconciling its own",
+		(_name, runtime) => {
+			const harness = officialServiceHarness(runtime);
+			expect(harness.converge().installErrors).toEqual([]);
+			const foreignDropIn = harness.addForeignDropIn();
+			const foreignContents = readFileSync(foreignDropIn, "utf8");
 
-		const drifted = harness.converge();
+			const converged = harness.converge();
 
-		expect(drifted.installErrors).toEqual([
-			expect.stringContaining(
-				`foreign systemd drop-in drift detected for ${runtime}-gateway.service`,
-			),
-		]);
-		expect(drifted.installErrors.join("\n")).toContain(foreignDropIn);
-		expect(drifted.outputs.systemdUserUnits).toEqual([]);
-		expect(harness.installCount()).toBe(1);
-		expect(readFileSync(foreignDropIn, "utf8")).toBe(foreignContents);
-	});
+			expect(converged.installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(readFileSync(foreignDropIn, "utf8")).toBe(foreignContents);
+		},
+	);
 
 	test("turns a hanging runtime version probe into a bounded convergence error", () => {
 		const harness = officialServiceHarness("openclaw");

@@ -44,7 +44,6 @@ import {
 	looksLikeMcpSecretLiteral,
 } from "./mcp-credential-policy";
 import type { RuntimePaths } from "./paths";
-import { makeRuntimeUserOwned, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
 export const HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR =
@@ -1044,16 +1043,13 @@ export function withPreparedAgentPluginDirectory<T>(
 	const root = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-stage-"));
 	try {
 		chmodSync(root, 0o700);
-		makeRuntimeUserOwned(root);
 		const sourceDir = join(root, "package");
-		withRuntimeUserFileAccess(() => {
-			mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
-			for (const file of prepared.tree) {
-				const target = join(sourceDir, ...file.path.split("/"));
-				mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-				writeFileSync(target, file.bytes, { mode: file.mode & 0o777 });
-			}
-		});
+		mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
+		for (const file of prepared.tree) {
+			const target = join(sourceDir, ...file.path.split("/"));
+			mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+			writeFileSync(target, file.bytes, { mode: file.mode & 0o777 });
+		}
 		return operation(sourceDir);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

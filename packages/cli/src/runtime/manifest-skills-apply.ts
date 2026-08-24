@@ -39,6 +39,12 @@ interface HostedSkillProjectionDriver {
 }
 type HostedSkillRuntime = "hermes" | "openclaw";
 
+function withRuntimeUserSkillFiles<T>(
+	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
+): T {
+	return withRuntimeUserFileAccess(operation);
+}
+
 function preparedSkillMatchesDesired(
 	prepared: PreparedHostedSkill | undefined,
 	desired: HostedSkillDesired,
@@ -70,7 +76,7 @@ function requirePreparedSkillTarget(
 	}
 	const targetDir = join(skillsRoot, prepared.id);
 	if (
-		withRuntimeUserFileAccess(() => existsSync(targetDir)) &&
+		withRuntimeUserSkillFiles(() => existsSync(targetDir)) &&
 		managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
 	) {
 		throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
@@ -117,7 +123,8 @@ function hostedSkillProjectionDrivers(input: {
 			"hermes",
 			{
 				skillsRoot: hermesSkillsRoot,
-				activate: activateHostedHermesSkill,
+				activate: (sourceDir, targetDir) =>
+					withRuntimeUserSkillFiles(() => activateHostedHermesSkill(sourceDir, targetDir)),
 			},
 		],
 		[
@@ -126,13 +133,16 @@ function hostedSkillProjectionDrivers(input: {
 				skillsRoot: openClawSkillsRoot,
 				exclude: new Set([".openclaw/source-origin.json"]),
 				activate: (sourceDir, targetDir) => {
-					if (!input.openClawWorkspaceRoot) openClawWorkspaceUnavailable();
-					activateHostedOpenClawSkill({
-						home: input.home,
-						workspaceRoot: input.openClawWorkspaceRoot,
-						sourceDir,
-						targetDir,
-					});
+					const workspaceRoot = input.openClawWorkspaceRoot;
+					if (!workspaceRoot) openClawWorkspaceUnavailable();
+					withRuntimeUserSkillFiles(() =>
+						activateHostedOpenClawSkill({
+							home: input.home,
+							workspaceRoot,
+							sourceDir,
+							targetDir,
+						}),
+					);
 				},
 			},
 		],
@@ -157,7 +167,7 @@ function pendingReservationMatchesPrepared(
 }
 
 function discardPendingHostedSkill(targetDir: string): void {
-	withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true }));
+	withRuntimeUserSkillFiles(() => rmSync(targetDir, { recursive: true, force: true }));
 }
 
 function recoverPendingHostedSkillInstallations(
@@ -187,9 +197,11 @@ function recoverPendingHostedSkillInstallations(
 			manager: "hosted-manifest",
 			verify: () =>
 				promotable !== null &&
-				installedTreeMatches(promotable, reservation.targetDir, {
-					exclude: driver.exclude,
-				}),
+				withRuntimeUserSkillFiles(() =>
+					installedTreeMatches(promotable, reservation.targetDir, {
+						exclude: driver.exclude,
+					}),
+				),
 			discard: () => discardPendingHostedSkill(reservation.targetDir),
 		});
 	}
@@ -248,7 +260,7 @@ function applyHostedSkills(
 					id: skillId,
 					manager: "hosted-manifest",
 					removeTarget: () => {
-						withRuntimeUserFileAccess(() =>
+						withRuntimeUserSkillFiles(() =>
 							rmSync(reservation.targetDir, { recursive: true, force: true }),
 						);
 					},
@@ -270,9 +282,11 @@ function applyHostedSkills(
 		if (
 			reservation?.targetDir === targetDir &&
 			reservation.digest === reservationIdentity.digest &&
-			installedTreeMatches(prepared, targetDir, {
-				exclude: driver.exclude,
-			})
+			withRuntimeUserSkillFiles(() =>
+				installedTreeMatches(prepared, targetDir, {
+					exclude: driver.exclude,
+				}),
+			)
 		) {
 			if (
 				reservation.version !== reservationIdentity.version ||
@@ -299,9 +313,11 @@ function applyHostedSkills(
 					withPreparedHostedSkill(prepared, (sourceDir) => driver.activate(sourceDir, targetDir)),
 				{
 					verify: () =>
-						installedTreeMatches(prepared, targetDir, {
-							exclude: driver.exclude,
-						}),
+						withRuntimeUserSkillFiles(() =>
+							installedTreeMatches(prepared, targetDir, {
+								exclude: driver.exclude,
+							}),
+						),
 					discard: () => discardPendingHostedSkill(targetDir),
 				},
 			);
@@ -346,7 +362,7 @@ export function reconcileHostedSkillProjection(input: {
 	for (const [, driver] of drivers) {
 		const skillsRoot = driver.skillsRoot;
 		if (skillsRoot) {
-			withRuntimeUserFileAccess(() =>
+			withRuntimeUserSkillFiles(() =>
 				rmSync(join(skillsRoot, ".clawdi-manifest-receipts"), {
 					recursive: true,
 					force: true,

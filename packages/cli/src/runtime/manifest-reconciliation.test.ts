@@ -4154,7 +4154,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("keeps generated systemd files root-owned outside the UID 10001 installer boundary", () => {
+	test("migrates legacy root-owned systemd files into the UID 10001 tenant tree", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -4174,15 +4174,13 @@ exit 0
 		);
 		const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
 		const enablementPath = join(wantsRoot, "openclaw-gateway.service");
-		const runtimeOwnedPaths = [
+		const tenantOwnedPaths = [
 			appRoot,
 			binDir,
 			commandPath,
 			dirname(dirname(paths.systemdUserRoot)),
 			dirname(paths.systemdUserRoot),
 			wantsRoot,
-		];
-		const platformOwnedPaths = [
 			paths.systemdUserRoot,
 			unitPath,
 			unitBackupPath,
@@ -4215,9 +4213,9 @@ case "$*" in
   "agents list --json")
     printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
     ;;
-  "skills install "*)
-    : > '${skillProjectionLog}'
-    ${platformOwnedPaths.map((path) => `stat -c '%u:%g' '${path}' >> '${skillProjectionLog}'`).join("\n    ")}
+			"skills install "*)
+			    : > '${skillProjectionLog}'
+			    ${tenantOwnedPaths.map((path) => `stat -c '%u:%g' '${path}' >> '${skillProjectionLog}'`).join("\n    ")}
     exit 45
     ;;
   "gateway install --force --json")
@@ -4241,12 +4239,12 @@ esac
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
-		for (const path of [commandPath, ...platformOwnedPaths]) {
+		for (const path of tenantOwnedPaths) {
 			if (lstatSync(path).isSymbolicLink()) continue;
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
-		lchownSync(enablementPath, runtimeUid, runtimeGid);
+		lchownSync(enablementPath, 0, 0);
 		chmodSync(unitPath, 0o600);
 		chmodSync(unitBackupPath, 0o600);
 		chmodSync(dropInPath, 0o600);
@@ -4296,19 +4294,11 @@ esac
 			"OpenClaw official Skill install failed: exit code 45 without output",
 		);
 		expect(readFileSync(skillProjectionLog, "utf8").trim().split("\n")).toEqual(
-			platformOwnedPaths.map(() => "0:0"),
+			tenantOwnedPaths.map(() => `${runtimeUid}:${runtimeGid}`),
 		);
-		for (const path of runtimeOwnedPaths) {
+		for (const path of [...tenantOwnedPaths, enablementPath]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-		}
-		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
-			runtimeUid,
-			runtimeGid,
-		]);
-		for (const path of platformOwnedPaths) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
 		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
 		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
@@ -4332,15 +4322,10 @@ esac
 			},
 		);
 		expect(installed.installErrors).toEqual([]);
-		for (const path of platformOwnedPaths) {
+		for (const path of [...tenantOwnedPaths, enablementPath]) {
 			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([0, 0]);
+			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
-		expect([statSync(wantsRoot).uid, statSync(wantsRoot).gid]).toEqual([runtimeUid, runtimeGid]);
-		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
-			runtimeUid,
-			runtimeGid,
-		]);
 		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	});
 

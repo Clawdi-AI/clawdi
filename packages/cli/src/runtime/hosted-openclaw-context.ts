@@ -14,12 +14,7 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
-import {
-	executableExists,
-	runtimeUserDirectoryOwnership,
-	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
 
 export const CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID = "clawdi-managed-provider";
@@ -33,15 +28,13 @@ const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
 function installedCommandPath(home: string): string | null {
-	return withRuntimeUserFileAccess(() => {
-		for (const candidate of [
-			join(home, ".local", "bin", "openclaw"),
-			join(home, ".openclaw", "bin", "openclaw"),
-		]) {
-			if (executableExists(candidate)) return candidate;
-		}
-		return null;
-	});
+	for (const candidate of [
+		join(home, ".local", "bin", "openclaw"),
+		join(home, ".openclaw", "bin", "openclaw"),
+	]) {
+		if (executableExists(candidate)) return candidate;
+	}
+	return null;
 }
 
 function commandPath(home: string): string {
@@ -175,23 +168,13 @@ function resolveSdkExports(
 		}
 		return value || null;
 	};
-	return withRuntimeUserFileAccess(() => ({
+	return {
 		configMutation: resolve(OPENCLAW_SDK_EXPORT_PATHS.configMutation),
 		deviceBootstrap: resolve(OPENCLAW_SDK_EXPORT_PATHS.deviceBootstrap),
 		providerAuth: testOverride("PROVIDER_AUTH") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerAuth),
 		providerEnvVars:
 			testOverride("PROVIDER_ENV_VARS") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerEnvVars),
-	}));
-}
-
-export function hostedOpenClawRuntimeUserOwnership(manifest: RuntimeManifest, home: string) {
-	const stateRoot = join(home, ".openclaw");
-	return manifest.runtimes.openclaw?.enabled === true
-		? [
-				...runtimeUserDirectoryOwnership(stateRoot, { mode: 0o700 }),
-				...runtimeUserDirectoryOwnership(join(stateRoot, "tmp"), { mode: 0o700 }),
-			]
-		: [];
+	};
 }
 
 export function createOpenClawHostedContext(manifest: RuntimeManifest, home: string) {
@@ -202,13 +185,11 @@ export function createOpenClawHostedContext(manifest: RuntimeManifest, home: str
 	const sourceDir = statePath("managed-sources", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const installDir = statePath("extensions", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const sdk = resolveSdkExports(home);
-	const ownership = hostedOpenClawRuntimeUserOwnership(manifest, home);
 	return {
 		home,
 		managedApiKeyProjection: hasManagedApiKeyProjection(manifest),
 		stateRoot,
 		configPath,
-		ownership,
 		agentDirs: {
 			main: statePath("agents", "main", "agent"),
 			managed: [] as string[],

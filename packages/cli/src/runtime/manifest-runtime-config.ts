@@ -10,11 +10,7 @@ import { mergeRuntimeEnvWithProviderPlaceholders } from "./hosted-provider-resol
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import type { RuntimeName, RuntimeRunSettings, RuntimeServiceName } from "./run-config";
-import {
-	executableExists,
-	makeRuntimeUserOwned,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { executableExists } from "./runtime-user-command";
 
 const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
 const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
@@ -64,13 +60,10 @@ export function nextManagedLocaleFileContent(
 	return { existing, next };
 }
 function updateManagedLocaleFile(path: string, block: string): string {
-	return withRuntimeUserFileAccess(() => {
-		const { existing, next } = nextManagedLocaleFileContent(path, block);
-		if (next === existing) return path;
-		writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
-		makeRuntimeUserOwned(path);
-		return path;
-	});
+	const { existing, next } = nextManagedLocaleFileContent(path, block);
+	if (next === existing) return path;
+	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
+	return path;
 }
 export function hermesConfigContext(
 	observation: RuntimeInstallObservation,

@@ -4,6 +4,7 @@ import {
 	chownSync,
 	existsSync,
 	lstatSync,
+	mkdirSync,
 	readdirSync,
 	readFileSync,
 	rmdirSync,
@@ -95,7 +96,8 @@ export interface OfficialRuntimeServicePlan {
 }
 
 export interface RuntimeSystemdStaleFilePlan {
-	files: string[];
+	platformFiles: string[];
+	userFiles: string[];
 	systemUnits: string[];
 	userUnits: string[];
 }
@@ -531,10 +533,15 @@ function writeSystemdProgramEnvironment(input: {
 	return writeSystemdEnvironmentFile(input);
 }
 
+function withRuntimeUserSystemdFiles<T>(
+	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
+): T {
+	return withRuntimeUserFileAccess(operation);
+}
+
 function writeSystemdUnit(input: {
 	root: string;
 	owner: "root" | "runtime-user";
-	unitOwner?: "root" | "runtime-user";
 	paths: RuntimePaths;
 	name: string;
 	description: string;
@@ -553,7 +560,6 @@ function writeSystemdUnit(input: {
 	wantedBy: "multi-user.target" | "default.target";
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
-	const unitOwner = input.unitOwner ?? input.owner;
 	const envFile = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
@@ -611,19 +617,21 @@ function writeSystemdUnit(input: {
 		"",
 	];
 	const writeUnitFile = (): string => {
+		if (input.owner === "runtime-user") mkdirSync(input.root, { recursive: true });
 		ensureDirectoryWithinTrustedRoot(input.root, input.root);
-		if (unitOwner === "runtime-user") makeRuntimeUserOwned(input.root);
 		writeSystemdManagedFile({
 			path,
 			content: lines.join("\n"),
 			mode: 0o644,
 			dirMode: 0o755,
 			trustedRoot: input.root,
-			owner: unitOwner,
+			owner: input.owner,
 		});
 		return path;
 	};
-	return unitOwner === "runtime-user" ? withRuntimeUserFileAccess(writeUnitFile) : writeUnitFile();
+	return input.owner === "runtime-user"
+		? withRuntimeUserSystemdFiles(writeUnitFile)
+		: writeUnitFile();
 }
 
 function writeSystemdSystemUnit(
@@ -644,7 +652,6 @@ function writeSystemdUserUnit(
 		...input,
 		root: input.paths.systemdUserRoot,
 		owner: "runtime-user",
-		unitOwner: "root",
 		wantedBy: "default.target",
 	});
 }
@@ -678,15 +685,18 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`EnvironmentFile=${systemdPath(envFile)}`,
 		"",
 	];
-	removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-	ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
-	writeSystemdManagedFile({
-		path,
-		content: lines.join("\n"),
-		mode: 0o644,
-		dirMode: 0o755,
-		trustedRoot: input.paths.systemdUserRoot,
-		owner: "root",
+	withRuntimeUserSystemdFiles(() => {
+		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
+		mkdirSync(input.paths.systemdUserRoot, { recursive: true });
+		ensureDirectoryWithinTrustedRoot(input.paths.systemdUserRoot, dirname(path));
+		writeSystemdManagedFile({
+			path,
+			content: lines.join("\n"),
+			mode: 0o644,
+			dirMode: 0o755,
+			trustedRoot: input.paths.systemdUserRoot,
+			owner: "runtime-user",
+		});
 	});
 	return join(input.paths.systemdUserRoot, unitName);
 }
@@ -848,42 +858,6 @@ function uninstallOfficialRuntimeUserService(input: {
 	}
 }
 
-function foreignRuntimeSystemdUserDropIns(paths: RuntimePaths, unitName: string): string[] {
-	const dropInRoot = join(paths.systemdUserRoot, `${unitName}.d`);
-	let rootStat: ReturnType<typeof lstatSync>;
-	try {
-		rootStat = lstatSync(dropInRoot);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-		throw error;
-	}
-	if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return [dropInRoot];
-	// systemd merges only *.conf files from unit drop-in directories:
-	// https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html
-	return readdirSync(dropInRoot)
-		.filter((entry) => entry.endsWith(".conf") && entry !== RUNTIME_SYSTEMD_DROP_IN_FILE)
-		.map((entry) => join(dropInRoot, entry))
-		.sort();
-}
-
-function officialRuntimeSystemdUserDropInDriftErrors(
-	programs: RuntimeSystemdUserProgram[],
-	paths: RuntimePaths,
-): string[] {
-	const errors: string[] = [];
-	for (const program of officialRuntimeSystemdPrograms(programs)) {
-		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
-		const foreignDropIns = foreignRuntimeSystemdUserDropIns(paths, unitName);
-		if (foreignDropIns.length === 0) continue;
-		errors.push(
-			`foreign systemd drop-in drift detected for ${unitName}; refusing to reconcile the platform override while these drop-ins exist: ${foreignDropIns
-				.map((path) => JSON.stringify(path))
-				.join(", ")}`,
-		);
-	}
-	return errors;
-}
-
 export function uninstallStaleOfficialRuntimeServices(input: {
 	paths: RuntimePaths;
 	unitNames: readonly string[];
@@ -906,7 +880,8 @@ function planStaleRuntimeSystemdFiles(
 	desiredSystemUnits: readonly string[],
 	desiredUserUnits: readonly string[],
 ): RuntimeSystemdStaleFilePlan {
-	const files = new Set<string>();
+	const platformFiles = new Set<string>();
+	const userFiles = new Set<string>();
 	const systemUnits = new Set<string>();
 	const userUnits = new Set<string>();
 	const desiredSystem = new Set(desiredSystemUnits);
@@ -920,13 +895,13 @@ function planStaleRuntimeSystemdFiles(
 	if (existsSync(paths.systemdSystemRoot)) {
 		for (const entry of readdirSync(paths.systemdSystemRoot)) {
 			if (!managedSystem.has(entry) || desiredSystem.has(entry)) continue;
-			files.add(join(paths.systemdSystemRoot, entry));
+			platformFiles.add(join(paths.systemdSystemRoot, entry));
 			systemUnits.add(entry);
 		}
 	}
 	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
 		if (desiredUser.has(entry.unitName)) continue;
-		files.add(entry.path);
+		userFiles.add(entry.path);
 		userUnits.add(entry.unitName);
 	}
 	const desiredEnvironmentFiles = new Set(
@@ -937,11 +912,12 @@ function planStaleRuntimeSystemdFiles(
 			if (!entry.endsWith(".service.env") || desiredEnvironmentFiles.has(entry)) continue;
 			const path = join(paths.systemdEnvRoot, entry);
 			if (!entry.startsWith("clawdi-") && !isGeneratedRuntimeSystemdPath(path)) continue;
-			files.add(path);
+			platformFiles.add(path);
 		}
 	}
 	return {
-		files: [...files].sort(),
+		platformFiles: [...platformFiles].sort(),
+		userFiles: [...userFiles].sort(),
 		systemUnits: [...systemUnits].sort(),
 		userUnits: [...userUnits].sort(),
 	};
@@ -949,16 +925,20 @@ function planStaleRuntimeSystemdFiles(
 
 export function removeStaleRuntimeSystemdFiles(plan: RuntimeSystemdStaleFilePlan): string[] {
 	const errors: string[] = [];
-	for (const path of plan.files) {
-		try {
-			rmSync(path, { force: true });
-			if (path.endsWith(`/${RUNTIME_SYSTEMD_DROP_IN_FILE}`) && existsSync(dirname(path))) {
-				if (readdirSync(dirname(path)).length === 0) rmdirSync(dirname(path));
+	const removeFiles = (paths: readonly string[]) => {
+		for (const path of paths) {
+			try {
+				rmSync(path, { force: true });
+				if (path.endsWith(`/${RUNTIME_SYSTEMD_DROP_IN_FILE}`) && existsSync(dirname(path))) {
+					if (readdirSync(dirname(path)).length === 0) rmdirSync(dirname(path));
+				}
+			} catch (error) {
+				errors.push(error instanceof Error ? error.message : String(error));
 			}
-		} catch (error) {
-			errors.push(error instanceof Error ? error.message : String(error));
 		}
-	}
+	};
+	removeFiles(plan.platformFiles);
+	withRuntimeUserSystemdFiles(() => removeFiles(plan.userFiles));
 	return errors;
 }
 
@@ -1312,10 +1292,7 @@ export function writeRuntimeSystemdState(input: {
 	};
 }
 
-export function validateRuntimeSystemdPlan(
-	programs: RuntimeSystemdUserProgram[],
-	paths: RuntimePaths,
-): void {
+export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]): void {
 	for (const program of programs) {
 		systemdUnitFileName(runtimeSystemdProgramName(program));
 		systemdPath(program.cwd);
@@ -1327,6 +1304,4 @@ export function validateRuntimeSystemdPlan(
 			systemdEnvironmentFileQuote(value);
 		}
 	}
-	const driftErrors = officialRuntimeSystemdUserDropInDriftErrors(programs, paths);
-	if (driftErrors.length > 0) throw new Error(driftErrors.join("; "));
 }

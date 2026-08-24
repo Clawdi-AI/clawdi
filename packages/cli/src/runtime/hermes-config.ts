@@ -3,11 +3,7 @@ import { isAbsolute } from "node:path";
 import { parseDocument } from "yaml";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
-import {
-	RuntimeUserCommandTimeoutError,
-	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { RuntimeUserCommandTimeoutError, spawnRuntimeUserCommand } from "./runtime-user-command";
 
 const HERMES_CONFIG_COMMAND_TIMEOUT_MS = 30_000;
 
@@ -88,7 +84,7 @@ function readHermesConfigDocumentAtPath(path: string): {
 } {
 	let content = "";
 	try {
-		content = withRuntimeUserFileAccess(() => readFileSync(path, "utf8"));
+		content = readFileSync(path, "utf8");
 	} catch (error) {
 		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
 			throw new Error(
@@ -162,12 +158,10 @@ function setHermesStructuredConfigValue(
 		}
 	}
 	document.setIn(keyPath, document.createNode(value));
-	withRuntimeUserFileAccess(() =>
-		writePrivateFileAtomic(path, String(document), {
-			mode: PRIVATE_FILE_MODE,
-			dirMode: PRIVATE_DIR_MODE,
-		}),
-	);
+	writePrivateFileAtomic(path, String(document), {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
 }
 
 export function setHermesConfigValue(
