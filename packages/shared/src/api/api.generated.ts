@@ -6097,6 +6097,8 @@ export interface components {
         HostedRuntimeSystem: {
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+            /** Openclawgatewaytrustedproxies */
+            openclawGatewayTrustedProxies?: string[] | null;
             /** Openclawcontroluibasepath */
             openclawControlUiBasePath?: string | null;
             openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;

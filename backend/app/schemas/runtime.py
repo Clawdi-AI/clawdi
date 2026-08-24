@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    IPvAnyAddress,
     JsonValue,
     SecretStr,
     TypeAdapter,
@@ -577,6 +578,11 @@ class HostedRuntimeSystem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     openclawControlUiAllowedOrigins: list[str] | None = None
+    openclawGatewayTrustedProxies: list[IPvAnyAddress] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=16,
+    )
     openclawControlUiBasePath: str | None = None
     openclawGatewayAuth: HostedOpenClawGatewayAuth | None = None
     hermesDashboardAuth: HostedHermesDashboardAuth | None = None
@@ -587,6 +593,16 @@ class HostedRuntimeSystem(BaseModel):
         if value is None:
             return None
         return [_validate_http_origin(origin) for origin in value]
+
+    @field_validator("openclawGatewayTrustedProxies")
+    @classmethod
+    def _validate_trusted_proxies(
+        cls,
+        value: list[IPvAnyAddress] | None,
+    ) -> list[IPvAnyAddress] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("must not contain duplicate IP addresses")
+        return value
 
     @field_validator("openclawControlUiBasePath")
     @classmethod

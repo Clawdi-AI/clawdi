@@ -71,6 +71,7 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
+import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
 	type HostedAgentPluginsDesiredState,
@@ -248,6 +249,7 @@ function preparedTestAgentPluginState(
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+		openclawGatewayTrustedProxies: ["10.173.0.1"],
 		openclawControlUiBasePath: "/control",
 		openclawGatewayAuth: hostedOpenClawNativeAuth(),
 		...overrides,
@@ -2088,6 +2090,33 @@ chmod 0755 '${commandPath}'
 		).toBe(false);
 	});
 
+	test.each([
+		{ trustedProxies: ["10.173.0.0/20"] },
+		{ trustedProxies: ["incusbr0"] },
+		{ trustedProxies: ["10.173.0.1", "10.173.0.1"] },
+	])("rejects non-exact OpenClaw trusted proxy IPs $trustedProxies", ({ trustedProxies }) => {
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse(
+				hostedManifestFixture({
+					system: hostedSystemFixture({
+						openclawGatewayTrustedProxies: trustedProxies,
+					}),
+				}),
+			).success,
+		).toBe(false);
+	});
+
+	test("accepts legacy OpenClaw manifests without trusted proxies and omits the patch", () => {
+		const system = hostedSystemFixture();
+		delete system.openclawGatewayTrustedProxies;
+		const manifest = hostedRuntimeBundleV2ManifestSchema.parse(hostedManifestFixture({ system }));
+
+		const patch = openClawGatewayHostedPatch(manifest, TEST_HOSTED_SECRET_VALUES, false);
+
+		expect(patch).not.toBeNull();
+		expect(patch).not.toHaveProperty("gateway.trustedProxies");
+	});
+
 	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
@@ -2149,6 +2178,7 @@ chmod 0755 '${commandPath}'
 			gateway: {
 				port: 18789,
 				bind: "lan",
+				trustedProxies: ["10.173.0.1"],
 				auth: { mode: "token", token: "gateway-token" },
 				controlUi: {
 					allowedOrigins,
