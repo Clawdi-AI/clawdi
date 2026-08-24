@@ -2048,7 +2048,7 @@ http.createServer((request, response) => {
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
 }, 120_000);
 
-test("migrates a legacy root-owned Hermes user-service tree without losing the unit", async () => {
+test("adopts a healthy legacy root-owned Hermes user-service tree and repairs later drift", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -2239,11 +2239,11 @@ WantedBy=default.target
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
 		const declaredUnit = readFileSync(unitPath, "utf8");
-		expect(declaredUnit).not.toContain("Legacy Hermes Gateway");
+		expect(declaredUnit).toContain("Legacy Hermes Gateway");
 
 		const idempotent = await converge();
 		expect(idempotent.installErrors).toEqual([]);
-		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
+		expect(readFileSync(installLog, "utf8")).toBe("");
 		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
@@ -2283,8 +2283,8 @@ WantedBy=default.target
 
 		const repaired = await converge();
 		expect(repaired.installErrors).toEqual([]);
-		expect(readFileSync(unitPath, "utf8")).toBe(declaredUnit);
-		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install", "install"]);
+		expect(readFileSync(unitPath, "utf8")).not.toContain("Legacy Hermes Gateway");
+		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
 		const repairedState = runUserSystemctl(
 			"show",
 			unitName,

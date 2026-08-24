@@ -306,23 +306,30 @@ function officialServiceHarness(
 		sourcePath: "inline-service-receipt",
 		offline: false,
 	};
+	const converge = (afterCommit?: () => void) =>
+		convergeRuntimeManifest(load, paths, {
+			commitAuthority: (convergence, authority) => {
+				commitRuntimeAppliedState({
+					load,
+					paths,
+					etag: '"official-service-test"',
+					sourceRevision: "a".repeat(64),
+					convergence,
+					applyIdentity: null,
+					officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
+				});
+				afterCommit?.();
+			},
+			executeOfficialServiceInstallers: true,
+		});
+	converge();
+	const appliedStateWithoutRevision = JSON.parse(
+		readFileSync(paths.appliedState, "utf8"),
+	) as Record<string, unknown>;
+	delete appliedStateWithoutRevision.officialServiceCommandRevisions;
+	writeFileSync(paths.appliedState, `${JSON.stringify(appliedStateWithoutRevision)}\n`);
 	return {
-		converge: (afterCommit) =>
-			convergeRuntimeManifest(load, paths, {
-				commitAuthority: (convergence, authority) => {
-					commitRuntimeAppliedState({
-						load,
-						paths,
-						etag: '"official-service-test"',
-						sourceRevision: "a".repeat(64),
-						convergence,
-						applyIdentity: null,
-						officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
-					});
-					afterCommit?.();
-				},
-				executeOfficialServiceInstallers: true,
-			}),
+		converge,
 		drift: () => writeFileSync(unitPath, `${readFileSync(unitPath, "utf8")}# upstream drift\n`),
 		revise: () =>
 			writeCli(false, runtime === "hermes" ? "Hermes Agent v0.18.1" : "OpenClaw 2026.7.30"),
@@ -1332,7 +1339,7 @@ esac
 	});
 
 	test.each(installGateHarnesses)(
-		"gates %s installs on a live no-op and fails closed on drift",
+		"adopts %s command revision when no revision is committed and repairs later drift",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
