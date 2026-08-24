@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	chownSync,
@@ -91,9 +92,9 @@ export interface OfficialRuntimeServicePlan {
 	pending: Array<{
 		unitName: string;
 		program: RuntimeSystemdUserProgram;
-		commandRevision: string | null;
+		serviceRevision: string | null;
 	}>;
-	commandRevisions: Record<string, string>;
+	serviceRevisions: Record<string, string>;
 }
 
 export interface RuntimeSystemdStaleFilePlan {
@@ -408,65 +409,56 @@ function officialRuntimeServiceCommand(
 	return commandPath && executableExists(commandPath) ? commandPath : descriptor.command;
 }
 
-function officialServiceBaseUnitIsCurrent(
-	program: RuntimeSystemdUserProgram,
-	paths: RuntimePaths,
-): boolean {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor) return false;
-	const unitName = systemdUnitFileName(descriptor.programName);
-	const unitPath = join(paths.systemdUserRoot, unitName);
-	try {
-		const contents = readFileSync(unitPath);
-		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return false;
-		const unitStat = lstatSync(unitPath);
-		if (!unitStat.isFile()) return false;
-		return true;
-	} catch (error) {
-		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
-		return false;
-	}
-}
-
-function officialRuntimeServiceCommandRevision(
+function officialRuntimeServiceRevision(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
 ): string | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
-	return runtimeCommandCurrentRevision(
-		officialRuntimeServiceCommand(descriptor, paths),
-		paths.userHome,
-		paths.userHome,
-	);
+	const unitName = systemdUnitFileName(descriptor.programName);
+	const unitPath = join(paths.systemdUserRoot, unitName);
+	try {
+		const unitStat = lstatSync(unitPath);
+		if (!unitStat.isFile()) return null;
+		const contents = readFileSync(unitPath);
+		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
+		const commandRevision = runtimeCommandCurrentRevision(
+			officialRuntimeServiceCommand(descriptor, paths),
+			paths.userHome,
+			paths.userHome,
+		);
+		if (!commandRevision) return null;
+		return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
+	} catch (error) {
+		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
+		return null;
+	}
 }
 
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
 	executeInstallers: boolean,
-	committedCommandRevisions: Readonly<Record<string, string>>,
+	committedServiceRevisions: Readonly<Record<string, string>>,
 ): OfficialRuntimeServicePlan {
 	const pending: OfficialRuntimeServicePlan["pending"] = [];
-	const commandRevisions: Record<string, string> = {};
-	if (!executeInstallers) return { pending, commandRevisions };
+	const serviceRevisions: Record<string, string> = {};
+	if (!executeInstallers) return { pending, serviceRevisions };
 	for (const program of officialRuntimeSystemdPrograms(programs)) {
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
-		const commandRevision = officialRuntimeServiceCommandRevision(program, paths);
-		if (commandRevision) commandRevisions[unitName] = commandRevision;
-		if (
-			!officialServiceBaseUnitIsCurrent(program, paths) ||
-			!commandRevision ||
-			committedCommandRevisions[unitName] !== commandRevision
-		) {
-			pending.push({ unitName, program, commandRevision });
+		const serviceRevision = officialRuntimeServiceRevision(program, paths);
+		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
+		if (!serviceRevision || committedServiceRevisions[unitName] !== serviceRevision) {
+			pending.push({ unitName, program, serviceRevision });
 		}
 	}
-	return { pending, commandRevisions };
+	return { pending, serviceRevisions };
 }
 
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
+const HERMES_DASHBOARD_INSTALL_TIMEOUT_MS = 600_000;
+const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -538,15 +530,8 @@ function writeSystemdProgramEnvironment(input: {
 	name: string;
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
-}): { envFile: string; envRevision: string } {
-	return {
-		envFile: writeSystemdEnvironmentFile(input),
-		envRevision: runtimeImpactRevision({
-			systemdEnvironmentFile: "v1",
-			env: input.revisionEnv ?? input.env,
-		}),
-	};
+}): string {
+	return writeSystemdEnvironmentFile(input);
 }
 
 function writeSystemdUnit(input: {
@@ -560,7 +545,6 @@ function writeSystemdUnit(input: {
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
 	unitEnv?: Record<string, string>;
 	execStart?: string;
 	serviceType?: "simple" | "oneshot" | "notify";
@@ -573,12 +557,11 @@ function writeSystemdUnit(input: {
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
 	const unitOwner = input.unitOwner ?? input.owner;
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
+	const envFile = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: input.owner,
 		env: input.env,
-		revisionEnv: input.revisionEnv,
 	});
 	const lines = [
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
@@ -593,7 +576,6 @@ function writeSystemdUnit(input: {
 		...(input.extraUnitLines ?? []),
 		"",
 		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
 		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		...(input.directoryKind === "platform"
@@ -677,7 +659,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	unsetEnvironment?: readonly string[];
 }): string {
 	const unitName = systemdUnitFileName(input.name);
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
+	const envFile = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: "runtime-user",
@@ -693,7 +675,6 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`ConditionPathExists=${systemdPath(envFile)}`,
 		"",
 		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
 		...(input.unsetEnvironment?.length
 			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
 			: []),
@@ -724,6 +705,54 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 }
 
 const OFFICIAL_INSTALLER_MAX_BUFFER_BYTES = 64 * 1024;
+
+export function prepareOfficialRuntimeServiceDependencies(
+	programs: RuntimeSystemdUserProgram[],
+	plan: OfficialRuntimeServicePlan,
+	paths: RuntimePaths,
+	egressSystemCaFile?: string,
+): string | null {
+	// Hermes includes the dashboard's node_modules/.bin in its gateway unit.
+	// Finish the cold build first so gateway startup cannot rewrite the installed unit.
+	const preparesHermesGateway = plan.pending.some((item) => item.program.runtime === "hermes");
+	const hasHermesDashboard = programs.some(
+		(program) => program.runtime === "hermes" && program.service === "dashboard",
+	);
+	if (!preparesHermesGateway || !hasHermesDashboard) return null;
+
+	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
+	const commands = [
+		{
+			args: ["ci", "--include=dev", "--workspace", "web"],
+			cwd: appRoot,
+			timeoutMs: HERMES_DASHBOARD_INSTALL_TIMEOUT_MS,
+		},
+		{
+			args: ["run", "build"],
+			cwd: join(appRoot, "web"),
+			timeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
+		},
+	] as const;
+	for (const command of commands) {
+		let result: ReturnType<typeof spawnRuntimeUserCommand>;
+		try {
+			result = spawnRuntimeUserCommand("npm", [...command.args], paths.userHome, command.cwd, {
+				egressSystemCaFile,
+				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+				timeoutMs: command.timeoutMs,
+			});
+		} catch (error) {
+			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", { error });
+			return `Hermes dashboard prerequisite failed; see ${logPath}`;
+		}
+		if (result.status !== 0 || result.error) {
+			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
+			return `Hermes dashboard prerequisite failed; see ${logPath}`;
+		}
+	}
+	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
+	return existsSync(index) ? null : `Hermes dashboard prerequisite did not produce ${index}`;
+}
 
 function installOfficialRuntimeUserService(
 	program: RuntimeSystemdUserProgram,
@@ -787,12 +816,9 @@ export function installOfficialRuntimeService(
 		runtimeIdentity,
 	);
 	if (error) return error;
-	if (!officialServiceBaseUnitIsCurrent(item.program, paths)) {
+	item.serviceRevision = officialRuntimeServiceRevision(item.program, paths);
+	if (!item.serviceRevision) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
-	}
-	item.commandRevision = officialRuntimeServiceCommandRevision(item.program, paths);
-	if (!item.commandRevision) {
-		return `official ${runtimeSystemdProgramName(item.program)} command revision could not be verified`;
 	}
 	return null;
 }
@@ -1039,14 +1065,14 @@ function writeRuntimeSystemdUserProgram(input: {
 		? {
 				...(isHermesDashboard ? { HOME: input.paths.userHome } : {}),
 				...runtimeEnv,
-				CLAWDI_RUNTIME_REV: revision,
+				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			}
 		: {
 				...input.commonEnvironment,
 				...runtimeEnv,
 				CLAWDI_AUTH_TOKEN: "",
 				CLAWDI_HOME: input.paths.clawdiHome,
-				CLAWDI_RUNTIME_REV: revision,
+				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			};
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
@@ -1092,7 +1118,7 @@ function writeFileBrowserSystemdUnit(input: {
 		directoryKind: "file-browser",
 		env: {
 			HOME: "/nonexistent",
-			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
+			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
 				companion: input.manifest.companions?.filebrowser ?? null,
 			}),
 		},
@@ -1174,11 +1200,12 @@ export function writeRuntimeSidecarSystemdUnit(input: {
 			...input.commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_EGRESS_ENV_FILE: input.program.envFilePath,
-			CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
-				input.manifest,
-				input.program,
-				input.identity,
-			),
+			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
+				program: runtimeSidecarProgramRevision(input.manifest, input.program, input.identity),
+				secretFile: input.program.secretFilePath
+					? readFileSync(input.program.secretFilePath, "utf8")
+					: null,
+			}),
 		},
 		serviceType: "notify",
 		extraUnitLines: [`Before=user@${input.identity.runtimeUid}.service`],
@@ -1280,7 +1307,10 @@ export function writeRuntimeSystemdState(input: {
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
-					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
+					CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
+						program: daemonProgramRevision(manifest),
+						authToken: readFileSync(daemonAuthTokenFile, "utf8"),
+					}),
 				},
 			}),
 		);

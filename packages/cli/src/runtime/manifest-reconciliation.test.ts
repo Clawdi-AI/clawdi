@@ -550,9 +550,8 @@ function commitTestRuntimeAuthority(
 		sourceRevision: runtimeContentSha256({ generation: load.manifest.generation }),
 		convergence,
 		applyIdentity: null,
-		daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-		daemonProgramRevision: authority.daemonProgramRevision,
-		egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+		activated: authority.activated,
+		officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
 	});
 }
 
@@ -2651,6 +2650,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						sourcePath: `inline-hermes-generation-${generation}`,
 						sha256: "a".repeat(64),
 					},
+					activated: {},
 					providerIds,
 					projectedProviderIds: { hermes: providerIds },
 				},
@@ -3023,7 +3023,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() => runAsEgressIdentity(["sh", "-c", `: > ${JSON.stringify(envFile)}`])).toThrow();
 	});
 
-	test("restarts only active sidecars for committed egress secret lifecycle changes", () => {
+	test("tracks egress secret lifecycle in rendered sidecar bytes", () => {
 		const paths = tempRuntimePaths();
 		const commandPath = join(paths.userHome, ".local", "bin", "openclaw");
 		const egressEngine = {
@@ -3095,7 +3095,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		);
-		const signals: boolean[] = [];
 		const converge = (manifest: RuntimeManifest, secret: string | undefined) =>
 			convergeRuntimeManifest(
 				manifestLoad(manifest, "inline-egress-secret-lifecycle", {
@@ -3127,15 +3126,13 @@ describe("runtime manifest reconciliation invariants", () => {
 					},
 					systemdApply: {
 						activateEgressPrerequisite: successfulPrerequisiteActivation,
-						activate: ({ restartEgressSidecar }) => {
-							signals.push(restartEgressSidecar);
-							return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-						},
+						activate: successfulPrerequisiteActivation,
 					},
 				},
 			);
 		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
 		const sidecarUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+		const sidecarEnv = join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env");
 
 		const initial = converge(activeManifest, "000000");
 		expect(initial.installErrors).toEqual([]);
@@ -3149,19 +3146,20 @@ describe("runtime manifest reconciliation invariants", () => {
 			"10-clawdi-hosted.conf",
 		);
 		const gatewayEnv = join(paths.systemdEnvRoot, `${gatewayUnitName}.env`);
-		expect(signals.at(-1)).toBe(true);
 		expect(statSync(secretFile).mode & 0o777).toBe(0o600);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000000");
+		const initialSidecarEnv = readFileSync(sidecarEnv, "utf-8");
 		const activeGatewayUnit = readFileSync(gatewayUnit, "utf-8");
+		const activeGatewayEnv = readFileSync(gatewayEnv, "utf-8");
 		expect(readFileSync(gatewayEnv, "utf-8")).toContain("NODE_EXTRA_CA_CERTS");
 		expect(readFileSync(gatewayEnv, "utf-8")).not.toContain("000000");
 
 		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
-		expect(signals.at(-1)).toBe(false);
+		expect(readFileSync(sidecarEnv, "utf-8")).toBe(initialSidecarEnv);
 		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
 
 		expect(converge(activeManifest, "000001").installErrors).toEqual([]);
-		expect(signals.at(-1)).toBe(true);
+		expect(readFileSync(sidecarEnv, "utf-8")).not.toBe(initialSidecarEnv);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
 		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
 
@@ -3183,7 +3181,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			egressProfiles: { profiles: [] },
 		};
 		expect(converge(noEgressManifest, undefined).installErrors).toEqual([]);
-		expect(readFileSync(gatewayUnit, "utf-8")).not.toBe(activeGatewayUnit);
+		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
+		expect(readFileSync(gatewayEnv, "utf-8")).not.toBe(activeGatewayEnv);
 		expect(readFileSync(gatewayEnv, "utf-8")).not.toContain("NODE_EXTRA_CA_CERTS");
 
 		const noSidecarManifest: RuntimeManifest = {
@@ -3191,22 +3190,17 @@ describe("runtime manifest reconciliation invariants", () => {
 			runtimes: { openclaw: { ...activeManifest.runtimes.openclaw, enabled: false } },
 		};
 		expect(converge(noSidecarManifest, "000002").installErrors).toEqual([]);
-		expect(signals.at(-1)).toBe(false);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000002");
 		expect(existsSync(sidecarUnit)).toBe(false);
-		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
 
 		const deletedManifest: RuntimeManifest = {
 			...noSidecarManifest,
 			egressProfiles: { profiles: [] },
 		};
 		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
-		expect(signals.at(-1)).toBe(false);
 		expect(existsSync(secretFile)).toBe(false);
 
 		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
-		expect(signals.at(-1)).toBe(false);
-		expect(signals).toEqual([true, false, true, false, false, false, false, false]);
 	});
 
 	test("reconciles 0.13.92 Skill trees from ledger-backed ownership", () => {

@@ -64,6 +64,7 @@ function appliedState(): RuntimeAppliedState {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: "c".repeat(64),
 		},
+		activated: {},
 		providerIds: [],
 		projectedProviderIds: {},
 	};

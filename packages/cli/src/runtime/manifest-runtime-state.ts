@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { runtimeContentSha256 } from "./applied-state";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { hostedProviderEnvironment } from "./hosted-provider-resolution";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
@@ -101,12 +100,6 @@ export function writeDaemonAuthToken(
 	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
 	return path;
-}
-export function daemonAuthTokenRevision(token: string): string {
-	return runtimeContentSha256({
-		schemaVersion: "clawdi.daemonAuthTokenRevision.v1",
-		token,
-	});
 }
 export function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,

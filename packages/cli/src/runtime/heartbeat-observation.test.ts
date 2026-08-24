@@ -56,6 +56,7 @@ function legacyAppliedState(generation: number): RuntimeAppliedStateV2 {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: (generation === 8 ? "b" : "a").repeat(64),
 		},
+		activated: {},
 		providerIds: ["managed"],
 		projectedProviderIds: { openclaw: ["managed"] },
 	};

@@ -650,20 +650,11 @@ exec /usr/bin/systemctl "$@"
 				expect(mainPid).toBeGreaterThan(1);
 				expect(statSync(`/proc/${mainPid}`).uid).toBe(runtimeUid);
 				firstPids.set(unitName, mainPid);
-				const processRevisions = readFileSync(`/proc/${mainPid}/environ`)
-					.toString("utf8")
-					.split("\0")
-					.filter((entry) => entry.startsWith("CLAWDI_RUNTIME_REV="));
-				expect(processRevisions).toHaveLength(1);
-				const processRevision = processRevisions[0].slice("CLAWDI_RUNTIME_REV=".length);
-				expect(processRevision).toMatch(/^[a-f0-9]{32}$/);
 				const managedEnvironment = readFileSync(
 					join(paths.systemdEnvRoot, `${unitName}.env`),
 					"utf8",
 				);
-				expect(managedEnvironment.match(/^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/m)?.[1]).toBe(
-					processRevision,
-				);
+				expect(managedEnvironment).toMatch(/^CLAWDI_MANAGED_CONTENT_DIGEST="[a-f0-9]{32}"$/m);
 				const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
 				expect(readlinkSync(enablementPath)).toBe(`../${unitName}`);
 			}

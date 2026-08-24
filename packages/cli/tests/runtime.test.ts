@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
@@ -24,7 +24,6 @@ import {
 	commitRuntimeAppliedState,
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
-	runtimeOnlyChangesCliPackage,
 	runtimePublicContentRevision,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
@@ -34,7 +33,6 @@ import {
 } from "../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../src/lib/version";
 import {
-	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -101,6 +99,7 @@ import {
 } from "../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
+	RUNTIME_WATCH_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
 } from "../src/runtime/systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
@@ -370,12 +369,7 @@ function fakeSystemdStatePath(
 	return join(stateRoot, `${scope}-${unit}.${state}`);
 }
 
-function seedFakeSystemdProcess(
-	stateRoot: string,
-	scope: "system" | "user",
-	unit: string,
-	revision: string,
-): number {
+function seedFakeSystemdProcess(stateRoot: string, scope: "system" | "user", unit: string): void {
 	const pidPath = fakeSystemdStatePath(stateRoot, scope, unit, "pid");
 	if (existsSync(pidPath)) {
 		const existingPid = Number(readFileSync(pidPath, "utf8").trim());
@@ -385,32 +379,15 @@ function seedFakeSystemdProcess(
 			} catch {}
 		}
 	}
-	const child = spawn("sleep", ["300"], {
-		env: { ...process.env, CLAWDI_RUNTIME_REV: revision },
-		stdio: "ignore",
-	});
+	const child = spawn("sleep", ["300"], { stdio: "ignore" });
 	if (!child.pid) throw new Error(`failed to start fake process for ${unit}`);
 	child.unref();
 	writeFileSync(fakeSystemdStatePath(stateRoot, scope, unit, "active"), "\n");
 	writeFileSync(pidPath, `${child.pid}\n`);
-	for (let attempt = 0; attempt < 10; attempt += 1) {
-		try {
-			if (
-				readFileSync(`/proc/${child.pid}/environ`)
-					.toString("utf8")
-					.split("\0")
-					.includes(`CLAWDI_RUNTIME_REV=${revision}`)
-			) {
-				return child.pid;
-			}
-		} catch {}
-		spawnSync("sleep", ["0.01"]);
-	}
-	throw new Error(`fake process for ${unit} did not publish its runtime revision`);
 }
 
 function seedFakeSystemdSnapshotProcesses(
-	paths: RuntimePaths,
+	_paths: RuntimePaths,
 	stateRoot: string,
 	snapshot: Parameters<typeof applySystemdRuntimeUpdate>[1],
 ): void {
@@ -419,14 +396,12 @@ function seedFakeSystemdSnapshotProcesses(
 		["user", snapshot.user],
 	] as const) {
 		for (const unit of units.keys()) {
+			writeFileSync(fakeSystemdStatePath(stateRoot, scope, unit, "enabled"), "\n");
 			if (unit === "clawdi-runtime-watch.service") {
 				writeFileSync(fakeSystemdStatePath(stateRoot, scope, unit, "active"), "\n");
 				continue;
 			}
-			const revision = systemdEnvRevision(
-				readFileSync(join(paths.systemdEnvRoot, `${unit}.env`), "utf8"),
-			);
-			seedFakeSystemdProcess(stateRoot, scope, unit, revision);
+			seedFakeSystemdProcess(stateRoot, scope, unit);
 		}
 	}
 }
@@ -435,7 +410,6 @@ function writeFakeSystemdManager(input: {
 	path: string;
 	logPath: string;
 	stateRoot: string;
-	environmentRoot: string;
 	failNextGatewayRestart?: string;
 	failNextSidecarRestart?: string;
 	sidecarReadyPath?: string;
@@ -459,24 +433,12 @@ shift || true
 state_path() {
   printf '%s/%s-%s.%s' '${input.stateRoot}' "$scope" "$1" "$2"
 }
-desired_revision() {
-  env_file='${input.environmentRoot}'/$1.env
-  [ "$(grep -c '^CLAWDI_RUNTIME_REV=' "$env_file" || true)" -eq 1 ]
-  revision="$(grep -E '^CLAWDI_RUNTIME_REV="[a-f0-9]{32}"$' "$env_file" | cut -d '"' -f 2)"
-  printf '%s' "$revision"
-}
 start_process() {
   unit="$1"
   pid_path="$(state_path "$unit" pid)"
   if [ -f "$pid_path" ]; then kill "$(cat "$pid_path")" 2>/dev/null || true; fi
-  revision="$(desired_revision "$unit")"
-  env CLAWDI_RUNTIME_REV="$revision" sleep 300 >/dev/null 2>&1 &
+  sleep 300 >/dev/null 2>&1 &
   printf '%s\n' "$!" > "$pid_path"
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    tr '\0' '\n' < "/proc/$!/environ" | grep -Fxq "CLAWDI_RUNTIME_REV=$revision" && return
-    sleep 0.01
-  done
-  return 1
 }
 case "$command" in
   show)
@@ -1486,7 +1448,6 @@ function installSuccessfulSystemctlFixture(
 		path: systemctlPath,
 		logPath: systemctlLog ?? join(root, "systemctl-success.log"),
 		stateRoot: join(root, "systemctl-success-state"),
-		environmentRoot: join(dirname(dirname(dirname(sidecarReadyPath))), "systemd", "env"),
 		sidecarReadyPath,
 	});
 	process.env.CLAWDI_SYSTEMD_APPLY = "1";
@@ -1691,8 +1652,8 @@ function readSystemdEnvFile(paths: RuntimePaths, name: string): string {
 	return readFileSync(join(paths.systemdEnvRoot, `${systemdUnitFileName(name)}.env`), "utf-8");
 }
 
-function systemdEnvRevision(envFile: string): string {
-	const match = envFile.match(/^CLAWDI_RUNTIME_REV="([^"]+)"$/m);
+function systemdEnvDigest(envFile: string): string {
+	const match = envFile.match(/^CLAWDI_MANAGED_CONTENT_DIGEST="([^"]+)"$/m);
 	expect(match?.[1]).toBeTruthy();
 	return match?.[1] ?? "";
 }
@@ -2267,7 +2228,7 @@ function writeTestRuntimeAppliedState(
 	input: {
 		etag?: string;
 		sourceRevision?: string;
-		egressSidecarSecretRevision?: string;
+		activated?: Record<string, string>;
 		officialServiceCommandRevisions?: Record<string, string>;
 	} = {},
 ): void {
@@ -2285,6 +2246,13 @@ function writeTestRuntimeAppliedState(
 	const providerIds = selectedRuntime
 		? [...new Set(load.manifest.runtimes[selectedRuntime]?.provider_ids ?? [])].sort()
 		: [];
+	const systemdUnits = readSystemdUnitSnapshot(paths);
+	const activated =
+		input.activated ??
+		Object.fromEntries([
+			...[...systemdUnits.system].filter(([unit]) => unit !== RUNTIME_WATCH_SYSTEM_UNIT),
+			...systemdUnits.user,
+		]);
 	writeRuntimeAppliedState(
 		{
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -2308,9 +2276,7 @@ function writeTestRuntimeAppliedState(
 					secretValues: load.secretValues ?? {},
 				}),
 			},
-			...(input.egressSidecarSecretRevision
-				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
-				: {}),
+			activated,
 			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
@@ -4820,13 +4786,13 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		convergeRuntimeManifest(loaded, paths);
 		const firstConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const firstRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 
 		convergeRuntimeManifest(loaded, paths);
 
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
 	});
 
 	it("ignores a retired Hermes plugin while removing the native provider", () => {
@@ -4863,7 +4829,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		const first = convergeRuntimeManifest(withProvider, paths);
 		writeTestRuntimeAppliedState(paths, withProvider, first);
-		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const firstRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
 		expect(
 			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
@@ -4875,7 +4841,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const unmanagedConfig = readHermesConfigYaml(home);
 		expect(unmanagedConfig.providers).toBeUndefined();
 		expect(unmanagedConfig.model).toBeUndefined();
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(firstRevision);
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(firstRevision);
 	});
 
 	it("replaces the frozen Hermes model catalog on each manifest generation", () => {
@@ -4985,7 +4951,6 @@ cp '${sdkSource}' '${sdkTarget}'
 				path: join(caseRoot, "bin", "systemctl"),
 				logPath: systemctlLog,
 				stateRoot: systemctlStateRoot,
-				environmentRoot: join(run, "systemd", "env"),
 			});
 			process.env.HOME = home;
 			process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -5030,7 +4995,7 @@ cp '${sdkSource}' '${sdkTarget}'
 				writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
 			}
 			const runtimeUnit = runtimeName === "openclaw" ? "openclaw-gateway" : "hermes-gateway";
-			const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit));
+			const initialRevision = systemdEnvDigest(readSystemdEnvFile(paths, runtimeUnit));
 			writeFileSync(systemctlLog, "");
 
 			const second = convergeRuntimeManifest(next, paths);
@@ -5042,12 +5007,12 @@ cp '${sdkSource}' '${sdkTarget}'
 				{},
 			);
 
-			expect(activation).toEqual({
+			expect(activation).toMatchObject({
 				applied: true,
 				systemUnitsChanged: [],
 				userUnitsChanged: [],
 			});
-			expect(systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit))).toBe(initialRevision);
+			expect(systemdEnvDigest(readSystemdEnvFile(paths, runtimeUnit))).toBe(initialRevision);
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8");
 			expect(systemctlCalls).toContain(`--user show ${runtimeUnit}.service`);
 			expect(systemctlCalls).not.toMatch(
@@ -5124,7 +5089,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 		convergeRuntimeManifest(loaded, paths);
 
-		const yamlRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const yamlRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 		const initialConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(initialConfig).toContain("provider: custom:hermes");
 		expect(initialConfig).toMatch(/api: "?https:\/\/hermes-provider\.example\.test\/v1"?/);
@@ -5133,7 +5098,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		writeHermesVersionBinary(home, "0.18.0");
 		convergeRuntimeManifest(loaded, paths);
 
-		const currentRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const currentRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 		const currentConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(currentConfig).toBe(initialConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
@@ -5640,9 +5605,8 @@ cp '${sdkSource}' '${sdkTarget}'
 							sourceRevision: load.sourceRevision,
 							convergence,
 							applyIdentity: load.applyContext?.identity ?? null,
-							daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-							daemonProgramRevision: authority.daemonProgramRevision,
-							egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+							activated: authority.activated,
+							officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
 						});
 					},
 				});
@@ -6012,7 +5976,6 @@ cp '${sdkSource}' '${sdkTarget}'
 			path: join(bin, "systemctl"),
 			logPath: systemctlLog,
 			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
 			sidecarReadyPath,
 		});
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
@@ -6052,7 +6015,13 @@ cp '${sdkSource}' '${sdkTarget}'
 						});
 					}
 					setTimeout(() => abort.abort(), 25);
-					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
+					const payload = hostedRuntimeWatchLocalePayload(home, 2);
+					payload.manifest.egressProfiles = hostedManifestEgressProfiles({
+						providers: {},
+						terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
+					});
+					payload.secretValues = { [TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool-rotated" };
+					return hostedRuntimeBundleResponse(payload, {
 						etag: testBundleEtag("manifest-locale-2"),
 					});
 				},
@@ -6104,7 +6073,7 @@ cp '${sdkSource}' '${sdkTarget}'
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
 			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
-			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
+			expect(systemctlCalls).not.toContain("restart clawdi-daemon.service");
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
@@ -6209,9 +6178,13 @@ cp '${sdkSource}' '${sdkTarget}'
 							return new Response(null, { status: 304 });
 						}
 						setTimeout(() => abort.abort(), 0);
-						return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-							etag: testBundleEtag("manifest-locale-2"),
-						});
+						return hostedRuntimeBundleResponse(
+							{
+								...hostedRuntimeWatchLocalePayload(home, 2),
+								secretValues: { [TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool-rotated" },
+							},
+							{ etag: testBundleEtag("manifest-locale-2") },
+						);
 					},
 				},
 			]);
@@ -6461,7 +6434,6 @@ exit 64
 			path: join(bin, "systemctl"),
 			logPath: join(root, "systemctl-watch-channel.log"),
 			stateRoot: join(root, "systemctl-watch-channel-state"),
-			environmentRoot: join(run, "systemd", "env"),
 			sidecarReadyPath,
 		});
 		process.env.HOME = home;
@@ -6606,11 +6578,7 @@ exit 64
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: true,
-				systemUnitsChanged: [
-					"clawdi-daemon.service",
-					"clawdi-runtime-sidecar.service",
-					"clawdi-runtime-watch.service",
-				],
+				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-sidecar.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(readFileSync(getRuntimePaths().runtimeWatchStatus, "utf-8"));
@@ -6675,7 +6643,6 @@ exit 64
 			path: systemctlPath,
 			logPath: systemctlLog,
 			stateRoot: join(root, "systemctl-generation-state"),
-			environmentRoot: join(run, "systemd", "env"),
 			sidecarReadyPath,
 		});
 		seedOfficialOpenClawServiceInstaller(home);
@@ -6740,8 +6707,8 @@ exit 64
 				etag: testBundleEtag("manifest-generation-30"),
 				generation: 30,
 			});
-			const initialDaemonAuthTokenRevision = initialAppliedState?.daemonAuthTokenRevision;
-			expect(initialDaemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
+			const initialDaemonActivation = initialAppliedState.activated["clawdi-daemon.service"];
+			expect(initialDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
 			expect(JSON.parse(readFileSync(openclawConfig, "utf8")).gateway.auth.token).toBe(
 				gatewayToken,
 			);
@@ -6898,8 +6865,9 @@ exit 64
 				manifestETag: manifestEtag,
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(rotatedAppliedState?.daemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
-			expect(rotatedAppliedState?.daemonAuthTokenRevision).not.toBe(initialDaemonAuthTokenRevision);
+			const rotatedDaemonActivation = rotatedAppliedState?.activated["clawdi-daemon.service"];
+			expect(rotatedDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
+			expect(rotatedDaemonActivation).not.toBe(initialDaemonActivation);
 			expect(watchFetch.captured.at(-1)?.headers.authorization).toBe("Bearer file-runtime-token");
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"rotated-runtime-auth-token\n",
@@ -6912,17 +6880,13 @@ exit 64
 				"restart clawdi-runtime-sidecar.service",
 			);
 			expect(readSystemdSystemUnit(paths, "clawdi-daemon")).toBe(initialDaemonUnit);
-			expect(readSystemdEnvFile(paths, "clawdi-daemon")).toBe(initialDaemonEnv);
-			expect(initialDaemonUnit).not.toContain(
-				rotatedAppliedState?.daemonAuthTokenRevision ?? "missing-daemon-token-revision",
-			);
-			expect(initialDaemonEnv).not.toContain(
-				rotatedAppliedState?.daemonAuthTokenRevision ?? "missing-daemon-token-revision",
-			);
+			const rotatedDaemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
+			expect(rotatedDaemonEnv).not.toBe(initialDaemonEnv);
+			expect(rotatedDaemonEnv).not.toContain("rotated-runtime-auth-token");
+			expect(rotatedDaemonEnv).toMatch(/^CLAWDI_MANAGED_CONTENT_DIGEST="[a-f0-9]{32}"$/m);
 
-			// Simulate a crash after the desired token file/unit were written but before
-			// the private applied authority advanced. The unchanged public unit cannot
-			// prove activation, so the next pass must retry the daemon restart.
+			// Simulate a crash after the desired token file and rendered environment were
+			// written but before the activated hash advanced.
 			writeFileSync(paths.appliedState, committedBeforeTokenRotation);
 			writeFileSync(systemctlLog, "");
 			process.exitCode = undefined;
@@ -6935,8 +6899,8 @@ exit 64
 					.filter((call) => call === "restart clawdi-daemon.service"),
 			).toHaveLength(1);
 			expect(readSystemdSystemUnit(paths, "clawdi-daemon")).toBe(initialDaemonUnit);
-			expect(readRuntimeAppliedState(paths)?.daemonAuthTokenRevision).toBe(
-				rotatedAppliedState?.daemonAuthTokenRevision,
+			expect(readRuntimeAppliedState(paths)?.activated["clawdi-daemon.service"]).toBe(
+				rotatedDaemonActivation,
 			);
 
 			writeFileSync(systemctlLog, "");
@@ -7196,7 +7160,7 @@ exit 64
 		} finally {
 			initial.restore();
 		}
-		const baselineRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
+		const baselineRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
 		const baselineMitmSecrets = JSON.parse(
 			readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
 		);
@@ -7243,7 +7207,7 @@ exit 64
 			);
 			expect(egressSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(egressSecrets[channelSecretRef]).toBe("agent-token-watch");
-			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+			expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
 		} finally {
@@ -7834,6 +7798,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					sourcePath: "https://runtime.test/v1/runtime/manifest",
 					sha256: "b".repeat(64),
 				},
+				activated: {},
 				providerIds: ["default"],
 				projectedProviderIds: {},
 			},
@@ -7941,305 +7906,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			},
 		});
 	});
-
-	it("classifies a fresh CLI package checkpoint as CLI-only", () => {
-		const home = join(root, "home", "clawdi");
-		const previousManifest = {
-			...runtimeWatchLocaleManifest(home, 13),
-			applyGeneration: 13,
-		};
-		const nextManifest: RuntimeManifest = {
-			...previousManifest,
-			generation: 14,
-			issuedAt: "2026-06-06T00:00:14Z",
-			clawdiCli: {
-				...previousManifest.clawdiCli,
-				packageSpec: "clawdi@1.2.4-test",
-			},
-		};
-		const previous = {
-			manifest: previousManifest,
-			secretValues: {
-				...TEST_HOSTED_CODEX_SECRET_VALUES,
-				"secret://runtime/openclaw/gateway-token": "gateway-token",
-			},
-		};
-		const next = { manifest: nextManifest, secretValues: previous.secretValues };
-
-		expect(runtimeOnlyChangesCliPackage(previous, next)).toBe(true);
-		expect(
-			runtimeOnlyChangesCliPackage(previous, {
-				...next,
-				manifest: {
-					...nextManifest,
-					controlPlane: { apiUrl: "https://other-cloud-api.test" },
-				},
-			}),
-		).toBe(false);
-		expect(
-			runtimeOnlyChangesCliPackage(previous, {
-				...next,
-				secretValues: { "secret://runtime/openclaw/gateway-token": "rotated-token" },
-			}),
-		).toBe(false);
-		expect(
-			runtimeOnlyChangesCliPackage(previous, {
-				...next,
-				manifest: {
-					...nextManifest,
-					clawdiCli: { ...nextManifest.clawdiCli, source: "other-source" },
-				},
-			}),
-		).toBe(false);
-	});
-
-	it("force-restarts only the daemon for a CLI-only checkpoint", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const systemctlPath = join(root, "bin", "systemctl");
-		const systemctlLog = join(root, "systemctl.log");
-		const systemctlStateRoot = join(root, "systemctl-cli-only-state");
-		writeFakeSystemdManager({
-			path: systemctlPath,
-			logPath: systemctlLog,
-			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
-		});
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
-		seedOpenClawBinary(home);
-		const paths = getRuntimePaths();
-		const current = runtimeWatchLocaleManifest(home, 10);
-		const runtimeAuthSecret = {
-			...TEST_HOSTED_CODEX_SECRET_VALUES,
-			"secret://clawdi/auth-token":
-				TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://clawdi/auth-token"],
-		};
-		expect(
-			convergeRuntimeManifest(
-				{
-					manifest: current,
-					source: "remote-datasource",
-					sourcePath: "test://cli-current",
-					offline: false,
-					secretValues: runtimeAuthSecret,
-				},
-				paths,
-			).installErrors,
-		).toEqual([]);
-		const before = readSystemdUnitSnapshot(paths);
-		before.user.set("hermes-gateway.service", "legacy");
-		const unchangedUnitInodes = [
-			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
-			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
-		].map((path) => statSync(path).ino);
-		const next: RuntimeManifest = {
-			...current,
-			generation: 11,
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: "clawdi@1.2.4-test",
-				registry: "https://registry.npmjs.org",
-			},
-		};
-		expect(
-			convergeRuntimeManifest(
-				{
-					manifest: next,
-					source: "remote-datasource",
-					sourcePath: "test://cli-next",
-					offline: false,
-					secretValues: runtimeAuthSecret,
-				},
-				paths,
-			).installErrors,
-		).toEqual([]);
-		expect(
-			[
-				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
-				join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
-			].map((path) => statSync(path).ino),
-		).toEqual(unchangedUnitInodes);
-		const after = readSystemdUnitSnapshot(paths);
-		after.user.set("hermes-gateway.service", "current");
-		const currentRevision = "a".repeat(32);
-		writeFileSync(
-			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
-			`CLAWDI_RUNTIME_REV="${currentRevision}"\n`,
-		);
-		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, before);
-		for (const unit of before.user.keys()) {
-			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
-		}
-		writeFileSync(systemctlLog, "");
-
-		const applied = applySystemdRuntimeUpdate(paths, before, after, {
-			forceRestartSystemUnits: ["clawdi-daemon.service"],
-			preserveActiveUnits: true,
-		});
-
-		expect(applied).toEqual({
-			applied: true,
-			systemUnitsChanged: ["clawdi-daemon.service"],
-			userUnitsChanged: [],
-		});
-		const calls = readFileSync(systemctlLog, "utf-8");
-		expect(calls).not.toContain("daemon-reload");
-		expect(calls).toContain("restart clawdi-daemon.service");
-		expect(calls).not.toContain("restart clawdi-runtime-watch.service");
-		expect(calls).not.toContain("restart hermes-gateway.service");
-		expect(calls).not.toContain("restart openclaw-gateway.service");
-		expect(calls).not.toContain("restart clawdi-runtime-sidecar.service");
-
-		const driftedUnits = {
-			system: new Map([["clawdi-runtime-watch.service", "watch"]]),
-			user: new Map([["hermes-gateway.service", "hermes"]]),
-		};
-		writeFileSync(
-			fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-runtime-watch.service", "active"),
-			"\n",
-		);
-		seedFakeSystemdProcess(systemctlStateRoot, "user", "hermes-gateway.service", "b".repeat(32));
-		writeFileSync(
-			fakeSystemdStatePath(systemctlStateRoot, "user", "hermes-gateway.service", "enabled"),
-			"\n",
-		);
-		writeFileSync(systemctlLog, "");
-
-		expect(
-			applySystemdRuntimeUpdate(paths, driftedUnits, driftedUnits, {
-				preserveActiveUnits: true,
-			}),
-		).toEqual({
-			applied: true,
-			systemUnitsChanged: [],
-			userUnitsChanged: ["hermes-gateway.service"],
-		});
-		const driftRepairCalls = readFileSync(systemctlLog, "utf-8");
-		expect(driftRepairCalls).not.toContain("daemon-reload");
-		expect(driftRepairCalls).toContain("--user restart hermes-gateway.service");
-		expect(driftRepairCalls).not.toContain("restart clawdi-runtime-watch.service");
-	});
-
-	it("adopts a cross-version user revision only until its desired program changes", () => {
-		const home = join(root, "revision-alias", "home", "clawdi");
-		const state = join(root, "revision-alias", "var", "lib", "clawdi");
-		const run = join(root, "revision-alias", "run", "clawdi");
-		const systemctlPath = join(root, "revision-alias", "bin", "systemctl");
-		const systemctlLog = join(root, "revision-alias", "systemctl.log");
-		const systemctlStateRoot = join(root, "revision-alias", "systemctl-state");
-		writeFakeSystemdManager({
-			path: systemctlPath,
-			logPath: systemctlLog,
-			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
-		});
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		const paths = getRuntimePaths();
-		const unit = "hermes-gateway.service";
-		const oldRevision = "a".repeat(32);
-		const migratedRevision = "b".repeat(32);
-		const changedRevision = "c".repeat(32);
-		const before = { system: new Map<string, string>(), user: new Map([[unit, "old"]]) };
-		const migrated = {
-			system: new Map<string, string>(),
-			user: new Map([[unit, "migrated"]]),
-		};
-		mkdirSync(paths.systemdEnvRoot, { recursive: true });
-		writeFileSync(
-			join(paths.systemdEnvRoot, `${unit}.env`),
-			`CLAWDI_RUNTIME_REV="${migratedRevision}"\n`,
-		);
-		seedFakeSystemdProcess(systemctlStateRoot, "user", unit, oldRevision);
-		writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
-		let aliases: RuntimeUserProcessRevisionAliases = {};
-
-		const adopted = applySystemdRuntimeUpdate(paths, before, migrated, {
-			preserveActiveUnits: true,
-			previousUserDesiredRevisions: new Map([[unit, oldRevision]]),
-			onUserProcessRevisionAliases: (value) => {
-				aliases = value;
-			},
-		});
-
-		expect(adopted).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
-		expect(aliases).toEqual({
-			[unit]: { desiredRevision: migratedRevision, processRevision: oldRevision },
-		});
-		expect(readFileSync(systemctlLog, "utf-8")).not.toContain(`--user restart ${unit}`);
-		mkdirSync(dirname(paths.appliedState), { recursive: true });
-		writeRuntimeAppliedState(
-			{
-				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				appliedAt: "2026-08-14T04:02:30.000Z",
-				instanceId: "iid_revision_alias",
-				etag: `"sha256:${"d".repeat(64)}"`,
-				sourceRevision: "d".repeat(64),
-				generation: 1,
-				contentIdentity: { sourcePath: "test://revision-alias", sha256: "e".repeat(64) },
-				userProcessRevisionAliases: aliases,
-				providerIds: [],
-				projectedProviderIds: {},
-			},
-			paths,
-		);
-
-		aliases = {};
-		writeFileSync(systemctlLog, "");
-		expect(
-			applySystemdRuntimeUpdate(paths, migrated, migrated, {
-				onUserProcessRevisionAliases: (value) => {
-					aliases = value;
-				},
-			}),
-		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
-		expect(aliases[unit]).toEqual({
-			desiredRevision: migratedRevision,
-			processRevision: oldRevision,
-		});
-		expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
-			/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
-		);
-
-		const changed = {
-			system: new Map<string, string>(),
-			user: new Map([[unit, "changed"]]),
-		};
-		writeFileSync(
-			join(paths.systemdEnvRoot, `${unit}.env`),
-			`CLAWDI_RUNTIME_REV="${changedRevision}"\n`,
-		);
-		aliases = {};
-		writeFileSync(systemctlLog, "");
-		expect(
-			applySystemdRuntimeUpdate(paths, migrated, changed, {
-				onUserProcessRevisionAliases: (value) => {
-					aliases = value;
-				},
-			}),
-		).toEqual({
-			applied: true,
-			systemUnitsChanged: [],
-			userUnitsChanged: [unit],
-		});
-		expect(aliases).toEqual({});
-		expect(readFileSync(systemctlLog, "utf-8")).toContain(`--user restart ${unit}`);
-	});
-
-	it("hands off a CLI-only checkpoint by restarting only the daemon once", async () => {
+	it("hands off a CLI update and restarts only changed daemon bytes", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8363,7 +8030,8 @@ chmod +x "$prefix/bin/clawdi"
 			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
 			expect(existsSync(paths.daemonAuthToken)).toBe(true);
 			const initialAppliedState = readRuntimeAppliedState(paths);
-			expect(initialAppliedState?.daemonProgramRevision).toMatch(/^[a-f0-9]{32}$/);
+			const initialDaemonActivation = initialAppliedState?.activated["clawdi-daemon.service"];
+			expect(initialDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
 			const legacyUnitPaths = [
 				...readdirSync(paths.systemdSystemRoot)
 					.filter((entry) => entry.endsWith(".service"))
@@ -8455,10 +8123,9 @@ chmod +x "$prefix/bin/clawdi"
 				generation: 14,
 				applyGeneration: 13,
 			});
-			expect(completedAppliedState?.daemonProgramRevision).toMatch(/^[a-f0-9]{32}$/);
-			expect(completedAppliedState?.daemonProgramRevision).not.toBe(
-				initialAppliedState?.daemonProgramRevision,
-			);
+			const completedDaemonActivation = completedAppliedState?.activated["clawdi-daemon.service"];
+			expect(completedDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
+			expect(completedDaemonActivation).not.toBe(initialDaemonActivation);
 			expect(JSON.stringify(currentTestApplyContext)).toBe(runtimeContextBefore);
 			const activationCalls = readFileSync(systemctlLog, "utf-8")
 				.trim()
@@ -8468,7 +8135,11 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual(["restart clawdi-daemon.service"]);
+			expect(activationCalls).toEqual([
+				"daemon-reload",
+				"--user daemon-reload",
+				"restart clawdi-daemon.service",
+			]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
@@ -8503,8 +8174,8 @@ chmod +x "$prefix/bin/clawdi"
 			expect(retryCalls).not.toContain("restart clawdi-runtime-watch.service");
 			expect(retryCalls).not.toContain("restart clawdi-runtime-sidecar.service");
 			expect(retryCalls).not.toContain("--user restart openclaw-gateway.service");
-			expect(readRuntimeAppliedState(paths)?.daemonProgramRevision).toBe(
-				completedAppliedState?.daemonProgramRevision,
+			expect(readRuntimeAppliedState(paths)?.activated["clawdi-daemon.service"]).toBe(
+				completedDaemonActivation,
 			);
 
 			const committedAfterRetry = readFileSync(paths.appliedState, "utf-8");
@@ -8573,7 +8244,6 @@ chmod +x "$prefix/bin/clawdi"
 				path: join(bin, "systemctl"),
 				logPath: systemctlLog,
 				stateRoot: systemctlStateRoot,
-				environmentRoot: paths.systemdEnvRoot,
 				sidecarReadyPath: publishCa ? paths.egressSystemCaFile : undefined,
 			});
 			writeFileSync(
@@ -8604,6 +8274,29 @@ exit 0
 			chmodSync(runtimeBin, 0o700);
 			if (runtime === "hermes") {
 				writeHermesDashboardPython(home, true);
+				const appRoot = join(home, ".hermes", "hermes-agent");
+				const npm = join(bin, "npm");
+				mkdirSync(join(appRoot, "web"), { recursive: true });
+				writeFileSync(join(appRoot, "web", "package.json"), '{"scripts":{"build":"true"}}\n');
+				writeFileSync(
+					npm,
+					`#!/usr/bin/env bash
+set -euo pipefail
+printf 'official hermes dashboard prerequisite %s\n' "$*" >> '${systemctlLog}'
+test -r '${paths.egressSystemCaFile}'
+case "$*" in
+  "ci --include=dev --workspace web")
+    mkdir -p '${join(appRoot, "node_modules", ".bin")}'
+    ;;
+  "run build")
+    mkdir -p '${join(appRoot, "hermes_cli", "web_dist")}'
+    printf '%s\n' '<html>Hermes dashboard</html>' > '${join(appRoot, "hermes_cli", "web_dist", "index.html")}'
+    ;;
+  *) exit 64 ;;
+esac
+`,
+				);
+				chmodSync(npm, 0o700);
 			}
 			seedCurrentCliInstall(
 				state,
@@ -8666,9 +8359,18 @@ exit 0
 				(call) => call.startsWith("start") && call.includes("clawdi-daemon.service"),
 			);
 			expect(sidecarActivation).toBeGreaterThanOrEqual(0);
+			if (runtime === "hermes") {
+				const dependencyInstall = calls.indexOf(
+					"official hermes dashboard prerequisite ci --include=dev --workspace web",
+				);
+				const dashboardBuild = calls.indexOf("official hermes dashboard prerequisite run build");
+				expect(dependencyInstall).toBeGreaterThan(sidecarActivation);
+				expect(dashboardBuild).toBeGreaterThan(dependencyInstall);
+				expect(officialInstaller).toBeGreaterThan(dashboardBuild);
+			}
 			expect(officialInstaller).toBeGreaterThan(sidecarActivation);
 			expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
-			expect(calls).not.toContain(`--user restart ${serviceName}.service`);
+			expect(calls).toContain(`--user restart ${serviceName}.service`);
 			const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
 			const installIndex = installerCalls.indexOf(installArgs);
 			if (runtime === "openclaw") {
@@ -8741,7 +8443,6 @@ chmod +x "$prefix/bin/clawdi"
 			path: join(bin, "systemctl"),
 			logPath: systemctlLog,
 			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
 			sidecarReadyPath: join(run, "egress", "systemd", "ca.pem"),
 		});
 		chmodSync(join(bin, "npm"), 0o700);
@@ -8862,7 +8563,7 @@ chmod +x "$prefix/bin/clawdi"
 			const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 			const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
 			expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
-			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(sidecarEnv).toContain('CLAWDI_MANAGED_CONTENT_DIGEST="');
 			expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 			expect(sidecarUnit).toContain(
 				`BindReadOnlyPaths=${cachedMitmproxyBinary(paths, mitmproxy)}:${paths.egressServiceBinary}:norbind`,
@@ -9892,7 +9593,6 @@ exit 64
 			path: systemctlPath,
 			logPath: systemctlLog,
 			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
 		});
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -10031,7 +9731,7 @@ exit 64
 			"platforms.whatsapp.extra.session_path",
 			sessionDir,
 		);
-		const initialHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const initialHermesRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 		const hermesDropIn = join(
 			paths.systemdUserRoot,
 			"hermes-gateway.service.d",
@@ -10039,6 +9739,7 @@ exit 64
 		);
 		const initialHermesDropInInode = statSync(hermesDropIn).ino;
 		const initialUnits = readSystemdUnitSnapshot(paths);
+		writeTestRuntimeAppliedState(paths, projected, convergence);
 		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, initialUnits);
 		for (const unit of initialUnits.user.keys()) {
 			writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "enabled"), "\n");
@@ -10056,8 +9757,8 @@ exit 64
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
 			applySystemdRuntimeUpdate(paths, initialUnits, readSystemdUnitSnapshot(paths), {}),
-		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
+		).toMatchObject({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
 			initialHermesRevision,
 		);
 
@@ -10083,20 +9784,16 @@ exit 64
 				}),
 			},
 		};
-		const preserveActiveUnits = runtimeOnlyChangesCliPackage(projected, changedCheckpoint);
-		expect(preserveActiveUnits).toBe(false);
 		const changedCredential = convergeRuntimeManifest(changedCheckpoint, paths);
 		expect(changedCredential.installErrors).toEqual([]);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
 		);
 		writeFileSync(systemctlLog, "");
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
-			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths), {
-				preserveActiveUnits,
-			}),
-		).toEqual({
+			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths), {}),
+		).toMatchObject({
 			applied: true,
 			systemUnitsChanged: [],
 			userUnitsChanged: ["hermes-gateway.service"],
@@ -10148,7 +9845,7 @@ exit 64
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
-		const removedHermesRevision = systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"));
+		const removedHermesRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 
 		writeFileSync(
 			join(home, ".hermes", "config.yaml"),
@@ -10171,7 +9868,7 @@ exit 64
 			platforms: { whatsapp: { enabled: false } },
 		});
 		expect(readHermesConfigYaml(home)).not.toHaveProperty("platforms.whatsapp.extra.session_path");
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
 			removedHermesRevision,
 		);
 		const repairedConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf8");
@@ -11359,6 +11056,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 				sourceRevision: "a".repeat(64),
 				generation: 0,
 				contentIdentity: { sourcePath: "legacy://0.13.x", sha256: "b".repeat(64) },
+				activated: {},
 				providerIds: [],
 				projectedProviderIds: {},
 			},
@@ -11595,7 +11293,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const paths = getRuntimePaths();
 		const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 		const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
-		const initialSidecarRevision = systemdEnvRevision(sidecarEnv);
+		const initialSidecarRevision = systemdEnvDigest(sidecarEnv);
 		const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
 		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
@@ -11661,7 +11359,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		convergeRuntimeManifest(load, paths);
 		const updatedSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 		const updatedTransparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
-		expect(systemdEnvRevision(updatedSidecarEnv)).not.toBe(initialSidecarRevision);
+		expect(systemdEnvDigest(updatedSidecarEnv)).not.toBe(initialSidecarRevision);
 		expect(updatedTransparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10012"');
 		expect(updatedTransparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10013"');
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
@@ -11722,6 +11420,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 					sourcePath: "https://runtime.test/v1/runtime/manifest",
 					sha256: "b".repeat(64),
 				},
+				activated: {},
 				providerIds: [],
 				projectedProviderIds: { openclaw: ["generation-1-provider"] },
 			},
@@ -11798,7 +11497,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		};
 
 		converge("en", "UTC");
-		const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
+		const initialRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
 
 		converge("fr", "Europe/Paris");
 		const soul = readFileSync(soulPath, "utf-8");
@@ -11808,11 +11507,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(soul).toContain("`Europe/Paris`");
 		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
 		const updatedEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-		expect(systemdEnvRevision(updatedEnv)).not.toBe(initialRevision);
+		expect(systemdEnvDigest(updatedEnv)).not.toBe(initialRevision);
 		converge("fr", "Europe/Paris");
 		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
-		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-			systemdEnvRevision(updatedEnv),
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+			systemdEnvDigest(updatedEnv),
 		);
 	});
 
@@ -11893,6 +11592,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 					sourcePath: "test://generation-reset-previous",
 					sha256: "b".repeat(64),
 				},
+				activated: {},
 				providerIds: [],
 				projectedProviderIds: {},
 			},
@@ -12210,7 +11910,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(controlTokenPath).toBe(join(state, "daemon", "control", "control-token"));
 			expect(controlTokenPath.startsWith(home)).toBe(false);
 			delete process.env.CLAWDI_STATE_DIR;
-			expect(daemonEnv).toContain('CLAWDI_RUNTIME_REV="');
+			expect(daemonEnv).toContain('CLAWDI_MANAGED_CONTENT_DIGEST="');
 			expect(daemonEnv).toContain("https://cloud-api.test");
 			expect(watchEnv).not.toContain("CLAWDI_RUNTIME_AUTH_ENV");
 			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');

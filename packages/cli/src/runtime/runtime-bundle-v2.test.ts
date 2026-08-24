@@ -848,6 +848,7 @@ describe("hosted runtime bundle v2", () => {
 				sourceRevision: load.sourceRevision,
 				generation: load.manifest.generation,
 				contentIdentity: runtimeAppliedContentIdentity(load),
+				activated: {},
 				providerIds: [],
 				projectedProviderIds: result.projectedProviderIds,
 			},
@@ -952,7 +953,9 @@ describe("hosted runtime bundle v2", () => {
 			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
 			"utf-8",
 		);
-		const initialSidecarRevision = initialSidecarEnv.match(/^CLAWDI_RUNTIME_REV="([^"]+)"$/m)?.[1];
+		const initialSidecarRevision = initialSidecarEnv.match(
+			/^CLAWDI_MANAGED_CONTENT_DIGEST="([^"]+)"$/m,
+		)?.[1];
 		expect(initialSidecarRevision).toBeTruthy();
 		writeFileSync(paths.daemonAuthToken, "deployment-auth-token-rotated\n", { mode: 0o600 });
 		if (!load.applyContext) throw new Error("expected runtime apply context");
@@ -988,12 +991,10 @@ describe("hosted runtime bundle v2", () => {
 			"utf-8",
 		);
 		const reconciledSidecarRevision = reconciledSidecarEnv.match(
-			/^CLAWDI_RUNTIME_REV="([^"]+)"$/m,
+			/^CLAWDI_MANAGED_CONTENT_DIGEST="([^"]+)"$/m,
 		)?.[1];
 		expect(reconciledSidecarRevision).toBeTruthy();
-		// Secret value rotation is tracked by the root-only applied authority and
-		// must not turn the public unit revision into an offline value verifier.
-		expect(reconciledSidecarRevision).toBe(initialSidecarRevision);
+		expect(reconciledSidecarRevision).not.toBe(initialSidecarRevision);
 		expect(reconciledSidecarEnv).not.toContain("deployment-auth-token-rotated");
 		expect(readFileSync(paths.daemonAuthToken, "utf-8")).toBe("deployment-auth-token-rotated\n");
 		const reconciledPersistentState = [

@@ -1,7 +1,6 @@
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
-import { readRuntimeAuthToken } from "./auth-token";
 import { removeHostedCliPathExposure } from "./cli-update";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
 import {
@@ -74,7 +73,6 @@ import {
 } from "./manifest-providers";
 import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 import {
-	daemonAuthTokenRevision,
 	removeStaleRuntimeRunConfigs,
 	runtimeProgramRevisionForManifest,
 	writeDaemonAuthToken,
@@ -93,16 +91,15 @@ import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider
 import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
-import { daemonProgramRevision } from "./runtime-impact-revision";
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
+	prepareOfficialRuntimeServiceDependencies,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
 	removeStaleRuntimeSystemdFiles,
 	resolveRuntimeSystemdIdentity,
 	runtimeSystemdCommonEnvironment,
-	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
@@ -153,9 +150,6 @@ interface RuntimeConvergenceState {
 	agentPluginTransaction: HostedAgentPluginTransaction | null;
 	agentPluginFailedNames: Set<string>;
 	agentPluginMutationAttempted: boolean;
-	agentPluginRestartUserUnits: string[];
-	runtimeProjectionMutationRuntimes: Set<string>;
-	runtimeProjectionRestartUserUnits: string[];
 	managedLocaleFiles: string[];
 	runConfigs: string[];
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
@@ -164,12 +158,7 @@ interface RuntimeConvergenceState {
 	projectedProviderIds: Record<string, string[]>;
 	observations: Map<string, RuntimeInstallObservation>;
 	openClawOwnerBrowserBootstrapSupported: boolean;
-	systemdActivationApplied: boolean;
-	restartDaemon: boolean;
-	desiredDaemonAuthTokenRevision?: string;
-	desiredDaemonProgramRevision?: string;
-	restartEgressSidecar: boolean;
-	desiredEgressSidecarSecretRevision?: string;
+	activated: Record<string, string>;
 	officialServiceCommandRevisions: Record<string, string>;
 	staleSystemdFiles: RuntimeSystemdStaleFilePlan;
 }
@@ -269,9 +258,6 @@ function initializeRuntimeConvergence(
 		agentPluginTransaction: null,
 		agentPluginFailedNames: new Set(),
 		agentPluginMutationAttempted: false,
-		agentPluginRestartUserUnits: [],
-		runtimeProjectionMutationRuntimes: new Set(),
-		runtimeProjectionRestartUserUnits: [],
 		managedLocaleFiles: [],
 		runConfigs: [],
 		runtimeSystemdUserPrograms: [],
@@ -280,9 +266,7 @@ function initializeRuntimeConvergence(
 		projectedProviderIds: {},
 		observations: new Map(),
 		openClawOwnerBrowserBootstrapSupported: false,
-		systemdActivationApplied: false,
-		restartDaemon: false,
-		restartEgressSidecar: false,
+		activated: {},
 		officialServiceCommandRevisions: {},
 		staleSystemdFiles: { files: [], systemUnits: [], userUnits: [] },
 	};
@@ -636,7 +620,6 @@ function prepareRuntimeEgressProjection(
 		workspaceRoot,
 		generatedAt,
 		egressProfileBundle,
-		appliedState,
 	} = context;
 	const egressProfileBundlePath = hasEnabledEgressProfiles(egressProfileBundle)
 		? writeEgressProfileBundle(egressProfileBundle, paths)
@@ -647,14 +630,6 @@ function prepareRuntimeEgressProjection(
 	requireV2EgressEngineReady(egressProfileBundlePath, egressEngine);
 	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths, secretValues);
-	const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
-	if (runtimeAuthToken) {
-		state.desiredDaemonAuthTokenRevision = daemonAuthTokenRevision(runtimeAuthToken);
-		state.desiredDaemonProgramRevision = daemonProgramRevision(manifest);
-		state.restartDaemon =
-			state.desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision ||
-			state.desiredDaemonProgramRevision !== appliedState?.daemonProgramRevision;
-	}
 	try {
 		withRuntimeUserFileAccess(
 			() => materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
@@ -667,8 +642,7 @@ function prepareRuntimeEgressProjection(
 			}`,
 		);
 	}
-	const egressSecretWrite = writeEgressSecretFile(manifest, secretValues, paths);
-	const egressSecretFile = egressSecretWrite.path;
+	const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths).path;
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const resolvedSystemdIdentity = resolveRuntimeSystemdIdentity({
 		paths,
@@ -707,18 +681,6 @@ function prepareRuntimeEgressProjection(
 			egress: egressSystemdProgram,
 		}),
 	);
-	const egressSidecarActive =
-		egressSystemdProgram !== null &&
-		egressIdentity !== null &&
-		state.runtimeSystemdUserPrograms.length > 0;
-	const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
-	if (egressSidecarActive) {
-		state.desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
-		state.restartEgressSidecar =
-			egressSecretWrite.changed ||
-			committedEgressSidecarSecretRevision === undefined ||
-			committedEgressSidecarSecretRevision !== state.desiredEgressSidecarSecretRevision;
-	}
 	return {
 		egressProfileBundlePath,
 		egressEngine,
@@ -920,7 +882,7 @@ function applyRuntimeEntryProjections(
 			);
 		}
 		try {
-			const channelConfigChanged = applyHostedChannelProjection(
+			applyHostedChannelProjection(
 				name,
 				observation,
 				manifest,
@@ -929,7 +891,6 @@ function applyRuntimeEntryProjections(
 				workspaceRoot,
 				hermesWhatsAppAuthDir,
 			);
-			if (channelConfigChanged) state.runtimeProjectionMutationRuntimes.add(name);
 		} catch (error) {
 			state.installErrors.push(
 				`runtime ${name} channel projection failed: ${
@@ -1019,35 +980,9 @@ function prepareRuntimeActivation(
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
 		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
-	const pendingOfficialUnits = new Set(officialServicePlan.pending.map((item) => item.unitName));
-	state.runtimeProjectionRestartUserUnits = [
-		...new Set(
-			state.runtimeSystemdUserPrograms
-				.filter(
-					(program) =>
-						program.programKind === "runtime" &&
-						program.service === null &&
-						state.runtimeProjectionMutationRuntimes.has(program.runtime),
-				)
-				.map(runtimeSystemdUserUnitName),
-		),
-	]
-		.filter((unitName) => !pendingOfficialUnits.has(unitName))
-		.sort();
 	// Agent Plugin mutations must precede every native service installer.
-	// The final activation below restarts the affected runtime units.
 	const appliedAgentPluginTransaction = state.agentPluginTransaction;
 	if (appliedAgentPluginTransaction?.hasMutations) {
-		const mutationRuntimes: ReadonlySet<string> = appliedAgentPluginTransaction.mutationRuntimes;
-		state.agentPluginRestartUserUnits = [
-			...new Set(
-				state.runtimeSystemdUserPrograms
-					.filter(
-						(program) => program.programKind === "runtime" && mutationRuntimes.has(program.runtime),
-					)
-					.map(runtimeSystemdUserUnitName),
-			),
-		].sort();
 		state.agentPluginMutationAttempted = true;
 	}
 	try {
@@ -1087,9 +1022,6 @@ function activateRuntimeServices(
 		opts.systemdApply
 	) {
 		const prerequisite = opts.systemdApply.activateEgressPrerequisite({
-			restartDaemon: state.restartDaemon,
-			restartEgressSidecar: state.restartEgressSidecar,
-			restartUserUnits: [],
 			staleSystemUnits: [],
 			staleUserUnits: [],
 		});
@@ -1097,6 +1029,13 @@ function activateRuntimeServices(
 			throw new Error("transparent-egress system prerequisites did not reach readiness");
 		}
 	}
+	const dependencyError = prepareOfficialRuntimeServiceDependencies(
+		state.runtimeSystemdUserPrograms,
+		officialServicePlan,
+		paths,
+		systemdUnits.egressSidecarActive ? paths.egressSystemCaFile : undefined,
+	);
+	if (dependencyError) throw new Error(dependencyError);
 
 	for (const item of officialServicePlan.pending) {
 		const unitPath = join(paths.systemdUserRoot, item.unitName);
@@ -1122,12 +1061,12 @@ function activateRuntimeServices(
 			);
 		}
 		if (error) throw new Error(error);
-		if (!item.commandRevision) {
-			throw new Error(`official ${item.unitName} command revision could not be verified`);
+		if (!item.serviceRevision) {
+			throw new Error(`official ${item.unitName} service revision could not be verified`);
 		}
-		officialServicePlan.commandRevisions[item.unitName] = item.commandRevision;
+		officialServicePlan.serviceRevisions[item.unitName] = item.serviceRevision;
 	}
-	state.officialServiceCommandRevisions = officialServicePlan.commandRevisions;
+	state.officialServiceCommandRevisions = officialServicePlan.serviceRevisions;
 	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 	}
@@ -1137,21 +1076,13 @@ function activateRuntimeServices(
 	);
 	if (opts.systemdApply) {
 		const activation = opts.systemdApply.activate({
-			restartDaemon: state.restartDaemon,
-			restartEgressSidecar: state.restartEgressSidecar,
-			restartUserUnits: [
-				...new Set([
-					...state.agentPluginRestartUserUnits,
-					...state.runtimeProjectionRestartUserUnits,
-				]),
-			].sort(),
 			staleSystemUnits: state.staleSystemdFiles.systemUnits,
 			staleUserUnits: state.staleSystemdFiles.userUnits,
 		});
-		state.systemdActivationApplied = activation.applied;
 		if (!activation.applied) {
 			throw new Error("systemd runtime services did not reach required readiness");
 		}
+		state.activated = activation.activated ?? {};
 		probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
 	}
 	let manifestLastGood: string | null = null;
@@ -1212,30 +1143,10 @@ function commitRuntimeConvergence(
 	egressProjection: RuntimeEgressProjection,
 	convergence: RuntimeConvergenceResult,
 ): void {
-	const { manifest, paths, opts, workspaceRoot, appliedState } = context;
+	const { manifest, paths, opts, workspaceRoot } = context;
 	if (state.installErrors.length > 0) return;
-	const daemonAuthTokenRevisionPreviouslyCommitted =
-		state.desiredDaemonAuthTokenRevision !== undefined &&
-		state.desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
-	const daemonProgramRevisionPreviouslyCommitted =
-		state.desiredDaemonProgramRevision !== undefined &&
-		state.desiredDaemonProgramRevision === appliedState?.daemonProgramRevision;
-	const egressRevisionPreviouslyCommitted =
-		state.desiredEgressSidecarSecretRevision !== undefined &&
-		state.desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 	opts.commitAuthority?.(convergence, {
-		...(state.desiredDaemonAuthTokenRevision !== undefined &&
-		(state.systemdActivationApplied || daemonAuthTokenRevisionPreviouslyCommitted)
-			? { daemonAuthTokenRevision: state.desiredDaemonAuthTokenRevision }
-			: {}),
-		...(state.desiredDaemonProgramRevision !== undefined &&
-		(state.systemdActivationApplied || daemonProgramRevisionPreviouslyCommitted)
-			? { daemonProgramRevision: state.desiredDaemonProgramRevision }
-			: {}),
-		...(state.desiredEgressSidecarSecretRevision !== undefined &&
-		(state.systemdActivationApplied || egressRevisionPreviouslyCommitted)
-			? { egressSidecarSecretRevision: state.desiredEgressSidecarSecretRevision }
-			: {}),
+		activated: state.activated,
 		officialServiceCommandRevisions: state.officialServiceCommandRevisions,
 	});
 	try {
