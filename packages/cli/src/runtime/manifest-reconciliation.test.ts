@@ -1194,10 +1194,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				systemdApply: {
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
-					quiesce: () => undefined,
-					rollback: () => {
-						throw new Error("isolated Agent Plugin failure must not roll back core");
-					},
 				},
 			},
 		);
@@ -1208,10 +1204,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 		expect(result.agentPluginFailedNames).toEqual(["acme.tools"]);
 		expect(authorityCommits).toBe(1);
-		expect(existsSync(join(paths.userHome, ".hermes", "plugins"))).toBe(false);
-		expect(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")).not.toContain(
-			"scan_on_install",
-		);
 	});
 
 	test.each([
@@ -3940,20 +3932,12 @@ installReservedManagedSkill(${JSON.stringify({
 			"openclaw-gateway.service.d",
 			"10-clawdi-hosted.conf",
 		);
-		const staleUserWant = join(paths.systemdUserRoot, "default.target.wants", "clawdi-old.service");
-		const staleDropInWant = join(
-			paths.systemdUserRoot,
-			"default.target.wants",
-			"openclaw-gateway.service",
-		);
 		const staleUserEnvironment = join(paths.systemdEnvRoot, "clawdi-old.service.env");
 		const staleDropInEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
 		const staleFiles = [
 			staleSystemUnit,
 			staleUserUnit,
 			staleDropIn,
-			staleUserWant,
-			staleDropInWant,
 			staleUserEnvironment,
 			staleDropInEnvironment,
 		];
@@ -3966,7 +3950,6 @@ installReservedManagedSkill(${JSON.stringify({
 			paths.systemdUserRoot,
 			paths.systemdEnvRoot,
 			dirname(staleDropIn),
-			dirname(staleUserWant),
 		]) {
 			chmodSync(path, 0o755);
 		}
@@ -4171,7 +4154,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("keeps the systemd enclave root-owned outside the UID 10001 installer boundary", () => {
+	test("keeps generated systemd files root-owned outside the UID 10001 installer boundary", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -4197,6 +4180,7 @@ exit 0
 			commandPath,
 			dirname(dirname(paths.systemdUserRoot)),
 			dirname(paths.systemdUserRoot),
+			wantsRoot,
 		];
 		const platformOwnedPaths = [
 			paths.systemdUserRoot,
@@ -4205,8 +4189,6 @@ exit 0
 			gatewayEnvironment,
 			dirname(dropInPath),
 			dropInPath,
-			wantsRoot,
-			enablementPath,
 		];
 		const skillProjectionLog = join(appRoot, "skill-projection-owners.log");
 
@@ -4264,7 +4246,7 @@ esac
 			chownSync(path, 0, 0);
 			chmodSync(path, 0o700);
 		}
-		for (const path of [enablementPath]) lchownSync(path, 0, 0);
+		lchownSync(enablementPath, runtimeUid, runtimeGid);
 		chmodSync(unitPath, 0o600);
 		chmodSync(unitBackupPath, 0o600);
 		chmodSync(dropInPath, 0o600);
@@ -4320,6 +4302,10 @@ esac
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
+		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
+		]);
 		for (const path of platformOwnedPaths) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
@@ -4332,9 +4318,6 @@ esac
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
 
-		rmSync(enablementPath);
-		symlinkSync("../unexpected.service", enablementPath);
-		lchownSync(enablementPath, 0, 0);
 		const installed = convergeRuntimeManifest(
 			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
 			paths,
@@ -4353,45 +4336,12 @@ esac
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
-		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
-
-		for (const path of runtimeOwnedPaths) chownSync(path, 0, 0);
-		const beforeRollback = new Map(
-			[...runtimeOwnedPaths, ...platformOwnedPaths].map(
-				(path) =>
-					[
-						path,
-						{
-							content: statSync(path).isFile() ? readFileSync(path) : null,
-							mode: statSync(path).mode & 0o777,
-						},
-					] as const,
-			),
-		);
-		const failed = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 3 }, "root-openclaw-ownership-rollback"),
-			paths,
-			{
-				cacheLastGood: false,
-				commitAuthority: () => {
-					throw new Error("injected ownership commit failure");
-				},
-				executeOfficialServiceInstallers: false,
-				hostedRuntimeContract,
-			},
-		);
-		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");
-		for (const [path, previous] of beforeRollback) {
-			const node = lstatSync(path);
-			const expectedOwner = platformOwnedPaths.includes(path) ? [0, 0] : [runtimeUid, runtimeGid];
-			expect([node.uid, node.gid]).toEqual(expectedOwner);
-			expect(node.mode & 0o777).toBe(previous.mode);
-			if (previous.content) expect(readFileSync(path)).toEqual(previous.content);
-		}
-		expect([statSync(paths.daemonAuthToken).uid, statSync(paths.daemonAuthToken).gid]).toEqual([
-			0, 0,
+		expect([statSync(wantsRoot).uid, statSync(wantsRoot).gid]).toEqual([runtimeUid, runtimeGid]);
+		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
 		]);
-		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
+		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

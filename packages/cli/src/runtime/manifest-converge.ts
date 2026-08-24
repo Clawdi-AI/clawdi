@@ -203,8 +203,7 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// Tenant HOME belongs to the runtime user except for declared platform
-	// enclaves. Ownership repair precedes snapshots by design.
+	// Tenant HOME belongs to the runtime user except for declared platform enclaves.
 	const platformEnclaves =
 		resolve(projectionHome) === resolve(paths.userHome)
 			? runtimeSystemdPlatformEnclaves(paths)
@@ -970,6 +969,14 @@ function prepareRuntimeActivation(
 		// Publish manager-readable modes before a native installer can reload or
 		// start its unit for the first time.
 		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
+	}
+	if (systemdUnits.userUnits.length > 0 || systemdUnits.staleFiles.userUnits.length > 0) {
+		enforceRuntimeUserOwnership(
+			runtimeUserDirectoryOwnership(join(paths.systemdUserRoot, "default.target.wants"), {
+				mode: 0o755,
+			}),
+			context.hostedRuntimeContract.identity,
+		);
 	}
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);

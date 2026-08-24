@@ -131,9 +131,7 @@ function nativePackage(prepared: PreparedHostedAgentPlugin): NativeAgentPluginPa
 
 interface NativeAgentPluginDriver {
 	runtime: HostedAgentPluginRuntime;
-	installRoot(): string;
 	installTarget(nativeId: string): string;
-	mutationStateTargets(): readonly string[];
 	observe(name: string, nativeId?: string): NativePluginObservation | null;
 	install(prepared: NativeAgentPluginPackage): NativePluginObservation;
 	setEnabled(observation: NativePluginObservation, enabled: boolean): void;
@@ -348,17 +346,7 @@ function createOpenClawDriver(input: {
 	};
 	return {
 		runtime: "openclaw",
-		installRoot: () => nativeInstallRoot(input.home, "openclaw"),
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "openclaw", nativeId),
-		mutationStateTargets() {
-			const database = join(input.home, ".openclaw", "state", "openclaw.sqlite");
-			return [
-				join(input.home, ".openclaw", "openclaw.json"),
-				database,
-				`${database}-wal`,
-				`${database}-shm`,
-			];
-		},
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
@@ -488,9 +476,7 @@ function createHermesDriver(input: {
 	};
 	return {
 		runtime: "hermes",
-		installRoot: () => nativeInstallRoot(input.home, "hermes"),
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "hermes", nativeId),
-		mutationStateTargets: () => [join(input.home, ".hermes", "config.yaml")],
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
@@ -631,8 +617,6 @@ interface PlannedMutation {
 
 export interface HostedAgentPluginTransaction {
 	readonly mutationNames: readonly string[];
-	readonly snapshotTargets: readonly string[];
-	readonly mutationRuntimes: ReadonlySet<HostedAgentPluginRuntime>;
 	readonly hasMutations: boolean;
 	apply(): HostedAgentPluginReceipt | null;
 }
@@ -686,17 +670,12 @@ export function prepareHostedAgentPluginTransaction(input: {
 	}
 
 	const mutations: PlannedMutation[] = [];
-	const snapshotTargets = new Set<string>();
-	const snapshotInstallRoots = new Set<string>();
 	const resolvedNativeIds = new Map<string, string>();
 	for (const slot of [...slots.values()].sort((left, right) =>
 		`${left.runtime}\0${left.name}`.localeCompare(`${right.runtime}\0${right.name}`),
 	)) {
 		const driver = driverFor(slot.runtime);
 		const nativeId = slot.previous?.nativeId ?? null;
-		if (nativeId) snapshotTargets.add(driver.installTarget(nativeId));
-		else snapshotInstallRoots.add(driver.installRoot());
-		for (const target of driver.mutationStateTargets()) snapshotTargets.add(target);
 		const before = driver.observe(slot.name, nativeId ?? undefined);
 		if (nativeId && !before && nativeInstallTargetNames(input.home, slot.runtime).has(nativeId)) {
 			throw new Error("refusing to replace an unmanaged native Agent Plugin target");
@@ -735,17 +714,8 @@ export function prepareHostedAgentPluginTransaction(input: {
 			action: before ? "replace" : "install",
 		});
 	}
-	for (const root of snapshotInstallRoots) {
-		for (const target of snapshotTargets) {
-			if (target.startsWith(`${root}/`)) snapshotTargets.delete(target);
-		}
-		snapshotTargets.add(root);
-	}
-
 	return {
 		mutationNames: [...new Set(mutations.map((mutation) => mutation.name))].sort(),
-		snapshotTargets: [...snapshotTargets].sort(),
-		mutationRuntimes: new Set(mutations.map((mutation) => mutation.runtime)),
 		hasMutations: mutations.length > 0,
 		apply() {
 			const installTargetsBefore = new Map<HostedAgentPluginRuntime, Set<string>>();

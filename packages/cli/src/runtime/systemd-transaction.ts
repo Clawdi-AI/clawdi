@@ -35,7 +35,6 @@ interface CommandResult {
 }
 
 export const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
-export const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 export const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const NON_TRANSACTIONAL_SYSTEM_UNITS = new Set([RUNTIME_WATCH_SYSTEM_UNIT]);
 

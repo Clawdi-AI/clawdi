@@ -82,14 +82,13 @@ export interface RuntimePaths {
 
 export function runtimeSystemdPlatformEnclaves(
 	paths: Pick<RuntimePaths, "systemdUserRoot" | "userHome">,
-): Array<{ path: string; owner: "root" }> {
+): Array<{ path: string; owner: "runtime-user" | "root" }> {
 	return [
 		// systemd requires user units below HOME. This root contains base units and
-		// backups, Clawdi drop-ins, and default.target enablement links. Preserving
-		// root-owned pre-images is required for rollback and generated-file authority.
+		// Clawdi drop-ins under generated-file authority.
 		{ path: paths.systemdUserRoot, owner: "root" },
-		// OpenClaw's installer writes this private environment file in HOME. Clawdi
-		// must snapshot and restore a root-owned pre-image without first adopting it.
+		{ path: join(paths.systemdUserRoot, "default.target.wants"), owner: "runtime-user" },
+		// OpenClaw's installer writes this private environment file in HOME.
 		{ path: join(paths.userHome, ".openclaw", "gateway.systemd.env"), owner: "root" },
 	];
 }

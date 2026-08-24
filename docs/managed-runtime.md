@@ -294,10 +294,7 @@ that boundary convergent in both directions:
   cleanup.
 - Systemd apply is a commit prerequisite. A rendered unit that cannot reach its
   required active/enabled state, or a stale unit that cannot reach its required
-  inactive/disabled state, fails the apply. Synchronous failure restores the
-  exact plan-derived filesystem pre-images and reconciles systemd to that
-  restored set; it never applies a partially rendered generation merely because
-  another convergence step reported an error.
+  inactive/disabled state, fails the apply.
 
 An official installer failure reports its exit code, terminating signal or
 spawn error, and bounded stdout/stderr tails. Capture is capped at 64 KiB per
@@ -306,8 +303,7 @@ removed and known secret values, credentials, URL parameters, and environment
 assignments are redacted. For an installer with a JSON contract, Clawdi
 allowlists only `error`, `message`, `hints`, and `warnings`; it never projects
 the rest of the installer response, a runtime manifest, or process environment.
-The failure still aborts Apply before authority commits and uses the existing
-filesystem/systemd rollback transaction.
+The failure still aborts Apply before authority commits.
 
 Runtime `--version` probes use a 10-second deadline, official service installs
 use 10 minutes, official service uninstalls use 2 minutes, and their preparatory
@@ -351,16 +347,12 @@ private `.staging-*` directory, verifies the exact SHA256, then atomically renam
 or non-directories. The service's unit-private bind mount runs the pinned
 version/commit probe in `ExecStartPre=` before executing the content-addressed candidate, and
 garbage-collects older candidates only after applied authority commits. The
-existing manifest snapshot covers the desired candidate, root-authored
-configuration handoff, install receipt, systemd unit/environment file, and applied
-state, so a download, verification, systemd, or readiness failure restores the
-previous exact pre-image. There is no separate active/previous link state or
-hand-built chroot.
+candidate has no separate active/previous link state or hand-built chroot.
 
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,
-`0700` directories, and dotfiles. Before snapshots, reconciliation repairs
-tenant-home ownership recursively except for declared platform enclaves:
+`0700` directories, and dotfiles. Reconciliation repairs tenant-home ownership
+recursively except for declared platform enclaves:
 `$HOME/.config/systemd/user` and OpenClaw's
 `$HOME/.openclaw/gateway.systemd.env`. The same ownership enforcer repairs
 non-root drift inside those enclaves back to root while repairing root drift
@@ -419,7 +411,7 @@ the [user-default and permission fields](https://github.com/gtsteffaniak/filebro
 and the [non-admin profile update boundary](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/users.go),
 plus the documented
 [systemd execution sandbox](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
-Repository tests verify the manifest, rollback, and systemd sandbox contracts.
+Repository tests verify the manifest and systemd sandbox contracts.
 
 Done: `bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts`
 and the focused backend runtime-manifest tests exit 0.
@@ -899,20 +891,6 @@ confirms the installed version and enabled state and the controlled install
 directory hashes to the receipt digest; Hermes hashing ignores only its
 top-level generated `.git` metadata. Removal disables and uninstalls only a
 receipt-owned plugin.
-
-Live package mutation precedes the runtime's official gateway installer and
-final systemd activation. Once native mutation intent is known, only the
-affected runtime user units are quiesced; the adapter then captures the exact
-native package directories, runtime plugin configuration, receipt, and
-OpenClaw SQLite/WAL/SHM preimage before applying any native mutation. Any
-package change forces those units through final restart and readiness even when
-their unit/config revision did not change. A package mutation or receipt
-failure restores that resource preimage while the affected units remain
-stopped, then lets core config, official services, and final readiness continue.
-A later core failure after package success makes the outer filesystem/systemd
-transaction restore the whole candidate. Unrelated units are not globally
-quiesced when systemd remains pristine. The plugin receipt advances only with
-native state; snapshot rollback errors remain core failures.
 
 Online preparation stores verified archives in private ownership-keyed cache
 entries. Failed preparation removes entries first created by that attempt.
@@ -1410,16 +1388,6 @@ Hosted convergence never writes `~/.clawdi`. Before launch it removes legacy
 exactly `clawdi runtime init`, then removes the directories only if empty.
 Unmarked files, non-regular files, and symlinks are never adopted or removed.
 
-Each reconciliation plan declares the exact managed root and runtime-user file
-targets it may mutate. Before any command that can change live state, Apply
-captures complete in-memory pre-images for those targets, including absence,
-regular-file bytes or symlink target, mode, uid, gid, and directory metadata.
-A synchronous failure restores that same bounded set and then reconciles
-systemd to the restored files. It never snapshots `$HOME` or a runtime-user
-tree. A process crash has no durable rollback journal: the next cycle converges
-forward from durable authority. If committed egress secret material cannot be
-verified during synchronous compensation, the derived secret file is removed,
-the sidecar is stopped fail-closed, and independent units still reconcile.
 Directory trust checks remain mandatory: every root-managed directory must be
 a real, root-owned directory without group/world write permission before Apply
 begins.
@@ -1515,10 +1483,9 @@ EnvironmentFile=/run/clawdi/systemd/env/openclaw-gateway.service.env
 are deliberately absent from the Clawdi-owned drop-in.
 
 The gateway environment file contains only desired runtime/provider
-environment, any required CA trust variables, and `CLAWDI_RUNTIME_REV`. It does
-not add `HOME`, `PATH`, `TZ`, `CLAWDI_HOME`, or `CLAWDI_AUTH_TOKEN`; the
-OpenClaw gateway token is also absent because the official config and installer
-own it.
+environment and any required CA trust variables. It does not add `HOME`,
+`PATH`, `TZ`, `CLAWDI_HOME`, or `CLAWDI_AUTH_TOKEN`; the OpenClaw gateway token
+is also absent because the official config and installer own it.
 
 When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
 interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
@@ -1702,7 +1669,7 @@ fallback for environments that reject custom WebSocket subprotocols.
 
 - Cache only manifests that validate and converge without core install or
   projection errors. A retryable Skill or Agent Plugin error may cache the
-  committed core desired state after its resource preimage is restored.
+  committed core desired state.
 - Use ETags for remote refreshes where the datasource supports them.
 - Offline boot is allowed only when `recovery.allowOfflineBoot` is true and the
   cached manifest does not require missing secret values. Its root-only secret

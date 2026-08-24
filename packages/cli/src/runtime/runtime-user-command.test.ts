@@ -503,6 +503,7 @@ test("enforces root ownership inside platform enclaves and runtime ownership out
 		const platformEnclaves = runtimeSystemdPlatformEnclaves({ userHome: home, systemdUserRoot });
 		expect(platformEnclaves).toEqual([
 			{ path: systemdUserRoot, owner: "root" },
+			{ path: wants, owner: "runtime-user" },
 			{ path: gatewayEnvironment, owner: "root" },
 		]);
 
@@ -511,16 +512,7 @@ test("enforces root ownership inside platform enclaves and runtime ownership out
 			runtimeUserDirectoryOwnership(home, { recursive: true, platformEnclaves }),
 		);
 
-		for (const path of [
-			systemdUserRoot,
-			unit,
-			dirname(dropIn),
-			dropIn,
-			wants,
-			enablement,
-			enclaveLink,
-			gatewayEnvironment,
-		]) {
+		for (const path of [systemdUserRoot, unit, dirname(dropIn), dropIn, gatewayEnvironment]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
@@ -531,6 +523,9 @@ test("enforces root ownership inside platform enclaves and runtime ownership out
 			dirname(gatewayEnvironment),
 			dirname(tenantFile),
 			tenantFile,
+			wants,
+			enablement,
+			enclaveLink,
 		]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual(expectedRuntimeOwner);

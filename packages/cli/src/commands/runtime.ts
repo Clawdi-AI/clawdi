@@ -57,6 +57,7 @@ import {
 } from "../runtime/manifest";
 import {
 	hostedRuntimeBundleV2Schema,
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
@@ -140,6 +141,7 @@ interface RuntimeApplyOptions {
 	continueOnCliUpdateError?: boolean;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
+	preparedCliUpdate?: RuntimeCliUpdateResult;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSkill>;
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
@@ -148,7 +150,7 @@ interface RuntimeApplyOptions {
 
 export type RuntimeManifestApplyOptions = Omit<
 	RuntimeApplyOptions,
-	"authorityCommit" | "requireSystemdApplied"
+	"authorityCommit" | "preparedCliUpdate" | "requireSystemdApplied"
 >;
 
 interface RuntimeWatchFailureBackoff {
@@ -1181,17 +1183,19 @@ async function applyRuntimeDesiredState(
 	const resourcePreparationFailures: RuntimeResourcePreparationFailures = {};
 	let preservePreparedAgentPluginArchives = false;
 	try {
-		let cliUpdate: RuntimeCliUpdateResult;
-		try {
-			cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
-				runningVersion: ACTIVE_CLI_VERSION,
-			});
-		} catch (error) {
-			if (!opts.continueOnCliUpdateError) throw error;
-			return {
-				kind: "cli_update_failed",
-				cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
-			};
+		let cliUpdate = opts.preparedCliUpdate;
+		if (!cliUpdate) {
+			try {
+				cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
+					runningVersion: ACTIVE_CLI_VERSION,
+				});
+			} catch (error) {
+				if (!opts.continueOnCliUpdateError) throw error;
+				return {
+					kind: "cli_update_failed",
+					cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
+				};
+			}
 		}
 		if (cliUpdate.status === "error") {
 			if (!opts.continueOnCliUpdateError) {
@@ -1324,6 +1328,37 @@ async function applyRuntimeDesiredState(
 				},
 			},
 		});
+		if (
+			convergence.installErrors.length > 0 &&
+			load.source !== "last-good-cache" &&
+			load.applyContext
+		) {
+			const committed = loadCommittedRuntimeManifest(paths, load.applyContext);
+			if ("errors" in committed) {
+				convergence.installErrors.push(`last-good replay failed: ${committed.errors.join("; ")}`);
+			} else {
+				const replayOptions = { ...opts, preparedCliUpdate: cliUpdate };
+				delete replayOptions.authorityCommit;
+				delete replayOptions.preparedHostedAgentPlugins;
+				delete replayOptions.preparedHostedSourcedSkills;
+				const replay = await applyRuntimeDesiredState(committed, paths, replayOptions);
+				if (replay.kind !== "converged") {
+					convergence.installErrors.push(
+						`last-good replay failed: runtime ${replay.kind.replaceAll("_", " ")}`,
+					);
+				} else {
+					const replayErrors = [
+						...replay.convergence.installErrors,
+						...replay.convergence.resourceProjectionErrors,
+					];
+					if (replayErrors.length > 0) {
+						convergence.installErrors.push(`last-good replay failed: ${replayErrors.join("; ")}`);
+					} else {
+						systemdApply = replay.systemdApply;
+					}
+				}
+			}
+		}
 		if (convergence.installErrors.length === 0) {
 			preservePreparedAgentPluginArchives = true;
 			try {
