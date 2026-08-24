@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.16
+
+Package: `clawdi@0.14.16`
+
+### Fixed
+
+- Bundled Skill staging on hosts with a root-only platform state root: tree verification now stages the platform source as root and only reads the tenant tree as the runtime user. Hosts stuck on "prepared bundled Skill could not be staged" self-heal on upgrade.
+- Managed Skill staging errors now carry the underlying cause, errno, and path.
+
 ## Clawdi CLI v0.14.15
 
 Package: `clawdi@0.14.15`
