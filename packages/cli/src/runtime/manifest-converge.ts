@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
 import { removeHostedCliPathExposure } from "./cli-update";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
@@ -15,7 +15,6 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import {
 	createOpenClawHostedContext,
-	hostedOpenClawRuntimeUserOwnership,
 	repairHostedOpenClawConfig,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
@@ -88,7 +87,7 @@ import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
-import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
+import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
 import {
@@ -105,13 +104,8 @@ import {
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import {
-	enforceRuntimeUserOwnership,
-	enforceRuntimeUserSystemdManagerAccess,
+	ensureRuntimeUserHomeOwnership,
 	executableExists,
-	makeRuntimeUserOwned,
-	runtimePlatformEnclaveOwnership,
-	runtimeUserDirectoryOwnership,
-	runtimeUserExistingOwnership,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 import { ensureRuntimePlatformDirectory } from "./state";
@@ -128,7 +122,6 @@ interface RuntimeConvergenceContext {
 	applyContext: NonNullable<RuntimeManifestLoad["applyContext"]>;
 	hostedRuntimeContract: ReturnType<typeof assertHostedRuntimeContract>;
 	projectionHome: string;
-	platformEnclaves: ReturnType<typeof runtimeSystemdPlatformEnclaves>;
 	openClawContext: ReturnType<typeof createOpenClawHostedContext>;
 	hermesWhatsAppAuthDir: string | null;
 	workspaceRoot: string;
@@ -203,21 +196,20 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// Tenant HOME belongs to the runtime user except for declared platform enclaves.
-	const platformEnclaves =
-		resolve(projectionHome) === resolve(paths.userHome)
-			? runtimeSystemdPlatformEnclaves(paths)
-			: [];
-	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
-		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
+	// SUNSET: remove the recursive migration after every 0.13.92/0.14.14 host has
+	// converged once; those releases could leave tenant HOME trees root-owned.
+	ensureRuntimeUserHomeOwnership(projectionHome, hostedRuntimeContract.identity);
+	if (manifest.runtimes.openclaw?.enabled === true) {
+		withRuntimeUserFileAccess(() => {
+			for (const path of [
+				join(projectionHome, ".openclaw"),
+				join(projectionHome, ".openclaw", "tmp"),
+			]) {
+				mkdirSync(path, { recursive: true });
+				chmodSync(path, 0o700);
+			}
+		}, hostedRuntimeContract.identity);
 	}
-	enforceRuntimeUserOwnership(
-		[
-			...runtimeUserDirectoryOwnership(projectionHome, { recursive: true, platformEnclaves }),
-			...hostedOpenClawRuntimeUserOwnership(manifest, projectionHome),
-		],
-		hostedRuntimeContract.identity,
-	);
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
 	removeHostedCliPathExposure(paths);
@@ -267,7 +259,7 @@ function initializeRuntimeConvergence(
 		openClawOwnerBrowserBootstrapSupported: false,
 		activated: {},
 		officialServiceCommandRevisions: {},
-		staleSystemdFiles: { files: [], systemUnits: [], userUnits: [] },
+		staleSystemdFiles: { platformFiles: [], userFiles: [], systemUnits: [], userUnits: [] },
 	};
 	if (opts.resourcePreparationFailures?.sourcedSkills) {
 		state.resourceProjectionErrors.push(opts.resourcePreparationFailures.sourcedSkills);
@@ -288,7 +280,6 @@ function initializeRuntimeConvergence(
 			applyContext,
 			hostedRuntimeContract,
 			projectionHome,
-			platformEnclaves,
 			openClawContext,
 			hermesWhatsAppAuthDir,
 			workspaceRoot,
@@ -375,7 +366,6 @@ function prepareRuntimeConvergencePlan(
 		manifest,
 		paths,
 		projectionHome,
-		openClawContext,
 		secretValues,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
@@ -411,25 +401,10 @@ function prepareRuntimeConvergencePlan(
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	try {
-		validateRuntimeSystemdPlan(plannedRuntimePrograms, paths);
+		validateRuntimeSystemdPlan(plannedRuntimePrograms);
 	} catch (error) {
 		state.installErrors.push(error instanceof Error ? error.message : String(error));
 		return { result: runtimeConvergenceFailure(context, state) };
-	}
-	if (openClawContext.managedApiKeyProjection) {
-		try {
-			const observation = state.observations.get("openclaw");
-			if (!observation?.commandPath) {
-				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
-			}
-			ensureManagedOpenClawProviderPlugin({
-				context: openClawContext,
-				commandPath: observation.commandPath,
-			});
-		} catch (error) {
-			state.installErrors.push(error instanceof Error ? error.message : String(error));
-			return { result: runtimeConvergenceFailure(context, state) };
-		}
 	}
 	return {
 		plan: {
@@ -456,127 +431,122 @@ function prepareRuntimeApplyDependencies(
 	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
 	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
 	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
-	const openClawObservation = state.observations.get("openclaw");
-	if (openClawObservation) {
-		try {
-			ensureHostedOpenClawProviderAuthCapability({
-				manifest,
-				secretValues,
-				context: openClawContext,
-			});
-		} catch (error) {
-			state.installErrors.push(
-				`runtime openclaw credential capability check failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-	}
-	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-	const managedOpenClawObservation = state.observations.get("openclaw");
-	if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
-		openClawContext.agentDirs.managed =
-			discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
-		if (openClawContext.agentDirs.managed.length > 0) {
-			enforceRuntimeUserOwnership(
-				runtimeUserExistingOwnership(openClawContext.agentDirs.managed),
-				hostedRuntimeContract.identity,
-			);
-		}
-	}
-	if (opts.preparedHostedAgentPlugins) {
-		const commands = hostedAgentPluginCommands(projectionHome);
-		let planned: ReturnType<typeof planHostedAgentPluginConvergence>;
-		try {
-			planned = planHostedAgentPluginConvergence({
-				prepared: opts.preparedHostedAgentPlugins,
-				home: projectionHome,
-				commands,
-				...(opts.hostedAgentPluginCommandRunner
-					? { runner: opts.hostedAgentPluginCommandRunner }
-					: {}),
-			});
-		} catch (error) {
-			for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
-				state.agentPluginFailedNames.add(name);
-			}
-			state.resourceProjectionErrors.push(
-				`runtime Agent Plugin projection planning failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-			planned = { transaction: null };
-		}
-		state.agentPluginTransaction = planned.transaction;
-		if (state.agentPluginTransaction?.hasMutations && !opts.systemdApply) {
-			throw new Error("Agent Plugin mutations require systemd activation and readiness");
-		}
-	}
-
 	let codexCli: Record<string, string> | null = null;
-	if (manifest.projection?.terminalTooling?.codex) {
-		try {
-			codexCli = ensureHostedCodexCli(paths);
-		} catch (error) {
-			state.installErrors.push(
-				`runtime codex setup failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
-	for (const [name] of runtimeEntries) {
-		const observation = state.observations.get(name);
-		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
-		try {
-			installHostedChannelProjectionDependencies(
-				name,
-				observation,
-				manifest,
-				projectionHome,
-				paths.userHome,
-			);
-		} catch (error) {
-			state.installErrors.push(
-				`runtime ${name} channel plugin install failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-	}
-	const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
-	try {
-		const observation = managedWhatsAppRuntime
-			? state.observations.get(managedWhatsAppRuntime)
-			: undefined;
-		if (managedWhatsAppRuntime && !observation?.appRoot) {
-			throw new Error(`runtime ${managedWhatsAppRuntime} artifact root is unavailable`);
-		}
-		const compatibility = reconcileManagedBaileysCompatibility({
-			desiredRuntime: managedWhatsAppRuntime,
-			home: projectionHome,
-			...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
-		});
-		if (compatibility.status === "rollback-refused") {
-			throw new Error(compatibility.errors.join(", "));
-		}
-	} catch (error) {
-		const operation = managedWhatsAppRuntime
-			? `runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility`
-			: "runtime managed WhatsApp compatibility cleanup";
-		state.installErrors.push(
-			`${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(paths.userHome),
-		hostedRuntimeContract.identity,
-	);
-	ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 	withRuntimeUserFileAccess(() => {
+		const openClawObservation = state.observations.get("openclaw");
+		if (openClawObservation) {
+			try {
+				ensureHostedOpenClawProviderAuthCapability({
+					manifest,
+					secretValues,
+					context: openClawContext,
+				});
+			} catch (error) {
+				state.installErrors.push(
+					`runtime openclaw credential capability check failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
+		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
+		const managedOpenClawObservation = state.observations.get("openclaw");
+		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
+			openClawContext.agentDirs.managed =
+				discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
+			if (!managedOpenClawObservation.commandPath) {
+				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
+			}
+			ensureManagedOpenClawProviderPlugin({
+				context: openClawContext,
+				commandPath: managedOpenClawObservation.commandPath,
+			});
+		}
+		if (opts.preparedHostedAgentPlugins) {
+			const commands = hostedAgentPluginCommands(projectionHome);
+			let planned: ReturnType<typeof planHostedAgentPluginConvergence>;
+			try {
+				planned = planHostedAgentPluginConvergence({
+					prepared: opts.preparedHostedAgentPlugins,
+					home: projectionHome,
+					commands,
+					...(opts.hostedAgentPluginCommandRunner
+						? { runner: opts.hostedAgentPluginCommandRunner }
+						: {}),
+				});
+			} catch (error) {
+				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
+					state.agentPluginFailedNames.add(name);
+				}
+				state.resourceProjectionErrors.push(
+					`runtime Agent Plugin projection planning failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+				planned = { transaction: null };
+			}
+			state.agentPluginTransaction = planned.transaction;
+			if (state.agentPluginTransaction?.hasMutations && !opts.systemdApply) {
+				throw new Error("Agent Plugin mutations require systemd activation and readiness");
+			}
+		}
+
+		if (manifest.projection?.terminalTooling?.codex) {
+			try {
+				codexCli = ensureHostedCodexCli(paths);
+			} catch (error) {
+				state.installErrors.push(
+					`runtime codex setup failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
+		for (const [name] of runtimeEntries) {
+			const observation = state.observations.get(name);
+			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+			try {
+				installHostedChannelProjectionDependencies(
+					name,
+					observation,
+					manifest,
+					projectionHome,
+					paths.userHome,
+				);
+			} catch (error) {
+				state.installErrors.push(
+					`runtime ${name} channel plugin install failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
+		const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
+		try {
+			const observation = managedWhatsAppRuntime
+				? state.observations.get(managedWhatsAppRuntime)
+				: undefined;
+			if (managedWhatsAppRuntime && !observation?.appRoot) {
+				throw new Error(`runtime ${managedWhatsAppRuntime} artifact root is unavailable`);
+			}
+			const compatibility = reconcileManagedBaileysCompatibility({
+				desiredRuntime: managedWhatsAppRuntime,
+				home: projectionHome,
+				...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
+			});
+			if (compatibility.status === "rollback-refused") {
+				throw new Error(compatibility.errors.join(", "));
+			}
+		} catch (error) {
+			const operation = managedWhatsAppRuntime
+				? `runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility`
+				: "runtime managed WhatsApp compatibility cleanup";
+			state.installErrors.push(
+				`${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		mkdirSync(workspaceRoot, { recursive: true });
-		makeRuntimeUserOwned(workspaceRoot);
 	}, hostedRuntimeContract.identity);
+	ensureRuntimeUserCliStateRoot(paths.clawdiHome, hostedRuntimeContract.identity);
 	ensureRuntimePlatformDirectory(paths, paths.managedSecretRoot);
 	makeManagedSecretRoot(paths.managedSecretRoot);
 	ensureRuntimePlatformDirectory(paths, paths.egressRoot, { mode: 0o711 });
@@ -584,10 +554,6 @@ function prepareRuntimeApplyDependencies(
 	makeEgressIdentityPrivateDir(paths.egressCaDir);
 	ensureRuntimePlatformDirectory(paths, dirname(paths.egressSystemCaFile), { mode: 0o711 });
 	chmodSync(dirname(paths.egressSystemCaFile), 0o711);
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(paths.egressScratchRoot, { mode: 0o700 }),
-		hostedRuntimeContract.identity,
-	);
 	return codexCli;
 }
 
@@ -629,18 +595,19 @@ function prepareRuntimeEgressProjection(
 	requireV2EgressEngineReady(egressProfileBundlePath, egressEngine);
 	const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 	const daemonAuthTokenFile = writeDaemonAuthToken(paths, secretValues);
-	try {
-		withRuntimeUserFileAccess(
-			() => materializeHostedChannelCredentials(manifest, secretValues, projectionHome),
-			hostedRuntimeContract.identity,
-		);
-	} catch (error) {
-		state.installErrors.push(
-			`runtime channel credential materialization failed: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-	}
+	let liveSyncEnvironments: string[] = [];
+	withRuntimeUserFileAccess(() => {
+		try {
+			materializeHostedChannelCredentials(manifest, secretValues, projectionHome);
+		} catch (error) {
+			state.installErrors.push(
+				`runtime channel credential materialization failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+		liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
+	}, hostedRuntimeContract.identity);
 	const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths).path;
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const resolvedSystemdIdentity = resolveRuntimeSystemdIdentity({
@@ -666,7 +633,6 @@ function prepareRuntimeEgressProjection(
 		egressUid,
 		egressGid,
 	});
-	const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 	const writtenRunConfigIds = new Set<string>();
 	state.runtimeSystemdUserPrograms.push(
 		...planRuntimeSystemdUserPrograms({
@@ -843,72 +809,74 @@ function applyRuntimeEntryProjections(
 				);
 			}
 		}
-		try {
-			const localeFile = applyHostedRuntimeConfigProjection(
-				name,
-				observation,
+		const resolved = withRuntimeUserFileAccess(() => {
+			try {
+				const localeFile = applyHostedRuntimeConfigProjection(
+					name,
+					observation,
+					manifest,
+					projectionHome,
+					plan.openClawWorkspaceRoot,
+					workspaceRoot,
+				);
+				if (localeFile) state.managedLocaleFiles.push(localeFile);
+			} catch (error) {
+				state.installErrors.push(
+					`runtime ${name} config projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			try {
+				const providerProjection = applyHostedAiProviderProjection(
+					name,
+					observation,
+					manifest,
+					secretValues,
+					projectionHome,
+					openClawContext,
+					workspaceRoot,
+					previousProjectedProviderIds[name] ?? [],
+					state.openClawOwnerBrowserBootstrapSupported,
+				);
+				state.projectedProviderIds[name] = providerProjection.providerIds;
+			} catch (error) {
+				state.installErrors.push(
+					`runtime ${name} provider projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			try {
+				applyHostedChannelProjection(
+					name,
+					observation,
+					manifest,
+					projectionHome,
+					openClawContext,
+					workspaceRoot,
+					hermesWhatsAppAuthDir,
+				);
+			} catch (error) {
+				state.installErrors.push(
+					`runtime ${name} channel projection failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+			if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
+			return resolveRuntimeRunConfigs({
 				manifest,
-				projectionHome,
-				plan.openClawWorkspaceRoot,
+				paths,
+				name,
+				runtime,
+				observation,
 				workspaceRoot,
-			);
-			if (localeFile) state.managedLocaleFiles.push(localeFile);
-		} catch (error) {
-			state.installErrors.push(
-				`runtime ${name} config projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		try {
-			const providerProjection = applyHostedAiProviderProjection(
-				name,
-				observation,
-				manifest,
+				generatedAt,
 				secretValues,
-				projectionHome,
-				openClawContext,
-				workspaceRoot,
-				previousProjectedProviderIds[name] ?? [],
-				state.openClawOwnerBrowserBootstrapSupported,
-			);
-			state.projectedProviderIds[name] = providerProjection.providerIds;
-		} catch (error) {
-			state.installErrors.push(
-				`runtime ${name} provider projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		try {
-			applyHostedChannelProjection(
-				name,
-				observation,
-				manifest,
-				projectionHome,
-				openClawContext,
-				workspaceRoot,
-				hermesWhatsAppAuthDir,
-			);
-		} catch (error) {
-			state.installErrors.push(
-				`runtime ${name} channel projection failed: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-		}
-		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-		const resolved = resolveRuntimeRunConfigs({
-			manifest,
-			paths,
-			name,
-			runtime,
-			observation,
-			workspaceRoot,
-			generatedAt,
-			secretValues,
-			egressProfileBundlePath: egressProjection.egressProfileBundlePath,
-		});
+				egressProfileBundlePath: egressProjection.egressProfileBundlePath,
+			});
+		}, context.hostedRuntimeContract.identity);
 		const runConfigPath = writeRuntimeRunConfig(resolved.runtime, paths);
 		state.runConfigs.push(runConfigPath);
 		egressProjection.writtenRunConfigIds.add(runtimeRunConfigId(resolved.runtime.runtime));
@@ -933,15 +901,7 @@ function prepareRuntimeActivation(
 	egressProjection: RuntimeEgressProjection,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 ): RuntimeActivationPlan {
-	const {
-		manifest,
-		paths,
-		opts,
-		platformEnclaves,
-		secretValues,
-		hermesWhatsAppAuthDir,
-		workspaceRoot,
-	} = context;
+	const { manifest, paths, opts, secretValues, hermesWhatsAppAuthDir, workspaceRoot } = context;
 	const systemdUnits = writeRuntimeSystemdState({
 		runtimePrograms: state.runtimeSystemdUserPrograms,
 		egressProgram: egressProjection.egressSystemdProgram,
@@ -964,20 +924,6 @@ function prepareRuntimeActivation(
 			),
 		commonEnvironment: egressProjection.commonSystemdEnvironment,
 	});
-	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
-		// Candidate files are written under the root service's private umask.
-		// Publish manager-readable modes before a native installer can reload or
-		// start its unit for the first time.
-		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
-	}
-	if (systemdUnits.userUnits.length > 0 || systemdUnits.staleFiles.userUnits.length > 0) {
-		enforceRuntimeUserOwnership(
-			runtimeUserDirectoryOwnership(join(paths.systemdUserRoot, "default.target.wants"), {
-				mode: 0o755,
-			}),
-			context.hostedRuntimeContract.identity,
-		);
-	}
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
 	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
@@ -1021,7 +967,7 @@ function activateRuntimeServices(
 	state: RuntimeConvergenceState,
 	activationPlan: RuntimeActivationPlan,
 ): RuntimeActivationOutputs {
-	const { load, manifest, paths, opts, hostedRuntimeContract, platformEnclaves } = context;
+	const { load, manifest, paths, opts, hostedRuntimeContract } = context;
 	const { officialServicePlan, systemdUnits } = activationPlan;
 	if (
 		officialServicePlan.pending.length > 0 &&
@@ -1045,28 +991,7 @@ function activateRuntimeServices(
 	if (dependencyError) throw new Error(dependencyError);
 
 	for (const item of officialServicePlan.pending) {
-		const unitPath = join(paths.systemdUserRoot, item.unitName);
-		const installerOwnership = [
-			...runtimeUserDirectoryOwnership(paths.systemdUserRoot),
-			...runtimeUserExistingOwnership([
-				unitPath,
-				`${unitPath}.bak`,
-				...(item.program.runtime === "openclaw"
-					? [join(paths.userHome, ".openclaw", "gateway.systemd.env")]
-					: []),
-			]),
-		];
-		let error: string | null;
-		try {
-			enforceRuntimeUserOwnership(installerOwnership, hostedRuntimeContract.identity);
-			error = installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
-		} finally {
-			enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
-			enforceRuntimeUserOwnership(
-				runtimePlatformEnclaveOwnership(platformEnclaves),
-				hostedRuntimeContract.identity,
-			);
-		}
+		const error = installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
 		if (error) throw new Error(error);
 		if (!item.serviceRevision) {
 			throw new Error(`official ${item.unitName} service revision could not be verified`);
@@ -1074,13 +999,6 @@ function activateRuntimeServices(
 		officialServicePlan.serviceRevisions[item.unitName] = item.serviceRevision;
 	}
 	state.officialServiceCommandRevisions = officialServicePlan.serviceRevisions;
-	if (platformEnclaves.some((enclave) => enclave.path === paths.systemdUserRoot)) {
-		enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
-	}
-	enforceRuntimeUserOwnership(
-		runtimePlatformEnclaveOwnership(platformEnclaves),
-		hostedRuntimeContract.identity,
-	);
 	if (opts.systemdApply) {
 		const activation = opts.systemdApply.activate({
 			staleSystemUnits: state.staleSystemdFiles.systemUnits,

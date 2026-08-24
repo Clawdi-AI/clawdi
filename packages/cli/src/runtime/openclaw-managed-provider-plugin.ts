@@ -10,7 +10,7 @@ import {
 	type OpenClawHostedContext,
 } from "./hosted-openclaw-context";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
-import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
+import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
 export { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "./hosted-openclaw-context";
 
@@ -91,15 +91,13 @@ function pluginDirectoryIsCurrent(directory: string): boolean {
 }
 
 function materializePluginDirectory(directory: string): string {
-	return withRuntimeUserFileAccess(() => {
-		if (pluginDirectoryIsCurrent(directory)) return directory;
-		rmSync(directory, { recursive: true, force: true });
-		mkdirSync(directory, { recursive: true, mode: 0o700 });
-		for (const [name, content] of pluginFiles) {
-			writeFileSync(join(directory, name), content, { mode: 0o600 });
-		}
-		return directory;
-	});
+	if (pluginDirectoryIsCurrent(directory)) return directory;
+	rmSync(directory, { recursive: true, force: true });
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	for (const [name, content] of pluginFiles) {
+		writeFileSync(join(directory, name), content, { mode: 0o600 });
+	}
+	return directory;
 }
 
 function materializePluginSource(context: OpenClawHostedContext): string {

@@ -4,24 +4,18 @@ import {
 	managedSkillTargetMatchesSource,
 	withManagedTargetRollback,
 } from "./managed-skill-delivery";
-import {
-	executableExists,
-	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_INSTALLED_TREE_EXCLUDES = new Set([".openclaw/source-origin.json"]);
 
 function installedCommandPath(home: string): string | null {
-	return withRuntimeUserFileAccess(() => {
-		for (const candidate of [
-			join(home, ".local", "bin", "openclaw"),
-			join(home, ".openclaw", "bin", "openclaw"),
-		])
-			if (executableExists(candidate)) return candidate;
-		return null;
-	});
+	for (const candidate of [
+		join(home, ".local", "bin", "openclaw"),
+		join(home, ".openclaw", "bin", "openclaw"),
+	])
+		if (executableExists(candidate)) return candidate;
+	return null;
 }
 
 function commandPath(home: string): string {

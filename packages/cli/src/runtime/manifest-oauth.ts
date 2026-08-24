@@ -33,11 +33,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import { tail } from "./manifest-install";
 import { recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
-import {
-	enforceRuntimeUserOwnership,
-	runtimeUserDirectoryOwnership,
-	spawnRuntimeUserCommand,
-} from "./runtime-user-command";
+import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
@@ -158,9 +154,6 @@ function runHermesCodexAuthCommand(
 	input: RuntimeOAuthCredentialCommand,
 ): Record<string, unknown> {
 	const authPath = hermesAuthPath(home);
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(dirname(authPath), { mode: 0o700, ancestorsUnder: home }),
-	);
 	const result = spawnRuntimeUserCommand(
 		"flock",
 		[
@@ -201,7 +194,6 @@ process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : 
 export function openClawSupportsOwnerBrowserBootstrap(context: OpenClawHostedContext): boolean {
 	const sdkPath = context.sdk.deviceBootstrap;
 	if (!sdkPath) return false;
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
@@ -242,7 +234,6 @@ if (
 `;
 function requireOpenClawProviderAuthCapability(context: OpenClawHostedContext): void {
 	const sdkPath = context.requireSdkExport("providerAuth");
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE, sdkPath],
@@ -263,7 +254,6 @@ function requireOpenClawManagedProviderAuthCleanupCapability(context: OpenClawHo
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
 	}
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	const result = spawnRuntimeUserCommand(
 		"node",
 		[

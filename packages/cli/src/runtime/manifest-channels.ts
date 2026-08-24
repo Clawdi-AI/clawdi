@@ -29,10 +29,7 @@ import { hermesConfigContext } from "./manifest-runtime-config";
 import { hasExactKeys, isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
-	enforceRuntimeUserOwnership,
-	makeRuntimeUserOwned,
 	runRuntimeUserCommand,
-	runtimeUserDirectoryOwnership,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
@@ -136,9 +133,6 @@ function materializeManagedWhatsAppAuthDir(
 		rmSync(credential.authDir, { recursive: true, force: true });
 	}
 
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(credential.authDir, { mode: 0o700, ancestorsUnder: home }),
-	);
 	writePrivateFileAtomic(
 		join(credential.authDir, "creds.json"),
 		`${JSON.stringify(inspection.creds, null, 2)}\n`,
@@ -147,7 +141,6 @@ function materializeManagedWhatsAppAuthDir(
 			dirMode: 0o700,
 		},
 	);
-	makeRuntimeUserOwned(join(credential.authDir, "creds.json"));
 	rmSync(join(credential.authDir, LEGACY_MANAGED_WHATSAPP_AUTH_MARKER), { force: true });
 }
 

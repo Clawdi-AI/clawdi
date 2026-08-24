@@ -269,10 +269,7 @@ export function applySystemdRuntimeUpdate(
 			continue;
 		}
 		if (state.activeState !== "active") continue;
-		if (
-			(opts.restartChangedUnits && user.changed.includes(unit)) ||
-			pendingUserActivation.has(unit)
-		) {
+		if (user.changed.includes(unit) || pendingUserActivation.has(unit)) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}

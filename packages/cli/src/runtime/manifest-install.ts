@@ -21,10 +21,8 @@ import {
 	buildRuntimeUserCommand,
 	clearTenantToolLocationOverrides,
 	commandResolvable,
-	enforceRuntimeUserOwnership,
 	executableExists,
 	RuntimeUserCommandTimeoutError,
-	runtimeUserDirectoryOwnership,
 	spawnRuntimeUserCommand,
 } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -278,7 +276,6 @@ function runOfficialInstaller(
 		);
 	}
 
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(install.home), identity);
 	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url, paths);
 	try {

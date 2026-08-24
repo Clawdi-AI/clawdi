@@ -3424,10 +3424,6 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
 
 		const context = createOpenClawHostedContext(loaded.manifest, home);
-		expect(context.ownership.map(({ path, mode, recursive }) => [path, mode, recursive])).toEqual([
-			[join(home, ".openclaw"), 0o700, false],
-			[join(home, ".openclaw", "tmp"), 0o700, false],
-		]);
 		loaded.manifest.runtimes.openclaw.enabled = false;
 		expect(context.managedApiKeyProjection).toBe(true);
 		expect(createOpenClawHostedContext(loaded.manifest, home).managedApiKeyProjection).toBe(false);
@@ -7906,7 +7902,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			},
 		});
 	});
-	it("hands off a CLI update and restarts only changed daemon bytes", async () => {
+	it("hands off a CLI update and restarts changed daemon and tenant unit bytes", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8116,7 +8112,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(completedEvent.systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service"],
-				userUnitsChanged: [],
+				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const completedAppliedState = readRuntimeAppliedState(paths);
 			expect(completedAppliedState).toMatchObject({
@@ -8139,15 +8135,13 @@ chmod +x "$prefix/bin/clawdi"
 				"daemon-reload",
 				"--user daemon-reload",
 				"restart clawdi-daemon.service",
+				"--user restart openclaw-gateway.service",
 			]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-sidecar.service",
-			);
-			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
-				"--user restart openclaw-gateway.service",
 			);
 			expect(existsSync(paths.cliUpgradeState)).toBe(false);
 			expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"))).toMatchObject({
@@ -11341,7 +11335,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(statSync(paths.egressTransparentEnv).uid).toBe(0);
 			expect(statSync(paths.egressTransparentEnv).gid).toBe(10002);
 		}
-		expect(statSync(join(run, "egress-scratch")).mode & 0o777).toBe(0o700);
 		expect(openclawUnit).not.toContain("\nExecStart=");
 		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawEnv).not.toContain("CLAWDI_EGRESS_PROFILE_BUNDLE");

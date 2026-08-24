@@ -28,13 +28,9 @@ import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
 	commandExists,
-	enforceRuntimeUserOwnership,
 	executableExists,
-	makeRuntimeUserOwned,
 	runRuntimeUserCommand,
-	runtimeUserDirectoryOwnership,
 	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
@@ -262,13 +258,9 @@ export function applyHostedCodexManagedProviderProjection(
 	if (!provider) return { path: null, revision: null, providerIds: [] };
 
 	const codexHome = hostedCodexHome(home);
-	enforceRuntimeUserOwnership(
-		runtimeUserDirectoryOwnership(codexHome, { mode: 0o700, ancestorsUnder: home }),
-	);
 	const configPath = join(codexHome, CODEX_MANAGED_PROVIDER_CONFIG_FILE);
 	const configContent = hostedCodexManagedConfigToml(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
-	makeRuntimeUserOwned(configPath);
 
 	return {
 		path: configPath,
@@ -388,7 +380,7 @@ function installHostedCodexBootstrap(
 	if (!commandExists("npm")) {
 		throw new Error("Codex bootstrap requires npm on PATH");
 	}
-	withRuntimeUserFileAccess(() => mkdirSync(npmPrefix, { recursive: true }));
+	mkdirSync(npmPrefix, { recursive: true });
 	const result = spawnRuntimeUserCommand(
 		"npm",
 		[
@@ -553,7 +545,6 @@ function applyOpenClawHostedProviderPatch(
 	workspaceRoot: string,
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
-	enforceRuntimeUserOwnership(runtimeUserDirectoryOwnership(context.home));
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],

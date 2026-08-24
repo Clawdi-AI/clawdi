@@ -219,14 +219,12 @@ function nativeInstallRoot(home: string, runtime: HostedAgentPluginRuntime): str
 
 function nativeInstallTargetNames(home: string, runtime: HostedAgentPluginRuntime): Set<string> {
 	const root = nativeInstallRoot(home, runtime);
-	return withRuntimeUserFileAccess(() => {
-		try {
-			return new Set(readdirSync(root));
-		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return new Set();
-			throw error;
-		}
-	});
+	try {
+		return new Set(readdirSync(root));
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return new Set();
+		throw error;
+	}
 }
 
 function assertTrustedInstalledDirectory(
@@ -266,20 +264,18 @@ function inspectInstalledPluginDirectory(input: {
 	reportedPath?: string;
 	ignoreTopLevelGitMetadata?: boolean;
 }): { installPath: string; contentDigest: string } {
-	return withRuntimeUserFileAccess(() => {
-		const installPath = assertTrustedInstalledDirectory(
-			input.home,
-			input.runtime,
-			input.nativeId,
-			input.reportedPath,
-		);
-		return {
-			installPath,
-			contentDigest: hostedAgentPluginDirectoryDigest(installPath, {
-				ignoreTopLevelGitMetadata: input.ignoreTopLevelGitMetadata,
-			}),
-		};
-	});
+	const installPath = assertTrustedInstalledDirectory(
+		input.home,
+		input.runtime,
+		input.nativeId,
+		input.reportedPath,
+	);
+	return {
+		installPath,
+		contentDigest: hostedAgentPluginDirectoryDigest(installPath, {
+			ignoreTopLevelGitMetadata: input.ignoreTopLevelGitMetadata,
+		}),
+	};
 }
 
 function createOpenClawDriver(input: {
@@ -414,9 +410,7 @@ type HermesNativeCommand = (args: string[]) => AgentPluginCommandResult;
 
 function ensureHermesPluginScanDisabled(home: string, run: HermesNativeCommand): void {
 	const configPath = join(home, ".hermes", "config.yaml");
-	const current = withRuntimeUserFileAccess(() =>
-		getHermesRawConfigFileValue(configPath, HERMES_PLUGIN_SCAN_POLICY_KEY),
-	);
+	const current = getHermesRawConfigFileValue(configPath, HERMES_PLUGIN_SCAN_POLICY_KEY);
 	if (current.exists && current.value === false) return;
 
 	// Remove this persistent policy when NousResearch/hermes-agent#89704 ships
@@ -718,81 +712,85 @@ export function prepareHostedAgentPluginTransaction(input: {
 		mutationNames: [...new Set(mutations.map((mutation) => mutation.name))].sort(),
 		hasMutations: mutations.length > 0,
 		apply() {
-			const installTargetsBefore = new Map<HostedAgentPluginRuntime, Set<string>>();
-			for (const mutation of mutations) {
-				if (mutation.nativeId || installTargetsBefore.has(mutation.runtime)) continue;
-				installTargetsBefore.set(
-					mutation.runtime,
-					nativeInstallTargetNames(input.home, mutation.runtime),
-				);
-			}
-			const namesByNativeId = new Map<string, string>();
-			const claimNativeId = (name: string, nativeId: string): void => {
-				const existing = namesByNativeId.get(nativeId);
-				if (existing !== undefined && existing !== name) {
-					throw new Error("Agent Plugin packages resolve to the same native identity");
+			return withRuntimeUserFileAccess(() => {
+				const installTargetsBefore = new Map<HostedAgentPluginRuntime, Set<string>>();
+				for (const mutation of mutations) {
+					if (mutation.nativeId || installTargetsBefore.has(mutation.runtime)) continue;
+					installTargetsBefore.set(
+						mutation.runtime,
+						nativeInstallTargetNames(input.home, mutation.runtime),
+					);
 				}
-				namesByNativeId.set(nativeId, name);
-			};
-			for (const mutation of mutations) {
-				if (
-					!observationUnchanged(
-						mutation.driver.observe(mutation.name, mutation.nativeId ?? undefined),
-						mutation.before,
-					)
-				) {
-					throw new Error("native Agent Plugin changed after ownership was verified");
-				}
-				if ((mutation.action === "remove" || mutation.action === "replace") && mutation.before) {
-					mutation.driver.remove(mutation.before);
-				}
-				if (mutation.action === "install" || mutation.action === "replace") {
-					if (!mutation.desired) throw new Error("Agent Plugin mutation plan is invalid");
-					const installed = mutation.driver.install(nativePackage(mutation.desired));
-					if (mutation.nativeId && installed.nativeId !== mutation.nativeId) {
-						throw new Error("Agent Plugin native identity no longer matches its ownership receipt");
+				const namesByNativeId = new Map<string, string>();
+				const claimNativeId = (name: string, nativeId: string): void => {
+					const existing = namesByNativeId.get(nativeId);
+					if (existing !== undefined && existing !== name) {
+						throw new Error("Agent Plugin packages resolve to the same native identity");
 					}
+					namesByNativeId.set(nativeId, name);
+				};
+				for (const mutation of mutations) {
 					if (
-						!mutation.nativeId &&
-						installTargetsBefore.get(mutation.runtime)?.has(installed.nativeId)
+						!observationUnchanged(
+							mutation.driver.observe(mutation.name, mutation.nativeId ?? undefined),
+							mutation.before,
+						)
 					) {
-						throw new Error("refusing to replace an unmanaged native Agent Plugin target");
+						throw new Error("native Agent Plugin changed after ownership was verified");
 					}
-					if (!observationMatches(installed, mutation.desired, installed.nativeId)) {
-						throw new Error("native Agent Plugin installed an unexpected identity or package");
+					if ((mutation.action === "remove" || mutation.action === "replace") && mutation.before) {
+						mutation.driver.remove(mutation.before);
 					}
-					claimNativeId(mutation.name, installed.nativeId);
-					resolvedNativeIds.set(mutation.name, installed.nativeId);
-					mutation.driver.setEnabled(installed, true);
+					if (mutation.action === "install" || mutation.action === "replace") {
+						if (!mutation.desired) throw new Error("Agent Plugin mutation plan is invalid");
+						const installed = mutation.driver.install(nativePackage(mutation.desired));
+						if (mutation.nativeId && installed.nativeId !== mutation.nativeId) {
+							throw new Error(
+								"Agent Plugin native identity no longer matches its ownership receipt",
+							);
+						}
+						if (
+							!mutation.nativeId &&
+							installTargetsBefore.get(mutation.runtime)?.has(installed.nativeId)
+						) {
+							throw new Error("refusing to replace an unmanaged native Agent Plugin target");
+						}
+						if (!observationMatches(installed, mutation.desired, installed.nativeId)) {
+							throw new Error("native Agent Plugin installed an unexpected identity or package");
+						}
+						claimNativeId(mutation.name, installed.nativeId);
+						resolvedNativeIds.set(mutation.name, installed.nativeId);
+						mutation.driver.setEnabled(installed, true);
+					}
+					if (mutation.action === "enable") {
+						if (!mutation.before) throw new Error("Agent Plugin mutation plan is invalid");
+						mutation.driver.setEnabled(mutation.before, true);
+					}
+					const nativeId = mutation.desired
+						? resolvedNativeIds.get(mutation.name)
+						: mutation.nativeId;
+					if (!nativeId) throw new Error("Agent Plugin mutation plan is invalid");
+					const observed = mutation.driver.observe(mutation.name, nativeId);
+					if (mutation.desired) {
+						if (!observationMatches(observed, mutation.desired, nativeId) || !observed.enabled) {
+							throw new Error("native Agent Plugin did not converge to the desired state");
+						}
+					} else if (observed) {
+						throw new Error("native Agent Plugin uninstall did not converge");
+					}
 				}
-				if (mutation.action === "enable") {
-					if (!mutation.before) throw new Error("Agent Plugin mutation plan is invalid");
-					mutation.driver.setEnabled(mutation.before, true);
-				}
-				const nativeId = mutation.desired
-					? resolvedNativeIds.get(mutation.name)
-					: mutation.nativeId;
-				if (!nativeId) throw new Error("Agent Plugin mutation plan is invalid");
-				const observed = mutation.driver.observe(mutation.name, nativeId);
-				if (mutation.desired) {
-					if (!observationMatches(observed, mutation.desired, nativeId) || !observed.enabled) {
+				for (const plugin of input.prepared.desired.values()) {
+					const nativeId = resolvedNativeIds.get(plugin.name);
+					if (!nativeId)
+						throw new Error("Agent Plugin native identity was not resolved during apply");
+					claimNativeId(plugin.name, nativeId);
+					const observed = driverFor(input.prepared.runtime).observe(plugin.name, nativeId);
+					if (!observationMatches(observed, plugin, nativeId) || !observed.enabled) {
 						throw new Error("native Agent Plugin did not converge to the desired state");
 					}
-				} else if (observed) {
-					throw new Error("native Agent Plugin uninstall did not converge");
 				}
-			}
-			for (const plugin of input.prepared.desired.values()) {
-				const nativeId = resolvedNativeIds.get(plugin.name);
-				if (!nativeId)
-					throw new Error("Agent Plugin native identity was not resolved during apply");
-				claimNativeId(plugin.name, nativeId);
-				const observed = driverFor(input.prepared.runtime).observe(plugin.name, nativeId);
-				if (!observationMatches(observed, plugin, nativeId) || !observed.enabled) {
-					throw new Error("native Agent Plugin did not converge to the desired state");
-				}
-			}
-			return desiredReceipt(input.prepared, resolvedNativeIds);
+				return desiredReceipt(input.prepared, resolvedNativeIds);
+			});
 		},
 	};
 }

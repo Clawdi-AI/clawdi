@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-08-20 |
+| Last updated | 2026-08-24 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -351,13 +351,11 @@ candidate has no separate active/previous link state or hand-built chroot.
 
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,
-`0700` directories, and dotfiles. Reconciliation repairs tenant-home ownership
-recursively except for declared platform enclaves:
-`$HOME/.config/systemd/user` and OpenClaw's
-`$HOME/.openclaw/gateway.systemd.env`. The same ownership enforcer repairs
-non-root drift inside those enclaves back to root while repairing root drift
-outside them back to the tenant. It does not rewrite modes or ACLs.
-Candidate directories and binaries remain root-owned. The root-authored JWT
+`0700` directories, and dotfiles. The entire tenant home, including user units
+and official runtime configuration, belongs to the tenant UID/GID. Hosted
+convergence recursively migrates legacy root-owned home trees without following
+symlinks. Candidate directories and binaries remain root-owned outside the
+tenant home. The root-authored JWT
 configuration is a `root:<runtime group>` `0440` file below a root-only `0700`
 directory, so other tenant processes cannot traverse to it; systemd publishes
 that file and the verified binary only inside the Files mount namespace through
@@ -393,15 +391,19 @@ When a later manifest omits the companion, normal stale-unit
 reconciliation stops and withdraws only `clawdi-files.service` while preserving
 the selected Hermes or OpenClaw unit.
 
-The unavoidable workspace boundary is content-level: the tenant owns its home
-outside the declared platform enclaves and can edit or delete its contents and
-Files state. This does not grant the tenant control over the root-owned binary,
-configuration secret source,
-receipts, unit, or listener authority. Port 9120 has normal socket exclusivity
-rather than a separate tenant-slice reservation: the tenant cannot displace the
-running service, but can bind 9120 while it is not listening and thereby cause
-later activation/readiness proof to fail. That remaining availability boundary
-does not let reconciliation adopt the tenant process as the managed unit.
+The unavoidable workspace boundary is content-level: the tenant owns its whole
+home and can edit or delete its contents, user units, official runtime config,
+and Files state. The tenant can already stop, start, or alter its own user
+services. Hosted convergence restores managed unit and drop-in bytes from
+declarative state and restarts an active unit when those rendered bytes changed;
+it leaves every foreign systemd drop-in untouched. This does not grant the
+tenant control over the root-owned Files binary, configuration secret source,
+receipts, system unit, or listener authority. Port 9120 has normal socket
+exclusivity rather than a separate tenant-slice reservation: the tenant cannot
+displace the running service, but can bind 9120 while it is not listening and
+thereby cause later activation/readiness proof to fail. That remaining
+availability boundary does not let reconciliation adopt the tenant process as
+the managed unit.
 
 The pinned upstream contracts are File Browser's
 [JWT verifier](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/auth/jwt.go),
@@ -1380,8 +1382,8 @@ and ephemeral runtime handoffs. Important outputs include:
 | `/run/clawdi/systemd/env/*.service.env` | Root-owned system-service env files or tenant-owned `0600` user-service env handoffs |
 | `/run/clawdi/egress/systemd/ca.pem` | Deliberately published root:tenant-group `0640` transparent-egress CA bundle |
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
-| `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
-| `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
+| `$HOME/.config/systemd/user/*.service` | Tenant-owned official runtime gateway base units and direct runtime-user programs |
+| `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Tenant-owned hosted drop-ins for official runtime units; foreign drop-ins are preserved |
 
 Hosted convergence never writes `~/.clawdi`. Before launch it removes legacy
 `~/.clawdi/environments/*.json` files only when their `managedBy` value is
