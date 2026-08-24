@@ -4,7 +4,6 @@ import chalk from "chalk";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
-	type RuntimeUserProcessRevisionAliases,
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
@@ -76,14 +75,11 @@ import {
 import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
-	RUNTIME_DAEMON_SYSTEM_UNIT,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
-	readSystemdUserDesiredRevisions,
-	SystemdRuntimeTransaction,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
-import { log, toErrorMessage } from "../serve/log";
+import { toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
 interface RuntimeInitOptions {
@@ -124,7 +120,7 @@ interface RuntimeApplyConvergedResult {
 	kind: "converged";
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
-	systemdApply: ReturnType<typeof applySystemdRuntimeUpdate>;
+	systemdApply: Omit<ReturnType<typeof applySystemdRuntimeUpdate>, "activated">;
 }
 
 interface RuntimeApplyCliHandoffResult {
@@ -145,6 +141,7 @@ interface RuntimeApplyOptions {
 	continueOnCliUpdateError?: boolean;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
+	preparedCliUpdate?: RuntimeCliUpdateResult;
 	preparedHostedSourcedSkills?: ReadonlyMap<string, PreparedHostedSkill>;
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
@@ -153,7 +150,7 @@ interface RuntimeApplyOptions {
 
 export type RuntimeManifestApplyOptions = Omit<
 	RuntimeApplyOptions,
-	"authorityCommit" | "requireSystemdApplied"
+	"authorityCommit" | "preparedCliUpdate" | "requireSystemdApplied"
 >;
 
 interface RuntimeWatchFailureBackoff {
@@ -267,62 +264,6 @@ function runtimeAppliedStatus(paths: RuntimePaths): {
 	};
 }
 
-function runtimeCheckpointContent(
-	load: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
-): unknown {
-	const {
-		generation: _generation,
-		applyGeneration: _applyGeneration,
-		issuedAt: _issuedAt,
-		clawdiCli,
-		...manifest
-	} = load.manifest;
-	const { packageSpec: _packageSpec, ...cliPolicy } = clawdiCli ?? {};
-	return {
-		manifest: {
-			...manifest,
-			...(clawdiCli === undefined ? {} : { clawdiCli: cliPolicy }),
-		},
-		secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
-	};
-}
-
-export function runtimeOnlyChangesCliPackage(
-	previous: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
-	next: Pick<RuntimeManifestLoad, "manifest" | "secretValues">,
-): boolean {
-	const previousPackageSpec = previous.manifest.clawdiCli?.packageSpec?.trim();
-	const nextPackageSpec = next.manifest.clawdiCli?.packageSpec?.trim();
-	if (!previousPackageSpec || !nextPackageSpec || previousPackageSpec === nextPackageSpec) {
-		return false;
-	}
-	try {
-		return (
-			runtimeContentSha256(runtimeCheckpointContent(previous)) ===
-			runtimeContentSha256(runtimeCheckpointContent(next))
-		);
-	} catch (error) {
-		log.warn("runtime.cli_only_checkpoint_compare_failed", { error: toErrorMessage(error) });
-		return false;
-	}
-}
-
-function isRuntimeCliOnlyCheckpoint(load: RuntimeManifestLoad, paths: RuntimePaths): boolean {
-	const activeAppliedState = readRuntimeAppliedState(paths);
-	const activeApplyIdentity = activeAppliedState
-		? runtimeAppliedApplyIdentity(activeAppliedState)
-		: null;
-	if (
-		!load.applyContext ||
-		!activeApplyIdentity ||
-		!runtimeApplyIdentitiesEqual(load.applyContext.identity, activeApplyIdentity)
-	) {
-		return false;
-	}
-	const committed = loadCommittedRuntimeManifest(paths, load.applyContext);
-	return "errors" in committed ? false : runtimeOnlyChangesCliPackage(committed, load);
-}
-
 export function commitRuntimeAppliedState(input: {
 	load: RuntimeManifestLoad;
 	paths: RuntimePaths;
@@ -330,10 +271,7 @@ export function commitRuntimeAppliedState(input: {
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	applyIdentity: RuntimeApplyIdentity | null;
-	daemonAuthTokenRevision?: string;
-	daemonProgramRevision?: string;
-	egressSidecarSecretRevision?: string;
-	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
+	activated?: Record<string, string>;
 	officialServiceCommandRevisions?: Record<string, string>;
 }): void {
 	if (
@@ -367,19 +305,7 @@ export function commitRuntimeAppliedState(input: {
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
-			...(input.daemonAuthTokenRevision
-				? { daemonAuthTokenRevision: input.daemonAuthTokenRevision }
-				: {}),
-			...(input.daemonProgramRevision
-				? { daemonProgramRevision: input.daemonProgramRevision }
-				: {}),
-			...(input.egressSidecarSecretRevision
-				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
-				: {}),
-			...(input.userProcessRevisionAliases &&
-			Object.keys(input.userProcessRevisionAliases).length > 0
-				? { userProcessRevisionAliases: input.userProcessRevisionAliases }
-				: {}),
+			activated: input.activated ?? {},
 			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
@@ -1241,10 +1167,7 @@ export async function applyRuntimeManifestLoad(
 				sourceRevision: load.sourceRevision ?? contentRevision,
 				convergence,
 				applyIdentity,
-				daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
-				daemonProgramRevision: authority.daemonProgramRevision,
-				egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
-				userProcessRevisionAliases: authority.userProcessRevisionAliases,
+				activated: authority.activated,
 				officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
 			}),
 		requireSystemdApplied: applyIdentity !== null,
@@ -1260,17 +1183,19 @@ async function applyRuntimeDesiredState(
 	const resourcePreparationFailures: RuntimeResourcePreparationFailures = {};
 	let preservePreparedAgentPluginArchives = false;
 	try {
-		let cliUpdate: RuntimeCliUpdateResult;
-		try {
-			cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
-				runningVersion: ACTIVE_CLI_VERSION,
-			});
-		} catch (error) {
-			if (!opts.continueOnCliUpdateError) throw error;
-			return {
-				kind: "cli_update_failed",
-				cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
-			};
+		let cliUpdate = opts.preparedCliUpdate;
+		if (!cliUpdate) {
+			try {
+				cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
+					runningVersion: ACTIVE_CLI_VERSION,
+				});
+			} catch (error) {
+				if (!opts.continueOnCliUpdateError) throw error;
+				return {
+					kind: "cli_update_failed",
+					cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
+				};
+			}
 		}
 		if (cliUpdate.status === "error") {
 			if (!opts.continueOnCliUpdateError) {
@@ -1281,7 +1206,6 @@ async function applyRuntimeDesiredState(
 		if (cliUpdate.selfReexec) {
 			return { kind: "cli_handoff", cliUpdate };
 		}
-		const preserveActiveUnits = isRuntimeCliOnlyCheckpoint(load, paths);
 		if (preparedHostedAgentPlugins === undefined) {
 			try {
 				preparedHostedAgentPlugins = await prepareHostedAgentPluginPackages(load.manifest, paths, {
@@ -1307,11 +1231,6 @@ async function applyRuntimeDesiredState(
 			}
 		}
 		const previousSystemdUnits = readSystemdUnitSnapshot(paths);
-		const previousUserDesiredRevisions = preserveActiveUnits
-			? readSystemdUserDesiredRevisions(paths, previousSystemdUnits.user.keys())
-			: new Map<string, string>();
-		const systemdTransaction = new SystemdRuntimeTransaction();
-		let userProcessRevisionAliases: RuntimeUserProcessRevisionAliases = {};
 		let systemdApply = {
 			applied: false,
 			systemUnitsChanged: [] as string[],
@@ -1334,18 +1253,10 @@ async function applyRuntimeDesiredState(
 				if (opts.requireSystemdApplied && !systemdApply.applied) {
 					throw new Error("systemd apply did not activate the rendered runtime manifest");
 				}
-				opts.authorityCommit?.(committedConvergence, {
-					...authority,
-					...(Object.keys(userProcessRevisionAliases).length > 0
-						? { userProcessRevisionAliases }
-						: {}),
-				});
+				opts.authorityCommit?.(committedConvergence, authority);
 			},
 			systemdApply: {
-				transactionState: () => systemdTransaction.state,
-				installOfficialService: (unit, install) =>
-					systemdTransaction.installOfficialService(paths, unit, install),
-				activateEgressPrerequisite: ({ restartEgressSidecar }) => {
+				activateEgressPrerequisite: () => {
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
 						const prerequisite = applySystemdRuntimeUpdate(
@@ -1353,15 +1264,12 @@ async function applyRuntimeDesiredState(
 							previousSystemdUnits,
 							candidateSystemdUnits,
 							{
-								transaction: systemdTransaction,
-								stage: "egress-prerequisite",
 								activationScope: {
 									systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
 									userUnits: [],
 								},
-								forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
-								preserveActiveUnits,
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
+								restartChangedUnits: load.source === "last-good-cache",
 							},
 						);
 						if (prerequisite.applied) {
@@ -1376,13 +1284,7 @@ async function applyRuntimeDesiredState(
 						);
 					}
 				},
-				activate: ({
-					restartDaemon,
-					restartEgressSidecar,
-					restartUserUnits,
-					staleSystemUnits,
-					staleUserUnits,
-				}) => {
+				activate: ({ staleSystemUnits, staleUserUnits }) => {
 					// Official installers run after the prerequisite phase and add their
 					// base units, so final reconciliation must observe a fresh rendered state.
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -1397,19 +1299,8 @@ async function applyRuntimeDesiredState(
 							previousSystemdUnits,
 							activationTarget,
 							{
-								transaction: systemdTransaction,
-								stage: "final-activation",
-								forceRestartSystemUnits: [
-									...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
-									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
-								],
-								forceRestartUserUnits: restartUserUnits,
-								preserveActiveUnits,
-								previousUserDesiredRevisions,
-								onUserProcessRevisionAliases: (aliases) => {
-									userProcessRevisionAliases = aliases;
-								},
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
+								restartChangedUnits: load.source === "last-good-cache",
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
@@ -1430,25 +1321,44 @@ async function applyRuntimeDesiredState(
 								]),
 							].sort(),
 						};
-						return systemdApply;
+						return { ...systemdApply, activated: activation.activated };
 					} catch (error) {
-						const mutationJournal = systemdTransaction.journal
-							.map(
-								(entry) =>
-									`${entry.sequence}:${entry.stage}/${entry.scope}/${entry.action}(${entry.units.join(",") || "manager"})=${entry.outcome}`,
-							)
-							.join(", ");
-						throw new Error(
-							`systemd apply failed: ${toErrorMessage(error)}${
-								mutationJournal ? `; mutation journal: ${mutationJournal}` : ""
-							}`,
-						);
+						throw new Error(`systemd apply failed: ${toErrorMessage(error)}`);
 					}
 				},
-				quiesce: (affectedUserUnits) => systemdTransaction.quiesce(paths, affectedUserUnits),
-				rollback: () => systemdTransaction.rollback(paths),
 			},
 		});
+		if (
+			convergence.installErrors.length > 0 &&
+			load.source !== "last-good-cache" &&
+			load.applyContext
+		) {
+			const committed = loadCommittedRuntimeManifest(paths, load.applyContext);
+			if ("errors" in committed) {
+				convergence.installErrors.push(`last-good replay failed: ${committed.errors.join("; ")}`);
+			} else {
+				const replayOptions = { ...opts, preparedCliUpdate: cliUpdate };
+				delete replayOptions.authorityCommit;
+				delete replayOptions.preparedHostedAgentPlugins;
+				delete replayOptions.preparedHostedSourcedSkills;
+				const replay = await applyRuntimeDesiredState(committed, paths, replayOptions);
+				if (replay.kind !== "converged") {
+					convergence.installErrors.push(
+						`last-good replay failed: runtime ${replay.kind.replaceAll("_", " ")}`,
+					);
+				} else {
+					const replayErrors = [
+						...replay.convergence.installErrors,
+						...replay.convergence.resourceProjectionErrors,
+					];
+					if (replayErrors.length > 0) {
+						convergence.installErrors.push(`last-good replay failed: ${replayErrors.join("; ")}`);
+					} else {
+						systemdApply = replay.systemdApply;
+					}
+				}
+			}
+		}
 		if (convergence.installErrors.length === 0) {
 			preservePreparedAgentPluginArchives = true;
 			try {

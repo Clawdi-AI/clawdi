@@ -14,13 +14,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitRuntimeAppliedState } from "../commands/runtime";
-import {
-	ensureTestOpenClawWorkspaceCli,
-	type TestConvergeOptions,
-	withTestSystemdTransaction,
-} from "../test-support/systemd-apply";
+import { ensureTestOpenClawWorkspaceCli } from "../test-support/runtime-workspace";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
+	type RuntimeConvergenceOptions,
 	type RuntimeManifest,
 } from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
@@ -42,7 +39,7 @@ const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: TestConvergeOptions = {},
+	opts: RuntimeConvergenceOptions = {},
 ) {
 	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
@@ -102,7 +99,7 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
-			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
+			systemdApply: opts.systemdApply,
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
 				expectedIdentity: {
 					home: paths.userHome,
@@ -326,7 +323,7 @@ function officialServiceHarness(
 				},
 				executeOfficialServiceInstallers: true,
 			}),
-		drift: () => writeFileSync(unitPath, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`),
+		drift: () => writeFileSync(unitPath, `${readFileSync(unitPath, "utf8")}# upstream drift\n`),
 		revise: () =>
 			writeCli(false, runtime === "hermes" ? "Hermes Agent v0.18.1" : "OpenClaw 2026.7.30"),
 		failNextInstall: () => writeCli(true),
@@ -413,7 +410,7 @@ esac
 		expect(commands).toContain("config validate --json");
 	});
 
-	test("restarts OpenClaw after repairing managed channel config drift", () => {
+	test("repairs managed OpenClaw channel config drift", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
 		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
@@ -465,7 +462,6 @@ esac
 			sourcePath: "inline-openclaw-channel-drift",
 			offline: false,
 		};
-		const restartSignals: string[][] = [];
 		const converge = () =>
 			convergeRuntimeManifest(load, paths, {
 				commitAuthority: (convergence, authority) =>
@@ -476,6 +472,7 @@ esac
 						sourceRevision: "a".repeat(64),
 						convergence,
 						applyIdentity: null,
+						activated: authority.activated,
 						officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
 					}),
 				systemdApply: {
@@ -484,29 +481,21 @@ esac
 						systemUnitsChanged: [],
 						userUnitsChanged: [],
 					}),
-					activate: (signal) => {
-						restartSignals.push(signal.restartUserUnits);
-						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-					},
-					quiesce: () => undefined,
-					rollback: () => undefined,
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
 				},
 			});
 
 		expect(converge().installErrors).toEqual([]);
 		expect(converge().installErrors).toEqual([]);
-		expect(restartSignals.at(-1)).toEqual([]);
 		const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 		delete config.channels;
 		writeFileSync(configPath, `${JSON.stringify(config)}\n`);
 
 		expect(converge().installErrors).toEqual([]);
-		expect(restartSignals.at(-1)).toEqual(["openclaw-gateway.service"]);
 
 		manifest.projection = { channels: {} };
 		writeFileSync(configPath, "{}\n");
 		expect(converge().installErrors).toEqual([]);
-		expect(restartSignals.at(-1)).toEqual([]);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
 			gateway: {
 				mode: "local",
@@ -673,15 +662,15 @@ esac
 		const revision = expect.stringMatching(/^[a-f0-9]{32}$/);
 		expect(readSystemdEnvironment(paths, "openclaw-gateway")).toEqual({
 			BYOK_RUNTIME_SECRET: "runtime-byok-value",
-			CLAWDI_RUNTIME_REV: revision,
+			CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			NON_SECRET_RUNTIME_SETTING: "public-value",
 		});
 		expect(readSystemdEnvironment(paths, "hermes-gateway")).toEqual({
-			CLAWDI_RUNTIME_REV: revision,
+			CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 		});
 		expect(readSystemdEnvironment(paths, "clawdi-hermes-dashboard")).toEqual({
 			BYOK_SERVICE_SECRET: "service-byok-value",
-			CLAWDI_RUNTIME_REV: revision,
+			CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			HOME: paths.userHome,
 			PATH: expect.any(String),
 		});
@@ -848,14 +837,14 @@ esac
 		const watchEnvStat = statSync(watchEnvPath);
 		const revision = expect.stringMatching(/^[a-f0-9]{32}$/);
 		expect(dashboardEnv).toEqual({
-			CLAWDI_RUNTIME_REV: revision,
+			CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "opaque-password-value",
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "opaque-session-value",
 			HOME: paths.userHome,
 			PATH: expect.any(String),
 		});
 		expect(gatewayEnv).toEqual({
-			CLAWDI_RUNTIME_REV: revision,
+			CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			RUNTIME_BUNDLE_TOKEN: "bundle-runtime-token",
 			RUNTIME_TARGET_TOKEN: "runtime-source-token",
 		});
@@ -943,11 +932,13 @@ esac
 			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
 			"utf8",
 		);
+		const rotatedDashboardEnv = readSystemdEnvironment(paths, "clawdi-hermes-dashboard");
 		const rotatedGatewayUnit = readUserServiceConfig(paths, "hermes-gateway");
 		const rotatedWatchEnv = readFileSync(watchEnvPath, "utf8");
 		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
 		expect(rotatedWatchEnv).toBe(watchEnv);
-		expect(rotatedDashboardUnit).not.toBe(dashboardUnit);
+		expect(rotatedDashboardUnit).toBe(dashboardUnit);
+		expect(rotatedDashboardEnv).not.toEqual(dashboardEnv);
 		expect(rotatedGatewayUnit).toBe(gatewayUnit);
 		// The root watcher reloads the apply-context file on each tick, so neither
 		// its environment nor its unit needs secret bytes.
@@ -1297,7 +1288,6 @@ esac
 			paths,
 			{
 				systemdApply: {
-					quiesce: () => {},
 					activateEgressPrerequisite: () => {
 						prerequisiteActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -1306,7 +1296,6 @@ esac
 						finalActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
-					rollback: () => {},
 				},
 			},
 		);
@@ -1736,7 +1725,6 @@ esac
 				authorityCommits += 1;
 			},
 			systemdApply: {
-				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1746,7 +1734,6 @@ esac
 					finalActivations += 1;
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				rollback: () => {},
 			},
 		});
 		const firstInstallError = failedFirstInstall.installErrors.join("\n");
@@ -1777,8 +1764,7 @@ esac
 			expect(installerLogStat.uid).toBe(0);
 			expect(installerLogStat.gid).toBe(0);
 		}
-		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
-		expect(existsSync(dropInPath)).toBe(false);
+		expect(existsSync(dropInPath)).toBe(true);
 		expect(authorityCommits).toBe(0);
 		expect(finalActivations).toBe(0);
 		expect(
@@ -1812,7 +1798,7 @@ esac
 		expect(failedReinstall.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
-		expect(existsSync(unitPath)).toBe(true);
+		expect(existsSync(unitPath)).toBe(false);
 		expect(existsSync(dropInPath)).toBe(true);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});

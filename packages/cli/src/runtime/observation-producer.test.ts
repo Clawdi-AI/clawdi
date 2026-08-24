@@ -48,6 +48,7 @@ function appliedState(generation: number): RuntimeAppliedStateV2 {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: (generation === 1 ? "c" : "d").repeat(64),
 		},
+		activated: {},
 		providerIds: [],
 		projectedProviderIds: {},
 	};

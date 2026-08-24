@@ -1,15 +1,13 @@
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	chownSync,
 	existsSync,
-	lchownSync,
 	lstatSync,
 	readdirSync,
 	readFileSync,
-	readlinkSync,
 	rmdirSync,
 	rmSync,
-	symlinkSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -91,19 +89,9 @@ export interface OfficialRuntimeServicePlan {
 	pending: Array<{
 		unitName: string;
 		program: RuntimeSystemdUserProgram;
-		commandRevision: string | null;
+		serviceRevision: string | null;
 	}>;
-	commandRevisions: Record<string, string>;
-}
-
-export interface RuntimeSystemdUserMutationPlan {
-	targets: string[];
-	symlinkTargets: string[];
-	environmentTargets: string[];
-	metadataTargets: string[];
-	unitNames: string[];
-	staleOfficialUnits: string[];
-	driftErrors: string[];
+	serviceRevisions: Record<string, string>;
 }
 
 export interface RuntimeSystemdStaleFilePlan {
@@ -286,48 +274,6 @@ export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): 
 	return systemdUnitFileName(runtimeSystemdProgramName(program));
 }
 
-function runtimeForSystemdUserUnitName(unitName: string): "openclaw" | "hermes" | null {
-	const officialRuntime = officialRuntimeServiceDescriptorForUnit(unitName)?.runtime;
-	if (officialRuntime === "openclaw" || officialRuntime === "hermes") return officialRuntime;
-	for (const runtime of ["openclaw", "hermes"] as const) {
-		const managedPrefix = `clawdi-${systemdUnitNameSegment(runtime)}`;
-		if (
-			unitName === systemdUnitFileName(managedPrefix) ||
-			(unitName.startsWith(`${managedPrefix}-`) && unitName.endsWith(".service"))
-		) {
-			return runtime;
-		}
-	}
-	return null;
-}
-
-export function planRuntimeMutationSystemdUserUnits(input: {
-	runtimePrograms: readonly RuntimeSystemdUserProgram[];
-	staleUserUnits: readonly string[];
-	mutationRuntimes: ReadonlySet<string>;
-}): { quiesceUserUnits: string[]; restartUserUnits: string[] } {
-	const restartUserUnits = [
-		...new Set(
-			input.runtimePrograms
-				.filter(
-					(program) =>
-						program.programKind === "runtime" && input.mutationRuntimes.has(program.runtime),
-				)
-				.map(runtimeSystemdUserUnitName),
-		),
-	].sort();
-	const quiesceUserUnits = [
-		...new Set([
-			...restartUserUnits,
-			...input.staleUserUnits.filter((unitName) => {
-				const runtime = runtimeForSystemdUserUnitName(unitName);
-				return runtime !== null && input.mutationRuntimes.has(runtime);
-			}),
-		]),
-	].sort();
-	return { quiesceUserUnits, restartUserUnits };
-}
-
 function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
@@ -460,65 +406,56 @@ function officialRuntimeServiceCommand(
 	return commandPath && executableExists(commandPath) ? commandPath : descriptor.command;
 }
 
-function officialServiceBaseUnitIsCurrent(
-	program: RuntimeSystemdUserProgram,
-	paths: RuntimePaths,
-): boolean {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor) return false;
-	const unitName = systemdUnitFileName(descriptor.programName);
-	const unitPath = join(paths.systemdUserRoot, unitName);
-	try {
-		const contents = readFileSync(unitPath);
-		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return false;
-		const unitStat = lstatSync(unitPath);
-		if (!unitStat.isFile()) return false;
-		return true;
-	} catch (error) {
-		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
-		return false;
-	}
-}
-
-function officialRuntimeServiceCommandRevision(
+function officialRuntimeServiceRevision(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
 ): string | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
-	return runtimeCommandCurrentRevision(
-		officialRuntimeServiceCommand(descriptor, paths),
-		paths.userHome,
-		paths.userHome,
-	);
+	const unitName = systemdUnitFileName(descriptor.programName);
+	const unitPath = join(paths.systemdUserRoot, unitName);
+	try {
+		const unitStat = lstatSync(unitPath);
+		if (!unitStat.isFile()) return null;
+		const contents = readFileSync(unitPath);
+		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
+		const commandRevision = runtimeCommandCurrentRevision(
+			officialRuntimeServiceCommand(descriptor, paths),
+			paths.userHome,
+			paths.userHome,
+		);
+		if (!commandRevision) return null;
+		return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
+	} catch (error) {
+		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
+		return null;
+	}
 }
 
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
 	executeInstallers: boolean,
-	committedCommandRevisions: Readonly<Record<string, string>>,
+	committedServiceRevisions: Readonly<Record<string, string>>,
 ): OfficialRuntimeServicePlan {
 	const pending: OfficialRuntimeServicePlan["pending"] = [];
-	const commandRevisions: Record<string, string> = {};
-	if (!executeInstallers) return { pending, commandRevisions };
+	const serviceRevisions: Record<string, string> = {};
+	if (!executeInstallers) return { pending, serviceRevisions };
 	for (const program of officialRuntimeSystemdPrograms(programs)) {
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
-		const commandRevision = officialRuntimeServiceCommandRevision(program, paths);
-		if (commandRevision) commandRevisions[unitName] = commandRevision;
-		if (
-			!officialServiceBaseUnitIsCurrent(program, paths) ||
-			!commandRevision ||
-			committedCommandRevisions[unitName] !== commandRevision
-		) {
-			pending.push({ unitName, program, commandRevision });
+		const serviceRevision = officialRuntimeServiceRevision(program, paths);
+		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
+		if (!serviceRevision || committedServiceRevisions[unitName] !== serviceRevision) {
+			pending.push({ unitName, program, serviceRevision });
 		}
 	}
-	return { pending, commandRevisions };
+	return { pending, serviceRevisions };
 }
 
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
+const HERMES_DASHBOARD_INSTALL_TIMEOUT_MS = 600_000;
+const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -590,15 +527,8 @@ function writeSystemdProgramEnvironment(input: {
 	name: string;
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
-}): { envFile: string; envRevision: string } {
-	return {
-		envFile: writeSystemdEnvironmentFile(input),
-		envRevision: runtimeImpactRevision({
-			systemdEnvironmentFile: "v1",
-			env: input.revisionEnv ?? input.env,
-		}),
-	};
+}): string {
+	return writeSystemdEnvironmentFile(input);
 }
 
 function writeSystemdUnit(input: {
@@ -612,7 +542,6 @@ function writeSystemdUnit(input: {
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
 	unitEnv?: Record<string, string>;
 	execStart?: string;
 	serviceType?: "simple" | "oneshot" | "notify";
@@ -625,12 +554,11 @@ function writeSystemdUnit(input: {
 }): string {
 	const path = join(input.root, systemdUnitFileName(input.name));
 	const unitOwner = input.unitOwner ?? input.owner;
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
+	const envFile = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: input.owner,
 		env: input.env,
-		revisionEnv: input.revisionEnv,
 	});
 	const lines = [
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
@@ -645,7 +573,6 @@ function writeSystemdUnit(input: {
 		...(input.extraUnitLines ?? []),
 		"",
 		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
 		`Type=${input.serviceType ?? "simple"}`,
 		`WorkingDirectory=${systemdPath(input.cwd)}`,
 		...(input.directoryKind === "platform"
@@ -729,7 +656,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	unsetEnvironment?: readonly string[];
 }): string {
 	const unitName = systemdUnitFileName(input.name);
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
+	const envFile = writeSystemdProgramEnvironment({
 		paths: input.paths,
 		name: input.name,
 		owner: "runtime-user",
@@ -745,7 +672,6 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`ConditionPathExists=${systemdPath(envFile)}`,
 		"",
 		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
 		...(input.unsetEnvironment?.length
 			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
 			: []),
@@ -776,6 +702,54 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 }
 
 const OFFICIAL_INSTALLER_MAX_BUFFER_BYTES = 64 * 1024;
+
+export function prepareOfficialRuntimeServiceDependencies(
+	programs: RuntimeSystemdUserProgram[],
+	plan: OfficialRuntimeServicePlan,
+	paths: RuntimePaths,
+	egressSystemCaFile?: string,
+): string | null {
+	// Hermes includes the dashboard's node_modules/.bin in its gateway unit.
+	// Finish the cold build first so gateway startup cannot rewrite the installed unit.
+	const preparesHermesGateway = plan.pending.some((item) => item.program.runtime === "hermes");
+	const hasHermesDashboard = programs.some(
+		(program) => program.runtime === "hermes" && program.service === "dashboard",
+	);
+	if (!preparesHermesGateway || !hasHermesDashboard) return null;
+
+	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
+	const commands = [
+		{
+			args: ["ci", "--include=dev", "--workspace", "web"],
+			cwd: appRoot,
+			timeoutMs: HERMES_DASHBOARD_INSTALL_TIMEOUT_MS,
+		},
+		{
+			args: ["run", "build"],
+			cwd: join(appRoot, "web"),
+			timeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
+		},
+	] as const;
+	for (const command of commands) {
+		let result: ReturnType<typeof spawnRuntimeUserCommand>;
+		try {
+			result = spawnRuntimeUserCommand("npm", [...command.args], paths.userHome, command.cwd, {
+				egressSystemCaFile,
+				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+				timeoutMs: command.timeoutMs,
+			});
+		} catch (error) {
+			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", { error });
+			return `Hermes dashboard prerequisite failed; see ${logPath}`;
+		}
+		if (result.status !== 0 || result.error) {
+			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
+			return `Hermes dashboard prerequisite failed; see ${logPath}`;
+		}
+	}
+	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
+	return existsSync(index) ? null : `Hermes dashboard prerequisite did not produce ${index}`;
+}
 
 function installOfficialRuntimeUserService(
 	program: RuntimeSystemdUserProgram,
@@ -839,12 +813,9 @@ export function installOfficialRuntimeService(
 		runtimeIdentity,
 	);
 	if (error) return error;
-	if (!officialServiceBaseUnitIsCurrent(item.program, paths)) {
+	item.serviceRevision = officialRuntimeServiceRevision(item.program, paths);
+	if (!item.serviceRevision) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
-	}
-	item.commandRevision = officialRuntimeServiceCommandRevision(item.program, paths);
-	if (!item.commandRevision) {
-		return `official ${runtimeSystemdProgramName(item.program)} command revision could not be verified`;
 	}
 	return null;
 }
@@ -875,10 +846,6 @@ function uninstallOfficialRuntimeUserService(input: {
 			error instanceof Error ? error.message : String(error)
 		}`;
 	}
-}
-
-function systemdUnitNameFromPath(unitPath: string): string {
-	return unitPath.split("/").at(-1) ?? "";
 }
 
 function foreignRuntimeSystemdUserDropIns(paths: RuntimePaths, unitName: string): string[] {
@@ -917,24 +884,6 @@ function officialRuntimeSystemdUserDropInDriftErrors(
 	return errors;
 }
 
-function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: string[]): string[] {
-	if (!existsSync(paths.systemdUserRoot)) return [];
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	const stale: string[] = [];
-	for (const entry of readdirSync(paths.systemdUserRoot)) {
-		if (!entry.endsWith(".service.d")) continue;
-		const unitName = entry.slice(0, -".d".length);
-		if (writtenNames.has(unitName)) continue;
-		if (!officialRuntimeServiceDescriptorForUnit(unitName)) continue;
-		const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
-		if (!isGeneratedRuntimeSystemdPath(dropInPath)) continue;
-		const baseUnitPath = join(paths.systemdUserRoot, unitName);
-		if (!existsSync(baseUnitPath) || isGeneratedRuntimeSystemdPath(baseUnitPath)) continue;
-		stale.push(unitName);
-	}
-	return stale.sort();
-}
-
 export function uninstallStaleOfficialRuntimeServices(input: {
 	paths: RuntimePaths;
 	unitNames: readonly string[];
@@ -950,85 +899,6 @@ export function uninstallStaleOfficialRuntimeServices(input: {
 		if (error) errors.push(error);
 	}
 	return errors;
-}
-
-export function planRuntimeSystemdUserMutations(
-	programs: RuntimeSystemdUserProgram[],
-	paths: RuntimePaths,
-): RuntimeSystemdUserMutationPlan {
-	const targets = new Set<string>();
-	const symlinkTargets = new Set<string>();
-	const environmentTargets = new Set<string>();
-	const unitNames = new Set<string>();
-	const metadataTargets = new Set<string>([
-		dirname(paths.systemdUserRoot),
-		paths.systemdUserRoot,
-		join(paths.systemdUserRoot, "default.target.wants"),
-	]);
-	const writtenUnits = programs
-		.map((program) => {
-			if (program.programKind === "file-browser") return null;
-			const name = runtimeSystemdProgramName(program);
-			const unitName = systemdUnitFileName(name);
-			unitNames.add(unitName);
-			const unitPath = join(paths.systemdUserRoot, unitName);
-			environmentTargets.add(systemdEnvironmentFilePath(paths, name));
-			targets.add(unitPath);
-			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-			targets.add(enablementPath);
-			symlinkTargets.add(enablementPath);
-			if (officialRuntimeServiceInstallArgs(program)) {
-				if (program.runtime === "openclaw") {
-					// OpenClaw's official Linux installer writes the base unit in place and
-					// preserves the previous unit beside it. Both are official-user
-					// transaction mutations:
-					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
-					targets.add(`${unitPath}.bak`);
-					// The same installer may write its owner-only environment file under
-					// the OpenClaw state directory:
-					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
-					targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
-				}
-				const dropInPath = systemdDropInFilePath(paths, name);
-				targets.add(dropInPath);
-				metadataTargets.add(dirname(dropInPath));
-			}
-			return unitPath;
-		})
-		.filter((path): path is string => path !== null);
-
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
-		if (writtenNames.has(entry.unitName)) continue;
-		targets.add(entry.path);
-		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", entry.unitName);
-		targets.add(enablementPath);
-		symlinkTargets.add(enablementPath);
-		unitNames.add(entry.unitName);
-		if (entry.kind === "hosted-drop-in") {
-			metadataTargets.add(dirname(entry.path));
-		}
-	}
-	if (existsSync(paths.systemdEnvRoot)) {
-		for (const entry of readdirSync(paths.systemdEnvRoot)) {
-			if (!entry.endsWith(".service.env")) continue;
-			const path = join(paths.systemdEnvRoot, entry);
-			if (entry.startsWith("clawdi-") || isGeneratedRuntimeSystemdPath(path)) {
-				environmentTargets.add(path);
-			}
-		}
-	}
-
-	const staleOfficialUnits = staleOfficialRuntimeUserServices(paths, writtenUnits);
-	return {
-		targets: [...targets].sort(),
-		symlinkTargets: [...symlinkTargets].sort(),
-		environmentTargets: [...environmentTargets].sort(),
-		metadataTargets: [...metadataTargets].sort(),
-		unitNames: [...unitNames].sort(),
-		staleOfficialUnits,
-		driftErrors: officialRuntimeSystemdUserDropInDriftErrors(programs, paths),
-	};
 }
 
 function planStaleRuntimeSystemdFiles(
@@ -1057,7 +927,6 @@ function planStaleRuntimeSystemdFiles(
 	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
 		if (desiredUser.has(entry.unitName)) continue;
 		files.add(entry.path);
-		files.add(join(paths.systemdUserRoot, "default.target.wants", entry.unitName));
 		userUnits.add(entry.unitName);
 	}
 	const desiredEnvironmentFiles = new Set(
@@ -1091,54 +960,6 @@ export function removeStaleRuntimeSystemdFiles(plan: RuntimeSystemdStaleFilePlan
 		}
 	}
 	return errors;
-}
-
-function materializeRuntimeSystemdUserEnablement(
-	paths: RuntimePaths,
-	desiredUnits: readonly string[],
-	staleUnits: readonly string[],
-): void {
-	const desired = new Set(desiredUnits);
-	const units = [...new Set([...desiredUnits, ...staleUnits])].sort();
-	if (units.length === 0) return;
-
-	const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
-	ensureDirectoryWithinTrustedRoot(paths.systemdUserRoot, wantsRoot, { mode: 0o755 });
-	chmodSync(wantsRoot, 0o755);
-	if (runningAsRoot()) chownSync(wantsRoot, 0, 0);
-
-	for (const unitName of units) {
-		const path = join(wantsRoot, unitName);
-		const target = `../${unitName}`;
-		let current: ReturnType<typeof lstatSync> | null = null;
-		try {
-			current = lstatSync(path);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-
-		if (!desired.has(unitName)) {
-			if (!current) continue;
-			if (current.isDirectory() && !current.isSymbolicLink()) {
-				throw new Error(`managed systemd enablement path is a directory: ${path}`);
-			}
-			rmSync(path, { force: true });
-			continue;
-		}
-
-		if (current?.isSymbolicLink() && readlinkSync(path) === target) {
-			if (runningAsRoot() && (current.uid !== 0 || current.gid !== 0)) lchownSync(path, 0, 0);
-			continue;
-		}
-		if (current) {
-			if (current.isDirectory() && !current.isSymbolicLink()) {
-				throw new Error(`managed systemd enablement path is a directory: ${path}`);
-			}
-			rmSync(path, { force: true });
-		}
-		symlinkSync(target, path);
-		if (runningAsRoot()) lchownSync(path, 0, 0);
-	}
 }
 
 export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<string, string> {
@@ -1192,14 +1013,14 @@ function writeRuntimeSystemdUserProgram(input: {
 		? {
 				...(isHermesDashboard ? { HOME: input.paths.userHome } : {}),
 				...runtimeEnv,
-				CLAWDI_RUNTIME_REV: revision,
+				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			}
 		: {
 				...input.commonEnvironment,
 				...runtimeEnv,
 				CLAWDI_AUTH_TOKEN: "",
 				CLAWDI_HOME: input.paths.clawdiHome,
-				CLAWDI_RUNTIME_REV: revision,
+				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			};
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
@@ -1245,7 +1066,7 @@ function writeFileBrowserSystemdUnit(input: {
 		directoryKind: "file-browser",
 		env: {
 			HOME: "/nonexistent",
-			CLAWDI_RUNTIME_REV: runtimeImpactRevision({
+			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
 				companion: input.manifest.companions?.filebrowser ?? null,
 			}),
 		},
@@ -1327,11 +1148,12 @@ export function writeRuntimeSidecarSystemdUnit(input: {
 			...input.commonEnvironment,
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_EGRESS_ENV_FILE: input.program.envFilePath,
-			CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
-				input.manifest,
-				input.program,
-				input.identity,
-			),
+			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
+				program: runtimeSidecarProgramRevision(input.manifest, input.program, input.identity),
+				secretFile: input.program.secretFilePath
+					? readFileSync(input.program.secretFilePath, "utf8")
+					: null,
+			}),
 		},
 		serviceType: "notify",
 		extraUnitLines: [`Before=user@${input.identity.runtimeUid}.service`],
@@ -1433,7 +1255,10 @@ export function writeRuntimeSystemdState(input: {
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
-					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
+					CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
+						program: daemonProgramRevision(manifest),
+						authToken: readFileSync(daemonAuthTokenFile, "utf8"),
+					}),
 				},
 			}),
 		);
@@ -1479,8 +1304,6 @@ export function writeRuntimeSystemdState(input: {
 			}),
 		);
 	}
-	materializeRuntimeSystemdUserEnablement(paths, desiredUserUnitNames, staleFiles.userUnits);
-
 	return {
 		systemUnits,
 		userUnits,
@@ -1489,7 +1312,10 @@ export function writeRuntimeSystemdState(input: {
 	};
 }
 
-export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]): void {
+export function validateRuntimeSystemdPlan(
+	programs: RuntimeSystemdUserProgram[],
+	paths: RuntimePaths,
+): void {
 	for (const program of programs) {
 		systemdUnitFileName(runtimeSystemdProgramName(program));
 		systemdPath(program.cwd);
@@ -1501,4 +1327,6 @@ export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]
 			systemdEnvironmentFileQuote(value);
 		}
 	}
+	const driftErrors = officialRuntimeSystemdUserDropInDriftErrors(programs, paths);
+	if (driftErrors.length > 0) throw new Error(driftErrors.join("; "));
 }

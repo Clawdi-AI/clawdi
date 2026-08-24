@@ -29,6 +29,11 @@ const officialServiceCommandRevisionsSchema = z.record(
 	z.string().regex(/^[a-f0-9]{64}$/),
 );
 
+const activatedSystemdUnitsSchema = z.record(
+	z.string().regex(/^[A-Za-z0-9_.@-]+\.service$/),
+	z.string().regex(/^[a-f0-9]{64}$/),
+);
+
 const providerIdsSchema = z
 	.array(z.string().min(1))
 	.refine((ids) => new Set(ids).size === ids.length, {
@@ -50,7 +55,7 @@ const userProcessRevisionAliasesSchema = z.record(
 		}),
 );
 
-export const runtimeAppliedStateSchema = z
+const runtimeAppliedStateFileSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
 		appliedAt: z.string().datetime({ offset: true }),
@@ -63,6 +68,8 @@ export const runtimeAppliedStateSchema = z
 		applyReceiptId: z.string().min(16).max(128).optional(),
 		bootNonce: z.string().min(16).max(128).optional(),
 		contentIdentity: appliedContentSourceSchema,
+		activated: activatedSystemdUnitsSchema.optional(),
+		// Accepted only to migrate released 0.13.92 and 0.14.14 state.
 		egressSidecarSecretRevision: z
 			.string()
 			.regex(/^[a-f0-9]{64}$/)
@@ -100,9 +107,18 @@ export const runtimeAppliedStateSchema = z
 		}
 	});
 
+export const runtimeAppliedStateSchema = runtimeAppliedStateFileSchema.transform(
+	({
+		egressSidecarSecretRevision: _egressSidecarSecretRevision,
+		daemonAuthTokenRevision: _daemonAuthTokenRevision,
+		daemonProgramRevision: _daemonProgramRevision,
+		userProcessRevisionAliases: _userProcessRevisionAliases,
+		...state
+	}) => ({ ...state, activated: state.activated ?? {} }),
+);
+
 export type RuntimeAppliedState = z.infer<typeof runtimeAppliedStateSchema>;
 export type RuntimeAppliedStateV2 = RuntimeAppliedState;
-export type RuntimeUserProcessRevisionAliases = z.infer<typeof userProcessRevisionAliasesSchema>;
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;
 export type RuntimeAppliedContentIdentity = RuntimeAppliedContentSource;
 

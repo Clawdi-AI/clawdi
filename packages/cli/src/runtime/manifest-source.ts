@@ -529,10 +529,8 @@ function loadLastGoodManifest(
 	}
 }
 
-// Internal recovery input for convergence rollback only. This does not
-// authorize the cached manifest to boot or converge under current semantics;
-// schema parsing plus an exact root-only applied content identity prove only
-// the previously committed secret material needed to roll back the sidecar.
+// Internal recovery input for declarative last-good replay. This bypasses only
+// offline-boot policy; schema and applied-content checks remain mandatory.
 export function loadCommittedRuntimeManifest(
 	paths: RuntimePaths,
 	applyContext: RuntimeApplyContext,

@@ -25,7 +25,7 @@ export interface RuntimeUserIdentity {
 
 export interface RuntimeOwnershipEnclave {
 	path: string;
-	owner: "root";
+	owner: "runtime-user" | "root";
 }
 
 export interface RuntimeUserOwnershipRule {

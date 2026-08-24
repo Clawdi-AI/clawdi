@@ -1,6 +1,5 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import type { RuntimeUserProcessRevisionAliases } from "./applied-state";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -40,33 +39,20 @@ export interface RuntimeConvergenceResult {
 }
 type RuntimeSystemdApplyResult = {
 	applied: boolean;
+	activated?: Record<string, string>;
 	systemUnitsChanged: string[];
 	userUnitsChanged: string[];
 };
 interface RuntimeSystemdApplySignal {
-	// Private, in-memory apply metadata. It must not enter convergence outputs,
-	// status, diagnostics, logs, or any generated public artifact.
-	restartDaemon: boolean;
-	restartEgressSidecar: boolean;
-	restartUserUnits: string[];
 	staleSystemUnits: string[];
 	staleUserUnits: string[];
 }
 export interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
-	transactionState: () => "pristine" | "mutated";
-	installOfficialService: (unit: string, install: () => string | null) => string | null;
-	quiesce: (affectedUserUnits: readonly string[]) => void;
-	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 export interface RuntimePrivateAppliedAuthority {
-	// These private activation verifiers may only be persisted in the root-owned
-	// 0600 applied-state authority.
-	daemonAuthTokenRevision?: string;
-	daemonProgramRevision?: string;
-	egressSidecarSecretRevision?: string;
-	userProcessRevisionAliases?: RuntimeUserProcessRevisionAliases;
+	activated: Record<string, string>;
 	officialServiceCommandRevisions: Record<string, string>;
 }
 export function writeRuntimePrivateFileAtomic(

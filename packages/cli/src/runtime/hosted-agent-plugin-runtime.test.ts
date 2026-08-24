@@ -528,7 +528,6 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "b".repeat(64));
 		const transaction = prepareTransaction(desiredState("hermes", desired), runner);
-		expect(transaction.snapshotTargets).toContain(join(runner.liveHome, ".hermes", "config.yaml"));
 
 		transaction.apply();
 
@@ -727,7 +726,6 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 			commands,
 			runner,
 		});
-		expect(transaction.snapshotTargets).toContain(join(runner.liveHome, ".openclaw", "extensions"));
 		expect(() => transaction.apply()).toThrow("unmanaged native Agent Plugin target");
 	});
 

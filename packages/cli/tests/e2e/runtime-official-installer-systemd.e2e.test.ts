@@ -29,6 +29,7 @@ import {
 } from "../../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../../src/lib/version";
 import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
+import { applyRuntimeBundleChannelsToManifestLoad } from "../../src/runtime/channels";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import { prepareHostedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
 import {
@@ -48,7 +49,6 @@ import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
-	SystemdRuntimeTransaction,
 } from "../../src/runtime/systemd-transaction";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
@@ -162,10 +162,16 @@ function filesystemTreeIdentity(root: string, relative = ""): Record<string, str
 	return identity;
 }
 
-function expectRootOwnedReadableTree(root: string): void {
+function expectManagedSystemdTreeOwnership(
+	root: string,
+	runtimeUid: number,
+	runtimeGid: number,
+): void {
+	const enablementRoot = join(root, "default.target.wants");
 	const visit = (path: string): void => {
 		const node = lstatSync(path);
-		expect([node.uid, node.gid]).toEqual([0, 0]);
+		const runtimeOwned = path === enablementRoot || path.startsWith(`${enablementRoot}/`);
+		expect([node.uid, node.gid]).toEqual(runtimeOwned ? [runtimeUid, runtimeGid] : [0, 0]);
 		if (node.isSymbolicLink()) return;
 		if (node.isDirectory()) {
 			expect(node.mode & 0o555).toBe(0o555);
@@ -651,22 +657,13 @@ exec /usr/bin/systemctl "$@"
 				expect(mainPid).toBeGreaterThan(1);
 				expect(statSync(`/proc/${mainPid}`).uid).toBe(runtimeUid);
 				firstPids.set(unitName, mainPid);
-				const processRevisions = readFileSync(`/proc/${mainPid}/environ`)
-					.toString("utf8")
-					.split("\0")
-					.filter((entry) => entry.startsWith("CLAWDI_RUNTIME_REV="));
-				expect(processRevisions).toHaveLength(1);
-				const processRevision = processRevisions[0].slice("CLAWDI_RUNTIME_REV=".length);
-				expect(processRevision).toMatch(/^[a-f0-9]{32}$/);
 				const managedEnvironment = readFileSync(
 					join(paths.systemdEnvRoot, `${unitName}.env`),
 					"utf8",
 				);
-				expect(managedEnvironment.match(/^CLAWDI_RUNTIME_REV="([a-f0-9]{32})"$/m)?.[1]).toBe(
-					processRevision,
-				);
+				expect(managedEnvironment).toMatch(/^CLAWDI_MANAGED_CONTENT_DIGEST="[a-f0-9]{32}"$/m);
 				const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-				expect(readlinkSync(enablementPath)).toBe(`../${unitName}`);
+				expect(realpathSync(enablementPath)).toBe(join(paths.systemdUserRoot, unitName));
 			}
 			for (const [port, unitName] of runtime === "hermes"
 				? ([[9119, "clawdi-hermes-dashboard.service"]] as const)
@@ -698,16 +695,15 @@ exec /usr/bin/systemctl "$@"
 					);
 				}
 			}
-			expectRootOwnedReadableTree(paths.systemdUserRoot);
+			expectManagedSystemdTreeOwnership(paths.systemdUserRoot, runtimeUid, runtimeGid);
 			const firstTree = filesystemTreeIdentity(paths.systemdUserRoot);
-			const firstMutations = readFileSync(systemctlLog, "utf8")
-				.trim()
-				.split("\n")
-				.filter((call) =>
-					/^(?:--user )?(?:daemon-reload|start|stop|restart|reset-failed)\b/.test(call),
-				);
+			const firstCalls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+			const firstMutations = firstCalls.filter((call) =>
+				/^(?:--user )?(?:daemon-reload|enable|disable|start|stop|restart|reset-failed)\b/.test(
+					call,
+				),
+			);
 			expect(firstMutations.length).toBeGreaterThan(0);
-			expect(readFileSync(systemctlLog, "utf8")).not.toMatch(/(?:^|\s)(?:enable|disable)(?:\s|$)/m);
 
 			await Bun.sleep(500);
 			writeFileSync(systemctlLog, "", { mode: 0o666 });
@@ -722,7 +718,9 @@ exec /usr/bin/systemctl "$@"
 				.trim()
 				.split("\n")
 				.filter((call) =>
-					/^(?:--user )?(?:daemon-reload|start|stop|restart|reset-failed)\b/.test(call),
+					/^(?:--user )?(?:daemon-reload|enable|disable|start|stop|restart|reset-failed)\b/.test(
+						call,
+					),
 				);
 			const secondTree = filesystemTreeIdentity(paths.systemdUserRoot);
 			expect(secondMutations).toEqual([]);
@@ -768,7 +766,7 @@ exec /usr/bin/systemctl "$@"
 	300_000,
 );
 
-test("propagates the real official OpenClaw installer failure and rolls back as UID 10001", () => {
+test("propagates the real official OpenClaw installer failure without committing authority", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -862,25 +860,25 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 		"default.target.wants",
 		"openclaw-gateway.service",
 	);
+	rmSync(enablementPath, { force: true });
 	const openClawConfig = join(runtimeHome, ".openclaw", "openclaw.json");
 	const gatewayEnvironment = join(runtimeHome, ".openclaw", "gateway.systemd.env");
 	expect(existsSync(unitPath)).toBe(false);
 	expect(existsSync(openClawConfig)).toBe(false);
 	expect(existsSync(gatewayEnvironment)).toBe(false);
 	const openClawWorkspaceRoot = join(runtimeHome, ".openclaw", "workspace");
-	const previousOpenClawConfig = `${JSON.stringify({
+	const initialOpenClawConfig = `${JSON.stringify({
 		agents: { defaults: { workspace: openClawWorkspaceRoot } },
 		gateway: { mode: "local" },
 	})}\n`;
-	const previousGatewayEnvironment = "PRESERVED_ENV=before\n";
 	mkdirSync(dirname(openClawConfig), { recursive: true, mode: 0o700 });
 	chownSync(dirname(openClawConfig), runtimeUid, runtimeGid);
-	writeFileSync(openClawConfig, previousOpenClawConfig, { mode: 0o600 });
+	writeFileSync(openClawConfig, initialOpenClawConfig, { mode: 0o600 });
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
-	writeFileSync(gatewayEnvironment, previousGatewayEnvironment, { mode: 0o600 });
+	writeFileSync(gatewayEnvironment, "PRESERVED_ENV=before\n", { mode: 0o600 });
 	mkdirSync(dirname(unitPath), { recursive: true });
 	mkdirSync(unitPath, { recursive: false });
-	writeFileSync(unitSentinel, "preserve exact rollback target\n");
+	writeFileSync(unitSentinel, "preserve directory target\n");
 
 	const workspaceRoot = join(runtimeHome, "clawdi-systemd-test-workspace");
 	const manifest: RuntimeManifest = {
@@ -956,9 +954,8 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
-	expect(readFileSync(unitSentinel, "utf8")).toBe("preserve exact rollback target\n");
-	expect(readFileSync(openClawConfig, "utf8")).toBe(previousOpenClawConfig);
-	expect(readFileSync(gatewayEnvironment, "utf8")).toBe(previousGatewayEnvironment);
+	expect(readFileSync(unitSentinel, "utf8")).toBe("preserve directory target\n");
+	expect(readFileSync(openClawConfig, "utf8")).not.toBe(initialOpenClawConfig);
 	for (const path of [unitPath, gatewayEnvironment]) {
 		const stat = statSync(path);
 		expect(stat.uid).toBe(0);
@@ -968,10 +965,14 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
 	expect(statSync(openClawConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
-	for (const path of [`${unitPath}.bak`, dropInPath, enablementPath, paths.manifestLastGood]) {
-		expect(existsSync(path)).toBe(false);
-	}
-	expect(existsSync(workspaceRoot)).toBe(false);
+	expect(existsSync(dropInPath)).toBe(true);
+	expect(existsSync(paths.manifestLastGood)).toBe(false);
+	expect(existsSync(workspaceRoot)).toBe(true);
+	rmSync(unitPath, { recursive: true, force: true });
+	rmSync(`${unitPath}.bak`, { recursive: true, force: true });
+	rmSync(dirname(dropInPath), { recursive: true, force: true });
+	rmSync(enablementPath, { force: true });
+	rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
 test("projects a large OpenClaw provider model-list reduction through the public mutation SDK", () => {
@@ -1816,28 +1817,19 @@ http.createServer((request, response) => {
 	};
 	const converge = () => {
 		const before = readSystemdUnitSnapshot(paths);
-		const transaction = new SystemdRuntimeTransaction();
 		return convergeRuntimeManifest(load, paths, {
 			fileBrowserInstallOptions: {
 				download: (_url, destination) => writeFileSync(destination, binary),
 			},
 			systemdApply: {
-				transactionState: () => transaction.state,
-				installOfficialService: (unit, install) =>
-					transaction.installOfficialService(paths, unit, install),
-				quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
 				activate: () => {
-					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-						transaction,
-						stage: "final-activation",
-					});
+					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {});
 				},
-				rollback: () => transaction.rollback(paths),
 			},
 		});
 	};
@@ -1984,13 +1976,18 @@ http.createServer((request, response) => {
 	expect(gatewayMainPid).toBeGreaterThan(1);
 	expect(statSync(`/proc/${gatewayMainPid}`).uid).toBe(runtimeUid);
 	const activeUnits = readSystemdUnitSnapshot(paths);
+	const activeGatewayHash = activeUnits.user.get("openclaw-gateway.service");
+	if (!activeGatewayHash) throw new Error("active OpenClaw gateway hash is missing");
 	expect(
 		applySystemdRuntimeUpdate(paths, activeUnits, activeUnits, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
 			activationScope: { systemUnits: [], userUnits: ["openclaw-gateway.service"] },
 		}),
-	).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
+	).toEqual({
+		applied: true,
+		activated: { "openclaw-gateway.service": activeGatewayHash },
+		systemUnitsChanged: [],
+		userUnitsChanged: ["openclaw-gateway.service"],
+	});
 	const unitControl = spawnSync(
 		"runuser",
 		["-u", "clawdi", "--", "systemctl", "stop", "clawdi-files.service"],
@@ -2216,10 +2213,14 @@ esac
 		);
 		expect(initialPid).toBeGreaterThan(1);
 		expect(runUserSystemctl("is-enabled", unitName).stdout.trim()).toBe("enabled");
-		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
+		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
+		]);
 
 		chmodSync(unitPath, 0o600);
 		chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
@@ -2231,10 +2232,14 @@ esac
 		const repaired = await converge();
 		expect(repaired.installErrors).toEqual([]);
 		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
-		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot, enablementPath]) {
+		for (const path of [paths.systemdUserRoot, unitPath, dropInRoot]) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
 		}
+		expect([lstatSync(enablementPath).uid, lstatSync(enablementPath).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
+		]);
 		const repairedState = runUserSystemctl(
 			"show",
 			unitName,
@@ -2264,6 +2269,8 @@ esac
 const BEHAVIORAL_GUARD_ENVIRONMENT = [
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_CODEX_INSTALL_DISABLED",
+	"CLAWDI_EGRESS_GID",
+	"CLAWDI_EGRESS_UID",
 	"CLAWDI_HOME",
 	"CLAWDI_RUN_DIR",
 	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
@@ -2279,17 +2286,12 @@ const BEHAVIORAL_GUARD_ENVIRONMENT = [
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
 ] as const;
 
-const BEHAVIORAL_GUARD_MAIN_MARKER = "/home/clawdi/.clawdi-e2e-main-generation";
-const BEHAVIORAL_GUARD_DASHBOARD_MARKER = "/home/clawdi/.clawdi-e2e-dashboard-generation";
-
 function configureBehavioralGuardEnvironment(root: string, systemctl = "/usr/bin/systemctl") {
 	const previous = new Map(BEHAVIORAL_GUARD_ENVIRONMENT.map((name) => [name, process.env[name]]));
-	const systemdSystemRoot = join(root, "systemd", "system");
-	mkdirSync(systemdSystemRoot, { recursive: true, mode: 0o755 });
-	chmodSync(join(root, "systemd"), 0o755);
-	chmodSync(systemdSystemRoot, 0o755);
 	Object.assign(process.env, {
 		CLAWDI_CODEX_INSTALL_DISABLED: "1",
+		CLAWDI_EGRESS_GID: "10002",
+		CLAWDI_EGRESS_UID: "10002",
 		CLAWDI_HOME: join(root, "clawdi-home"),
 		CLAWDI_RUN_DIR: join(root, "run"),
 		CLAWDI_RUNTIME_GID: "10001",
@@ -2300,7 +2302,7 @@ function configureBehavioralGuardEnvironment(root: string, systemctl = "/usr/bin
 		CLAWDI_SERVICE_STATE_DIR: join(root, "state"),
 		CLAWDI_SYSTEMCTL_PATH: systemctl,
 		CLAWDI_SYSTEMD_APPLY: "1",
-		CLAWDI_SYSTEMD_SYSTEM_ROOT: systemdSystemRoot,
+		CLAWDI_SYSTEMD_SYSTEM_ROOT: "/run/systemd/system",
 	});
 	delete process.env.CLAWDI_AUTH_TOKEN;
 	delete process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
@@ -2351,6 +2353,10 @@ function ensureBehavioralGuardUserManager(): void {
 
 function cleanBehavioralGuardUnits(paths: ReturnType<typeof getRuntimePaths>): void {
 	const units = ["hermes-gateway.service", "clawdi-hermes-dashboard.service"];
+	spawnSync("/usr/bin/systemctl", ["disable", "--now", "clawdi-runtime-sidecar.service"]);
+	rmSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"), { force: true });
+	rmSync(join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"), { force: true });
+	spawnSync("/usr/bin/systemctl", ["daemon-reload"]);
 	runBehavioralGuardUserSystemctl("disable", "--now", ...units);
 	for (const unit of units) {
 		rmSync(join(paths.systemdUserRoot, unit), { force: true });
@@ -2360,84 +2366,23 @@ function cleanBehavioralGuardUnits(paths: ReturnType<typeof getRuntimePaths>): v
 	runBehavioralGuardUserSystemctl("daemon-reload");
 }
 
-function writeBehavioralGuardHermesCommand(path: string): void {
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(
-		path,
-		`#!/bin/sh
-set -eu
-case "$*" in
-  "--version")
-    printf '%s\\n' 'Hermes Agent v0.19.1'
-    ;;
-  "config path"|"config get "*|"config set "*|"config unset "*)
-	exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
-    ;;
-  "gateway install --force")
-    mkdir -p "$HOME/.config/systemd/user"
-    cat > "$HOME/.config/systemd/user/hermes-gateway.service" <<'EOF'
-[Unit]
-Description=Hermes behavioral guard gateway
-
-[Service]
-Type=simple
-ExecStartPre=/bin/sh -c 'test "$BEHAVIORAL_GUARD_MAIN" != broken-generation-two'
-ExecStart=${path} gateway run
-Restart=no
-
-[Install]
-WantedBy=default.target
-EOF
-    systemctl --user daemon-reload
-    systemctl --user enable hermes-gateway.service
-    ;;
-  "gateway uninstall")
-    systemctl --user disable --now hermes-gateway.service || true
-    rm -f "$HOME/.config/systemd/user/hermes-gateway.service"
-    systemctl --user daemon-reload
-    ;;
-  "gateway run")
-    printf '%s\\n' "\${BEHAVIORAL_GUARD_MAIN:-missing}" > ${BEHAVIORAL_GUARD_MAIN_MARKER}
-    exec /bin/sleep infinity
-    ;;
-  "dashboard"*)
-    printf '%s\\n' "\${BEHAVIORAL_GUARD_DASHBOARD:-missing}" > ${BEHAVIORAL_GUARD_DASHBOARD_MARKER}
-    exec /bin/sleep infinity
-    ;;
-  "config path") printf '%s\\n' "$HOME/.hermes/config.yaml" ;;
-  *) exit 64 ;;
-esac
-`,
-		{ mode: 0o755 },
+function installBehavioralGuardHermesRuntime(): void {
+	rmSync("/home/clawdi/.hermes", { recursive: true, force: true });
+	rmSync("/home/clawdi/.local/bin/hermes", { force: true });
+	const install = spawnSync(
+		"runuser",
+		[
+			"-u",
+			"clawdi",
+			"--",
+			"env",
+			"HOME=/home/clawdi",
+			"CLAWDI_TEST_STOCK_RUNTIME=hermes",
+			"/opt/fixture/install-stock-runtime.sh",
+		],
+		{ encoding: "utf8" },
 	);
-	chmodSync(path, 0o755);
-}
-
-function installBehavioralGuardHermesCommand(path: string): () => void {
-	const previous = existsSync(path)
-		? (() => {
-				const node = lstatSync(path);
-				if (!node.isFile() || node.isSymbolicLink()) {
-					throw new Error(`behavioral guard Hermes command is not a regular file: ${path}`);
-				}
-				return {
-					contents: readFileSync(path),
-					mode: node.mode & 0o777,
-					uid: node.uid,
-					gid: node.gid,
-				};
-			})()
-		: null;
-	writeBehavioralGuardHermesCommand(path);
-	return () => {
-		if (!previous) {
-			rmSync(path, { force: true });
-			return;
-		}
-		writeFileSync(path, previous.contents, { mode: previous.mode });
-		chmodSync(path, previous.mode);
-		chownSync(path, previous.uid, previous.gid);
-	};
+	if (install.status !== 0) throw new Error(install.stderr);
 }
 
 function behavioralGuardSkill(
@@ -2467,79 +2412,35 @@ function behavioralGuardSkill(
 	};
 }
 
-function behavioralGuardManifest(input: {
+function behavioralGuardLoad(input: {
 	generation: number;
-	command: string;
-	mainMarker: string;
-	dashboardMarker: string;
+	timezone: string;
+	dashboardSecret: string;
 	skillSource?: HostedSkillSource;
-}): RuntimeManifest {
-	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "hdep_behavioral_e2e_guards",
-		environmentId: "env_behavioral_e2e_guards",
-		instanceId: "hri_behavioral_e2e_guards",
-		generation: input.generation,
-		issuedAt: `2026-08-23T00:00:0${input.generation}.000Z`,
-		workspaceRoot: "/home/clawdi/behavioral-e2e-guard-workspace",
-		controlPlane: { apiUrl: "https://cloud-api.example.test" },
-		runtimes: {
-			hermes: {
-				enabled: true,
-				run: {
-					command: input.command,
-					args: ["gateway", "run"],
-					env: { BEHAVIORAL_GUARD_MAIN: input.mainMarker },
-					prependPath: [],
-				},
-				services: {
-					dashboard: {
-						args: ["dashboard"],
-						env: { BEHAVIORAL_GUARD_DASHBOARD: input.dashboardMarker },
-						prependPath: [],
-					},
-				},
-			},
-		},
-		...(input.skillSource
-			? {
-					projection: {
-						skills: {
-							entries: {
-								"lean-replay-guard": { enabled: true, source: input.skillSource },
-							},
-						},
-					},
-				}
-			: {}),
-		recovery: {},
-	};
-}
-
-function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
+}): RuntimeManifestLoad {
 	const sourceRevision = createHash("sha256")
-		.update(`behavioral-e2e-generation-${manifest.generation}`)
+		.update(`behavioral-e2e-generation-${input.generation}`)
 		.digest("hex");
 	const dashboardPasswordRef = "secret://runtime/hermes/dashboard-password";
 	const dashboardSessionRef = "secret://runtime/hermes/dashboard-session-secret";
 	const codexApiKeyRef = "secret://tool.codex.apiKey";
 	const secretValues = {
-		[dashboardPasswordRef]: "behavioral-e2e-dashboard-password",
-		[dashboardSessionRef]: "behavioral-e2e-dashboard-session-secret",
+		[dashboardPasswordRef]: `behavioral-e2e-dashboard-password-${input.dashboardSecret}`,
+		[dashboardSessionRef]: `behavioral-e2e-dashboard-session-${input.dashboardSecret}`,
 		[codexApiKeyRef]: "behavioral-e2e-codex-api-key",
 	};
-	const sourceBundle = hostedRuntimeBundleV2Schema.parse({
+	const parsed = hostedRuntimeBundleV2Schema.parse({
 		schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 		sourceRevision,
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 			runtime: "hermes",
-			deploymentId: manifest.deploymentId,
-			environmentId: manifest.environmentId,
-			instanceId: manifest.instanceId,
-			generation: manifest.generation,
-			issuedAt: manifest.issuedAt,
-			locale: { language: "en", timezone: "UTC" },
+			deploymentId: "hdep_behavioral_e2e_guards",
+			environmentId: "env_behavioral_e2e_guards",
+			instanceId: "hri_behavioral_e2e_guards",
+			generation: input.generation,
+			issuedAt: `2026-08-23T00:00:0${input.generation}.000Z`,
+			locale: { language: "en", timezone: input.timezone },
 			system: {
 				hermesDashboardAuth: {
 					mode: "password",
@@ -2552,7 +2453,13 @@ function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 					activation: { enabled: true, capability: "hermes-basic-auth-v1" },
 				},
 			},
-			controlPlane: { cloudApiUrl: manifest.controlPlane.apiUrl },
+			controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
+			egressEngine: {
+				type: "mitmproxy",
+				version: "12.2.3",
+				url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+				sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+			},
 			clawdiCli: {
 				source: "npm:clawdi",
 				packageSpec: `clawdi@${getCliVersion()}`,
@@ -2590,48 +2497,37 @@ function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 				},
 			},
 			liveSync: { enabled: false, agents: [] },
-			...(manifest.projection?.skills ? { skills: manifest.projection.skills } : {}),
+			...(input.skillSource
+				? {
+						skills: {
+							entries: {
+								"lean-replay-guard": { enabled: true, source: input.skillSource },
+							},
+						},
+					}
+				: {}),
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		},
 		channelBindings: [],
 		secretValues,
-	}).sourceBundle;
-	const hermes = manifest.runtimes.hermes;
-	const dashboard = hermes?.services?.dashboard;
-	if (!hermes?.run || !dashboard) throw new Error("behavioral guard Hermes runtime is incomplete");
-	return {
-		manifest: {
-			...manifest,
-			runtimes: {
-				hermes: {
-					...hermes,
-					services: {
-						dashboard: {
-							...dashboard,
-							secretEnv: {
-								BEHAVIORAL_GUARD_DASHBOARD_PASSWORD: dashboardPasswordRef,
-								BEHAVIORAL_GUARD_DASHBOARD_SESSION: dashboardSessionRef,
-								BEHAVIORAL_GUARD_CODEX_API_KEY: codexApiKeyRef,
-							},
-						},
-					},
-				},
-			},
-		},
-		sourceBundle,
+	});
+	return applyRuntimeBundleChannelsToManifestLoad({
+		manifest: parsed.manifest,
+		sourceBundle: parsed.sourceBundle,
 		source: "remote-datasource",
-		sourcePath: `behavioral-e2e-generation-${manifest.generation}`,
+		sourcePath: `behavioral-e2e-generation-${input.generation}`,
 		offline: false,
-		secretValues,
-		sourceRevision,
+		secretValues: parsed.secretValues,
+		sourceRevision: parsed.sourceRevision,
+		channelBindings: parsed.channelBindings,
 		applyContext: {
 			kind: "context-file",
 			backend: "incus",
 			identity: {
-				generation: manifest.generation,
+				generation: input.generation,
 				manifestETag: `"sha256:${sourceRevision}"`,
-				applyReceiptId: `behavioral-e2e-receipt-${manifest.generation}`,
-				bootNonce: `behavioral-e2e-boot-nonce-${manifest.generation}`,
+				applyReceiptId: `behavioral-e2e-receipt-${input.generation}`,
+				bootNonce: `behavioral-e2e-boot-nonce-${input.generation}`,
 			},
 			manifestSource: {
 				type: "http",
@@ -2639,7 +2535,7 @@ function behavioralGuardLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
 				auth: { type: "bearer", token: "behavioral-e2e-auth-token" },
 			},
 		},
-	};
+	});
 }
 
 async function convergeBehavioralGuard(
@@ -2660,7 +2556,10 @@ async function convergeBehavioralGuard(
 				},
 			})
 		: undefined;
-	const result = await applyRuntimeManifestLoad(load, paths, { preparedHostedSourcedSkills });
+	let result = await applyRuntimeManifestLoad(load, paths, { preparedHostedSourcedSkills });
+	if (result.kind === "cli_handoff") {
+		result = await applyRuntimeManifestLoad(load, paths, { preparedHostedSourcedSkills });
+	}
 	if (result.kind !== "converged") {
 		throw new Error(`unexpected behavioral guard apply result: ${result.kind}`);
 	}
@@ -2700,6 +2599,7 @@ function behavioralGuardObservableState(
 	skillRoot: string,
 ) {
 	return {
+		systemdTree: directoryFileDigests(paths.systemdUserRoot),
 		userUnits: Object.fromEntries(
 			[...readSystemdUnitSnapshot(paths).user.entries()].sort(([left], [right]) =>
 				left.localeCompare(right),
@@ -2711,10 +2611,6 @@ function behavioralGuardObservableState(
 			JSON.parse(readFileSync(paths.manifestLastGood, "utf8")),
 		).sourceBundle.manifest,
 		appliedState: stableBehavioralGuardAppliedState(paths),
-		processMarkers: {
-			gateway: readFileSync(BEHAVIORAL_GUARD_MAIN_MARKER, "utf8"),
-			dashboard: readFileSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, "utf8"),
-		},
 		services: {
 			gateway: behavioralGuardUnitState("hermes-gateway.service"),
 			dashboard: behavioralGuardUnitState("clawdi-hermes-dashboard.service"),
@@ -2728,73 +2624,95 @@ test("replays last-good declarative state after a failed candidate and advances 
 	expect(process.geteuid?.()).toBe(0);
 	const root = mkdtempSync(join(tmpdir(), "clawdi-lean-replay-guard-"));
 	chmodSync(root, 0o755);
-	const restoreEnvironment = configureBehavioralGuardEnvironment(root);
+	const failureMarker = join(root, "activation-validation.marker");
+	const systemctlWrapper = join(root, "systemctl-replay-guard");
+	writeFileSync(failureMarker, "idle\n", { mode: 0o666 });
+	chmodSync(failureMarker, 0o666);
+	writeFileSync(
+		systemctlWrapper,
+		`#!/bin/sh
+set -eu
+state="$(cat ${JSON.stringify(failureMarker)})"
+if [ "$state" = "armed" ] && [ "\${1:-}" = "--user" ] && [ "\${2:-}" = "restart" ]; then
+  /usr/bin/systemctl "$@"
+  printf '%s\\n' verify > ${JSON.stringify(failureMarker)}
+  exit 0
+fi
+if [ "$state" = "verify" ] && [ "\${1:-}" = "--user" ] && [ "\${2:-}" = "show" ]; then
+  printf '%s\\n' consumed > ${JSON.stringify(failureMarker)}
+  printf '%s\\n' 'injected post-activation validation failure' >&2
+  exit 1
+fi
+exec /usr/bin/systemctl "$@"
+`,
+		{ mode: 0o755 },
+	);
+	chmodSync(systemctlWrapper, 0o755);
+	const restoreEnvironment = configureBehavioralGuardEnvironment(root, systemctlWrapper);
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
 	ensureBehavioralGuardUserManager();
-	const healthyCommand = join("/home/clawdi", ".local", "bin", "hermes");
-	const restoreHermesCommand = installBehavioralGuardHermesCommand(healthyCommand);
+	installBehavioralGuardHermesRuntime();
 	const skillRoot = join("/home/clawdi", ".hermes", "skills", "lean-replay-guard");
 	const generationOneSkill = behavioralGuardSkill(root, "a".repeat(40), "generation one\n");
 	const generationTwoSkill = behavioralGuardSkill(root, "b".repeat(40), "broken candidate\n");
 	const generationThreeSkill = behavioralGuardSkill(root, "c".repeat(40), "generation three\n");
-	const generationOne = behavioralGuardLoad(
-		behavioralGuardManifest({
-			generation: 1,
-			command: healthyCommand,
-			mainMarker: "generation-one",
-			dashboardMarker: "generation-one",
-			skillSource: generationOneSkill.source,
-		}),
-	);
-	const generationTwo = behavioralGuardLoad(
-		behavioralGuardManifest({
-			generation: 2,
-			command: healthyCommand,
-			mainMarker: "broken-generation-two",
-			dashboardMarker: "broken-generation-two",
-			skillSource: generationTwoSkill.source,
-		}),
-	);
-	const generationThree = behavioralGuardLoad(
-		behavioralGuardManifest({
-			generation: 3,
-			command: healthyCommand,
-			mainMarker: "repaired-generation-three",
-			dashboardMarker: "repaired-generation-three",
-			skillSource: generationThreeSkill.source,
-		}),
-	);
+	const generationOne = behavioralGuardLoad({
+		generation: 1,
+		timezone: "UTC",
+		dashboardSecret: "generation-one",
+		skillSource: generationOneSkill.source,
+	});
+	const generationTwo = behavioralGuardLoad({
+		generation: 2,
+		timezone: "Europe/Berlin",
+		dashboardSecret: "generation-two",
+		skillSource: generationTwoSkill.source,
+	});
+	const generationThree = behavioralGuardLoad({
+		generation: 3,
+		timezone: "Asia/Tokyo",
+		dashboardSecret: "generation-three",
+		skillSource: generationThreeSkill.source,
+	});
 
 	try {
 		cleanBehavioralGuardUnits(paths);
 		rmSync(skillRoot, { recursive: true, force: true });
-		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
-		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
 		const initial = await convergeBehavioralGuard(generationOne, paths, generationOneSkill);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
+		const initialState = behavioralGuardObservableState(paths, skillRoot);
+		const initialGatewayEnvironment = readFileSync(
+			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
+			"utf8",
+		);
+		const initialDashboardEnvironment = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
+			"utf8",
+		);
 
+		writeFileSync(failureMarker, "armed\n");
 		const failed = await convergeBehavioralGuard(generationTwo, paths, generationTwoSkill);
 		expect(failed.installErrors.length).toBeGreaterThan(0);
+		expect(readFileSync(failureMarker, "utf8").trim()).toBe("consumed");
 		const failedFinalState = behavioralGuardObservableState(paths, skillRoot);
 		expect(failedFinalState.appliedState.generation).toBe(1);
 		expect(failedFinalState.lastGood.generation).toBe(1);
 		expect(failedFinalState.skillTree["SKILL.md"]).toContain(
 			createHash("sha256").update("generation one\n").digest("hex"),
 		);
-		const failedGatewayEnvironment = readFileSync(
-			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
-			"utf8",
+		expect(readFileSync(join(paths.systemdEnvRoot, "hermes-gateway.service.env"), "utf8")).toBe(
+			initialGatewayEnvironment,
 		);
-		expect(failedGatewayEnvironment).toContain('BEHAVIORAL_GUARD_MAIN="generation-one"');
-		expect(failedGatewayEnvironment).not.toContain("broken-generation-two");
-		expect(failedFinalState.processMarkers).toEqual({
-			gateway: "generation-one\n",
-			dashboard: "generation-one\n",
-		});
+		expect(failedFinalState.systemdTree).toEqual(initialState.systemdTree);
+		expect(failedFinalState.userUnits).toEqual(initialState.userUnits);
+		expect(failedFinalState.environmentFiles).toEqual(initialState.environmentFiles);
+		expect(failedFinalState.skillTree).toEqual(initialState.skillTree);
+		expect(failedFinalState.lastGood).toEqual(initialState.lastGood);
+		expect(failedFinalState.appliedState).toEqual(initialState.appliedState);
 		expect(failedFinalState.services.gateway.ActiveState).toBe("active");
 		expect(failedFinalState.services.dashboard.ActiveState).toBe("active");
 
@@ -2810,25 +2728,21 @@ test("replays last-good declarative state after a failed candidate and advances 
 				.manifest.generation,
 		).toBe(3);
 		expect(readFileSync(join(skillRoot, "SKILL.md"), "utf8")).toBe("generation three\n");
-		expect(
-			readFileSync(join(paths.systemdEnvRoot, "hermes-gateway.service.env"), "utf8"),
-		).toContain('BEHAVIORAL_GUARD_MAIN="repaired-generation-three"');
-		expect(readFileSync(BEHAVIORAL_GUARD_MAIN_MARKER, "utf8")).toBe("repaired-generation-three\n");
-		expect(readFileSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, "utf8")).toBe(
-			"repaired-generation-three\n",
+		expect(readFileSync(join(paths.systemdEnvRoot, "hermes-gateway.service.env"), "utf8")).not.toBe(
+			initialGatewayEnvironment,
 		);
+		expect(
+			readFileSync(join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"), "utf8"),
+		).not.toBe(initialDashboardEnvironment);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 	} finally {
 		cleanBehavioralGuardUnits(paths);
 		rmSync(skillRoot, { recursive: true, force: true });
-		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
-		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
-		restoreHermesCommand();
 		restoreEnvironment();
 		rmSync(root, { recursive: true, force: true });
 	}
-}, 120_000);
+}, 300_000);
 
 test("restarts only rendered-but-unactivated services after a write-side crash", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
@@ -2859,30 +2773,21 @@ exec /usr/bin/systemctl "$@"
 	const paths = getRuntimePaths({ mode: "hosted" });
 	ensureRuntimeStateDirs(paths);
 	ensureBehavioralGuardUserManager();
-	const healthyCommand = join("/home/clawdi", ".local", "bin", "hermes");
-	const restoreHermesCommand = installBehavioralGuardHermesCommand(healthyCommand);
-	const generationOne = behavioralGuardLoad(
-		behavioralGuardManifest({
-			generation: 1,
-			command: healthyCommand,
-			mainMarker: "before-crash",
-			dashboardMarker: "unchanged-dashboard",
-		}),
-	);
-	const generationTwo = behavioralGuardLoad(
-		behavioralGuardManifest({
-			generation: 2,
-			command: healthyCommand,
-			mainMarker: "written-before-crash",
-			dashboardMarker: "unchanged-dashboard",
-		}),
-	);
+	installBehavioralGuardHermesRuntime();
+	const generationOne = behavioralGuardLoad({
+		generation: 1,
+		timezone: "UTC",
+		dashboardSecret: "unchanged-dashboard",
+	});
+	const generationTwo = behavioralGuardLoad({
+		generation: 2,
+		timezone: "Europe/Berlin",
+		dashboardSecret: "unchanged-dashboard",
+	});
 	let child: ReturnType<typeof Bun.spawn> | null = null;
 
 	try {
 		cleanBehavioralGuardUnits(paths);
-		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
-		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
 		const initial = await convergeBehavioralGuard(generationOne, paths, null);
 		expect([...initial.installErrors, ...initial.resourceProjectionErrors]).toEqual([]);
 		const gatewayBefore = behavioralGuardUnitState("hermes-gateway.service");
@@ -2891,6 +2796,9 @@ exec /usr/bin/systemctl "$@"
 		expect(dashboardBefore.ActiveState).toBe("active");
 		expect(gatewayBefore.InvocationID).toMatch(/^[a-f0-9]{32}$/);
 		expect(dashboardBefore.InvocationID).toMatch(/^[a-f0-9]{32}$/);
+		const gatewayEnvironmentBefore = readFileSync(
+			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
+		);
 		const dashboardEnvironmentBefore = readFileSync(
 			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
 		);
@@ -2928,9 +2836,11 @@ exec /usr/bin/systemctl "$@"
 
 		const renderedGatewayEnvironment = readFileSync(
 			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
-			"utf8",
 		);
-		expect(renderedGatewayEnvironment).toContain('BEHAVIORAL_GUARD_MAIN="written-before-crash"');
+		expect(renderedGatewayEnvironment).not.toEqual(gatewayEnvironmentBefore);
+		expect(readFileSync(join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"))).toEqual(
+			dashboardEnvironmentBefore,
+		);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 		expect(behavioralGuardUnitState("hermes-gateway.service").InvocationID).toBe(
 			gatewayBefore.InvocationID,
@@ -2968,10 +2878,7 @@ exec /usr/bin/systemctl "$@"
 			await child.exited;
 		}
 		cleanBehavioralGuardUnits(paths);
-		rmSync(BEHAVIORAL_GUARD_MAIN_MARKER, { force: true });
-		rmSync(BEHAVIORAL_GUARD_DASHBOARD_MARKER, { force: true });
-		restoreHermesCommand();
 		restoreEnvironment();
 		rmSync(root, { recursive: true, force: true });
 	}
-}, 120_000);
+}, 300_000);

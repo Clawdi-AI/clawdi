@@ -34,6 +34,9 @@ function appliedStateFixture() {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: "a".repeat(64),
 		},
+		activated: {
+			"openclaw-gateway.service": "d".repeat(64),
+		},
 		providerIds: ["clawdi-default", "default"],
 		projectedProviderIds: {
 			hermes: ["clawdi-default"],
@@ -41,6 +44,35 @@ function appliedStateFixture() {
 		},
 		officialServiceCommandRevisions: {
 			"openclaw-gateway.service": "b".repeat(64),
+		},
+	};
+}
+
+function releasedAppliedStateFixture(version: "0.13.92" | "0.14.14") {
+	return {
+		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
+		appliedAt: `2026-07-${version === "0.13.92" ? "13" : "14"}T06:00:00.000Z`,
+		instanceId: `hri_${version.replaceAll(".", "_")}`,
+		etag: `"release-${version}"`,
+		sourceRevision: "c".repeat(64),
+		generation: version === "0.13.92" ? 13 : 14,
+		contentIdentity: {
+			sourcePath: "https://runtime.test/v1/runtime/manifest",
+			sha256: "a".repeat(64),
+		},
+		egressSidecarSecretRevision: "e".repeat(64),
+		daemonAuthTokenRevision: "d".repeat(64),
+		daemonProgramRevision: "d".repeat(32),
+		userProcessRevisionAliases: {
+			"openclaw-gateway.service": {
+				desiredRevision: "d".repeat(32),
+				processRevision: "a".repeat(32),
+			},
+		},
+		providerIds: ["clawdi-default", "default"],
+		projectedProviderIds: {
+			hermes: ["clawdi-default"],
+			openclaw: ["default"],
 		},
 	};
 }
@@ -80,69 +112,28 @@ describe("runtime applied state", () => {
 		expect(
 			runtimeAppliedStateSchema.safeParse({
 				...state,
-				egressSidecarSecretRevision: "e".repeat(64),
-			}).success,
-		).toBe(true);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				egressSidecarSecretRevision: "not-a-private-revision",
-			}).success,
-		).toBe(false);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				daemonAuthTokenRevision: "d".repeat(64),
-			}).success,
-		).toBe(true);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				daemonAuthTokenRevision: "not-a-private-revision",
-			}).success,
-		).toBe(false);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				daemonProgramRevision: "d".repeat(32),
-			}).success,
-		).toBe(true);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				daemonProgramRevision: "not-a-private-revision",
-			}).success,
-		).toBe(false);
-		const revisionAlias = {
-			"openclaw-gateway.service": {
-				desiredRevision: "d".repeat(32),
-				processRevision: "a".repeat(32),
-			},
-		};
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				userProcessRevisionAliases: revisionAlias,
-			}).success,
-		).toBe(true);
-		expect(
-			runtimeAppliedStateSchema.safeParse({
-				...state,
-				userProcessRevisionAliases: {
-					"openclaw-gateway.service": {
-						desiredRevision: "d".repeat(32),
-						processRevision: "d".repeat(32),
-					},
-				},
+				activated: { "openclaw-gateway.service": "invalid" },
 			}).success,
 		).toBe(false);
 	});
 
+	for (const version of ["0.13.92", "0.14.14"] as const) {
+		test(`migrates the ${version} released applied-state format`, () => {
+			const migrated = runtimeAppliedStateSchema.parse(releasedAppliedStateFixture(version));
+			expect(migrated.activated).toEqual({});
+			for (const field of [
+				"egressSidecarSecretRevision",
+				"daemonAuthTokenRevision",
+				"daemonProgramRevision",
+				"userProcessRevisionAliases",
+			]) {
+				expect(Object.hasOwn(migrated, field)).toBe(false);
+			}
+		});
+	}
+
 	test("reads old state through the named fallback and preserves explicit apply generation", () => {
-		const state = {
-			...appliedStateFixture(),
-			egressSidecarSecretRevision: "e".repeat(64),
-		};
+		const state = appliedStateFixture();
 		const complete = {
 			...state,
 			manifestETag: '"manifest-generation-7"',
@@ -217,10 +208,7 @@ describe("runtime applied state", () => {
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
 		mkdirSync(paths.serviceStateRoot);
-		const state = {
-			...appliedStateFixture(),
-			egressSidecarSecretRevision: "e".repeat(64),
-		};
+		const state = appliedStateFixture();
 
 		expect(paths.appliedState).toBe(join(root, "state", "status", "runtime-applied.json"));
 		expect(writeRuntimeAppliedState(state, paths)).toBe(paths.appliedState);
