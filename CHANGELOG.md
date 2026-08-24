@@ -10,6 +10,24 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.15
+
+Package: `clawdi@0.14.15`
+
+### Changed
+
+- Major internal consolidation: ~17,400 lines removed with behavior preserved
+  (single-authority state records, single wire manifest schema, single-file CLI
+  upgrade state).
+- Runtime apply flattened to a declarative line; failed candidate generations
+  recover by replaying the last-good manifest (whole-tree snapshots, systemd
+  transaction journal, and /proc revision proofs removed).
+- Tenant home is now fully tenant-owned; legacy root-owned systemd trees
+  migrate once on first converge.
+- Operational note: the first converge after upgrading reinstalls each managed
+  skill once and restarts managed agent units once (state-record format
+  promotion). Roll out off-peak.
+
 ## Clawdi CLI v0.14.14
 
 Package: `clawdi@0.14.14`
