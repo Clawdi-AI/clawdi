@@ -34,7 +34,7 @@ export function AgentPluginActions({
 	const removing = pendingAction === "remove";
 
 	return (
-		<>
+		<div data-hosted="true" data-v2="true" className="contents">
 			<AgentPluginPrimaryButton
 				item={item}
 				state={state}
@@ -63,7 +63,7 @@ export function AgentPluginActions({
 					</Button>
 				</ConfirmAction>
 			) : null}
-		</>
+		</div>
 	);
 }
 
