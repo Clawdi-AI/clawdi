@@ -9,13 +9,15 @@ artifact audited by
 The compatibility layer classifies every exact hunk from the installed files:
 
 1. All `before` hunks are eligible for apply.
-2. All `after` hunks are already patched, or eligible for rollback when managed
+2. Exact predecessor hunks are eligible for migration to the current `after`
+   state.
+3. All `after` hunks are already patched, or eligible for rollback when managed
    WhatsApp is disabled.
-3. Mixed, duplicated, or unknown hunks are refused without mutation.
+4. Mixed, duplicated, or unknown hunks are refused without mutation.
 
-Rollback safety comes from requiring every hunk to be in the `after` state before
-any target is mutated. No separate ownership receipt or pristine-file hash is
-needed.
+Rollback safety requires every hunk to be in the current or exact predecessor
+`after` state before any target is mutated. No separate ownership receipt or
+pristine-file hash is needed.
 
 The patch targets are:
 

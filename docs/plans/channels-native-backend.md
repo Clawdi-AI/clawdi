@@ -106,10 +106,10 @@ binding, alias, and relay policy.
 
 The pinned `7.0.0-rc13` artifacts `baileys` and
 `@whiskeysockets/baileys` lack the required configurable Noise
-trust authority and a WebSocket-only managed marker header, so the CLI owns an
-expected-name and SemVer-major-7 static compatibility patch for those two
-Baileys aliases. Every audited before/after context hunk must match uniquely and
-exactly with fuzz zero; unrelated bytes outside those hunks are preserved. It
+trust authority, so the CLI owns an expected-name and SemVer-major-7 static
+compatibility patch for those two Baileys aliases. Every audited before/after
+context hunk must match uniquely and exactly with fuzz zero; unrelated bytes
+outside those hunks are preserved. It
 reads strictly validated namespaced metadata from stock `creds.additionalData`;
 no OpenClaw or Hermes source is patched. These are explicitly downstream CLI
 patch capabilities, not native upstream managed capabilities. Executable rc13
@@ -128,12 +128,10 @@ remain outside the accepted design.
   HTTP contract, and typecheck;
 - provider ingress persistence, alias resolution, durable outbound delivery,
   raw-node policy, bounded IQ forwarding, and Link revocation tests;
-- managed/unmarked/invalid marker tests through the generic egress engine;
 - executable patched rc13 WebSocket, HTTP, Noise trust, malformed-metadata, and
   stock consumer auth save/reconstruction coverage plus fixed-artifact stock
   native-plugin E2E;
-- Link-removal stale-marker denial plus backend revoked/cross-Link authority
-  denial;
+- backend revoked/cross-Link authority denial;
 - source invariants for no WhatsApp Graph/Cloud production path and no custom
   runtime adapter or runtime master enablement switch.
 

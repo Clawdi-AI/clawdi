@@ -23,6 +23,7 @@ interface StrictContextHunk {
 	id: string;
 	before: string;
 	after: string;
+	predecessors?: readonly string[];
 }
 
 interface StaticPatchTarget {
@@ -62,7 +63,7 @@ const BAILEYS_TARGETS = [
 					"import { DEFAULT_CONNECTION_CONFIG, DEF_CALLBACK_PREFIX, DEF_TAG_PREFIX, INITIAL_PREKEY_COUNT, MIN_PREKEY_COUNT, NOISE_WA_HEADER, PROCESSABLE_HISTORY_TYPES, TimeMs, UPLOAD_TIMEOUT } from '../Defaults/index.js';\n",
 			},
 			{
-				id: "socket.managed-metadata-validator.v1",
+				id: "socket.managed-metadata-validator.v2",
 				before:
 					"import { executeWMexQuery } from './mex.js';\n" +
 					"/**\n" +
@@ -71,7 +72,6 @@ const BAILEYS_TARGETS = [
 					"import { executeWMexQuery } from './mex.js';\n" +
 					"const CLAWDI_MANAGED_SOCKET_KEY = 'clawdi.managedWhatsAppSocket';\n" +
 					"const CLAWDI_MANAGED_SOCKET_SCHEMA = 'clawdi.managedWhatsAppSocket.v1';\n" +
-					"const CLAWDI_LINK_CAPABILITY_HEADER = 'x-clawdi-whatsapp-link-capability';\n" +
 					"const hasExactKeys = (value, keys) => Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');\n" +
 					"const managedSocketMetadata = (creds) => {\n" +
 					"    const additionalData = creds?.additionalData;\n" +
@@ -80,13 +80,34 @@ const BAILEYS_TARGETS = [
 					"    }\n" +
 					"    const value = additionalData[CLAWDI_MANAGED_SOCKET_KEY];\n" +
 					"    const authCert = value?.authCert;\n" +
-					"    if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, ['authCert', 'capability', 'schemaVersion']) || value.schemaVersion !== CLAWDI_MANAGED_SOCKET_SCHEMA || typeof value.capability !== 'string' || !/^clawdi_[a-f0-9]{32}$/.test(value.capability) || !authCert || typeof authCert !== 'object' || Array.isArray(authCert) || !hasExactKeys(authCert, ['ISSUER', 'PUBLIC_KEY', 'SERIAL']) || !Number.isSafeInteger(authCert.SERIAL) || authCert.SERIAL < 0 || typeof authCert.ISSUER !== 'string' || !authCert.ISSUER || authCert.ISSUER.trim() !== authCert.ISSUER || authCert.ISSUER.length > 256 || !Buffer.isBuffer(authCert.PUBLIC_KEY) || authCert.PUBLIC_KEY.length !== 32) {\n" +
+					"    if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, ['authCert', 'schemaVersion']) || value.schemaVersion !== CLAWDI_MANAGED_SOCKET_SCHEMA || !authCert || typeof authCert !== 'object' || Array.isArray(authCert) || !hasExactKeys(authCert, ['ISSUER', 'PUBLIC_KEY', 'SERIAL']) || !Number.isSafeInteger(authCert.SERIAL) || authCert.SERIAL < 0 || typeof authCert.ISSUER !== 'string' || !authCert.ISSUER || authCert.ISSUER.trim() !== authCert.ISSUER || authCert.ISSUER.length > 256 || !Buffer.isBuffer(authCert.PUBLIC_KEY) || authCert.PUBLIC_KEY.length !== 32) {\n" +
 					"        throw new Error('Invalid Clawdi managed WhatsApp socket metadata');\n" +
 					"    }\n" +
 					"    return value;\n" +
 					"};\n" +
 					"/**\n" +
 					" * Connects to WA servers and performs:\n",
+				predecessors: [
+					"import { executeWMexQuery } from './mex.js';\n" +
+						"const CLAWDI_MANAGED_SOCKET_KEY = 'clawdi.managedWhatsAppSocket';\n" +
+						"const CLAWDI_MANAGED_SOCKET_SCHEMA = 'clawdi.managedWhatsAppSocket.v1';\n" +
+						"const CLAWDI_LINK_CAPABILITY_HEADER = 'x-clawdi-whatsapp-link-capability';\n" +
+						"const hasExactKeys = (value, keys) => Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');\n" +
+						"const managedSocketMetadata = (creds) => {\n" +
+						"    const additionalData = creds?.additionalData;\n" +
+						"    if (!additionalData || typeof additionalData !== 'object' || Array.isArray(additionalData) || !Object.prototype.hasOwnProperty.call(additionalData, CLAWDI_MANAGED_SOCKET_KEY)) {\n" +
+						"        return undefined;\n" +
+						"    }\n" +
+						"    const value = additionalData[CLAWDI_MANAGED_SOCKET_KEY];\n" +
+						"    const authCert = value?.authCert;\n" +
+						"    if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, ['authCert', 'capability', 'schemaVersion']) || value.schemaVersion !== CLAWDI_MANAGED_SOCKET_SCHEMA || typeof value.capability !== 'string' || !/^clawdi_[a-f0-9]{32}$/.test(value.capability) || !authCert || typeof authCert !== 'object' || Array.isArray(authCert) || !hasExactKeys(authCert, ['ISSUER', 'PUBLIC_KEY', 'SERIAL']) || !Number.isSafeInteger(authCert.SERIAL) || authCert.SERIAL < 0 || typeof authCert.ISSUER !== 'string' || !authCert.ISSUER || authCert.ISSUER.trim() !== authCert.ISSUER || authCert.ISSUER.length > 256 || !Buffer.isBuffer(authCert.PUBLIC_KEY) || authCert.PUBLIC_KEY.length !== 32) {\n" +
+						"        throw new Error('Invalid Clawdi managed WhatsApp socket metadata');\n" +
+						"    }\n" +
+						"    return value;\n" +
+						"};\n" +
+						"/**\n" +
+						" * Connects to WA servers and performs:\n",
+				],
 			},
 			{
 				id: "socket.managed-metadata-read.v1",
@@ -107,7 +128,7 @@ const BAILEYS_TARGETS = [
 					"    const url = typeof effectiveWebSocketUrl === 'string' ? new URL(effectiveWebSocketUrl) : effectiveWebSocketUrl;\n",
 			},
 			{
-				id: "socket.managed-noise-and-upgrade.v1",
+				id: "socket.managed-noise.v2",
 				before:
 					"        routingInfo: authState?.creds?.routingInfo\n" +
 					"    });\n" +
@@ -116,17 +137,23 @@ const BAILEYS_TARGETS = [
 					"        routingInfo: authState?.creds?.routingInfo,\n" +
 					"        authCert: managedMetadata?.authCert\n" +
 					"    });\n" +
-					"    const webSocketConfig = managedMetadata ? {\n" +
-					"        ...config,\n" +
-					"        options: {\n" +
-					"            ...config.options,\n" +
-					"            headers: {\n" +
-					"                ...config.options?.headers,\n" +
-					"                [CLAWDI_LINK_CAPABILITY_HEADER]: managedMetadata.capability\n" +
-					"            }\n" +
-					"        }\n" +
-					"    } : config;\n" +
-					"    const ws = new WebSocketClient(url, webSocketConfig);\n",
+					"    const ws = new WebSocketClient(url, config);\n",
+				predecessors: [
+					"        routingInfo: authState?.creds?.routingInfo,\n" +
+						"        authCert: managedMetadata?.authCert\n" +
+						"    });\n" +
+						"    const webSocketConfig = managedMetadata ? {\n" +
+						"        ...config,\n" +
+						"        options: {\n" +
+						"            ...config.options,\n" +
+						"            headers: {\n" +
+						"                ...config.options?.headers,\n" +
+						"                [CLAWDI_LINK_CAPABILITY_HEADER]: managedMetadata.capability\n" +
+						"            }\n" +
+						"        }\n" +
+						"    } : config;\n" +
+						"    const ws = new WebSocketClient(url, webSocketConfig);\n",
+				],
 			},
 		],
 	},
@@ -411,13 +438,14 @@ function verifyArtifactIdentity(
 	return { path: packagePath, sha256: sha256String(packageContent) };
 }
 
-type HunkState = "before" | "after" | "unknown";
+type HunkState = "before" | "after" | "predecessor" | "unknown";
 
 interface ClassifiedHunk {
 	hunk: StrictContextHunk;
 	state: HunkState;
 	beforeMatches: number[];
 	afterMatches: number[];
+	predecessorMatches: { content: string; offsets: number[] }[];
 }
 
 interface ClassifiedTarget {
@@ -473,16 +501,27 @@ function classifyTarget(
 function classifyHunk(content: string, hunk: StrictContextHunk): ClassifiedHunk {
 	const beforeMatches = exactMatchOffsets(content, hunk.before);
 	const afterMatches = exactMatchOffsets(content, hunk.after);
+	const predecessorMatches = (hunk.predecessors ?? []).map((predecessor) => ({
+		content: predecessor,
+		offsets: exactMatchOffsets(content, predecessor),
+	}));
+	const predecessorMatchCount = predecessorMatches.reduce(
+		(count, predecessor) => count + predecessor.offsets.length,
+		0,
+	);
 	return {
 		hunk,
 		beforeMatches,
 		afterMatches,
+		predecessorMatches,
 		state:
-			beforeMatches.length === 1 && afterMatches.length === 0
+			beforeMatches.length === 1 && afterMatches.length === 0 && predecessorMatchCount === 0
 				? "before"
-				: beforeMatches.length === 0 && afterMatches.length === 1
+				: beforeMatches.length === 0 && afterMatches.length === 1 && predecessorMatchCount === 0
 					? "after"
-					: "unknown",
+					: beforeMatches.length === 0 && afterMatches.length === 0 && predecessorMatchCount === 1
+						? "predecessor"
+						: "unknown",
 	};
 }
 
@@ -506,7 +545,7 @@ function uniformArtifactState(
 		target.hunks.flatMap((hunk) =>
 			hunk.state === "unknown"
 				? [
-						`${target.path}#${hunk.hunk.id} (before=${hunk.beforeMatches.length}, after=${hunk.afterMatches.length})`,
+						`${target.path}#${hunk.hunk.id} (before=${hunk.beforeMatches.length}, after=${hunk.afterMatches.length}, predecessor=${hunk.predecessorMatches.reduce((count, predecessor) => count + predecessor.offsets.length, 0)})`,
 					]
 				: [],
 		),
@@ -516,15 +555,17 @@ function uniformArtifactState(
 			`managed WhatsApp compatibility patch refused non-unique or changed ${artifact.runtime} hunks: ${unknown.join(", ")}`,
 		);
 	}
-	const recognized = new Set(states.flatMap((target) => target.hunks.map((hunk) => hunk.state)));
-	if (recognized.size !== 1) {
-		throw new Error(`managed WhatsApp compatibility patch refused mixed ${artifact.runtime} hunks`);
+	const recognized = states.flatMap((target) => target.hunks);
+	if (recognized.every((hunk) => hunk.state === "before")) return "before";
+	if (recognized.every((hunk) => hunk.state === "after")) return "after";
+	if (
+		recognized.every((hunk) =>
+			hunk.hunk.predecessors ? hunk.state === "predecessor" : hunk.state === "after",
+		)
+	) {
+		return "predecessor";
 	}
-	const state = recognized.values().next().value;
-	if (state !== "before" && state !== "after") {
-		throw new Error(`managed WhatsApp compatibility patch could not classify ${artifact.runtime}`);
-	}
-	return state;
+	throw new Error(`managed WhatsApp compatibility patch refused mixed ${artifact.runtime} hunks`);
 }
 
 function planTargetHunkMutation(
@@ -536,9 +577,21 @@ function planTargetHunkMutation(
 		if (hunk.state === "unknown") {
 			throw new Error(`managed WhatsApp patch cannot mutate unknown hunk ${hunk.hunk.id}`);
 		}
-		const source = hunk.state === "before" ? hunk.hunk.before : hunk.hunk.after;
+		const predecessor = hunk.predecessorMatches.find((candidate) => candidate.offsets.length === 1);
+		const source =
+			hunk.state === "before"
+				? hunk.hunk.before
+				: hunk.state === "after"
+					? hunk.hunk.after
+					: predecessor?.content;
+		if (!source) throw new Error(`managed WhatsApp predecessor hunk ${hunk.hunk.id} is missing`);
 		const replacement = desired === "after" ? hunk.hunk.after : hunk.hunk.before;
-		const offsets = hunk.state === "before" ? hunk.beforeMatches : hunk.afterMatches;
+		const offsets =
+			hunk.state === "before"
+				? hunk.beforeMatches
+				: hunk.state === "after"
+					? hunk.afterMatches
+					: (predecessor?.offsets ?? []);
 		const offset = offsets[0];
 		if (offset === undefined) throw new Error(`managed WhatsApp hunk ${hunk.hunk.id} is missing`);
 		return [{ id: hunk.hunk.id, offset, source, replacement }];

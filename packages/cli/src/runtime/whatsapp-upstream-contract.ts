@@ -1,6 +1,5 @@
 import { hasExactKeys, recordValue } from "./manifest-shared";
 
-export const CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER = "x-clawdi-whatsapp-link-capability";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY = "clawdi.managedWhatsAppSocket";
 export const CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA = "clawdi.managedWhatsAppSocket.v1";
 export const CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY = "clawdi.managedWhatsAppCredential";
@@ -8,7 +7,6 @@ export const CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA = "clawdi.managedWhatsApp
 
 export interface ManagedWhatsAppSocketMetadataJson {
 	schemaVersion: typeof CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA;
-	capability: string;
 	authCert: {
 		SERIAL: number;
 		ISSUER: string;
@@ -27,16 +25,13 @@ export function parseManagedWhatsAppSocketMetadataJson(
 	const metadata = recordValue(value);
 	const authCert = recordValue(metadata?.authCert);
 	const publicKey = recordValue(authCert?.PUBLIC_KEY);
-	const capability = metadata?.capability;
 	const issuer = authCert?.ISSUER;
 	const serial = authCert?.SERIAL;
 	const publicKeyData = publicKey?.data;
 	if (
 		!metadata ||
-		!hasExactKeys(metadata, ["authCert", "capability", "schemaVersion"]) ||
+		!hasExactKeys(metadata, ["authCert", "schemaVersion"]) ||
 		metadata.schemaVersion !== CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA ||
-		typeof capability !== "string" ||
-		!/^clawdi_[a-f0-9]{32}$/.test(capability) ||
 		!authCert ||
 		!hasExactKeys(authCert, ["ISSUER", "PUBLIC_KEY", "SERIAL"]) ||
 		typeof serial !== "number" ||
@@ -56,7 +51,6 @@ export function parseManagedWhatsAppSocketMetadataJson(
 	}
 	return {
 		schemaVersion: CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
-		capability,
 		authCert: {
 			SERIAL: serial,
 			ISSUER: issuer,

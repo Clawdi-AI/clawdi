@@ -15,12 +15,11 @@ or Hermes channel connector and not a second agent runtime.
 - An OpenClaw or Hermes native WhatsApp plugin runs its own pinned stock Baileys
   with synthetic, Link-scoped Clawdi auth state. It never receives the physical
   account auth directory, credentials, or token.
-- The synthetic socket connects to the FastAPI Noise emulator only when its
-  WebSocket upgrade carries the exact managed marker. The generic egress engine
-  strips the marker and injects the AgentLink bearer before forwarding.
-- A missing marker is a user-owned socket and remains request-level passthrough
-  to the official upstream. A present but invalid, stale, or misplaced marker
-  matches the generic deny profile and fails closed.
+- A compute with an active managed WhatsApp Link routes the stock WebSocket host
+  and path to the FastAPI Noise emulator. The generic egress engine injects the
+  AgentLink bearer before forwarding.
+- FastAPI rejects inactive Link bearers before the Noise handshake, while stale
+  synthetic trust material fails the Noise handshake.
 - FastAPI owns bindings, aliases, durable inbox/outbox state, Link authority,
   Noise/Signal emulation, and revocation. The provider transport has no product
   routing or tenant authority.
@@ -34,7 +33,7 @@ claims a native upstream managed identity capability. Fixed-artifact stock
 OpenClaw and Hermes native-plugin E2E runs from
 `scripts/test-managed-whatsapp-native-e2e.sh`; the real live-account drill has
 not been executed and does not control local projection. Managed
-projection uses Link-scoped markers, audited compatibility patches, synthetic
+projection uses audited compatibility patches, synthetic
 credentials, and the generic interception profile after ordinary authority and
 compatibility checks.
 
@@ -55,7 +54,7 @@ Agent egress:
 
 ```text
 stock native plugin Baileys
-  -> managed marker selected by a provider profile
+  -> exact stock WebSocket route selected by the managed profile
   -> generic egress rewrite injects AgentLink bearer
   -> FastAPI validates Link + synthetic Noise identity + binding ownership
   -> messages enter durable channel_messages/channel_deliveries
@@ -168,8 +167,7 @@ Provider builders choose the natural placeholder location:
 
 - Telegram: placeholder in the Bot API path.
 - Discord: placeholder in Authorization or gateway identity.
-- WhatsApp: managed WebSocket-upgrade marker header. This marker selects a
-  profile; it is not a WhatsApp token or backend credential.
+- WhatsApp: exact stock WebSocket host and path.
 
 Done: `python3 -m unittest packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` exits 0 and
 `test_generic_engine_source_contains_no_channel_product_constants` passes.

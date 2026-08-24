@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
 	chmodSync,
 	copyFileSync,
@@ -121,6 +121,35 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		writeBaileysIdentity(fixture, "8.0.0");
 		expect(rollback(fixture).status).toBe("rolled-back");
 		assertTargetHunkState(fixture, "before");
+	});
+
+	it("migrates the predecessor capability patch without accepting unknown content", () => {
+		const fixture = createArtifactFixture(runtime);
+		reconcile(fixture);
+		for (const { target, path } of artifactTargets(fixture)) {
+			let content = readFileSync(path, "utf8");
+			for (const hunk of target.hunks) {
+				const predecessors = "predecessors" in hunk ? hunk.predecessors : undefined;
+				const predecessor = predecessors?.[0];
+				if (predecessor) content = content.replace(hunk.after, predecessor);
+			}
+			writeFileSync(path, content);
+		}
+
+		expect(reconcile(fixture).status).toBe("applied");
+		assertTargetHunkState(fixture, "after");
+		expect(readFileSync(join(fixture.baileysRoot, "lib/Socket/socket.js"), "utf8")).not.toContain(
+			"x-clawdi-whatsapp-link-capability",
+		);
+
+		const partial = createArtifactFixture(runtime);
+		reconcile(partial);
+		const target = artifactTargets(partial)[0];
+		const hunk = target?.target.hunks.find((candidate) => "predecessors" in candidate);
+		const predecessor = hunk && "predecessors" in hunk ? hunk.predecessors?.[0] : undefined;
+		if (!target || !hunk || !predecessor) throw new Error("missing predecessor fixture");
+		writeFileSync(target.path, readFileSync(target.path, "utf8").replace(hunk.after, predecessor));
+		expect(() => reconcile(partial)).toThrow(`refused mixed ${runtime} hunks`);
 	});
 
 	it("preserves an unrelated external edit outside owned hunks during rollback", () => {
@@ -513,7 +542,7 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 	expect(userSocket.webSocketConfig).toBe(userConfig);
 	expect(userSocket.noiseConfig.authCert).toBeUndefined();
 
-	const metadata = managedMetadata("clawdi_0123456789abcdef0123456789abcdef", 73);
+	const metadata = managedMetadata(73);
 	const managedConfig = socketConfig({
 		waWebSocketUrl: "wss://consumer.example/must-not-use",
 		options: { headers: { "user-agent": "audited-client" } },
@@ -521,11 +550,7 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 	});
 	const managedSocket = executePatchedSocketPrologue(socketPath, managedConfig);
 	expect(String(managedSocket.url)).toBe(qualifiedDefaultWebSocketUrl);
-	expect(managedSocket.webSocketConfig).not.toBe(managedConfig);
-	expect(managedSocket.webSocketConfig.options?.headers).toEqual({
-		"user-agent": "audited-client",
-		"x-clawdi-whatsapp-link-capability": metadata.capability,
-	});
+	expect(managedSocket.webSocketConfig).toBe(managedConfig);
 	expect(managedConfig.options?.headers).toEqual({ "user-agent": "audited-client" });
 	expect(managedSocket.noiseConfig.authCert).toEqual(metadata.authCert);
 	expect(() =>
@@ -540,34 +565,6 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 			}),
 		),
 	).toThrow("Invalid Clawdi managed WhatsApp socket metadata");
-});
-
-it("keeps managed upgrade identity out of the qualified artifact media fetch", async () => {
-	const mediaModule = await import(
-		pathToFileURL(join(pristineBaileysRoot, "lib/Utils/messages-media.js")).href
-	);
-	const getHttpStream = Reflect.get(mediaModule, "getHttpStream");
-	if (typeof getHttpStream !== "function")
-		throw new Error("qualified getHttpStream export is missing");
-	let fetchInit: RequestInit | undefined;
-	const originalFetch = globalThis.fetch;
-	globalThis.fetch = Object.assign(
-		mock(async (_input: string | URL | Request, init?: RequestInit) => {
-			fetchInit = init;
-			return new Response("media");
-		}),
-		{ preconnect: originalFetch.preconnect },
-	);
-	try {
-		await Reflect.apply(getHttpStream, undefined, [
-			new URL("https://mmg.whatsapp.net/media"),
-			{ headers: { "user-agent": "audited-client" } },
-		]);
-	} finally {
-		globalThis.fetch = originalFetch;
-	}
-	expect(fetchInit?.headers).toEqual({ "user-agent": "audited-client" });
-	expect(JSON.stringify(fetchInit)).not.toContain("x-clawdi-whatsapp-link-capability");
 });
 
 it("executes official Noise trust by default and the managed public key plus serial when present", async () => {
@@ -592,7 +589,7 @@ it("executes official Noise trust by default and the managed public key plus ser
 	expect(harness.verify(undefined, officialSerial).intermediateAuthorityKey).toEqual(officialKey);
 	expect(() => harness.verify(undefined, officialSerial + 1)).toThrow("certification match failed");
 
-	const customCert = managedMetadata("clawdi_0123456789abcdef0123456789abcdef", 73).authCert;
+	const customCert = managedMetadata(73).authCert;
 	expect(harness.verify(customCert, customCert.SERIAL).intermediateAuthorityKey).toEqual(
 		customCert.PUBLIC_KEY,
 	);
@@ -606,7 +603,7 @@ describe.each(["openclaw", "hermes"] as const)("stock %s auth reconstruction", (
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		const authDir = join(fixture.root, `auth-${runtime}`);
-		const firstMetadata = managedMetadata("clawdi_0123456789abcdef0123456789abcdef", 11);
+		const firstMetadata = managedMetadata(11);
 		await writeStockCreds(authDir, {
 			additionalData: { unrelated: "preserved", "clawdi.managedWhatsAppSocket": firstMetadata },
 		});
@@ -615,9 +612,9 @@ describe.each(["openclaw", "hermes"] as const)("stock %s auth reconstruction", (
 			join(fixture.baileysRoot, "lib/Socket/socket.js"),
 			socketConfig({ auth: initialAuth.state }),
 		);
-		expect(managedCapability(initial)).toBe(firstMetadata.capability);
+		expect(initial.noiseConfig.authCert?.PUBLIC_KEY).toEqual(Buffer.alloc(32, 11));
 
-		const secondMetadata = managedMetadata("clawdi_fedcba9876543210fedcba9876543210", 22);
+		const secondMetadata = managedMetadata(22);
 		initialAuth.state.creds.additionalData["clawdi.managedWhatsAppSocket"] = secondMetadata;
 		initialAuth.state.creds.accountSyncCounter = 2;
 		if (runtime === "hermes") {
@@ -631,7 +628,6 @@ describe.each(["openclaw", "hermes"] as const)("stock %s auth reconstruction", (
 			join(fixture.baileysRoot, "lib/Socket/socket.js"),
 			socketConfig({ auth: reconnectAuth.state }),
 		);
-		expect(managedCapability(reconnect)).toBe(secondMetadata.capability);
 		expect(reconnect.noiseConfig.authCert?.PUBLIC_KEY).toEqual(Buffer.alloc(32, 22));
 		expect(reconnectAuth.state.creds.additionalData.unrelated).toBe("preserved");
 		const persistedMetadata =
@@ -864,20 +860,15 @@ function executePatchedSocketPrologue(
 	return { url, webSocketConfig: capturedWebSocketConfig, noiseConfig: capturedNoiseConfig };
 }
 
-function managedMetadata(capability: string, keyByte: number) {
+function managedMetadata(keyByte: number) {
 	return {
 		schemaVersion: "clawdi.managedWhatsAppSocket.v1",
-		capability,
 		authCert: {
 			SERIAL: keyByte,
 			ISSUER: "ClawdiManagedLink",
 			PUBLIC_KEY: Buffer.alloc(32, keyByte),
 		},
 	};
-}
-
-function managedCapability(result: SocketHarnessResult): unknown {
-	return result.webSocketConfig.options?.headers?.["x-clawdi-whatsapp-link-capability"];
 }
 
 async function loadPatchedNoiseHarness(path: string, officialCert: object) {

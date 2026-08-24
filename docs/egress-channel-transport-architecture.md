@@ -39,20 +39,11 @@ the placeholder location native to its official client:
 | --- | --- | --- |
 | Telegram | Bot API placeholder in the request path | Rewrite to the Telegram backend boundary and inject the Link bearer. |
 | Discord | Placeholder in REST Authorization or gateway identity | Rewrite to the Discord backend boundary and inject the Link bearer. |
-| WhatsApp | Exact managed WebSocket-upgrade capability header | Rewrite to the Link-scoped Noise endpoint, strip the marker, and inject the Link bearer. |
+| WhatsApp | Exact stock WebSocket host and path | Rewrite to the Link-scoped Noise endpoint and inject the Link bearer. |
 
-The WhatsApp marker only selects a local profile. It is not the real provider
-credential, not the Link bearer, and not a WhatsApp token. A missing marker is a
-user-owned stock Baileys connection and retains official upstream behavior. A
-present marker that is wrong, stale, or placed on another request is caught by
-the lower-priority deny profile and fails closed.
-
-The per-Link marker is deterministic and intentionally has no expiry: it is a
-local profile selector, not backend authority. Link removal removes its valid
-rewrite profile while retaining the catch-all marked-request deny profile.
-Until that projection converges, the backend still rejects the revoked Link
-bearer; it also binds synthetic Noise identity to that Link, so copying a
-selector or synthetic identity across Links does not confer authority.
+The WhatsApp profile exists only when the compute's single managed WhatsApp Link
+is active. Backend bearer validation and Link-scoped synthetic Noise identity
+remain the authorization boundary.
 
 `packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` runs all three
 profile shapes through the same matcher and rewrite functions and asserts that
@@ -85,18 +76,18 @@ synthetic socket owns only Link-scoped Clawdi auth and talks to the Noise
 emulator. See
 [`designs/whatsapp-baileys-sidecar-runtime.md`](designs/whatsapp-baileys-sidecar-runtime.md).
 
-The audited Baileys release lacks managed credential metadata and a safe
-WebSocket-only header seam. The CLI owns a static compatibility patch for the
-two installed Baileys aliases, conditioned on the expected package name, rigorously parsed
-SemVer major 7, and unique exact before/after context for every audited hunk
-with fuzz zero. Whole-file rc13 hashes are audit fixtures rather than
+The audited Baileys release lacks managed credential metadata and configurable
+Noise trust. The CLI owns a static compatibility patch for the two installed
+Baileys aliases, conditioned on the expected package name, rigorously parsed
+SemVer major 7, and unique exact before/after context for every audited hunk with
+fuzz zero. Whole-file rc13 hashes are audit fixtures rather than
 compatibility gates, so unrelated changes outside those hunks are preserved.
 OpenClaw and Hermes source is not patched: their stock auth persistence carries
 the namespaced `creds.additionalData` value through initial construction and
-reconnect. Valid managed metadata forces Baileys' official WebSocket URL, adds
-the marker only to a derived upgrade config, and supplies the Noise trust;
-absent metadata preserves consumer URL/options and official trust. This is a
-downstream CLI capability, not a native upstream managed capability.
+reconnect. Valid managed metadata forces Baileys' official WebSocket URL and
+supplies the Noise trust; absent metadata preserves consumer URL/options and
+official trust. This is a downstream CLI capability, not a native upstream
+managed capability.
 Fixed-artifact stock OpenClaw and Hermes native-plugin E2E covers auth
 reconstruction, reconnect, inbound, outbound, and representative protocol
 envelopes. The real live-account message drill has not been executed and does
@@ -109,9 +100,8 @@ managed interception profile after ordinary authority and compatibility checks.
 - Profile schema: `packages/cli/src/runtime/egress-profiles.ts`
 - Generic interpreter: `packages/cli/egress-addon/clawdi_egress_addon.py`
 - Transparent redirect: `packages/cli/src/runtime/transparent-egress.ts`
-- Telegram/Discord builders: `packages/cli/src/runtime/channels.ts`
-- WhatsApp builder: `packages/cli/src/runtime/whatsapp-egress.ts`
+- Native channel builders: `packages/cli/src/runtime/channels.ts`
 - Static compatibility reconciler:
   `packages/cli/src/runtime/managed-baileys-compat.ts`
-- WhatsApp marker and metadata contract:
+- WhatsApp metadata contract:
   `packages/cli/src/runtime/whatsapp-upstream-contract.ts`

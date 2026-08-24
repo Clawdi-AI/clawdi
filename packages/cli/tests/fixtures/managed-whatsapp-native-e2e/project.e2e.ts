@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -44,10 +43,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 	const agentTokenSecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
 	const capabilitySecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
 	const credentialSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
-	const capability = `clawdi_${createHash("sha256")
-		.update(`whatsapp:${accountKey}:${linkId}`)
-		.digest("hex")
-		.slice(0, 32)}`;
+	const capability = `clawdi_${"0".repeat(32)}`;
 	const manifest: RuntimeManifestLoad = {
 		...runtimeManifest(runtime, home),
 		channelBindings: [
@@ -111,6 +107,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 			return [ref, value];
 		}),
 	);
+	expect(egressSecrets).not.toHaveProperty(capabilitySecretRef);
 	mkdirSync(outputRoot, { recursive: true });
 	const profileBundlePath = join(outputRoot, "egress-profiles.json");
 	const secretFilePath = join(outputRoot, "egress-secrets.json");

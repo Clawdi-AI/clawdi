@@ -26,7 +26,7 @@ import {
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
 import { hermesConfigContext } from "./manifest-runtime-config";
-import { isPlainRecord, recordValue } from "./manifest-shared";
+import { hasExactKeys, isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
 	enforceRuntimeUserOwnership,
@@ -300,9 +300,17 @@ export function readManagedWhatsAppAuthMetadata(
 			return null;
 		}
 		try {
-			parseManagedWhatsAppSocketMetadataJson(
+			const socketMetadata = recordValue(
 				additionalData[CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY],
 			);
+			const normalizedSocketMetadata =
+				socketMetadata &&
+				hasExactKeys(socketMetadata, ["authCert", "capability", "schemaVersion"]) &&
+				typeof socketMetadata.capability === "string" &&
+				/^clawdi_[a-f0-9]{32}$/.test(socketMetadata.capability)
+					? { schemaVersion: socketMetadata.schemaVersion, authCert: socketMetadata.authCert }
+					: socketMetadata;
+			parseManagedWhatsAppSocketMetadataJson(normalizedSocketMetadata);
 			const credentialMetadata = Object.hasOwn(
 				additionalData,
 				CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY,

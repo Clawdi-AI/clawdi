@@ -10692,10 +10692,7 @@ exit 64
 		const agentTokenSecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
 		const capabilitySecretRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
 		const credentialSecretRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
-		const capability = `clawdi_${createHash("sha256")
-			.update(`whatsapp:${accountKey}:${linkId}`)
-			.digest("hex")
-			.slice(0, 32)}`;
+		const capability = `clawdi_${"0".repeat(32)}`;
 		const sessionDir = join(home, ".hermes", "platforms", "whatsapp", "session");
 		const baileysSocket = join(hermesManagedBaileysRoot(home), "lib", "Socket", "socket.js");
 		const legacySessionDir = join(home, ".hermes", "whatsapp", "session");
@@ -10837,7 +10834,8 @@ exit 64
 			}),
 		]);
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-hermes-secret");
-		expect(JSON.stringify(projected)).toContain("x-clawdi-whatsapp-link-capability");
+		expect(JSON.stringify(projected.manifest)).not.toContain("x-clawdi-whatsapp-link-capability");
+		expect(projected.secretValues?.[capabilitySecretRef]).toBeUndefined();
 		expect(projected.secretValues?.[credentialSecretRef]).toContain("wa-hermes-secret");
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			whatsapp: {
@@ -10857,6 +10855,9 @@ exit 64
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
+		const egressSecrets = readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8");
+		expect(egressSecrets).toContain(agentTokenSecretRef);
+		expect(egressSecrets).not.toContain(capabilitySecretRef);
 		expect(readFileSync(retiredWhatsAppReceipt, "utf8")).toBe(retiredWhatsAppReceiptContent);
 		expect(existsSync(retiredWhatsAppAuthReceipts)).toBe(false);
 		expect(projected.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
@@ -10962,7 +10963,7 @@ exit 64
 			"runtime managed WhatsApp compatibility cleanup failed",
 		);
 		expect(readFileSync(paths.egressProfileBundle, "utf8")).toContain(
-			"native-whatsapp-baileys-invalid-capability",
+			"native-whatsapp-baileys-managed",
 		);
 
 		writeFileSync(baileysSocket, patchedSocket);
@@ -11186,7 +11187,6 @@ exit 0
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		const managedMetadata = {
 			schemaVersion: "clawdi.managedWhatsAppSocket.v1",
-			capability: `clawdi_${"a".repeat(32)}`,
 			authCert: {
 				SERIAL: 7,
 				ISSUER: "clawdi",

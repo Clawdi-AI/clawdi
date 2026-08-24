@@ -49,10 +49,10 @@ Decision labels:
 | `apps/web/src/hosted/v2/channels/whatsapp-credential-cache.ts` | B, deleted | Cached the removed public credential API response. Its hooks and query keys are also removed. |
 | `packages/cli/egress-addon/clawdi_egress_addon.py` | A | Single provider-neutral matcher/rewrite engine. Source invariant rejects provider constants. |
 | `packages/cli/src/runtime/egress-env.ts`, `egress-profiles.ts`, `hosted-egress-profiles.ts`, `transparent-egress.ts` and their tests | A | Generic schema, secret references, redirect, and profile materialization shared by all providers. No WhatsApp branch is added. |
-| `packages/cli/src/runtime/whatsapp-egress.ts`, `whatsapp-upstream-contract.ts` | A | Provider-only profile builder plus the exact marker and metadata contract consumed by production. Fixed-artifact E2E evidence lives in its CI-wired script, not in runtime constants. Normal runtime projection consumes the builder without a master feature flag. |
+| `packages/cli/src/runtime/channels.ts`, `whatsapp-upstream-contract.ts` | A | Native channel profiles plus the WhatsApp Noise metadata contract consumed by production. Fixed-artifact E2E evidence lives in its CI-wired script, not in runtime constants. |
 | `packages/whatsapp-baileys-sidecar/**` | A/C | Package name retained for build stability and documented as the one physical-provider transport. `runtime.ts` is the only production `makeWASocket`; a single WAL/FULL SQLite store holds auth/Signal/retry/inbox state and immutable account metadata under SQLite exclusive locking on a compatible local filesystem, rejecting symlinked state paths before open. At-rest encryption remains a deployment infrastructure requirement. The private bearer HTTP operations and byte-safe node codec remain. Demo multi-file auth, mutable version discovery, PID locking, and JSON spool/cache files are absent from production. |
 | `docs/designs/whatsapp-baileys-sidecar-runtime.md` | C | Current topology and exact upstream proposal. |
-| `docs/egress-channel-transport-architecture.md` | C | Replaced stale proxy/Graph research with the current generic engine and three provider builders. |
+| `docs/egress-channel-transport-architecture.md` | C | Replaced stale proxy/Graph research with the current generic engine and native channel builders. |
 
 ## Origin/Main References Removed In Place
 
@@ -189,7 +189,6 @@ packages/cli/src/runtime/manifest-reconciliation.test.ts
 packages/cli/src/runtime/manifest-source.ts
 packages/cli/src/runtime/manifest.ts
 packages/cli/src/runtime/runtime-bundle-v2.test.ts
-packages/cli/src/runtime/whatsapp-egress.ts
 packages/cli/src/runtime/whatsapp-upstream-contract.ts
 packages/cli/tests/commands/runtime.test.ts
 packages/cli/tests/egress_addon/clawdi_egress_addon_test.py
