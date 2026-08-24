@@ -197,11 +197,9 @@ function recoverPendingHostedSkillInstallations(
 			manager: "hosted-manifest",
 			verify: () =>
 				promotable !== null &&
-				withRuntimeUserSkillFiles(() =>
-					installedTreeMatches(promotable, reservation.targetDir, {
-						exclude: driver.exclude,
-					}),
-				),
+				installedTreeMatches(promotable, reservation.targetDir, {
+					exclude: driver.exclude,
+				}),
 			discard: () => discardPendingHostedSkill(reservation.targetDir),
 		});
 	}
@@ -282,11 +280,9 @@ function applyHostedSkills(
 		if (
 			reservation?.targetDir === targetDir &&
 			reservation.digest === reservationIdentity.digest &&
-			withRuntimeUserSkillFiles(() =>
-				installedTreeMatches(prepared, targetDir, {
-					exclude: driver.exclude,
-				}),
-			)
+			installedTreeMatches(prepared, targetDir, {
+				exclude: driver.exclude,
+			})
 		) {
 			if (
 				reservation.version !== reservationIdentity.version ||
@@ -313,11 +309,9 @@ function applyHostedSkills(
 					withPreparedHostedSkill(prepared, (sourceDir) => driver.activate(sourceDir, targetDir)),
 				{
 					verify: () =>
-						withRuntimeUserSkillFiles(() =>
-							installedTreeMatches(prepared, targetDir, {
-								exclude: driver.exclude,
-							}),
-						),
+						installedTreeMatches(prepared, targetDir, {
+							exclude: driver.exclude,
+						}),
 					discard: () => discardPendingHostedSkill(targetDir),
 				},
 			);

@@ -34,10 +34,7 @@ import type {
 	PreparedHostedAgentPlugins,
 } from "./hosted-agent-plugin-package";
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
-import {
-	assertHostedBundledSkillCatalogDigest,
-	resolveHostedBundledSkill,
-} from "./hosted-bundled-skill";
+import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import {
@@ -3380,13 +3377,19 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(existsSync(platformReceiptDirectory)).toBe(false);
 	});
 
-	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
+	test("upgrades a reserved bundled Skill from a private platform source idempotently", () => {
 		if (process.geteuid?.() !== 0) return;
 		const paths = tempRuntimePaths();
 		const fixtureRoot = dirname(paths.serviceStateRoot);
-		const hermesCommand = writeFakeHermesCli(paths);
-		const skillDir = join(paths.userHome, ".hermes", "skills", "clawdi");
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const skillDir = join(paths.userHome, ".openclaw", "workspace", "skills", "clawdi");
 		const ledger = join(paths.managedResourceRoot, "managed-skills.json");
+		const previousDigest = "272ec28025eb3c5227e4f7d7215327d5c070e7c4c87933e4d6df2f5bf33f9b9c";
 		const cliRoot = resolve(import.meta.dir, "../..");
 		const skillSource = join(cliRoot, "skills", "hosted-versions", "1", "clawdi");
 		const protectedSourceAncestors = [
@@ -3399,38 +3402,50 @@ describe("runtime manifest reconciliation invariants", () => {
 		const originalSourceModes = new Map(
 			protectedSourceAncestors.map((path) => [path, statSync(path).mode & 0o777]),
 		);
-		const runtimeUid = Number.parseInt(
-			execFileSync("id", ["-u", "nobody"], { encoding: "utf8" }).trim(),
-			10,
-		);
-		const runtimeGid = Number.parseInt(
-			execFileSync("id", ["-g", "nobody"], { encoding: "utf8" }).trim(),
-			10,
-		);
-		process.env.CLAWDI_RUNTIME_USER = "nobody";
+		const runtimeUid = 10_001;
+		const runtimeGid = 10_001;
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+		process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.clawdiHome, { recursive: true });
 		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(join(skillDir, "SKILL.md"), "# Clawdi 0.14.13\n");
+		for (const path of [
+			paths.userHome,
+			join(paths.userHome, ".local"),
+			dirname(command),
+			command,
+			join(paths.userHome, ".openclaw"),
+			join(paths.userHome, ".openclaw", "workspace"),
+			dirname(skillDir),
+			skillDir,
+			join(skillDir, "SKILL.md"),
+		]) {
+			chownSync(path, runtimeUid, runtimeGid);
+		}
+		ensureRuntimeStateDirs(paths);
+		reserveManagedSkill({
+			targetDir: skillDir,
+			id: "clawdi",
+			manager: "hosted-manifest",
+			version: 1,
+			digest: previousDigest,
+		});
 		const manifest = baseManifest(
 			paths,
 			{
-				hermes: {
+				openclaw: {
 					enabled: true,
-					run: runSettings(hermesCommand, ["gateway"]),
+					run: runSettings(command, ["gateway"]),
 					services: {},
 				},
 			},
 			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
 		);
-		const driftedSource = join(fixtureRoot, "drifted-skill-source");
-		cpSync(skillSource, driftedSource, { recursive: true });
-		writeFileSync(join(driftedSource, "SKILL.md"), "catalog drift\n");
-		expect(() =>
-			assertHostedBundledSkillCatalogDigest(resolveHostedBundledSkill("clawdi", 1), driftedSource),
-		).toThrow("catalog digest mismatch");
-
 		for (const path of protectedSourceAncestors) chmodSync(path, 0o700);
 		const accountPrivilegeTool = ["run", "user"].join("");
 		try {
@@ -3449,8 +3464,24 @@ describe("runtime manifest reconciliation invariants", () => {
 					join(skillSource, "SKILL.md"),
 				]),
 			).toThrow();
-			const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-skill"), paths);
+			const hostedRuntimeContract = {
+				expectedIdentity: {
+					home: paths.userHome,
+					user: "clawdi",
+					uid: runtimeUid,
+					gid: runtimeGid,
+				},
+				resolveUserIdentity: () => ({ uid: runtimeUid, gid: runtimeGid }),
+			};
+			const result = convergeRuntimeManifest(
+				manifestLoad(manifest, "bundled-skill-upgrade"),
+				paths,
+				{
+					hostedRuntimeContract,
+				},
+			);
 			expect(result.installErrors).toEqual([]);
+			expect(result.resourceProjectionErrors).toEqual([]);
 			expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toContain("# Clawdi");
 			expect(statSync(skillDir).uid).toBe(runtimeUid);
 			expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
@@ -3458,9 +3489,22 @@ describe("runtime manifest reconciliation invariants", () => {
 			expect(statSync(paths.managedResourceRoot).mode & 0o777).toBe(0o755);
 			expect(statSync(ledger).uid).toBe(0);
 			expect(statSync(ledger).mode & 0o022).toBe(0);
+			const upgradedLedger = JSON.parse(readFileSync(ledger, "utf8"));
+			expect(upgradedLedger.reservations[skillDir].digest).toBe(
+				resolveHostedBundledSkill("clawdi", 1).digest,
+			);
+			expect(upgradedLedger.pendingReservations).toEqual({});
 			for (const path of protectedSourceAncestors) {
 				expect(statSync(path).mode & 0o777).toBe(0o700);
 			}
+			const upgradedInode = statSync(skillDir).ino;
+			const unchanged = convergeRuntimeManifest(
+				manifestLoad({ ...manifest, generation: 2 }, "bundled-skill-unchanged"),
+				paths,
+				{ hostedRuntimeContract },
+			);
+			expect([...unchanged.installErrors, ...unchanged.resourceProjectionErrors]).toEqual([]);
+			expect(statSync(skillDir).ino).toBe(upgradedInode);
 
 			expect(() =>
 				execFileSync(accountPrivilegeTool, [
@@ -3476,9 +3520,10 @@ describe("runtime manifest reconciliation invariants", () => {
 			const removal = convergeRuntimeManifest(
 				manifestLoad(
 					{ ...manifest, projection: { skills: { entries: {} } } },
-					"inline-hermes-skill-removal",
+					"bundled-skill-removal",
 				),
 				paths,
+				{ hostedRuntimeContract },
 			);
 
 			expect(removal.installErrors).toEqual([]);
