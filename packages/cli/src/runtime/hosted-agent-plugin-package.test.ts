@@ -14,25 +14,47 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as tar from "tar";
 import {
-	cleanupHostedAgentPluginTransientArchives,
 	gcHostedAgentPluginArchives,
-	type PreparedHostedAgentPluginInstallation,
-	type PreparedHostedAgentPlugins,
+	hostedAgentPluginOwnershipIdentity,
+	hostedAgentPluginReceiptsPath,
 	prepareHostedAgentPluginPackages,
-	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginCommandRunner,
 	hostedAgentPluginCommands,
-	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import type { RuntimeManifest } from "./manifest-contract";
+import { planHostedAgentPluginConvergence } from "./manifest-planning";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
 import { getRuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
 
 const originalEnv = { ...process.env };
 let root = "";
+
+const releasedAgentPluginReceiptWriters = [
+	{
+		writerVersion: "0.13.92",
+		fileName: "runtime-agent-plugin-receipts.json",
+		schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+		mode: 0o600,
+	},
+	{
+		writerVersion: "0.14.14",
+		fileName: "runtime-agent-plugin-receipts.json",
+		schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
+		mode: 0o600,
+	},
+] satisfies Array<{
+	writerVersion: "0.13.92" | "0.14.14";
+	fileName: "runtime-agent-plugin-receipts.json";
+	schemaVersion: "clawdi.hostedAgentPluginReceipts.v2";
+	mode: 0o600;
+}>;
+const releasedAgentPluginReceiptFixtures = releasedAgentPluginReceiptWriters.flatMap((writer) => [
+	{ ...writer, runtime: "openclaw" as const },
+	{ ...writer, runtime: "hermes" as const },
+]);
 
 afterEach(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
@@ -160,16 +182,6 @@ function clawdiExtension(fields: Record<string, unknown> = {}): Record<string, u
 		schemaVersion: 1,
 		display: { name: "Acme Tools", category: "tools", languages: [] },
 		...fields,
-	};
-}
-
-function permissiveNativeRunner(onCommand: () => void): HostedAgentPluginCommandRunner {
-	return {
-		available: () => true,
-		run: () => {
-			onCommand();
-			return { status: 0, stdout: "[]", stderr: "" };
-		},
 	};
 }
 
@@ -308,10 +320,7 @@ describe("Hosted Agent Plugin package preparation", () => {
 			runtimePaths,
 			{ fetcher: async () => archiveResponse(bytes) },
 		);
-		expect(prepared?.desired.get("acme.tools")).toMatchObject({
-			mcpServerNames: ["remote"],
-			hasStreamableHttpMcp: true,
-		});
+		expect(prepared?.desired.get("acme.tools")?.mcpServerNames).toEqual(["remote"]);
 
 		const sseFiles = pluginFiles({
 			$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
@@ -570,28 +579,15 @@ describe("Hosted Agent Plugin package preparation", () => {
 				}),
 			})),
 		];
-		let nativeCommands = 0;
-		const runner = permissiveNativeRunner(() => {
-			nativeCommands += 1;
-		});
 		for (const fixture of cases) {
 			const bytes = await archive(fixture.files);
 			await expect(
-				(async () => {
-					const prepared = await prepareHostedAgentPluginPackages(
-						manifest("hermes", treeDigest(fixture.files)),
-						runtimePaths,
-						{ fetcher: async () => archiveResponse(bytes) },
-					);
-					if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
-					proveHostedAgentPluginCapabilities({
-						prepared,
-						commands: hostedAgentPluginCommands(runtimePaths.userHome),
-						runner,
-					});
-				})(),
+				prepareHostedAgentPluginPackages(
+					manifest("hermes", treeDigest(fixture.files)),
+					runtimePaths,
+					{ fetcher: async () => archiveResponse(bytes) },
+				),
 			).rejects.toThrow();
-			expect(nativeCommands).toBe(0);
 		}
 	});
 
@@ -701,80 +697,130 @@ describe("Hosted Agent Plugin package preparation", () => {
 		expect(existsSync(symlinkTarget)).toBe(true);
 	});
 
-	test("capability failure removes only this attempt's new desired archive", async () => {
-		const runtimePaths = paths();
-		const previousFiles = pluginFiles(undefined, "1.2.2");
-		const previousBytes = await archive(previousFiles);
-		const previousManifest = manifest("openclaw", treeDigest(previousFiles), "plugins/acme.tools", {
-			commit: "b".repeat(40),
-			installationId: "install_acme_tools_previous",
-			version: "1.2.2",
-		});
-		const previous = await prepareHostedAgentPluginPackages(previousManifest, runtimePaths, {
-			fetcher: async () => archiveResponse(previousBytes),
-		});
-		const previousInstallation = previous?.desired.get("acme.tools")?.installation;
-		if (!previousInstallation) throw new Error("missing previous Agent Plugin fixture");
-		const desiredFiles = pluginFiles(undefined, "1.2.3");
-		const desiredBytes = await archive(desiredFiles);
-		mkdirSync(dirname(runtimePaths.manifestLastGood), { recursive: true });
-		writeFileSync(
-			runtimePaths.manifestLastGood,
-			JSON.stringify(manifest("openclaw", treeDigest(desiredFiles))),
-		);
-		writeHostedAgentPluginReceipt(
-			{
-				schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-				runtime: "openclaw",
-				installations: {
-					"acme.tools": {
-						...previousInstallation,
-						nativeId: "acme-tools",
-					},
-				},
-			},
-			runtimePaths,
-		);
+	test.each(releasedAgentPluginReceiptFixtures)(
+		"adopts a $writerVersion $runtime receipt and installed plugin on first convergence",
+		async ({ fileName, mode, runtime, schemaVersion }) => {
+			const runtimePaths = paths();
+			const files = pluginFiles();
+			const bytes = await archive(files);
+			const desiredManifest = manifest(runtime, treeDigest(files));
+			const installation = desiredManifest.projection?.agentPlugins?.installations["acme.tools"];
+			if (!installation) throw new Error("missing Agent Plugin installation fixture");
+			const nativeId = runtime === "openclaw" ? "acme-tools" : "acme.tools";
+			const persistedInstallation = {
+				...installation,
+				ownershipIdentity: hostedAgentPluginOwnershipIdentity("acme.tools", installation),
+				nativeId,
+			};
+			const persistedReceipt = {
+				schemaVersion,
+				runtime,
+				installations: { "acme.tools": persistedInstallation },
+			};
+			const receiptPath = join(runtimePaths.statusRoot, fileName);
+			expect(hostedAgentPluginReceiptsPath(runtimePaths)).toBe(receiptPath);
+			writeFileSync(receiptPath, `${JSON.stringify(persistedReceipt, null, 2)}\n`, { mode });
+			expect(lstatSync(receiptPath).mode & 0o777).toBe(mode);
 
-		let prepared: PreparedHostedAgentPlugins | null = null;
-		let liveCommands = 0;
-		const runner: HostedAgentPluginCommandRunner = {
-			available: () => false,
-			run: () => {
-				liveCommands += 1;
-				return { status: 0, stdout: "", stderr: "" };
-			},
-		};
-		let desiredInstallation: PreparedHostedAgentPluginInstallation | undefined;
-		try {
-			const capabilityPrepared = await prepareHostedAgentPluginPackages(
-				manifest("openclaw", treeDigest(desiredFiles)),
-				runtimePaths,
-				{ fetcher: async () => archiveResponse(desiredBytes) },
+			const prepared = await prepareHostedAgentPluginPackages(desiredManifest, runtimePaths, {
+				fetcher: async () => archiveResponse(bytes),
+			});
+			if (!prepared) throw new Error("missing prepared Agent Plugin fixture");
+			const plugin = prepared.desired.get("acme.tools");
+			if (!plugin) throw new Error("missing desired Agent Plugin fixture");
+			const installRoot = join(
+				runtimePaths.userHome,
+				runtime === "openclaw" ? ".openclaw" : ".hermes",
+				runtime === "openclaw" ? "extensions" : "plugins",
+				nativeId,
 			);
-			prepared = capabilityPrepared;
-			desiredInstallation = capabilityPrepared?.desired.get("acme.tools")?.installation;
-			if (!capabilityPrepared || !desiredInstallation) {
-				throw new Error("missing desired Agent Plugin fixture");
+			for (const file of plugin.tree) {
+				const path = join(installRoot, ...file.path.split("/"));
+				mkdirSync(dirname(path), { recursive: true });
+				writeFileSync(path, file.bytes, { mode: file.mode & 0o777 });
 			}
-			expect(capabilityPrepared.transientCacheOwnerships).toEqual(
-				new Set([desiredInstallation.ownershipIdentity]),
-			);
-			expect(() =>
-				proveHostedAgentPluginCapabilities({
-					prepared: capabilityPrepared,
-					commands: hostedAgentPluginCommands(runtimePaths.userHome),
-					runner,
-				}),
-			).toThrow("Agent Plugin capability probe runtime command is unavailable");
-		} finally {
-			cleanupHostedAgentPluginTransientArchives(prepared, runtimePaths);
-		}
+			if (runtime === "hermes") {
+				const gitConfig = join(installRoot, ".git", "config");
+				mkdirSync(dirname(gitConfig), { recursive: true });
+				writeFileSync(gitConfig, "[core]\n\trepositoryformatversion = 0\n");
+			}
 
-		const container = join(runtimePaths.cacheRoot, "agent-plugins");
-		if (!desiredInstallation) throw new Error("missing desired Agent Plugin fixture");
-		expect(liveCommands).toBe(0);
-		expect(existsSync(join(container, desiredInstallation.ownershipIdentity))).toBe(false);
-		expect(existsSync(join(container, previousInstallation.ownershipIdentity))).toBe(true);
-	});
+			const calls: string[][] = [];
+			const runner: HostedAgentPluginCommandRunner = {
+				run(input) {
+					calls.push(input.args);
+					if (input.args[1] === "list") {
+						if (runtime === "hermes") {
+							return {
+								status: 0,
+								stdout: JSON.stringify([
+									{
+										name: "acme.tools",
+										status: "enabled",
+										version: installation.version,
+										source: "git",
+									},
+								]),
+								stderr: "",
+							};
+						}
+						return {
+							status: 0,
+							stdout: JSON.stringify({
+								plugins: [
+									{
+										id: "acme-tools",
+										name: "acme.tools",
+										version: installation.version,
+										enabled: true,
+										status: "loaded",
+										format: "bundle",
+										bundleFormat: "agent",
+									},
+								],
+							}),
+							stderr: "",
+						};
+					}
+					if (input.args[1] === "inspect") {
+						return {
+							status: 0,
+							stdout: JSON.stringify({
+								plugin: {
+									id: "acme-tools",
+									name: "acme.tools",
+									source: installRoot,
+									origin: "global",
+									status: "loaded",
+									version: installation.version,
+									enabled: true,
+									format: "bundle",
+									bundleFormat: "agent",
+								},
+								mcpServers: [],
+								diagnostics: [],
+								install: {
+									source: "path",
+									installPath: installRoot,
+									resolvedVersion: installation.version,
+								},
+							}),
+							stderr: "",
+						};
+					}
+					throw new Error(`unexpected native mutation: ${input.args.join(" ")}`);
+				},
+			};
+			const { transaction } = planHostedAgentPluginConvergence({
+				prepared,
+				home: runtimePaths.userHome,
+				commands: hostedAgentPluginCommands(runtimePaths.userHome),
+				runner,
+			});
+
+			expect(transaction?.hasMutations).toBe(false);
+			expect(transaction?.apply()).toEqual(persistedReceipt);
+			expect(calls.every((args) => args[1] === "list" || args[1] === "inspect")).toBe(true);
+		},
+	);
 });

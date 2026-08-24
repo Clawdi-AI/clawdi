@@ -117,7 +117,6 @@ export interface PreparedHostedAgentPlugin {
 	name: string;
 	installation: PreparedHostedAgentPluginInstallation;
 	mcpServerNames: readonly string[];
-	hasStreamableHttpMcp: boolean;
 	tree: readonly PreparedAgentPluginTreeFile[];
 }
 
@@ -719,12 +718,11 @@ function assertRemoteServer(server: z.infer<typeof remoteServerSchema>): void {
 function assertMcpComponents(
 	tree: readonly PreparedAgentPluginTreeFile[],
 	runtime: HostedAgentPluginRuntime,
-): { serverNames: string[]; hasStreamableHttp: boolean; bareCommands: string[] } {
+): { serverNames: string[]; bareCommands: string[] } {
 	const file = tree.find((entry) => entry.path === "mcp.json");
-	if (!file) return { serverNames: [], hasStreamableHttp: false, bareCommands: [] };
+	if (!file) return { serverNames: [], bareCommands: [] };
 	const parsed = mcpManifestSchema.safeParse(parseJsonObject(file, "Agent Plugin mcp.json"));
 	if (!parsed.success) throw new Error("Agent Plugin mcp.json does not match the 1.0.0 schema");
-	let hasStreamableHttp = false;
 	const bareCommands = new Set<string>();
 	for (const server of Object.values(parsed.data.mcpServers)) {
 		if (server.type !== "stdio") {
@@ -732,7 +730,6 @@ function assertMcpComponents(
 			if (server.type === "sse" && runtime === "hermes") {
 				throw new Error(HERMES_AGENT_PLUGIN_REMOTE_UNSUPPORTED_ERROR);
 			}
-			hasStreamableHttp ||= server.type === "streamable-http";
 			continue;
 		}
 		if (server.command.includes("\0")) {
@@ -777,7 +774,6 @@ function assertMcpComponents(
 	}
 	return {
 		serverNames: Object.keys(parsed.data.mcpServers).sort(),
-		hasStreamableHttp,
 		bareCommands: [...bareCommands].sort(),
 	};
 }
@@ -877,7 +873,6 @@ async function validateArchive(
 			name: descriptor.name,
 			installation: descriptor.installation,
 			mcpServerNames: mcp.serverNames,
-			hasStreamableHttpMcp: mcp.hasStreamableHttp,
 			tree: collected.tree,
 		};
 	} finally {

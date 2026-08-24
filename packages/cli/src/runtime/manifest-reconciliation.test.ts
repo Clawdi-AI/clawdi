@@ -38,10 +38,7 @@ import {
 	type PreparedHostedAgentPlugin,
 	type PreparedHostedAgentPlugins,
 } from "./hosted-agent-plugin-package";
-import {
-	type HostedAgentPluginCommandRunner,
-	hostedAgentPluginCommands,
-} from "./hosted-agent-plugin-runtime";
+import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	resolveHostedBundledSkill,
@@ -61,7 +58,6 @@ import {
 } from "./managed-skill-reservation";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
-	planHostedAgentPluginConvergence,
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 	runtimeInstallerMutationTargets,
@@ -156,12 +152,41 @@ function preparedTestAgentPlugin(
 	name: string,
 	version: string,
 	ownershipIdentity: string,
+	remote = false,
 ): PreparedHostedAgentPlugin {
-	const bytes = Buffer.from(JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version }));
-	const fileDigest = createHash("sha256").update(bytes).digest("hex");
-	const treeDigest = createHash("sha256")
-		.update(`100644\0plugin.json\0${bytes.byteLength}\0${fileDigest}\n`)
-		.digest("hex");
+	const tree = [
+		{
+			path: "plugin.json",
+			mode: 0o100644 as const,
+			bytes: Buffer.from(JSON.stringify({ $schema: AGENT_PLUGINS_SCHEMA_1_0_0, name, version })),
+		},
+		...(remote
+			? [
+					{
+						path: "mcp.json",
+						mode: 0o100644 as const,
+						bytes: Buffer.from(
+							JSON.stringify({
+								$schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+								mcpServers: {
+									remote: {
+										type: "streamable-http",
+										url: "https://mcp.example.test/mcp",
+									},
+								},
+							}),
+						),
+					},
+				]
+			: []),
+	].sort((left, right) => left.path.localeCompare(right.path));
+	const treeDigest = createHash("sha256");
+	for (const file of tree) {
+		const fileDigest = createHash("sha256").update(file.bytes).digest("hex");
+		treeDigest.update(
+			`${file.mode.toString(8)}\0${file.path}\0${file.bytes.byteLength}\0${fileDigest}\n`,
+		);
+	}
 	return {
 		name,
 		installation: {
@@ -174,22 +199,25 @@ function preparedTestAgentPlugin(
 				path: `plugins/${name}`,
 				commit: ownershipIdentity.slice(0, 40),
 			},
-			contentDigest: `sha256-tree-v1:${treeDigest}`,
+			contentDigest: `sha256-tree-v1:${treeDigest.digest("hex")}`,
 			ownershipIdentity,
 		},
-		mcpServerNames: [],
-		hasStreamableHttpMcp: false,
-		tree: [{ path: "plugin.json", mode: 0o100644, bytes }],
+		mcpServerNames: remote ? ["remote"] : [],
+		tree,
 	};
 }
 
 function testAgentPluginDesiredState(
-	prepared: PreparedHostedAgentPlugin,
+	...plugins: PreparedHostedAgentPlugin[]
 ): HostedAgentPluginsDesiredState {
-	const { ownershipIdentity: _ownershipIdentity, ...installation } = prepared.installation;
 	return {
 		schemaVersion: 1,
-		installations: { [prepared.name]: installation },
+		installations: Object.fromEntries(
+			plugins.map((plugin) => {
+				const { ownershipIdentity: _ownershipIdentity, ...installation } = plugin.installation;
+				return [plugin.name, installation];
+			}),
+		),
 	};
 }
 
@@ -1138,25 +1166,70 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
 	});
 
-	test("fails closed when native Agent Plugin lifecycle support is unavailable", () => {
+	test("isolates an unsupported Hermes streamable-http plugin during apply", () => {
 		const paths = tempRuntimePaths();
-		const desired = preparedTestAgentPlugin("acme.tools", "1.2.3", "a".repeat(64));
-		const prepared = preparedTestAgentPluginState(desired);
-		const unavailableRunner: HostedAgentPluginCommandRunner = {
-			available: () => false,
-			run: () => {
-				throw new Error("unsupported runtime must not execute Agent Plugin commands");
+		const command = writeFakeHermesCli(paths);
+		const desired = preparedTestAgentPlugin("acme.tools", "1.2.3", "a".repeat(64), true);
+		const manifest = baseManifest(
+			paths,
+			{ hermes: { enabled: true, run: runSettings(command, ["gateway"]), services: {} } },
+			{
+				runtime: "hermes",
+				projection: { agentPlugins: testAgentPluginDesiredState(desired) },
+			},
+		);
+		const runner: HostedAgentPluginCommandRunner = {
+			run: (input) => {
+				if (input.command === "git") return { status: 0, stdout: "", stderr: "" };
+				if (input.args[0] === "config") {
+					const configPath = join(input.home, ".hermes", "config.yaml");
+					mkdirSync(dirname(configPath), { recursive: true });
+					writeFileSync(configPath, "plugins:\n  scan_on_install: false\n");
+					return { status: 0, stdout: "", stderr: "" };
+				}
+				if (input.args[1] === "list") return { status: 0, stdout: "[]", stderr: "" };
+				if (input.args[1] === "install") {
+					const partialRoot = join(input.home, ".hermes", "plugins", "acme.tools");
+					mkdirSync(partialRoot, { recursive: true });
+					writeFileSync(join(partialRoot, "partial"), "partial install");
+					return { status: 1, stdout: "", stderr: "streamable-http unsupported" };
+				}
+				throw new Error(`unexpected Agent Plugin command: ${input.args.join(" ")}`);
 			},
 		};
-		const commands = hostedAgentPluginCommands(paths.userHome);
-		expect(() =>
-			planHostedAgentPluginConvergence({
-				prepared,
-				home: paths.userHome,
-				commands,
-				runner: unavailableRunner,
-			}),
-		).toThrow("Agent Plugin capability probe runtime command is unavailable");
+		let authorityCommits = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "hermes-plugin-unsupported"),
+			paths,
+			{
+				cacheLastGood: false,
+				preparedHostedAgentPlugins: {
+					...preparedTestAgentPluginState(desired),
+					runtime: "hermes",
+				},
+				hostedAgentPluginCommandRunner: runner,
+				commitAuthority: () => authorityCommits++,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+					quiesce: () => undefined,
+					rollback: () => {
+						throw new Error("isolated Agent Plugin failure must not roll back core");
+					},
+				},
+			},
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors).toEqual([
+			"runtime Agent Plugin projection failed: Hermes native Agent Plugin install failed: streamable-http unsupported",
+		]);
+		expect(result.agentPluginFailedNames).toEqual(["acme.tools"]);
+		expect(authorityCommits).toBe(1);
+		expect(existsSync(join(paths.userHome, ".hermes", "plugins"))).toBe(false);
+		expect(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")).not.toContain(
+			"scan_on_install",
+		);
 	});
 
 	test("orders cold native plugin activation and restores the full preimage after failure", () => {
@@ -1236,11 +1309,7 @@ case "\${1:-}" in
 	        plugin_native_id="\${plugin_name//./-}"
 	        plugin_root="$HOME/.openclaw/extensions/$plugin_native_id"
 	        version=$(sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p' "$3/plugin.json")
-	        if [[ "$HOME" == '${paths.userHome}' ]]; then
-	          printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
-        else
-          printf 'probe-install:%s\\n' "$version" >> '${eventLog}'
-        fi
+	        printf 'plugin-apply:%s\\n' "$version" >> '${eventLog}'
         rm -rf "$plugin_root"
         mkdir -p "$(dirname "$plugin_root")"
         cp -R "$3" "$plugin_root"
@@ -1335,8 +1404,6 @@ chmod 0755 '${commandPath}'
 		expect(first.installErrors).toEqual([]);
 		expect(readFileSync(eventLog, "utf8").trim().split("\n")).toEqual([
 			"binary-install",
-			"probe-install:1.0.0",
-			"probe-install:1.0.0",
 			"quiesce",
 			"plugin-apply:1.0.0",
 			"gateway-install",
@@ -1381,11 +1448,89 @@ chmod 0755 '${commandPath}'
 				`${pluginDatabasePath}-shm`,
 			].map((path) => [path, readFileSync(path)]),
 		);
+		const colliding = preparedTestAgentPlugin("acme-tools", "1.0.0", "c".repeat(64));
+		const collisionManifest: RuntimeManifest = {
+			...manifest,
+			generation: 2,
+			issuedAt: "2026-07-01T00:01:00.000Z",
+			projection: {
+				agentPlugins: testAgentPluginDesiredState(colliding),
+			},
+		};
+		let collisionAuthorityCommits = 0;
+		const collision = convergeRuntimeManifest(
+			manifestLoad(collisionManifest, "agent-plugin-native-id-collision"),
+			paths,
+			{
+				cacheLastGood: false,
+				preparedHostedAgentPlugins: preparedTestAgentPluginState(colliding, previous),
+				commitAuthority: () => collisionAuthorityCommits++,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+					quiesce: () => undefined,
+					rollback: () => {
+						throw new Error("isolated Agent Plugin collision must not roll back core");
+					},
+				},
+			},
+		);
+		expect(collision.installErrors).toEqual([]);
+		expect(collision.resourceProjectionErrors.join("\n")).toContain(
+			"refusing to replace an unmanaged native Agent Plugin target",
+		);
+		expect(collisionAuthorityCommits).toBe(1);
+		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
+
+		const dotted = preparedTestAgentPlugin("acme.first", "1.0.0", "d".repeat(64));
+		const dashed = preparedTestAgentPlugin("acme-first", "1.0.0", "e".repeat(64));
+		const nativeCollisionManifest: RuntimeManifest = {
+			...manifest,
+			generation: 3,
+			issuedAt: "2026-07-01T00:02:00.000Z",
+			projection: {
+				agentPlugins: testAgentPluginDesiredState(dotted, dashed),
+			},
+		};
+		const previousState = preparedTestAgentPluginState(dotted, previous).previous;
+		let nativeCollisionAuthorityCommits = 0;
+		const nativeCollision = convergeRuntimeManifest(
+			manifestLoad(nativeCollisionManifest, "agent-plugin-desired-native-id-collision"),
+			paths,
+			{
+				cacheLastGood: false,
+				preparedHostedAgentPlugins: {
+					runtime: "openclaw",
+					desired: new Map([
+						[dotted.name, dotted],
+						[dashed.name, dashed],
+					]),
+					previous: previousState,
+					transientCacheOwnerships: new Set(),
+				},
+				commitAuthority: () => nativeCollisionAuthorityCommits++,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+					quiesce: () => undefined,
+					rollback: () => {
+						throw new Error("isolated Agent Plugin collision must not roll back core");
+					},
+				},
+			},
+		);
+		expect(nativeCollision.installErrors).toEqual([]);
+		expect(nativeCollision.resourceProjectionErrors.join("\n")).toContain(
+			"Agent Plugin packages resolve to the same native identity",
+		);
+		expect(nativeCollisionAuthorityCommits).toBe(1);
+		for (const [path, content] of preimage) expect(readFileSync(path)).toEqual(content);
+
 		const desired = preparedTestAgentPlugin("acme.tools", "2.0.0", "b".repeat(64));
 		const nextManifest: RuntimeManifest = {
 			...manifest,
-			generation: 2,
-			issuedAt: "2026-07-01T00:02:00.000Z",
+			generation: 4,
+			issuedAt: "2026-07-01T00:03:00.000Z",
 			projection: {
 				agentPlugins: testAgentPluginDesiredState(desired),
 			},
