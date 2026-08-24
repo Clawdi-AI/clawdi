@@ -313,23 +313,20 @@ The managed projection is Link-scoped and fail-closed:
 2. Runtime convergence embeds strict namespaced metadata under
    `creds.additionalData["clawdi.managedWhatsAppSocket"]` and writes that one
    synthetic `creds.json` into the stock OpenClaw or Hermes auth directory with
-   private permissions. The metadata contains only its schema, per-Link
-   selector, and public Noise trust material; it never contains the Link bearer
-   or a websocket URL, and physical provider auth state is never copied.
-3. A provider profile matches an exact per-Link managed upgrade capability,
-   strips it, injects the Link bearer, and rewrites the WebSocket upgrade to the
-   Noise endpoint. The capability is a profile selector, not a WhatsApp token.
-4. Missing capability preserves the stock plugin's official upstream request;
-   a present invalid, stale, or misplaced capability fails closed. The
-   deterministic selector has no expiry because it grants no backend authority.
-   Link removal deletes the valid route but retains the deny rule, while the
-   backend independently rejects revoked bearers and cross-Link synthetic
-   identities during convergence.
+   private permissions. The metadata contains only its schema and public Noise
+   trust material; it never contains the Link bearer or a websocket URL, and
+   physical provider auth state is never copied.
+3. The single-account provider profile matches the exact stock WebSocket host
+   and path, injects the Link bearer, and rewrites the upgrade to the Noise
+   endpoint.
+4. Link removal deletes the route. The backend independently rejects revoked
+   bearers and cross-Link synthetic identities, while stale synthetic trust
+   material fails the Noise handshake.
 
-The Baileys aliases receive the dedicated WebSocket-only header and `authCert`
-seams through the CLI-owned static compatibility reconciler. OpenClaw and
-Hermes source remains stock: both already persist the full Baileys auth state,
-including `additionalData`, on initial construction and reconnect. The
+The Baileys aliases receive the `authCert` seam through the CLI-owned static
+compatibility reconciler. OpenClaw and Hermes source remains stock: both already
+persist the full Baileys auth state, including `additionalData`, on initial
+construction and reconnect. The
 reconciler accepts only rigorously parsed SemVer major 7 packages whose audited
 before/after context hunks each match uniquely and exactly with fuzz zero.
 Unrelated bytes outside those hunks are allowed, while missing, duplicated,

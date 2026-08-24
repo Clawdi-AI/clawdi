@@ -2,14 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { egressProfileSchema } from "../src/runtime/egress-profiles";
-import { buildManagedWhatsAppEgressProfiles } from "../src/runtime/whatsapp-egress";
-import { CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER } from "../src/runtime/whatsapp-upstream-contract";
-
-const agentTokenSecretRef = (link: string) =>
-	`secret://channels/whatsapp/account/links/${link}/agent-token`;
-const capabilitySecretRef = (link: string) =>
-	`secret://channels/whatsapp/account/links/${link}/egress-capability`;
 
 describe("native WhatsApp egress contract", () => {
 	it("keeps one physical socket implementation and no legacy application connector", () => {
@@ -58,66 +50,6 @@ describe("native WhatsApp egress contract", () => {
 			"utf-8",
 		);
 		expect(routeSource).not.toMatch(/\/graph|\/webhook|\/media/);
-	});
-
-	it("requires an exact per-Link capability marker and denies stale markers", () => {
-		const profiles = buildManagedWhatsAppEgressProfiles({
-			controlPlaneApiUrl: "https://control-plane.test/base?ignored=true",
-			links: ["link-a", "link-b"].map((linkId) => ({
-				linkId,
-				agentTokenSecretRef: agentTokenSecretRef(linkId),
-				capabilitySecretRef: capabilitySecretRef(linkId),
-			})),
-		});
-
-		expect(profiles).toHaveLength(3);
-		for (const profile of profiles) {
-			expect(egressProfileSchema.safeParse(profile).success).toBe(true);
-			expect(profile.id).not.toContain("link-a");
-			expect(profile.id).not.toContain("link-b");
-		}
-		const managed = profiles.filter((profile) => profile.kind === "websocket");
-		expect(managed).toHaveLength(2);
-		expect(
-			managed.map((profile) => profile.match.headers[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]),
-		).toEqual([
-			{
-				type: "secretRefEquals",
-				secretRef: capabilitySecretRef("link-a"),
-			},
-			{
-				type: "secretRefEquals",
-				secretRef: capabilitySecretRef("link-b"),
-			},
-		]);
-		for (const profile of managed) {
-			expect(profile.match.path).toEqual({ type: "equals", value: "/ws/chat" });
-			expect(profile.match).not.toHaveProperty("notAfter");
-			expect(profile.rewrite?.upstreamBaseUrl).toBe(
-				"wss://control-plane.test/v1/channels/whatsapp/baileys",
-			);
-			expect(profile.rewrite?.preservePath).toBe(false);
-			expect(profile.rewrite?.removeHeaders).toEqual([CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]);
-			expect(profile.rewrite?.upstreamBaseUrl).not.toMatch(/link|account|capability/i);
-		}
-		expect(profiles.at(-1)).toMatchObject({
-			kind: "deny",
-			match: {
-				headers: {
-					[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]: { type: "exists" },
-				},
-			},
-		});
-		expect(profiles.at(-1)?.match.path).toBeUndefined();
-	});
-
-	it("does not intercept WhatsApp without a managed Link", () => {
-		const profiles = buildManagedWhatsAppEgressProfiles({
-			controlPlaneApiUrl: "https://control-plane.test",
-			links: [],
-		});
-
-		expect(profiles).toEqual([]);
 	});
 
 	it("qualifies the pinned rc14 physical sidecar artifact", () => {

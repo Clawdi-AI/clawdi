@@ -75,13 +75,17 @@ function manifest(path: string, credentialId = "credential-test"): RuntimeManife
 	};
 }
 
-function credsJson(secret = "managed-secret", credentialId?: string): string {
+function credsJson(
+	secret = "managed-secret",
+	credentialId?: string,
+	legacyCapability = false,
+): string {
 	return JSON.stringify({
 		advSecretKey: secret,
 		additionalData: {
 			"clawdi.managedWhatsAppSocket": {
 				schemaVersion: "clawdi.managedWhatsAppSocket.v1",
-				capability: `clawdi_${"a".repeat(32)}`,
+				...(legacyCapability ? { capability: `clawdi_${"a".repeat(32)}` } : {}),
 				authCert: {
 					SERIAL: 7,
 					ISSUER: "clawdi",
@@ -141,11 +145,11 @@ describe("managed WhatsApp auth directories", () => {
 		expect(existsSync(path)).toBe(false);
 	});
 
-	test("adopts 0.13.92 creds metadata under a new credential ID without replacing sessions", () => {
+	test("adopts 0.13.92 and 0.14.14 creds metadata without replacing sessions", () => {
 		const path = authDir();
 		mkdirSync(path, { recursive: true });
 		const sessionPath = join(path, "session-key.json");
-		writeFileSync(join(path, "creds.json"), `${credsJson("legacy-secret")}\n`);
+		writeFileSync(join(path, "creds.json"), `${credsJson("legacy-secret", undefined, true)}\n`);
 		writeFileSync(sessionPath, '{"preserved":true}\n');
 		writeFileSync(join(path, LEGACY_MARKER), legacyMarker("credential-old"));
 		const sessionBefore = { bytes: readFileSync(sessionPath), inode: statSync(sessionPath).ino };
@@ -164,7 +168,9 @@ describe("managed WhatsApp auth directories", () => {
 			home,
 		);
 		expect(existsSync(join(path, LEGACY_MARKER))).toBe(false);
-		expect(readFileSync(join(path, "creds.json"), "utf8")).toContain("credential-new");
+		const rewrittenCreds = readFileSync(join(path, "creds.json"), "utf8");
+		expect(rewrittenCreds).toContain("credential-new");
+		expect(rewrittenCreds).not.toContain("capability");
 		expect(readFileSync(sessionPath)).toEqual(sessionBefore.bytes);
 		expect(statSync(sessionPath).ino).toBe(sessionBefore.inode);
 	});

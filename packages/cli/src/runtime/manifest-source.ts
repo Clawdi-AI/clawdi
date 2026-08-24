@@ -67,7 +67,7 @@ const runtimeBundleWhatsAppBindingSchema = z
 		accountKey: z.string().min(1),
 		linkId: z.string().uuid(),
 		agentTokenSecretRef: canonicalSecretRefSchema,
-		placeholderTokenSecretRef: canonicalSecretRefSchema,
+		placeholderTokenSecretRef: canonicalSecretRefSchema.optional(),
 		credential: z
 			.object({
 				id: z.string().uuid(),

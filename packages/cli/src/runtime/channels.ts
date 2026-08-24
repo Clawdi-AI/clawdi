@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { EgressProfileInputBundle } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import { recordValue, toWebSocketUrl } from "./manifest-shared";
@@ -10,7 +9,6 @@ import {
 	managedWhatsAppAuthCredentials,
 	managedWhatsAppAuthDir,
 } from "./whatsapp-credential-projection";
-import { buildManagedWhatsAppEgressProfiles } from "./whatsapp-egress";
 import {
 	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY,
 	CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_SCHEMA,
@@ -56,7 +54,7 @@ interface ManagedChannelLink {
 	accountKey: string;
 	linkId: string;
 	secretRef: string;
-	placeholderSecretRef: string;
+	placeholderSecretRef: string | null;
 	credential?: ManagedChannelCredential;
 	whatsappMaterial: WhatsAppBaileysCredentialMaterial | null;
 }
@@ -100,7 +98,12 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const { channelBindings, ...source } = load;
-	const secretValues = load.secretValues ?? {};
+	const secretValues = { ...(load.secretValues ?? {}) };
+	for (const binding of channelBindings) {
+		if (binding.provider === "whatsapp" && binding.placeholderTokenSecretRef) {
+			delete secretValues[binding.placeholderTokenSecretRef];
+		}
+	}
 	const links: ManagedChannelLink[] = channelBindings.map((binding) =>
 		managedBundleChannelLink(binding, secretValues),
 	);
@@ -121,23 +124,17 @@ function managedBundleChannelLink(
 	secretValues: Record<string, string>,
 ): ManagedChannelLink {
 	const agentToken = runtimeSecretValue(secretValues, binding.agentTokenSecretRef);
-	const placeholderToken = runtimeSecretValue(secretValues, binding.placeholderTokenSecretRef);
 	if (!agentToken) throw new Error(`runtime bundle is missing ${binding.agentTokenSecretRef}`);
-	if (!placeholderToken) {
+	if (
+		binding.provider !== "whatsapp" &&
+		!runtimeSecretValue(secretValues, binding.placeholderTokenSecretRef)
+	) {
 		throw new Error(`runtime bundle is missing ${binding.placeholderTokenSecretRef}`);
 	}
 	if (binding.provider === "whatsapp") {
 		const expectedAgentRef = whatsappAgentTokenSecretRef(binding.accountKey, binding.linkId);
-		const expectedCapabilityRef = whatsappCapabilitySecretRef(binding.accountKey, binding.linkId);
-		const expectedCapability = whatsappCapabilityToken(binding.accountKey, binding.linkId);
 		if (binding.agentTokenSecretRef !== expectedAgentRef) {
 			throw new Error("runtime bundle WhatsApp agent token ref does not match its Link");
-		}
-		if (binding.placeholderTokenSecretRef !== expectedCapabilityRef) {
-			throw new Error("runtime bundle WhatsApp capability ref does not match its Link");
-		}
-		if (placeholderToken !== expectedCapability) {
-			throw new Error("runtime bundle WhatsApp capability does not match its Link");
 		}
 	}
 	const link: ManagedChannelLink = {
@@ -148,7 +145,8 @@ function managedBundleChannelLink(
 		accountKey: binding.accountKey,
 		linkId: binding.provider === "whatsapp" ? binding.linkId : binding.accountKey,
 		secretRef: binding.agentTokenSecretRef,
-		placeholderSecretRef: binding.placeholderTokenSecretRef,
+		placeholderSecretRef:
+			binding.provider === "whatsapp" ? null : binding.placeholderTokenSecretRef,
 		credential:
 			binding.provider === "whatsapp"
 				? runtimeBundleWhatsAppCredential(binding, secretValues)
@@ -317,7 +315,8 @@ function applyOpenClawRuntimeChannelSettings(
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
-		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
+		if (link.account.provider === "whatsapp") continue;
+		secretEnv[openClawChannelTokenEnvName(link)] = channelPlaceholderSecretRef(link);
 	}
 	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
 		return manifest;
@@ -355,11 +354,11 @@ function applyHermesRuntimeChannelSettings(
 	if (telegram) {
 		env.TELEGRAM_ALLOW_ALL_USERS = "true";
 		env.HERMES_TELEGRAM_DISABLE_FALLBACK_IPS = "true";
-		secretEnv.TELEGRAM_BOT_TOKEN = telegram.placeholderSecretRef;
+		secretEnv.TELEGRAM_BOT_TOKEN = channelPlaceholderSecretRef(telegram);
 	}
 	if (discord) {
 		env.DISCORD_ALLOW_ALL_USERS = "true";
-		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
+		secretEnv.DISCORD_BOT_TOKEN = channelPlaceholderSecretRef(discord);
 	}
 	if (whatsapp) {
 		env.WHATSAPP_MODE = "bot";
@@ -411,6 +410,12 @@ function openClawChannelPlaceholderTokenSecretRef(link: ManagedChannelLink): Ope
 		provider: "default",
 		id: openClawChannelTokenEnvName(link),
 	};
+}
+
+function channelPlaceholderSecretRef(link: ManagedChannelLink): string {
+	if (!link.placeholderSecretRef)
+		throw new Error("managed channel placeholder secret ref is missing");
+	return link.placeholderSecretRef;
 }
 
 function openClawChannelTokenEnvName(link: ManagedChannelLink): string {
@@ -502,7 +507,7 @@ function buildManagedChannelEgressProfiles(
 						pathPrefix: route.pathPrefix,
 						path: {
 							type: "secretRefPrefix",
-							secretRef: link.placeholderSecretRef,
+							secretRef: channelPlaceholderSecretRef(link),
 							prefix: route.pathPrefix,
 							suffix: "/",
 						},
@@ -540,7 +545,7 @@ function buildManagedChannelEgressProfiles(
 					headers: {
 						authorization: {
 							type: "secretRefEquals",
-							secretRef: link.placeholderSecretRef,
+							secretRef: channelPlaceholderSecretRef(link),
 							prefix: "Bot ",
 						},
 					},
@@ -593,20 +598,36 @@ function buildManagedChannelEgressProfiles(
 	if (whatsapp && !whatsapp.whatsappMaterial) {
 		throw new Error(`managed WhatsApp Link ${whatsapp.linkId} has no valid synthetic auth`);
 	}
-	profiles.push(
-		...buildManagedWhatsAppEgressProfiles({
-			controlPlaneApiUrl: cloudApiUrl,
-			links: whatsapp
-				? [
-						{
-							linkId: whatsapp.linkId,
-							agentTokenSecretRef: whatsapp.secretRef,
-							capabilitySecretRef: whatsapp.placeholderSecretRef,
-						},
-					]
-				: [],
-		}),
-	);
+	if (whatsapp) {
+		profiles.push({
+			id: "native-whatsapp-baileys-managed",
+			enabled: true,
+			kind: "websocket",
+			match: {
+				scheme: "wss",
+				host: "web.whatsapp.com",
+				path: { type: "equals", value: "/ws/chat" },
+				headers: {},
+				query: {},
+			},
+			rewrite: {
+				upstreamBaseUrl: toWebSocketUrl(
+					new URL("/v1/channels/whatsapp/baileys", baseUrl).toString(),
+				),
+				preservePath: false,
+				setHeaders: {
+					authorization: {
+						type: "secretRef",
+						secretRef: whatsapp.secretRef,
+						prefix: "Bearer ",
+					},
+				},
+			},
+			logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+			priority: 40,
+			owner: "clawdi-native-channels",
+		});
+	}
 	return profiles;
 }
 
@@ -645,7 +666,7 @@ function managedWhatsAppSecretValues(
 		if (material) {
 			const credsSecretRef = material.credential.credsSecretRef;
 			if (projectedCredentialSecrets.has(credsSecretRef)) {
-				values[credsSecretRef] = JSON.stringify(managedWhatsAppCreds(link, material));
+				values[credsSecretRef] = JSON.stringify(managedWhatsAppCreds(material));
 			}
 		}
 	}
@@ -656,20 +677,8 @@ function whatsappAgentTokenSecretRef(accountKey: string, linkId: string): string
 	return `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
 }
 
-function whatsappCapabilitySecretRef(accountKey: string, linkId: string): string {
-	return `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
-}
-
 function whatsappCredentialSecretRef(accountKey: string, credentialId: string): string {
 	return `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
-}
-
-function whatsappCapabilityToken(accountKey: string, linkId: string): string {
-	const suffix = createHash("sha256")
-		.update(`whatsapp:${accountKey}:${linkId}`)
-		.digest("hex")
-		.slice(0, 32);
-	return `clawdi_${suffix}`;
 }
 
 function whatsappBaileysCredentialProjection(
@@ -719,7 +728,6 @@ function whatsappBaileysCredentialMaterial(
 	try {
 		metadata = parseManagedWhatsAppSocketMetadataJson({
 			schemaVersion: CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
-			capability: whatsappCapabilityToken(link.accountKey, link.linkId),
 			authCert: material.authCert,
 		});
 	} catch {
@@ -733,7 +741,6 @@ function whatsappBaileysCredentialMaterial(
 }
 
 function managedWhatsAppCreds(
-	link: ManagedChannelLink,
 	material: WhatsAppBaileysCredentialMaterial,
 ): Record<string, unknown> {
 	const existingAdditionalData = material.creds.additionalData;
@@ -744,7 +751,6 @@ function managedWhatsAppCreds(
 	}
 	const metadata = parseManagedWhatsAppSocketMetadataJson({
 		schemaVersion: CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
-		capability: whatsappCapabilityToken(link.accountKey, link.linkId),
 		authCert: material.authCert,
 	});
 	return {
