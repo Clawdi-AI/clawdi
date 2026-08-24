@@ -77,8 +77,8 @@ chown -R egress:egress "${EGRESS_HOME}"
 /opt/e2e-harness/.venv/bin/python "${FIXTURE_ROOT}/server.py" init "${E2E_SCENARIO}"
 
 export E2E_HOME E2E_OUTPUT E2E_SCENARIO
-bun test "${FIXTURE_ROOT}/project.e2e.ts"
 chown -R clawdi:clawdi "${E2E_OUTPUT}"
+runuser -u clawdi -- env HOME="${E2E_HOME}" bun test "${FIXTURE_ROOT}/project.e2e.ts"
 
 export CLAWDI_EGRESS_PROFILE_BUNDLE="${E2E_OUTPUT}/egress-profiles.json"
 export CLAWDI_EGRESS_SECRET_FILE="${E2E_OUTPUT}/egress-secrets.json"
