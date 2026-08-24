@@ -2424,6 +2424,10 @@ function installBehavioralGuardHermesRuntime(): void {
 		{ encoding: "utf8" },
 	);
 	if (install.status !== 0) throw new Error(install.stderr);
+	const dashboardRoot = "/home/clawdi/.hermes/hermes-agent/hermes_cli/web_dist";
+	mkdirSync(dashboardRoot, { recursive: true });
+	writeFileSync(join(dashboardRoot, "index.html"), "<html>Hermes dashboard</html>\n");
+	chownTreeWithoutFollowingLinks(dashboardRoot, 10_001, 10_001);
 }
 
 function behavioralGuardSkill(
