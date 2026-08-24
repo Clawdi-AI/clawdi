@@ -1,14 +1,11 @@
 "use client";
 
-import { Blocks, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Blocks } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
-import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
+import { AgentPluginActions, type AgentPluginPendingAction } from "./agent-plugin-actions";
 import {
 	type AgentPluginInventoryItem,
 	agentPluginActionState,
@@ -16,7 +13,7 @@ import {
 	pluginDisplayName,
 } from "./agent-plugin-model";
 
-export type AgentPluginPendingAction = "install" | "remove" | "retry" | null;
+export type { AgentPluginPendingAction } from "./agent-plugin-actions";
 
 export function AgentPluginCard({
 	item,
@@ -38,10 +35,7 @@ export function AgentPluginCard({
 	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
 }) {
 	const title = pluginDisplayName(item);
-	const { status, installability, hasUpdate, canInstall, canRetry, version } =
-		agentPluginActionState(item, runtime);
-	const showUpdateBadge = hasUpdate && item.desired?.convergence === "installed";
-	const visibleStatus = showUpdateBadge ? null : status;
+	const actionState = agentPluginActionState(item, runtime);
 
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
@@ -55,86 +49,26 @@ export function AgentPluginCard({
 					</IconChip>
 				}
 				title={title}
-				badges={
-					visibleStatus || showUpdateBadge ? (
-						<>
-							{visibleStatus ? (
-								<StatusBadge status={visibleStatus.tone} withDot>
-									{visibleStatus.label}
-								</StatusBadge>
-							) : null}
-							{showUpdateBadge ? <StatusBadge status="info">Update available</StatusBadge> : null}
-						</>
-					) : undefined
-				}
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
 				footer={[
 					item.catalog?.publisher,
-					version,
+					actionState.version,
 					item.catalog ? agentPluginComponentSummary(item.catalog) : null,
 				]}
 				footerWrap
 				actionsVisibility="always"
 				actions={
-					<>
-						{item.desired ? (
-							<ConfirmAction
-								title={`Remove ${title}?`}
-								description={<p>This removes its Skills and MCP servers from the agent.</p>}
-								confirmLabel="Remove plugin"
-								destructive
-								onConfirm={() => onRemove(item)}
-							>
-								<Button
-									variant="ghost"
-									size="sm"
-									disabled={mutationsBlocked}
-									className="text-muted-foreground hover:text-destructive"
-								>
-									{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
-									{pendingAction === "remove" ? "Removing…" : "Remove"}
-								</Button>
-							</ConfirmAction>
-						) : null}
-						{canInstall ? (
-							<Button
-								size="sm"
-								variant={hasUpdate ? "outline" : "default"}
-								disabled={mutationsBlocked}
-								onClick={() => void onInstall(item).catch(() => undefined)}
-							>
-								{pendingAction === "install" ? <Spinner /> : hasUpdate ? <RefreshCw /> : <Plus />}
-								{pendingAction === "install"
-									? hasUpdate
-										? "Updating…"
-										: "Installing…"
-									: hasUpdate
-										? "Update"
-										: "Install"}
-							</Button>
-						) : !item.desired && installability ? (
-							<Button
-								size="sm"
-								variant="outline"
-								disabled
-								title={installability.reason ?? undefined}
-							>
-								{installability.label}
-							</Button>
-						) : null}
-						{canRetry ? (
-							<Button
-								size="sm"
-								disabled={mutationsBlocked}
-								onClick={() => void onRetry(item).catch(() => undefined)}
-							>
-								{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
-								{pendingAction === "retry" ? "Retrying…" : "Retry"}
-							</Button>
-						) : null}
-					</>
+					<AgentPluginActions
+						item={item}
+						state={actionState}
+						pendingAction={pendingAction}
+						mutationsBlocked={mutationsBlocked}
+						onInstall={onInstall}
+						onRemove={onRemove}
+						onRetry={onRetry}
+					/>
 				}
 			/>
 		</div>

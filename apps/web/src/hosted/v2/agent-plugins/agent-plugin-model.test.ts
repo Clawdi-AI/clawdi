@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentPluginCatalogEntry, AgentPluginDesiredState } from "./agent-plugin-model";
 import {
+	agentPluginActionState,
 	agentPluginInstallability,
 	agentPluginStatusPresentation,
 	assignAgentPluginGroups,
@@ -120,6 +121,32 @@ describe("Agent Plugin model", () => {
 		expect(agentPluginStatusPresentation(pending, new Date("2026-08-16T00:11:00Z")).label).toBe(
 			"Waiting for agent",
 		);
+	});
+
+	test("keeps one primary action coherent across the install lifecycle", () => {
+		const now = new Date("2026-08-16T00:05:00Z");
+		const entry = catalogEntry("sui");
+		const actionFor = (desiredState: AgentPluginDesiredState | null, at = now) =>
+			agentPluginActionState({ name: "sui", catalog: entry, desired: desiredState }, "hermes", at)
+				.primaryAction;
+
+		expect(actionFor(null)).toEqual({ kind: "install", label: "Install" });
+		expect(actionFor(desired("sui", { convergence: "not_observed" }))).toEqual({
+			kind: "installing",
+			label: "Installing…",
+		});
+		expect(
+			actionFor(desired("sui", { convergence: "not_observed" }), new Date("2026-08-16T00:11:00Z")),
+		).toEqual({ kind: "waiting", label: "Waiting for agent" });
+		expect(actionFor(desired("sui", { version: "2.0.0" }))).toEqual({
+			kind: "installed",
+			label: "Installed",
+		});
+		expect(actionFor(desired("sui"))).toEqual({ kind: "update", label: "Update" });
+		expect(actionFor(desired("sui", { convergence: "failed" }))).toEqual({
+			kind: "retry",
+			label: "Retry",
+		});
 	});
 
 	test("keeps the latest catalog version and only flags real upgrades", () => {

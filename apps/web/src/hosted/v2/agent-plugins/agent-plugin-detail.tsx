@@ -6,11 +6,10 @@ import {
 	Blocks,
 	BookOpen,
 	Box,
-	Plus,
+	Clock3,
 	RefreshCw,
 	Server,
 	Tag,
-	Trash2,
 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { DetailMeta, DetailStats } from "@/components/detail/layout";
@@ -19,14 +18,11 @@ import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge } from "@/components/ui/status-badge";
 import type { HostedRuntime } from "@/hosted/runtimes";
 import { identityFor } from "@/lib/identity";
-import type { AgentPluginPendingAction } from "./agent-plugin-card";
+import { AgentPluginActions, type AgentPluginPendingAction } from "./agent-plugin-actions";
 import {
-	type AgentPluginActionState,
 	type AgentPluginCatalogEntry,
 	type AgentPluginInventoryItem,
 	agentPluginActionState,
@@ -66,6 +62,8 @@ export function AgentPluginDetail({
 	const actionState = agentPluginActionState(item, runtime);
 	const { status, installability, hasUpdate, version } = actionState;
 	const showCompatibilityWarning = Boolean(installability?.reason && (!item.desired || hasUpdate));
+	const installFailed = item.desired?.convergence === "failed";
+	const waitingForAgent = actionState.primaryAction?.kind === "waiting";
 
 	return (
 		<div data-hosted="true" data-v2="true" className="space-y-6">
@@ -108,23 +106,11 @@ export function AgentPluginDetail({
 				description={
 					item.catalog?.description ?? "This plugin is no longer available in the Store."
 				}
-				titleAdornment={
-					(status && item.desired?.convergence === "installed") || hasUpdate ? (
-						<>
-							{status && item.desired?.convergence === "installed" ? (
-								<StatusBadge status={status.tone} withDot>
-									{status.label}
-								</StatusBadge>
-							) : null}
-							{hasUpdate ? <StatusBadge status="info">Update available</StatusBadge> : null}
-						</>
-					) : undefined
-				}
 				status={
 					item.catalog?.publisher ? <DetailMeta>{item.catalog.publisher}</DetailMeta> : undefined
 				}
 				actions={
-					<PluginDetailActions
+					<AgentPluginActions
 						item={item}
 						state={actionState}
 						pendingAction={pendingAction}
@@ -135,10 +121,16 @@ export function AgentPluginDetail({
 					/>
 				}
 			/>
-			{status && item.desired?.convergence !== "installed" ? (
-				<Alert variant={status.tone === "destructive" ? "destructive" : "default"}>
-					{status.tone === "destructive" ? <AlertCircle /> : <RefreshCw />}
-					<AlertTitle>{status.label}</AlertTitle>
+			{installFailed && status ? (
+				<Alert variant="destructive">
+					<AlertCircle />
+					<AlertTitle>Plugin installation failed</AlertTitle>
+					<AlertDescription>{status.description}</AlertDescription>
+				</Alert>
+			) : waitingForAgent && status ? (
+				<Alert>
+					<Clock3 />
+					<AlertTitle>Agent hasn't picked up this change</AlertTitle>
 					<AlertDescription>{status.description}</AlertDescription>
 				</Alert>
 			) : showCompatibilityWarning && installability ? (
@@ -165,80 +157,6 @@ export function AgentPluginDetail({
 			</DetailStats>
 			<PluginDetailsPanel entry={item.catalog} />
 		</div>
-	);
-}
-
-function PluginDetailActions({
-	item,
-	state,
-	pendingAction,
-	mutationsBlocked,
-	onInstall,
-	onRemove,
-	onRetry,
-}: {
-	item: AgentPluginInventoryItem;
-	state: AgentPluginActionState;
-	pendingAction: AgentPluginPendingAction;
-	mutationsBlocked: boolean;
-	onInstall: (item: AgentPluginInventoryItem) => Promise<unknown>;
-	onRemove: (item: AgentPluginInventoryItem) => Promise<unknown>;
-	onRetry: (item: AgentPluginInventoryItem) => Promise<unknown>;
-}) {
-	const { canInstall, canRetry, installability, hasUpdate: updating } = state;
-	return (
-		<>
-			{canInstall ? (
-				<Button
-					size="sm"
-					variant={updating ? "outline" : "default"}
-					disabled={mutationsBlocked}
-					onClick={() => void onInstall(item).catch(() => undefined)}
-				>
-					{pendingAction === "install" ? <Spinner /> : updating ? <RefreshCw /> : <Plus />}
-					{pendingAction === "install"
-						? updating
-							? "Updating…"
-							: "Installing…"
-						: updating
-							? `Update to v${item.catalog?.version}`
-							: "Install"}
-				</Button>
-			) : !item.desired && installability ? (
-				<Button size="sm" variant="outline" disabled title={installability.reason ?? undefined}>
-					{installability.label}
-				</Button>
-			) : null}
-			{canRetry ? (
-				<Button
-					size="sm"
-					disabled={mutationsBlocked}
-					onClick={() => void onRetry(item).catch(() => undefined)}
-				>
-					{pendingAction === "retry" ? <Spinner /> : <RefreshCw />}
-					{pendingAction === "retry" ? "Retrying…" : "Retry"}
-				</Button>
-			) : null}
-			{item.desired ? (
-				<ConfirmAction
-					title={`Remove ${pluginDisplayName(item)}?`}
-					description={<p>The agent will remove the Skills and MCP servers from this plugin.</p>}
-					confirmLabel="Remove plugin"
-					destructive
-					onConfirm={() => onRemove(item)}
-				>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={mutationsBlocked}
-						className="text-destructive hover:text-destructive"
-					>
-						{pendingAction === "remove" ? <Spinner /> : <Trash2 />}
-						{pendingAction === "remove" ? "Removing…" : "Remove"}
-					</Button>
-				</ConfirmAction>
-			) : null}
-		</>
 	);
 }
 
