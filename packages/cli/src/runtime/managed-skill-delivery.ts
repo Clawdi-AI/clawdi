@@ -15,6 +15,7 @@ import { collectRegularFileTree } from "../lib/file-tree";
 import { extractTarGzSync } from "../lib/tar";
 import { MANAGED_SKILL_TREE_LIMITS, managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
+import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 export class ManagedSkillResourceError extends Error {}
 
@@ -97,7 +98,11 @@ export function withPreparedHostedSkill<T>(
 				cpSync(skill.sourceDir, sourceDir, { recursive: true });
 			} catch (error) {
 				if (error instanceof ManagedSkillResourceError) throw error;
-				throw new ManagedSkillResourceError("prepared bundled Skill could not be staged");
+				const detail = error instanceof Error ? error.message : String(error);
+				throw new ManagedSkillResourceError(
+					`prepared bundled Skill could not be staged: ${detail}`,
+					{ cause: error },
+				);
 			}
 		} else {
 			if (createHash("sha256").update(skill.tarBytes).digest("hex") !== skill.identity.digest) {
@@ -105,8 +110,10 @@ export function withPreparedHostedSkill<T>(
 			}
 			try {
 				extractTarGzSync(root, skill.tarBytes);
-			} catch {
-				throw new ManagedSkillResourceError("prepared Skill archive could not be staged");
+			} catch (error) {
+				throw new ManagedSkillResourceError("prepared Skill archive could not be staged", {
+					cause: error,
+				});
 			}
 		}
 		const sourceTree = collectManagedSkillTree(sourceDir);
@@ -133,7 +140,7 @@ export function installedTreeMatches(
 	options: { exclude?: ReadonlySet<string> } = {},
 ): boolean {
 	return withPreparedHostedSkill(skill, (sourceDir) =>
-		managedSkillTargetMatchesSource(sourceDir, targetDir, options),
+		withRuntimeUserFileAccess(() => managedSkillTargetMatchesSource(sourceDir, targetDir, options)),
 	);
 }
 
