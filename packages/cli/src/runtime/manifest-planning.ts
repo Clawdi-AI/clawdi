@@ -14,7 +14,6 @@ import {
 	type HostedAgentPluginCommands,
 	type HostedAgentPluginTransaction,
 	prepareHostedAgentPluginTransaction,
-	proveHostedAgentPluginCapabilities,
 } from "./hosted-agent-plugin-runtime";
 import { hostedBundledSkillIds } from "./hosted-bundled-skill";
 import { createOpenClawHostedContext, type OpenClawHostedContext } from "./hosted-openclaw-context";
@@ -140,17 +139,11 @@ export function planHostedAgentPluginConvergence(input: {
 }): {
 	transaction: HostedAgentPluginTransaction | null;
 } {
-	const proof = proveHostedAgentPluginCapabilities({
-		prepared: input.prepared,
-		commands: input.commands,
-		...(input.runner ? { runner: input.runner } : {}),
-	});
 	return {
 		transaction: prepareHostedAgentPluginTransaction({
 			prepared: input.prepared,
 			home: input.home,
 			commands: input.commands,
-			capabilityProof: proof,
 			...(input.runner ? { runner: input.runner } : {}),
 		}),
 	};

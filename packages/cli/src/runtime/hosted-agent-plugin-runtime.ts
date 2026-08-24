@@ -1,35 +1,25 @@
-import { lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { lstatSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import { runHermesAgentPluginCanary } from "./hermes-agent-plugin-canary-client";
 import { getHermesRawConfigFileValue } from "./hermes-config";
 import {
 	type HostedAgentPluginOwnership,
 	type HostedAgentPluginReceipt,
 	type HostedAgentPluginRuntime,
 	hostedAgentPluginDirectoryDigest,
-	hostedAgentPluginTreeDigest,
 	type PreparedHostedAgentPlugin,
 	type PreparedHostedAgentPlugins,
 	withPreparedAgentPluginDirectory,
 } from "./hosted-agent-plugin-package";
-import { AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR } from "./manifest-contract";
 import {
 	openClawAgentPluginInspectSchema,
 	openClawPluginListSchema,
 } from "./openclaw-plugin-observation";
-import {
-	commandResolvable,
-	makeRuntimeUserOwned,
-	spawnRuntimeUserCommand,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 1024 * 1024;
-const capabilityProofMarker = Symbol("HostedAgentPluginCapabilityProof");
 const isolatedGitEnvironment: Readonly<Record<string, string | undefined>> = {
 	GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
 	GIT_ATTR_NOSYSTEM: "1",
@@ -75,46 +65,11 @@ interface AgentPluginCommandResult {
 }
 
 export interface HostedAgentPluginCommandRunner {
-	available(command: string): boolean;
 	run(input: AgentPluginCommandInput): AgentPluginCommandResult;
 }
-
-export interface HostedAgentPluginPackageProof {
-	runtime: HostedAgentPluginRuntime;
-	command: string;
-	name: string;
-	ownershipIdentity: string;
-	nativeId: string;
-}
-
-export interface HostedAgentPluginCapabilityProof {
-	readonly [capabilityProofMarker]: true;
-	readonly runner: HostedAgentPluginCommandRunner;
-	readonly packages: ReadonlyMap<string, HostedAgentPluginPackageProof>;
-}
-
-export class HostedAgentPluginCapabilityUnsupportedError extends Error {
-	constructor(message = AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR) {
-		super(message);
-		this.name = "HostedAgentPluginCapabilityUnsupportedError";
-	}
-}
-
-class OpenClawAgentPluginNotObservedError extends Error {}
-
-const OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR =
-	"OpenClaw installed the package but did not report it as an Agent Plugins 1.0.0 bundle; standards-native installation is unsupported";
-const AGENT_PLUGIN_CAPABILITY_CANARY_NAME = "clawdi-capability-canary";
 const HERMES_PLUGIN_SCAN_POLICY_KEY = "plugins.scan_on_install";
 
-export type HermesRemoteCapabilityProbe = (input: {
-	command: string;
-	home: string;
-	runner: HostedAgentPluginCommandRunner;
-}) => void;
-
 const defaultCommandRunner: HostedAgentPluginCommandRunner = {
-	available: (command) => withRuntimeUserFileAccess(() => commandResolvable(command)),
 	run(input) {
 		const result = spawnRuntimeUserCommand(input.command, input.args, input.home, input.cwd, {
 			environmentOverrides: input.environmentOverrides,
@@ -161,7 +116,6 @@ interface NativeAgentPluginPackage {
 	version: string;
 	contentDigest: string;
 	mcpServerNames: readonly string[];
-	hasStreamableHttpMcp: boolean;
 	tree: PreparedHostedAgentPlugin["tree"];
 }
 
@@ -171,13 +125,13 @@ function nativePackage(prepared: PreparedHostedAgentPlugin): NativeAgentPluginPa
 		version: prepared.installation.version,
 		contentDigest: prepared.installation.contentDigest,
 		mcpServerNames: prepared.mcpServerNames,
-		hasStreamableHttpMcp: prepared.hasStreamableHttpMcp,
 		tree: prepared.tree,
 	};
 }
 
 interface NativeAgentPluginDriver {
 	runtime: HostedAgentPluginRuntime;
+	installRoot(): string;
 	installTarget(nativeId: string): string;
 	mutationStateTargets(): readonly string[];
 	observe(name: string, nativeId?: string): NativePluginObservation | null;
@@ -254,21 +208,24 @@ function nativeInstallTarget(
 	nativeId: string,
 ): string {
 	assertNativeId(nativeId);
+	return join(nativeInstallRoot(home, runtime), nativeId);
+}
+
+function nativeInstallRoot(home: string, runtime: HostedAgentPluginRuntime): string {
 	return join(
 		home,
 		runtime === "openclaw" ? ".openclaw" : ".hermes",
 		runtime === "openclaw" ? "extensions" : "plugins",
-		nativeId,
 	);
 }
 
-function nativeInstallTargetExists(path: string): boolean {
+function nativeInstallTargetNames(home: string, runtime: HostedAgentPluginRuntime): Set<string> {
+	const root = nativeInstallRoot(home, runtime);
 	return withRuntimeUserFileAccess(() => {
 		try {
-			lstatSync(path);
-			return true;
+			return new Set(readdirSync(root));
 		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return new Set();
 			throw error;
 		}
 	});
@@ -391,6 +348,7 @@ function createOpenClawDriver(input: {
 	};
 	return {
 		runtime: "openclaw",
+		installRoot: () => nativeInstallRoot(input.home, "openclaw"),
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "openclaw", nativeId),
 		mutationStateTargets() {
 			const database = join(input.home, ".openclaw", "state", "openclaw.sqlite");
@@ -411,9 +369,7 @@ function createOpenClawDriver(input: {
 			});
 			const installed = observe(prepared.name);
 			if (!installed) {
-				throw new OpenClawAgentPluginNotObservedError(
-					"OpenClaw did not report the installed Agent Plugin",
-				);
+				throw new Error("OpenClaw did not report the installed Agent Plugin");
 			}
 			return installed;
 		},
@@ -532,6 +488,7 @@ function createHermesDriver(input: {
 	};
 	return {
 		runtime: "hermes",
+		installRoot: () => nativeInstallRoot(input.home, "hermes"),
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "hermes", nativeId),
 		mutationStateTargets: () => [join(input.home, ".hermes", "config.yaml")],
 		observe,
@@ -580,103 +537,6 @@ function createNativeDriver(input: {
 	runner: HostedAgentPluginCommandRunner;
 }): NativeAgentPluginDriver {
 	return input.runtime === "openclaw" ? createOpenClawDriver(input) : createHermesDriver(input);
-}
-
-function packageProofKey(runtime: HostedAgentPluginRuntime, ownershipIdentity: string): string {
-	return `${runtime}\0${ownershipIdentity}`;
-}
-
-const defaultHermesRemoteCapabilityProbe: HermesRemoteCapabilityProbe = (input) => {
-	runHermesAgentPluginCanary({
-		home: input.home,
-		runOneShot: ({ args, environmentOverrides, timeoutMs }) =>
-			input.runner.run({
-				command: input.command,
-				args,
-				home: input.home,
-				cwd: input.home,
-				environmentOverrides: {
-					...isolatedNativeEnvironment("hermes", input.home),
-					...environmentOverrides,
-				},
-				timeoutMs,
-			}),
-		withEnabledCanary: (canary, prove) => {
-			const driver = createHermesDriver(input);
-			const installed = driver.install(nativePackage(canary));
-			try {
-				driver.setEnabled(installed, true);
-				prove();
-				const enabled = driver.observe(canary.name, installed.nativeId);
-				if (!enabled?.enabled) throw new Error();
-			} finally {
-				const current = driver.observe(canary.name, installed.nativeId);
-				if (current) {
-					if (current.enabled) driver.setEnabled(current, false);
-					driver.remove({ ...current, enabled: false });
-				}
-			}
-		},
-	});
-};
-
-interface CapabilityProbePackage {
-	runtime: HostedAgentPluginRuntime;
-	prepared: PreparedHostedAgentPlugin;
-}
-
-function capabilityCanaryPackage(): NativeAgentPluginPackage {
-	const tree: PreparedHostedAgentPlugin["tree"] = [
-		{
-			path: "plugin.json",
-			mode: 0o100644,
-			bytes: Buffer.from(
-				JSON.stringify({
-					$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-					name: AGENT_PLUGIN_CAPABILITY_CANARY_NAME,
-					version: "1.0.0",
-				}),
-			),
-		},
-		{
-			path: "skills/clawdi-capability/SKILL.md",
-			mode: 0o100644,
-			bytes: Buffer.from(
-				[
-					"---",
-					"name: clawdi-capability",
-					"description: Verify standards-native Agent Plugin lifecycle support.",
-					"---",
-					"",
-					"# Clawdi capability canary",
-					"",
-				].join("\n"),
-			),
-		},
-	];
-	return {
-		name: AGENT_PLUGIN_CAPABILITY_CANARY_NAME,
-		version: "1.0.0",
-		contentDigest: hostedAgentPluginTreeDigest(tree),
-		mcpServerNames: [],
-		hasStreamableHttpMcp: false,
-		tree,
-	};
-}
-
-function capabilityProbePackages(prepared: PreparedHostedAgentPlugins): CapabilityProbePackage[] {
-	const packages = new Map<string, CapabilityProbePackage>();
-	for (const plugin of prepared.desired.values()) {
-		packages.set(packageProofKey(prepared.runtime, plugin.installation.ownershipIdentity), {
-			runtime: prepared.runtime,
-			prepared: plugin,
-		});
-	}
-	return [...packages.values()].sort((left, right) =>
-		`${left.runtime}\0${left.prepared.installation.ownershipIdentity}`.localeCompare(
-			`${right.runtime}\0${right.prepared.installation.ownershipIdentity}`,
-		),
-	);
 }
 
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -740,239 +600,28 @@ function observationUnchanged(
 	);
 }
 
-type NativePackageProbeResult =
-	| { kind: "supported"; nativeId: string }
-	| { kind: "unsupported"; message?: string };
-
-function probeObservationCapability(
-	observation: NativePluginObservation,
-	prepared: NativeAgentPluginPackage,
-	expectedNativeId?: string,
-): "supported" | "unsupported" {
-	if (
-		observation.name !== prepared.name ||
-		observation.version !== prepared.version ||
-		(expectedNativeId !== undefined && observation.nativeId !== expectedNativeId)
-	) {
-		throw new Error("native Agent Plugin probe observed an unexpected package identity");
-	}
-	if (!observation.compatible)
-		throw new Error("native Agent Plugin probe observed an unexpected package source");
-	if (observation.contentDigest !== prepared.contentDigest) {
-		throw new Error("native Agent Plugin probe observed unexpected package bytes");
-	}
-	if (observation.runtime === "openclaw") {
-		if (observation.hasComponentDiagnostics) {
-			throw new Error("OpenClaw Agent Plugin probe reported ambiguous diagnostics");
-		}
-		if (!observation.formatSupported) return "unsupported";
-		if (!stringArraysEqual(observation.mcpServerNames, prepared.mcpServerNames)) {
-			throw new Error("OpenClaw Agent Plugin probe observed an unexpected MCP inventory");
-		}
-		if (observation.hasUnsupportedComponents) return "unsupported";
-	}
-	return "supported";
-}
-
-function probeNativePackage(input: {
-	runtime: HostedAgentPluginRuntime;
-	command: string;
-	prepared: NativeAgentPluginPackage;
-	runner: HostedAgentPluginCommandRunner;
-	hermesRemoteCapabilityProbe: HermesRemoteCapabilityProbe;
-}): NativePackageProbeResult {
-	if (!isAbsolute(input.command)) {
-		throw new Error("Agent Plugin capability probe requires an absolute runtime command");
-	}
-	if (!input.runner.available(input.command)) {
-		throw new Error("Agent Plugin capability probe runtime command is unavailable");
-	}
-	const root = mkdtempSync(join(tmpdir(), "clawdi-agent-plugin-probe-"));
-	try {
-		makeRuntimeUserOwned(root);
-		const home = join(root, "home");
-		mkdirSync(home, { recursive: true, mode: 0o700 });
-		makeRuntimeUserOwned(home);
-		const driver = createNativeDriver({
-			runtime: input.runtime,
-			command: input.command,
-			home,
-			runner: input.runner,
-		});
-		let installed: NativePluginObservation;
-		try {
-			installed = driver.install(input.prepared);
-		} catch (error) {
-			if (input.runtime === "openclaw" && error instanceof OpenClawAgentPluginNotObservedError) {
-				return { kind: "unsupported", message: OPENCLAW_AGENT_PLUGIN_STANDARD_UNSUPPORTED_ERROR };
-			}
-			throw error;
-		}
-		if (probeObservationCapability(installed, input.prepared) === "unsupported") {
-			return { kind: "unsupported" };
-		}
-		driver.setEnabled(installed, true);
-		const enabled = driver.observe(input.prepared.name, installed.nativeId);
-		if (!enabled) throw new Error("native Agent Plugin disappeared after enable");
-		if (probeObservationCapability(enabled, input.prepared, installed.nativeId) === "unsupported") {
-			return { kind: "unsupported" };
-		}
-		if (!enabled.enabled) throw new Error("native Agent Plugin did not enable during probe");
-		driver.setEnabled(enabled, false);
-		const disabled = driver.observe(input.prepared.name, installed.nativeId);
-		if (!disabled) throw new Error("native Agent Plugin disappeared after disable");
-		if (
-			probeObservationCapability(disabled, input.prepared, installed.nativeId) === "unsupported"
-		) {
-			return { kind: "unsupported" };
-		}
-		if (disabled.enabled) throw new Error("native Agent Plugin did not disable during probe");
-		driver.remove(disabled);
-		const removed = driver.observe(input.prepared.name, installed.nativeId);
-		if (removed !== null) throw new Error("native Agent Plugin remained installed after cleanup");
-		if (input.runtime === "hermes" && input.prepared.hasStreamableHttpMcp) {
-			input.hermesRemoteCapabilityProbe({
-				command: input.command,
-				home,
-				runner: input.runner,
-			});
-		}
-		return { kind: "supported", nativeId: installed.nativeId };
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-}
-
-function assertNoNativeIdentityCollisions(packages: Iterable<HostedAgentPluginPackageProof>): void {
-	const namesByNativeId = new Map<string, string>();
-	for (const proof of packages) {
-		const key = `${proof.runtime}\0${proof.nativeId}`;
-		const existing = namesByNativeId.get(key);
-		if (existing !== undefined && existing !== proof.name) {
-			throw new Error("Agent Plugin packages resolve to the same native identity");
-		}
-		namesByNativeId.set(key, proof.name);
-	}
-}
-
-export function proveHostedAgentPluginCapabilities(input: {
-	prepared: PreparedHostedAgentPlugins;
-	commands: HostedAgentPluginCommands;
-	runner?: HostedAgentPluginCommandRunner;
-	hermesRemoteCapabilityProbe?: HermesRemoteCapabilityProbe;
-}): HostedAgentPluginCapabilityProof {
-	const runner = input.runner ?? defaultCommandRunner;
-	const packages = new Map<string, HostedAgentPluginPackageProof>();
-	let hermesRemoteProven = false;
-	const probePackages = capabilityProbePackages(input.prepared);
-	const runtimes = [...new Set(probePackages.map((item) => item.runtime))].sort();
-	for (const runtime of runtimes) {
-		const probe = probeNativePackage({
-			runtime,
-			command: input.commands[runtime],
-			prepared: capabilityCanaryPackage(),
-			runner,
-			hermesRemoteCapabilityProbe: () => undefined,
-		});
-		if (probe.kind === "unsupported") {
-			throw new HostedAgentPluginCapabilityUnsupportedError(probe.message);
-		}
-	}
-	for (const item of probePackages) {
-		const command = input.commands[item.runtime];
-		const probe = probeNativePackage({
-			runtime: item.runtime,
-			command,
-			prepared: nativePackage(item.prepared),
-			runner,
-			hermesRemoteCapabilityProbe: (probeInput) => {
-				if (hermesRemoteProven) return;
-				(input.hermesRemoteCapabilityProbe ?? defaultHermesRemoteCapabilityProbe)(probeInput);
-				hermesRemoteProven = true;
-			},
-		});
-		if (probe.kind === "unsupported") {
-			throw new Error("Agent Plugin package is not supported by the selected native runtime");
-		}
-		const proof = {
-			runtime: item.runtime,
-			command,
-			name: item.prepared.name,
-			ownershipIdentity: item.prepared.installation.ownershipIdentity,
-			nativeId: probe.nativeId,
-		};
-		packages.set(packageProofKey(proof.runtime, proof.ownershipIdentity), proof);
-	}
-	assertNoNativeIdentityCollisions(packages.values());
-	return { [capabilityProofMarker]: true, runner, packages };
-}
-
-function assertCapabilityProof(input: {
-	prepared: PreparedHostedAgentPlugins;
-	commands: HostedAgentPluginCommands;
-	runner: HostedAgentPluginCommandRunner;
-	proof: HostedAgentPluginCapabilityProof;
-}): void {
-	if (input.proof[capabilityProofMarker] !== true || input.proof.runner !== input.runner) {
-		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-	}
-	const expected = capabilityProbePackages(input.prepared);
-	if (input.proof.packages.size !== expected.length) {
-		throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-	}
-	for (const item of expected) {
-		const ownershipIdentity = item.prepared.installation.ownershipIdentity;
-		const proof = input.proof.packages.get(packageProofKey(item.runtime, ownershipIdentity));
-		if (
-			!proof ||
-			proof.runtime !== item.runtime ||
-			proof.command !== input.commands[item.runtime] ||
-			proof.name !== item.prepared.name ||
-			proof.ownershipIdentity !== ownershipIdentity
-		) {
-			throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-		}
-		assertNativeId(proof.nativeId);
-	}
-	assertNoNativeIdentityCollisions(input.proof.packages.values());
-}
-
-function proofFor(
-	proof: HostedAgentPluginCapabilityProof,
-	runtime: HostedAgentPluginRuntime,
-	prepared: PreparedHostedAgentPlugin,
-): HostedAgentPluginPackageProof {
-	const packageProof = proof.packages.get(
-		packageProofKey(runtime, prepared.installation.ownershipIdentity),
-	);
-	if (!packageProof) throw new Error(AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR);
-	return packageProof;
-}
-
 function desiredReceipt(
 	prepared: PreparedHostedAgentPlugins,
-	proof: HostedAgentPluginCapabilityProof,
+	nativeIds: ReadonlyMap<string, string>,
 ): HostedAgentPluginReceipt | null {
 	if (prepared.desired.size === 0) return null;
+	const installations: HostedAgentPluginReceipt["installations"] = {};
+	for (const [name, plugin] of prepared.desired) {
+		const nativeId = nativeIds.get(name);
+		if (!nativeId) throw new Error("Agent Plugin native identity was not resolved during apply");
+		installations[name] = { ...plugin.installation, nativeId };
+	}
 	return {
 		schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
 		runtime: prepared.runtime,
-		installations: Object.fromEntries(
-			[...prepared.desired].map(([name, plugin]) => [
-				name,
-				{
-					...plugin.installation,
-					nativeId: proofFor(proof, prepared.runtime, plugin).nativeId,
-				},
-			]),
-		),
+		installations,
 	};
 }
 
 interface PlannedMutation {
 	runtime: HostedAgentPluginRuntime;
 	name: string;
-	nativeId: string;
+	nativeId: string | null;
 	driver: NativeAgentPluginDriver;
 	desired: PreparedHostedAgentPlugin | null;
 	previous: HostedAgentPluginOwnership | null;
@@ -992,16 +641,9 @@ export function prepareHostedAgentPluginTransaction(input: {
 	prepared: PreparedHostedAgentPlugins;
 	home: string;
 	commands: HostedAgentPluginCommands;
-	capabilityProof: HostedAgentPluginCapabilityProof;
 	runner?: HostedAgentPluginCommandRunner;
 }): HostedAgentPluginTransaction {
 	const runner = input.runner ?? defaultCommandRunner;
-	assertCapabilityProof({
-		prepared: input.prepared,
-		commands: input.commands,
-		runner,
-		proof: input.capabilityProof,
-	});
 	const drivers = new Map<HostedAgentPluginRuntime, NativeAgentPluginDriver>();
 	const driverFor = (runtime: HostedAgentPluginRuntime): NativeAgentPluginDriver => {
 		const existing = drivers.get(runtime);
@@ -1045,23 +687,18 @@ export function prepareHostedAgentPluginTransaction(input: {
 
 	const mutations: PlannedMutation[] = [];
 	const snapshotTargets = new Set<string>();
+	const snapshotInstallRoots = new Set<string>();
+	const resolvedNativeIds = new Map<string, string>();
 	for (const slot of [...slots.values()].sort((left, right) =>
 		`${left.runtime}\0${left.name}`.localeCompare(`${right.runtime}\0${right.name}`),
 	)) {
 		const driver = driverFor(slot.runtime);
-		const packageProof = slot.desired
-			? proofFor(input.capabilityProof, slot.runtime, slot.desired)
-			: null;
-		if (slot.previous && packageProof && slot.previous.nativeId !== packageProof.nativeId) {
-			throw new Error("Agent Plugin native identity no longer matches its ownership receipt");
-		}
-		const nativeId = slot.previous?.nativeId ?? packageProof?.nativeId;
-		if (!nativeId) throw new Error("Agent Plugin transaction slot is empty");
-		const installTarget = driver.installTarget(nativeId);
-		snapshotTargets.add(installTarget);
+		const nativeId = slot.previous?.nativeId ?? null;
+		if (nativeId) snapshotTargets.add(driver.installTarget(nativeId));
+		else snapshotInstallRoots.add(driver.installRoot());
 		for (const target of driver.mutationStateTargets()) snapshotTargets.add(target);
-		const before = driver.observe(slot.name, nativeId);
-		if (!before && nativeInstallTargetExists(installTarget)) {
+		const before = driver.observe(slot.name, nativeId ?? undefined);
+		if (nativeId && !before && nativeInstallTargetNames(input.home, slot.runtime).has(nativeId)) {
 			throw new Error("refusing to replace an unmanaged native Agent Plugin target");
 		}
 		if (slot.previous) {
@@ -1074,14 +711,17 @@ export function prepareHostedAgentPluginTransaction(input: {
 			throw new Error("refusing to replace an unmanaged native Agent Plugin");
 		}
 		if (!slot.desired) {
+			if (!nativeId) throw new Error("Agent Plugin transaction slot is empty");
 			if (before) mutations.push({ ...slot, nativeId, driver, before, action: "remove" });
 			continue;
 		}
 		if (
+			nativeId &&
 			slot.previous?.installation.ownershipIdentity ===
 				slot.desired.installation.ownershipIdentity &&
 			observationMatches(before, slot.desired, nativeId)
 		) {
+			resolvedNativeIds.set(slot.name, nativeId);
 			if (!before.enabled) {
 				mutations.push({ ...slot, nativeId, driver, before, action: "enable" });
 			}
@@ -1095,6 +735,12 @@ export function prepareHostedAgentPluginTransaction(input: {
 			action: before ? "replace" : "install",
 		});
 	}
+	for (const root of snapshotInstallRoots) {
+		for (const target of snapshotTargets) {
+			if (target.startsWith(`${root}/`)) snapshotTargets.delete(target);
+		}
+		snapshotTargets.add(root);
+	}
 
 	return {
 		mutationNames: [...new Set(mutations.map((mutation) => mutation.name))].sort(),
@@ -1102,10 +748,26 @@ export function prepareHostedAgentPluginTransaction(input: {
 		mutationRuntimes: new Set(mutations.map((mutation) => mutation.runtime)),
 		hasMutations: mutations.length > 0,
 		apply() {
+			const installTargetsBefore = new Map<HostedAgentPluginRuntime, Set<string>>();
+			for (const mutation of mutations) {
+				if (mutation.nativeId || installTargetsBefore.has(mutation.runtime)) continue;
+				installTargetsBefore.set(
+					mutation.runtime,
+					nativeInstallTargetNames(input.home, mutation.runtime),
+				);
+			}
+			const namesByNativeId = new Map<string, string>();
+			const claimNativeId = (name: string, nativeId: string): void => {
+				const existing = namesByNativeId.get(nativeId);
+				if (existing !== undefined && existing !== name) {
+					throw new Error("Agent Plugin packages resolve to the same native identity");
+				}
+				namesByNativeId.set(nativeId, name);
+			};
 			for (const mutation of mutations) {
 				if (
 					!observationUnchanged(
-						mutation.driver.observe(mutation.name, mutation.nativeId),
+						mutation.driver.observe(mutation.name, mutation.nativeId ?? undefined),
 						mutation.before,
 					)
 				) {
@@ -1117,21 +779,33 @@ export function prepareHostedAgentPluginTransaction(input: {
 				if (mutation.action === "install" || mutation.action === "replace") {
 					if (!mutation.desired) throw new Error("Agent Plugin mutation plan is invalid");
 					const installed = mutation.driver.install(nativePackage(mutation.desired));
-					if (!observationMatches(installed, mutation.desired, mutation.nativeId)) {
+					if (mutation.nativeId && installed.nativeId !== mutation.nativeId) {
+						throw new Error("Agent Plugin native identity no longer matches its ownership receipt");
+					}
+					if (
+						!mutation.nativeId &&
+						installTargetsBefore.get(mutation.runtime)?.has(installed.nativeId)
+					) {
+						throw new Error("refusing to replace an unmanaged native Agent Plugin target");
+					}
+					if (!observationMatches(installed, mutation.desired, installed.nativeId)) {
 						throw new Error("native Agent Plugin installed an unexpected identity or package");
 					}
+					claimNativeId(mutation.name, installed.nativeId);
+					resolvedNativeIds.set(mutation.name, installed.nativeId);
 					mutation.driver.setEnabled(installed, true);
 				}
 				if (mutation.action === "enable") {
 					if (!mutation.before) throw new Error("Agent Plugin mutation plan is invalid");
 					mutation.driver.setEnabled(mutation.before, true);
 				}
-				const observed = mutation.driver.observe(mutation.name, mutation.nativeId);
+				const nativeId = mutation.desired
+					? resolvedNativeIds.get(mutation.name)
+					: mutation.nativeId;
+				if (!nativeId) throw new Error("Agent Plugin mutation plan is invalid");
+				const observed = mutation.driver.observe(mutation.name, nativeId);
 				if (mutation.desired) {
-					if (
-						!observationMatches(observed, mutation.desired, mutation.nativeId) ||
-						!observed.enabled
-					) {
+					if (!observationMatches(observed, mutation.desired, nativeId) || !observed.enabled) {
 						throw new Error("native Agent Plugin did not converge to the desired state");
 					}
 				} else if (observed) {
@@ -1139,13 +813,16 @@ export function prepareHostedAgentPluginTransaction(input: {
 				}
 			}
 			for (const plugin of input.prepared.desired.values()) {
-				const proof = proofFor(input.capabilityProof, input.prepared.runtime, plugin);
-				const observed = driverFor(input.prepared.runtime).observe(plugin.name, proof.nativeId);
-				if (!observationMatches(observed, plugin, proof.nativeId) || !observed.enabled) {
+				const nativeId = resolvedNativeIds.get(plugin.name);
+				if (!nativeId)
+					throw new Error("Agent Plugin native identity was not resolved during apply");
+				claimNativeId(plugin.name, nativeId);
+				const observed = driverFor(input.prepared.runtime).observe(plugin.name, nativeId);
+				if (!observationMatches(observed, plugin, nativeId) || !observed.enabled) {
 					throw new Error("native Agent Plugin did not converge to the desired state");
 				}
 			}
-			return desiredReceipt(input.prepared, input.capabilityProof);
+			return desiredReceipt(input.prepared, resolvedNativeIds);
 		},
 	};
 }

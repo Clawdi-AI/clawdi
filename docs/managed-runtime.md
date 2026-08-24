@@ -830,18 +830,14 @@ URL is never passed to Hermes for another download. Packages containing Git
 control directories or attributes that could change verified checkout bytes
 fail closed instead of weakening that transport boundary.
 
-There is no release-version cutoff. After the official runtime binary is
-installed and observed, but before any live plugin or gateway-service mutation,
-the CLI behaviorally probes the complete native install, enable, structured
-observation, disable, and uninstall lifecycle for every desired and rollback
-package. Each probe has an isolated HOME and runtime-specific state root.
-OpenClaw location overrides and Hermes `HERMES_HOME`, `HERMES_PROFILE`,
-`HERMES_CONFIG`, and `HERMES_ENV` are explicitly cleared or replaced so
-inherited process state cannot redirect the probe into the live Hosted profile.
-An unavailable command, unsupported or nonzero lifecycle operation, malformed
-report, ambiguous component inventory, package-byte drift, cleanup failure,
-Hermes canary failure, or unexpected install source fails closed. No SemVer,
-release tag, commit, or binary hash is a capability gate.
+Runtime support is fixed by the versions pinned in the Hosted manifest. After
+the official runtime binary is installed and observed, the CLI uses the native
+plugin lifecycle against the real runtime HOME. It validates the installed
+identity, package bytes, component inventory, enabled state, and install source
+before advancing the receipt. An unavailable command, unsupported or nonzero
+lifecycle operation, malformed report, ambiguous component inventory,
+package-byte drift, or unexpected install source fails the resource Apply and
+restores its snapshot. There is no separate package rehearsal or remote canary.
 
 The canonical Agent Plugins 1.0.0 schemas were rechecked on 2026-08-16 at
 [`agentplugins/agent-plugins-spec` HEAD `bd383552`](https://github.com/agentplugins/agent-plugins-spec/tree/bd383552095128f6effe895b9257cfd580a6d179).
@@ -880,8 +876,8 @@ token storage/refresh. The official authenticated Dashboard exposes
 `POST /api/mcp/servers/{name}/auth`, flow status/cancel, and callback endpoints,
 which is the hosted browser surface. Background discovery fails fast instead
 of starting an unusable interactive flow. These source commits document the
-audit only; runtime acceptance remains behavioral and never gates on a version,
-SemVer, or SHA.
+support bound into the manifest-pinned runtime versions; the live Apply still
+validates the native installation result.
 
 | Agent Plugin surface | Hosted support |
 | --- | --- |
@@ -890,12 +886,13 @@ SemVer, or SHA.
 | Protected remote OAuth | Owner-managed same-name native override only; OpenClaw operator CLI or Hermes authenticated Dashboard |
 | API-key or credential-bearing custom headers | Not portable; use managed MCP |
 | Store `ai.clawdi` extension | Closed display and compatibility policy only; no auth or credential fields |
-| Portable SSE | OpenClaw requires native inspect proof; Hermes rejects |
+| Portable SSE | OpenClaw requires native inspect validation; Hermes rejects |
 
 A private last-applied receipt binds each managed name to `installationId`,
-version, schema, immutable source tuple, content digest, and native id. Native
-id collisions are checked across desired packages and against installed state,
-so an OpenClaw slug collision cannot authorize `--force`. A same-name or
+version, schema, immutable source tuple, content digest, and native id. The
+native id comes from the real install result; collisions are then checked
+across desired packages and against the pre-Apply install targets, so an
+OpenClaw slug collision cannot authorize `--force`. A same-name or
 same-native-id plugin without that receipt is unmanaged and is never replaced
 or removed. Repeat convergence is a no-op only after native JSON observation
 confirms the installed version and enabled state and the controlled install
@@ -909,14 +906,13 @@ affected runtime user units are quiesced; the adapter then captures the exact
 native package directories, runtime plugin configuration, receipt, and
 OpenClaw SQLite/WAL/SHM preimage before applying any native mutation. Any
 package change forces those units through final restart and readiness even when
-their unit/config revision did not change. A package mutation or receipt failure
-runs native compensation and restores that resource preimage while the affected
-units remain stopped; successful compensation lets core config, official
-services, and final readiness continue. If compensation itself fails, or a
-later core step fails after package success, the outer filesystem/systemd
-transaction restores the whole candidate. Unrelated units are not globally
+their unit/config revision did not change. A package mutation or receipt
+failure restores that resource preimage while the affected units remain
+stopped, then lets core config, official services, and final readiness continue.
+A later core failure after package success makes the outer filesystem/systemd
+transaction restore the whole candidate. Unrelated units are not globally
 quiesced when systemd remains pristine. The plugin receipt advances only with
-native state; native rollback errors remain core failures.
+native state; snapshot rollback errors remain core failures.
 
 Online preparation stores verified archives in private ownership-keyed cache
 entries. Failed preparation removes entries first created by that attempt.
