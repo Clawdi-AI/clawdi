@@ -48,7 +48,6 @@ import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
-	SystemdRuntimeTransaction,
 } from "../../src/runtime/systemd-transaction";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
@@ -1816,28 +1815,19 @@ http.createServer((request, response) => {
 	};
 	const converge = () => {
 		const before = readSystemdUnitSnapshot(paths);
-		const transaction = new SystemdRuntimeTransaction();
 		return convergeRuntimeManifest(load, paths, {
 			fileBrowserInstallOptions: {
 				download: (_url, destination) => writeFileSync(destination, binary),
 			},
 			systemdApply: {
-				transactionState: () => transaction.state,
-				installOfficialService: (unit, install) =>
-					transaction.installOfficialService(paths, unit, install),
-				quiesce: (affectedUserUnits) => transaction.quiesce(paths, affectedUserUnits),
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
 					userUnitsChanged: [],
 				}),
 				activate: () => {
-					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-						transaction,
-						stage: "final-activation",
-					});
+					return applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {});
 				},
-				rollback: () => transaction.rollback(paths),
 			},
 		});
 	};
@@ -1986,8 +1976,6 @@ http.createServer((request, response) => {
 	const activeUnits = readSystemdUnitSnapshot(paths);
 	expect(
 		applySystemdRuntimeUpdate(paths, activeUnits, activeUnits, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
 			activationScope: { systemUnits: [], userUnits: ["openclaw-gateway.service"] },
 		}),
 	).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });

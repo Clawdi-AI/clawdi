@@ -97,7 +97,6 @@ import { daemonProgramRevision } from "./runtime-impact-revision";
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
-	planRuntimeMutationSystemdUserUnits,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
 	removeStaleRuntimeSystemdFiles,
@@ -153,10 +152,7 @@ interface RuntimeConvergenceContext {
 interface RuntimeConvergenceState {
 	agentPluginTransaction: HostedAgentPluginTransaction | null;
 	agentPluginFailedNames: Set<string>;
-	agentPluginQuiesceAttempted: boolean;
-	agentPluginUnitsQuiesced: boolean;
 	agentPluginMutationAttempted: boolean;
-	agentPluginQuiesceUserUnits: string[];
 	agentPluginRestartUserUnits: string[];
 	runtimeProjectionMutationRuntimes: Set<string>;
 	runtimeProjectionRestartUserUnits: string[];
@@ -272,10 +268,7 @@ function initializeRuntimeConvergence(
 	const state: RuntimeConvergenceState = {
 		agentPluginTransaction: null,
 		agentPluginFailedNames: new Set(),
-		agentPluginQuiesceAttempted: false,
-		agentPluginUnitsQuiesced: false,
 		agentPluginMutationAttempted: false,
-		agentPluginQuiesceUserUnits: [],
 		agentPluginRestartUserUnits: [],
 		runtimeProjectionMutationRuntimes: new Set(),
 		runtimeProjectionRestartUserUnits: [],
@@ -1045,16 +1038,16 @@ function prepareRuntimeActivation(
 	// The final activation below restarts the affected runtime units.
 	const appliedAgentPluginTransaction = state.agentPluginTransaction;
 	if (appliedAgentPluginTransaction?.hasMutations) {
-		const affectedUserUnits = planRuntimeMutationSystemdUserUnits({
-			runtimePrograms: state.runtimeSystemdUserPrograms,
-			staleUserUnits: state.staleSystemdFiles.userUnits,
-			mutationRuntimes: appliedAgentPluginTransaction.mutationRuntimes,
-		});
-		state.agentPluginQuiesceUserUnits = affectedUserUnits.quiesceUserUnits;
-		state.agentPluginRestartUserUnits = affectedUserUnits.restartUserUnits;
-		state.agentPluginQuiesceAttempted = true;
-		opts.systemdApply?.quiesce(state.agentPluginQuiesceUserUnits);
-		state.agentPluginUnitsQuiesced = true;
+		const mutationRuntimes: ReadonlySet<string> = appliedAgentPluginTransaction.mutationRuntimes;
+		state.agentPluginRestartUserUnits = [
+			...new Set(
+				state.runtimeSystemdUserPrograms
+					.filter(
+						(program) => program.programKind === "runtime" && mutationRuntimes.has(program.runtime),
+					)
+					.map(runtimeSystemdUserUnitName),
+			),
+		].sort();
 		state.agentPluginMutationAttempted = true;
 	}
 	try {
@@ -1093,7 +1086,6 @@ function activateRuntimeServices(
 		systemdUnits.egressSidecarActive &&
 		opts.systemdApply
 	) {
-		state.agentPluginUnitsQuiesced = false;
 		const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,
@@ -1106,7 +1098,6 @@ function activateRuntimeServices(
 		}
 	}
 
-	if (officialServicePlan.pending.length > 0) state.agentPluginUnitsQuiesced = false;
 	for (const item of officialServicePlan.pending) {
 		const unitPath = join(paths.systemdUserRoot, item.unitName);
 		const installerOwnership = [
@@ -1122,11 +1113,7 @@ function activateRuntimeServices(
 		let error: string | null;
 		try {
 			enforceRuntimeUserOwnership(installerOwnership, hostedRuntimeContract.identity);
-			const install = () =>
-				installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
-			error = opts.systemdApply
-				? opts.systemdApply.installOfficialService(item.unitName, install)
-				: install();
+			error = installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
 		} finally {
 			enforceRuntimeUserSystemdManagerAccess(paths.systemdUserRoot);
 			enforceRuntimeUserOwnership(
@@ -1149,7 +1136,6 @@ function activateRuntimeServices(
 		hostedRuntimeContract.identity,
 	);
 	if (opts.systemdApply) {
-		state.agentPluginUnitsQuiesced = false;
 		const activation = opts.systemdApply.activate({
 			restartDaemon: state.restartDaemon,
 			restartEgressSidecar: state.restartEgressSidecar,

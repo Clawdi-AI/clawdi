@@ -24,10 +24,6 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
-	type TestConvergeOptions,
-	withTestSystemdTransaction,
-} from "../test-support/systemd-apply";
-import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -52,6 +48,7 @@ import {
 } from "./managed-skill-reservation";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContract,
+	type RuntimeConvergenceOptions,
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 } from "./manifest";
@@ -311,12 +308,12 @@ function preparedTestSourcedSkill(
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: TestConvergeOptions = {},
+	opts: RuntimeConvergenceOptions = {},
 ) {
 	ensureRuntimeStateDirs(paths);
 	return convergeRuntimeManifestWithContract(load, paths, {
 		...opts,
-		systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
+		systemdApply: opts.systemdApply,
 		hostedRuntimeContract: opts.hostedRuntimeContract ?? {
 			expectedIdentity: {
 				home: paths.userHome,
@@ -907,15 +904,9 @@ function fileBrowserManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad
 }
 
 function fileBrowserApplyHooks(
-	input: {
-		activationApplied?: boolean;
-		onActivate?: () => void;
-		onQuiesce?: () => void;
-		onRollback?: () => void;
-	} = {},
+	input: { activationApplied?: boolean; onActivate?: () => void } = {},
 ) {
 	return {
-		quiesce: () => input.onQuiesce?.(),
 		activateEgressPrerequisite: successfulPrerequisiteActivation,
 		activate: () => {
 			input.onActivate?.();
@@ -925,7 +916,6 @@ function fileBrowserApplyHooks(
 				userUnitsChanged: [],
 			};
 		},
-		rollback: () => input.onRollback?.(),
 	};
 }
 
@@ -2963,10 +2953,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			egressEngineEnsureOptions: { downloadCommand: curl.commandPath },
 			systemdApply: {
-				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: successfulPrerequisiteActivation,
-				rollback: () => {},
 			},
 		});
 
@@ -3000,10 +2988,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				cacheLastGood: false,
 				systemdApply: {
-					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: successfulPrerequisiteActivation,
-					rollback: () => {},
 				},
 				hostedRuntimeContract: {
 					expectedIdentity: {
@@ -3140,13 +3126,11 @@ describe("runtime manifest reconciliation invariants", () => {
 						);
 					},
 					systemdApply: {
-						quiesce: () => {},
 						activateEgressPrerequisite: successfulPrerequisiteActivation,
 						activate: ({ restartEgressSidecar }) => {
 							signals.push(restartEgressSidecar);
 							return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 						},
-						rollback: () => {},
 					},
 				},
 			);
@@ -4011,7 +3995,6 @@ installReservedManagedSkill(${JSON.stringify({
 					committed = true;
 				},
 				systemdApply: {
-					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: (signal) => {
 						expect(signal.staleSystemUnits).toEqual(["clawdi-runtime-sidecar.service"]);
@@ -4022,9 +4005,6 @@ installReservedManagedSkill(${JSON.stringify({
 						for (const path of staleFiles) expect(existsSync(path)).toBe(false);
 						activated = true;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-					},
-					rollback: () => {
-						throw new Error("rollback must not run after a successful authority commit");
 					},
 				},
 			},
@@ -4361,42 +4341,20 @@ esac
 		rmSync(enablementPath);
 		symlinkSync("../unexpected.service", enablementPath);
 		lchownSync(enablementPath, 0, 0);
-		let installerBoundaryObserved = false;
 		const installed = convergeRuntimeManifest(
 			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
 			paths,
 			{
 				hostedRuntimeContract,
 				systemdApply: {
-					quiesce: () => {},
 					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					installOfficialService: (_unitName, install) => {
-						installerBoundaryObserved = true;
-						for (const path of [
-							paths.systemdUserRoot,
-							unitPath,
-							unitBackupPath,
-							gatewayEnvironment,
-						]) {
-							const node = lstatSync(path);
-							expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-						}
-						for (const path of [dirname(dropInPath), dropInPath, wantsRoot, enablementPath]) {
-							const node = lstatSync(path);
-							expect([node.uid, node.gid]).toEqual([0, 0]);
-						}
-						expect(readlinkSync(enablementPath)).toBe("../openclaw-gateway.service");
-						return install();
-					},
 					activate: () => {
 						return successfulPrerequisiteActivation();
 					},
-					rollback: () => {},
 				},
 			},
 		);
 		expect(installed.installErrors).toEqual([]);
-		expect(installerBoundaryObserved).toBe(true);
 		for (const path of platformOwnedPaths) {
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([0, 0]);
@@ -4742,13 +4700,11 @@ esac
 		let staleSystemUnits: string[] = [];
 		const result = convergeRuntimeManifest(fileBrowserManifestLoad(withoutFileBrowser), paths, {
 			systemdApply: {
-				quiesce: () => {},
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: (signal) => {
 					staleSystemUnits = signal.staleSystemUnits;
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				rollback: () => {},
 			},
 		});
 

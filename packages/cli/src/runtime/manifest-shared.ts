@@ -55,10 +55,6 @@ interface RuntimeSystemdApplySignal {
 export interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
-	transactionState: () => "pristine" | "mutated";
-	installOfficialService: (unit: string, install: () => string | null) => string | null;
-	quiesce: (affectedUserUnits: readonly string[]) => void;
-	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 export interface RuntimePrivateAppliedAuthority {
 	// These private activation verifiers may only be persisted in the root-owned

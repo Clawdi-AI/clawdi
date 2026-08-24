@@ -14,13 +14,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitRuntimeAppliedState } from "../commands/runtime";
-import {
-	ensureTestOpenClawWorkspaceCli,
-	type TestConvergeOptions,
-	withTestSystemdTransaction,
-} from "../test-support/systemd-apply";
+import { ensureTestOpenClawWorkspaceCli } from "../test-support/runtime-workspace";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
+	type RuntimeConvergenceOptions,
 	type RuntimeManifest,
 } from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
@@ -42,7 +39,7 @@ const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: TestConvergeOptions = {},
+	opts: RuntimeConvergenceOptions = {},
 ) {
 	ensureTestOpenClawWorkspaceCli(load.manifest, paths);
 	ensureRuntimeStateDirs(paths);
@@ -102,7 +99,7 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
-			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
+			systemdApply: opts.systemdApply,
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? {
 				expectedIdentity: {
 					home: paths.userHome,
@@ -488,8 +485,6 @@ esac
 						restartSignals.push(signal.restartUserUnits);
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
-					quiesce: () => undefined,
-					rollback: () => undefined,
 				},
 			});
 
@@ -1297,7 +1292,6 @@ esac
 			paths,
 			{
 				systemdApply: {
-					quiesce: () => {},
 					activateEgressPrerequisite: () => {
 						prerequisiteActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -1306,7 +1300,6 @@ esac
 						finalActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
-					rollback: () => {},
 				},
 			},
 		);
@@ -1736,7 +1729,6 @@ esac
 				authorityCommits += 1;
 			},
 			systemdApply: {
-				quiesce: () => {},
 				activateEgressPrerequisite: () => ({
 					applied: true,
 					systemUnitsChanged: [],
@@ -1746,7 +1738,6 @@ esac
 					finalActivations += 1;
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				rollback: () => {},
 			},
 		});
 		const firstInstallError = failedFirstInstall.installErrors.join("\n");

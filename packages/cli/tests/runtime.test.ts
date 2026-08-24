@@ -72,6 +72,7 @@ import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
 	materializeHostedChannelCredentials,
+	type RuntimeConvergenceOptions,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
@@ -101,16 +102,11 @@ import {
 import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
-	SystemdRuntimeTransaction,
 } from "../src/runtime/systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
-import {
-	ensureTestOpenClawWorkspaceCli,
-	type TestConvergeOptions,
-	withTestSystemdTransaction,
-} from "../src/test-support/systemd-apply";
+import { ensureTestOpenClawWorkspaceCli } from "../src/test-support/runtime-workspace";
 import { mockFetch } from "./commands/helpers";
 
 const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
@@ -236,7 +232,7 @@ function loadRuntimeManifest(
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: TestConvergeOptions = {},
+	opts: RuntimeConvergenceOptions = {},
 ) {
 	if (!process.env.CLAWDI_RUNTIME_MODE) process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
@@ -257,7 +253,7 @@ function convergeRuntimeManifest(
 		paths,
 		{
 			...opts,
-			systemdApply: opts.systemdApply ? withTestSystemdTransaction(opts.systemdApply) : undefined,
+			systemdApply: opts.systemdApply,
 			hostedRuntimeContract: opts?.hostedRuntimeContract ?? testHostedRuntimeContract(paths),
 		},
 	);
@@ -266,7 +262,7 @@ function convergeRuntimeManifest(
 function convergeAndCommitTestRuntimeManifest(
 	load: RuntimeManifestLoad,
 	paths: RuntimePaths,
-	opts: Omit<TestConvergeOptions, "commitAuthority"> = {},
+	opts: Omit<RuntimeConvergenceOptions, "commitAuthority"> = {},
 ) {
 	let officialServiceCommandRevisions: Record<string, string> = {};
 	const convergence = convergeRuntimeManifest(load, paths, {
@@ -5035,15 +5031,16 @@ cp '${sdkSource}' '${sdkTarget}'
 			}
 			const runtimeUnit = runtimeName === "openclaw" ? "openclaw-gateway" : "hermes-gateway";
 			const initialRevision = systemdEnvRevision(readSystemdEnvFile(paths, runtimeUnit));
-			const transaction = new SystemdRuntimeTransaction();
 			writeFileSync(systemctlLog, "");
 
 			const second = convergeRuntimeManifest(next, paths);
 			expect(second.installErrors).toEqual([]);
-			const activation = applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {
-				transaction,
-				stage: "final-activation",
-			});
+			const activation = applySystemdRuntimeUpdate(
+				paths,
+				before,
+				readSystemdUnitSnapshot(paths),
+				{},
+			);
 
 			expect(activation).toEqual({
 				applied: true,
@@ -5101,7 +5098,7 @@ cp '${sdkSource}' '${sdkTarget}'
 				paths,
 				beforeBaseUrlChange,
 				readSystemdUnitSnapshot(paths),
-				{ transaction, stage: "final-activation" },
+				{},
 			);
 			expect(baseUrlActivation.userUnitsChanged).toEqual([`${runtimeUnit}.service`]);
 			expect(readFileSync(systemctlLog, "utf-8")).toContain(
@@ -5623,7 +5620,6 @@ cp '${sdkSource}' '${sdkTarget}'
 			const apply = (load: RuntimeManifestLoad) =>
 				convergeRuntimeManifest(load, paths, {
 					systemdApply: {
-						quiesce: () => {},
 						activateEgressPrerequisite: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -5634,9 +5630,6 @@ cp '${sdkSource}' '${sdkTarget}'
 							systemUnitsChanged: [],
 							userUnitsChanged: [],
 						}),
-						rollback: () => {
-							throw new Error("successful MCP auth apply must not roll back");
-						},
 					},
 					commitAuthority: (convergence, authority) => {
 						if (!load.sourceRevision) throw new Error("expected runtime source revision");
@@ -8088,8 +8081,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeFileSync(systemctlLog, "");
 
 		const applied = applySystemdRuntimeUpdate(paths, before, after, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
 			forceRestartSystemUnits: ["clawdi-daemon.service"],
 			preserveActiveUnits: true,
 		});
@@ -8124,8 +8115,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 
 		expect(
 			applySystemdRuntimeUpdate(paths, driftedUnits, driftedUnits, {
-				transaction: new SystemdRuntimeTransaction(),
-				stage: "final-activation",
 				preserveActiveUnits: true,
 			}),
 		).toEqual({
@@ -8179,8 +8168,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		let aliases: RuntimeUserProcessRevisionAliases = {};
 
 		const adopted = applySystemdRuntimeUpdate(paths, before, migrated, {
-			transaction: new SystemdRuntimeTransaction(),
-			stage: "final-activation",
 			preserveActiveUnits: true,
 			previousUserDesiredRevisions: new Map([[unit, oldRevision]]),
 			onUserProcessRevisionAliases: (value) => {
@@ -8214,8 +8201,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeFileSync(systemctlLog, "");
 		expect(
 			applySystemdRuntimeUpdate(paths, migrated, migrated, {
-				transaction: new SystemdRuntimeTransaction(),
-				stage: "final-activation",
 				onUserProcessRevisionAliases: (value) => {
 					aliases = value;
 				},
@@ -8241,8 +8226,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeFileSync(systemctlLog, "");
 		expect(
 			applySystemdRuntimeUpdate(paths, migrated, changed, {
-				transaction: new SystemdRuntimeTransaction(),
-				stage: "final-activation",
 				onUserProcessRevisionAliases: (value) => {
 					aliases = value;
 				},
@@ -8254,104 +8237,6 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		});
 		expect(aliases).toEqual({});
 		expect(readFileSync(systemctlLog, "utf-8")).toContain(`--user restart ${unit}`);
-	});
-
-	it("scopes reload-only and explicit user-unit rollback without touching unrelated units", () => {
-		const home = join(root, "home", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const systemctlPath = join(root, "bin", "systemctl");
-		const systemctlLog = join(root, "systemctl-reload-only.log");
-		const systemctlStateRoot = join(root, "systemctl-reload-only-state");
-		writeFakeSystemdManager({
-			path: systemctlPath,
-			logPath: systemctlLog,
-			stateRoot: systemctlStateRoot,
-			environmentRoot: join(run, "systemd", "env"),
-		});
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		const paths = getRuntimePaths();
-		const units = {
-			system: new Map<string, string>(),
-			user: new Map([["openclaw-gateway.service", "gateway"]]),
-		};
-		mkdirSync(paths.systemdEnvRoot, { recursive: true });
-		writeFileSync(
-			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
-			`CLAWDI_RUNTIME_REV="${"a".repeat(32)}"\n`,
-		);
-		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, units);
-		writeFileSync(
-			fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled"),
-			"\n",
-		);
-		writeFileSync(
-			fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "reload"),
-			"\n",
-		);
-		writeFileSync(
-			fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-files.service", "active"),
-			"\n",
-		);
-		writeFileSync(systemctlLog, "");
-		const transaction = new SystemdRuntimeTransaction();
-
-		expect(
-			applySystemdRuntimeUpdate(paths, units, units, {
-				transaction,
-				stage: "final-activation",
-			}),
-		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
-		transaction.quiesce(paths);
-		transaction.rollback(paths);
-
-		expect(transaction.journal).toEqual([
-			{
-				sequence: 1,
-				stage: "final-activation",
-				scope: "user",
-				action: "daemon-reload",
-				units: ["openclaw-gateway.service"],
-				outcome: "succeeded",
-			},
-		]);
-		expect(readFileSync(systemctlLog, "utf8").trim().split("\n")).toEqual([
-			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled --quiet openclaw-gateway.service",
-			"--user daemon-reload",
-			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled --quiet openclaw-gateway.service",
-			"--user show openclaw-gateway.service --property=LoadState --property=ActiveState --property=MainPID --property=NeedDaemonReload",
-			"--user is-enabled --quiet openclaw-gateway.service",
-		]);
-		expect(
-			existsSync(
-				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-files.service", "active"),
-			),
-		).toBe(true);
-
-		writeFileSync(systemctlLog, "");
-		const agentPluginTransaction = new SystemdRuntimeTransaction();
-		agentPluginTransaction.quiesce(paths, ["openclaw-gateway.service"]);
-		agentPluginTransaction.rollback(paths);
-		const pluginRollbackCalls = readFileSync(systemctlLog, "utf8").trim().split("\n");
-		expect(pluginRollbackCalls).toContain("--user stop openclaw-gateway.service");
-		expect(pluginRollbackCalls).toContain("--user start openclaw-gateway.service");
-		expect(pluginRollbackCalls.some((call) => call.includes("clawdi-files.service"))).toBe(false);
-		expect(
-			existsSync(
-				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "active"),
-			),
-		).toBe(true);
-		expect(
-			existsSync(
-				fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled"),
-			),
-		).toBe(true);
 	});
 
 	it("hands off a CLI-only checkpoint by restarting only the daemon once", async () => {
@@ -10170,10 +10055,7 @@ exit 64
 		expect(statSync(hermesDropIn).ino).toBe(initialHermesDropInInode);
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
-			applySystemdRuntimeUpdate(paths, initialUnits, readSystemdUnitSnapshot(paths), {
-				transaction: new SystemdRuntimeTransaction(),
-				stage: "final-activation",
-			}),
+			applySystemdRuntimeUpdate(paths, initialUnits, readSystemdUnitSnapshot(paths), {}),
 		).toEqual({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] });
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
 			initialHermesRevision,
@@ -10212,8 +10094,6 @@ exit 64
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		expect(
 			applySystemdRuntimeUpdate(paths, beforeCredentialChange, readSystemdUnitSnapshot(paths), {
-				transaction: new SystemdRuntimeTransaction(),
-				stage: "final-activation",
 				preserveActiveUnits,
 			}),
 		).toEqual({

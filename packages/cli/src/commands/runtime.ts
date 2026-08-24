@@ -80,7 +80,6 @@ import {
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
 	readSystemdUserDesiredRevisions,
-	SystemdRuntimeTransaction,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
 import { log, toErrorMessage } from "../serve/log";
@@ -1310,7 +1309,6 @@ async function applyRuntimeDesiredState(
 		const previousUserDesiredRevisions = preserveActiveUnits
 			? readSystemdUserDesiredRevisions(paths, previousSystemdUnits.user.keys())
 			: new Map<string, string>();
-		const systemdTransaction = new SystemdRuntimeTransaction();
 		let userProcessRevisionAliases: RuntimeUserProcessRevisionAliases = {};
 		let systemdApply = {
 			applied: false,
@@ -1342,9 +1340,6 @@ async function applyRuntimeDesiredState(
 				});
 			},
 			systemdApply: {
-				transactionState: () => systemdTransaction.state,
-				installOfficialService: (unit, install) =>
-					systemdTransaction.installOfficialService(paths, unit, install),
 				activateEgressPrerequisite: ({ restartEgressSidecar }) => {
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
@@ -1353,8 +1348,6 @@ async function applyRuntimeDesiredState(
 							previousSystemdUnits,
 							candidateSystemdUnits,
 							{
-								transaction: systemdTransaction,
-								stage: "egress-prerequisite",
 								activationScope: {
 									systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
 									userUnits: [],
@@ -1397,8 +1390,6 @@ async function applyRuntimeDesiredState(
 							previousSystemdUnits,
 							activationTarget,
 							{
-								transaction: systemdTransaction,
-								stage: "final-activation",
 								forceRestartSystemUnits: [
 									...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 									...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
@@ -1432,21 +1423,9 @@ async function applyRuntimeDesiredState(
 						};
 						return systemdApply;
 					} catch (error) {
-						const mutationJournal = systemdTransaction.journal
-							.map(
-								(entry) =>
-									`${entry.sequence}:${entry.stage}/${entry.scope}/${entry.action}(${entry.units.join(",") || "manager"})=${entry.outcome}`,
-							)
-							.join(", ");
-						throw new Error(
-							`systemd apply failed: ${toErrorMessage(error)}${
-								mutationJournal ? `; mutation journal: ${mutationJournal}` : ""
-							}`,
-						);
+						throw new Error(`systemd apply failed: ${toErrorMessage(error)}`);
 					}
 				},
-				quiesce: (affectedUserUnits) => systemdTransaction.quiesce(paths, affectedUserUnits),
-				rollback: () => systemdTransaction.rollback(paths),
 			},
 		});
 		if (convergence.installErrors.length === 0) {
