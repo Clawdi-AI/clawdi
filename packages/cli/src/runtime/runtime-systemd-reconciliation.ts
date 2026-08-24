@@ -96,16 +96,6 @@ export interface OfficialRuntimeServicePlan {
 	commandRevisions: Record<string, string>;
 }
 
-export interface RuntimeSystemdUserMutationPlan {
-	targets: string[];
-	symlinkTargets: string[];
-	environmentTargets: string[];
-	metadataTargets: string[];
-	unitNames: string[];
-	staleOfficialUnits: string[];
-	driftErrors: string[];
-}
-
 export interface RuntimeSystemdStaleFilePlan {
 	files: string[];
 	systemUnits: string[];
@@ -877,10 +867,6 @@ function uninstallOfficialRuntimeUserService(input: {
 	}
 }
 
-function systemdUnitNameFromPath(unitPath: string): string {
-	return unitPath.split("/").at(-1) ?? "";
-}
-
 function foreignRuntimeSystemdUserDropIns(paths: RuntimePaths, unitName: string): string[] {
 	const dropInRoot = join(paths.systemdUserRoot, `${unitName}.d`);
 	let rootStat: ReturnType<typeof lstatSync>;
@@ -917,24 +903,6 @@ function officialRuntimeSystemdUserDropInDriftErrors(
 	return errors;
 }
 
-function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: string[]): string[] {
-	if (!existsSync(paths.systemdUserRoot)) return [];
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	const stale: string[] = [];
-	for (const entry of readdirSync(paths.systemdUserRoot)) {
-		if (!entry.endsWith(".service.d")) continue;
-		const unitName = entry.slice(0, -".d".length);
-		if (writtenNames.has(unitName)) continue;
-		if (!officialRuntimeServiceDescriptorForUnit(unitName)) continue;
-		const dropInPath = join(paths.systemdUserRoot, entry, RUNTIME_SYSTEMD_DROP_IN_FILE);
-		if (!isGeneratedRuntimeSystemdPath(dropInPath)) continue;
-		const baseUnitPath = join(paths.systemdUserRoot, unitName);
-		if (!existsSync(baseUnitPath) || isGeneratedRuntimeSystemdPath(baseUnitPath)) continue;
-		stale.push(unitName);
-	}
-	return stale.sort();
-}
-
 export function uninstallStaleOfficialRuntimeServices(input: {
 	paths: RuntimePaths;
 	unitNames: readonly string[];
@@ -950,85 +918,6 @@ export function uninstallStaleOfficialRuntimeServices(input: {
 		if (error) errors.push(error);
 	}
 	return errors;
-}
-
-export function planRuntimeSystemdUserMutations(
-	programs: RuntimeSystemdUserProgram[],
-	paths: RuntimePaths,
-): RuntimeSystemdUserMutationPlan {
-	const targets = new Set<string>();
-	const symlinkTargets = new Set<string>();
-	const environmentTargets = new Set<string>();
-	const unitNames = new Set<string>();
-	const metadataTargets = new Set<string>([
-		dirname(paths.systemdUserRoot),
-		paths.systemdUserRoot,
-		join(paths.systemdUserRoot, "default.target.wants"),
-	]);
-	const writtenUnits = programs
-		.map((program) => {
-			if (program.programKind === "file-browser") return null;
-			const name = runtimeSystemdProgramName(program);
-			const unitName = systemdUnitFileName(name);
-			unitNames.add(unitName);
-			const unitPath = join(paths.systemdUserRoot, unitName);
-			environmentTargets.add(systemdEnvironmentFilePath(paths, name));
-			targets.add(unitPath);
-			const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
-			targets.add(enablementPath);
-			symlinkTargets.add(enablementPath);
-			if (officialRuntimeServiceInstallArgs(program)) {
-				if (program.runtime === "openclaw") {
-					// OpenClaw's official Linux installer writes the base unit in place and
-					// preserves the previous unit beside it. Both are official-user
-					// transaction mutations:
-					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
-					targets.add(`${unitPath}.bak`);
-					// The same installer may write its owner-only environment file under
-					// the OpenClaw state directory:
-					// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
-					targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
-				}
-				const dropInPath = systemdDropInFilePath(paths, name);
-				targets.add(dropInPath);
-				metadataTargets.add(dirname(dropInPath));
-			}
-			return unitPath;
-		})
-		.filter((path): path is string => path !== null);
-
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	for (const entry of managedRuntimeSystemdUnitEntries(paths.systemdUserRoot)) {
-		if (writtenNames.has(entry.unitName)) continue;
-		targets.add(entry.path);
-		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", entry.unitName);
-		targets.add(enablementPath);
-		symlinkTargets.add(enablementPath);
-		unitNames.add(entry.unitName);
-		if (entry.kind === "hosted-drop-in") {
-			metadataTargets.add(dirname(entry.path));
-		}
-	}
-	if (existsSync(paths.systemdEnvRoot)) {
-		for (const entry of readdirSync(paths.systemdEnvRoot)) {
-			if (!entry.endsWith(".service.env")) continue;
-			const path = join(paths.systemdEnvRoot, entry);
-			if (entry.startsWith("clawdi-") || isGeneratedRuntimeSystemdPath(path)) {
-				environmentTargets.add(path);
-			}
-		}
-	}
-
-	const staleOfficialUnits = staleOfficialRuntimeUserServices(paths, writtenUnits);
-	return {
-		targets: [...targets].sort(),
-		symlinkTargets: [...symlinkTargets].sort(),
-		environmentTargets: [...environmentTargets].sort(),
-		metadataTargets: [...metadataTargets].sort(),
-		unitNames: [...unitNames].sort(),
-		staleOfficialUnits,
-		driftErrors: officialRuntimeSystemdUserDropInDriftErrors(programs, paths),
-	};
 }
 
 function planStaleRuntimeSystemdFiles(
@@ -1489,7 +1378,10 @@ export function writeRuntimeSystemdState(input: {
 	};
 }
 
-export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]): void {
+export function validateRuntimeSystemdPlan(
+	programs: RuntimeSystemdUserProgram[],
+	paths: RuntimePaths,
+): void {
 	for (const program of programs) {
 		systemdUnitFileName(runtimeSystemdProgramName(program));
 		systemdPath(program.cwd);
@@ -1501,4 +1393,6 @@ export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]
 			systemdEnvironmentFileQuote(value);
 		}
 	}
+	const driftErrors = officialRuntimeSystemdUserDropInDriftErrors(programs, paths);
+	if (driftErrors.length > 0) throw new Error(driftErrors.join("; "));
 }

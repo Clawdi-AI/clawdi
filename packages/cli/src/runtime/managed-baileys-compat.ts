@@ -216,39 +216,6 @@ const BAILEYS_TARGETS = [
 	},
 ] as const satisfies readonly StaticPatchTarget[];
 
-export function managedBaileysCompatSnapshotRuntimes(input: {
-	desiredRuntime: ManagedBaileysRuntime | null;
-	home: string;
-}): ManagedBaileysRuntime[] {
-	const runtimes = new Set<ManagedBaileysRuntime>();
-	if (input.desiredRuntime) runtimes.add(input.desiredRuntime);
-	for (const runtime of ["openclaw", "hermes"] as const) {
-		if (
-			runtime !== input.desiredRuntime &&
-			artifactContainsAfterHunk(resolveInstalledArtifact(runtime, input.home))
-		) {
-			runtimes.add(runtime);
-		}
-	}
-	return [...runtimes];
-}
-
-export function managedBaileysCompatMutationTargets(input: {
-	runtime: ManagedBaileysRuntime;
-	home: string;
-	appRoot: string;
-}): string[] {
-	const artifact = resolveArtifact(input);
-	if (input.runtime === "hermes" && !existsSync(join(artifact.root, "package.json"))) {
-		return [join(assertHermesBridgeRoot(artifact), "node_modules")];
-	}
-	const targets = artifact.targets.map((target) => join(artifact.root, target.relativePath));
-	if (input.runtime === "hermes") {
-		targets.push(join(assertHermesBridgeRoot(artifact), "node_modules", ".hermes-pkg-hash"));
-	}
-	return targets;
-}
-
 export function reconcileManagedBaileysCompatibility(input: {
 	desiredRuntime: ManagedBaileysRuntime | null;
 	home: string;

@@ -14,11 +14,8 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeContentSha256 } from "./applied-state";
 import { SYSTEM_CA_BUNDLE } from "./egress-env";
-import type { RuntimeManagedMutationPlan } from "./live-state-snapshot";
 import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
-import { mutationAncestorMetadataTargets } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
-import { hostedRuntimeProjectionHome } from "./projection-home";
 import { isSupportedRuntimeName } from "./run-config";
 import {
 	buildRuntimeUserCommand,
@@ -27,9 +24,7 @@ import {
 	enforceRuntimeUserOwnership,
 	executableExists,
 	RuntimeUserCommandTimeoutError,
-	type RuntimeUserOwnershipRule,
 	runtimeUserDirectoryOwnership,
-	runtimeUserExistingOwnership,
 	spawnRuntimeUserCommand,
 } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -493,102 +488,4 @@ export function runtimeCommandCurrentRevision(
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;
 	}
-}
-export function runtimeInstallerMutationTargets(
-	manifest: RuntimeManifest,
-	home: string,
-	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
-): string[] {
-	const targets = new Set<string>();
-	const openclawObservation = observations.get("openclaw");
-	if (
-		manifest.runtimes.openclaw?.enabled &&
-		manifest.runtimes.openclaw.install &&
-		openclawObservation?.status !== "present"
-	) {
-		targets.add(join(home, ".local", "bin", "openclaw"));
-		targets.add(join(home, ".local", "tools"));
-	}
-	const hermesObservation = observations.get("hermes");
-	if (
-		manifest.runtimes.hermes?.enabled &&
-		manifest.runtimes.hermes.install &&
-		hermesObservation?.status !== "present"
-	) {
-		for (const target of [
-			join(home, ".hermes", "hermes-agent"),
-			join(home, ".hermes", "bin"),
-			join(home, ".hermes", "node"),
-			join(home, ".hermes", "uv"),
-			join(home, ".hermes", ".env"),
-			join(home, ".hermes", ".no-bundled-skills"),
-			join(home, ".hermes", "config.yaml"),
-			join(home, ".hermes", "SOUL.md"),
-			join(home, ".hermes", "skills"),
-			join(home, ".local", "bin", "hermes"),
-			join(home, ".local", "bin", "hermes-agent"),
-			join(home, ".local", "bin", "hermes-acp"),
-			join(home, ".local", "bin", "node"),
-			join(home, ".local", "bin", "npm"),
-			join(home, ".local", "bin", "npx"),
-		]) {
-			targets.add(target);
-		}
-	}
-	return [...targets];
-}
-const HERMES_INSTALLER_DATA_DIRECTORIES = [
-	"cron",
-	"sessions",
-	"logs",
-	"pairing",
-	"hooks",
-	"image_cache",
-	"audio_cache",
-	"memories",
-] as const;
-export function runtimeColdInstallMutationPlan(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	observations: ReadonlyMap<string, RuntimeInstallObservation>,
-): {
-	snapshot: RuntimeManagedMutationPlan;
-	runtimeUserOwnership: RuntimeUserOwnershipRule[];
-} | null {
-	const pending = Object.entries(manifest.runtimes).some(([name, runtime]) => {
-		if (!runtime.enabled || !runtime.install) return false;
-		return observations.get(name)?.status !== "present";
-	});
-	if (!pending) return null;
-	const home = hostedRuntimeProjectionHome(manifest, paths);
-	const runtimeUserTargets = runtimeInstallerMutationTargets(manifest, home, observations).sort();
-	if (runtimeUserTargets.length === 0) return null;
-	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
-	const metadataTargets = [
-		...new Set([
-			paths.userHome,
-			paths.clawdiHome,
-			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserTrustedRoots),
-			...(manifest.runtimes.hermes?.enabled &&
-			manifest.runtimes.hermes.install &&
-			observations.get("hermes")?.status !== "present"
-				? HERMES_INSTALLER_DATA_DIRECTORIES.map((directory) => join(home, ".hermes", directory))
-				: []),
-		]),
-	].sort();
-	const runtimeCommandTargets = Object.keys(manifest.runtimes).flatMap((name) => {
-		const command = runtimeCommandPath(name, home);
-		return command && runtimeUserTargets.includes(command) ? [command] : [];
-	});
-	return {
-		snapshot: {
-			rootTargets: [],
-			trustedRootDirectories: [],
-			runtimeUserTargets,
-			runtimeUserTrustedRoots,
-			runtimeUserSymlinkTargets: runtimeCommandTargets,
-			metadataTargets,
-		},
-		runtimeUserOwnership: runtimeUserExistingOwnership([...metadataTargets, ...runtimeUserTargets]),
-	};
 }

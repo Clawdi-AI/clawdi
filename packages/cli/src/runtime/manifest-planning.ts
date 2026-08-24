@@ -1,11 +1,8 @@
-import { existsSync, readdirSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
-import { toErrorMessage } from "../serve/log";
 import {
 	type FileBrowserCompanionInstallOptions,
-	fileBrowserCompanionMutationPlan,
 	fileBrowserCompanionProgram,
 } from "./file-browser-companion";
 import type { PreparedHostedAgentPlugins } from "./hosted-agent-plugin-package";
@@ -15,8 +12,6 @@ import {
 	type HostedAgentPluginTransaction,
 	prepareHostedAgentPluginTransaction,
 } from "./hosted-agent-plugin-runtime";
-import { hostedBundledSkillIds } from "./hosted-bundled-skill";
-import { createOpenClawHostedContext, type OpenClawHostedContext } from "./hosted-openclaw-context";
 import {
 	agentTargetProjectionInput,
 	hostedAiProviderCatalog,
@@ -24,45 +19,20 @@ import {
 } from "./hosted-provider-resolution";
 import type { HostedRuntimeContractOptions } from "./hosted-runtime-contract";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
-import {
-	captureRuntimeLiveSnapshot,
-	type RuntimeLiveSnapshot,
-	type RuntimeManagedMutationPlan,
-	restoreRuntimeLiveSnapshot,
-	runtimeRootLiveMutationDirectories,
-	runtimeRootLiveMutationTargets,
-} from "./live-state-snapshot";
-import {
-	type ManagedBaileysRuntime,
-	managedBaileysCompatMutationTargets,
-	managedBaileysCompatSnapshotRuntimes,
-} from "./managed-baileys-compat";
+import type { ManagedBaileysRuntime } from "./managed-baileys-compat";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
-import { managedSkillReservations } from "./managed-skill-reservation";
 import {
-	hostedChannelCredentialsDeclared,
 	hostedChannelProjection,
 	hostedWhatsAppAuthCredentials,
-	managedWhatsAppAuthRoot,
-	OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS,
 	openClawManagedChannelsPatch,
-	readManagedWhatsAppAuthMetadata,
 	validateHostedChannelCredentialsPlan,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
-import {
-	type RuntimeInstallObservation,
-	runtimeAppRoot,
-	runtimeCommandPath,
-	runtimeInstallerMutationTargets,
-} from "./manifest-install";
-import { HOSTED_RUNTIME_TARGETS, validateHostedMcpProjectionPlan } from "./manifest-mcp";
-import { hermesAuthPath } from "./manifest-oauth";
+import type { RuntimeInstallObservation } from "./manifest-install";
+import { validateHostedMcpProjectionPlan } from "./manifest-mcp";
 import {
 	assertHostedProviderProjectionMode,
 	buildOpenClawHostedProviderPatch,
-	CODEX_MANAGED_PROVIDER_CONFIG_FILE,
-	hostedCodexHome,
 	hostedCodexManagedConfigToml,
 	hostedCodexManagedProvider,
 	openClawGatewayHostedPatch,
@@ -74,10 +44,8 @@ import {
 	resolvedRuntimeServiceSettings,
 	resolvedRuntimeSettings,
 } from "./manifest-runtime-config";
-import { MANAGED_LIVE_SYNC_AGENTS } from "./manifest-runtime-state";
 import { scopedSecretValues } from "./manifest-secrets";
 import {
-	mutationAncestorMetadataTargets,
 	type RuntimeConvergenceResult,
 	type RuntimePrivateAppliedAuthority,
 	type RuntimeSystemdApplyHooks,
@@ -85,7 +53,7 @@ import {
 } from "./manifest-shared";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { EnsureRuntimeMitmproxyOptions } from "./mitmproxy-fetch";
-import { type RuntimePaths, runtimeSystemdPlatformEnclaves } from "./paths";
+import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	buildRuntimeRunConfig,
@@ -96,15 +64,9 @@ import {
 } from "./run-config";
 import {
 	buildRuntimeSystemdUserProgram,
-	planRuntimeSystemdUserMutations,
 	type RuntimeEgressSystemdProgram,
 	type RuntimeSystemdUserProgram,
 } from "./runtime-systemd-reconciliation";
-import {
-	executableExists,
-	type RuntimeUserOwnershipRule,
-	runtimeUserExistingOwnership,
-} from "./runtime-user-command";
 
 export interface RuntimeConvergenceOptions {
 	cacheLastGood?: boolean;
@@ -414,93 +376,6 @@ export function validateRuntimeProjectionPlan(input: {
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
 	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
 }
-export function managedOpenClawPluginBootstrapMutationPlan(
-	context: OpenClawHostedContext,
-	paths: RuntimePaths,
-): RuntimeManagedMutationPlan | null {
-	if (!context.managedApiKeyProjection) return null;
-	const targets = context.providerPlugin.mutationTargets;
-	const runtimeUserTrustedRoots = [paths.userHome, paths.clawdiHome];
-	return {
-		rootTargets: [],
-		trustedRootDirectories: [],
-		runtimeUserTargets: targets,
-		runtimeUserTrustedRoots,
-		runtimeUserSymlinkTargets: [],
-		metadataTargets: mutationAncestorMetadataTargets(targets, runtimeUserTrustedRoots),
-	};
-}
-export interface RuntimeSnapshotRollbackScope {
-	readonly start: number;
-}
-
-export interface RuntimeSnapshotCaptureScope extends RuntimeSnapshotRollbackScope {
-	readonly snapshot: RuntimeLiveSnapshot;
-}
-
-export class RuntimeSnapshotRollbackStack {
-	readonly #snapshots: Array<{ failure: string; snapshot: RuntimeLiveSnapshot }> = [];
-
-	capture(failure: string, plan: RuntimeManagedMutationPlan): RuntimeLiveSnapshot {
-		return this.captureScoped(failure, plan).snapshot;
-	}
-
-	scope(): RuntimeSnapshotRollbackScope {
-		return { start: this.#snapshots.length };
-	}
-
-	captureScoped(failure: string, plan: RuntimeManagedMutationPlan): RuntimeSnapshotCaptureScope {
-		const start = this.#snapshots.length;
-		const snapshot = captureRuntimeLiveSnapshot(plan);
-		this.#snapshots.push({ failure, snapshot });
-		return { start, snapshot };
-	}
-
-	pop(scope?: RuntimeSnapshotRollbackScope): void {
-		this.#snapshots.splice(scope?.start ?? 0);
-	}
-
-	restore(
-		scope?: RuntimeSnapshotRollbackScope,
-		formatFailure: (failure: string, error: unknown) => string = (failure, error) =>
-			`${failure}: ${toErrorMessage(error)}`,
-	): string[] {
-		const errors: string[] = [];
-		for (const { failure, snapshot } of this.#snapshots.splice(scope?.start ?? 0).reverse()) {
-			try {
-				restoreRuntimeLiveSnapshot(snapshot);
-			} catch (error) {
-				errors.push(formatFailure(failure, error));
-			}
-		}
-		return errors;
-	}
-
-	failure(error: unknown): unknown {
-		const rollbackErrors = this.restore();
-		if (rollbackErrors.length === 0) return error;
-		return new Error(`${toErrorMessage(error)}; ${rollbackErrors.join("; ")}`);
-	}
-}
-function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
-	const targets = new Set(
-		hostedChannelCredentialsDeclared(manifest)
-			? hostedWhatsAppAuthCredentials(manifest).map((entry) => entry.authDir)
-			: [],
-	);
-	const root = managedWhatsAppAuthRoot(home, "openclaw");
-	if (root && existsSync(root)) {
-		for (const entry of readdirSync(root)) {
-			const authDir = join(root, entry);
-			if (readManagedWhatsAppAuthMetadata(authDir)) targets.add(authDir);
-		}
-	}
-	const hermesAuthDir = managedWhatsAppAuthRoot(home, "hermes");
-	if (hermesAuthDir && readManagedWhatsAppAuthMetadata(hermesAuthDir)) {
-		targets.add(hermesAuthDir);
-	}
-	return [...targets];
-}
 export function managedWhatsAppCompatibilityRuntime(
 	manifest: RuntimeManifest,
 ): ManagedBaileysRuntime | null {
@@ -512,223 +387,4 @@ export function managedWhatsAppCompatibilityRuntime(
 		throw new Error("managed WhatsApp projection must target exactly one native runtime");
 	}
 	return runtimes.values().next().value ?? null;
-}
-export function runtimeUserMutationTargets(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	openClawWorkspaceRoot: string | null,
-	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
-	openClawContext: OpenClawHostedContext = createOpenClawHostedContext(
-		manifest,
-		hostedRuntimeProjectionHome(manifest, paths),
-	),
-): string[] {
-	const home = openClawContext.home;
-	const installerTargets = runtimeInstallerMutationTargets(manifest, home, observations);
-	const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
-	const channels = hostedChannelProjection(manifest);
-	const channelPluginTargets = channels
-		? Object.keys(channels)
-				.filter((channel) => Boolean(OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel]))
-				.map((channel) => join(home, ".openclaw", "extensions", channel))
-		: [];
-	const targets = new Set<string>([
-		openClawContext.configPath,
-		join(home, ".hermes", "config.yaml"),
-		join(home, ".hermes", "SOUL.md"),
-		hermesAuthPath(home),
-		join(dirname(hermesAuthPath(home)), "auth.lock"),
-		openClawContext.agentDirs.main,
-		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
-		...hostedChannelCredentialMutationTargets(manifest, home),
-		...channelPluginTargets,
-	]);
-	if (openClawWorkspaceRoot) targets.add(join(openClawWorkspaceRoot, "SOUL.md"));
-	for (const name of HOSTED_RUNTIME_TARGETS) {
-		if (manifest.runtimes[name]?.enabled !== true) continue;
-		const commandPath = runtimeCommandPath(name, home);
-		if (
-			commandPath &&
-			!installerTargets.some((target) => {
-				const candidate = relative(resolve(target), resolve(commandPath));
-				return candidate === "" || (!candidate.startsWith("..") && !isAbsolute(candidate));
-			})
-		) {
-			// The command itself is an ownership mutation even when no runtime
-			// install is pending. Root bootstrap images can otherwise leave a
-			// private root-owned executable that root observes as present but the
-			// official runtime user cannot execute. OpenClaw's official installer
-			// writes the CLI under the selected prefix's bin directory:
-			// https://github.com/openclaw/openclaw/blob/v2026.7.1/scripts/install-cli.sh#L1113-L1120
-			targets.add(commandPath);
-		}
-	}
-	const compatibilityRuntimes = managedBaileysCompatSnapshotRuntimes({
-		desiredRuntime: managedWhatsAppRuntime,
-		home,
-	});
-	for (const runtime of compatibilityRuntimes) {
-		const appRoot = runtimeAppRoot(runtime, home);
-		if (!appRoot) continue;
-		for (const target of managedBaileysCompatMutationTargets({ runtime, home, appRoot })) {
-			// Cold installers and OpenClaw plugin reconciliation already snapshot
-			// their complete roots. Do not add nested patch targets to that plan.
-			if (
-				[...installerTargets, ...channelPluginTargets].some(
-					(root) => target === root || target.startsWith(`${root}/`),
-				)
-			) {
-				continue;
-			}
-			targets.add(target);
-		}
-	}
-	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
-		targets.add(join(paths.localEnvironments, `${agentType}.json`));
-	}
-	return [...targets].sort();
-}
-export function hostedSkillMutationTargets(
-	manifest: RuntimeManifest,
-	home: string,
-	openClawWorkspaceRoot: string | null,
-): string[] {
-	const runtimeUserTargets = new Set<string>();
-	const hermesSkillsRoot = join(home, ".hermes", "skills");
-	const openClawSkillsRoot = openClawWorkspaceRoot ? join(openClawWorkspaceRoot, "skills") : null;
-	const addSkillTarget = (skillsRoot: string, skillId: string) => {
-		runtimeUserTargets.add(join(skillsRoot, skillId));
-	};
-	for (const skillId of Object.keys(manifest.projection?.skills?.entries ?? {})) {
-		addSkillTarget(hermesSkillsRoot, skillId);
-		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
-	}
-	for (const skillId of hostedBundledSkillIds()) {
-		addSkillTarget(hermesSkillsRoot, skillId);
-		if (openClawSkillsRoot) addSkillTarget(openClawSkillsRoot, skillId);
-	}
-	for (const reservation of managedSkillReservations("hosted-manifest")) {
-		if (dirname(reservation.targetDir) === hermesSkillsRoot) {
-			runtimeUserTargets.add(reservation.targetDir);
-		}
-		if (openClawSkillsRoot && dirname(reservation.targetDir) === openClawSkillsRoot) {
-			runtimeUserTargets.add(reservation.targetDir);
-		}
-	}
-	return [...runtimeUserTargets].sort();
-}
-export function runtimeManagedMutationPlan(input: {
-	manifest: RuntimeManifest;
-	paths: RuntimePaths;
-	openClawWorkspaceRoot: string | null;
-	openClawContext: OpenClawHostedContext;
-	programs: RuntimeSystemdUserProgram[];
-	observations: ReadonlyMap<string, RuntimeInstallObservation>;
-}): {
-	snapshot: RuntimeManagedMutationPlan;
-	runtimeUserOwnership: RuntimeUserOwnershipRule[];
-	staleOfficialUnits: string[];
-	systemdUserUnits: string[];
-	systemdDriftErrors: string[];
-} {
-	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
-	const fileBrowserMutation = fileBrowserCompanionMutationPlan(input.manifest, input.paths);
-	for (const target of fileBrowserMutation.rootTargets) rootTargets.add(target);
-	const rootMetadataTargets = new Set<string>();
-	const egressPin = input.manifest.egressEngine;
-	if (egressPin?.type === "mitmproxy") {
-		const cacheDir = join(
-			input.paths.egressEngineMaintainedRoot,
-			egressPin.version,
-			egressPin.sha256.toLowerCase(),
-		);
-		if (!executableExists(join(cacheDir, "mitmdump"))) rootTargets.add(cacheDir);
-		rootMetadataTargets.add(dirname(input.paths.egressEngineMaintainedRoot));
-		rootMetadataTargets.add(input.paths.egressEngineMaintainedRoot);
-		rootMetadataTargets.add(join(input.paths.egressEngineMaintainedRoot, egressPin.version));
-	}
-
-	const systemd = planRuntimeSystemdUserMutations(input.programs, input.paths);
-	for (const target of systemd.environmentTargets) rootTargets.add(target);
-	const runtimeUserTargets = [
-		...new Set([
-			...runtimeUserMutationTargets(
-				input.manifest,
-				input.paths,
-				input.openClawWorkspaceRoot,
-				input.observations,
-				input.openClawContext,
-			),
-			...systemd.targets,
-		]),
-	].sort();
-	const rootTargetsList = [...rootTargets].sort();
-	const projectionHome = hostedRuntimeProjectionHome(input.manifest, input.paths);
-	const runtimeCommandTargets = HOSTED_RUNTIME_TARGETS.flatMap((name) => {
-		if (input.manifest.runtimes[name]?.enabled !== true) return [];
-		const commandPath = runtimeCommandPath(name, projectionHome);
-		return commandPath ? [commandPath] : [];
-	});
-	const runtimeUserBoundaries = [input.paths.userHome, input.paths.clawdiHome];
-	const runtimeUserMetadataTargets = [
-		...new Set([
-			...systemd.metadataTargets,
-			input.paths.userHome,
-			input.paths.clawdiHome,
-			...mutationAncestorMetadataTargets(runtimeUserTargets, runtimeUserBoundaries),
-		]),
-	].sort();
-	const platformEnclaveRoots = runtimeSystemdPlatformEnclaves(input.paths).map((enclave) =>
-		resolve(enclave.path),
-	);
-	const runtimeUserOwnership = runtimeUserExistingOwnership([
-		...runtimeUserTargets,
-		...runtimeUserMetadataTargets,
-		...runtimeCommandTargets,
-	]).filter((rule) =>
-		platformEnclaveRoots.every((root) => {
-			const candidate = relative(root, rule.path);
-			return candidate.startsWith("..") || isAbsolute(candidate);
-		}),
-	);
-	return {
-		snapshot: {
-			rootTargets: rootTargetsList,
-			trustedRootDirectories: [
-				...runtimeRootLiveMutationDirectories(input.paths),
-				...fileBrowserMutation.rootTrustedRoots,
-			],
-			runtimeUserTargets,
-			runtimeUserTrustedRoots: runtimeUserBoundaries,
-			runtimeUserSymlinkTargets: [
-				...new Set([
-					...systemd.symlinkTargets,
-					...runtimeCommandTargets.filter((target) => runtimeUserTargets.includes(target)),
-				]),
-			].sort(),
-			metadataTargets: [
-				...new Set([
-					...rootMetadataTargets,
-					...systemd.metadataTargets,
-					input.paths.configurationRoot,
-					input.paths.serviceStateRoot,
-					input.paths.cacheRoot,
-					input.paths.runRoot,
-					input.paths.systemdSystemRoot,
-					...mutationAncestorMetadataTargets(rootTargetsList, [
-						input.paths.configurationRoot,
-						input.paths.serviceStateRoot,
-						input.paths.cacheRoot,
-						input.paths.runRoot,
-						input.paths.systemdSystemRoot,
-					]),
-					...runtimeUserMetadataTargets,
-				]),
-			].sort(),
-		},
-		runtimeUserOwnership,
-		staleOfficialUnits: systemd.staleOfficialUnits,
-		systemdUserUnits: systemd.unitNames,
-		systemdDriftErrors: systemd.driftErrors,
-	};
 }

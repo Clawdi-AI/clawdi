@@ -46,11 +46,6 @@ export interface FileBrowserCompanionInstallResult {
 	installed: boolean;
 }
 
-export interface FileBrowserCompanionMutationPlan {
-	rootTrustedRoots: string[];
-	rootTargets: string[];
-}
-
 function fileBrowser(manifest: RuntimeManifest): FileBrowserCompanion | null {
 	return manifest.companions?.filebrowser ?? null;
 }
@@ -111,29 +106,6 @@ function candidateIsValid(paths: RuntimePaths, sha256: string): boolean {
 	} catch {
 		return false;
 	}
-}
-
-export function fileBrowserCompanionMutationPlan(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	arch: NodeJS.Architecture = process.arch,
-): FileBrowserCompanionMutationPlan {
-	const companion = fileBrowser(manifest);
-	if (!companion) {
-		return {
-			rootTrustedRoots: [],
-			rootTargets: [],
-		};
-	}
-	const asset = selectedAsset(companion, arch);
-	const target = candidateRoot(paths, asset.sha256);
-	return {
-		rootTrustedRoots: [paths.fileBrowserInstallRoot],
-		rootTargets: [
-			...(candidateIsValid(paths, asset.sha256) ? [] : [target]),
-			paths.fileBrowserConfig,
-		],
-	};
 }
 
 function renderFileBrowserConfig(

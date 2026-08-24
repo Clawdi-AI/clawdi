@@ -16,13 +16,8 @@ import { createContext, SourceTextModule } from "node:vm";
 import {
 	MANAGED_BAILEYS_STATIC_PATCH_TARGETS,
 	type ManagedBaileysRuntime,
-	managedBaileysCompatMutationTargets,
-	managedBaileysCompatSnapshotRuntimes,
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
-import { runtimeUserMutationTargets } from "./manifest";
-import type { RuntimeManifest } from "./manifest-contract";
-import { getRuntimePaths } from "./paths";
 
 const repositoryRoot = join(import.meta.dir, "../../../..");
 const pristineBaileysRoot = join(
@@ -263,66 +258,6 @@ it("rolls back the previous runtime before applying a runtime switch", () => {
 	assertTargetHunkState(hermes, "after");
 });
 
-it("derives snapshot targets from desired and installed aliases", () => {
-	const fixture = createArtifactFixture("openclaw");
-	expect(
-		managedBaileysCompatSnapshotRuntimes({
-			desiredRuntime: null,
-			home: fixture.home,
-		}),
-	).toEqual([]);
-	reconcile(fixture);
-	expect(
-		managedBaileysCompatSnapshotRuntimes({
-			desiredRuntime: null,
-			home: fixture.home,
-		}),
-	).toEqual(["openclaw"]);
-	expect(
-		managedBaileysCompatSnapshotRuntimes({
-			desiredRuntime: "hermes",
-			home: fixture.home,
-		}),
-	).toEqual(["hermes", "openclaw"]);
-
-	const paths = {
-		...getRuntimePaths(),
-		userHome: fixture.home,
-		localEnvironments: join(fixture.root, "environments"),
-	};
-	const manifest: RuntimeManifest = {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		runtime: "hermes",
-		deploymentId: "dep-content-snapshot",
-		environmentId: "env-content-snapshot",
-		instanceId: "iid-content-snapshot",
-		generation: 1,
-		issuedAt: "2026-08-02T00:00:00Z",
-		controlPlane: { apiUrl: "https://cloud-api.test" },
-		runtimes: { hermes: { enabled: true, services: {} } },
-		projection: { system: { home: fixture.home, workspace: fixture.home } },
-		recovery: {},
-	};
-	const targets = runtimeUserMutationTargets(manifest, paths, fixture.home, new Map());
-	for (const { path } of artifactTargets(fixture)) expect(targets).toContain(path);
-	expect(
-		targets.some((target) =>
-			target.startsWith(
-				join(
-					fixture.home,
-					".hermes",
-					"hermes-agent",
-					"scripts",
-					"whatsapp-bridge",
-					"node_modules",
-					"@whiskeysockets",
-					"baileys",
-				),
-			),
-		),
-	).toBe(false);
-});
-
 it.each([
 	["openclaw", "7.1.2"],
 	["hermes", "7.0.0-rc14"],
@@ -478,18 +413,6 @@ it("refuses a symlinked patch target before mutating any audited file", () => {
 	targets.slice(1).forEach(({ path }, index) => {
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
-});
-
-it("snapshots the Hermes dependency tree only when isolated npm ci may replace it", () => {
-	const fixture = createArtifactFixture("hermes");
-	const bridgeRoot = join(fixture.appRoot, "scripts", "whatsapp-bridge");
-	const nodeModules = join(bridgeRoot, "node_modules");
-	const exactTargets = managedBaileysCompatMutationTargets(fixture);
-
-	expect(exactTargets).toContain(join(nodeModules, ".hermes-pkg-hash"));
-	expect(exactTargets).not.toContain(nodeModules);
-	rmSync(join(fixture.baileysRoot, "package.json"));
-	expect(managedBaileysCompatMutationTargets(fixture)).toEqual([nodeModules]);
 });
 
 it("uses an explicitly mocked local npm for missing pristine Hermes dependencies", () => {

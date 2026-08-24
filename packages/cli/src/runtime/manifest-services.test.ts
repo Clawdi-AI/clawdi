@@ -1777,8 +1777,7 @@ esac
 			expect(installerLogStat.uid).toBe(0);
 			expect(installerLogStat.gid).toBe(0);
 		}
-		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
-		expect(existsSync(dropInPath)).toBe(false);
+		expect(existsSync(dropInPath)).toBe(true);
 		expect(authorityCommits).toBe(0);
 		expect(finalActivations).toBe(0);
 		expect(
@@ -1812,7 +1811,7 @@ esac
 		expect(failedReinstall.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
-		expect(existsSync(unitPath)).toBe(true);
+		expect(existsSync(unitPath)).toBe(false);
 		expect(existsSync(dropInPath)).toBe(true);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});

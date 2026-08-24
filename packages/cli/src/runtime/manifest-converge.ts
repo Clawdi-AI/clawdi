@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
 import { readRuntimeAuthToken } from "./auth-token";
@@ -9,10 +9,7 @@ import {
 	gcFileBrowserCompanionCandidates,
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
-import {
-	hostedAgentPluginReceiptsPath,
-	writeHostedAgentPluginReceipt,
-} from "./hosted-agent-plugin-package";
+import { writeHostedAgentPluginReceipt } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginTransaction,
 	hostedAgentPluginCommands,
@@ -24,10 +21,8 @@ import {
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
-import { captureRuntimeLiveSnapshot, type RuntimeLiveSnapshot } from "./live-state-snapshot";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
-import { managedSkillReservationLedgerPath } from "./managed-skill-reservation";
 import {
 	applyHostedChannelProjection,
 	installHostedChannelProjectionDependencies,
@@ -51,7 +46,6 @@ import {
 	observeRuntimeInstall,
 	planRuntimeInstallObservation,
 	type RuntimeInstallObservation,
-	runtimeColdInstallMutationPlan,
 	runtimeCommandPath,
 } from "./manifest-install";
 import { applyHostedMcpProjections } from "./manifest-mcp";
@@ -62,17 +56,12 @@ import {
 	reconcileHostedRuntimeOAuthCredentials,
 } from "./manifest-oauth";
 import {
-	hostedSkillMutationTargets,
-	managedOpenClawPluginBootstrapMutationPlan,
 	managedWhatsAppCompatibilityRuntime,
 	planHostedAgentPluginConvergence,
 	planRuntimeSystemdUserPrograms,
 	type RuntimeConvergenceOptions,
-	type RuntimeSnapshotRollbackScope,
-	RuntimeSnapshotRollbackStack,
 	resolveRuntimeRunConfigs,
 	runtimeConvergenceWithoutApply,
-	runtimeManagedMutationPlan,
 	runtimeSecretValues,
 	runtimeWorkspaceRoot,
 	validateRuntimeProjectionPlan,
@@ -92,15 +81,11 @@ import {
 	writeLiveSyncEnvironmentFiles,
 } from "./manifest-runtime-state";
 import {
-	egressSecretFilePath,
 	makeManagedSecretRoot,
-	type RuntimeEgressSecretMaterial,
-	verifiedCommittedEgressSecretMaterial,
 	writeEgressSecretFile,
-	writeEgressSecretMaterial,
 	writeLastGoodManifest,
 } from "./manifest-secrets";
-import { mutationAncestorMetadataTargets, type RuntimeConvergenceResult } from "./manifest-shared";
+import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
@@ -183,7 +168,6 @@ interface RuntimeConvergenceState {
 	projectedProviderIds: Record<string, string[]>;
 	observations: Map<string, RuntimeInstallObservation>;
 	openClawOwnerBrowserBootstrapSupported: boolean;
-	rollbackSnapshots: RuntimeSnapshotRollbackStack;
 	systemdActivationApplied: boolean;
 	restartDaemon: boolean;
 	desiredDaemonAuthTokenRevision?: string;
@@ -191,24 +175,11 @@ interface RuntimeConvergenceState {
 	restartEgressSidecar: boolean;
 	desiredEgressSidecarSecretRevision?: string;
 	officialServiceCommandRevisions: Record<string, string>;
-	rollbackEgressSecretOverride?: RuntimeEgressSecretMaterial;
-	rollbackEgressSecretRevision?: string;
-	egressRollbackAuthorityVerified: boolean;
 	staleSystemdFiles: RuntimeSystemdStaleFilePlan;
 }
 
-interface RuntimeInstallStage {
-	coldInstallPlan: ReturnType<typeof runtimeColdInstallMutationPlan>;
-	pluginBootstrapPlan: ReturnType<typeof managedOpenClawPluginBootstrapMutationPlan>;
-}
-
-interface RuntimeConvergencePlan extends RuntimeInstallStage {
+interface RuntimeConvergencePlan {
 	openClawWorkspaceRoot: string | null;
-	plannedRuntimePrograms: RuntimeSystemdUserProgram[];
-	mutationPlan: ReturnType<typeof runtimeManagedMutationPlan>;
-	workspaceExistedBeforeApply: boolean;
-	liveSnapshot: RuntimeLiveSnapshot;
-	resourceRollbackScope: RuntimeSnapshotRollbackScope;
 }
 
 function resolveOpenClawWorkspaceForConvergence(
@@ -316,12 +287,10 @@ function initializeRuntimeConvergence(
 		projectedProviderIds: {},
 		observations: new Map(),
 		openClawOwnerBrowserBootstrapSupported: false,
-		rollbackSnapshots: new RuntimeSnapshotRollbackStack(),
 		systemdActivationApplied: false,
 		restartDaemon: false,
 		restartEgressSidecar: false,
 		officialServiceCommandRevisions: {},
-		egressRollbackAuthorityVerified: true,
 		staleSystemdFiles: { files: [], systemUnits: [], userUnits: [] },
 	};
 	if (opts.resourcePreparationFailures?.sourcedSkills) {
@@ -380,22 +349,11 @@ function runtimeConvergenceFailure(
 	});
 }
 
-function rollbackRuntimeInstallFailure(
-	context: RuntimeConvergenceContext,
-	state: RuntimeConvergenceState,
-	error: unknown,
-): RuntimeConvergenceResult {
-	state.installErrors.push(...state.rollbackSnapshots.restore());
-	const message = error instanceof Error ? error.message : String(error);
-	if (!state.installErrors.includes(message)) state.installErrors.unshift(message);
-	return runtimeConvergenceFailure(context, state);
-}
-
 function prepareRuntimeInstallStage(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-): { stage: RuntimeInstallStage } | { result: RuntimeConvergenceResult } {
-	const { manifest, paths, projectionHome, runtimeEntries, hostedRuntimeContract } = context;
+): { result: RuntimeConvergenceResult } | null {
+	const { projectionHome, runtimeEntries, paths, hostedRuntimeContract } = context;
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = planRuntimeInstallObservation(
 			name,
@@ -410,62 +368,32 @@ function prepareRuntimeInstallStage(
 	if (state.installErrors.length > 0) {
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	const coldInstallPlan = runtimeColdInstallMutationPlan(manifest, paths, state.observations);
-	if (coldInstallPlan) {
-		state.rollbackSnapshots.capture("runtime installer rollback failed", coldInstallPlan.snapshot);
+	for (const [name, runtime] of runtimeEntries) {
+		const observation = observeRuntimeInstall(
+			name,
+			runtime,
+			projectionHome,
+			paths,
+			hostedRuntimeContract.identity,
+		);
+		state.observations.set(name, observation);
+		if (observation.error) state.installErrors.push(observation.error);
+		if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
+		if (name === "openclaw" && observation.enabled && observation.commandPath) {
+			state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
+				context.openClawContext,
+			);
+		}
 	}
-	const pluginBootstrapPlan = managedOpenClawPluginBootstrapMutationPlan(
-		context.openClawContext,
-		paths,
-	);
-	try {
-		if (coldInstallPlan) {
-			enforceRuntimeUserOwnership(
-				coldInstallPlan.runtimeUserOwnership,
-				hostedRuntimeContract.identity,
-			);
-		}
-		for (const [name, runtime] of runtimeEntries) {
-			const observation = observeRuntimeInstall(
-				name,
-				runtime,
-				projectionHome,
-				paths,
-				hostedRuntimeContract.identity,
-			);
-			state.observations.set(name, observation);
-			if (observation.error) state.installErrors.push(observation.error);
-			if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
-			if (name === "openclaw" && observation.enabled && observation.commandPath) {
-				state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
-					context.openClawContext,
-				);
-			}
-		}
-		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-		if (pluginBootstrapPlan) {
-			state.rollbackSnapshots.capture(
-				"OpenClaw managed provider plugin rollback failed",
-				pluginBootstrapPlan,
-			);
-			enforceRuntimeUserOwnership(
-				runtimeUserExistingOwnership([
-					...pluginBootstrapPlan.metadataTargets,
-					...pluginBootstrapPlan.runtimeUserTargets,
-				]),
-				hostedRuntimeContract.identity,
-			);
-		}
-	} catch (error) {
-		return { result: rollbackRuntimeInstallFailure(context, state, error) };
+	if (state.installErrors.length > 0) {
+		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	return { stage: { coldInstallPlan, pluginBootstrapPlan } };
+	return null;
 }
 
 function prepareRuntimeConvergencePlan(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	installStage: RuntimeInstallStage,
 ): { plan: RuntimeConvergencePlan } | { result: RuntimeConvergenceResult } {
 	const {
 		manifest,
@@ -479,50 +407,40 @@ function prepareRuntimeConvergencePlan(
 		generatedAt,
 		plannedEgressProfileBundlePath,
 	} = context;
-	let openClawWorkspaceRoot: string | null;
-	let plannedRuntimePrograms: RuntimeSystemdUserProgram[];
-	let mutationPlan: ReturnType<typeof runtimeManagedMutationPlan>;
+	const openClawCommand = runtimeCommandPath("openclaw", projectionHome);
+	const shouldResolveOpenClawWorkspace =
+		manifest.runtimes.openclaw?.enabled === true ||
+		Boolean(openClawCommand && executableExists(openClawCommand));
+	const openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
+		? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
+		: null;
+	const plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
+		manifest,
+		paths,
+		workspaceRoot,
+		generatedAt,
+		secretValues,
+		observations: state.observations,
+		egressProfileBundlePath: plannedEgressProfileBundlePath,
+		egress: null,
+	});
+	validateRuntimeProjectionPlan({
+		manifest,
+		paths,
+		openClawWorkspaceRoot,
+		secretValues,
+		observations: state.observations,
+		previousProjectedProviderIds,
+		hermesWhatsAppAuthDir,
+		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
+	});
 	try {
-		const openClawCommand = runtimeCommandPath("openclaw", projectionHome);
-		const shouldResolveOpenClawWorkspace =
-			manifest.runtimes.openclaw?.enabled === true ||
-			Boolean(openClawCommand && executableExists(openClawCommand));
-		openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-			? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
-			: null;
-		plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
-			manifest,
-			paths,
-			workspaceRoot,
-			generatedAt,
-			secretValues,
-			observations: state.observations,
-			egressProfileBundlePath: plannedEgressProfileBundlePath,
-			egress: null,
-		});
-		validateRuntimeProjectionPlan({
-			manifest,
-			paths,
-			openClawWorkspaceRoot,
-			secretValues,
-			observations: state.observations,
-			previousProjectedProviderIds,
-			hermesWhatsAppAuthDir,
-			openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
-		});
-		validateRuntimeSystemdPlan(plannedRuntimePrograms);
-		mutationPlan = runtimeManagedMutationPlan({
-			manifest,
-			paths,
-			openClawWorkspaceRoot,
-			openClawContext,
-			programs: plannedRuntimePrograms,
-			observations: state.observations,
-		});
+		validateRuntimeSystemdPlan(plannedRuntimePrograms, paths);
 	} catch (error) {
-		throw state.rollbackSnapshots.failure(error);
+		state.installErrors.push(error instanceof Error ? error.message : String(error));
+		return { result: runtimeConvergenceFailure(context, state) };
 	}
-	if (installStage.pluginBootstrapPlan) {
+	if (openClawContext.managedApiKeyProjection) {
 		try {
 			const observation = state.observations.get("openclaw");
 			if (!observation?.commandPath) {
@@ -533,39 +451,13 @@ function prepareRuntimeConvergencePlan(
 				commandPath: observation.commandPath,
 			});
 		} catch (error) {
-			return { result: rollbackRuntimeInstallFailure(context, state, error) };
+			state.installErrors.push(error instanceof Error ? error.message : String(error));
+			return { result: runtimeConvergenceFailure(context, state) };
 		}
 	}
-	if (mutationPlan.systemdDriftErrors.length > 0) {
-		state.installErrors.push(...state.rollbackSnapshots.restore());
-		state.installErrors.push(...mutationPlan.systemdDriftErrors);
-		return { result: runtimeConvergenceFailure(context, state) };
-	}
-	const workspaceExistedBeforeApply = withRuntimeUserFileAccess(
-		() => existsSync(workspaceRoot),
-		context.hostedRuntimeContract.identity,
-	);
-	let liveSnapshot: RuntimeLiveSnapshot;
-	try {
-		liveSnapshot = state.rollbackSnapshots.capture(
-			"runtime filesystem rollback failed",
-			mutationPlan.snapshot,
-		);
-	} catch (error) {
-		throw state.rollbackSnapshots.failure(error);
-	}
-	// Resource snapshots live below tenant-owned roots and restore before the
-	// platform-root assertion that guards every earlier snapshot.
-	const resourceRollbackScope = state.rollbackSnapshots.scope();
 	return {
 		plan: {
-			...installStage,
 			openClawWorkspaceRoot,
-			plannedRuntimePrograms,
-			mutationPlan,
-			workspaceExistedBeforeApply,
-			liveSnapshot,
-			resourceRollbackScope,
 		},
 	};
 }
@@ -573,7 +465,6 @@ function prepareRuntimeConvergencePlan(
 function prepareRuntimeApplyDependencies(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 ): Record<string, string> | null {
 	const {
 		manifest,
@@ -588,14 +479,6 @@ function prepareRuntimeApplyDependencies(
 	} = context;
 	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
 	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
-	// Runtime-user targets and their ancestor metadata are already in the
-	// exact pre-image snapshot. Establish their positive ownership boundary
-	// before any official installer or CLI command drops privilege. Modes are
-	// intentionally preserved, so private runtime state stays private.
-	enforceRuntimeUserOwnership(
-		plan.mutationPlan.runtimeUserOwnership,
-		hostedRuntimeContract.identity,
-	);
 	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
 	const openClawObservation = state.observations.get("openclaw");
 	if (openClawObservation) {
@@ -618,23 +501,9 @@ function prepareRuntimeApplyDependencies(
 	if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
 		openClawContext.agentDirs.managed =
 			discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
-		const supplementalTargets = openClawContext.agentDirs.managed.filter(
-			(path) => !plan.liveSnapshot.entries.has(path),
-		);
-		if (supplementalTargets.length > 0) {
-			const supplementalSnapshot = captureRuntimeLiveSnapshot({
-				rootTargets: [],
-				trustedRootDirectories: [],
-				runtimeUserTargets: supplementalTargets,
-				runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
-				runtimeUserSymlinkTargets: [],
-				metadataTargets: [],
-			});
-			for (const [path, node] of supplementalSnapshot.entries) {
-				if (!plan.liveSnapshot.entries.has(path)) plan.liveSnapshot.entries.set(path, node);
-			}
+		if (openClawContext.agentDirs.managed.length > 0) {
 			enforceRuntimeUserOwnership(
-				runtimeUserExistingOwnership(supplementalTargets),
+				runtimeUserExistingOwnership(openClawContext.agentDirs.managed),
 				hostedRuntimeContract.identity,
 			);
 		}
@@ -769,7 +638,6 @@ function prepareRuntimeEgressProjection(
 		paths,
 		opts,
 		secretValues,
-		applyContext,
 		hostedRuntimeContract,
 		projectionHome,
 		workspaceRoot,
@@ -857,29 +725,6 @@ function prepareRuntimeEgressProjection(
 			egressSecretWrite.changed ||
 			committedEgressSidecarSecretRevision === undefined ||
 			committedEgressSidecarSecretRevision !== state.desiredEgressSidecarSecretRevision;
-		if (committedEgressSidecarSecretRevision === undefined) {
-			// Legacy applied state has no private egress revision. An exact
-			// applied content identity can still prove complete last-good material
-			// for rollback, but its absence must not block loading the desired
-			// material. If desired activation later fails, unverified live bytes
-			// must never be loaded by a rollback restart.
-			state.rollbackEgressSecretOverride =
-				verifiedCommittedEgressSecretMaterial(paths, applyContext) ?? undefined;
-			state.egressRollbackAuthorityVerified = state.rollbackEgressSecretOverride !== undefined;
-		} else if (
-			state.restartEgressSidecar &&
-			egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
-		) {
-			if (state.desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
-				state.rollbackEgressSecretOverride = egressSecretWrite.material;
-			} else {
-				// A crash may have already advanced both the live file and last-good
-				// cache while the applied authority still describes the loaded secret.
-				// Do not require rollback material until activation actually fails:
-				// successfully restarting the desired material can safely commit it.
-				state.rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
-			}
-		}
 	}
 	return {
 		egressProfileBundlePath,
@@ -955,28 +800,7 @@ function applyRuntimeResourceProjections(
 	}
 	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 	if (sourcedSkillsPrepared) {
-		let skillProjectionScope: ReturnType<typeof state.rollbackSnapshots.captureScoped> | null =
-			null;
 		try {
-			const skillMutationTargets = hostedSkillMutationTargets(
-				manifest,
-				projectionHome,
-				plan.openClawWorkspaceRoot,
-			);
-			skillProjectionScope = state.rollbackSnapshots.captureScoped(
-				"runtime Skill filesystem rollback failed",
-				{
-					rootTargets: [managedSkillReservationLedgerPath()],
-					trustedRootDirectories: [paths.managedResourceRoot],
-					runtimeUserTargets: skillMutationTargets,
-					runtimeUserTrustedRoots: [paths.userHome, paths.clawdiHome],
-					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(skillMutationTargets, [
-						paths.userHome,
-						paths.clawdiHome,
-					]),
-				},
-			);
 			state.resourceProjectionErrors.push(
 				...reconcileHostedSkillProjection({
 					manifest,
@@ -988,18 +812,7 @@ function applyRuntimeResourceProjections(
 				}),
 			);
 		} catch (error) {
-			const projectionError = error instanceof Error ? error.message : String(error);
-			const rollbackErrors = skillProjectionScope
-				? state.rollbackSnapshots.restore(skillProjectionScope, (_failure, rollbackError) =>
-						rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-					)
-				: [];
-			if (rollbackErrors.length > 0) {
-				throw new Error(
-					`runtime Skill projection failed and could not be rolled back: ${projectionError}; ${rollbackErrors.join("; ")}`,
-				);
-			}
-			state.resourceProjectionErrors.push(projectionError);
+			state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
 	try {
@@ -1173,7 +986,6 @@ function prepareRuntimeActivation(
 		opts,
 		platformEnclaves,
 		secretValues,
-		projectionHome,
 		hermesWhatsAppAuthDir,
 		workspaceRoot,
 	} = context;
@@ -1245,52 +1057,14 @@ function prepareRuntimeActivation(
 		state.agentPluginUnitsQuiesced = true;
 		state.agentPluginMutationAttempted = true;
 	}
-	let agentPluginApplyCompleted = false;
-	let agentPluginSnapshotScope: ReturnType<typeof state.rollbackSnapshots.captureScoped> | null =
-		null;
 	try {
 		if (appliedAgentPluginTransaction) {
-			agentPluginSnapshotScope = state.rollbackSnapshots.captureScoped(
-				"runtime Agent Plugin filesystem rollback failed",
-				{
-					rootTargets: [hostedAgentPluginReceiptsPath(paths)],
-					trustedRootDirectories: [paths.statusRoot],
-					runtimeUserTargets: [...appliedAgentPluginTransaction.snapshotTargets],
-					runtimeUserTrustedRoots: [projectionHome],
-					runtimeUserSymlinkTargets: [],
-					metadataTargets: mutationAncestorMetadataTargets(
-						appliedAgentPluginTransaction.snapshotTargets,
-						[projectionHome],
-					),
-				},
-			);
-		}
-		if (appliedAgentPluginTransaction) {
 			const receipt = appliedAgentPluginTransaction.apply();
-			agentPluginApplyCompleted = true;
 			writeHostedAgentPluginReceipt(receipt, paths);
 		}
 	} catch (error) {
-		const failedNames = agentPluginApplyCompleted
-			? opts.preparedHostedAgentPlugins?.desired.keys()
-			: appliedAgentPluginTransaction?.mutationNames;
-		for (const name of failedNames ?? []) state.agentPluginFailedNames.add(name);
-		const rollbackErrors = agentPluginSnapshotScope
-			? state.rollbackSnapshots.restore(
-					agentPluginSnapshotScope,
-					(_failure, rollbackError) =>
-						`runtime Agent Plugin snapshot rollback failed: ${
-							rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-						}`,
-				)
-			: [];
-		if (rollbackErrors.length > 0) {
-			throw new Error(
-				`runtime Agent Plugin projection failed and could not be rolled back: ${[
-					error instanceof Error ? error.message : String(error),
-					...rollbackErrors,
-				].join("; ")}`,
-			);
+		for (const name of appliedAgentPluginTransaction?.mutationNames ?? []) {
+			state.agentPluginFailedNames.add(name);
 		}
 		state.resourceProjectionErrors.push(
 			`runtime Agent Plugin projection failed: ${
@@ -1449,7 +1223,6 @@ function buildRuntimeConvergenceResult(
 function commitRuntimeConvergence(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	egressProjection: RuntimeEgressProjection,
 	convergence: RuntimeConvergenceResult,
 ): void {
@@ -1499,134 +1272,26 @@ function commitRuntimeConvergence(
 	}
 	for (const cleanupError of uninstallStaleOfficialRuntimeServices({
 		paths,
-		unitNames: plan.mutationPlan.staleOfficialUnits,
+		unitNames: state.staleSystemdFiles.userUnits,
 		workspaceRoot,
 	})) {
 		console.warn(`post-commit official runtime service cleanup deferred: ${cleanupError}`);
 	}
 }
 
-function rollbackRuntimeApply(
+function runtimeApplyFailure(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
-	plan: RuntimeConvergencePlan,
 	error: unknown,
 ): RuntimeConvergenceResult {
-	const { paths, opts, applyContext, hostedRuntimeContract, workspaceRoot } = context;
 	if (state.agentPluginMutationAttempted) {
 		for (const name of state.agentPluginTransaction?.mutationNames ?? []) {
 			state.agentPluginFailedNames.add(name);
 		}
 	}
-	const applyError = error instanceof Error ? error.message : String(error);
-	const systemdMutated = opts.systemdApply?.transactionState() === "mutated";
-	const rollbackRequiresQuiesce =
-		systemdMutated || state.agentPluginQuiesceAttempted || state.agentPluginMutationAttempted;
-	let candidateQuiesced = state.agentPluginUnitsQuiesced || !rollbackRequiresQuiesce;
-	if (rollbackRequiresQuiesce && !candidateQuiesced) {
-		try {
-			opts.systemdApply?.quiesce(state.agentPluginQuiesceUserUnits);
-			candidateQuiesced = true;
-		} catch (quiesceError) {
-			state.installErrors.push(
-				`runtime candidate service quiesce failed: ${
-					quiesceError instanceof Error ? quiesceError.message : String(quiesceError)
-				}`,
-			);
-		}
-	}
-	let filesystemRollbackSucceeded = false;
-	if (candidateQuiesced) {
-		const resourceSnapshotRollbackErrors = state.rollbackSnapshots.restore(
-			plan.resourceRollbackScope,
-		);
-		state.installErrors.push(...resourceSnapshotRollbackErrors);
-		try {
-			const snapshotRollbackErrors = state.rollbackSnapshots.restore();
-			state.installErrors.push(...snapshotRollbackErrors);
-			if (state.rollbackEgressSecretOverride) {
-				writeEgressSecretMaterial(state.rollbackEgressSecretOverride, paths);
-			} else if (state.rollbackEgressSecretRevision) {
-				const committedMaterial = verifiedCommittedEgressSecretMaterial(paths, applyContext);
-				if (committedMaterial?.revision === state.rollbackEgressSecretRevision) {
-					writeEgressSecretMaterial(committedMaterial, paths);
-				} else {
-					state.egressRollbackAuthorityVerified = false;
-					rmSync(egressSecretFilePath(paths), { force: true });
-				}
-			} else if (!state.egressRollbackAuthorityVerified) {
-				rmSync(egressSecretFilePath(paths), { force: true });
-			}
-			filesystemRollbackSucceeded =
-				resourceSnapshotRollbackErrors.length === 0 && snapshotRollbackErrors.length === 0;
-		} catch (rollbackError) {
-			state.installErrors.push(
-				`runtime filesystem rollback failed: ${
-					rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-				}`,
-			);
-		}
-	} else {
-		state.installErrors.push(
-			"runtime filesystem rollback skipped because candidate services did not quiesce",
-		);
-	}
-	if (
-		filesystemRollbackSucceeded &&
-		!plan.workspaceExistedBeforeApply &&
-		resolve(workspaceRoot) !== resolve(paths.userHome) &&
-		withRuntimeUserFileAccess(() => existsSync(workspaceRoot), hostedRuntimeContract.identity)
-	) {
-		try {
-			withRuntimeUserFileAccess(() => {
-				if (readdirSync(workspaceRoot).length === 0) {
-					rmSync(workspaceRoot, { recursive: true });
-				}
-			}, hostedRuntimeContract.identity);
-		} catch (rollbackError) {
-			state.installErrors.push(
-				`runtime workspace rollback failed: ${
-					rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-				}`,
-			);
-		}
-	}
-	if (opts.systemdApply && filesystemRollbackSucceeded && rollbackRequiresQuiesce) {
-		try {
-			opts.systemdApply.rollback({
-				restartDaemon: state.restartDaemon,
-				restartEgressSidecar: state.restartEgressSidecar && state.egressRollbackAuthorityVerified,
-				restartUserUnits: [
-					...new Set([
-						...state.agentPluginRestartUserUnits,
-						...state.runtimeProjectionRestartUserUnits,
-					]),
-				].sort(),
-				staleSystemUnits: state.staleSystemdFiles.systemUnits,
-				staleUserUnits: state.staleSystemdFiles.userUnits,
-			});
-		} catch (rollbackError) {
-			state.installErrors.push(
-				`runtime systemd rollback failed: ${
-					rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-				}`,
-			);
-		}
-	} else if (opts.systemdApply && rollbackRequiresQuiesce && candidateQuiesced) {
-		state.installErrors.push(
-			"runtime systemd rollback skipped because filesystem authority restoration failed",
-		);
-	} else if (opts.systemdApply && rollbackRequiresQuiesce) {
-		state.installErrors.push(
-			"runtime systemd reconciliation skipped because candidate services did not quiesce",
-		);
-	}
-	if (!state.egressRollbackAuthorityVerified) {
-		state.installErrors.push(
-			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
-		);
-	}
-	state.installErrors.unshift(`runtime apply failed: ${applyError}`);
+	state.installErrors.unshift(
+		`runtime apply failed: ${error instanceof Error ? error.message : String(error)}`,
+	);
 	return runtimeConvergenceFailure(context, state, true);
 }
 
@@ -1637,12 +1302,12 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
 	const installResult = prepareRuntimeInstallStage(context, state);
-	if ("result" in installResult) return installResult.result;
-	const planResult = prepareRuntimeConvergencePlan(context, state, installResult.stage);
+	if (installResult) return installResult.result;
+	const planResult = prepareRuntimeConvergencePlan(context, state);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
 	try {
-		const codexCli = prepareRuntimeApplyDependencies(context, state, plan);
+		const codexCli = prepareRuntimeApplyDependencies(context, state);
 		const egressProjection = prepareRuntimeEgressProjection(context, state);
 		const providerProjectionRevisions = applyRuntimeResourceProjections(
 			context,
@@ -1666,10 +1331,9 @@ export function convergeRuntimeManifest(
 			activationPlan,
 			activationOutputs,
 		);
-		commitRuntimeConvergence(context, state, plan, egressProjection, convergence);
-		state.rollbackSnapshots.pop();
+		commitRuntimeConvergence(context, state, egressProjection, convergence);
 		return convergence;
 	} catch (error) {
-		return rollbackRuntimeApply(context, state, plan, error);
+		return runtimeApplyFailure(context, state, error);
 	}
 }
