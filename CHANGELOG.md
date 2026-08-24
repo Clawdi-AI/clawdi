@@ -10,6 +10,14 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.17
+
+Package: `clawdi@0.14.17`
+
+### Fixed
+
+- First converge after an upgrade no longer reruns official runtime installers (and no longer restarts the OpenClaw gateway a second time): a missing service command-revision record is adopted from the live binary instead of being treated as a change.
+
 ## Clawdi CLI v0.14.16
 
 Package: `clawdi@0.14.16`
