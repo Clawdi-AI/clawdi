@@ -1579,17 +1579,15 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
             )
 
     class AuthenticatedSidecarRegistry:
-        def custom_session_revision(self, session_id: UUID) -> str | None:
+        def session_revision(self, session_id: UUID) -> str | None:
             return sidecar_revision if session_id == sidecar_session_id else None
 
-        def get_custom_lifecycle_client(self, session_id: UUID, *, config_revision: str):
-            if session_id == sidecar_session_id and config_revision == sidecar_revision:
-                return AuthenticatedSidecar()
-            return None
+        def session_client(self, session_id: UUID):
+            return AuthenticatedSidecar() if session_id == sidecar_session_id else None
 
     monkeypatch.setattr(
         whatsapp_router_module,
-        "get_active_whatsapp_sidecar_registry",
+        "get_active_whatsapp_sidecar_clients",
         lambda: AuthenticatedSidecarRegistry(),
     )
     binding = ChannelBinding(

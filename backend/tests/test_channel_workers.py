@@ -46,14 +46,40 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
 
 
 @pytest.mark.asyncio
-async def test_channel_worker_process_owns_postgres_listener(monkeypatch):
+async def test_channel_worker_process_owns_singleton_services(monkeypatch):
     import app.workers.channels as channel_workers
 
     calls: list[str] = []
+    health = ChannelWorkerHealth()
 
     class Worker:
         async def run_forever(self, _stop):
             calls.append("worker")
+
+    class Sidecars:
+        enabled = True
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def start(self):
+            calls.append("sidecars-start")
+
+        async def reconcile_custom_ownership(self):
+            calls.append("custom-reconcile")
+
+        async def reconcile_managed_ownership(self):
+            calls.append("managed-reconcile")
+
+        async def stop(self):
+            calls.append("sidecars-stop")
+
+    class CatalogWorker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def run_forever(self, _stop):
+            calls.append("catalog")
 
     async def start_listener():
         calls.append("start-listener")
@@ -61,13 +87,28 @@ async def test_channel_worker_process_owns_postgres_listener(monkeypatch):
     async def stop_listener():
         calls.append("stop-listener")
 
+    async def run_ownership(_stop, _registry):
+        calls.append("ownership")
+
     monkeypatch.setattr(channel_workers, "start_postgres_listener", start_listener)
     monkeypatch.setattr(channel_workers, "stop_postgres_listener", stop_listener)
     monkeypatch.setattr(channel_workers, "build_channel_workers", lambda: (Worker(),))
+    monkeypatch.setattr(channel_workers, "ConfiguredWhatsAppSidecarRegistry", Sidecars)
+    monkeypatch.setattr(channel_workers, "PluginCatalogSyncWorker", CatalogWorker)
+    monkeypatch.setattr(channel_workers, "_run_whatsapp_ownership", run_ownership)
+    monkeypatch.setattr(settings, "plugin_catalog_sync_enabled", True)
 
-    await run_channel_workers(asyncio.Event())
+    await run_channel_workers(asyncio.Event(), health)
 
-    assert calls == ["start-listener", "worker", "stop-listener"]
+    assert calls[:4] == [
+        "start-listener",
+        "sidecars-start",
+        "custom-reconcile",
+        "managed-reconcile",
+    ]
+    assert set(calls[4:7]) == {"worker", "catalog", "ownership"}
+    assert calls[-2:] == ["sidecars-stop", "stop-listener"]
+    assert health.ready is True
 
 
 @pytest.mark.asyncio

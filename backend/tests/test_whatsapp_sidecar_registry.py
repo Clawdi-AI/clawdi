@@ -19,7 +19,10 @@ from app.services.whatsapp_provider_bridge import (
     whatsapp_provider_transport_status,
 )
 from app.services.whatsapp_sidecar_registry import (
+    ConfiguredWhatsAppSidecarClientPool,
     ConfiguredWhatsAppSidecarRegistry,
+    get_active_whatsapp_sidecar_clients,
+    get_active_whatsapp_sidecar_registry,
 )
 
 
@@ -52,6 +55,23 @@ class _FakeSidecarClient:
 
     async def query(self, node, timeout_ms):
         raise AssertionError((node, timeout_ms))
+
+
+@pytest.mark.asyncio
+async def test_client_pool_exposes_sidecar_sessions_without_transport_ownership():
+    session_id = UUID("00000000-0000-4000-8000-000000000887")
+    pool = ConfiguredWhatsAppSidecarClientPool(
+        "secret",
+        client_factory=_FakeSidecarClient,
+    )
+    await pool.start()
+    try:
+        assert get_active_whatsapp_sidecar_clients() is pool
+        assert get_active_whatsapp_sidecar_registry() is None
+        assert pool.session_client(session_id) is not None
+        assert whatsapp_provider_transport_status(session_id).available is False
+    finally:
+        await pool.stop()
 
 
 @pytest.mark.asyncio

@@ -219,6 +219,7 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
             session_id=second.id,
             registry=registry,
         )
+        await registry.reconcile_managed_ownership(db_session)
 
         assert registry.managed_is_bound(first_id)
         assert registry.managed_is_bound(second_id)
@@ -293,6 +294,7 @@ async def test_existing_shared_account_reauth_preserves_inventory_and_history(
         )
         assert connected.state == "connected"
         assert await db_session.get(ChannelAccount, account_id) is account
+        await registry.reconcile_managed_ownership(db_session)
         assert registry.managed_is_bound(account_id)
         await db_session.refresh(account)
         assert account.config["phone_number"] == "15551234567"
@@ -345,9 +347,7 @@ async def test_explicit_reauth_recovers_retained_remote_logout(db_session) -> No
 
 
 @pytest.mark.asyncio
-async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
-    db_session, monkeypatch
-):
+async def test_bind_failure_does_not_rollback_durable_promotion(db_session, monkeypatch):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
@@ -360,16 +360,17 @@ async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
             raise WhatsAppSidecarProtocolError("injected bind failure")
 
         monkeypatch.setattr(registry, "bind_managed_account", fail_bind)
-        with pytest.raises(HTTPException) as exc_info:
-            await get_platform_whatsapp_pairing(
-                db_session, session_id=started.id, registry=registry
-            )
-        assert exc_info.value.status_code == 503
-        assert await db_session.get(ChannelAccount, account_id) is None
+        connected = await get_platform_whatsapp_pairing(
+            db_session, session_id=started.id, registry=registry
+        )
+        await registry.reconcile_managed_ownership(db_session)
+
+        assert connected.state == "connected"
+        assert await db_session.get(ChannelAccount, account_id) is not None
         session = await db_session.get(ChannelWhatsAppOnboardingSession, started.id)
         assert session is not None
-        assert session.state == "error"
-        assert session.channel_account_id is None
+        assert session.state == "connected"
+        assert session.channel_account_id == account_id
         assert not registry.managed_is_bound(account_id)
     finally:
         await registry.stop()

@@ -37,7 +37,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppSidecarProtocolError,
     whatsapp_phone_number_from_pn_jid,
 )
-from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
+from app.services.whatsapp_sidecar_registry import WhatsAppSidecarClients
 
 _LOCK_ID = 8_071_323_913
 _OWNING_STATES = ("generating", "ready", "scanned", "error")
@@ -50,11 +50,11 @@ async def start_platform_whatsapp_pairing(
     account_id: UUID,
     request_id: UUID,
     name: str,
-    registry: ConfiguredWhatsAppSidecarRegistry | None,
+    registry: WhatsAppSidecarClients | None,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
-    if registry is None or registry.get_managed_client(account_id) is None:
+    if registry is None or registry.session_client(account_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "configured WhatsApp account not found")
-    revision = registry.managed_account_revision(account_id)
+    revision = registry.session_revision(account_id)
     if revision is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable")
     await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": _LOCK_ID})
@@ -102,7 +102,7 @@ async def start_platform_whatsapp_pairing(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "configured WhatsApp account name conflicts"
             )
-        client = registry.get_managed_client(account_id)
+        client = registry.session_client(account_id)
         if client is None:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable"
@@ -171,7 +171,7 @@ async def get_platform_whatsapp_pairing(
     db: AsyncSession,
     *,
     session_id: UUID,
-    registry: ConfiguredWhatsAppSidecarRegistry | None,
+    registry: WhatsAppSidecarClients | None,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     onboarding = await _session(db, session_id)
     if onboarding.state in {
@@ -187,7 +187,7 @@ async def cancel_platform_whatsapp_pairing(
     db: AsyncSession,
     *,
     session_id: UUID,
-    registry: ConfiguredWhatsAppSidecarRegistry | None,
+    registry: WhatsAppSidecarClients | None,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     onboarding = await _session(db, session_id)
     if onboarding.state == WHATSAPP_ONBOARDING_STATE_CANCELED:
@@ -196,7 +196,7 @@ async def cancel_platform_whatsapp_pairing(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "archive the connected WhatsApp account instead"
         )
-    client = registry.get_managed_client(onboarding.sidecar_account_id) if registry else None
+    client = registry.session_client(onboarding.sidecar_account_id) if registry else None
     try:
         stopped = (
             await stop_whatsapp_pairing(client, allow_remote_logout_recovery=True)
@@ -220,7 +220,7 @@ async def cancel_platform_whatsapp_pairing(
 async def expire_stale_platform_whatsapp_pairing_sessions(
     db: AsyncSession,
     *,
-    registry: ConfiguredWhatsAppSidecarRegistry,
+    registry: WhatsAppSidecarClients,
 ) -> int:
     session_ids = list(
         (
@@ -246,14 +246,14 @@ async def _refresh(
     db: AsyncSession,
     *,
     onboarding: ChannelWhatsAppOnboardingSession,
-    registry: ConfiguredWhatsAppSidecarRegistry | None,
+    registry: WhatsAppSidecarClients | None,
     start_qr: bool,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     if registry is None:
         return await _error(db, onboarding)
-    client = registry.get_managed_client(onboarding.sidecar_account_id)
+    client = registry.session_client(onboarding.sidecar_account_id)
     if client is None or (
-        registry.managed_account_revision(onboarding.sidecar_account_id)
+        registry.session_revision(onboarding.sidecar_account_id)
         != onboarding.sidecar_config_revision
     ):
         return await _error(db, onboarding)
@@ -272,7 +272,6 @@ async def _refresh(
         await _promote(
             db,
             onboarding=onboarding,
-            registry=registry,
             phone_number=phone_number,
             account_jid=health.account_jid,
             account_lid=health.account_lid,
@@ -312,14 +311,12 @@ async def _promote(
     db: AsyncSession,
     *,
     onboarding: ChannelWhatsAppOnboardingSession,
-    registry: ConfiguredWhatsAppSidecarRegistry,
     phone_number: str,
     account_jid: str,
     account_lid: str,
 ) -> None:
     account_id = onboarding.sidecar_account_id
     session_id = onboarding.id
-    newly_bound = False
     account = await db.get(ChannelAccount, onboarding.sidecar_account_id)
     try:
         if account is None:
@@ -346,17 +343,12 @@ async def _promote(
             config["phone_number"] = phone_number
             config["self_identity"] = {"id": account_jid, "lid": account_lid}
             account.config = config
-        newly_bound = await registry.bind_managed_account(
-            account.id, config_revision=onboarding.sidecar_config_revision
-        )
         onboarding.channel_account_id = account.id
         onboarding.state = WHATSAPP_ONBOARDING_STATE_CONNECTED
         onboarding.completed_at = datetime.now(UTC)
         await db.commit()
     except BaseException as exc:
         await db.rollback()
-        if newly_bound:
-            await registry.unbind_managed_account(account_id)
         failed = await _session(db, session_id)
         failed.state = WHATSAPP_ONBOARDING_STATE_ERROR
         await db.commit()

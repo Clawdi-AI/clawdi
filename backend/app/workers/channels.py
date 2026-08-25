@@ -7,6 +7,7 @@ import signal
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.core.config import settings
 from app.core.database import async_session_factory, engine
 from app.core.logging_config import configure_application_logging
 from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
@@ -18,9 +19,15 @@ from app.services.discord_command_reconciliation_worker import (
 )
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.metrics import metrics_content_type, render_metrics
+from app.services.plugin_catalog import PluginCatalogSyncWorker
 from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
+from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
+from app.services.whatsapp_managed_onboarding import (
+    expire_stale_platform_whatsapp_pairing_sessions,
+)
+from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 configure_application_logging()
 log = logging.getLogger(__name__)
@@ -163,14 +170,63 @@ async def run_channel_workers(
     stop: asyncio.Event,
     health: ChannelWorkerHealth | None = None,
 ) -> None:
+    whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
+        settings.channel_whatsapp_baileys_sidecar_token.get_secret_value(),
+        base_url=settings.channel_whatsapp_baileys_sidecar_url or None,
+    )
     await start_postgres_listener()
     try:
+        await whatsapp_sidecars.start()
+        if whatsapp_sidecars.enabled:
+            await whatsapp_sidecars.reconcile_custom_ownership()
+            await whatsapp_sidecars.reconcile_managed_ownership()
         workers = build_channel_workers()
         if health is not None:
             health.ready = True
-        await asyncio.gather(*(worker.run_forever(stop) for worker in workers))
+        async with asyncio.TaskGroup() as tasks:
+            for worker in workers:
+                tasks.create_task(worker.run_forever(stop))
+            if settings.plugin_catalog_sync_enabled:
+                catalog_worker = PluginCatalogSyncWorker(
+                    async_session_factory,
+                    interval_seconds=settings.plugin_catalog_sync_interval_seconds,
+                    timeout_seconds=settings.plugin_catalog_sync_timeout_seconds,
+                )
+                tasks.create_task(catalog_worker.run_forever(stop))
+            if whatsapp_sidecars.enabled:
+                tasks.create_task(_run_whatsapp_ownership(stop, whatsapp_sidecars))
     finally:
-        await stop_postgres_listener()
+        try:
+            await whatsapp_sidecars.stop()
+        finally:
+            await stop_postgres_listener()
+
+
+async def _run_whatsapp_ownership(
+    stop: asyncio.Event,
+    registry: ConfiguredWhatsAppSidecarRegistry,
+) -> None:
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=15)
+            return
+        except TimeoutError:
+            pass
+        try:
+            await registry.reconcile_custom_ownership()
+            await registry.reconcile_managed_ownership()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("WhatsApp sidecar ownership reconciliation failed")
+        try:
+            async with async_session_factory() as db:
+                await expire_stale_whatsapp_onboarding_sessions(db, registry=registry)
+                await expire_stale_platform_whatsapp_pairing_sessions(db, registry=registry)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("WhatsApp onboarding expiry sweep failed")
 
 
 async def main() -> None:

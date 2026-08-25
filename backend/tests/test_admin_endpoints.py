@@ -3956,7 +3956,7 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         client_factory=lambda _config: fake,
     )
     await registry.start()
-    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_clients", lambda: registry)
     payload = {
         "account_id": str(account_id),
         "request_id": str(uuid.uuid4()),
@@ -3998,7 +3998,7 @@ async def test_admin_platform_whatsapp_qr_promotes_only_after_connected_and_logo
         await registry.start()
         await registry.reconcile_managed_ownership(db_session)
         assert registry.managed_is_bound(account_id)
-        monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+        monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_clients", lambda: registry)
         db_session.add(
             ChannelBotAgentLink(
                 account_id=account.id,
@@ -4043,7 +4043,7 @@ async def test_admin_platform_whatsapp_errors_are_authenticated_configured_only_
 ):
     import app.routes.admin as admin_routes
 
-    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: None)
+    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_clients", lambda: None)
     payload = {
         "account_id": str(uuid.uuid4()),
         "request_id": str(uuid.uuid4()),
@@ -4075,7 +4075,7 @@ async def test_admin_platform_whatsapp_cancel_success_is_no_store(admin_client, 
         client_factory=lambda _config: fake,
     )
     await registry.start()
-    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_clients", lambda: registry)
     pairing_url = "/v1/admin/channels/whatsapp/pairing-sessions"
     try:
         started = await admin_client.post(

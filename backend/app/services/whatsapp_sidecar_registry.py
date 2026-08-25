@@ -122,17 +122,23 @@ class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
     async def pairing_recover(self) -> WhatsAppSidecarPairingStatus: ...
 
 
+class WhatsAppSidecarClients(Protocol):
+    @property
+    def enabled(self) -> bool: ...
+
+    async def service_ready(self) -> bool: ...
+
+    def session_client(self, session_id: UUID) -> WhatsAppSidecarClient | None: ...
+
+    def session_revision(self, session_id: UUID) -> str | None: ...
+
+
 SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppSidecarClient]
-_active_registry: ConfiguredWhatsAppSidecarRegistry | None = None
+_active_sidecar_clients: ConfiguredWhatsAppSidecarClientPool | None = None
 
 
-class ConfiguredWhatsAppSidecarRegistry:
-    """Bind product-owned accounts to opaque sessions on one provider service.
-
-    The sidecar endpoint has no tenant, Shared, Custom, inventory, or capacity
-    knowledge. PostgreSQL owns those policies; this registry only creates a
-    session-scoped client and restores local transport/ingress bindings.
-    """
+class ConfiguredWhatsAppSidecarClientPool:
+    """Process-local HTTP pool for stateless sidecar control operations."""
 
     def __init__(
         self,
@@ -152,13 +158,6 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._shared_service: WhatsAppBaileysSidecarService | None = None
         self._service_client: WhatsAppSidecarClient | None = None
         self._clients_by_session: dict[UUID, WhatsAppSidecarClient] = {}
-        self._bound_managed_accounts: set[UUID] = set()
-        self._managed_attach_failures: dict[UUID, str] = {}
-        self._custom_session_to_account: dict[UUID, UUID] = {}
-        self._custom_account_to_session: dict[UUID, UUID] = {}
-        self._blocked_custom_sessions: set[UUID] = set()
-        self._ingress_tasks: dict[UUID, asyncio.Task[None]] = {}
-        self._custom_reconcile_lock = asyncio.Lock()
         self._started = False
         if self.enabled:
             self._service_config()
@@ -166,6 +165,116 @@ class ConfiguredWhatsAppSidecarRegistry:
     @property
     def enabled(self) -> bool:
         return bool(self._api_token)
+
+    async def start(self) -> None:
+        global _active_sidecar_clients
+        if self._started or _active_sidecar_clients is not None:
+            raise RuntimeError("WhatsApp sidecar clients are already started")
+        if self._uses_shared_service and self._shared_service is None:
+            self._shared_service = WhatsAppBaileysSidecarService(self._service_config())
+        self._started = True
+        _active_sidecar_clients = self
+
+    async def stop(self) -> None:
+        global _active_sidecar_clients
+        if _active_sidecar_clients is self:
+            _active_sidecar_clients = None
+        self._started = False
+        clients = tuple(self._clients_by_session.values())
+        self._clients_by_session.clear()
+        if self._service_client is not None:
+            clients = (*clients, self._service_client)
+            self._service_client = None
+        if clients:
+            await asyncio.gather(*(client.aclose() for client in clients), return_exceptions=True)
+        if self._shared_service is not None:
+            await self._shared_service.aclose()
+            self._shared_service = None
+
+    async def service_ready(self) -> bool:
+        if not self._started or not self.enabled:
+            return False
+        if self._shared_service is not None:
+            try:
+                return await self._shared_service.service_ready()
+            except WhatsAppSidecarError:
+                return False
+        if self._service_client is None:
+            self._service_client = self._client_factory(self._service_config())
+        try:
+            return await self._service_client.service_ready()
+        except WhatsAppSidecarError:
+            return False
+
+    def session_client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
+        return self._client(session_id)
+
+    def session_revision(self, session_id: UUID) -> str | None:
+        config = self._session_config(session_id)
+        return config.binding_revision if config is not None else None
+
+    def _client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
+        if not self._started or not self.enabled:
+            return None
+        client = self._clients_by_session.get(session_id)
+        if client is None:
+            config = self._session_config(session_id)
+            if config is None:
+                return None
+            client = (
+                self._shared_service.session_client(session_id)
+                if self._shared_service is not None
+                else self._client_factory(config)
+            )
+            self._clients_by_session[session_id] = client
+        return client
+
+    def _session_config(self, session_id: UUID) -> WhatsAppBaileysSidecarConfig | None:
+        if not self.enabled:
+            return None
+        return WhatsAppBaileysSidecarConfig(
+            api_token=self._api_token,
+            base_url=self._base_url,
+            unix_socket_path=self._unix_socket_path,
+            timeout_seconds=self._timeout_seconds,
+            account_id=session_id,
+        )
+
+    def _service_config(self) -> WhatsAppBaileysSidecarConfig:
+        return WhatsAppBaileysSidecarConfig(
+            api_token=self._api_token,
+            base_url=self._base_url,
+            unix_socket_path=self._unix_socket_path,
+            timeout_seconds=self._timeout_seconds,
+        )
+
+
+class ConfiguredWhatsAppSidecarRegistry(ConfiguredWhatsAppSidecarClientPool):
+    """Own provider ingress and account bindings in the channel worker."""
+
+    def __init__(
+        self,
+        api_token: str,
+        *,
+        base_url: str | None = None,
+        unix_socket_path: str = DEFAULT_WHATSAPP_SIDECAR_SOCKET_PATH,
+        timeout_seconds: float = 10.0,
+        client_factory: SidecarClientFactory | None = None,
+    ) -> None:
+        super().__init__(
+            api_token,
+            base_url=base_url,
+            unix_socket_path=unix_socket_path,
+            timeout_seconds=timeout_seconds,
+            client_factory=client_factory,
+        )
+        self._bound_managed_accounts: set[UUID] = set()
+        self._managed_attach_failures: dict[UUID, str] = {}
+        self._custom_session_to_account: dict[UUID, UUID] = {}
+        self._custom_account_to_session: dict[UUID, UUID] = {}
+        self._blocked_custom_sessions: set[UUID] = set()
+        self._ingress_tasks: dict[UUID, asyncio.Task[None]] = {}
+        self._custom_reconcile_lock = asyncio.Lock()
 
     @property
     def managed_account_ids(self) -> tuple[UUID, ...]:
@@ -211,20 +320,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     def custom_account_for_session(self, session_id: UUID) -> UUID | None:
         return self._custom_session_to_account.get(session_id)
 
-    async def start(self) -> None:
-        global _active_registry
-        if self._started or _active_registry is not None:
-            raise RuntimeError("WhatsApp sidecar registry is already started")
-        if self._uses_shared_service and self._shared_service is None:
-            self._shared_service = WhatsAppBaileysSidecarService(self._service_config())
-        self._started = True
-        _active_registry = self
-
     async def stop(self) -> None:
-        global _active_registry
-        if _active_registry is self:
-            _active_registry = None
-        self._started = False
         tasks = tuple(self._ingress_tasks.values())
         self._ingress_tasks.clear()
         for task in tasks:
@@ -238,31 +334,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._custom_session_to_account.clear()
         self._custom_account_to_session.clear()
         self._blocked_custom_sessions.clear()
-        clients = tuple(self._clients_by_session.values())
-        self._clients_by_session.clear()
-        if self._service_client is not None:
-            clients = (*clients, self._service_client)
-            self._service_client = None
-        if clients:
-            await asyncio.gather(*(client.aclose() for client in clients), return_exceptions=True)
-        if self._shared_service is not None:
-            await self._shared_service.aclose()
-            self._shared_service = None
-
-    async def service_ready(self) -> bool:
-        if not self._started or not self.enabled:
-            return False
-        if self._shared_service is not None:
-            try:
-                return await self._shared_service.service_ready()
-            except WhatsAppSidecarError:
-                return False
-        if self._service_client is None:
-            self._service_client = self._client_factory(self._service_config())
-        try:
-            return await self._service_client.service_ready()
-        except WhatsAppSidecarError:
-            return False
+        await super().stop()
 
     async def bind_managed_account(self, account_id: UUID, *, config_revision: str) -> bool:
         client = self._client(account_id)
@@ -445,33 +517,15 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._custom_account_to_session.pop(account_id, None)
         return True
 
-    async def reconcile_custom_ownership(self) -> None:
+    async def reconcile_custom_ownership(self, db: AsyncSession | None = None) -> None:
         if not self.enabled:
             return
         async with self._custom_reconcile_lock:
-            async with async_session_factory() as db:
-                accounts = list(
-                    (
-                        await db.scalars(
-                            select(ChannelAccount).where(
-                                ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
-                                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                                ChannelAccount.archived_at.is_(None),
-                            )
-                        )
-                    ).all()
-                )
-                sessions = list(
-                    (
-                        await db.scalars(
-                            select(ChannelWhatsAppOnboardingSession).where(
-                                ChannelWhatsAppOnboardingSession.ownership_kind
-                                == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
-                                ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_STATES),
-                            )
-                        )
-                    ).all()
-                )
+            if db is None:
+                async with async_session_factory() as owned_db:
+                    accounts, sessions = await self._custom_ownership_rows(owned_db)
+            else:
+                accounts, sessions = await self._custom_ownership_rows(db)
 
             owners: dict[UUID, tuple[UUID, str]] = {}
             invalid_sessions: set[UUID] = set()
@@ -557,6 +611,34 @@ class ConfiguredWhatsAppSidecarRegistry:
                         await self._block_custom_session_unlocked(session_id, current_account)
                     else:
                         self._blocked_custom_sessions.discard(session_id)
+
+    async def _custom_ownership_rows(
+        self,
+        db: AsyncSession,
+    ) -> tuple[list[ChannelAccount], list[ChannelWhatsAppOnboardingSession]]:
+        accounts = list(
+            (
+                await db.scalars(
+                    select(ChannelAccount).where(
+                        ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                        ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                        ChannelAccount.archived_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        sessions = list(
+            (
+                await db.scalars(
+                    select(ChannelWhatsAppOnboardingSession).where(
+                        ChannelWhatsAppOnboardingSession.ownership_kind
+                        == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+                        ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_STATES),
+                    )
+                )
+            ).all()
+        )
+        return accounts, sessions
 
     async def _block_custom_session_unlocked(
         self,
@@ -669,41 +751,11 @@ class ConfiguredWhatsAppSidecarRegistry:
                     _PROVIDER_INGRESS_RETRY_MAX_SECONDS,
                 )
 
-    def _client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
-        if not self._started or not self.enabled:
-            return None
-        client = self._clients_by_session.get(session_id)
-        if client is None:
-            config = self._session_config(session_id)
-            if config is None:
-                return None
-            client = (
-                self._shared_service.session_client(session_id)
-                if self._shared_service is not None
-                else self._client_factory(config)
-            )
-            self._clients_by_session[session_id] = client
-        return client
 
-    def _session_config(self, session_id: UUID) -> WhatsAppBaileysSidecarConfig | None:
-        if not self.enabled:
-            return None
-        return WhatsAppBaileysSidecarConfig(
-            api_token=self._api_token,
-            base_url=self._base_url,
-            unix_socket_path=self._unix_socket_path,
-            timeout_seconds=self._timeout_seconds,
-            account_id=session_id,
-        )
-
-    def _service_config(self) -> WhatsAppBaileysSidecarConfig:
-        return WhatsAppBaileysSidecarConfig(
-            api_token=self._api_token,
-            base_url=self._base_url,
-            unix_socket_path=self._unix_socket_path,
-            timeout_seconds=self._timeout_seconds,
-        )
+def get_active_whatsapp_sidecar_clients() -> ConfiguredWhatsAppSidecarClientPool | None:
+    return _active_sidecar_clients
 
 
 def get_active_whatsapp_sidecar_registry() -> ConfiguredWhatsAppSidecarRegistry | None:
-    return _active_registry
+    active = _active_sidecar_clients
+    return active if isinstance(active, ConfiguredWhatsAppSidecarRegistry) else None

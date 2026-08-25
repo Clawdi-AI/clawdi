@@ -23,15 +23,15 @@ from app.services.whatsapp_device_onboarding import (
     whatsapp_onboarding_readiness,
 )
 from app.services.whatsapp_sidecar_registry import (
-    ConfiguredWhatsAppSidecarRegistry,
-    get_active_whatsapp_sidecar_registry,
+    WhatsAppSidecarClients,
+    get_active_whatsapp_sidecar_clients,
 )
 
 router = APIRouter(prefix="/channels/whatsapp/onboarding", tags=["channels"])
 
 
-def get_whatsapp_sidecar_registry() -> ConfiguredWhatsAppSidecarRegistry | None:
-    return get_active_whatsapp_sidecar_registry()
+def get_whatsapp_sidecar_clients() -> WhatsAppSidecarClients | None:
+    return get_active_whatsapp_sidecar_clients()
 
 
 def _prevent_sensitive_caching(response: Response) -> None:
@@ -44,7 +44,7 @@ async def get_whatsapp_onboarding_readiness(
     response: Response,
     _auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingReadinessResponse:
     _prevent_sensitive_caching(response)
     return await whatsapp_onboarding_readiness(db, registry=registry)
@@ -56,7 +56,7 @@ async def create_whatsapp_onboarding_session(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await start_whatsapp_onboarding(
@@ -74,7 +74,7 @@ async def get_whatsapp_onboarding_session(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await refresh_whatsapp_onboarding(
@@ -92,7 +92,7 @@ async def create_whatsapp_onboarding_pairing_code(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await request_whatsapp_pairing_code(
@@ -110,7 +110,7 @@ async def cancel_whatsapp_onboarding_session(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await cancel_whatsapp_onboarding(
@@ -127,7 +127,7 @@ async def retry_whatsapp_onboarding_session(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await retry_whatsapp_onboarding(
@@ -144,7 +144,7 @@ async def repair_whatsapp_channel_account(
     response: Response,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
-    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+    registry: WhatsAppSidecarClients | None = Depends(get_whatsapp_sidecar_clients),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _prevent_sensitive_caching(response)
     return await repair_whatsapp_account(
