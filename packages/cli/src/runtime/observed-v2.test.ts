@@ -109,7 +109,29 @@ describe("hosted runtime observed v2", () => {
 		mkdirSync(dirname(paths.cliBootstrapStatus), { recursive: true });
 		writeFileSync(
 			paths.cliBootstrapStatus,
-			JSON.stringify({ version: "0.0.0-stale", imageShimExtension: true }),
+			JSON.stringify({
+				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+				generatedAt: "2026-07-13T06:00:00.000Z",
+				status: "installed",
+				source: "npm",
+				packageSpec: "clawdi@0.0.0-stale",
+				registry: "https://registry.npmjs.org",
+				npmPrefix: paths.cliNpmPrefix,
+				npmCache: paths.cliNpmCache,
+				activePath: paths.cliManagedBin,
+				activeTarget: join(paths.cliNpmPrefix, "bin", "clawdi"),
+				version: "0.0.0-stale",
+				verification: {
+					verifiedAt: "2026-07-13T06:00:00.000Z",
+					device: 0,
+					inode: 0,
+					size: 0,
+					modifiedAtMs: 0,
+				},
+				previous: null,
+				bad: null,
+				error: null,
+			}),
 		);
 
 		const observed = readHostedRuntimeObserved(paths);

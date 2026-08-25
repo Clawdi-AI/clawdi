@@ -221,6 +221,7 @@ function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
 	);
 	expect(install.status, install.stderr).toBe(0);
 	const activeTarget = join(prefix, "bin", "clawdi");
+	const activeIdentity = statSync(activeTarget);
 	mkdirSync(dirname(paths.cliManagedBin), { recursive: true, mode: 0o755 });
 	symlinkSync(activeTarget, paths.cliManagedBin);
 	writeFileSync(
@@ -237,6 +238,15 @@ function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
 			activePath: paths.cliManagedBin,
 			activeTarget,
 			version,
+			verification: {
+				verifiedAt: new Date().toISOString(),
+				device: activeIdentity.dev,
+				inode: activeIdentity.ino,
+				size: activeIdentity.size,
+				modifiedAtMs: activeIdentity.mtimeMs,
+			},
+			previous: null,
+			bad: null,
 			error: null,
 		})}\n`,
 		{ mode: 0o600 },
