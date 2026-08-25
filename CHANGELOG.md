@@ -10,6 +10,20 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.18
+
+Package: `clawdi@0.14.18`
+
+### Changed
+
+- Steady-state converge now completes in about a second with single-digit process spawns (previously ~25s and dozens of spawns): Hermes config reconciliation reads and writes the config once per round, OpenClaw probes are cached against manifest revisions with on-disk verification, and systemd state is read in batch.
+- Successful convergence is reported to the control plane immediately instead of waiting for the next heartbeat, so plugin and skill installs show as applied right away.
+- The per-round recursive ownership sweep of the tenant home was removed; every write path now creates files under the correct owner (requires upgrading from 0.14.17).
+
+### Removed
+
+- Expired migration guards for pre-0.14.17 on-disk state (legacy applied-state fields, CLI upgrade journal, MCP ledger and WhatsApp marker cleanup, retired runtime state cleanup, Hermes legacy gateway argv). Upgrading directly from 0.13.x to 0.14.18 is not supported; upgrade through 0.14.17 first.
+
 ## Clawdi CLI v0.14.17
 
 Package: `clawdi@0.14.17`
