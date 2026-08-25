@@ -15452,6 +15452,10 @@ def _install_discord_gateway_test_session_factory(monkeypatch: pytest.MonkeyPatc
         "app.routes.channel_routers.discord.async_session_factory",
         async_sessionmaker(gateway_engine, expire_on_commit=False),
     )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.discord.database_engine",
+        gateway_engine,
+    )
 
 
 def test_discord_gateway_rejects_unsupported_encoding_and_compress():
