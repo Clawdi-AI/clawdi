@@ -219,13 +219,14 @@ class DiscordGatewayWorker:
     ) -> bool:
         lock_key = discord_gateway_advisory_lock_key(account_id)
         async with self._lock_engine.connect() as lock_connection:
-            acquired = await _try_advisory_lock(lock_connection, lock_key)
+            acquired = await try_advisory_lock(lock_connection, lock_key)
             if not acquired:
                 return False
             try:
                 await self._connect_and_record(account_id, stop, state)
             finally:
-                await _release_advisory_lock(lock_connection, lock_key)
+                if not await release_advisory_lock(lock_connection, lock_key):
+                    raise RuntimeError("discord gateway advisory unlock failed")
         return True
 
     async def _connect_and_record(
@@ -656,7 +657,7 @@ def discord_gateway_close_code(exc: ConnectionClosed) -> int | None:
     return exc.rcvd.code if exc.rcvd is not None else None
 
 
-async def _try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
+async def try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
     result = await connection.execute(
         text("SELECT pg_try_advisory_lock(:lock_key)"),
         {"lock_key": lock_key},
@@ -665,12 +666,13 @@ async def _try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool
     return result.scalar_one() is True
 
 
-async def _release_advisory_lock(connection: AsyncConnection, lock_key: int) -> None:
-    await connection.execute(
+async def release_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
+    result = await connection.execute(
         text("SELECT pg_advisory_unlock(:lock_key)"),
         {"lock_key": lock_key},
     )
     await connection.commit()
+    return result.scalar_one() is True
 
 
 async def _recv_gateway_frame(websocket: _GatewayConnection) -> GatewayFrame:
