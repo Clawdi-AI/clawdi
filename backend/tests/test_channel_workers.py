@@ -11,7 +11,11 @@ from app.routes.channel_routers.whatsapp import _wait_whatsapp_websocket_inbox
 from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
-from app.services.channel_wakeups import ChannelWakeup
+from app.services.channel_wakeups import (
+    CHANNEL_DELIVERIES_ENQUEUED,
+    ChannelWakeup,
+    wait_for_channel_inbound_messages,
+)
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import ChannelRetentionBatch
 from app.services.discord_command_reconciliation_worker import (
@@ -134,10 +138,42 @@ async def test_channel_delivery_worker_wakes_on_enqueue_signal(monkeypatch):
     task = asyncio.create_task(worker.run_forever(stop))
     await idle.wait()
 
-    wakeup.signal()
+    wakeup.signal(CHANNEL_DELIVERIES_ENQUEUED)
 
     await asyncio.wait_for(awakened.wait(), timeout=1)
     await asyncio.wait_for(task, timeout=1)
+    assert calls == 2
+
+
+def test_channel_wakeup_routes_signal_by_account():
+    wakeup = ChannelWakeup()
+    account_a = wakeup.subscribe("account-a")
+    account_b = wakeup.subscribe("account-b")
+
+    wakeup.signal("account-a")
+
+    assert account_a.is_set()
+    assert not account_b.is_set()
+
+
+@pytest.mark.asyncio
+async def test_channel_inbound_wait_falls_back_when_notification_is_lost():
+    calls = 0
+
+    async def fetch():
+        nonlocal calls
+        calls += 1
+        return [] if calls == 1 else ["message"]
+
+    messages = await wait_for_channel_inbound_messages(
+        fetch,
+        account_id="account-a",
+        timeout_seconds=1,
+        fallback_poll_seconds=0.001,
+        wakeup=ChannelWakeup(),
+    )
+
+    assert messages == ["message"]
     assert calls == 2
 
 
@@ -214,7 +250,7 @@ async def test_whatsapp_websocket_inbox_wakes_on_inbound_signal(monkeypatch):
     )
     await first_query_complete.wait()
 
-    wakeup.signal()
+    wakeup.signal("00000000-0000-4000-8000-000000000906")
 
     events = await asyncio.wait_for(waiting, timeout=1)
     assert [event.provider_message_id for event in events] == ["message-1"]

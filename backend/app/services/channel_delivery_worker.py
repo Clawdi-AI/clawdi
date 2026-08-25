@@ -7,7 +7,11 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.services.channel_wakeups import ChannelWakeup, channel_deliveries_enqueued
+from app.services.channel_wakeups import (
+    CHANNEL_DELIVERIES_ENQUEUED,
+    ChannelWakeup,
+    channel_deliveries_enqueued,
+)
 from app.services.channels import claim_next_channel_delivery, deliver_channel_delivery
 
 log = logging.getLogger(__name__)
@@ -40,7 +44,7 @@ class ChannelDeliveryWorker:
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()
-        notified = self._wakeup.subscribe()
+        notified = self._wakeup.subscribe(CHANNEL_DELIVERIES_ENQUEUED)
         try:
             while not stop_event.is_set():
                 notified.clear()
@@ -70,4 +74,4 @@ class ChannelDeliveryWorker:
                                 task.cancel()
                         await asyncio.gather(stop_task, wake_task, return_exceptions=True)
         finally:
-            self._wakeup.unsubscribe(notified)
+            self._wakeup.unsubscribe(CHANNEL_DELIVERIES_ENQUEUED, notified)

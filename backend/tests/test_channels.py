@@ -5995,7 +5995,10 @@ async def test_telegram_get_updates_wait_helper_sees_new_committed_update(
                 )
             )
             await insert_session.flush()
-            await notify_channel_inbound_message_enqueued(insert_session)
+            await notify_channel_inbound_message_enqueued(
+                insert_session,
+                account_id=created["id"],
+            )
             await insert_session.commit()
 
         updates = await asyncio.wait_for(pending, timeout=1)
