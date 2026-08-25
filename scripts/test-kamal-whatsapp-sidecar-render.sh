@@ -140,6 +140,22 @@ raise "top-level logging did not render journald" unless config.logging_args == 
 config.roles.each do |role|
   raise "#{role.name} logging drifted" unless role.logging_args == expected_logging_args
 end
+
+web = config.role("web")
+unless web.specialized_env.clear == { "WEB_CONCURRENCY" => 1 }
+  raise "web role lost its single-worker contract"
+end
+raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "4g"
+web_env = web.env(web.primary_host).clear
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW") == [ 20, 20 ]
+  raise "web role did not inherit the top-level database pool"
+end
+channels_worker = config.role("channels-worker")
+worker_role = channels_worker.specialized_env.clear == { "CLAWDI_PROCESS_ROLE" => "channels-worker" }
+unless worker_role && !channels_worker.running_proxy?
+  raise "channels-worker role contract drifted"
+end
+
 config.accessories.each do |accessory|
   command = Kamal::Commands::Accessory.new(config, name: accessory.name).run
   unless command.each_cons(2).include?([ "--restart", "unless-stopped" ])
