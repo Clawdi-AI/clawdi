@@ -20,8 +20,13 @@ describe("agent overview registry", () => {
 			"skills",
 			"vaults",
 		]);
-		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);
-		expect(hosted[0]?.layout).toBe(connected[0]?.layout);
+		expect(hosted[0]?.modules.map((module) => module.id)).toEqual([
+			"projects",
+			"skills",
+			"vaults",
+			"plugins",
+		]);
+		expect(hosted[0]?.layout).toBe("two-column");
 		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
 		expect(hosted[1]?.modules).toEqual(connected[1]?.modules);
 		expect(hosted[2]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);

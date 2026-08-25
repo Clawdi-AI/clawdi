@@ -35,8 +35,9 @@ describe("hosted agent detail header", () => {
 		expect(source).toContain("Open in new tab");
 		expect(source).toContain("Opening Files…");
 		expect(source).not.toContain('target="_blank"');
+		expect(source).toContain("hostedAgentVisibleSectionIds(");
 		expect(source).toContain(
-			'const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;',
+			'const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";',
 		);
 
 		// The Clerk token only ever travels in the HTTPS Authorization header —

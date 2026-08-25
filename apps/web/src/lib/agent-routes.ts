@@ -158,6 +158,16 @@ export function agentRouteOwnsSection(
 	);
 }
 
+/** Whether the current pathname is this agent section or one of its valid detail routes. */
+export function agentRouteBelongsToSection(
+	pathname: string,
+	agentId: string,
+	section: AgentSectionId,
+): boolean {
+	const route = parseAgentPathname(pathname);
+	return Boolean(route && agentRouteIdsEqual(route.agentId, agentId) && route.section === section);
+}
+
 function optionalSearchString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }

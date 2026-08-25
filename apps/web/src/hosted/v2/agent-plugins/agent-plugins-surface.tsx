@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useRouter } from "@tanstack/react-router";
 import { AlertCircle, Blocks, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -29,17 +29,16 @@ import {
 	type AgentPluginGroup,
 	type AgentPluginInventoryItem,
 	agentPluginInstallability,
-	agentPluginIsStalled,
 	agentPluginMatches,
 	assignAgentPluginGroups,
 	buildAgentPluginInventory,
 	pluginDisplayName,
 	pluginHasUpdate,
 } from "./agent-plugin-model";
-
-const DESIRED_QUERY_KEY = ["get", "/v1/agents/{agent_id}/agent-plugins"] as const;
-const ACTIVE_INSTALL_POLL_MS = 5_000;
-const STALLED_INSTALL_POLL_MS = 60_000;
+import {
+	AGENT_PLUGIN_DESIRED_QUERY_KEY,
+	agentPluginDesiredStateQueryOptions,
+} from "./agent-plugin-query";
 
 type PendingPluginMutation = {
 	name: string;
@@ -77,24 +76,7 @@ export function AgentPluginsSurface({
 		convergenceLog.current = { agentId, seen: new Map() };
 	}
 	const catalogQuery = api.useQuery("get", "/v1/plugin-catalog", {});
-	const desiredQuery = api.useQuery(
-		"get",
-		"/v1/agents/{agent_id}/agent-plugins",
-		{ params: { path: { agent_id: agentId } } },
-		{
-			refetchInterval: (query) => {
-				const plugins = query.state.data?.plugins;
-				if (!plugins?.some((plugin) => plugin.convergence === "not_observed")) return false;
-				const now = new Date();
-				return plugins.some(
-					(plugin) => plugin.convergence === "not_observed" && !agentPluginIsStalled(plugin, now),
-				)
-					? ACTIVE_INSTALL_POLL_MS
-					: STALLED_INSTALL_POLL_MS;
-			},
-			refetchIntervalInBackground: false,
-		},
-	);
+	const desiredQuery = useQuery(agentPluginDesiredStateQueryOptions(api, agentId));
 	const installMutation = api.useMutation(
 		"put",
 		"/v1/agents/{agent_id}/agent-plugins/{plugin_name}",
@@ -104,7 +86,8 @@ export function AgentPluginsSurface({
 		"/v1/agents/{agent_id}/agent-plugins/{plugin_name}",
 	);
 
-	const refreshDesired = () => queryClient.invalidateQueries({ queryKey: DESIRED_QUERY_KEY });
+	const refreshDesired = () =>
+		queryClient.invalidateQueries({ queryKey: AGENT_PLUGIN_DESIRED_QUERY_KEY });
 	const openPlugin = (name: string) => {
 		void router
 			.navigate({ href: agentPluginDetailHref(agentId, name), resetScroll: false })

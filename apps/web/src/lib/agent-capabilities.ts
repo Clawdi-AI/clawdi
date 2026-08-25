@@ -8,6 +8,7 @@ import {
 export type AgentOverviewModuleId =
 	| "projects"
 	| "skills"
+	| "plugins"
 	| "memories"
 	| "vaults"
 	| "connectors"
@@ -33,6 +34,11 @@ const WORKSPACE_RESOURCES = AGENT_OVERVIEW_WORKSPACE_SECTION_IDS.map((section) =
 	section,
 }));
 
+const HOSTED_WORKSPACE_RESOURCES = [
+	...WORKSPACE_RESOURCES,
+	{ id: "plugins", section: "plugins" },
+] as const;
+
 const SHARED_RESOURCES = AGENT_SHARED_SECTION_IDS.map((section) => ({
 	id: section,
 	section,
@@ -57,8 +63,8 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "three-column",
-			modules: WORKSPACE_RESOURCES,
+			layout: "two-column",
+			modules: HOSTED_WORKSPACE_RESOURCES,
 		},
 		{
 			id: "shared",

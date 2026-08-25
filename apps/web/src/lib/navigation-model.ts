@@ -461,14 +461,8 @@ export const CONNECTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
 	agentNavigationSectionIds("hosted");
 
-export function hostedAgentVisibleSectionIds(
-	filesAvailable: boolean,
-	agentPluginsEnabled = false,
-): AgentSectionId[] {
-	return HOSTED_AGENT_SECTION_IDS.filter(
-		(section) =>
-			(filesAvailable || section !== "files") && (agentPluginsEnabled || section !== "plugins"),
-	);
+export function hostedAgentVisibleSectionIds(filesAvailable: boolean): AgentSectionId[] {
+	return HOSTED_AGENT_SECTION_IDS.filter((section) => filesAvailable || section !== "files");
 }
 
 export function agentNavigationGroups(

@@ -15,12 +15,12 @@ import { defaultDeploymentRuntime, deploymentFilesUrl, isHostedRuntime } from "@
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
+	agentRouteBelongsToSection,
 	agentRouteOwnsSection,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
-import { useProductAccess } from "@/lib/product-access";
 
 export async function runManualDeploymentRefetch(
 	refetch: () => Promise<unknown>,
@@ -51,7 +51,6 @@ export function AgentHome({
 	routeSearch: AgentRouteSearch;
 }) {
 	const router = useRouter();
-	const { canUseAgentPluginsUI, isLoading: productAccessLoading } = useProductAccess();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const {
 		deployment,
@@ -66,17 +65,17 @@ export function AgentHome({
 	} = useAgentDeployment(environmentId);
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
-	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
+	const ownsCurrentSection =
+		agentRouteOwnsSection(pathname, environmentId, section) ||
+		(section === "plugins" && agentRouteBelongsToSection(pathname, environmentId, section));
 	const hostedSectionIds = deployment
-		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null, canUseAgentPluginsUI)
+		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
 		: HOSTED_AGENT_SECTION_IDS;
-	const agentPluginsAccessPending = section === "plugins" && productAccessLoading;
-	const hostedSection =
-		agentPluginsAccessPending || hostedSectionIds.some((candidate) => candidate === section);
+	const hostedSection = hostedSectionIds.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
-	// Only the exact current section may redirect an unsupported surface; a
-	// stale rendered match cannot rewrite a newer route.
+	// Canonicalize exact section roots and nested Plugins routes, while a stale
+	// rendered match cannot rewrite a newer route.
 	useEffect(() => {
 		if (!ownsCurrentSection) return;
 
@@ -152,9 +151,6 @@ export function AgentHome({
 	}
 
 	if (deployment) {
-		if (agentPluginsAccessPending) {
-			return <ConnectedAgentDetailSkeleton hosted section={section} />;
-		}
 		// Scope the detail to the deployment's selected runtime.
 		const runtime =
 			matchedRuntime && isHostedRuntime(matchedRuntime)

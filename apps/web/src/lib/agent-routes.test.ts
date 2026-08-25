@@ -8,6 +8,7 @@ import {
 	agentProjectDetailLink,
 	agentProjectResourceHref,
 	agentProjectResourceLink,
+	agentRouteBelongsToSection,
 	agentRouteOwnsSection,
 	agentSectionHref,
 	agentSectionLabel,
@@ -144,6 +145,22 @@ describe("agent routes", () => {
 		).toBe(false);
 		expect(agentRouteOwnsSection("/agents/agent-1/plugins/sui", "agent-1", "plugins")).toBe(false);
 		expect(agentRouteOwnsSection("/agents/agent-1/skills", "agent-1", "overview")).toBe(false);
+	});
+
+	it("recognizes valid nested routes without weakening current-section identity", () => {
+		expect(agentRouteBelongsToSection("/agents/AGENT-1/plugins", "agent-1", "plugins")).toBe(true);
+		expect(agentRouteBelongsToSection("/agents/AGENT-1/plugins/sui", "agent-1", "plugins")).toBe(
+			true,
+		);
+		expect(agentRouteBelongsToSection("/agents/agent-2/plugins/sui", "agent-1", "plugins")).toBe(
+			false,
+		);
+		expect(agentRouteBelongsToSection("/agents/agent-1/plugins/sui", "agent-1", "overview")).toBe(
+			false,
+		);
+		expect(
+			agentRouteBelongsToSection("/agents/agent-1/plugins/sui/extra", "agent-1", "plugins"),
+		).toBe(false);
 	});
 
 	it("owns canonical section navigation with explicit typed search", () => {

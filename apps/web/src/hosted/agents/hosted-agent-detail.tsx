@@ -220,6 +220,8 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
+import { agentPluginOverviewState } from "@/hosted/v2/agent-plugins/agent-plugin-model";
+import { agentPluginDesiredStateQueryOptions } from "@/hosted/v2/agent-plugins/agent-plugin-query";
 import { AgentPluginsSurface } from "@/hosted/v2/agent-plugins/agent-plugins-surface";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
@@ -302,7 +304,10 @@ import {
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import {
+	AGENT_SECTION_NAVIGATION_ITEMS,
+	hostedAgentVisibleSectionIds,
+} from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
@@ -454,7 +459,6 @@ export function HostedAgentDetail({
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const { canUseAgentPluginsUI } = useProductAccess();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
@@ -492,9 +496,9 @@ export function HostedAgentDetail({
 		? agentDisplayName(agent)
 		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
 	const parsedTab = parseHostedAgentTab(section) ?? "overview";
-	const requestedTab = parsedTab === "plugins" && !canUseAgentPluginsUI ? "overview" : parsedTab;
 	const filesUrl = deploymentFilesUrl(deployment);
-	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
+	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null);
+	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
 	useSetBreadcrumbTitle(
 		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
 	);
@@ -1216,6 +1220,24 @@ function OverviewTab({
 		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
 	});
+	const pluginDesiredState = useQuery(agentPluginDesiredStateQueryOptions(useOpenApi(), agentId));
+	const pluginOverview = agentPluginOverviewState({
+		plugins: pluginDesiredState.data?.plugins,
+		isLoading: pluginDesiredState.isLoading,
+		error: shouldBlockQueryError(pluginDesiredState.error, pluginDesiredState.data)
+			? pluginDesiredState.error
+			: null,
+	});
+	const pluginsModule = {
+		description:
+			pluginOverview.kind === "loading" ? (
+				<OverviewDescriptionSkeleton label="plugins" />
+			) : pluginOverview.kind === "error" ? (
+				"Unavailable right now"
+			) : (
+				pluginOverview.description
+			),
+	};
 	const skillsModule = runtimeSkills.isLoading
 		? { description: <OverviewDescriptionSkeleton label="skills" /> }
 		: runtimeSkills.error
@@ -1321,6 +1343,7 @@ function OverviewTab({
 							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
 							: null,
 					},
+					plugins: pluginsModule,
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,

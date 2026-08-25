@@ -11,7 +11,6 @@ export type ProductAccess = {
 	legacyDashboardUrl: string | null;
 	canCreateCloudAgents: boolean;
 	canUseCloudAgents: boolean;
-	canUseAgentPluginsUI: boolean;
 	status: ProductAccessStatus;
 	isLoading: boolean;
 	isError: boolean;
@@ -32,7 +31,6 @@ export const UNAVAILABLE_PRODUCT_ACCESS: ProductAccess = {
 	legacyDashboardUrl: null,
 	canCreateCloudAgents: false,
 	canUseCloudAgents: false,
-	canUseAgentPluginsUI: false,
 	status: "unavailable",
 	isLoading: false,
 	isError: false,
