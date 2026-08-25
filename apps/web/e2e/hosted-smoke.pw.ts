@@ -4816,6 +4816,11 @@ for (const firstTimeViewport of [
 			agent_link_id: linkId,
 		});
 		await expect(page.locator("body")).not.toContainText("agent-custom-bot-token-must-not-render");
+		await page.waitForResponse((response) => {
+			const url = new URL(response.url());
+			return url.pathname === "/v1/channels/agent-links" && response.request().method() === "GET";
+		});
+		const pairingObservedAt = Date.now();
 		channelBindings.push({
 			id: "33333333-3333-4333-8333-333333333333",
 			account_id: channelId,
@@ -4829,6 +4834,12 @@ for (const firstTimeViewport of [
 		});
 		channelLink.binding_count = 1;
 		await expect(pairDialog).toHaveCount(0, { timeout: 5_000 });
+		const pairingElapsed = Date.now() - pairingObservedAt;
+		console.log(
+			`[channel-pairing-e2e] ${firstTimeViewport.label} polling convergence: ${pairingElapsed}ms`,
+		);
+		expect(pairingElapsed).toBeGreaterThanOrEqual(2_000);
+		expect(pairingElapsed).toBeLessThan(4_500);
 		const successToast = page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" });
 		await expect(successToast).toHaveCount(1);
 		await expect(successToast).toContainText("Telegram chat is ready.");

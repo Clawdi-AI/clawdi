@@ -5,9 +5,13 @@ import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	applyDeploymentEventStreamHandoff,
 	consumeServerSentEvents,
+	createDeploymentEventInvalidationBatch,
+	type DeploymentEventSignal,
 	deploymentEventQueryBelongsToAgent,
 	deploymentEventSignal,
+	EVENT_STREAM_INVALIDATION_BATCH_MS,
 	eventStreamReconnectDelay,
+	eventStreamResponseResetsCursor,
 	invalidateDeploymentEventQueries,
 	type ServerSentEvent,
 } from "@/hosted/deployment-event-stream";
@@ -74,11 +78,20 @@ describe("deployment event stream protocol", () => {
 		expect(deploymentEventSignal(event({ data: "not-json" }))).toBeNull();
 	});
 
-	test("uses 10x polling only while connected and caps exponential reconnects", () => {
+	test("uses 10x polling only while connected and jitters capped exponential reconnects", () => {
 		expect(eventStreamFallbackInterval(5_000, false)).toBe(5_000);
 		expect(eventStreamFallbackInterval(5_000, true)).toBe(50_000);
 		expect(eventStreamFallbackInterval(false, true)).toBe(false);
-		expect([0, 1, 2, 8].map(eventStreamReconnectDelay)).toEqual([1_000, 2_000, 4_000, 30_000]);
+		expect([0, 1, 2, 8].map((attempt) => eventStreamReconnectDelay(attempt, () => 0.5))).toEqual([
+			1_000, 2_000, 4_000, 30_000,
+		]);
+		expect(eventStreamReconnectDelay(0, () => 0)).toBe(800);
+		expect(eventStreamReconnectDelay(8, () => 1)).toBe(36_000);
+	});
+
+	test("resets cursors rejected by validation, authorization, or retention", () => {
+		expect([400, 403, 410].every(eventStreamResponseResetsCursor)).toBe(true);
+		expect([401, 404, 429, 500].some(eventStreamResponseResetsCursor)).toBe(false);
 	});
 });
 
@@ -154,15 +167,62 @@ describe("deployment event query invalidation", () => {
 
 		await invalidateDeploymentEventQueries(
 			queryClient,
-			{
-				deploymentId: DEPLOYMENT_ID,
-				eventType: "deployment.operation.succeeded",
-				operationName: "operations/restart-2",
-			},
+			[
+				{
+					deploymentId: DEPLOYMENT_ID,
+					eventType: "deployment.operation.succeeded",
+					operationName: "operations/restart-2",
+				},
+			],
 			AGENT_ID,
 		);
 
 		for (const key of affected) expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
 		for (const key of unaffected) expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
+	});
+
+	test("micro-batches burst events and preserves each affected deployment", async () => {
+		const queryClient = new QueryClient();
+		const otherDeploymentId = "hdep_other";
+		const batches: Array<readonly DeploymentEventSignal[]> = [];
+		const batch = createDeploymentEventInvalidationBatch((events) => batches.push(events), 1);
+		const first = deploymentEventSignal(event());
+		const second = deploymentEventSignal(
+			event({
+				id: "cursor-3",
+				data: JSON.stringify({
+					event_id: "event-3",
+					stream_sequence: 3,
+					deployment_id: otherDeploymentId,
+					event_type: "deployment.state.changed",
+					operation_name: null,
+				}),
+			}),
+		);
+		if (!first || !second) throw new Error("Expected valid deployment events");
+
+		batch.enqueue(first);
+		batch.enqueue(first);
+		batch.enqueue(second);
+		expect(EVENT_STREAM_INVALIDATION_BATCH_MS).toBeGreaterThanOrEqual(50);
+		expect(EVENT_STREAM_INVALIDATION_BATCH_MS).toBeLessThanOrEqual(100);
+		expect(batches).toHaveLength(0);
+		await Bun.sleep(10);
+		expect(batches).toHaveLength(1);
+		expect(batches[0]?.map((item) => item.deploymentId)).toEqual([
+			DEPLOYMENT_ID,
+			otherDeploymentId,
+		]);
+
+		queryClient.setQueryData(billingKeys.workspaceSkills(DEPLOYMENT_ID), {});
+		queryClient.setQueryData(billingKeys.workspaceSkills(otherDeploymentId), {});
+		await invalidateDeploymentEventQueries(queryClient, [first, second], AGENT_ID);
+		expect(
+			queryClient.getQueryState(billingKeys.workspaceSkills(DEPLOYMENT_ID))?.isInvalidated,
+		).toBe(true);
+		expect(
+			queryClient.getQueryState(billingKeys.workspaceSkills(otherDeploymentId))?.isInvalidated,
+		).toBe(true);
+		batch.dispose();
 	});
 });

@@ -1,5 +1,3 @@
-import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
-
 export const AGENT_PROJECT_SKILLS_REFETCH_INTERVAL_MS = 10_000;
 
 /** Foreground polling bridges filesystem projection events until Web SSE owns invalidation. */
@@ -9,13 +7,8 @@ export const AGENT_PROJECT_SKILLS_REFRESH_POLICY = {
 	refetchOnWindowFocus: true,
 } as const;
 
-export function agentSkillForegroundRefetchInterval(
-	enabled: boolean,
-	eventStreamActive = false,
-): number | false {
-	return enabled
-		? eventStreamFallbackInterval(AGENT_PROJECT_SKILLS_REFETCH_INTERVAL_MS, eventStreamActive)
-		: false;
+export function agentSkillForegroundRefetchInterval(enabled: boolean): number | false {
+	return enabled ? AGENT_PROJECT_SKILLS_REFETCH_INTERVAL_MS : false;
 }
 
 export function agentProjectSkillsQueryKey(

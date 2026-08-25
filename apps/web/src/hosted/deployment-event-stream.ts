@@ -8,11 +8,17 @@ import { billingKeys } from "@/hosted/billing/query-keys";
 
 export const EVENT_STREAM_RECONNECT_BASE_MS = 1_000;
 export const EVENT_STREAM_RECONNECT_MAX_MS = 30_000;
+export const EVENT_STREAM_INVALIDATION_BATCH_MS = 75;
 
 export type DeploymentEventSignal = {
 	deploymentId: DeploymentEvent["deployment_id"];
 	eventType: DeploymentEventType;
 	operationName: string | null;
+};
+
+export type DeploymentEventInvalidationBatch = {
+	enqueue: (event: DeploymentEventSignal) => void;
+	dispose: () => void;
 };
 
 const DEPLOYMENT_EVENT_TYPES = [
@@ -140,9 +146,47 @@ export function deploymentEventSignal(event: ServerSentEvent): DeploymentEventSi
 	}
 }
 
-export function eventStreamReconnectDelay(attempt: number): number {
+export function eventStreamResponseResetsCursor(status: number): boolean {
+	return status === 400 || status === 403 || status === 410;
+}
+
+export function eventStreamReconnectDelay(
+	attempt: number,
+	random: () => number = Math.random,
+): number {
 	const exponent = Math.max(0, Math.floor(attempt));
-	return Math.min(EVENT_STREAM_RECONNECT_BASE_MS * 2 ** exponent, EVENT_STREAM_RECONNECT_MAX_MS);
+	const baseDelay = Math.min(
+		EVENT_STREAM_RECONNECT_BASE_MS * 2 ** exponent,
+		EVENT_STREAM_RECONNECT_MAX_MS,
+	);
+	const jitter = 0.8 + Math.min(1, Math.max(0, random())) * 0.4;
+	return Math.round(baseDelay * jitter);
+}
+
+export function createDeploymentEventInvalidationBatch(
+	onFlush: (events: readonly DeploymentEventSignal[]) => void,
+	delayMs = EVENT_STREAM_INVALIDATION_BATCH_MS,
+): DeploymentEventInvalidationBatch {
+	const pending = new Map<string, DeploymentEventSignal>();
+	let timer: ReturnType<typeof setTimeout> | null = null;
+
+	return {
+		enqueue(event) {
+			pending.set(event.deploymentId, event);
+			if (timer !== null) return;
+			timer = globalThis.setTimeout(() => {
+				timer = null;
+				const events = [...pending.values()];
+				pending.clear();
+				onFlush(events);
+			}, delayMs);
+		},
+		dispose() {
+			if (timer !== null) globalThis.clearTimeout(timer);
+			timer = null;
+			pending.clear();
+		},
+	};
 }
 
 function openApiParamMatches(
@@ -223,16 +267,20 @@ export function applyDeploymentEventStreamHandoff(
 /** Deployment snapshots also carry the accepted operation projection. */
 export function invalidateDeploymentEventQueries(
 	queryClient: QueryClient,
-	event: DeploymentEventSignal,
+	events: readonly DeploymentEventSignal[],
 	agentId: string | null,
 ): Promise<void> {
+	if (events.length === 0) return Promise.resolve();
+	const deploymentIds = new Set(events.map((event) => event.deploymentId));
 	const invalidations = [
 		queryClient.invalidateQueries({ queryKey: billingKeys.deployments, exact: true }),
-		queryClient.invalidateQueries({
-			queryKey: billingKeys.workspaceSkills(event.deploymentId),
-			exact: true,
-		}),
 		queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
+		...[...deploymentIds].map((deploymentId) =>
+			queryClient.invalidateQueries({
+				queryKey: billingKeys.workspaceSkills(deploymentId),
+				exact: true,
+			}),
+		),
 	];
 	if (agentId) {
 		invalidations.push(

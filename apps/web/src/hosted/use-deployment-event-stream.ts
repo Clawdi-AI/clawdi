@@ -6,8 +6,10 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import {
 	applyDeploymentEventStreamHandoff,
 	consumeServerSentEvents,
+	createDeploymentEventInvalidationBatch,
 	deploymentEventSignal,
 	eventStreamReconnectDelay,
+	eventStreamResponseResetsCursor,
 	invalidateDeploymentEventQueries,
 } from "@/hosted/deployment-event-stream";
 
@@ -54,6 +56,9 @@ export function useDeploymentEventStream({
 		let reconnectAttempt = 0;
 		let retryTimer: ReturnType<typeof setTimeout> | null = null;
 		let activeController: AbortController | null = null;
+		const invalidationBatch = createDeploymentEventInvalidationBatch((events) => {
+			void invalidateDeploymentEventQueries(queryClient, events, agentId);
+		});
 
 		const schedule = (delayMs: number) => {
 			if (disposed || pageIsHidden() || retryTimer !== null) return;
@@ -87,7 +92,7 @@ export function useDeploymentEventStream({
 					controller.signal,
 				);
 				if (!response.ok) {
-					if (response.status === 410) cursor = null;
+					if (eventStreamResponseResetsCursor(response.status)) cursor = null;
 					retryDelay = retryAfterMs(response);
 					throw new Error(`Deployment event stream returned ${response.status}`);
 				}
@@ -103,7 +108,7 @@ export function useDeploymentEventStream({
 					const event = deploymentEventSignal(message);
 					if (!event) return;
 					receivedEvent = true;
-					void invalidateDeploymentEventQueries(queryClient, event, agentId);
+					invalidationBatch.enqueue(event);
 				});
 				throw new Error("Deployment event stream disconnected");
 			} catch {
@@ -142,6 +147,7 @@ export function useDeploymentEventStream({
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 			if (retryTimer !== null) globalThis.clearTimeout(retryTimer);
 			activeController?.abort();
+			invalidationBatch.dispose();
 		};
 	}, [agentId, client, deploymentId, queryClient, streamEnabled]);
 

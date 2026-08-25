@@ -56,7 +56,6 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
@@ -103,7 +102,6 @@ export function SkillDetailContent({
 	const api = useApi();
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const eventStreamActive = useDeploymentEventStreamActive();
 
 	// Library routes keep their legacy resolver fallback for backwards
 	// compatibility. Agent routes must resolve one explicit binding first and
@@ -183,7 +181,6 @@ export function SkillDetailContent({
 		refetchInterval: (query) =>
 			agentSkillForegroundRefetchInterval(
 				Boolean(agentId) && !isApiNotFoundError(query.state.error),
-				eventStreamActive,
 			),
 		refetchIntervalInBackground: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchIntervalInBackground,
 		refetchOnWindowFocus: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchOnWindowFocus,

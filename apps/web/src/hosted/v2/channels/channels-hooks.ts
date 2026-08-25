@@ -297,37 +297,22 @@ export function useCreatePairCode(
 export function agentChannelLinksQueryOptions(
 	api: OpenApiClient,
 	agentId: string,
-	{
-		enabled = true,
-		poll = false,
-		eventStreamActive = false,
-	}: { enabled?: boolean; poll?: boolean; eventStreamActive?: boolean } = {},
+	{ enabled = true, poll = false }: { enabled?: boolean; poll?: boolean } = {},
 ) {
 	return api.queryOptions(
 		"get",
 		"/v1/channels/agent-links",
 		{ params: { query: { agent_id: agentId } } },
 		{
-			...agentChannelLinksQueryBehavior(agentId, { enabled, poll, eventStreamActive }),
+			...agentChannelLinksQueryBehavior(agentId, { enabled, poll }),
 			select: normalizeAgentChannelLinks,
 		},
 	);
 }
 
 /** An Agent's linked channels and active binding counts in one generated query. */
-export function useAgentChannelLinks(
-	agentId: string,
-	enabled = true,
-	poll = false,
-	eventStreamActive = false,
-) {
-	return useQuery(
-		agentChannelLinksQueryOptions(useOpenApi(), agentId, {
-			enabled,
-			poll,
-			eventStreamActive,
-		}),
-	);
+export function useAgentChannelLinks(agentId: string, enabled = true, poll = false) {
+	return useQuery(agentChannelLinksQueryOptions(useOpenApi(), agentId, { enabled, poll }));
 }
 
 export function useUnlinkAgentChannel(agentId: string) {

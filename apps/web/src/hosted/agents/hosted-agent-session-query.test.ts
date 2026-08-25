@@ -12,7 +12,6 @@ import {
 	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
 	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
-	hostedAgentSessionsRefetchInterval,
 } from "./hosted-agent-session-query";
 
 const detailSource = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
@@ -73,9 +72,6 @@ describe("hosted agent sessions refresh", () => {
 			refetchInterval: 30_000,
 			refetchIntervalInBackground: false,
 		});
-		expect(hostedAgentSessionsRefetchInterval(false)).toBe(30_000);
-		expect(hostedAgentSessionsRefetchInterval(true)).toBe(300_000);
-
 		environmentManager.setIsServer(() => false);
 		focusManager.setFocused(false);
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -116,7 +116,6 @@ import {
 	canQueryHostedAgentSessions,
 	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
-	hostedAgentSessionsRefetchInterval,
 } from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
@@ -642,10 +641,7 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab
-							environmentId={environmentId}
-							eventStreamActive={eventStreamActive}
-						/>
+						<HostedAgentSessionsTab environmentId={environmentId} />
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -684,7 +680,6 @@ export function HostedAgentDetail({
 								environmentId={environmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
-								eventStreamActive={eventStreamActive}
 							/>
 						) : (
 							<ChannelsSyncState
@@ -796,13 +791,7 @@ function StoppedAgentState({
 	);
 }
 
-function HostedAgentSessionsTab({
-	environmentId,
-	eventStreamActive,
-}: {
-	environmentId: string;
-	eventStreamActive: boolean;
-}) {
+function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
@@ -818,7 +807,6 @@ function HostedAgentSessionsTab({
 		placeholderData: keepPreviousData,
 		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
 		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
-		refetchInterval: hostedAgentSessionsRefetchInterval(eventStreamActive),
 	});
 	const total = sessions.data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -2668,24 +2656,17 @@ function ChannelsTab({
 	environmentId,
 	agentType,
 	agentName,
-	eventStreamActive,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
 	agentName: string;
-	eventStreamActive: boolean;
 }) {
 	const api = useApi();
 	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(
-		environmentId,
-		isAgentRouteId(environmentId),
-		true,
-		eventStreamActive,
-	);
+	const linked = useAgentChannelLinks(environmentId, isAgentRouteId(environmentId), true);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const deleteChannel = useDeleteChannel();

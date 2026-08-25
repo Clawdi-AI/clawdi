@@ -1,5 +1,5 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
-import { includedBasicDeployment, stubHostedApi } from "./hosted-stub-api";
+import { includedBasicDeployment, readDeploymentFixture, stubHostedApi } from "./hosted-stub-api";
 
 const DEPLOY_API = "http://127.0.0.1:8001";
 const CLOUD_API = "http://127.0.0.1:8000";
@@ -181,6 +181,54 @@ test("plugin convergence refreshes within two seconds of a deployment event", as
 	const pluginElapsed = Date.now() - eventAt;
 	console.log(`[deployment-events-e2e] plugin convergence: ${pluginElapsed}ms`);
 	expect(pluginElapsed).toBeLessThan(2_000);
+});
+
+test("a rejected cursor obtains a fresh snapshot before reconnecting", async ({ page }) => {
+	const restarting = deployment("hdep_event_cursor", "restarting");
+	let handoffRequests = 0;
+	const streamCursors: Array<string | undefined> = [];
+	let cursorRejectedAt = 0;
+	await stubHostedApi(page, { deployments: [restarting] });
+	await page.route(`${DEPLOY_API}/v2/deployments**`, async (route) => {
+		const url = new URL(route.request().url());
+		if (url.searchParams.get("eventStreamHandoff") !== "true") {
+			await route.fallback();
+			return;
+		}
+		handoffRequests += 1;
+		await fulfillJson(route, {
+			snapshot_isolation: "REPEATABLE READ",
+			read_only: true,
+			deployments: [readDeploymentFixture(restarting)],
+			operations: [],
+			event_stream_cursor: handoffRequests === 1 ? "rejected-cursor" : "fresh-cursor",
+		});
+	});
+	await page.route(`${DEPLOY_API}/v2/deployments/${restarting.id}/events`, async (route) => {
+		const cursor = route.request().headers()["last-event-id"];
+		streamCursors.push(cursor);
+		if (cursor === "rejected-cursor") {
+			cursorRejectedAt = Date.now();
+			await fulfillJson(route, { detail: "Cursor signature is no longer valid" }, 403);
+			return;
+		}
+		expect(cursor).toBe("fresh-cursor");
+		restarting.status = "running";
+		await route.fulfill({
+			status: 200,
+			contentType: "text/event-stream",
+			body: sseFrame(restarting.id),
+		});
+	});
+
+	await page.goto(`/agents/${AGENT_ID}`);
+	await expect(page.getByText("Restarting", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Running", { exact: true }).first()).toBeVisible({ timeout: 4_000 });
+	const elapsed = Date.now() - cursorRejectedAt;
+	console.log(`[deployment-events-e2e] rejected cursor recovery: ${elapsed}ms`);
+	expect(handoffRequests).toBe(2);
+	expect(streamCursors).toEqual(["rejected-cursor", "fresh-cursor"]);
+	expect(elapsed).toBeLessThan(3_000);
 });
 
 test("deployment polling resumes at the original cadence when the stream is unavailable", async ({
