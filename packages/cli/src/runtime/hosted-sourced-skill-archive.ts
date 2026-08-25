@@ -132,7 +132,7 @@ async function fetchProjectSkillArchive(
 		const skillDir = join(extractedRoot, skillId);
 		const canonical = await snapshotSkillArchive(skillDir, extractedRoot, skillId);
 		const skillEntries = readdirSync(skillDir);
-		// SUNSET: remove once the control plane has backfilled tree hashes for pre-2026-04-28 project skills.
+		// SUNSET(hosted #1839): remove once the control plane has backfilled tree hashes for pre-2026-04-28 project skills.
 		const matchesLegacySingleFileHash =
 			skillEntries.length === 1 &&
 			skillEntries[0] === "SKILL.md" &&

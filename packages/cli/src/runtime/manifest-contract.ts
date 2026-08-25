@@ -30,6 +30,19 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 };
 
 const HOSTED_GATEWAY_RUN_ARGS = ["gateway", "run"] as const;
+// SUNSET: delete after hosted flips `_runtime_run_state('openclaw')` to the canonical
+// official gateway command, existing runtime states are re-pushed, and the wire is
+// verified canonical.
+const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
+	"gateway",
+	"run",
+	"--allow-unconfigured",
+	"--port",
+	"18789",
+	"--bind",
+	"lan",
+	"--force",
+] as const;
 const HOSTED_HERMES_DASHBOARD_ARGS = [
 	"dashboard",
 	"--host",
@@ -44,6 +57,13 @@ function exactStringArray(value: unknown, expected: readonly string[]): boolean 
 		Array.isArray(value) &&
 		value.length === expected.length &&
 		value.every((entry, index) => entry === expected[index])
+	);
+}
+
+export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: unknown): boolean {
+	return (
+		exactStringArray(value, HOSTED_GATEWAY_RUN_ARGS) ||
+		(runtime === "openclaw" && exactStringArray(value, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS))
 	);
 }
 
@@ -759,7 +779,7 @@ function validateHostedRuntimeManifest(
 			);
 		}
 		const run = manifest.runtimes.openclaw?.run;
-		if (!exactStringArray(run?.args, HOSTED_GATEWAY_RUN_ARGS)) {
+		if (!isHostedGatewayRunArgs("openclaw", run?.args)) {
 			addIssue(
 				"OpenClaw v2 gateway must use the official gateway run command",
 				runtimePath("run", "args"),
@@ -805,7 +825,7 @@ function validateHostedRuntimeManifest(
 				systemPath("openclawGatewayTrustedProxies"),
 			);
 		}
-		if (!exactStringArray(manifest.runtimes.hermes?.run.args, HOSTED_GATEWAY_RUN_ARGS)) {
+		if (!isHostedGatewayRunArgs("hermes", manifest.runtimes.hermes?.run.args)) {
 			addIssue(
 				"Hermes gateway must use the official gateway run command",
 				runtimePath("run", "args"),
@@ -918,7 +938,7 @@ export const hostedRuntimeBundleV2ManifestSchema =
 						home: paths.userHome,
 						args: officialInstallArgs(selectedRuntime, paths.userHome),
 					},
-					run: copyHostedRuntimeRunSettings(runtime.run),
+					run: hostedRuntimeRunSettings(selectedRuntime, runtime.run),
 					services: Object.fromEntries(
 						Object.entries(runtime.services).map(([service, run]) => [
 							service,
@@ -954,6 +974,15 @@ function hostedRuntimeProviderBinding(
 	| { provider_ids: [] } {
 	if (runtime.providerMode === "unmanaged") return { provider_ids: [] };
 	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };
+}
+
+function hostedRuntimeRunSettings(
+	runtime: HostedRuntimeBundleV2ManifestWire["runtime"],
+	run: HostedRuntimeRunSettings,
+): ReturnType<typeof copyHostedRuntimeRunSettings> {
+	const settings = copyHostedRuntimeRunSettings(run);
+	if (isHostedGatewayRunArgs(runtime, run.args)) settings.args = ["gateway", "run"];
+	return settings;
 }
 
 function copyHostedRuntimeRunSettings(run: HostedRuntimeRunSettings): {

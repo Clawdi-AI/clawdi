@@ -649,6 +649,7 @@ function hostedHermesManifestFixture(
 
 function hostedOpenClawV2ManifestFixture(
 	overrides: Record<string, unknown> = {},
+	gatewayArgs: string[] = ["gateway", "run"],
 ): Record<string, unknown> {
 	const publicUrl = "https://agent.example.test/control";
 	return hostedManifestFixture({
@@ -661,7 +662,7 @@ function hostedOpenClawV2ManifestFixture(
 		runtimes: {
 			openclaw: hostedRuntimeFixture({
 				run: {
-					args: ["gateway", "run"],
+					args: gatewayArgs,
 					secretEnv: {
 						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 					},
@@ -671,6 +672,17 @@ function hostedOpenClawV2ManifestFixture(
 		...overrides,
 	});
 }
+
+const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
+	"gateway",
+	"run",
+	"--allow-unconfigured",
+	"--port",
+	"18789",
+	"--bind",
+	"lan",
+	"--force",
+];
 
 function normalizeHostedBundleFixture(
 	manifest: Record<string, unknown>,
@@ -1033,6 +1045,24 @@ describe("runtime manifest reconciliation invariants", () => {
 		).hermes.services.dashboard;
 		dashboard.env = { EXTRA: "value" };
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(hermesDashboardEnv).success).toBe(false);
+	});
+
+	test("normalizes the hosted OpenClaw producer gateway args", () => {
+		const legacy = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS),
+		);
+		expect(legacy.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
+
+		const unsupported = hostedOpenClawV2ManifestFixture({}, ["gateway", "run", "--force"]);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(unsupported).success).toBe(false);
+
+		const legacyHermes = hostedHermesManifestFixture();
+		(legacyHermes.runtimes as { hermes: { run: { args: string[] } } }).hermes.run.args = [
+			"gateway",
+			"run",
+			"--replace",
+		];
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacyHermes).success).toBe(false);
 	});
 
 	test("requires official Basic auth and direct 9119 exposure for hosted Hermes v2", () => {
@@ -1882,7 +1912,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		chmodSync(openclawBin, 0o700);
 
-		const projected = hostedRuntimeBundleV2ManifestSchema.parse(hostedOpenClawV2ManifestFixture());
+		const projected = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedOpenClawV2ManifestFixture({}, LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS),
+		);
+		expect(projected.runtimes.openclaw.run?.args).toEqual(["gateway", "run"]);
 		const normalized: RuntimeManifest = {
 			...projected,
 			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-native-auth"),

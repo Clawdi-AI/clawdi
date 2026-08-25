@@ -1527,6 +1527,9 @@ authentication overrides. The manifest identity is:
 {"args": ["gateway", "run"]}
 ```
 
+The reader still accepts the previous producer argv containing
+`--allow-unconfigured --port 18789 --bind lan --force` long enough for an old
+CLI to self-upgrade, then normalizes it before matching the official service.
 The official OpenClaw installer currently writes an absolute Node/CLI
 entrypoint with `gateway --port 18789`; that upstream argv is deliberately not
 duplicated or overridden by Clawdi.
