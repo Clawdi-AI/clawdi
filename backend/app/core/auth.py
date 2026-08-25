@@ -14,7 +14,7 @@ import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from app.core.config import canonical_clerk_issuer, settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.principal_lifecycle import PrincipalLifecycle
+from app.models.session import AgentEnvironment
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.schemas.problem import ACCOUNT_SUSPENDED_DETAIL, AccountSuspendedProblem
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
@@ -35,6 +36,8 @@ from app.services.principal_lifecycle import (
     assert_clerk_principal_active,
     assert_user_authority_active,
     load_clerk_user_for_issuer,
+    lock_api_key_user_authority_shared,
+    user_authority_sql_expressions,
 )
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
@@ -159,6 +162,15 @@ class _CachedApiKeyAuth:
             revoked_at=None,
         )
         return AuthContext(user=user, api_key=api_key, api_key_project_id=self.api_key_project_id)
+
+
+@dataclass(frozen=True, slots=True)
+class _ApiKeyAuthority:
+    api_key: ApiKey
+    user: User | None
+    api_key_project_id: UUID | None
+    suspended: bool
+    disabled: bool
 
 
 _api_key_auth_cache: dict[str, tuple[float, _CachedApiKeyAuth]] = {}
@@ -292,8 +304,6 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         # post-commit invalidation, and so other worker-local caches fail
         # closed immediately after they observe the committed archive.
         if cached.api_key is not None and cached.api_key.environment_id is not None:
-            from app.models.session import AgentEnvironment
-
             active_key_id = await db.scalar(
                 select(ApiKey.id)
                 .join(
@@ -311,61 +321,114 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
         return cached
 
-    result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
-    api_key = result.scalar_one_or_none()
-
-    if not api_key:
+    # A separate statement after the advisory lock is intentional: under
+    # READ COMMITTED a statement snapshot is fixed before a lock wait, so the
+    # joined authority read must start only after any committed lifecycle
+    # mutation holding the exclusive lock has finished.
+    user_id = await lock_api_key_user_authority_shared(db, key_hash)
+    if user_id is None:
         return None
-    if api_key.revoked_at:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+    authority = await _load_api_key_authority(db, key_hash)
+    if authority is None:
+        return None
     now = datetime.now(UTC)
-    if api_key.expires_at and api_key.expires_at < now:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
-
-    result = await db.execute(select(User).where(User.id == api_key.user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
-    await _assert_active_user_or_401(db, user.id)
+    context = _validated_api_key_auth_context(authority, now=now)
 
     # Throttle last_used_at writes: once per LAST_USED_THROTTLE per key.
-    last = api_key.last_used_at
+    last = authority.api_key.last_used_at
     if last is None or (now - last) > LAST_USED_THROTTLE:
-        api_key.last_used_at = now
+        authority.api_key.last_used_at = now
         await db.commit()
-        # Commit releases the authority lock. Reacquire and recheck before
-        # returning a credential snapshot to the route.
-        await _assert_active_user_or_401(db, user.id)
-
-    api_key_project_id = None
-    if api_key.environment_id is not None:
-        from app.models.session import AgentEnvironment
-
-        api_key_project_id = (
-            await db.execute(
-                select(AgentEnvironment.default_project_id).where(
-                    AgentEnvironment.id == api_key.environment_id,
-                    AgentEnvironment.user_id == api_key.user_id,
-                    AgentEnvironment.archived_at.is_(None),
-                )
-            )
-        ).scalar_one_or_none()
-        if api_key_project_id is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Agent is archived")
+        # Commit releases the authority lock. Reacquire it and rerun the full
+        # key/user/lifecycle/Agent read before returning authority.
+        if await lock_api_key_user_authority_shared(db, key_hash) is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+        authority = await _load_api_key_authority(db, key_hash)
+        if authority is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+        now = datetime.now(UTC)
+        context = _validated_api_key_auth_context(authority, now=now)
 
     # Agent-bound keys are lifecycle authority and must never be installed in
     # a process-local cache. A cache fill racing archive commit could otherwise
     # happen after the archive caller's post-commit invalidation. Unbound keys
     # retain the existing cache behavior.
-    if api_key.environment_id is None:
+    if authority.api_key.environment_id is None:
         _cache_api_key_auth(
             key_hash=key_hash,
-            api_key=api_key,
-            user=user,
-            api_key_project_id=api_key_project_id,
+            api_key=authority.api_key,
+            user=context.user,
+            api_key_project_id=authority.api_key_project_id,
             now=now,
         )
-    return AuthContext(user=user, api_key=api_key, api_key_project_id=api_key_project_id)
+    return context
+
+
+async def _load_api_key_authority(
+    db: AsyncSession,
+    key_hash: str,
+) -> _ApiKeyAuthority | None:
+    expressions = user_authority_sql_expressions()
+    row = (
+        await db.execute(
+            select(
+                ApiKey,
+                User,
+                AgentEnvironment.default_project_id,
+                expressions.suspended.label("principal_suspended"),
+                expressions.disabled.label("principal_disabled"),
+            )
+            .outerjoin(User, User.id == ApiKey.user_id)
+            .outerjoin(
+                AgentEnvironment,
+                and_(
+                    AgentEnvironment.id == ApiKey.environment_id,
+                    AgentEnvironment.user_id == ApiKey.user_id,
+                    AgentEnvironment.archived_at.is_(None),
+                ),
+            )
+            .where(ApiKey.key_hash == key_hash)
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    api_key, user, api_key_project_id, suspended, disabled = row
+    return _ApiKeyAuthority(
+        api_key=api_key,
+        user=user,
+        api_key_project_id=api_key_project_id,
+        suspended=bool(suspended),
+        disabled=bool(disabled),
+    )
+
+
+def _validated_api_key_auth_context(
+    authority: _ApiKeyAuthority,
+    *,
+    now: datetime,
+) -> AuthContext:
+    api_key = authority.api_key
+    if api_key.revoked_at:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+    if api_key.expires_at and api_key.expires_at < now:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
+    user = authority.user
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    if authority.suspended:
+        invalidate_user_api_key_auth_cache(user.id)
+        raise AccountSuspendedHTTPException()
+    if authority.disabled:
+        invalidate_user_api_key_auth_cache(user.id)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated")
+    if api_key.environment_id is not None and authority.api_key_project_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Agent is archived")
+    return AuthContext(
+        user=user,
+        api_key=api_key,
+        api_key_project_id=authority.api_key_project_id,
+    )
 
 
 async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | None:

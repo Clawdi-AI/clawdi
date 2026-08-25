@@ -30,7 +30,10 @@ from app.routes.channel_routers.shared import (
     optional_str,
 )
 from app.services.channel_debug_events import record_channel_debug_event
-from app.services.channel_wakeups import channel_inbound_messages_enqueued
+from app.services.channel_wakeups import (
+    channel_inbound_messages_enqueued,
+    wait_for_channel_inbound_messages,
+)
 from app.services.channels import (
     get_active_channel_account,
     resolve_channel_agent_by_identity,
@@ -592,53 +595,38 @@ async def _wait_whatsapp_websocket_inbox(
     after_sequence: int,
     limit: int = 100,
 ) -> list[WhatsAppInboxPumpEvent]:
-    timeout = max(0.0, min(settings.channel_long_poll_max_seconds, 30.0))
-    poll_interval = max(0.001, settings.channel_long_poll_interval_seconds)
-    deadline = asyncio.get_running_loop().time() + timeout
-    notified = channel_inbound_messages_enqueued.subscribe()
-    try:
-        while True:
-            notified.clear()
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(ChannelMessage)
-                    .where(
-                        ChannelMessage.account_id == account_id,
-                        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-                        ChannelMessage.binding_id.is_not(None),
-                        ChannelMessage.delivered_at.is_(None),
-                        ChannelMessage.inbox_sequence > after_sequence,
-                        ChannelMessage.bot_agent_link_id == bot_agent_link_id,
-                    )
-                    .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
-                    .limit(max(0, limit))
+    async def fetch() -> list[ChannelMessage]:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.account_id == account_id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                    ChannelMessage.binding_id.is_not(None),
+                    ChannelMessage.delivered_at.is_(None),
+                    ChannelMessage.inbox_sequence > after_sequence,
+                    ChannelMessage.bot_agent_link_id == bot_agent_link_id,
                 )
-                messages = list(result.scalars().all())
-            if messages or timeout == 0 or asyncio.get_running_loop().time() >= deadline:
-                return [
-                    WhatsAppInboxPumpEvent(
-                        sequence=message.inbox_sequence,
-                        external_chat_id=message.external_chat_id,
-                        payload=message.payload if isinstance(message.payload, dict) else {},
-                        provider_message_id=message.provider_message_id,
-                        text=message.text,
-                    )
-                    for message in messages
-                ]
-            if notified.is_set():
-                continue
-            try:
-                await asyncio.wait_for(
-                    notified.wait(),
-                    timeout=min(
-                        poll_interval,
-                        max(0.0, deadline - asyncio.get_running_loop().time()),
-                    ),
-                )
-            except TimeoutError:
-                pass
-    finally:
-        channel_inbound_messages_enqueued.unsubscribe(notified)
+                .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
+                .limit(max(0, limit))
+            )
+            return list(result.scalars().all())
+
+    messages = await wait_for_channel_inbound_messages(
+        fetch,
+        timeout_seconds=settings.channel_long_poll_max_seconds,
+        wakeup=channel_inbound_messages_enqueued,
+    )
+    return [
+        WhatsAppInboxPumpEvent(
+            sequence=message.inbox_sequence,
+            external_chat_id=message.external_chat_id,
+            payload=message.payload if isinstance(message.payload, dict) else {},
+            provider_message_id=message.provider_message_id,
+            text=message.text,
+        )
+        for message in messages
+    ]
 
 
 async def _ack_whatsapp_websocket_inbox(

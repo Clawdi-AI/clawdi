@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -10,7 +9,6 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from time import monotonic
 from typing import TypeGuard
 from uuid import UUID, uuid4
 
@@ -75,8 +73,10 @@ from app.services.channel_config import (
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_wakeups import (
+    channel_inbound_messages_enqueued,
     notify_channel_delivery_enqueued,
     notify_channel_inbound_message_enqueued,
+    wait_for_channel_inbound_messages,
 )
 from app.services.discord_rate_limiter import discord_rate_limiter
 from app.services.metrics import (
@@ -3765,10 +3765,7 @@ async def wait_for_telegram_updates(
     timeout_seconds: int | float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> list[JsonObject]:
-    timeout = max(0.0, min(float(timeout_seconds or 0), 30.0))
-    poll_interval = _channel_long_poll_interval(poll_interval_seconds)
-    deadline = monotonic() + timeout
-    while True:
+    async def fetch() -> list[JsonObject]:
         async with sessionmaker() as db:
             updates = await dequeue_telegram_updates(
                 db,
@@ -3779,9 +3776,14 @@ async def wait_for_telegram_updates(
                 allowed_updates=allowed_updates,
             )
             await db.commit()
-        if updates or timeout == 0 or monotonic() >= deadline:
             return updates
-        await asyncio.sleep(min(poll_interval, max(0.0, deadline - monotonic())))
+
+    return await wait_for_channel_inbound_messages(
+        fetch,
+        timeout_seconds=timeout_seconds,
+        fallback_poll_seconds=poll_interval_seconds,
+        wakeup=channel_inbound_messages_enqueued,
+    )
 
 
 async def dequeue_channel_inbox_events(
@@ -4481,10 +4483,7 @@ async def wait_for_channel_inbox_events(
     timeout_seconds: int | float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> list[ChannelMessage]:
-    timeout = max(0.0, min(float(timeout_seconds or 0), 30.0))
-    poll_interval = _channel_long_poll_interval(poll_interval_seconds)
-    deadline = monotonic() + timeout
-    while True:
+    async def fetch() -> list[ChannelMessage]:
         async with sessionmaker() as db:
             events = await dequeue_channel_inbox_events(
                 db,
@@ -4494,14 +4493,14 @@ async def wait_for_channel_inbox_events(
                 limit=limit,
             )
             await db.commit()
-        if events or timeout == 0 or monotonic() >= deadline:
             return events
-        await asyncio.sleep(min(poll_interval, max(0.0, deadline - monotonic())))
 
-
-def _channel_long_poll_interval(value: float | None) -> float:
-    configured = settings.channel_long_poll_interval_seconds if value is None else value
-    return max(0.001, float(configured))
+    return await wait_for_channel_inbound_messages(
+        fetch,
+        timeout_seconds=timeout_seconds,
+        fallback_poll_seconds=poll_interval_seconds,
+        wakeup=channel_inbound_messages_enqueued,
+    )
 
 
 async def pending_channel_inbox_count(

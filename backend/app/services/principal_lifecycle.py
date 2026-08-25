@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
 from app.models.agent_project_binding import AgentProjectBinding
@@ -81,6 +82,13 @@ class PrincipalCleanupClaimLostError(RuntimeError):
 
 PRINCIPAL_CLEANUP_CLAIM_LEASE_SECONDS = 60
 PRINCIPAL_CLEANUP_BACKOFF_CAP_SECONDS = 15 * 60
+_USER_AUTHORITY_LOCK_PREFIX = "user-authority:"
+
+
+@dataclass(frozen=True, slots=True)
+class _UserAuthoritySqlExpressions:
+    suspended: ColumnElement[bool]
+    disabled: ColumnElement[bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,13 +168,69 @@ async def lock_clerk_principal_shared(
 async def lock_user_authority(db: AsyncSession, user_id: UUID) -> None:
     """Hold the exclusive user authority lock for fence/cleanup."""
 
-    await _advisory_xact_lock(db, f"user-authority:{user_id}")
+    await _advisory_xact_lock(db, f"{_USER_AUTHORITY_LOCK_PREFIX}{user_id}")
 
 
 async def lock_user_authority_shared(db: AsyncSession, user_id: UUID) -> None:
     """Hold the shared user authority lock for an active request."""
 
-    await _advisory_xact_lock_shared(db, f"user-authority:{user_id}")
+    await _advisory_xact_lock_shared(db, f"{_USER_AUTHORITY_LOCK_PREFIX}{user_id}")
+
+
+async def lock_api_key_user_authority_shared(
+    db: AsyncSession,
+    key_hash: str,
+) -> UUID | None:
+    """Resolve an API key's user and acquire its shared authority lock."""
+
+    row = (
+        await db.execute(
+            select(
+                ApiKey.user_id,
+                func.pg_advisory_xact_lock_shared(
+                    func.hashtextextended(
+                        func.concat(_USER_AUTHORITY_LOCK_PREFIX, ApiKey.user_id),
+                        0,
+                    )
+                ),
+            ).where(ApiKey.key_hash == key_hash)
+        )
+    ).first()
+    return row[0] if row is not None else None
+
+
+def user_authority_sql_expressions() -> _UserAuthoritySqlExpressions:
+    """Build the correlated predicates shared by durable user-authority reads."""
+
+    lifecycle_fenced = (
+        select(PrincipalLifecycle.id).where(PrincipalLifecycle.user_id == User.id).exists()
+    )
+    clerk_banned = (
+        select(ClerkPrincipalAuthority.id)
+        .where(
+            ClerkPrincipalAuthority.issuer == User.clerk_issuer,
+            ClerkPrincipalAuthority.subject == User.clerk_id,
+            ClerkPrincipalAuthority.banned.is_(True),
+        )
+        .exists()
+    )
+    suspended = (
+        select(ClerkPrincipalSuspension.subject)
+        .where(
+            or_(
+                ClerkPrincipalSuspension.user_id == User.id,
+                and_(
+                    ClerkPrincipalSuspension.issuer == User.clerk_issuer,
+                    ClerkPrincipalSuspension.subject == User.clerk_id,
+                ),
+            )
+        )
+        .exists()
+    )
+    return _UserAuthoritySqlExpressions(
+        suspended=suspended,
+        disabled=or_(lifecycle_fenced, clerk_banned),
+    )
 
 
 async def assert_clerk_principal_active(
@@ -302,47 +366,20 @@ async def assert_user_authority_active(
 
     if lock:
         await lock_user_authority_shared(db, user_id)
-    active_id = await db.scalar(
-        select(User.id).where(
-            User.id == user_id,
-            ~select(PrincipalLifecycle.id).where(PrincipalLifecycle.user_id == User.id).exists(),
-            ~select(ClerkPrincipalAuthority.id)
-            .where(
-                ClerkPrincipalAuthority.issuer == User.clerk_issuer,
-                ClerkPrincipalAuthority.subject == User.clerk_id,
-                ClerkPrincipalAuthority.banned.is_(True),
+    expressions = user_authority_sql_expressions()
+    authority = (
+        await db.execute(
+            select(
+                expressions.suspended.label("suspended"),
+                expressions.disabled.label("disabled"),
             )
-            .exists(),
-            ~select(ClerkPrincipalSuspension.subject)
-            .where(
-                or_(
-                    ClerkPrincipalSuspension.user_id == User.id,
-                    and_(
-                        ClerkPrincipalSuspension.issuer == User.clerk_issuer,
-                        ClerkPrincipalSuspension.subject == User.clerk_id,
-                    ),
-                )
-            )
-            .exists(),
-        )
-    )
-    if active_id is None:
-        suspended = await db.scalar(
-            select(ClerkPrincipalSuspension.subject)
-            .join(
-                User,
-                or_(
-                    ClerkPrincipalSuspension.user_id == User.id,
-                    and_(
-                        ClerkPrincipalSuspension.issuer == User.clerk_issuer,
-                        ClerkPrincipalSuspension.subject == User.clerk_id,
-                    ),
-                ),
-            )
+            .select_from(User)
             .where(User.id == user_id)
         )
-        if suspended is not None:
-            raise PrincipalSuspendedError("user authority is suspended")
+    ).one_or_none()
+    if authority is not None and authority.suspended:
+        raise PrincipalSuspendedError("user authority is suspended")
+    if authority is None or authority.disabled:
         raise PrincipalTerminatedError("user authority is disabled")
 
 
@@ -1142,4 +1179,5 @@ __all__ = [
     "resolve_clerk_owner_issuer",
     "record_principal_cleanup_failure",
     "set_clerk_principal_suspension",
+    "user_authority_sql_expressions",
 ]

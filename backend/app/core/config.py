@@ -311,10 +311,10 @@ class Settings(BaseSettings):
     memory_embedding_base_url: str = ""
     memory_embedding_model: str = "text-embedding-3-small"
 
-    # Channel emulation waits. Production defaults preserve the native APIs'
-    # long-poll behaviour; tests can lower these without changing route code.
+    # Channel emulation waits. PostgreSQL notifications wake normal long polls;
+    # the interval is a bounded fallback for listener failure or notification loss.
     channel_long_poll_max_seconds: float = 30.0
-    channel_long_poll_interval_seconds: float = 0.1
+    channel_long_poll_interval_seconds: float = 5.0
     discord_gateway_poll_interval_seconds: float = 1.0
     channel_message_retention_days: Annotated[int, Field(gt=0, le=3_650)] = 30
     channel_unbound_message_retention_hours: Annotated[int, Field(gt=0, le=87_600)] = 24
