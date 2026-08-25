@@ -20,7 +20,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, true, update
+from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -606,10 +606,7 @@ async def list_environment_runtime_observed(
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
-                environment=_env_to_response(
-                    env,
-                    state.deployment_id if state is not None else None,
-                ),
+                environment=_env_to_response(env, state),
                 desired=(
                     _runtime_observed_desired(
                         state,
@@ -1080,10 +1077,7 @@ async def get_environment_runtime_observed(
         )
     ).scalar_one_or_none()
     return RuntimeObservedResponse(
-        environment=_env_to_response(
-            env,
-            state.deployment_id if state is not None else None,
-        ),
+        environment=_env_to_response(env, state),
         desired=(
             _runtime_observed_desired(state, source_revision=source_revision)
             if state is not None
@@ -1243,7 +1237,17 @@ async def get_public_asset(asset_key: str) -> Response:
 
 def _env_to_response(
     env: AgentEnvironment,
-    hosted_deployment_id: str | None = None,
+    hosted_state: HostedRuntimeState | None = None,
+) -> EnvironmentResponse:
+    return _env_to_response_with_deployment_id(
+        env,
+        hosted_state.deployment_id if hosted_state is not None else None,
+    )
+
+
+def _env_to_response_with_deployment_id(
+    env: AgentEnvironment,
+    hosted_deployment_id: str | None,
 ) -> EnvironmentResponse:
     # Deprecated signal: dashboards now classify agents through their control
     # plane's ownership surface. Kept (runtime-state-derived only) for older
@@ -1326,7 +1330,7 @@ def _identity_response(
 ) -> AgentResponse | EnvironmentResponse:
     if agent_response:
         return _agent_to_response(env)
-    return _env_to_response(env, hosted_deployment_id)
+    return _env_to_response_with_deployment_id(env, hosted_deployment_id)
 
 
 def _agent_name_from_fields(
@@ -1935,147 +1939,111 @@ async def sync_heartbeat(
     light endpoint: validate ownership / env-id binding, update a
     handful of columns, commit. No heavy queries.
     """
-    binding_matches = not (
+    env = (
+        await db.execute(
+            select(AgentEnvironment).where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
+            )
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
+
+    # If the deploy-key is bound to a specific env, refuse calls
+    # for any other env. Resource-level project alone wasn't enough
+    # — without this, a key from pod A could heartbeat under
+    # pod B's id and corrupt B's observability fields.
+    if (
         auth.is_cli
         and auth.api_key is not None
         and auth.api_key.environment_id is not None
         and auth.api_key.environment_id != agent_id
-    )
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "api key bound to a different environment",
+        )
 
     # Conditional write: skip the UPDATE entirely when nothing
     # interesting has changed since the prior heartbeat. Daemons
-    # heartbeat every 30-60s; with N daemons per user × M users
+    # heartbeat every 30s; with N daemons per user × M users
     # this was the single highest-write hot path in the backend.
     # Now we only commit when last_sync_error flips, queue HWM
     # advances, dropped delta is non-zero, or sync_enabled needs
     # to flip on — all real state-change signals. last_sync_at
     # advances on every commit (so the dashboard's "live" badge
-    # transitions still fire) but unchanged state writes happen at
-    # most once per 40s, not once per heartbeat. The badge
+    # transitions still fire) but we throttle commits to one per
+    # 30s of *content change*, not one per heartbeat. The badge
     # logic on the dashboard tolerates last_sync_at being stale
     # by up to ~90s.
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
     runtime_observed = body.runtime_observed
-    hosted_runtime_exists = False
+    hosted_state = None
     observation = None
     runtime_observed_values = None
     observed_changed = False
-    if runtime_observed is not None and binding_matches:
+    if runtime_observed is not None:
         runtime_observed_values = _runtime_observed_columns(
             runtime_observed,
             observed_at=now,
         )
         row = (
             await db.execute(
-                select(
-                    HostedRuntimeState.environment_id,
-                    HostedRuntimeConfigObservation,
-                )
+                select(HostedRuntimeState, HostedRuntimeConfigObservation)
                 .outerjoin(
                     HostedRuntimeConfigObservation,
                     HostedRuntimeConfigObservation.environment_id
                     == HostedRuntimeState.environment_id,
                 )
-                .join(
-                    AgentEnvironment,
-                    AgentEnvironment.id == HostedRuntimeState.environment_id,
-                )
-                .where(
-                    HostedRuntimeState.environment_id == agent_id,
-                    AgentEnvironment.user_id == auth.user_id,
-                    active_agent_filter(),
-                )
+                .where(HostedRuntimeState.environment_id == agent_id)
             )
         ).first()
         if row is not None:
-            hosted_runtime_exists = True
-            _, observation = row
+            hosted_state, observation = row
             observed_changed = _runtime_observation_changed(observation, runtime_observed_values)
-
-    write_conditions = [
-        AgentEnvironment.last_sync_error.is_distinct_from(new_error),
-        AgentEnvironment.sync_enabled.is_(False),
-        AgentEnvironment.last_sync_at.is_(None),
-        AgentEnvironment.last_sync_at < now - _HEARTBEAT_FRESHNESS_WRITE_INTERVAL,
-    ]
-    if new_revision is not None:
-        write_conditions.append(AgentEnvironment.last_revision_seen.is_distinct_from(new_revision))
-    if body.queue_depth is not None:
-        write_conditions.append(
-            body.queue_depth > AgentEnvironment.queue_depth_high_water_since_start
+    has_state_change = (
+        env.last_sync_error != new_error
+        or (new_revision is not None and env.last_revision_seen != new_revision)
+        or (
+            body.queue_depth is not None
+            and body.queue_depth > env.queue_depth_high_water_since_start
         )
-    if body.dropped_count_delta or observed_changed:
-        write_conditions.append(true())
-
-    update_values: dict[str, Any] = {
-        "last_sync_at": now,
-        "last_sync_error": new_error,
-        "sync_enabled": True,
-        "updated_at": func.now(),
-    }
-    if new_revision is not None:
-        update_values["last_revision_seen"] = new_revision
-    if body.queue_depth is not None:
-        update_values["queue_depth_high_water_since_start"] = func.greatest(
-            AgentEnvironment.queue_depth_high_water_since_start,
-            body.queue_depth,
-        )
-    if body.dropped_count_delta:
-        update_values["dropped_count_since_start"] = (
-            AgentEnvironment.dropped_count_since_start + body.dropped_count_delta
-        )
-
-    # One statement owns the active/owner check and the conditional mutation.
-    # The data-modifying CTE keeps unchanged heartbeats at one round trip while
-    # preserving the legacy distinction between a same-owner binding mismatch
-    # (403) and an unavailable/cross-owner Agent (404). Database expressions
-    # make queue HWM and dropped deltas atomic under concurrent heartbeats.
-    heartbeat_target = (
-        select(AgentEnvironment.id)
-        .where(
-            AgentEnvironment.id == agent_id,
-            AgentEnvironment.user_id == auth.user_id,
-            active_agent_filter(),
-        )
-        .cte("heartbeat_target")
+        or bool(body.dropped_count_delta)
+        or not env.sync_enabled
+        or observed_changed
     )
-    if binding_matches:
-        heartbeat_update = (
-            update(AgentEnvironment)
-            .where(
-                AgentEnvironment.id == heartbeat_target.c.id,
-                AgentEnvironment.user_id == auth.user_id,
-                active_agent_filter(),
-                or_(*write_conditions),
-            )
-            .values(**update_values)
-            .returning(AgentEnvironment.id)
-            .cte("heartbeat_update")
-        )
-        target_exists, heartbeat_updated = (
-            await db.execute(
-                select(
-                    select(heartbeat_target.c.id).exists(),
-                    select(heartbeat_update.c.id).exists(),
-                )
-            )
-        ).one()
-    else:
-        target_exists = await db.scalar(select(select(heartbeat_target.c.id).exists()))
-        heartbeat_updated = False
-    if not target_exists:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
-    if not binding_matches:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "api key bound to a different environment",
-        )
-    if not heartbeat_updated:
+    # Even with no state change, refresh last_sync_at on a bounded
+    # cadence. The dashboard freshness cutoff is 90s; 40s keeps new
+    # 60s clients live while preventing old 30s clients from writing
+    # on every heartbeat.
+    last = env.last_sync_at
+    needs_freshness_refresh = (
+        last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
+    )
+    if not has_state_change and not needs_freshness_refresh:
         return
-
-    if hosted_runtime_exists and runtime_observed_values is not None:
+    env.last_sync_at = now
+    env.last_sync_error = new_error
+    if new_revision is not None:
+        env.last_revision_seen = new_revision
+    if body.queue_depth is not None and body.queue_depth > env.queue_depth_high_water_since_start:
+        env.queue_depth_high_water_since_start = body.queue_depth
+    if body.dropped_count_delta:
+        env.dropped_count_since_start = (
+            env.dropped_count_since_start or 0
+        ) + body.dropped_count_delta
+    # A heartbeat IS the user opting in: they ran `clawdi daemon` (or
+    # installed the launchd / systemd unit) and the daemon is
+    # successfully posting liveness. The `sync_enabled` flag was a
+    # canary toggle so existing envs wouldn't auto-pick-up sync at
+    # rollout — it has done its job once an actual heartbeat arrives.
+    if not env.sync_enabled:
+        env.sync_enabled = True
+    if hosted_state is not None and runtime_observed_values is not None:
         insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
             environment_id=agent_id,
             **runtime_observed_values,
