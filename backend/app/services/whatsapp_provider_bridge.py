@@ -459,7 +459,9 @@ async def persist_whatsapp_provider_event(
     route_jid = choose_whatsapp_route_jid(remote_jid, alt_jid)
     external_chat_id = route_jid
     external_chat_type = "group" if route_jid.endswith("@g.us") else "dm"
-    external_chat_name = event.push_name
+    # The provider payload below retains the full pushName. Channel bindings
+    # use a bounded display label, matching their VARCHAR(300) schema.
+    external_chat_name = event.push_name[:300] if event.push_name is not None else None
     binding_lookup = await resolve_whatsapp_binding_by_jids(
         db,
         account=account,

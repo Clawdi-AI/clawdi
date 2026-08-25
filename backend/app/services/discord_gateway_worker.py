@@ -91,6 +91,7 @@ class _GatewayState:
     heartbeat_acknowledged: bool = True
     session_id: str | None = None
     resume_gateway_url: str | None = None
+    account_revision: str | None = None
 
     def can_resume(self) -> bool:
         return self.sequence is not None and bool(self.session_id) and bool(self.resume_gateway_url)
@@ -120,12 +121,13 @@ class DiscordGatewayWorker:
         self._reconnect_max_seconds = reconnect_max_seconds
         self._connect_factory = connect_factory
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
+        self._terminal_account_revisions: dict[UUID, str] = {}
 
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
-        account_ids = await list_active_discord_gateway_account_ids(self._sessionmaker)
+        accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
         stop_event = stop or asyncio.Event()
-        self._sync_tasks(account_ids, stop_event)
-        return len(account_ids)
+        self._sync_tasks(accounts, stop_event)
+        return len(accounts)
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()
@@ -148,18 +150,30 @@ class DiscordGatewayWorker:
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
+        self._terminal_account_revisions.clear()
 
-    def _sync_tasks(self, active_account_ids: list[UUID], stop: asyncio.Event) -> None:
-        active = set(active_account_ids)
+    def _sync_tasks(
+        self,
+        active_accounts: dict[UUID, str],
+        stop: asyncio.Event,
+    ) -> None:
+        active = set(active_accounts)
         for account_id, task in list(self._tasks.items()):
             if task.done():
                 self._observe_done_task(account_id, task)
                 self._tasks.pop(account_id, None)
             elif account_id not in active:
                 task.cancel()
-        for account_id in active_account_ids:
+        for account_id in set(self._terminal_account_revisions) - active:
+            self._terminal_account_revisions.pop(account_id, None)
+        for account_id, revision in active_accounts.items():
             if account_id in self._tasks:
                 continue
+            terminal_revision = self._terminal_account_revisions.get(account_id)
+            if terminal_revision == revision:
+                continue
+            if terminal_revision is not None:
+                self._terminal_account_revisions.pop(account_id, None)
             self._tasks[account_id] = asyncio.create_task(
                 self._run_account_forever(account_id, stop),
                 name=f"discord-gateway-{account_id}",
@@ -187,8 +201,9 @@ class DiscordGatewayWorker:
                         account_id,
                         close_code,
                     )
-                    await _sleep_until_stop(stop, self._reconnect_max_seconds)
-                    continue
+                    if state.account_revision is not None:
+                        self._terminal_account_revisions[account_id] = state.account_revision
+                    return
                 log.warning("discord gateway account %s disconnected: %s", account_id, exc)
             except Exception as exc:
                 # Gateway workers must reconnect after transport and protocol faults.
@@ -222,6 +237,7 @@ class DiscordGatewayWorker:
         account = await load_discord_gateway_account(self._sessionmaker, account_id)
         if account is None:
             return
+        state.account_revision = discord_gateway_account_revision(account)
         try:
             token = decrypt_provider_token(account)
         except HTTPException as exc:
@@ -345,9 +361,9 @@ class DiscordGatewayWorker:
                 log.error("discord gateway task %s exited: %s", account_id, exc)
 
 
-async def list_active_discord_gateway_account_ids(
+async def list_active_discord_gateway_accounts(
     sessionmaker: async_sessionmaker[AsyncSession],
-) -> list[UUID]:
+) -> dict[UUID, str]:
     async with sessionmaker() as db:
         result = await db.execute(
             select(ChannelAccount)
@@ -361,7 +377,11 @@ async def list_active_discord_gateway_account_ids(
             .order_by(ChannelAccount.created_at, ChannelAccount.id)
         )
         accounts = result.scalars().all()
-        return [account.id for account in accounts if discord_gateway_enabled(account)]
+        return {
+            account.id: discord_gateway_account_revision(account)
+            for account in accounts
+            if discord_gateway_enabled(account)
+        }
 
 
 async def load_discord_gateway_account(
@@ -585,6 +605,20 @@ def discord_gateway_intents(account: ChannelAccount) -> int:
 def discord_gateway_enabled(account: ChannelAccount) -> bool:
     value = _account_config_value(account, "gateway_enabled")
     return value is not False
+
+
+def discord_gateway_account_revision(account: ChannelAccount) -> str:
+    """Fingerprint the credentials and configuration that drive one Gateway session."""
+
+    config = account.config if isinstance(account.config, dict) else {}
+    material = b"\0".join(
+        (
+            account.encrypted_provider_token or b"",
+            account.provider_token_nonce or b"",
+            json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+    )
+    return hashlib.sha256(material).hexdigest()
 
 
 def parse_gateway_frame(raw_frame: str | bytes) -> GatewayFrame | None:

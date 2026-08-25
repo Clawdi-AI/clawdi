@@ -18,7 +18,9 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarService,
     WhatsAppNativeRelayRequest,
     WhatsAppProviderTransportAdapter,
+    WhatsAppRejectedProviderEvent,
     WhatsAppSidecarUnavailableError,
+    _provider_message_event,
     _sidecar_account_lid,
     whatsapp_phone_number_from_pn_jid,
 )
@@ -353,6 +355,34 @@ def test_whatsapp_phone_number_requires_strict_pn_jid(
     phone_number: str | None,
 ) -> None:
     assert whatsapp_phone_number_from_pn_jid(account_jid) == phone_number
+
+
+@pytest.mark.parametrize(
+    ("override", "reason"),
+    [
+        ({"remoteJid": "x" * 301}, "identity_too_long"),
+        ({"pushName": "x" * 4097}, "identity_too_long"),
+        ({"messageProtoBase64": "not-base64"}, "invalid_schema"),
+    ],
+)
+def test_whatsapp_provider_event_with_sequence_is_terminally_rejected_at_boundary(
+    override: dict[str, object],
+    reason: str,
+) -> None:
+    value = {
+        "sequence": 9,
+        "eventType": "messages.upsert",
+        "fromMe": False,
+        "messageId": "provider-9",
+        "remoteJid": "15551112222@s.whatsapp.net",
+        "messageProtoBase64": "CgVoZWxsbw==",
+        **override,
+    }
+
+    assert _provider_message_event(value) == WhatsAppRejectedProviderEvent(
+        sequence=9,
+        reason=reason,
+    )
 
 
 @pytest.mark.parametrize(

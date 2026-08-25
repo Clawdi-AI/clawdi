@@ -4,13 +4,14 @@ import asyncio
 import json
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError
 
+import app.services.discord_gateway_worker as discord_gateway_worker_module
 from app.services.discord_gateway_worker import (
     DiscordGatewayWorker,
     GatewayFrame,
@@ -32,6 +33,86 @@ class _ObservedGatewayExchange:
 
 def _gateway_json(frame: GatewayFrame) -> str:
     return json.dumps(frame, separators=(",", ":"))
+
+
+@pytest.mark.asyncio
+async def test_terminal_discord_auth_close_waits_for_account_revision_change(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = UUID("00000000-0000-4000-8000-000000000907")
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(engine, expire_on_commit=False),
+        lock_engine=engine,
+    )
+    attempts = 0
+    rearmed = asyncio.Event()
+
+    async def run_account(_account_id, _stop, state):
+        nonlocal attempts
+        attempts += 1
+        state.account_revision = f"revision-{attempts}"
+        if attempts == 1:
+            raise ConnectionClosedError(None, None, None)
+        rearmed.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    monkeypatch.setattr(
+        discord_gateway_worker_module, "discord_gateway_close_code", lambda _exc: 4004
+    )
+    stop = asyncio.Event()
+
+    worker._sync_tasks({account_id: "revision-1"}, stop)
+    first_task = worker._tasks[account_id]
+    await asyncio.wait_for(first_task, timeout=1)
+    worker._sync_tasks({account_id: "revision-1"}, stop)
+
+    assert attempts == 1
+    assert account_id not in worker._tasks
+    assert worker._terminal_account_revisions == {account_id: "revision-1"}
+
+    worker._sync_tasks({account_id: "revision-2"}, stop)
+    try:
+        await asyncio.wait_for(rearmed.wait(), timeout=1)
+        assert attempts == 2
+        assert worker._terminal_account_revisions == {}
+    finally:
+        await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_transient_discord_gateway_failures_use_bounded_exponential_backoff(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(engine, expire_on_commit=False),
+        lock_engine=engine,
+        reconnect_initial_seconds=1,
+        reconnect_max_seconds=4,
+    )
+    stop = asyncio.Event()
+    attempts = 0
+    delays: list[float] = []
+
+    async def run_account(_account_id, _stop, _state):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 5:
+            stop.set()
+            return True
+        raise OSError("temporary DNS failure")
+
+    async def record_delay(_stop, timeout_seconds: float) -> None:
+        delays.append(timeout_seconds)
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    monkeypatch.setattr(discord_gateway_worker_module, "_sleep_until_stop", record_delay)
+
+    await worker._run_account_forever(uuid4(), stop)
+
+    assert delays == [1, 2, 4, 4, 1]
 
 
 @pytest.mark.parametrize("resume", [False, True], ids=["identify", "resume"])

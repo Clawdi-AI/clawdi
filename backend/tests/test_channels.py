@@ -5543,55 +5543,49 @@ async def test_telegram_get_updates_wait_helper_sees_new_committed_update(
     )
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
-    async with sessionmaker() as wait_session:
-        account = (
-            await wait_session.execute(
-                select(ChannelAccount).where(ChannelAccount.id == UUID(created["id"]))
+    pending = asyncio.create_task(
+        wait_for_telegram_updates(
+            sessionmaker,
+            account_id=UUID(created["id"]),
+            offset=2,
+            limit=100,
+            timeout_seconds=1,
+            poll_interval_seconds=0.005,
+        )
+    )
+    await asyncio.sleep(0.01)
+    async with sessionmaker() as insert_session:
+        binding = (
+            await insert_session.execute(
+                select(ChannelBinding).where(
+                    ChannelBinding.account_id == UUID(created["id"]),
+                    ChannelBinding.external_chat_id == "222",
+                )
             )
         ).scalar_one()
-        pending = asyncio.create_task(
-            wait_for_telegram_updates(
-                wait_session,
-                account=account,
-                offset=2,
-                limit=100,
-                timeout_seconds=1,
-                poll_interval_seconds=0.005,
+        insert_session.add(
+            ChannelMessage(
+                account_id=binding.account_id,
+                bot_agent_link_id=binding.bot_agent_link_id,
+                binding_id=binding.id,
+                user_id=binding.user_id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id="222",
+                provider_message_id="2",
+                text="arrived during long poll",
+                payload={
+                    "update_id": 2,
+                    "message": {
+                        "message_id": 2,
+                        "text": "arrived during long poll",
+                        "chat": {"id": 222, "type": "private"},
+                    },
+                },
             )
         )
-        await asyncio.sleep(0.01)
-        async with sessionmaker() as insert_session:
-            binding = (
-                await insert_session.execute(
-                    select(ChannelBinding).where(
-                        ChannelBinding.account_id == UUID(created["id"]),
-                        ChannelBinding.external_chat_id == "222",
-                    )
-                )
-            ).scalar_one()
-            insert_session.add(
-                ChannelMessage(
-                    account_id=binding.account_id,
-                    bot_agent_link_id=binding.bot_agent_link_id,
-                    binding_id=binding.id,
-                    user_id=binding.user_id,
-                    direction=MESSAGE_DIRECTION_INBOUND,
-                    external_chat_id="222",
-                    provider_message_id="2",
-                    text="arrived during long poll",
-                    payload={
-                        "update_id": 2,
-                        "message": {
-                            "message_id": 2,
-                            "text": "arrived during long poll",
-                            "chat": {"id": 222, "type": "private"},
-                        },
-                    },
-                )
-            )
-            await insert_session.commit()
+        await insert_session.commit()
 
-        updates = await pending
+    updates = await pending
 
     assert updates == [
         {

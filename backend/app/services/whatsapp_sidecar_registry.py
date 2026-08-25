@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
@@ -19,6 +20,7 @@ from app.models.channel import (
     ChannelAccount,
     ChannelWhatsAppOnboardingSession,
 )
+from app.services.metrics import provider_ingress_terminal_events
 from app.services.whatsapp_delivery_transport import (
     DEFAULT_WHATSAPP_SIDECAR_SOCKET_PATH,
     configured_whatsapp_sidecar_session_id,
@@ -28,8 +30,9 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppBaileysSidecarService,
     WhatsAppNativeUpstreamClient,
-    WhatsAppProviderMessageEvent,
+    WhatsAppProviderEvent,
     WhatsAppProviderTransportAdapter,
+    WhatsAppRejectedProviderEvent,
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarError,
     WhatsAppSidecarHealth,
@@ -51,6 +54,37 @@ _UNRELEASED_STATES = (
     WHATSAPP_ONBOARDING_STATE_ERROR,
 )
 _PROVIDER_EVENTS_WAIT_MS = 8_000
+_PROVIDER_INGRESS_RETRY_INITIAL_SECONDS = 1.0
+_PROVIDER_INGRESS_RETRY_MAX_SECONDS = 60.0
+_PROVIDER_INGRESS_EMPTY_POLL_DELAY_SECONDS = 0.1
+type _TerminalProviderEventReason = Literal[
+    "invalid_schema",
+    "identity_too_long",
+    "payload_too_large",
+    "persistence_data_error",
+]
+
+
+def _record_terminal_provider_event(
+    account_id: UUID,
+    *,
+    sequence: int,
+    reason: _TerminalProviderEventReason,
+) -> None:
+    provider_ingress_terminal_events.labels(channel="whatsapp", reason=reason).inc()
+    log.error(
+        "WhatsApp provider ingress terminally acknowledged account=%s sequence=%s reason=%s",
+        account_id,
+        sequence,
+        reason,
+    )
+
+
+def _is_terminal_provider_data_error(exc: DBAPIError) -> bool:
+    # asyncpg's SQLAlchemy adapter maps Postgres data exceptions through its
+    # generic DBAPI Error. SQLSTATE 22001 is the deterministic varchar overflow
+    # observed in production; other DB failures must remain retryable.
+    return getattr(exc.orig, "sqlstate", None) == "22001"
 
 
 class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
@@ -65,7 +99,7 @@ class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
         *,
         limit: int = 100,
         wait_ms: int = 0,
-    ) -> list[WhatsAppProviderMessageEvent]: ...
+    ) -> list[WhatsAppProviderEvent]: ...
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None: ...
 
@@ -578,25 +612,47 @@ class ConfiguredWhatsAppSidecarRegistry:
         account_id: UUID,
         client: WhatsAppSidecarClient,
     ) -> None:
+        retry_seconds = _PROVIDER_INGRESS_RETRY_INITIAL_SECONDS
         while True:
             try:
                 events = await client.provider_events(
-                    limit=100,
+                    # The sidecar acknowledgement cursor is ordered. Pull one
+                    # event so a terminally bad row can be acknowledged without
+                    # accidentally skipping an unprocessed later row.
+                    limit=1,
                     wait_ms=_PROVIDER_EVENTS_WAIT_MS,
                 )
                 if not events:
                     # A compatible older endpoint may ignore wait_ms and return
-                    # immediately. Yield without reintroducing timed polling.
-                    await asyncio.sleep(0)
+                    # immediately. Keep that endpoint from becoming a busy loop.
+                    await asyncio.sleep(_PROVIDER_INGRESS_EMPTY_POLL_DELAY_SECONDS)
+                    retry_seconds = _PROVIDER_INGRESS_RETRY_INITIAL_SECONDS
                     continue
-                for event in events:
-                    async with async_session_factory() as db:
-                        await persist_whatsapp_provider_event(
-                            db,
-                            account_id=account_id,
-                            event=event,
+                event = events[0]
+                if isinstance(event, WhatsAppRejectedProviderEvent):
+                    _record_terminal_provider_event(
+                        account_id,
+                        sequence=event.sequence,
+                        reason=event.reason,
+                    )
+                else:
+                    try:
+                        async with async_session_factory() as db:
+                            await persist_whatsapp_provider_event(
+                                db,
+                                account_id=account_id,
+                                event=event,
+                            )
+                    except DBAPIError as exc:
+                        if not _is_terminal_provider_data_error(exc):
+                            raise
+                        _record_terminal_provider_event(
+                            account_id,
+                            sequence=event.sequence,
+                            reason="persistence_data_error",
                         )
-                    await client.acknowledge_provider_events(through_sequence=event.sequence)
+                await client.acknowledge_provider_events(through_sequence=event.sequence)
+                retry_seconds = _PROVIDER_INGRESS_RETRY_INITIAL_SECONDS
             except asyncio.CancelledError:
                 raise
             except WhatsAppProviderAccountRetired:
@@ -607,7 +663,11 @@ class ConfiguredWhatsAppSidecarRegistry:
                 return
             except Exception:
                 log.exception("WhatsApp provider ingress pump failed for account %s", account_id)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(retry_seconds)
+                retry_seconds = min(
+                    retry_seconds * 2,
+                    _PROVIDER_INGRESS_RETRY_MAX_SECONDS,
+                )
 
     def _client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
         if not self._started or not self.enabled:

@@ -4,6 +4,7 @@ import asyncio
 from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
@@ -11,6 +12,7 @@ from app.services.whatsapp_delivery_transport import resolve_whatsapp_delivery_t
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
+    WhatsAppRejectedProviderEvent,
 )
 from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderAccountRetired,
@@ -19,6 +21,10 @@ from app.services.whatsapp_provider_bridge import (
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
 )
+
+
+class _StringDataRightTruncationError(ValueError):
+    sqlstate = "22001"
 
 
 class _FakeSidecarClient:
@@ -31,7 +37,7 @@ class _FakeSidecarClient:
         self.closed = True
 
     async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
-        assert limit == 100
+        assert limit == 1
         assert wait_ms in {0, 8_000}
         return []
 
@@ -179,7 +185,7 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
             self._first_poll = True
 
         async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
-            assert limit == 100
+            assert limit == 1
             assert wait_ms == 8_000
             if self._first_poll:
                 self._first_poll = False
@@ -211,7 +217,7 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_provider_ingress_reissues_long_poll_without_idle_sleep():
+async def test_provider_ingress_bounds_empty_long_poll_retries():
     account_id = UUID("00000000-0000-4000-8000-000000000905")
     second_request = asyncio.Event()
     calls = 0
@@ -220,7 +226,7 @@ async def test_provider_ingress_reissues_long_poll_without_idle_sleep():
         async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
             nonlocal calls
             calls += 1
-            assert limit == 100
+            assert limit == 1
             assert wait_ms == 8_000
             if calls == 2:
                 second_request.set()
@@ -235,6 +241,163 @@ async def test_provider_ingress_reissues_long_poll_without_idle_sleep():
     try:
         await asyncio.wait_for(second_request.wait(), timeout=1)
         assert calls == 2
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_event", "terminal_reason"),
+    [
+        (WhatsAppRejectedProviderEvent(sequence=1, reason="invalid_schema"), "invalid_schema"),
+        (
+            WhatsAppProviderMessageEvent(
+                sequence=1,
+                message_id="provider-invalid-1",
+                remote_jid="15550001111@s.whatsapp.net",
+                remote_jid_alt=None,
+                participant=None,
+                participant_alt=None,
+                push_name=None,
+                message_timestamp=None,
+                message_proto=b"\x0a\x05hello",
+            ),
+            "persistence_data_error",
+        ),
+    ],
+)
+async def test_provider_ingress_terminally_acks_poison_event_then_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    first_event,
+    terminal_reason: str,
+) -> None:
+    account_id = UUID("00000000-0000-4000-8000-000000000906")
+    valid_event = WhatsAppProviderMessageEvent(
+        sequence=2,
+        message_id="provider-valid-2",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05world",
+    )
+    queued = [first_event, valid_event]
+    persisted: list[int] = []
+    acknowledged: list[int] = []
+    terminal: list[tuple[int, str]] = []
+    completed = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def persist(_db, *, account_id, event):
+        if event.sequence == 1:
+            raise DBAPIError(
+                "insert",
+                {},
+                _StringDataRightTruncationError("invalid persisted value"),
+                False,
+            )
+        persisted.append(event.sequence)
+
+    class PumpClient:
+        async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
+            assert limit == 1
+            assert wait_ms == 8_000
+            if queued:
+                return queued[:limit]
+            await asyncio.Future()
+
+        async def acknowledge_provider_events(self, *, through_sequence: int):
+            acknowledged.append(through_sequence)
+            queued[:] = [event for event in queued if event.sequence > through_sequence]
+            if through_sequence == 2:
+                completed.set()
+
+    def record_terminal(_account_id, *, sequence: int, reason: str) -> None:
+        terminal.append((sequence, reason))
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", persist)
+    monkeypatch.setattr(sidecar_registry_module, "_record_terminal_provider_event", record_terminal)
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    task = asyncio.create_task(registry._pump_provider_ingress(account_id, PumpClient()))
+    try:
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        assert acknowledged == [1, 2]
+        assert persisted == [2]
+        assert terminal == [(1, terminal_reason)]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_provider_ingress_retries_transient_database_error_without_ack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = UUID("00000000-0000-4000-8000-000000000908")
+    event = WhatsAppProviderMessageEvent(
+        sequence=1,
+        message_id="provider-retry-1",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05hello",
+    )
+    persistence_attempts = 0
+    acknowledged: list[int] = []
+    delays: list[float] = []
+    completed = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def persist(_db, *, account_id, event):
+        nonlocal persistence_attempts
+        persistence_attempts += 1
+        if persistence_attempts == 1:
+            raise DBAPIError("insert", {}, OSError("database unavailable"), False)
+
+    class PumpClient:
+        async def provider_events(self, *, limit: int = 100, wait_ms: int = 0):
+            assert limit == 1
+            assert wait_ms == 8_000
+            if acknowledged:
+                await asyncio.Future()
+            return [event]
+
+        async def acknowledge_provider_events(self, *, through_sequence: int):
+            acknowledged.append(through_sequence)
+            completed.set()
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", persist)
+    monkeypatch.setattr(sidecar_registry_module.asyncio, "sleep", record_sleep)
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    task = asyncio.create_task(registry._pump_provider_ingress(account_id, PumpClient()))
+    try:
+        await asyncio.wait_for(completed.wait(), timeout=1)
+        assert persistence_attempts == 2
+        assert acknowledged == [1]
+        assert delays == [1.0]
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -284,7 +447,7 @@ async def test_terminal_ingress_releases_local_owner_and_can_reattach(
 
         async def provider_events(self, *, limit=100, wait_ms=0):
             assert wait_ms == 8_000
-            assert limit == 100
+            assert limit == 1
             return [event]
 
         async def acknowledge_provider_events(self, *, through_sequence):

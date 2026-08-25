@@ -23,7 +23,7 @@ from sqlalchemy import and_, delete, exists, func, or_, select, union_all, updat
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.models.channel import (
@@ -3673,7 +3673,7 @@ def _virtualized_telegram_direct_message(message: JsonObject) -> JsonObject:
 async def dequeue_telegram_updates(
     db: AsyncSession,
     *,
-    account: ChannelAccount,
+    account_id: UUID,
     bot_agent_link_id: UUID | None = None,
     offset: int | None,
     limit: int,
@@ -3681,7 +3681,7 @@ async def dequeue_telegram_updates(
 ) -> list[JsonObject]:
     now = datetime.now(UTC)
     filters = [
-        ChannelMessage.account_id == account.id,
+        ChannelMessage.account_id == account_id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
         ChannelMessage.binding_id.is_not(None),
         ChannelMessage.delivered_at.is_(None),
@@ -3755,9 +3755,9 @@ async def dequeue_telegram_updates(
 
 
 async def wait_for_telegram_updates(
-    db: AsyncSession,
+    sessionmaker: async_sessionmaker[AsyncSession],
     *,
-    account: ChannelAccount,
+    account_id: UUID,
     bot_agent_link_id: UUID | None = None,
     offset: int | None,
     limit: int,
@@ -3769,14 +3769,16 @@ async def wait_for_telegram_updates(
     poll_interval = _channel_long_poll_interval(poll_interval_seconds)
     deadline = monotonic() + timeout
     while True:
-        updates = await dequeue_telegram_updates(
-            db,
-            account=account,
-            bot_agent_link_id=bot_agent_link_id,
-            offset=offset,
-            limit=limit,
-            allowed_updates=allowed_updates,
-        )
+        async with sessionmaker() as db:
+            updates = await dequeue_telegram_updates(
+                db,
+                account_id=account_id,
+                bot_agent_link_id=bot_agent_link_id,
+                offset=offset,
+                limit=limit,
+                allowed_updates=allowed_updates,
+            )
+            await db.commit()
         if updates or timeout == 0 or monotonic() >= deadline:
             return updates
         await asyncio.sleep(min(poll_interval, max(0.0, deadline - monotonic())))
@@ -3785,13 +3787,13 @@ async def wait_for_telegram_updates(
 async def dequeue_channel_inbox_events(
     db: AsyncSession,
     *,
-    account: ChannelAccount,
+    account_id: UUID,
     bot_agent_link_id: UUID | None = None,
     after_sequence: int,
     limit: int,
 ) -> list[ChannelMessage]:
     filters = [
-        ChannelMessage.account_id == account.id,
+        ChannelMessage.account_id == account_id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
         ChannelMessage.binding_id.is_not(None),
         ChannelMessage.delivered_at.is_(None),
@@ -4470,9 +4472,9 @@ async def channel_queue_snapshots(
 
 
 async def wait_for_channel_inbox_events(
-    db: AsyncSession,
+    sessionmaker: async_sessionmaker[AsyncSession],
     *,
-    account: ChannelAccount,
+    account_id: UUID,
     bot_agent_link_id: UUID | None = None,
     after_sequence: int,
     limit: int,
@@ -4483,13 +4485,15 @@ async def wait_for_channel_inbox_events(
     poll_interval = _channel_long_poll_interval(poll_interval_seconds)
     deadline = monotonic() + timeout
     while True:
-        events = await dequeue_channel_inbox_events(
-            db,
-            account=account,
-            bot_agent_link_id=bot_agent_link_id,
-            after_sequence=after_sequence,
-            limit=limit,
-        )
+        async with sessionmaker() as db:
+            events = await dequeue_channel_inbox_events(
+                db,
+                account_id=account_id,
+                bot_agent_link_id=bot_agent_link_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+            await db.commit()
         if events or timeout == 0 or monotonic() >= deadline:
             return events
         await asyncio.sleep(min(poll_interval, max(0.0, deadline - monotonic())))
