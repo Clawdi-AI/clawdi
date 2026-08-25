@@ -11,6 +11,7 @@ import {
 	MANAGED_PROVIDER_LABEL,
 	providerPresentation,
 } from "@/hosted/v2/ai-providers/model-binding";
+import type { ProviderObservedHealth } from "@/hosted/v2/ai-providers/provider-observed-health";
 import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 
 /** Brand-preserving icon for a saved provider or provider reference. */
@@ -75,8 +76,38 @@ export function ProviderReadinessBadge({ deployable }: { deployable: boolean }) 
 	);
 }
 
+export function ProviderObservedBadge({ health }: { health: ProviderObservedHealth }) {
+	const status =
+		health.status === "ok" ? "success" : health.status === "degraded" ? "destructive" : "neutral";
+	const label =
+		health.status === "ok"
+			? "Observed OK"
+			: health.status === "degraded"
+				? "Degraded"
+				: "Not observed";
+	return (
+		<StatusBadge status={status} withDot>
+			{label}
+		</StatusBadge>
+	);
+}
+
+export function providerObservedDescription(health: ProviderObservedHealth): string {
+	if (health.reason) return health.reason;
+	if (health.status === "ok") {
+		return `Observed on ${health.agentCount} ${health.agentCount === 1 ? "agent" : "agents"}.`;
+	}
+	return health.agentCount > 0
+		? "Waiting for a fresh runtime observation."
+		: "Not currently observed on an agent.";
+}
+
 /** The always-on managed default, no setup. */
-export function ManagedProviderCard() {
+export function ManagedProviderCard({
+	observedHealth,
+}: {
+	observedHealth: ProviderObservedHealth;
+}) {
 	return (
 		<div data-hosted="true" data-v2="true" className={ENTITY_CARD_BASE}>
 			<EntityHeader
@@ -84,12 +115,15 @@ export function ManagedProviderCard() {
 				icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 				title={MANAGED_PROVIDER_LABEL}
 				titleAdornment={
-					<StatusBadge status="success">
-						<ShieldCheck className="size-3" />
-						Default
-					</StatusBadge>
+					<span className="inline-flex items-center gap-1.5">
+						<StatusBadge status="success">
+							<ShieldCheck className="size-3" />
+							Default
+						</StatusBadge>
+						<ProviderObservedBadge health={observedHealth} />
+					</span>
 				}
-				meta={["No setup required", "Wallet billed"]}
+				meta={["No setup required · Wallet billed", providerObservedDescription(observedHealth)]}
 			/>
 		</div>
 	);

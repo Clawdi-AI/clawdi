@@ -13,6 +13,7 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type {
 	AiProvider,
+	AiProviderConnectionTestResponse,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
 } from "@/hosted/v2/ai-providers/types";
@@ -38,6 +39,30 @@ export function authFor(method: AuthMethod): AiProviderUpsertAuth {
 
 export function providerListAllowsSubmit(isEdit: boolean, listLoaded: boolean): boolean {
 	return isEdit || listLoaded;
+}
+
+export type SavedProviderConnectionTestInput = {
+	params: { path: { provider_id: string } };
+	body: { model?: string };
+};
+
+type SavedProviderConnectionTestResult = Pick<AiProviderConnectionTestResponse, "ok" | "error">;
+
+export async function runPostSaveProviderConnectionTest(
+	provider: Pick<AiProvider, "provider_id" | "auth" | "models">,
+	execute: (input: SavedProviderConnectionTestInput) => Promise<SavedProviderConnectionTestResult>,
+): Promise<SavedProviderConnectionTestResult | null> {
+	if (provider.auth.type !== "api_key" || provider.auth.source !== "managed") return null;
+	const model = provider.models?.[0]?.id;
+	try {
+		return await execute({
+			params: { path: { provider_id: provider.provider_id } },
+			body: model ? { model } : {},
+		});
+	} catch {
+		// Saving is authoritative. A follow-up test failure must not turn it into a failed mutation.
+		return null;
+	}
 }
 
 export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {

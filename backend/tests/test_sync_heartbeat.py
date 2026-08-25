@@ -1657,6 +1657,10 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
     )
     assert by_env[missing_state_env_id]["health"]["status"] == "not_configured"
 
+    canonical = await client.get("/v1/agents/runtime-observed")
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json() == payload
+
 
 @pytest.mark.asyncio
 async def test_sync_heartbeat_rejects_malformed_observed_scalar(

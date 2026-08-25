@@ -623,6 +623,18 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
+@router.get(
+    "/agents/runtime-observed",
+    response_model=RuntimeObservedSummaryResponse,
+)
+async def list_agent_runtime_observed(
+    limit: int = Query(default=100, ge=1, le=500),
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedSummaryResponse:
+    return await list_environment_runtime_observed(limit=limit, auth=auth, db=db)
+
+
 @overload
 async def _reorder_agent_identities(
     requested_ids: list[UUID], auth: AuthContext, db: AsyncSession, *, agent_response: Literal[True]

@@ -21,3 +21,4 @@ export type AiProviderConnectionTestRequest = Schemas["AiProviderConnectionTestR
 export type AiProviderConnectionTestResponse = Schemas["AiProviderConnectionTestResponse"];
 export type AiProviderOAuthDeviceStartResponse = Schemas["AiProviderOAuthDeviceStartResponse"];
 export type AiProviderOAuthDevicePollResponse = Schemas["AiProviderOAuthDevicePollResponse"];
+export type RuntimeObservedSummary = Schemas["RuntimeObservedSummaryResponse"];

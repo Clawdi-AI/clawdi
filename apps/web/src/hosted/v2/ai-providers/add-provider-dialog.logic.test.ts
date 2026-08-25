@@ -4,6 +4,7 @@ import {
 	modelsFromText,
 	providerFormIdentity,
 	providerListAllowsSubmit,
+	runPostSaveProviderConnectionTest,
 	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
@@ -30,6 +31,64 @@ describe("provider list submit gate", () => {
 
 	test("does not block editing an already-loaded provider snapshot", () => {
 		expect(providerListAllowsSubmit(true, false)).toBe(true);
+	});
+});
+
+describe("post-save provider connection test", () => {
+	test("tests a saved managed API key against its first model", async () => {
+		const inputs: unknown[] = [];
+		const result = await runPostSaveProviderConnectionTest(
+			{
+				provider_id: "openai",
+				auth: { type: "api_key", source: "managed" },
+				models: [{ id: "gpt-5" }],
+			},
+			async (input) => {
+				inputs.push(input);
+				return { ok: true, error: null };
+			},
+		);
+
+		expect(inputs).toEqual([
+			{
+				params: { path: { provider_id: "openai" } },
+				body: { model: "gpt-5" },
+			},
+		]);
+		expect(result?.ok).toBe(true);
+	});
+
+	test("keeps a successful save authoritative when its follow-up test fails", async () => {
+		const result = await runPostSaveProviderConnectionTest(
+			{
+				provider_id: "openai",
+				auth: { type: "api_key", source: "managed" },
+				models: null,
+			},
+			async () => {
+				throw new Error("offline");
+			},
+		);
+
+		expect(result).toBeNull();
+	});
+
+	test("does not run the API-key test for OAuth providers", async () => {
+		let called = false;
+		const result = await runPostSaveProviderConnectionTest(
+			{
+				provider_id: "openai-codex",
+				auth: { type: "agent_profile", tool: "codex", profile: "default" },
+				models: [{ id: "gpt-5" }],
+			},
+			async () => {
+				called = true;
+				return { ok: true, error: null };
+			},
+		);
+
+		expect(called).toBe(false);
+		expect(result).toBeNull();
 	});
 });
 

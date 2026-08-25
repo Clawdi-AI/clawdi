@@ -24,6 +24,7 @@ import {
 	modelsToText,
 	providerFormIdentity,
 	providerListAllowsSubmit,
+	runPostSaveProviderConnectionTest,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	useAcceptProvider,
@@ -32,6 +33,7 @@ import {
 	useOAuthDeviceStart,
 	usePatchProvider,
 	useTestDraftProviderConnection,
+	useTestProviderConnection,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
@@ -82,6 +84,7 @@ export function AddProviderDialog({
 	const acceptProvider = useAcceptProvider();
 	const patchProvider = usePatchProvider();
 	const testDraft = useTestDraftProviderConnection();
+	const testSaved = useTestProviderConnection();
 	const oauthDeviceStart = useOAuthDeviceStart();
 	const oauthDevicePoll = useOAuthDevicePoll();
 	const pollDeviceOAuth = oauthDevicePoll.execute;
@@ -367,6 +370,7 @@ export function AddProviderDialog({
 					.catch(() => null);
 				if (result?.status !== "ready") return;
 				toast.success("Provider updated");
+				await reportPostSaveConnectionTest(result.provider);
 				requestClose(false);
 				return;
 			}
@@ -390,6 +394,7 @@ export function AddProviderDialog({
 				.catch(() => null);
 			if (!saved) return;
 			toast.success("Provider settings updated");
+			await reportPostSaveConnectionTest(saved);
 			requestClose(false);
 			return;
 		}
@@ -412,8 +417,21 @@ export function AddProviderDialog({
 			.catch(() => null);
 		if (result?.status !== "ready") return;
 		toast.success("Provider added");
+		await reportPostSaveConnectionTest(result.provider);
 		onCreated?.(result.provider.provider_id);
 		requestClose(false);
+	}
+
+	async function reportPostSaveConnectionTest(provider: AiProvider) {
+		const result = await runPostSaveProviderConnectionTest(provider, testSaved.mutateAsync);
+		if (!result) return;
+		if (result.ok) {
+			toast.success("Connection verified");
+			return;
+		}
+		toast.warning("Provider saved, but the connection needs attention", {
+			description: providerConnectionIssueMessage(result.error),
+		});
 	}
 
 	async function testDraftConnection() {
@@ -462,6 +480,7 @@ export function AddProviderDialog({
 		acceptProvider.isPending ||
 		patchProvider.isPending ||
 		testDraft.isPending ||
+		testSaved.isPending ||
 		oauthDeviceStart.isPending ||
 		oauthDevicePoll.isPending;
 
