@@ -4503,6 +4503,12 @@ export interface components {
             /** Status */
             status: string;
             /**
+             * Runtime Status
+             * @default connecting
+             * @enum {string}
+             */
+            runtime_status: "connecting" | "connected";
+            /**
              * Created At
              * Format: date-time
              */
@@ -4529,6 +4535,12 @@ export interface components {
             agent_id: string;
             /** Status */
             status: string;
+            /**
+             * Runtime Status
+             * @default connecting
+             * @enum {string}
+             */
+            runtime_status: "connecting" | "connected";
             /**
              * Created At
              * Format: date-time

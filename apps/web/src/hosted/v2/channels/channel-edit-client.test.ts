@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeAgentChannelLinks } from "./channel-edit-client.logic";
+import {
+	channelRuntimeStatus,
+	linkedChannelConnectionSummary,
+	normalizeAgentChannelLinks,
+} from "./channel-edit-client.logic";
 
 const account = {
 	id: "11111111-1111-4111-8111-111111111111",
@@ -31,5 +35,23 @@ describe("agent channel link response normalization", () => {
 
 	test("preserves the backend aggregate when present", () => {
 		expect(normalizeAgentChannelLinks([link(3)])[0]?.binding_count).toBe(3);
+	});
+
+	test("withholds connected copy until the backend reports observed convergence", () => {
+		const connecting = normalizeAgentChannelLinks([link()])[0];
+		const connected = normalizeAgentChannelLinks([
+			{ ...link(), runtime_status: "connected" as const },
+		])[0];
+		expect(connecting && channelRuntimeStatus(connecting)).toBe("connecting");
+		expect(connected && channelRuntimeStatus(connected)).toBe("connected");
+		expect(linkedChannelConnectionSummary(connecting ? [connecting] : [])).toBe(
+			"1 connecting channel",
+		);
+		expect(linkedChannelConnectionSummary(connected ? [connected] : [])).toBe(
+			"1 connected channel",
+		);
+		expect(
+			linkedChannelConnectionSummary(connecting ? [connecting] : [], { agentStopped: true }),
+		).toBe("Agent stopped");
 	});
 });

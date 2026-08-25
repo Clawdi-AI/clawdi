@@ -149,7 +149,7 @@ from app.services.whatsapp_provider_bridge import (
 )
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
-    canonical_codex_tool_provider_graph,
+    ensure_canonical_codex_tool_provider,
 )
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
@@ -569,6 +569,62 @@ async def _seed_created_channel_link(
         agent_token=raw_token,
     )
     return link
+
+
+async def _converge_hosted_runtime(
+    db_session: AsyncSession,
+    *,
+    user,
+    agent_id: UUID,
+) -> HostedRuntimeConfigObservation:
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    state.tools = CANONICAL_CODEX_TOOLS
+    await ensure_canonical_codex_tool_provider(db_session, user)
+    await db_session.commit()
+
+    batch = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[agent_id],
+        owner_user_id=user.id,
+    )
+    rendered = render_runtime_source(
+        batch,
+        environment_id=agent_id,
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    observation = await db_session.get(HostedRuntimeConfigObservation, agent_id)
+    assert observation is not None
+    observed_at = datetime.now(UTC)
+    generation = resolve_runtime_apply_generation(
+        generation=state.generation,
+        apply_generation=state.apply_generation,
+    )
+    etag = expected_runtime_bundle_v2_etag(rendered.source_revision)
+    observation.observed_at = observed_at
+    observation.observed_config_generation = generation
+    observation.observed_manifest_etag = etag
+    observation.observed_source_revision = rendered.source_revision
+    observation.diagnostics = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+        "reportedAt": observed_at.isoformat(),
+        "runtimeMode": "hosted",
+        "status": "ok",
+        "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
+        "applied": {
+            "etag": etag,
+            "sourceRevision": rendered.source_revision,
+            "generation": generation,
+            "instanceId": state.instance_id,
+            "appliedProviderIds": [],
+        },
+        "boot": None,
+        "cli": None,
+    }
+    await db_session.commit()
+    return observation
 
 
 async def _create_public_channel_with_links(
@@ -2013,54 +2069,13 @@ async def test_channel_health_requires_fresh_converged_runtime_evidence(
     assert created_response.status_code == 201, created_response.text
     created = created_response.json()
 
-    state = await db_session.get(HostedRuntimeState, channel_agent.id)
-    assert state is not None
-    state.tools = CANONICAL_CODEX_TOOLS
-    provider, payload = canonical_codex_tool_provider_graph(seed_user)
-    db_session.add_all([provider, payload])
-    await db_session.commit()
-
-    batch = await load_runtime_source_batch(
+    observation = await _converge_hosted_runtime(
         db_session,
-        environment_ids=[channel_agent.id],
-        owner_user_id=seed_user.id,
+        user=seed_user,
+        agent_id=channel_agent.id,
     )
-    rendered = render_runtime_source(
-        batch,
-        environment_id=channel_agent.id,
-        public_api_url=settings.public_api_url,
-        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-        decrypt_secrets=False,
-    )
-    observation = await db_session.get(HostedRuntimeConfigObservation, channel_agent.id)
-    assert observation is not None
-    observed_at = datetime.now(UTC)
-    generation = resolve_runtime_apply_generation(
-        generation=state.generation,
-        apply_generation=state.apply_generation,
-    )
-    etag = expected_runtime_bundle_v2_etag(rendered.source_revision)
-    observation.observed_at = observed_at
-    observation.observed_config_generation = generation
-    observation.observed_manifest_etag = etag
-    observation.observed_source_revision = rendered.source_revision
-    observation.diagnostics = {
-        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
-        "reportedAt": observed_at.isoformat(),
-        "runtimeMode": "hosted",
-        "status": "ok",
-        "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
-        "applied": {
-            "etag": etag,
-            "sourceRevision": rendered.source_revision,
-            "generation": generation,
-            "instanceId": state.instance_id,
-            "appliedProviderIds": [],
-        },
-        "boot": None,
-        "cli": None,
-    }
-    await db_session.commit()
+    assert observation.observed_at is not None
+    observed_at = observation.observed_at
 
     fresh_response = await client.get("/v1/channels/health")
     fresh = next(
@@ -4132,6 +4147,52 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
 
 
 @pytest.mark.asyncio
+async def test_channel_agent_link_is_connected_only_after_runtime_convergence(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"link-convergence-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    connecting = await client.get(f"/v1/channels/{created['id']}/agent-links")
+    assert connecting.status_code == 200, connecting.text
+    assert connecting.json()[0]["runtime_status"] == "connecting"
+
+    await _converge_hosted_runtime(
+        db_session,
+        user=seed_user,
+        agent_id=channel_agent.id,
+    )
+    connected = await client.get(
+        "/v1/channels/agent-links",
+        params={"agent_id": str(channel_agent.id)},
+    )
+    assert connected.status_code == 200, connected.text
+    item = next(link for link in connected.json() if link["account_id"] == created["id"])
+    assert item["runtime_status"] == "connected"
+
+    rotated = await client.post(
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["runtime_status"] == "connecting"
+
+    reconciling = await client.get(f"/v1/channels/{created['id']}/agent-links")
+    assert reconciling.status_code == 200, reconciling.text
+    assert reconciling.json()[0]["runtime_status"] == "connecting"
+
+
+@pytest.mark.asyncio
 async def test_list_channel_agent_links_by_agent_returns_linked_channel_summaries(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -4252,6 +4313,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert private_item["id"] == private["agent_link_id"]
     assert private_item["agent_id"] == str(channel_agent.id)
     assert private_item["status"] == "active"
+    assert private_item["runtime_status"] == "connecting"
     assert private_item["agent_token"] is None
     assert private_item["account"]["id"] == private["id"]
     assert private_item["account"]["name"] == private["name"]
@@ -4263,7 +4325,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert public_item["binding_count"] == 1
     assert other_private["id"] not in by_account_id
     assert other_user_listing.status_code == 404
-    assert select_count == 2
+    assert select_count == 8
 
 
 @pytest.mark.asyncio

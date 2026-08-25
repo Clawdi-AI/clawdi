@@ -10,6 +10,7 @@ ChannelProvider = Literal["telegram", "discord", "whatsapp"]
 ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
 ChannelHealthStatus = Literal["ok", "warning", "error"]
+ChannelRuntimeStatus = Literal["connecting", "connected"]
 WhatsAppOnboardingState = Literal[
     "generating",
     "ready",
@@ -164,6 +165,7 @@ class ChannelAgentLinkResponse(BaseModel):
     account_id: UUID
     agent_id: UUID
     status: str
+    runtime_status: ChannelRuntimeStatus = "connecting"
     created_at: datetime
     agent_token: str | None = None
 

@@ -36,6 +36,7 @@ import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summar
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
+	ChannelRuntimeStatusBadge,
 	ChannelStatusBadge,
 	CopyInline,
 	DeliveryBadge,
@@ -318,7 +319,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 // ── Agents ───────────────────────────────────────────────────────────────────
 
 function AgentsTab({ accountId }: { accountId: string }) {
-	const links = useChannelAgentLinks(accountId);
+	const links = useChannelAgentLinks(accountId, true);
 	const envs = useEnvironments();
 
 	if (links.isLoading || envs.isLoading) {
@@ -369,6 +370,7 @@ function AgentsTab({ accountId }: { accountId: string }) {
 							<AgentName
 								env={findEnv(envs.data, link.agent_id)}
 								meta={[
+									<ChannelRuntimeStatusBadge key="runtime-status" status={link.runtime_status} />,
 									...(isNormalChannelStatus(link.status)
 										? []
 										: [<ChannelStatusBadge key="status" status={link.status} />]),

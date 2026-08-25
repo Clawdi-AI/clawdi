@@ -84,6 +84,7 @@ from app.schemas.channel import (
     ChannelMessageResponse,
     ChannelPairCodeCreate,
     ChannelPairCodeResponse,
+    ChannelRuntimeStatus,
     ChannelSendMessageRequest,
 )
 from app.services.agent_bindings import get_owned_agent_or_404
@@ -194,12 +195,14 @@ def _agent_link_response(
     link: ChannelBotAgentLink,
     *,
     agent_token: str | None = None,
+    runtime_status: ChannelRuntimeStatus = "connecting",
 ) -> ChannelAgentLinkResponse:
     return ChannelAgentLinkResponse(
         id=link.id,
         account_id=link.account_id,
         agent_id=link.agent_id,
         status=link.status,
+        runtime_status=runtime_status,
         created_at=link.created_at,
         agent_token=agent_token,
     )
@@ -210,12 +213,21 @@ def _agent_link_with_account_response(
     account: ChannelAccount,
     *,
     binding_count: int = 0,
+    runtime_status: ChannelRuntimeStatus = "connecting",
 ) -> ChannelAgentLinkWithAccountResponse:
     return ChannelAgentLinkWithAccountResponse(
-        **_agent_link_response(link).model_dump(),
+        **_agent_link_response(link, runtime_status=runtime_status).model_dump(),
         account=account_response(account),
         binding_count=binding_count,
     )
+
+
+def _agent_link_runtime_status(
+    evidence: RuntimeObservedEvidence | None,
+) -> ChannelRuntimeStatus:
+    if evidence is not None and evidence.status == "ok" and evidence.converged:
+        return "connected"
+    return "connecting"
 
 
 def _activity_message_response(
@@ -563,11 +575,18 @@ async def list_agent_channel_links(
         user_id=auth.user_id,
         agent_id=agent_id,
     )
+    runtime_evidence = await load_runtime_observed_evidence(
+        db,
+        environment_ids=[agent_id],
+        owner_user_id=auth.user_id,
+    )
+    runtime_status = _agent_link_runtime_status(runtime_evidence.get(agent_id))
     return [
         _agent_link_with_account_response(
             link,
             account,
             binding_count=binding_count,
+            runtime_status=runtime_status,
         )
         for link, account, binding_count in rows
     ]
@@ -852,7 +871,19 @@ async def list_channel_agent_links(
         )
         .order_by(ChannelBotAgentLink.created_at)
     )
-    return [_agent_link_response(link) for link in result.scalars().all()]
+    links = list(result.scalars().all())
+    runtime_evidence = await load_runtime_observed_evidence(
+        db,
+        environment_ids=[link.agent_id for link in links],
+        owner_user_id=auth.user_id,
+    )
+    return [
+        _agent_link_response(
+            link,
+            runtime_status=_agent_link_runtime_status(runtime_evidence.get(link.agent_id)),
+        )
+        for link in links
+    ]
 
 
 @router.post("/{account_id}/agent-links", status_code=status.HTTP_201_CREATED)
