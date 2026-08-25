@@ -894,6 +894,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Runtime Observed */
+        get: operations["list_agent_runtime_observed_v1_agents_runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/order": {
         parameters: {
             query?: never;
@@ -4503,6 +4520,12 @@ export interface components {
             /** Status */
             status: string;
             /**
+             * Runtime Status
+             * @default connecting
+             * @enum {string}
+             */
+            runtime_status: "connecting" | "connected";
+            /**
              * Created At
              * Format: date-time
              */
@@ -4529,6 +4552,12 @@ export interface components {
             agent_id: string;
             /** Status */
             status: string;
+            /**
+             * Runtime Status
+             * @default connecting
+             * @enum {string}
+             */
+            runtime_status: "connecting" | "connected";
             /**
              * Created At
              * Format: date-time
@@ -10127,6 +10156,37 @@ export interface operations {
         };
     };
     list_environment_runtime_observed_v1_environments_runtime_observed_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservedSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_runtime_observed_v1_agents_runtime_observed_get: {
         parameters: {
             query?: {
                 limit?: number;

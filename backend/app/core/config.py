@@ -263,7 +263,9 @@ class Settings(BaseSettings):
     # opaque to Hosted; empty uses encryption_key so existing deployments need
     # no additional secret before adopting the protocol.
     runtime_observation_cursor_key: str = ""
-    runtime_observation_freshness_seconds: Annotated[int, Field(gt=0, le=86_400)] = 90
+    # Runtime reports every 60 +/- 15 seconds. Allow two full intervals before
+    # treating the latest observation as stale.
+    runtime_observation_freshness_seconds: Annotated[int, Field(gt=0, le=86_400)] = 150
     runtime_observation_max_future_skew_seconds: Annotated[int, Field(gt=0, le=86_400)] = 300
     runtime_observation_max_capture_age_days: Annotated[int, Field(gt=0, le=365)] = 30
     runtime_observation_replay_horizon_days: Annotated[int, Field(gt=0, le=365)] = 7

@@ -857,11 +857,24 @@ async def test_runtime_health_fences_stale_instance_source_and_freshness(
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    stale_at = datetime.now(UTC) - timedelta(minutes=5)
     observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
     agent = await db_session.get(AgentEnvironment, uuid.UUID(env_id))
     assert observation is not None
     assert agent is not None
+
+    still_fresh_at = datetime.now(UTC) - timedelta(seconds=120)
+    observation.observed_at = still_fresh_at
+    agent.last_sync_at = still_fresh_at
+    await db_session.commit()
+
+    fresh_response = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert fresh_response.status_code == 200, fresh_response.text
+    fresh_health = fresh_response.json()["health"]
+    assert fresh_health["status"] == "unknown"
+    assert "daemon_stale" not in fresh_health["reasons"]
+    assert "runtime_observed_stale" not in fresh_health["reasons"]
+
+    stale_at = datetime.now(UTC) - timedelta(seconds=151)
     observation.observed_at = stale_at
     agent.last_sync_at = stale_at
     await db_session.commit()
@@ -1656,6 +1669,10 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
         provider["status"] == "error" for provider in by_env[error_env_id]["provider_health"]
     )
     assert by_env[missing_state_env_id]["health"]["status"] == "not_configured"
+
+    canonical = await client.get("/v1/agents/runtime-observed")
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json() == payload
 
 
 @pytest.mark.asyncio

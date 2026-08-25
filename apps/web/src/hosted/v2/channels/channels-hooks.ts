@@ -10,7 +10,10 @@ import {
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
-import { agentChannelLinksQueryBehavior } from "@/hosted/v2/channels/channel-query-options.logic";
+import {
+	AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS,
+	agentChannelLinksQueryBehavior,
+} from "@/hosted/v2/channels/channel-query-options.logic";
 import type {
 	ChannelCreate,
 	ChannelCreated,
@@ -147,12 +150,16 @@ export function useWhatsAppOnboardingActions() {
 	return { start, refresh, pairingCode, cancel, retry, repair };
 }
 
-export function useChannelAgentLinks(id: string) {
+export function useChannelAgentLinks(id: string, poll = false) {
 	return useOpenApi().useQuery(
 		"get",
 		"/v1/channels/{account_id}/agent-links",
 		{ params: { path: { account_id: id } } },
-		{ enabled: Boolean(id) },
+		{
+			enabled: Boolean(id),
+			refetchInterval: poll ? AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS : false,
+			refetchIntervalInBackground: false,
+		},
 	);
 }
 

@@ -55,6 +55,7 @@ function link(
 		account_id: accountId,
 		agent_id: agentId,
 		status: "active",
+		runtime_status: overrides.runtime_status ?? "connecting",
 		created_at: createdAt,
 		...overrides,
 		binding_count: overrides.binding_count ?? 0,

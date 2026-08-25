@@ -47,6 +47,39 @@ describe("channel health summaries", () => {
 		});
 	});
 
+	test("degrades missing and stale runtime evidence instead of claiming healthy", () => {
+		expect(
+			channelHealthSummary(
+				health({ health_status: "warning", reasons: ["runtime_observation_missing"] }),
+			),
+		).toEqual({
+			label: "Waiting for runtime",
+			detail: "No Agent runtime activity has been observed for this channel yet.",
+		});
+		expect(
+			channelHealthSummary(
+				health({ health_status: "warning", reasons: ["runtime_observation_stale"] }),
+			).label,
+		).toBe("Runtime inactive");
+	});
+
+	test("distinguishes reconnection and an unlinked channel from missing runtime evidence", () => {
+		expect(
+			channelHealthSummary(
+				health({ health_status: "warning", reasons: ["native_transport_reconnecting"] }),
+			),
+		).toEqual({
+			label: "Reconnecting",
+			detail: "The channel transport is reconnecting after a service restart.",
+		});
+		expect(
+			channelHealthSummary(health({ health_status: "warning", reasons: ["agent_not_linked"] })),
+		).toEqual({
+			label: "Not linked",
+			detail: "This channel is not linked to an Agent.",
+		});
+	});
+
 	test("prioritizes actionable error states", () => {
 		expect(
 			channelHealthSummary(

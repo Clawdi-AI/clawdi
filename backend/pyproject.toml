@@ -279,6 +279,7 @@ strict = [
     "app/services/runtime_manifest_resources.py",
     "app/services/runtime_observation.py",
     "app/services/runtime_observation_retention_worker.py",
+    "app/services/runtime_observed_evidence.py",
     "app/services/runtime_source.py",
     "app/services/runtime_source_authority.py",
     "app/services/runtime_state_cleanup.py",

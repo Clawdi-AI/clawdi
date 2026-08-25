@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeGuard
@@ -81,6 +82,7 @@ class WhatsAppProviderNodeRelayResult:
 @dataclass(frozen=True)
 class WhatsAppProviderTransportStatus:
     available: bool
+    reconnecting: bool
     mode: Literal["sidecar", "none"]
     reason: str | None
     supports_outbound_messages: bool
@@ -88,6 +90,7 @@ class WhatsAppProviderTransportStatus:
     def as_dict(self) -> dict[str, JsonValue]:
         return {
             "available": self.available,
+            "reconnecting": self.reconnecting,
             "mode": self.mode,
             "reason": self.reason,
             "supportsOutboundMessages": self.supports_outbound_messages,
@@ -107,6 +110,13 @@ class WhatsAppProviderTransport(Protocol):
 
 
 _PROVIDER_TRANSPORTS: dict[UUID, WhatsAppProviderTransport] = {}
+_PROVIDER_TRANSPORT_UNAVAILABLE_SINCE: dict[UUID, float] = {}
+_PROVIDER_TRANSPORTS_STARTED_AT = time.monotonic()
+_PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS = 5 * 60
+
+
+def _transport_clock() -> float:
+    return time.monotonic()
 
 
 class WhatsAppProviderAccountRetired(Exception):
@@ -122,10 +132,13 @@ def register_whatsapp_provider_transport(
     if account_id in _PROVIDER_TRANSPORTS:
         raise RuntimeError(f"WhatsApp provider transport already registered for {account_id}")
     _PROVIDER_TRANSPORTS[account_id] = transport
+    _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.pop(account_id, None)
 
 
 def unregister_whatsapp_provider_transport(account_id: UUID) -> None:
-    _PROVIDER_TRANSPORTS.pop(account_id, None)
+    removed = _PROVIDER_TRANSPORTS.pop(account_id, None)
+    if removed is not None:
+        _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE[account_id] = _transport_clock()
 
 
 def get_whatsapp_provider_transport(account_id: UUID) -> WhatsAppProviderTransport | None:
@@ -133,17 +146,30 @@ def get_whatsapp_provider_transport(account_id: UUID) -> WhatsAppProviderTranspo
 
 
 def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTransportStatus:
+    now = _transport_clock()
     transport = get_whatsapp_provider_transport(account_id)
     if transport is None:
+        unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.get(
+            account_id, _PROVIDER_TRANSPORTS_STARTED_AT
+        )
         return WhatsAppProviderTransportStatus(
             available=False,
+            reconnecting=(now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS),
             mode="none",
             reason="provider-transport-unavailable",
             supports_outbound_messages=False,
         )
     connected = _transport_connected(transport)
+    if connected:
+        _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.pop(account_id, None)
+        unavailable_since = now
+    else:
+        unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.setdefault(account_id, now)
     return WhatsAppProviderTransportStatus(
         available=connected,
+        reconnecting=(
+            not connected and now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS
+        ),
         mode="sidecar",
         reason=None if connected else "provider-transport-disconnected",
         supports_outbound_messages=True,

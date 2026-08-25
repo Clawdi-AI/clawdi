@@ -18,8 +18,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
+type DaemonSyncEvidence = Pick<Env, "sync_enabled" | "last_sync_at" | "last_sync_error">;
 
-const FRESH_WINDOW_MS = 90_000;
+// Runtime reports every 60 +/- 15 seconds. Match the backend's two-interval window.
+const FRESH_WINDOW_MS = 150_000;
 
 export type DaemonStatusKind = "live" | "set-up" | "errored" | "paused";
 export type DaemonStatusSource = "self-managed" | "on-clawdi";
@@ -84,7 +86,7 @@ function isRetryExhaustedError(raw: string | null | undefined): boolean {
 	return typeof raw === "string" && raw.startsWith("retry_exhausted: ");
 }
 
-function classify(env: Env | null | undefined): DaemonStatusKind {
+function classify(env: DaemonSyncEvidence | null | undefined): DaemonStatusKind {
 	if (!env) return "set-up";
 	// Treat "never heartbeated" the same as "sync disabled" from
 	// the user's POV — both mean the daemon isn't running on this
@@ -162,7 +164,7 @@ const DOT_LABEL: Record<DaemonStatusKind, string> = {
 };
 
 export function daemonStatusVisual(
-	env: Env | null | undefined,
+	env: DaemonSyncEvidence | null | undefined,
 	source: DaemonStatusSource = "self-managed",
 ): DaemonStatusVisual {
 	const kind = classify(env);
