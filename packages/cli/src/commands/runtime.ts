@@ -154,6 +154,7 @@ interface RuntimeApplyOptions {
 	preparedHostedAgentPlugins?: PreparedHostedAgentPlugins | null;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
+	refreshCachedRuntimeProbes?: boolean;
 }
 
 export type RuntimeManifestApplyOptions = Omit<
@@ -882,6 +883,7 @@ async function runtimeWatchTick(
 			await convergeOnce(() => loadRuntimeManifestForWatch(paths, opts), paths, {
 				continueOnCliUpdateError: true,
 				recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
+				refreshCachedRuntimeProbes: opts.forceRefresh,
 				hostedRuntimeContract: opts.hostedRuntimeContract,
 				requireAppliedAuthority: true,
 			}),
@@ -1282,6 +1284,7 @@ async function applyRuntimeDesiredState(
 		const convergence = convergeRuntimeManifest(load, paths, {
 			cacheLastGood: false,
 			hostedRuntimeContract: opts.hostedRuntimeContract,
+			refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 			preparedHostedSourcedSkills,
 			...(preparedHostedAgentPlugins ? { preparedHostedAgentPlugins } : {}),
 			...(Object.keys(resourcePreparationFailures).length > 0

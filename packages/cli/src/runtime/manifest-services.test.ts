@@ -20,6 +20,8 @@ import {
 	type RuntimeConvergenceOptions,
 	type RuntimeManifest,
 } from "./manifest";
+import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
+import { observeRuntimeInstall, runtimeCommandCurrentRevision } from "./manifest-install";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
@@ -35,6 +37,74 @@ const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 	new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url),
 );
+
+test("reuses a runtime version until its executable revision changes", () => {
+	const paths = tempRuntimePaths();
+	mkdirSync(paths.runRoot, { recursive: true });
+	mkdirSync(paths.userHome, { recursive: true });
+	const command = join(paths.runRoot, "versioned-runtime");
+	const log = join(paths.runRoot, "version-probes.log");
+	const writeCommand = (version: string) => {
+		writeFileSync(
+			command,
+			`#!/bin/sh
+printf '%s\n' "$*" >> '${log}'
+printf '%s\n' '${version}'
+`,
+			{ mode: 0o755 },
+		);
+	};
+	writeCommand("runtime 1.0.0");
+
+	const first = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+	expect(runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome)).toBe(first);
+	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version"]);
+
+	writeCommand("runtime 1.0.1");
+	const revised = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+	expect(revised).not.toBe(first);
+	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version", "--version"]);
+});
+
+test("reuses the Hermes dashboard capability until its service revision changes", () => {
+	const paths = tempRuntimePaths();
+	mkdirSync(paths.runRoot, { recursive: true });
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const python = join(paths.userHome, ".hermes", "hermes-agent", "venv", "bin", "python");
+	const log = join(paths.runRoot, "dashboard-capability.log");
+	for (const executable of [command, python]) {
+		mkdirSync(dirname(executable), { recursive: true });
+		writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`, {
+			mode: 0o755,
+		});
+	}
+	const runtime: RuntimeManifest["runtimes"][string] = {
+		enabled: true,
+		install: {
+			authority: "official",
+			method: "official-installer",
+			url: OFFICIAL_INSTALL_URLS.hermes,
+			home: paths.userHome,
+			args: officialInstallArgs("hermes", paths.userHome),
+		},
+		services: { dashboard: runSettings(command, ["dashboard"]) },
+	};
+	const observe = (revision: string) =>
+		observeRuntimeInstall(
+			"hermes",
+			runtime,
+			paths.userHome,
+			paths,
+			{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
+			revision,
+		);
+
+	expect(observe("a".repeat(64)).error).toBeNull();
+	expect(observe("a".repeat(64)).error).toBeNull();
+	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
+	expect(observe("b".repeat(64)).error).toBeNull();
+	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
+});
 
 function convergeRuntimeManifest(
 	load: RuntimeManifestLoad,

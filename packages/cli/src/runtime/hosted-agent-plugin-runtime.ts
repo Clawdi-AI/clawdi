@@ -12,14 +12,20 @@ import {
 	type PreparedHostedAgentPlugins,
 	withPreparedAgentPluginDirectory,
 } from "./hosted-agent-plugin-package";
+import { runtimeFileCurrentRevision } from "./manifest-install";
 import {
 	openClawAgentPluginInspectSchema,
 	openClawPluginListSchema,
 } from "./openclaw-plugin-observation";
+import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 1024 * 1024;
+const stableAgentPluginRevisions = new Map<
+	string,
+	{ revision: string; receipt: HostedAgentPluginReceipt | null }
+>();
 const isolatedGitEnvironment: Readonly<Record<string, string | undefined>> = {
 	GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
 	GIT_ATTR_NOSYSTEM: "1",
@@ -620,7 +626,39 @@ export function prepareHostedAgentPluginTransaction(input: {
 	home: string;
 	commands: HostedAgentPluginCommands;
 	runner?: HostedAgentPluginCommandRunner;
+	refreshCachedRuntimeProbes?: boolean;
 }): HostedAgentPluginTransaction {
+	const revision = runtimeImpactRevision({
+		runtime: input.prepared.runtime,
+		desired: [...input.prepared.desired]
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([name, plugin]) => ({
+				name,
+				ownershipIdentity: plugin.installation.ownershipIdentity,
+			})),
+		previous: [...input.prepared.previous]
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([name, plugin]) => ({
+				name,
+				runtime: plugin.runtime,
+				nativeId: plugin.nativeId,
+				ownershipIdentity: plugin.installation.ownershipIdentity,
+			})),
+		commands: Object.fromEntries(
+			Object.entries(input.commands).map(([runtime, command]) => [
+				runtime,
+				runtimeFileCurrentRevision(command),
+			]),
+		),
+	});
+	const cached = stableAgentPluginRevisions.get(input.home);
+	if (!input.refreshCachedRuntimeProbes && cached?.revision === revision) {
+		return {
+			mutationNames: [],
+			hasMutations: false,
+			apply: () => cached.receipt,
+		};
+	}
 	const runner = input.runner ?? defaultCommandRunner;
 	const drivers = new Map<HostedAgentPluginRuntime, NativeAgentPluginDriver>();
 	const driverFor = (runtime: HostedAgentPluginRuntime): NativeAgentPluginDriver => {
@@ -706,6 +744,12 @@ export function prepareHostedAgentPluginTransaction(input: {
 			driver,
 			before,
 			action: before ? "replace" : "install",
+		});
+	}
+	if (mutations.length === 0) {
+		stableAgentPluginRevisions.set(input.home, {
+			revision,
+			receipt: desiredReceipt(input.prepared, resolvedNativeIds),
 		});
 	}
 	return {

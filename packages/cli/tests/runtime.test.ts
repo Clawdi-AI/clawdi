@@ -442,28 +442,36 @@ start_process() {
 }
 case "$command" in
   show)
-    unit="\${1:-}"
-    load_state=loaded
-    active_state=inactive
-    [ ! -f "$(state_path "$unit" active)" ] || active_state=active
-    [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
-    if [ -f "$(state_path "$unit" not-found)" ]; then load_state=not-found; active_state=inactive; fi
-    need_daemon_reload=no
-    [ ! -f "$(state_path "$unit" reload)" ] || need_daemon_reload=yes
-    main_pid=0
-    [ ! -f "$(state_path "$unit" pid)" ] || main_pid="$(cat "$(state_path "$unit" pid)")"
-    printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
+    first=1
+    for unit in "$@"; do
+      case "$unit" in --property=*) continue ;; esac
+      if [ "$first" = "0" ]; then printf '\\n'; fi
+      first=0
+      load_state=loaded
+      active_state=inactive
+      [ ! -f "$(state_path "$unit" active)" ] || active_state=active
+      [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
+      if [ -f "$(state_path "$unit" not-found)" ]; then load_state=not-found; active_state=inactive; fi
+      need_daemon_reload=no
+      [ ! -f "$(state_path "$unit" reload)" ] || need_daemon_reload=yes
+      main_pid=0
+      [ ! -f "$(state_path "$unit" pid)" ] || main_pid="$(cat "$(state_path "$unit" pid)")"
+      printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
+    done
     ;;
-	  is-enabled)
-	    quiet=0
-	    if [ "\${1:-}" = "--quiet" ]; then quiet=1; shift; fi
-	    unit="\${1:-}"
-	    if [ -f "$(state_path "$unit" enabled)" ] || [ -L "$HOME/.config/systemd/user/default.target.wants/$unit" ]; then
-	      if [ "$quiet" = "0" ]; then printf 'enabled\\n'; fi
-	    else
-	      if [ "$quiet" = "0" ]; then printf 'disabled\\n'; fi
-	      exit 1
-    fi
+  is-enabled)
+    quiet=0
+    if [ "\${1:-}" = "--quiet" ]; then quiet=1; shift; fi
+    status=0
+    for unit in "$@"; do
+      if [ -f "$(state_path "$unit" enabled)" ] || [ -L "$HOME/.config/systemd/user/default.target.wants/$unit" ]; then
+        if [ "$quiet" = "0" ]; then printf 'enabled\\n'; fi
+      else
+        if [ "$quiet" = "0" ]; then printf 'disabled\\n'; fi
+        status=1
+      fi
+    done
+    exit "$status"
     ;;
   start)
     for unit in "$@"; do
@@ -5010,7 +5018,12 @@ cp '${sdkSource}' '${sdkTarget}'
 			});
 			expect(systemdEnvDigest(readSystemdEnvFile(paths, runtimeUnit))).toBe(initialRevision);
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8");
-			expect(systemctlCalls).toContain(`--user show ${runtimeUnit}.service`);
+			const managerReads = systemctlCalls.trim().split("\n");
+			expect(managerReads.find((call) => call.startsWith("--user show "))).toContain(
+				`${runtimeUnit}.service`,
+			);
+			expect(managerReads.filter((call) => /^(?:--user )?show /.test(call))).toHaveLength(2);
+			expect(managerReads.filter((call) => /^(?:--user )?is-enabled /.test(call))).toHaveLength(2);
 			expect(systemctlCalls).not.toMatch(
 				/(?:^|\s)(?:start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
 			);

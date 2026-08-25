@@ -95,6 +95,7 @@ import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
+import { runtimeImpactRevision, runtimeProviderRevision } from "./runtime-impact-revision";
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
@@ -156,6 +157,28 @@ interface RuntimeConvergenceState {
 	activated: Record<string, string>;
 	officialServiceCommandRevisions: Record<string, string>;
 	staleSystemdFiles: RuntimeSystemdStaleFilePlan;
+}
+
+function officialServiceCommandRevision(
+	context: RuntimeConvergenceContext,
+	runtime: string,
+): string | null {
+	const unitName =
+		runtime === "openclaw"
+			? "openclaw-gateway.service"
+			: runtime === "hermes"
+				? "hermes-gateway.service"
+				: null;
+	return unitName
+		? (context.appliedState?.officialServiceCommandRevisions?.[unitName] ?? null)
+		: null;
+}
+
+function runtimeProbeRevision(context: RuntimeConvergenceContext, runtime: string): string {
+	return runtimeImpactRevision({
+		provider: runtimeProviderRevision(context.manifest, runtime),
+		officialServiceCommand: officialServiceCommandRevision(context, runtime),
+	});
 }
 
 interface RuntimeConvergencePlan {
@@ -342,6 +365,7 @@ function prepareRuntimeInstallStage(
 			projectionHome,
 			paths,
 			hostedRuntimeContract.identity,
+			officialServiceCommandRevision(context, name),
 		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
@@ -349,6 +373,7 @@ function prepareRuntimeInstallStage(
 		if (name === "openclaw" && observation.enabled && observation.commandPath) {
 			state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
 				context.openClawContext,
+				runtimeProbeRevision(context, "openclaw"),
 			);
 		}
 	}
@@ -457,6 +482,7 @@ function prepareRuntimeApplyDependencies(
 					manifest,
 					secretValues,
 					context: openClawContext,
+					revision: runtimeProbeRevision(context, "openclaw"),
 				});
 			} catch (error) {
 				state.installErrors.push(
@@ -469,14 +495,18 @@ function prepareRuntimeApplyDependencies(
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		const managedOpenClawObservation = state.observations.get("openclaw");
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
-			openClawContext.agentDirs.managed =
-				discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
+			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
+				openClawContext,
+				runtimeProbeRevision(context, "openclaw"),
+			);
 			if (!managedOpenClawObservation.commandPath) {
 				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
 			}
 			ensureManagedOpenClawProviderPlugin({
 				context: openClawContext,
 				commandPath: managedOpenClawObservation.commandPath,
+				revision: runtimeProbeRevision(context, "openclaw"),
+				refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 			});
 		}
 		if (opts.preparedHostedAgentPlugins) {
@@ -490,6 +520,7 @@ function prepareRuntimeApplyDependencies(
 					...(opts.hostedAgentPluginCommandRunner
 						? { runner: opts.hostedAgentPluginCommandRunner }
 						: {}),
+					refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 				});
 			} catch (error) {
 				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
@@ -859,6 +890,7 @@ function applyRuntimeEntryProjections(
 					previousProjectedProviderIds[name] ?? [],
 					state.openClawOwnerBrowserBootstrapSupported,
 					hermesConfig,
+					runtimeProbeRevision(context, name),
 				);
 				state.projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {

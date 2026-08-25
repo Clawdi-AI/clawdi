@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
@@ -14,6 +15,8 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
+import { runtimeFileCurrentRevision } from "./manifest-install";
+import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
 
@@ -24,6 +27,7 @@ const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
 const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
 const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
+const openClawWorkspaces = new Map<string, { revision: string; workspace: string }>();
 
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
@@ -57,6 +61,33 @@ function parseOfficialWorkspaceRoster(stdout: string): string {
 	return resolve(main[0].workspace);
 }
 
+export function openClawRosterConfigRevision(home: string): string {
+	try {
+		const config = JSON.parse(
+			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
+		) as unknown;
+		const root =
+			config && typeof config === "object" && !Array.isArray(config)
+				? (config as Record<string, unknown>)
+				: {};
+		const agents =
+			root.agents && typeof root.agents === "object" && !Array.isArray(root.agents)
+				? (root.agents as Record<string, unknown>)
+				: {};
+		const defaults =
+			agents.defaults && typeof agents.defaults === "object" && !Array.isArray(agents.defaults)
+				? (agents.defaults as Record<string, unknown>)
+				: {};
+		return runtimeImpactRevision({
+			defaultWorkspace: defaults.workspace ?? null,
+			entries: agents.entries ?? null,
+			list: agents.list ?? null,
+		});
+	} catch {
+		return "unavailable";
+	}
+}
+
 function openClawGatewayIsTransitioning(home: string): boolean {
 	const result = spawnRuntimeUserCommand(
 		systemctlPath(),
@@ -84,6 +115,11 @@ function waitForOpenClawGatewayTransition(): void {
 
 export function resolveHostedOpenClawWorkspace(home: string): string {
 	const command = commandPath(home);
+	const revision = [runtimeFileCurrentRevision(command), openClawRosterConfigRevision(home)].join(
+		"\0",
+	);
+	const cached = openClawWorkspaces.get(home);
+	if (cached?.revision === revision) return cached.workspace;
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
@@ -104,7 +140,9 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (result.status !== 0) {
 		throw new Error("OpenClaw official agent workspace roster is unavailable");
 	}
-	return parseOfficialWorkspaceRoster(String(result.stdout));
+	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
+	openClawWorkspaces.set(home, { revision, workspace });
+	return workspace;
 }
 
 function invalidConfigValidation(result: ReturnType<typeof spawnRuntimeUserCommand>): boolean {

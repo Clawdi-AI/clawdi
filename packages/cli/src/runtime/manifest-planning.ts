@@ -85,6 +85,7 @@ export interface RuntimeConvergenceOptions {
 	resourcePreparationFailures?: RuntimeResourcePreparationFailures;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
+	refreshCachedRuntimeProbes?: boolean;
 }
 
 export interface RuntimeResourcePreparationFailures {
@@ -99,6 +100,7 @@ export function planHostedAgentPluginConvergence(input: {
 	home: string;
 	commands: HostedAgentPluginCommands;
 	runner?: HostedAgentPluginCommandRunner;
+	refreshCachedRuntimeProbes?: boolean;
 }): {
 	transaction: HostedAgentPluginTransaction | null;
 } {
@@ -108,6 +110,7 @@ export function planHostedAgentPluginConvergence(input: {
 			home: input.home,
 			commands: input.commands,
 			...(input.runner ? { runner: input.runner } : {}),
+			refreshCachedRuntimeProbes: input.refreshCachedRuntimeProbes,
 		}),
 	};
 }

@@ -73,6 +73,11 @@ const HERMES_DASHBOARD_CAPABILITY_PROBE =
 	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
 const HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS = 30_000;
 const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+const runtimeCommandRevisions = new Map<
+	string,
+	{ executableRevision: string; commandRevision: string }
+>();
+const hermesDashboardCapabilityRevisions = new Map<string, string>();
 function runtimeInstallTimeoutMs(): number {
 	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
 	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
@@ -86,6 +91,7 @@ function runtimeInstallTimeoutMs(): number {
 function hermesDashboardCapabilityError(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
+	officialServiceCommandRevision?: string | null,
 ): string | null {
 	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
 		return null;
@@ -93,6 +99,11 @@ function hermesDashboardCapabilityError(
 	if (!executableExists(python)) {
 		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
 	}
+	const capabilityRevision = [
+		officialServiceCommandRevision ?? "uncommitted",
+		runtimeFileCurrentRevision(python) ?? "missing",
+	].join("\0");
+	if (hermesDashboardCapabilityRevisions.get(python) === capabilityRevision) return null;
 	let result: ReturnType<typeof spawnRuntimeUserCommand>;
 	try {
 		result = spawnRuntimeUserCommand(
@@ -107,7 +118,10 @@ function hermesDashboardCapabilityError(
 			error instanceof Error ? error.message : String(error)
 		}`;
 	}
-	if (result.status === 0) return null;
+	if (result.status === 0) {
+		hermesDashboardCapabilityRevisions.set(python, capabilityRevision);
+		return null;
+	}
 	return `Hermes dashboard runtime is incompatible: ${
 		tail(String(result.stderr ?? "")) ??
 		(result.error instanceof Error
@@ -331,6 +345,7 @@ export function observeRuntimeInstall(
 	home: string,
 	paths: RuntimePaths,
 	identity: { uid: number; gid: number },
+	officialServiceCommandRevision?: string | null,
 ) {
 	if (!runtime.enabled) {
 		return runtimeInstallObservation({
@@ -365,7 +380,11 @@ export function observeRuntimeInstall(
 	}
 	const observation = runOfficialInstaller(name, runtime.install, paths, identity);
 	if (observation.error) return observation;
-	const capabilityError = hermesDashboardCapabilityError(name, runtime);
+	const capabilityError = hermesDashboardCapabilityError(
+		name,
+		runtime,
+		officialServiceCommandRevision,
+	);
 	return capabilityError
 		? { ...observation, status: "install_failed" as const, error: capabilityError }
 		: observation;
@@ -457,6 +476,9 @@ export function runtimeCommandCurrentRevision(
 ): string | null {
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
+	const cacheKey = `${command}\0${home}\0${cwd}`;
+	const cached = runtimeCommandRevisions.get(cacheKey);
+	if (cached?.executableRevision === executableRevision) return cached.commandRevision;
 	try {
 		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
 			timeoutMs: 10_000,
@@ -477,10 +499,12 @@ export function runtimeCommandCurrentRevision(
 			: versionResult.stderr;
 		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
 		if (!version) return null;
-		return runtimeContentSha256({
+		const commandRevision = runtimeContentSha256({
 			executableRevision,
 			version,
 		});
+		runtimeCommandRevisions.set(cacheKey, { executableRevision, commandRevision });
+		return commandRevision;
 	} catch (error) {
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;

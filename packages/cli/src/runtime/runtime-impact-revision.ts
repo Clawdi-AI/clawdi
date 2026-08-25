@@ -59,6 +59,26 @@ export function runtimeImpactRevision(value: unknown): string {
 		.slice(0, 32);
 }
 
+export function runtimeProviderRevision(manifest: RuntimeManifest, runtimeName: string): string {
+	const runtime = manifest.runtimes[runtimeName];
+	const providerIds = runtime?.provider_ids ?? [];
+	const providers = manifest.projection?.providers ?? {};
+	return runtimeImpactRevision({
+		runtime: runtime
+			? {
+					providerMode: runtime.providerMode ?? null,
+					provider_ids: providerIds,
+					primary_model: runtime.primary_model ?? null,
+				}
+			: null,
+		providers: Object.fromEntries(
+			providerIds
+				.filter((providerId) => Object.hasOwn(providers, providerId))
+				.map((providerId) => [providerId, providers[providerId]]),
+		),
+	});
+}
+
 export function runtimeProgramRevision(input: RuntimeProgramRevisionInput): string {
 	const runtime = input.desiredRuntime
 		? Object.fromEntries(

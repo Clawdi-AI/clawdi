@@ -58,6 +58,43 @@ printf '%s\n' 'LoadState=loaded' 'ActiveState=deactivating'
 	expect(readFileSync(attempts, "utf8")).toBe("2\n");
 });
 
+test("reuses the official roster until its config revision changes", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-roster-cache-"));
+	const home = join(root, "home");
+	const firstWorkspace = join(home, "first-workspace");
+	const secondWorkspace = join(home, "second-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const config = join(home, ".openclaw", "openclaw.json");
+	const commandLog = join(root, "commands.log");
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(config), { recursive: true });
+	writeFileSync(config, '{"agents":{"defaults":{"workspace":"first"}}}\n');
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+if grep -q second '${config}'; then
+  printf '%s\n' '[{"id":"main","workspace":"${secondWorkspace}"}]'
+else
+  printf '%s\n' '[{"id":"main","workspace":"${firstWorkspace}"}]'
+fi
+`,
+		{ mode: 0o755 },
+	);
+
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(firstWorkspace);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(firstWorkspace);
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual(["agents list --json"]);
+
+	writeFileSync(config, '{"agents":{"defaults":{"workspace":"second"}}}\n');
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(secondWorkspace);
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+		"agents list --json",
+		"agents list --json",
+	]);
+});
+
 test("does not retry roster failures when the OpenClaw gateway failed or is not installed", () => {
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-gateway-failure-"));
 	for (const scenario of [

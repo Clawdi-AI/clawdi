@@ -20,7 +20,11 @@ import {
 	hostedProviderRequiresApiKey,
 } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
-import { type RuntimeInstallObservation, tail } from "./manifest-install";
+import {
+	type RuntimeInstallObservation,
+	runtimeFileCurrentRevision,
+	tail,
+} from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { canonicalJsonEqual, isPlainRecord, recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
@@ -34,6 +38,7 @@ import {
 import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
+const openClawProviderPatchRevisions = new Map<string, string>();
 
 export function providerHealthReasons(
 	provider: Record<string, unknown>,
@@ -116,6 +121,7 @@ export function applyHostedAiProviderProjection(
 	previousProviderIds: readonly string[],
 	openClawOwnerBrowserBootstrapSupported: boolean,
 	hermesConfig: HermesConfigTransaction | null,
+	providerRevision: string,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -154,7 +160,12 @@ export function applyHostedAiProviderProjection(
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			applyOpenClawHostedProviderPatch(providerPatch, openClawContext, workspaceRoot);
+			applyOpenClawHostedProviderPatch(
+				providerPatch,
+				openClawContext,
+				workspaceRoot,
+				providerRevision,
+			);
 		}
 		if (openClawContext.managedApiKeyProjection) {
 			if (openClawContext.agentDirs.managed.length === 0) {
@@ -162,7 +173,7 @@ export function applyHostedAiProviderProjection(
 					"OpenClaw managed provider-auth stores were not transactionally discovered",
 				);
 			}
-			removeOpenClawManagedProviderAuthProfiles(openClawContext, workspaceRoot);
+			removeOpenClawManagedProviderAuthProfiles(openClawContext, workspaceRoot, providerRevision);
 		}
 		return {
 			path: observation.commandPath,
@@ -532,8 +543,19 @@ function applyOpenClawHostedProviderPatch(
 	patch: OpenClawHostedProviderPatch,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
+	providerRevision: string,
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
+	const patchRevision = runtimeImpactRevision({
+		providerRevision,
+		content: patch.content,
+		sdk: runtimeFileCurrentRevision(sdkPath),
+	});
+	if (openClawProviderPatchRevisions.get(context.configPath) === patchRevision) {
+		const expected = recordValue(JSON.parse(patch.content) as unknown);
+		if (!expected) throw new Error("OpenClaw provider projection patch must be an object");
+		if (openClawConfigPatchIsApplied(context, expected)) return;
+	}
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
@@ -541,6 +563,7 @@ function applyOpenClawHostedProviderPatch(
 		context.home,
 		workspaceRoot,
 	);
+	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
 }
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
