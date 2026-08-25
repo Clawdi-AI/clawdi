@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	getHermesRawConfigValue,
@@ -72,8 +72,6 @@ export function applyHostedMcpProjections(
 			runRuntimeUserCommand(runtime.commandPath, args, "", plan.home, workspaceRoot);
 		}
 	}
-	// SUNSET: remove after the fleet has converged on content-owned MCP state.
-	rmSync(join(paths.managedResourceRoot, "managed-mcp-servers.json"), { force: true });
 }
 type HostedMcpTarget = (typeof HOSTED_RUNTIME_TARGETS)[number];
 type HostedMcpNativeServer = ReturnType<typeof hostedMcpNativeServerConfig>;

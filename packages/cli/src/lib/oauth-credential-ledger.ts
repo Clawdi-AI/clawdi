@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { OAuthCredentialLedgerSnapshot } from "./chatgpt-oauth-reconciliation";
@@ -80,11 +80,6 @@ export function oauthCredentialLedgerPath(
 export function readOAuthCredentialLedger(path: string): OAuthCredentialLedger | null {
 	if (!existsSync(path)) return null;
 	const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-	// SUNSET: remove after the fleet no longer carries pre-#1187 retired tombstones.
-	if (typeof raw === "object" && raw !== null && "state" in raw && raw.state === "retired") {
-		rmSync(path, { force: true });
-		return null;
-	}
 	return oauthCredentialLedgerSchema.parse(raw);
 }
 

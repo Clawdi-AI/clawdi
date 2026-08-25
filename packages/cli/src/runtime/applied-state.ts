@@ -40,22 +40,7 @@ const providerIdsSchema = z
 		message: "provider IDs must be unique",
 	});
 
-const runtimeRevisionSchema = z.string().regex(/^[a-f0-9]{32}$/);
-
-const userProcessRevisionAliasesSchema = z.record(
-	z.string().regex(/^[A-Za-z0-9_.@-]+\.service$/),
-	z
-		.object({
-			desiredRevision: runtimeRevisionSchema,
-			processRevision: runtimeRevisionSchema,
-		})
-		.strict()
-		.refine((alias) => alias.desiredRevision !== alias.processRevision, {
-			message: "revision alias must describe distinct desired and process revisions",
-		}),
-);
-
-const runtimeAppliedStateFileSchema = z
+export const runtimeAppliedStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
 		appliedAt: z.string().datetime({ offset: true }),
@@ -68,21 +53,7 @@ const runtimeAppliedStateFileSchema = z
 		applyReceiptId: z.string().min(16).max(128).optional(),
 		bootNonce: z.string().min(16).max(128).optional(),
 		contentIdentity: appliedContentSourceSchema,
-		activated: activatedSystemdUnitsSchema.optional(),
-		// Accepted only to migrate released 0.13.92 and 0.14.14 state.
-		egressSidecarSecretRevision: z
-			.string()
-			.regex(/^[a-f0-9]{64}$/)
-			.optional(),
-		daemonAuthTokenRevision: z
-			.string()
-			.regex(/^[a-f0-9]{64}$/)
-			.optional(),
-		daemonProgramRevision: z
-			.string()
-			.regex(/^[a-f0-9]{32}$/)
-			.optional(),
-		userProcessRevisionAliases: userProcessRevisionAliasesSchema.optional(),
+		activated: activatedSystemdUnitsSchema,
 		officialServiceCommandRevisions: officialServiceCommandRevisionsSchema.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
@@ -106,17 +77,6 @@ const runtimeAppliedStateFileSchema = z
 			});
 		}
 	});
-
-export const runtimeAppliedStateSchema = runtimeAppliedStateFileSchema.transform(
-	({
-		egressSidecarSecretRevision: _egressSidecarSecretRevision,
-		daemonAuthTokenRevision: _daemonAuthTokenRevision,
-		daemonProgramRevision: _daemonProgramRevision,
-		userProcessRevisionAliases: _userProcessRevisionAliases,
-		...state
-	}) => ({ ...state, activated: state.activated ?? {} }),
-);
-
 export type RuntimeAppliedState = z.infer<typeof runtimeAppliedStateSchema>;
 export type RuntimeAppliedStateV2 = RuntimeAppliedState;
 export type RuntimeAppliedContentSource = z.infer<typeof appliedContentSourceSchema>;

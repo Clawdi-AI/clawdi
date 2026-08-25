@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
 import { removeHostedCliPathExposure } from "./cli-update";
@@ -470,8 +470,6 @@ function prepareRuntimeApplyDependencies(
 		workspaceRoot,
 		runtimeEntries,
 	} = context;
-	// SUNSET: remove after the whole fleet has converged on receipt-free channel state.
-	rmSync(join(paths.managedResourceRoot, "whatsapp-auth"), { recursive: true, force: true });
 	ensureFileBrowserCompanion(manifest, paths, opts.fileBrowserInstallOptions);
 	let codexCli: Record<string, string> | null = null;
 	withRuntimeUserFileAccess(() => {

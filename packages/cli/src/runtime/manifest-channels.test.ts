@@ -13,14 +13,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	materializeHostedChannelCredentials,
-	validateHostedChannelCredentialsPlan,
-} from "./manifest-channels";
+import { materializeHostedChannelCredentials } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
-const LEGACY_MARKER = ".clawdi-managed-whatsapp-auth.json";
 const ACCOUNT_KEY = "clawdi_whatsapp_test";
 const SECRET_REF = `secret://channels/whatsapp/${ACCOUNT_KEY}/credentials/credential-test/creds-json`;
 
@@ -75,17 +71,12 @@ function manifest(path: string, credentialId = "credential-test"): RuntimeManife
 	};
 }
 
-function credsJson(
-	secret = "managed-secret",
-	credentialId?: string,
-	legacyCapability = false,
-): string {
+function credsJson(secret = "managed-secret", credentialId?: string): string {
 	return JSON.stringify({
 		advSecretKey: secret,
 		additionalData: {
 			"clawdi.managedWhatsAppSocket": {
 				schemaVersion: "clawdi.managedWhatsAppSocket.v1",
-				...(legacyCapability ? { capability: `clawdi_${"a".repeat(32)}` } : {}),
 				authCert: {
 					SERIAL: 7,
 					ISSUER: "clawdi",
@@ -105,16 +96,6 @@ function credsJson(
 				: {}),
 		},
 	});
-}
-
-function legacyMarker(credentialId = "credential-test"): string {
-	return `${JSON.stringify({
-		schemaVersion: "clawdi.managedWhatsAppAuth.v1",
-		provider: "whatsapp",
-		target: "legacy",
-		accountKey: ACCOUNT_KEY,
-		credentialId,
-	})}\n`;
 }
 
 describe("managed WhatsApp auth directories", () => {
@@ -145,36 +126,6 @@ describe("managed WhatsApp auth directories", () => {
 		expect(existsSync(path)).toBe(false);
 	});
 
-	test("adopts 0.13.92 and 0.14.14 creds metadata without replacing sessions", () => {
-		const path = authDir();
-		mkdirSync(path, { recursive: true });
-		const sessionPath = join(path, "session-key.json");
-		writeFileSync(join(path, "creds.json"), `${credsJson("legacy-secret", undefined, true)}\n`);
-		writeFileSync(sessionPath, '{"preserved":true}\n');
-		writeFileSync(join(path, LEGACY_MARKER), legacyMarker("credential-old"));
-		const sessionBefore = { bytes: readFileSync(sessionPath), inode: statSync(sessionPath).ino };
-		const desired = manifest(path, "credential-new");
-
-		validateHostedChannelCredentialsPlan(
-			desired,
-			{ [SECRET_REF]: credsJson("legacy-secret", "credential-new") },
-			home,
-		);
-		expect(existsSync(join(path, LEGACY_MARKER))).toBe(true);
-
-		materializeHostedChannelCredentials(
-			desired,
-			{ [SECRET_REF]: credsJson("legacy-secret", "credential-new") },
-			home,
-		);
-		expect(existsSync(join(path, LEGACY_MARKER))).toBe(false);
-		const rewrittenCreds = readFileSync(join(path, "creds.json"), "utf8");
-		expect(rewrittenCreds).toContain("credential-new");
-		expect(rewrittenCreds).not.toContain("capability");
-		expect(readFileSync(sessionPath)).toEqual(sessionBefore.bytes);
-		expect(statSync(sessionPath).ino).toBe(sessionBefore.inode);
-	});
-
 	test("rejects directories without valid creds metadata", () => {
 		const cases = [
 			JSON.stringify({ advSecretKey: "user-secret" }),
@@ -190,7 +141,6 @@ describe("managed WhatsApp auth directories", () => {
 			const path = authDir();
 			mkdirSync(path, { recursive: true });
 			writeFileSync(join(path, "creds.json"), `${creds}\n`);
-			writeFileSync(join(path, LEGACY_MARKER), legacyMarker());
 
 			expect(() =>
 				materializeHostedChannelCredentials(
