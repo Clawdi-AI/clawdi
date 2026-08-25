@@ -3,14 +3,12 @@ import { join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import {
 	getHermesRawConfigValue,
-	type HermesConfigCommandContext,
+	type HermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
 import { mergeRuntimeEnvWithProviderPlaceholders } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
-import type { RuntimeInstallObservation } from "./manifest-install";
 import type { RuntimeName, RuntimeRunSettings, RuntimeServiceName } from "./run-config";
-import { executableExists } from "./runtime-user-command";
 
 const MANAGED_LOCALE_BLOCK_START = "<!-- >>> clawdi managed locale >>>";
 const MANAGED_LOCALE_BLOCK_END = "<!-- <<< clawdi managed locale <<< -->";
@@ -65,18 +63,8 @@ function updateManagedLocaleFile(path: string, block: string): string {
 	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
 	return path;
 }
-export function hermesConfigContext(
-	observation: RuntimeInstallObservation,
-	home: string,
-	cwd: string,
-): HermesConfigCommandContext {
-	if (!observation.commandPath || !executableExists(observation.commandPath)) {
-		throw new Error("Hermes config command is unavailable");
-	}
-	return { command: observation.commandPath, home, cwd };
-}
 function applyHermesDashboardConfig(
-	context: HermesConfigCommandContext,
+	context: HermesConfigTransaction,
 	auth: NonNullable<RuntimeManifest["hermesDashboardAuth"]>,
 ): void {
 	reconcileHermesConfigValue(context, "dashboard.basic_auth", {
@@ -103,11 +91,11 @@ function applyHermesDashboardConfig(
 }
 export function applyHostedRuntimeConfigProjection(
 	runtime: string,
-	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
 	openClawWorkspaceRoot: string | null,
 	workspaceRoot: string,
+	hermesConfig: HermesConfigTransaction | null,
 ): string | null {
 	if (manifest.runtimes[runtime]?.enabled !== true) return null;
 	const locale = manifest.locale;
@@ -118,12 +106,12 @@ export function applyHostedRuntimeConfigProjection(
 			: null;
 	}
 	if (runtime === "hermes") {
+		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
 		const auth = manifest.hermesDashboardAuth;
-		const context = hermesConfigContext(observation, home, workspaceRoot);
 		const hermesHome = join(home, ".hermes");
-		reconcileHermesConfigValue(context, "terminal.cwd", workspaceRoot);
-		if (auth) applyHermesDashboardConfig(context, auth);
-		if (locale) reconcileHermesConfigValue(context, "timezone", locale.timezone);
+		reconcileHermesConfigValue(hermesConfig, "terminal.cwd", workspaceRoot);
+		if (auth) applyHermesDashboardConfig(hermesConfig, auth);
+		if (locale) reconcileHermesConfigValue(hermesConfig, "timezone", locale.timezone);
 		return locale
 			? updateManagedLocaleFile(join(hermesHome, "SOUL.md"), managedLocaleBlock(locale))
 			: null;

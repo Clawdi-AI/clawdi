@@ -12,7 +12,7 @@ import {
 import { join, resolve } from "node:path";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { type HermesConfigCommandContext, reconcileHermesConfigValue } from "./hermes-config";
+import { type HermesConfigTransaction, reconcileHermesConfigValue } from "./hermes-config";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import {
 	buildHermesManagedChannelsPatch,
@@ -25,7 +25,6 @@ import {
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
-import { hermesConfigContext } from "./manifest-runtime-config";
 import { hasExactKeys, isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
@@ -355,7 +354,7 @@ export function hostedChannelProjection(manifest: RuntimeManifest): Record<strin
 	return channels;
 }
 function applyHermesNestedConfigPatch(
-	context: HermesConfigCommandContext,
+	context: HermesConfigTransaction,
 	prefix: string,
 	patch: Record<string, unknown>,
 ): boolean {
@@ -374,7 +373,7 @@ function applyHermesNestedConfigPatch(
 	return changed;
 }
 function applyHermesChannelConfig(
-	context: HermesConfigCommandContext,
+	context: HermesConfigTransaction,
 	patch: Record<string, unknown>,
 ): boolean {
 	let changed = false;
@@ -422,6 +421,7 @@ export function applyHostedChannelProjection(
 	openClawContext: OpenClawHostedContext,
 	workspaceRoot: string,
 	hermesWhatsAppAuthDir: string | null,
+	hermesConfig: HermesConfigTransaction | null,
 ): boolean {
 	if (name !== "openclaw" && name !== "hermes") return false;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -431,8 +431,9 @@ export function applyHostedChannelProjection(
 	if (!channels) return false;
 
 	if (name === "hermes") {
+		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
 		return applyHermesChannelConfig(
-			hermesConfigContext(observation, home, workspaceRoot),
+			hermesConfig,
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 		);
 	}

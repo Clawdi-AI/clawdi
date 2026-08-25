@@ -5,6 +5,7 @@ import {
 	type FileBrowserCompanionInstallOptions,
 	fileBrowserCompanionProgram,
 } from "./file-browser-companion";
+import type { HermesConfigTransaction } from "./hermes-config";
 import type { PreparedHostedAgentPlugins } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginCommandRunner,
@@ -297,6 +298,7 @@ export function validateRuntimeProjectionPlan(input: {
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	hermesWhatsAppAuthDir: string | null;
+	hermesConfig: HermesConfigTransaction | null;
 	openClawOwnerBrowserBootstrapSupported: boolean;
 }): void {
 	const {
@@ -307,6 +309,7 @@ export function validateRuntimeProjectionPlan(input: {
 		observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -373,7 +376,7 @@ export function validateRuntimeProjectionPlan(input: {
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
 		}
 	}
-	validateHostedMcpProjectionPlan(manifest, paths, observations);
+	validateHostedMcpProjectionPlan(manifest, paths, observations, hermesConfig);
 	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
 }
 export function managedWhatsAppCompatibilityRuntime(

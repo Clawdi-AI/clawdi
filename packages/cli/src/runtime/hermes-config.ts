@@ -19,6 +19,16 @@ export interface HermesConfigValue {
 	value?: unknown;
 }
 
+export interface HermesConfigTransaction {
+	readonly context: HermesConfigCommandContext;
+	readonly path: string;
+	readonly sourceContent: string;
+	readonly document: ReturnType<typeof parseDocument>;
+	changed: boolean;
+}
+
+export type HermesConfigCommitResult = "unchanged" | "committed" | "conflict";
+
 function commandText(value: string | Buffer | null | undefined): string {
 	return stripTerminalEscapes(String(value ?? "")).trim();
 }
@@ -77,33 +87,39 @@ function isConfigRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readHermesConfigContentAtPath(path: string): string {
+	try {
+		return readFileSync(path, "utf8");
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+		throw new Error(
+			`Hermes config could not be read: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
 function readHermesConfigDocumentAtPath(path: string): {
 	path: string;
+	content: string;
 	document: ReturnType<typeof parseDocument>;
 	root: Record<string, unknown>;
 } {
-	let content = "";
-	try {
-		content = readFileSync(path, "utf8");
-	} catch (error) {
-		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-			throw new Error(
-				`Hermes config could not be read: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
+	const content = readHermesConfigContentAtPath(path);
 	const document = parseDocument(content);
 	if (document.errors.length > 0) {
 		throw new Error(`Hermes config is invalid YAML: ${document.errors[0]?.message}`);
 	}
 	const parsed = document.toJS() as unknown;
-	if (parsed === null || parsed === undefined) return { path, document, root: {} };
+	if (parsed === null || parsed === undefined) return { path, content, document, root: {} };
 	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
-	return { path, document, root: parsed };
+	return { path, content, document, root: parsed };
 }
 
-function readHermesConfigDocument(context: HermesConfigCommandContext) {
-	return readHermesConfigDocumentAtPath(hermesConfigPath(context));
+export function beginHermesConfigTransaction(
+	context: HermesConfigCommandContext,
+): HermesConfigTransaction {
+	const { path, content, document } = readHermesConfigDocumentAtPath(hermesConfigPath(context));
+	return { context, path, sourceContent: content, document, changed: false };
 }
 
 function rawConfigValue(root: Record<string, unknown>, key: string): HermesConfigValue {
@@ -116,10 +132,12 @@ function rawConfigValue(root: Record<string, unknown>, key: string): HermesConfi
 }
 
 export function getHermesRawConfigValue(
-	context: HermesConfigCommandContext,
+	source: HermesConfigCommandContext | HermesConfigTransaction,
 	key: string,
 ): HermesConfigValue {
-	return rawConfigValue(readHermesConfigDocument(context).root, key);
+	if ("document" in source) return rawConfigValue(configDocumentRoot(source.document), key);
+	const transaction = beginHermesConfigTransaction(source);
+	return rawConfigValue(configDocumentRoot(transaction.document), key);
 }
 
 export function getHermesRawConfigFileValue(path: string, key: string): HermesConfigValue {
@@ -139,54 +157,38 @@ function configValueAtPath(
 	return { exists: true, value: current };
 }
 
-function setHermesStructuredConfigValue(
-	context: HermesConfigCommandContext,
+function setHermesConfigValue(
+	transaction: HermesConfigTransaction,
 	key: string,
-	value: object | null,
+	value: unknown,
 ): void {
-	const { path, document, root } = readHermesConfigDocument(context);
 	const keyPath = key.split(".");
 	for (let index = 1; index < keyPath.length; index += 1) {
 		const parentPath = keyPath.slice(0, index);
-		const parent = configValueAtPath(root, parentPath);
+		const parent = configValueAtPath(configDocumentRoot(transaction.document), parentPath);
 		if (!parent.exists) {
-			document.setIn(parentPath, document.createNode({}));
+			transaction.document.setIn(parentPath, transaction.document.createNode({}));
 			continue;
 		}
 		if (!isConfigRecord(parent.value)) {
 			throw new Error(`Hermes config field ${parentPath.join(".")} must be an object`);
 		}
 	}
-	document.setIn(keyPath, document.createNode(value));
-	writePrivateFileAtomic(path, String(document), {
-		mode: PRIVATE_FILE_MODE,
-		dirMode: PRIVATE_DIR_MODE,
-	});
+	transaction.document.setIn(keyPath, transaction.document.createNode(value));
+	transaction.changed = true;
 }
 
-export function setHermesConfigValue(
-	context: HermesConfigCommandContext,
-	key: string,
-	value: unknown,
-): void {
-	// Hermes config set does not reliably coerce structured CLI values across
-	// supported installs, so mappings and arrays use its resolved config path
-	// and an atomic YAML document update instead.
-	if (typeof value === "object") {
-		setHermesStructuredConfigValue(context, key, value);
-		return;
+function unsetHermesConfigValue(transaction: HermesConfigTransaction, key: string): void {
+	const keyPath = key.split(".");
+	transaction.document.deleteIn(keyPath);
+	for (let length = keyPath.length - 1; length > 0; length -= 1) {
+		const parentPath = keyPath.slice(0, length);
+		const parent = configValueAtPath(configDocumentRoot(transaction.document), parentPath);
+		if (!parent.exists || !isConfigRecord(parent.value) || Object.keys(parent.value).length > 0)
+			break;
+		transaction.document.deleteIn(parentPath);
 	}
-	const result = runHermesConfigCommand(context, ["set", "--force", key, String(value)]);
-	if (result.status !== 0 || result.error) {
-		throw commandFailure(`Hermes config set ${key}`, result);
-	}
-}
-
-export function unsetHermesConfigValue(context: HermesConfigCommandContext, key: string): void {
-	const result = runHermesConfigCommand(context, ["unset", key]);
-	if (result.status !== 0 || result.error) {
-		throw commandFailure(`Hermes config unset ${key}`, result);
-	}
+	transaction.changed = true;
 }
 
 function canonicalJsonValue(value: unknown): unknown {
@@ -204,17 +206,48 @@ function configValuesEqual(left: unknown, right: unknown): boolean {
 }
 
 export function reconcileHermesConfigValue(
-	context: HermesConfigCommandContext,
+	source: HermesConfigCommandContext | HermesConfigTransaction,
 	key: string,
 	desired: unknown | undefined,
 ): boolean {
-	const current = getHermesRawConfigValue(context, key);
+	const transaction = "document" in source ? source : beginHermesConfigTransaction(source);
+	const current = rawConfigValue(configDocumentRoot(transaction.document), key);
 	if (desired === undefined) {
 		if (!current.exists) return false;
-		unsetHermesConfigValue(context, key);
+		unsetHermesConfigValue(transaction, key);
+		if (!("document" in source)) commitImmediateHermesConfigTransaction(transaction);
 		return true;
 	}
 	if (current.exists && configValuesEqual(current.value, desired)) return false;
-	setHermesConfigValue(context, key, desired);
+	setHermesConfigValue(transaction, key, desired);
+	if (!("document" in source)) commitImmediateHermesConfigTransaction(transaction);
 	return true;
+}
+
+function commitImmediateHermesConfigTransaction(transaction: HermesConfigTransaction): void {
+	if (commitHermesConfigTransaction(transaction) === "conflict") {
+		throw new Error("Hermes config changed during reconciliation");
+	}
+}
+
+export function commitHermesConfigTransaction(
+	transaction: HermesConfigTransaction,
+): HermesConfigCommitResult {
+	if (!transaction.changed) return "unchanged";
+	if (readHermesConfigContentAtPath(transaction.path) !== transaction.sourceContent) {
+		return "conflict";
+	}
+	writePrivateFileAtomic(transaction.path, String(transaction.document), {
+		mode: PRIVATE_FILE_MODE,
+		dirMode: PRIVATE_DIR_MODE,
+	});
+	transaction.changed = false;
+	return "committed";
+}
+
+function configDocumentRoot(document: ReturnType<typeof parseDocument>): Record<string, unknown> {
+	const parsed = document.toJS() as unknown;
+	if (parsed === null || parsed === undefined) return {};
+	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
+	return parsed;
 }

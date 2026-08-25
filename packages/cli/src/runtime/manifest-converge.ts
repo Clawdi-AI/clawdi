@@ -8,6 +8,11 @@ import {
 	gcFileBrowserCompanionCandidates,
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
+import {
+	beginHermesConfigTransaction,
+	commitHermesConfigTransaction,
+	type HermesConfigTransaction,
+} from "./hermes-config";
 import { writeHostedAgentPluginReceipt } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginTransaction,
@@ -123,6 +128,7 @@ interface RuntimeConvergenceContext {
 	hostedRuntimeContract: ReturnType<typeof assertHostedRuntimeContract>;
 	projectionHome: string;
 	openClawContext: ReturnType<typeof createOpenClawHostedContext>;
+	hermesConfig: HermesConfigTransaction | null;
 	hermesWhatsAppAuthDir: string | null;
 	workspaceRoot: string;
 	enabledRuntimes: string[];
@@ -281,6 +287,7 @@ function initializeRuntimeConvergence(
 			hostedRuntimeContract,
 			projectionHome,
 			openClawContext,
+			hermesConfig: null,
 			hermesWhatsAppAuthDir,
 			workspaceRoot,
 			enabledRuntimes,
@@ -358,6 +365,21 @@ function prepareRuntimeInstallStage(
 	return null;
 }
 
+function beginRuntimeHermesConfig(
+	context: RuntimeConvergenceContext,
+	state: RuntimeConvergenceState,
+): HermesConfigTransaction | null {
+	const command =
+		state.observations.get("hermes")?.commandPath ??
+		runtimeCommandPath("hermes", context.projectionHome);
+	if (!command || !executableExists(command)) return null;
+	return beginHermesConfigTransaction({
+		command,
+		home: context.projectionHome,
+		cwd: context.projectionHome,
+	});
+}
+
 function prepareRuntimeConvergencePlan(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
@@ -369,6 +391,7 @@ function prepareRuntimeConvergencePlan(
 		secretValues,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		generatedAt,
 		plannedEgressProfileBundlePath,
@@ -398,6 +421,7 @@ function prepareRuntimeConvergencePlan(
 		observations: state.observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	try {
@@ -674,6 +698,7 @@ function applyRuntimeResourceProjections(
 		projectionHome,
 		openClawContext,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		previousProjectedProviderIds,
 		runtimeEntries,
@@ -690,6 +715,7 @@ function applyRuntimeResourceProjections(
 		observations: state.observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
@@ -736,7 +762,7 @@ function applyRuntimeResourceProjections(
 		}
 	}
 	try {
-		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot);
+		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot, hermesConfig);
 	} catch (error) {
 		state.installErrors.push(
 			`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -781,6 +807,7 @@ function applyRuntimeEntryProjections(
 		projectionHome,
 		openClawContext,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		generatedAt,
 		previousProjectedProviderIds,
@@ -813,11 +840,11 @@ function applyRuntimeEntryProjections(
 			try {
 				const localeFile = applyHostedRuntimeConfigProjection(
 					name,
-					observation,
 					manifest,
 					projectionHome,
 					plan.openClawWorkspaceRoot,
 					workspaceRoot,
+					hermesConfig,
 				);
 				if (localeFile) state.managedLocaleFiles.push(localeFile);
 			} catch (error) {
@@ -838,6 +865,7 @@ function applyRuntimeEntryProjections(
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
 					state.openClawOwnerBrowserBootstrapSupported,
+					hermesConfig,
 				);
 				state.projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
@@ -856,6 +884,7 @@ function applyRuntimeEntryProjections(
 					openClawContext,
 					workspaceRoot,
 					hermesWhatsAppAuthDir,
+					hermesConfig,
 				);
 			} catch (error) {
 				state.installErrors.push(
@@ -1125,6 +1154,7 @@ export function convergeRuntimeManifest(
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
+	context.hermesConfig = beginRuntimeHermesConfig(context, state);
 	const planResult = prepareRuntimeConvergencePlan(context, state);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
@@ -1139,6 +1169,19 @@ export function convergeRuntimeManifest(
 		);
 
 		applyRuntimeEntryProjections(context, state, plan, egressProjection);
+		if (context.hermesConfig) {
+			const hermesConfig = context.hermesConfig;
+			const commitResult = withRuntimeUserFileAccess(
+				() => commitHermesConfigTransaction(hermesConfig),
+				context.hostedRuntimeContract.identity,
+			);
+			if (commitResult === "conflict") {
+				return {
+					...runtimeConvergenceFailure(context, state),
+					deferredReason: "hermes_config_conflict",
+				};
+			}
+		}
 		const activationPlan = prepareRuntimeActivation(
 			context,
 			state,

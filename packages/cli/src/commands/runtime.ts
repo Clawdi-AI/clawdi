@@ -113,6 +113,7 @@ const RUNTIME_WATCH_MAX_BACKOFF_MS = 300_000;
 
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
+	| RuntimeApplyDeferredResult
 	| RuntimeApplyCliHandoffResult
 	| RuntimeApplyCliUpdateFailedResult;
 
@@ -121,6 +122,13 @@ interface RuntimeApplyConvergedResult {
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
 	systemdApply: Omit<ReturnType<typeof applySystemdRuntimeUpdate>, "activated">;
+}
+
+interface RuntimeApplyDeferredResult {
+	kind: "deferred";
+	reason: NonNullable<RuntimeApplyConvergedResult["convergence"]["deferredReason"]>;
+	convergence: RuntimeApplyConvergedResult["convergence"];
+	cliUpdate: RuntimeCliUpdateResult;
 }
 
 interface RuntimeApplyCliHandoffResult {
@@ -196,6 +204,12 @@ type ConvergeOutcome =
 	  >)
 	| { kind: "apply_error"; error: string; load?: RuntimeManifestLoad; etag?: string }
 	| { kind: "cli_update_failed"; load: RuntimeManifestLoad; cliUpdate: RuntimeCliUpdateResult }
+	| {
+			kind: "deferred";
+			load: RuntimeManifestLoad;
+			reason: RuntimeApplyDeferredResult["reason"];
+			convergence: RuntimeApplyDeferredResult["convergence"];
+	  }
 	| {
 			kind: "converged";
 			load: RuntimeManifestLoad;
@@ -774,6 +788,24 @@ async function runtimeInitLocked(
 		});
 		return;
 	}
+	if (outcome.kind === "deferred") {
+		const message = "Hermes config changed during runtime convergence; retry on the next poll";
+		const applied = runtimeAppliedStatus(paths);
+		emitRuntimeInitRepair({
+			opts,
+			paths,
+			stage: "final",
+			bootId,
+			runtimeMode: mode,
+			errors: [message],
+			exitCode: 23,
+			active: applied,
+			rejectedGeneration: outcome.load.manifest.generation,
+			manifestLoad: outcome.load,
+			render: renderRuntimeInit(paths, `repair: ${message}`, chalk.red),
+		});
+		return;
+	}
 	if (outcome.kind === "apply_error" || outcome.kind === "cli_update_failed") {
 		const message =
 			outcome.kind === "apply_error"
@@ -908,6 +940,14 @@ async function convergeOnce(
 	if (applyResult.kind === "cli_update_failed") {
 		return { kind: "cli_update_failed", load: convergenceLoad, cliUpdate: applyResult.cliUpdate };
 	}
+	if (applyResult.kind === "deferred") {
+		return {
+			kind: "deferred",
+			load: convergenceLoad,
+			reason: applyResult.reason,
+			convergence: applyResult.convergence,
+		};
+	}
 
 	const cliUpdateError =
 		applyResult.cliUpdate.status === "error"
@@ -1016,6 +1056,7 @@ function runtimeWatchEventForOutcome(
 	paths: RuntimePaths,
 ): RuntimeWatchEvent | null {
 	if (outcome.kind === "idle") return null;
+	if (outcome.kind === "deferred") return null;
 	if (outcome.kind === "reconciliation_error") {
 		return runtimeWatchError("cli-update", [outcome.error], { selfReexec: false });
 	}
@@ -1328,6 +1369,14 @@ async function applyRuntimeDesiredState(
 				},
 			},
 		});
+		if (convergence.deferredReason) {
+			return {
+				kind: "deferred",
+				reason: convergence.deferredReason,
+				convergence,
+				cliUpdate,
+			};
+		}
 		if (
 			convergence.installErrors.length > 0 &&
 			load.source !== "last-good-cache" &&
