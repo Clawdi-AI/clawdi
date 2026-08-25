@@ -878,9 +878,11 @@ test("propagates the real official OpenClaw installer failure without committing
 	writeFileSync(openClawConfig, initialOpenClawConfig, { mode: 0o600 });
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	writeFileSync(gatewayEnvironment, "PRESERVED_ENV=before\n", { mode: 0o600 });
+	chownSync(gatewayEnvironment, runtimeUid, runtimeGid);
 	mkdirSync(dirname(unitPath), { recursive: true });
 	mkdirSync(unitPath, { recursive: false });
 	writeFileSync(unitSentinel, "preserve directory target\n");
+	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
 
 	const workspaceRoot = join(runtimeHome, "clawdi-systemd-test-workspace");
 	const manifest: RuntimeManifest = {
@@ -1572,8 +1574,8 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	const tenantExisting = join(runtimeHome, "files-tenant-existing.txt");
 	writeFileSync(tenantExisting, "tenant-existing\n", { mode: 0o600 });
 	chownSync(tenantExisting, runtimeUid, runtimeGid);
-	const tenantOwnershipDrift = join(runtimeHome, "files-root-owned-drift.txt");
-	writeFileSync(tenantOwnershipDrift, "repair-to-tenant\n", { mode: 0o600 });
+	const rootOwnedSentinel = join(runtimeHome, "files-root-owned-sentinel.txt");
+	writeFileSync(rootOwnedSentinel, "preserve root ownership\n", { mode: 0o600 });
 	const hermesConfig = join(runtimeHome, ".hermes", "config.yaml");
 	mkdirSync(dirname(hermesConfig), { recursive: true, mode: 0o700 });
 	chownSync(dirname(hermesConfig), runtimeUid, runtimeGid);
@@ -1610,15 +1612,6 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	ensureRuntimeStateDirs(paths);
 	const rootOwnedControl = join(paths.statusRoot, "files-root-owned-control");
 	writeFileSync(rootOwnedControl, "root-owned\n", { mode: 0o600 });
-	const legacyRootOwnedUnit = join(paths.systemdUserRoot, "legacy-root-owned.service");
-	const legacyRootOwnedDropIn = join(`${legacyRootOwnedUnit}.d`, "10-legacy.conf");
-	const legacyRootOwnedEnvironment = join(openClawStateDir, "gateway.systemd.env");
-	mkdirSync(dirname(legacyRootOwnedDropIn), { recursive: true });
-	writeFileSync(legacyRootOwnedUnit, "[Service]\nExecStart=/bin/true\n");
-	writeFileSync(legacyRootOwnedDropIn, "[Service]\nEnvironment=LEGACY=1\n");
-	writeFileSync(legacyRootOwnedEnvironment, "LEGACY_ROOT_OWNED_ENV=1\n", { mode: 0o600 });
-	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, 0, 0);
-	chownSync(legacyRootOwnedEnvironment, 0, 0);
 	const legacyEnvironmentRoot = join(runtimeHome, ".clawdi", "environments");
 	const legacyEnvironmentPath = join(legacyEnvironmentRoot, "openclaw.json");
 	const legacyEnvironmentContent = `${JSON.stringify({
@@ -1628,6 +1621,7 @@ test("runs Files as the tenant while preserving platform isolation", () => {
 	})}\n`;
 	mkdirSync(legacyEnvironmentRoot, { recursive: true });
 	writeFileSync(legacyEnvironmentPath, legacyEnvironmentContent);
+	chownTreeWithoutFollowingLinks(join(runtimeHome, ".clawdi"), runtimeUid, runtimeGid);
 	const systemNpmCli = "/usr/local/lib/node_modules/clawdi/bin/clawdi.mjs";
 	mkdirSync(dirname(systemNpmCli), { recursive: true });
 	writeFileSync(systemNpmCli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -1851,19 +1845,7 @@ http.createServer((request, response) => {
 	expect(statSync(paths.clawdiHome).uid).toBe(runtimeUid);
 	expect(statSync(paths.clawdiHome).gid).toBe(runtimeGid);
 	expect(statSync(paths.clawdiHome).mode & 0o777).toBe(0o750);
-	expect([statSync(tenantOwnershipDrift).uid, statSync(tenantOwnershipDrift).gid]).toEqual([
-		runtimeUid,
-		runtimeGid,
-	]);
-	for (const path of [
-		paths.systemdUserRoot,
-		legacyRootOwnedUnit,
-		dirname(legacyRootOwnedDropIn),
-		legacyRootOwnedDropIn,
-		legacyRootOwnedEnvironment,
-	]) {
-		expect([statSync(path).uid, statSync(path).gid]).toEqual([runtimeUid, runtimeGid]);
-	}
+	expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
 	expect([statSync(rootOwnedControl).uid, statSync(rootOwnedControl).gid]).toEqual([0, 0]);
 	const tenantClawdiAfterConverge = tenantClawdi();
 	expect(tenantClawdiAfterConverge.status).not.toBe(0);
@@ -2048,7 +2030,7 @@ http.createServer((request, response) => {
 	expect(tenantRead.stdout).toBe("tenant-existing\n");
 }, 120_000);
 
-test("adopts a healthy legacy root-owned Hermes user-service tree and repairs later drift", async () => {
+test("0.14.18 keeps tenant-owned Hermes state writable without chowning tenant home", async () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -2059,6 +2041,7 @@ test("adopts a healthy legacy root-owned Hermes user-service tree and repairs la
 	chmodSync(root, 0o755);
 	const hermesCommand = join(runtimeHome, ".local", "bin", "hermes");
 	const installLog = join(root, "hermes-installer.log");
+	const rootOwnedSentinel = join(runtimeHome, "root-owned-sentinel");
 	writeFileSync(installLog, "");
 	chownSync(installLog, runtimeUid, runtimeGid);
 	const unitName = "hermes-gateway.service";
@@ -2195,7 +2178,7 @@ esac
 	writeFileSync(
 		unitPath,
 		`[Unit]
-Description=Legacy Hermes Gateway
+Description=Existing Hermes Gateway
 
 [Service]
 Type=simple
@@ -2211,10 +2194,11 @@ WantedBy=default.target
 		mode: 0o600,
 	});
 	symlinkSync("../hermes-gateway.service", enablementPath);
-	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, 0, 0);
+	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
 	for (const path of [paths.systemdUserRoot, dropInRoot, dirname(enablementPath)]) {
 		chmodSync(path, 0o700);
 	}
+	writeFileSync(rootOwnedSentinel, "preserve root ownership\n", { mode: 0o600 });
 
 	try {
 		expect((await converge()).installErrors).toEqual([]);
@@ -2238,8 +2222,9 @@ WantedBy=default.target
 			const node = lstatSync(path);
 			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
 		}
+		expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
 		const declaredUnit = readFileSync(unitPath, "utf8");
-		expect(declaredUnit).toContain("Legacy Hermes Gateway");
+		expect(declaredUnit).toContain("Existing Hermes Gateway");
 
 		const idempotent = await converge();
 		expect(idempotent.installErrors).toEqual([]);
@@ -2283,8 +2268,10 @@ WantedBy=default.target
 
 		const repaired = await converge();
 		expect(repaired.installErrors).toEqual([]);
-		expect(readFileSync(unitPath, "utf8")).not.toContain("Legacy Hermes Gateway");
+		expect(readFileSync(unitPath, "utf8")).not.toContain("Existing Hermes Gateway");
 		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
+		expect([statSync(unitPath).uid, statSync(unitPath).gid]).toEqual([runtimeUid, runtimeGid]);
+		expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
 		const repairedState = runUserSystemctl(
 			"show",
 			unitName,
@@ -2303,6 +2290,7 @@ WantedBy=default.target
 		rmSync(unitPath, { force: true });
 		rmSync(dropInRoot, { recursive: true, force: true });
 		rmSync(enablementPath, { force: true });
+		rmSync(rootOwnedSentinel, { force: true });
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 120_000);

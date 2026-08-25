@@ -5,6 +5,7 @@ import {
 	type FileBrowserCompanionInstallOptions,
 	fileBrowserCompanionProgram,
 } from "./file-browser-companion";
+import type { HermesConfigTransaction } from "./hermes-config";
 import type { PreparedHostedAgentPlugins } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginCommandRunner,
@@ -84,6 +85,7 @@ export interface RuntimeConvergenceOptions {
 	resourcePreparationFailures?: RuntimeResourcePreparationFailures;
 	hostedAgentPluginCommandRunner?: HostedAgentPluginCommandRunner;
 	hostedRuntimeContract?: HostedRuntimeContractOptions;
+	refreshCachedRuntimeProbes?: boolean;
 }
 
 export interface RuntimeResourcePreparationFailures {
@@ -98,6 +100,7 @@ export function planHostedAgentPluginConvergence(input: {
 	home: string;
 	commands: HostedAgentPluginCommands;
 	runner?: HostedAgentPluginCommandRunner;
+	refreshCachedRuntimeProbes?: boolean;
 }): {
 	transaction: HostedAgentPluginTransaction | null;
 } {
@@ -107,6 +110,7 @@ export function planHostedAgentPluginConvergence(input: {
 			home: input.home,
 			commands: input.commands,
 			...(input.runner ? { runner: input.runner } : {}),
+			refreshCachedRuntimeProbes: input.refreshCachedRuntimeProbes,
 		}),
 	};
 }
@@ -297,6 +301,7 @@ export function validateRuntimeProjectionPlan(input: {
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	hermesWhatsAppAuthDir: string | null;
+	hermesConfig: HermesConfigTransaction | null;
 	openClawOwnerBrowserBootstrapSupported: boolean;
 }): void {
 	const {
@@ -307,6 +312,7 @@ export function validateRuntimeProjectionPlan(input: {
 		observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported,
 	} = input;
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -373,7 +379,7 @@ export function validateRuntimeProjectionPlan(input: {
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
 		}
 	}
-	validateHostedMcpProjectionPlan(manifest, paths, observations);
+	validateHostedMcpProjectionPlan(manifest, paths, observations, hermesConfig);
 	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
 }
 export function managedWhatsAppCompatibilityRuntime(

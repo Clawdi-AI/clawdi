@@ -8,6 +8,11 @@ import {
 	gcFileBrowserCompanionCandidates,
 	probeFileBrowserReadiness,
 } from "./file-browser-companion";
+import {
+	beginHermesConfigTransaction,
+	commitHermesConfigTransaction,
+	type HermesConfigTransaction,
+} from "./hermes-config";
 import { writeHostedAgentPluginReceipt } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginTransaction,
@@ -90,6 +95,7 @@ import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
+import { runtimeImpactRevision, runtimeProviderRevision } from "./runtime-impact-revision";
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
@@ -103,11 +109,7 @@ import {
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
-import {
-	ensureRuntimeUserHomeOwnership,
-	executableExists,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { ensureRuntimePlatformDirectory } from "./state";
 
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
@@ -123,6 +125,7 @@ interface RuntimeConvergenceContext {
 	hostedRuntimeContract: ReturnType<typeof assertHostedRuntimeContract>;
 	projectionHome: string;
 	openClawContext: ReturnType<typeof createOpenClawHostedContext>;
+	hermesConfig: HermesConfigTransaction | null;
 	hermesWhatsAppAuthDir: string | null;
 	workspaceRoot: string;
 	enabledRuntimes: string[];
@@ -154,6 +157,28 @@ interface RuntimeConvergenceState {
 	activated: Record<string, string>;
 	officialServiceCommandRevisions: Record<string, string>;
 	staleSystemdFiles: RuntimeSystemdStaleFilePlan;
+}
+
+function officialServiceCommandRevision(
+	context: RuntimeConvergenceContext,
+	runtime: string,
+): string | null {
+	const unitName =
+		runtime === "openclaw"
+			? "openclaw-gateway.service"
+			: runtime === "hermes"
+				? "hermes-gateway.service"
+				: null;
+	return unitName
+		? (context.appliedState?.officialServiceCommandRevisions?.[unitName] ?? null)
+		: null;
+}
+
+function runtimeProbeRevision(context: RuntimeConvergenceContext, runtime: string): string {
+	return runtimeImpactRevision({
+		provider: runtimeProviderRevision(context.manifest, runtime),
+		officialServiceCommand: officialServiceCommandRevision(context, runtime),
+	});
 }
 
 interface RuntimeConvergencePlan {
@@ -196,9 +221,6 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// SUNSET: remove the recursive migration after every 0.13.92/0.14.14 host has
-	// converged once; those releases could leave tenant HOME trees root-owned.
-	ensureRuntimeUserHomeOwnership(projectionHome, hostedRuntimeContract.identity);
 	if (manifest.runtimes.openclaw?.enabled === true) {
 		withRuntimeUserFileAccess(() => {
 			for (const path of [
@@ -281,6 +303,7 @@ function initializeRuntimeConvergence(
 			hostedRuntimeContract,
 			projectionHome,
 			openClawContext,
+			hermesConfig: null,
 			hermesWhatsAppAuthDir,
 			workspaceRoot,
 			enabledRuntimes,
@@ -342,6 +365,7 @@ function prepareRuntimeInstallStage(
 			projectionHome,
 			paths,
 			hostedRuntimeContract.identity,
+			officialServiceCommandRevision(context, name),
 		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
@@ -349,6 +373,7 @@ function prepareRuntimeInstallStage(
 		if (name === "openclaw" && observation.enabled && observation.commandPath) {
 			state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
 				context.openClawContext,
+				runtimeProbeRevision(context, "openclaw"),
 			);
 		}
 	}
@@ -356,6 +381,21 @@ function prepareRuntimeInstallStage(
 		return { result: runtimeConvergenceFailure(context, state) };
 	}
 	return null;
+}
+
+function beginRuntimeHermesConfig(
+	context: RuntimeConvergenceContext,
+	state: RuntimeConvergenceState,
+): HermesConfigTransaction | null {
+	const command =
+		state.observations.get("hermes")?.commandPath ??
+		runtimeCommandPath("hermes", context.projectionHome);
+	if (!command || !executableExists(command)) return null;
+	return beginHermesConfigTransaction({
+		command,
+		home: context.projectionHome,
+		cwd: context.projectionHome,
+	});
 }
 
 function prepareRuntimeConvergencePlan(
@@ -369,6 +409,7 @@ function prepareRuntimeConvergencePlan(
 		secretValues,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		generatedAt,
 		plannedEgressProfileBundlePath,
@@ -398,6 +439,7 @@ function prepareRuntimeConvergencePlan(
 		observations: state.observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	try {
@@ -440,6 +482,7 @@ function prepareRuntimeApplyDependencies(
 					manifest,
 					secretValues,
 					context: openClawContext,
+					revision: runtimeProbeRevision(context, "openclaw"),
 				});
 			} catch (error) {
 				state.installErrors.push(
@@ -452,14 +495,18 @@ function prepareRuntimeApplyDependencies(
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		const managedOpenClawObservation = state.observations.get("openclaw");
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
-			openClawContext.agentDirs.managed =
-				discoverOpenClawManagedProviderAuthAgentDirs(openClawContext);
+			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
+				openClawContext,
+				runtimeProbeRevision(context, "openclaw"),
+			);
 			if (!managedOpenClawObservation.commandPath) {
 				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
 			}
 			ensureManagedOpenClawProviderPlugin({
 				context: openClawContext,
 				commandPath: managedOpenClawObservation.commandPath,
+				revision: runtimeProbeRevision(context, "openclaw"),
+				refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 			});
 		}
 		if (opts.preparedHostedAgentPlugins) {
@@ -473,6 +520,7 @@ function prepareRuntimeApplyDependencies(
 					...(opts.hostedAgentPluginCommandRunner
 						? { runner: opts.hostedAgentPluginCommandRunner }
 						: {}),
+					refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 				});
 			} catch (error) {
 				for (const name of opts.preparedHostedAgentPlugins.desired.keys()) {
@@ -674,6 +722,7 @@ function applyRuntimeResourceProjections(
 		projectionHome,
 		openClawContext,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		previousProjectedProviderIds,
 		runtimeEntries,
@@ -690,6 +739,7 @@ function applyRuntimeResourceProjections(
 		observations: state.observations,
 		previousProjectedProviderIds,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
@@ -736,7 +786,7 @@ function applyRuntimeResourceProjections(
 		}
 	}
 	try {
-		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot);
+		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot, hermesConfig);
 	} catch (error) {
 		state.installErrors.push(
 			`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -781,6 +831,7 @@ function applyRuntimeEntryProjections(
 		projectionHome,
 		openClawContext,
 		hermesWhatsAppAuthDir,
+		hermesConfig,
 		workspaceRoot,
 		generatedAt,
 		previousProjectedProviderIds,
@@ -813,11 +864,11 @@ function applyRuntimeEntryProjections(
 			try {
 				const localeFile = applyHostedRuntimeConfigProjection(
 					name,
-					observation,
 					manifest,
 					projectionHome,
 					plan.openClawWorkspaceRoot,
 					workspaceRoot,
+					hermesConfig,
 				);
 				if (localeFile) state.managedLocaleFiles.push(localeFile);
 			} catch (error) {
@@ -838,6 +889,8 @@ function applyRuntimeEntryProjections(
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
 					state.openClawOwnerBrowserBootstrapSupported,
+					hermesConfig,
+					runtimeProbeRevision(context, name),
 				);
 				state.projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
@@ -856,6 +909,7 @@ function applyRuntimeEntryProjections(
 					openClawContext,
 					workspaceRoot,
 					hermesWhatsAppAuthDir,
+					hermesConfig,
 				);
 			} catch (error) {
 				state.installErrors.push(
@@ -1125,6 +1179,7 @@ export function convergeRuntimeManifest(
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
+	context.hermesConfig = beginRuntimeHermesConfig(context, state);
 	const planResult = prepareRuntimeConvergencePlan(context, state);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
@@ -1139,6 +1194,19 @@ export function convergeRuntimeManifest(
 		);
 
 		applyRuntimeEntryProjections(context, state, plan, egressProjection);
+		if (context.hermesConfig) {
+			const hermesConfig = context.hermesConfig;
+			const commitResult = withRuntimeUserFileAccess(
+				() => commitHermesConfigTransaction(hermesConfig),
+				context.hostedRuntimeContract.identity,
+			);
+			if (commitResult === "conflict") {
+				return {
+					...runtimeConvergenceFailure(context, state),
+					deferredReason: "hermes_config_conflict",
+				};
+			}
+		}
 		const activationPlan = prepareRuntimeActivation(
 			context,
 			state,

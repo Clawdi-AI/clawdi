@@ -6,8 +6,6 @@ import {
 	chownSync,
 	cpSync,
 	existsSync,
-	lchownSync,
-	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -710,6 +708,7 @@ function writeFakeGatewayCli(input: {
 	configPatchPath?: string;
 	failInstall?: boolean;
 	skillInstallSourceLog?: string;
+	commandLog?: string;
 }): void {
 	const home = dirname(dirname(dirname(input.path)));
 	mkdirSync(dirname(input.path), { recursive: true });
@@ -717,6 +716,7 @@ function writeFakeGatewayCli(input: {
 		input.path,
 		`#!/usr/bin/env bash
 set -euo pipefail
+${input.commandLog ? `printf '%s\\n' "$*" >> '${input.commandLog}'` : ""}
 case "$*" in
 	"--version")
 		printf '%s\\n' '${input.runtime === "openclaw" ? "OpenClaw test-version" : "Hermes test-version"}'
@@ -748,6 +748,17 @@ EOF
 	  "agents list --json")
 	    printf '[{"id":"main","workspace":"%s"}]\n' "$HOME/.openclaw/workspace"
 	    ;;
+	  "plugins inspect clawdi-managed-provider --json")
+	    test -f "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json" || exit 1
+	    printf '{"plugin":{"id":"clawdi-managed-provider","name":"Clawdi Managed Provider Metadata","source":"%s/.openclaw/extensions/clawdi-managed-provider/index.js","origin":"global","status":"loaded","version":"1.0.0","enabled":true},"mcpServers":[],"diagnostics":[],"install":{"source":"path","sourcePath":"%s/.openclaw/managed-sources/clawdi-managed-provider","installPath":"%s/.openclaw/extensions/clawdi-managed-provider"}}\n' "$HOME" "$HOME" "$HOME"
+	    ;;
+	  "plugins install "*" --force")
+	    rm -rf "$HOME/.openclaw/extensions/clawdi-managed-provider"
+	    mkdir -p "$HOME/.openclaw/extensions"
+	    cp -R "$3" "$HOME/.openclaw/extensions/clawdi-managed-provider"
+	    ;;
+	  "plugins enable clawdi-managed-provider")
+	    ;;
 	  "skills install "*)
 	    source_dir="$3"
 	    skill_id="$7"
@@ -769,7 +780,7 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
-function writeFakeOpenClawConfigMutationSdk(home: string): string {
+function writeFakeOpenClawConfigMutationSdk(home: string, importLog?: string): string {
 	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
 	mkdirSync(packageRoot, { recursive: true });
@@ -780,12 +791,21 @@ function writeFakeOpenClawConfigMutationSdk(home: string): string {
 		JSON.stringify({
 			name: "openclaw",
 			type: "module",
-			exports: { "./plugin-sdk/config-mutation": "./config-mutation.mjs" },
+			exports: {
+				"./plugin-sdk/config-mutation": "./config-mutation.mjs",
+				"./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs",
+				"./plugin-sdk/provider-auth": "./provider-auth.mjs",
+				"./plugin-sdk/provider-env-vars": "./provider-env-vars.mjs",
+			},
 		}),
 	);
+	const logImport = (name: string) =>
+		importLog
+			? `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(importLog)}, ${JSON.stringify(`${name}\n`)});\n`
+			: "";
 	writeFileSync(
 		join(packageRoot, "config-mutation.mjs"),
-		`import { readFileSync, writeFileSync } from "node:fs";
+		`${logImport("config-mutation")}import { readFileSync, writeFileSync } from "node:fs";
 const configPath = ${JSON.stringify(configPath)};
 export async function readConfigFileSnapshotForWrite() {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
@@ -797,6 +817,22 @@ export async function mutateConfigFile(options) {
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
 }
 `,
+	);
+	writeFileSync(
+		join(packageRoot, "device-bootstrap.mjs"),
+		`${logImport("device-bootstrap")}export const normalizeDeviceBootstrapProfile = (profile) => profile;\n`,
+	);
+	writeFileSync(
+		join(packageRoot, "provider-auth.mjs"),
+		`${logImport("provider-auth")}export const ensureAuthProfileStoreForLocalUpdate = () => ({ profiles: {} });
+export const updateAuthProfileStoreWithLock = async () => ({});
+export const listProfilesForProvider = () => [];
+export const removeProviderAuthProfilesWithLock = async () => ({});
+`,
+	);
+	writeFileSync(
+		join(packageRoot, "provider-env-vars.mjs"),
+		`${logImport("provider-env-vars")}export const listKnownProviderAuthEnvVarNames = () => ["CLAWDI_AI_API_KEY"];\n`,
 	);
 	return configPath;
 }
@@ -2548,6 +2584,167 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("sk-managed");
 	});
 
+	test("reuses OpenClaw probes until the provider revision changes", () => {
+		const paths = tempRuntimePaths();
+		const commandLog = join(paths.serviceStateRoot, "openclaw-probe-commands.log");
+		const sdkLog = join(paths.serviceStateRoot, "openclaw-probe-sdk.log");
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, sdkLog);
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			commandLog,
+		});
+		const egressEngine = installCachedTestEgressEngine(paths, "12.2.3-test-probe-cache");
+		const manifestFor = (baseUrl: string, generation: number): RuntimeManifest => ({
+			...hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({
+					generation,
+					issuedAt: `2026-07-11T00:00:0${generation}.000Z`,
+					providers: {
+						clawdi: {
+							kind: "openai-compatible",
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl,
+							apiMode: "openai_responses",
+							models: [{ id: "gpt-test" }],
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
+							apiKeySecretRef: "secret://providers/clawdi/api-key",
+						},
+					},
+					runtimes: {
+						openclaw: hostedRuntimeFixture({
+							provider_ids: ["clawdi"],
+							primary_model: { provider_id: "clawdi", model: "gpt-test" },
+						}),
+					},
+				}),
+			),
+			egressEngine,
+		});
+		const secrets = {
+			...TEST_HOSTED_SECRET_VALUES,
+			"secret://providers/clawdi/api-key": "sk-managed",
+		};
+		const converge = (manifest: RuntimeManifest, opts: RuntimeConvergenceOptions = {}) =>
+			convergeRuntimeManifest(
+				manifestLoad(manifest, `provider-${manifest.generation}`, secrets),
+				paths,
+				opts,
+			);
+		const callCounts = (calls: string[]) =>
+			Object.fromEntries(
+				[...new Set(calls)].map((call) => [
+					call,
+					calls.filter((candidate) => candidate === call).length,
+				]),
+			);
+		const hotspotCounts = () =>
+			callCounts(
+				readFileSync(commandLog, "utf8")
+					.trim()
+					.split("\n")
+					.filter(
+						(command) =>
+							command === "agents list --json" ||
+							command === "plugins inspect clawdi-managed-provider --json",
+					),
+			);
+		const sdkCounts = () => callCounts(readFileSync(sdkLog, "utf8").trim().split("\n"));
+
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		const firstHotspots = hotspotCounts();
+		const firstSdkCalls = sdkCounts();
+		for (const hotspot of [
+			"agents list --json",
+			"plugins inspect clawdi-managed-provider --json",
+		]) {
+			expect(firstHotspots[hotspot]).toBeGreaterThan(0);
+		}
+		for (const sdk of [
+			"device-bootstrap",
+			"provider-auth",
+			"config-mutation",
+			"provider-env-vars",
+		]) {
+			expect(firstSdkCalls[sdk]).toBeGreaterThan(0);
+		}
+
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		expect(hotspotCounts()).toEqual(firstHotspots);
+		expect(sdkCounts()).toEqual(firstSdkCalls);
+
+		const driftedConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+		const driftedModels = driftedConfig.models as Record<string, unknown>;
+		const driftedProviders = driftedModels.providers as Record<string, unknown>;
+		delete driftedProviders.clawdi;
+		writeFileSync(configPath, `${JSON.stringify(driftedConfig, null, 2)}\n`);
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		expect(
+			(
+				(JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>).models as Record<
+					string,
+					Record<string, unknown>
+				>
+			).providers.clawdi,
+		).toBeDefined();
+		expect(hotspotCounts()).toEqual(firstHotspots);
+		const repairedProviderSdkCalls = sdkCounts();
+		expect(repairedProviderSdkCalls["config-mutation"]).toBeGreaterThan(
+			firstSdkCalls["config-mutation"] ?? 0,
+		);
+
+		const managedProviderInstallDir = join(
+			paths.userHome,
+			".openclaw",
+			"extensions",
+			"clawdi-managed-provider",
+		);
+		rmSync(managedProviderInstallDir, { recursive: true });
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		expect(existsSync(managedProviderInstallDir)).toBe(false);
+		expect(hotspotCounts()).toEqual(firstHotspots);
+		expect(
+			converge(manifestFor("https://provider.example.test/v1", 1), {
+				refreshCachedRuntimeProbes: true,
+			}).installErrors,
+		).toEqual([]);
+		expect(existsSync(join(managedProviderInstallDir, "openclaw.plugin.json"))).toBe(true);
+		const selfHealedHotspots = hotspotCounts();
+		expect(selfHealedHotspots["plugins inspect clawdi-managed-provider --json"]).toBeGreaterThan(
+			firstHotspots["plugins inspect clawdi-managed-provider --json"] ?? 0,
+		);
+
+		const rosterConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+		const agents = rosterConfig.agents as Record<string, unknown>;
+		agents.list = [{ id: "research", agentDir: join(paths.userHome, "research-agent") }];
+		writeFileSync(configPath, `${JSON.stringify(rosterConfig, null, 2)}\n`);
+		const beforeRosterChange = sdkCounts();
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		expect(hotspotCounts()["agents list --json"]).toBeGreaterThan(
+			selfHealedHotspots["agents list --json"] ?? 0,
+		);
+		const afterRosterChange = sdkCounts();
+		expect(afterRosterChange["provider-auth"]).toBeGreaterThan(
+			beforeRosterChange["provider-auth"] ?? 0,
+		);
+		const rosterChangedHotspots = hotspotCounts();
+
+		expect(converge(manifestFor("https://provider-v2.example.test/v1", 2)).installErrors).toEqual(
+			[],
+		);
+		const revisedHotspots = hotspotCounts();
+		expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
+		expect(revisedHotspots["plugins inspect clawdi-managed-provider --json"]).toBeGreaterThan(
+			firstHotspots["plugins inspect clawdi-managed-provider --json"] ?? 0,
+		);
+		const revisedSdkCalls = sdkCounts();
+		for (const [sdk, count] of Object.entries(firstSdkCalls)) {
+			expect(revisedSdkCalls[sdk]).toBeGreaterThan(count);
+		}
+	});
+
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
 		const paths = tempRuntimePaths();
 		process.env.HERMES_TEST_PROVIDER_TOKEN = "resolved-provider-secret-must-not-be-written";
@@ -4199,7 +4396,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("migrates legacy root-owned systemd files into the UID 10001 tenant tree", () => {
+	test("0.14.18 does not recursively chown tenant home and keeps tenant writes owned", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -4207,45 +4404,17 @@ exit 0
 		const runtimeUid = 10_001;
 		const runtimeGid = 10_001;
 		const appRoot = join(paths.userHome, ".openclaw");
+		const localRoot = join(paths.userHome, ".local");
 		const binDir = join(paths.userHome, ".local", "bin");
 		const commandPath = join(binDir, "openclaw");
-		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
-		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
-		const unitBackupPath = `${unitPath}.bak`;
-		const dropInPath = join(
-			paths.systemdUserRoot,
-			"openclaw-gateway.service.d",
-			"10-clawdi-hosted.conf",
-		);
-		const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
-		const enablementPath = join(wantsRoot, "openclaw-gateway.service");
-		const tenantOwnedPaths = [
-			appRoot,
-			binDir,
-			commandPath,
-			dirname(dirname(paths.systemdUserRoot)),
-			dirname(paths.systemdUserRoot),
-			wantsRoot,
-			paths.systemdUserRoot,
-			unitPath,
-			unitBackupPath,
-			gatewayEnvironment,
-			dirname(dropInPath),
-			dropInPath,
-		];
 		const skillProjectionLog = join(appRoot, "skill-projection-owners.log");
+		const rootOwnedSentinel = join(paths.userHome, "root-owned-sentinel");
 
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.userHome, { recursive: true });
-		chownSync(paths.userHome, runtimeUid, runtimeGid);
-		chmodSync(paths.userHome, 0o700);
 		mkdirSync(paths.clawdiHome, { recursive: true });
-		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
-		chmodSync(paths.clawdiHome, 0o700);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(appRoot, { recursive: true });
-		mkdirSync(dirname(dropInPath), { recursive: true });
-		mkdirSync(wantsRoot, { recursive: true });
 		writeFileSync(
 			commandPath,
 			`#!/usr/bin/env bash
@@ -4258,42 +4427,26 @@ case "$*" in
   "agents list --json")
     printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
     ;;
-			"skills install "*)
-			    : > '${skillProjectionLog}'
-			    ${tenantOwnedPaths.map((path) => `stat -c '%u:%g' '${path}' >> '${skillProjectionLog}'`).join("\n    ")}
+  "skills install "*)
+    printf '%s:%s\\n' "$(id -u)" "$(id -g)" > '${skillProjectionLog}'
     exit 45
-    ;;
-  "gateway install --force --json")
-    unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
-    cp "$unit" "$unit.bak"
-    printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > "$unit"
-    printf '%s\\n' 'OPENCLAW_OFFICIAL_USER_STATE=1' > "$HOME/.openclaw/gateway.systemd.env"
-    chmod 0600 "$HOME/.openclaw/gateway.systemd.env"
-    printf '{"ok":true}\\n'
     ;;
   *) exit 64 ;;
 esac
 `,
 		);
-		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
-		writeFileSync(unitBackupPath, "previous official backup\n");
-		writeFileSync(dropInPath, "[Service]\nEnvironment=PREVIOUS=1\n");
-		symlinkSync("../openclaw-gateway.service", enablementPath);
-		writeFileSync(gatewayEnvironment, "PREVIOUS_OFFICIAL_STATE=1\n");
-		for (const path of [appRoot, binDir]) {
-			chownSync(path, 0, 0);
-			chmodSync(path, 0o700);
+		chmodSync(commandPath, 0o700);
+		for (const path of [
+			paths.userHome,
+			paths.clawdiHome,
+			localRoot,
+			binDir,
+			appRoot,
+			commandPath,
+		]) {
+			chownSync(path, runtimeUid, runtimeGid);
 		}
-		for (const path of tenantOwnedPaths) {
-			if (lstatSync(path).isSymbolicLink()) continue;
-			chownSync(path, 0, 0);
-			chmodSync(path, 0o700);
-		}
-		lchownSync(enablementPath, 0, 0);
-		chmodSync(unitPath, 0o600);
-		chmodSync(unitBackupPath, 0o600);
-		chmodSync(dropInPath, 0o600);
-		chmodSync(gatewayEnvironment, 0o600);
+		writeFileSync(rootOwnedSentinel, "preserve root ownership\n", { mode: 0o600 });
 
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
 		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
@@ -4338,40 +4491,18 @@ esac
 		expect(result.resourceProjectionErrors.join("\n")).toContain(
 			"OpenClaw official Skill install failed: exit code 45 without output",
 		);
-		expect(readFileSync(skillProjectionLog, "utf8").trim().split("\n")).toEqual(
-			tenantOwnedPaths.map(() => `${runtimeUid}:${runtimeGid}`),
-		);
-		for (const path of [...tenantOwnedPaths, enablementPath]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-		}
-		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
-		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
-		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
+		expect(readFileSync(skillProjectionLog, "utf8")).toBe(`${runtimeUid}:${runtimeGid}\n`);
+		expect([statSync(skillProjectionLog).uid, statSync(skillProjectionLog).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
+		]);
+		expect(readFileSync(rootOwnedSentinel, "utf8")).toBe("preserve root ownership\n");
+		expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
+		expect(statSync(rootOwnedSentinel).mode & 0o777).toBe(0o600);
 		expect([statSync(paths.daemonAuthToken).uid, statSync(paths.daemonAuthToken).gid]).toEqual([
 			0, 0,
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
-
-		const installed = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
-			paths,
-			{
-				hostedRuntimeContract,
-				systemdApply: {
-					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: () => {
-						return successfulPrerequisiteActivation();
-					},
-				},
-			},
-		);
-		expect(installed.installErrors).toEqual([]);
-		for (const path of [...tenantOwnedPaths, enablementPath]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-		}
-		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, chownSync, constants, lstatSync, mkdirSync } from "node:fs";
+import { accessSync, chownSync, constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -8,6 +8,8 @@ import { parsePositiveLinuxId } from "./transparent-egress";
 
 const RUNTIME_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const runtimeUserUids = new Map<string, number>();
+const runtimeUserGids = new Map<string, number>();
 
 export interface RuntimeUserIdentity {
 	uid: number;
@@ -232,10 +234,15 @@ export function runtimeUserUid(runtimeUser: string): number {
 	if (explicit !== null) return explicit;
 	const numericUser = linuxUid(runtimeUser);
 	if (numericUser !== null) return numericUser;
+	const cached = runtimeUserUids.get(runtimeUser);
+	if (cached !== undefined) return cached;
 	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
 	if (resolved.status === 0) {
 		const uid = linuxUid(resolved.stdout.trim());
-		if (uid !== null) return uid;
+		if (uid !== null) {
+			runtimeUserUids.set(runtimeUser, uid);
+			return uid;
+		}
 	}
 	if (runtimeUser === "clawdi") return 10_001;
 	throw new Error(`could not resolve uid for ${runtimeUser}`);
@@ -248,6 +255,9 @@ function linuxUid(value: string): number | null {
 }
 
 function strictRuntimeUserId(runtimeUser: string, kind: "uid" | "gid"): number {
+	const cache = kind === "uid" ? runtimeUserUids : runtimeUserGids;
+	const cached = cache.get(runtimeUser);
+	if (cached !== undefined) return cached;
 	const flag = kind === "uid" ? "-u" : "-g";
 	const resolved = spawnSync("id", [flag, runtimeUser], {
 		encoding: "utf8",
@@ -266,6 +276,7 @@ function strictRuntimeUserId(runtimeUser: string, kind: "uid" | "gid"): number {
 	if (parsed === null) {
 		throw new Error(`runtime user ${runtimeUser} resolved an invalid ${kind}`);
 	}
+	cache.set(runtimeUser, parsed);
 	return parsed;
 }
 
@@ -348,10 +359,15 @@ export function clearTenantToolLocationOverrides(env: NodeJS.ProcessEnv): void {
 export function runtimeUserGid(runtimeUser: string): number {
 	const explicit = linuxUid(process.env.CLAWDI_RUNTIME_GID?.trim() ?? "");
 	if (explicit !== null) return explicit;
+	const cached = runtimeUserGids.get(runtimeUser);
+	if (cached !== undefined) return cached;
 	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
 	if (resolved.status === 0) {
 		const gid = linuxUid(resolved.stdout.trim());
-		if (gid !== null) return gid;
+		if (gid !== null) {
+			runtimeUserGids.set(runtimeUser, gid);
+			return gid;
+		}
 	}
 	if (runtimeUser === "clawdi") return 10_001;
 	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
@@ -368,20 +384,6 @@ export function runtimeEgressGid(): number {
 function positiveLinuxIdEnv(key: string, fallback: number): number {
 	const raw = process.env[key]?.trim();
 	return raw ? parsePositiveLinuxId(raw, key) : fallback;
-}
-
-export function ensureRuntimeUserHomeOwnership(path: string, identity: RuntimeUserIdentity): void {
-	mkdirSync(path, { recursive: true });
-	const node = lstatSync(path);
-	if (!node.isDirectory() || node.isSymbolicLink()) {
-		throw new Error(`runtime-user home must be a real directory: ${path}`);
-	}
-	if (!runningAsRoot()) return;
-	if (identity.uid === 0 || identity.gid === 0) {
-		throw new Error("runtime user resolved to a root filesystem identity");
-	}
-	// SUNSET: remove after all 0.13.92/0.14.14 hosts have migrated their root-owned tenant trees.
-	execFileSync("chown", ["-hR", "-P", `${identity.uid}:${identity.gid}`, "--", path]);
 }
 
 export function makeRuntimeUserOwned(path: string): void {

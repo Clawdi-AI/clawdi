@@ -8,7 +8,7 @@ import { isValidSemver } from "../lib/semver";
 import {
 	getHermesRawConfigValue,
 	getHermesResolvedConfigValue,
-	type HermesConfigCommandContext,
+	type HermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
@@ -20,9 +20,12 @@ import {
 	hostedProviderRequiresApiKey,
 } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
-import { type RuntimeInstallObservation, tail } from "./manifest-install";
+import {
+	type RuntimeInstallObservation,
+	runtimeFileCurrentRevision,
+	tail,
+} from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
-import { hermesConfigContext } from "./manifest-runtime-config";
 import { canonicalJsonEqual, isPlainRecord, recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
@@ -35,6 +38,7 @@ import {
 import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
+const openClawProviderPatchRevisions = new Map<string, string>();
 
 export function providerHealthReasons(
 	provider: Record<string, unknown>,
@@ -116,6 +120,8 @@ export function applyHostedAiProviderProjection(
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
 	openClawOwnerBrowserBootstrapSupported: boolean,
+	hermesConfig: HermesConfigTransaction | null,
+	providerRevision: string,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -137,11 +143,10 @@ export function applyHostedAiProviderProjection(
 	}
 	if (name === "hermes") {
 		return applyHostedHermesAiProviderProjection(
-			observation,
 			projectionInput,
 			previousProviderIds,
 			home,
-			workspaceRoot,
+			hermesConfig,
 		);
 	}
 	if (name === "openclaw") {
@@ -155,7 +160,12 @@ export function applyHostedAiProviderProjection(
 		);
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (providerPatch.apply) {
-			applyOpenClawHostedProviderPatch(providerPatch, openClawContext, workspaceRoot);
+			applyOpenClawHostedProviderPatch(
+				providerPatch,
+				openClawContext,
+				workspaceRoot,
+				providerRevision,
+			);
 		}
 		if (openClawContext.managedApiKeyProjection) {
 			if (openClawContext.agentDirs.managed.length === 0) {
@@ -163,7 +173,7 @@ export function applyHostedAiProviderProjection(
 					"OpenClaw managed provider-auth stores were not transactionally discovered",
 				);
 			}
-			removeOpenClawManagedProviderAuthProfiles(openClawContext, workspaceRoot);
+			removeOpenClawManagedProviderAuthProfiles(openClawContext, workspaceRoot, providerRevision);
 		}
 		return {
 			path: observation.commandPath,
@@ -211,11 +221,10 @@ export function previewHostedAiProviderProjectionRevision(
 		});
 	}
 	return applyHostedHermesAiProviderProjection(
-		observation,
 		projectionInput,
 		previousProviderIds,
 		home,
-		home,
+		null,
 		false,
 	).revision;
 }
@@ -414,22 +423,18 @@ function installHostedCodexBootstrap(
 	}
 }
 function applyHostedHermesAiProviderProjection(
-	observation: RuntimeInstallObservation,
 	projectionInput: HostedAiProviderProjectionInput | null,
 	previousProviderIds: readonly string[],
 	home: string,
-	workspaceRoot: string,
+	config: HermesConfigTransaction | null,
 	apply = true,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (!projectionInput) {
 		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
 		if (apply && deletedProviderIds.length > 0) {
-			applyHermesProviderConfig(
-				hermesConfigContext(observation, home, workspaceRoot),
-				{},
-				deletedProviderIds,
-			);
+			if (!config) throw new Error("Hermes config command is unavailable");
+			applyHermesProviderConfig(config, {}, deletedProviderIds);
 		}
 		return {
 			path: null,
@@ -441,8 +446,6 @@ function applyHostedHermesAiProviderProjection(
 		};
 	}
 
-	const commandPath = observation.commandPath;
-	if (!commandPath) return { path: null, revision: null, providerIds: [] };
 	const projection = buildAgentTargetProjection(
 		"hermes",
 		projectionInput.catalog,
@@ -458,14 +461,11 @@ function applyHostedHermesAiProviderProjection(
 	);
 	const patchContent = mergeProviderDeletes("hermes", file.content, deletedProviderIds);
 	if (apply) {
+		if (!config) throw new Error("Hermes config command is unavailable");
 		const patch = parseYaml(file.content) as unknown;
 		const root = recordValue(patch);
 		if (!root) throw new Error("Hermes projection patch must be a YAML object.");
-		applyHermesProviderConfig(
-			hermesConfigContext(observation, home, workspaceRoot),
-			root,
-			deletedProviderIds,
-		);
+		applyHermesProviderConfig(config, root, deletedProviderIds);
 	}
 	return {
 		path: configPath,
@@ -543,8 +543,19 @@ function applyOpenClawHostedProviderPatch(
 	patch: OpenClawHostedProviderPatch,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
+	providerRevision: string,
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
+	const patchRevision = runtimeImpactRevision({
+		providerRevision,
+		content: patch.content,
+		sdk: runtimeFileCurrentRevision(sdkPath),
+	});
+	if (openClawProviderPatchRevisions.get(context.configPath) === patchRevision) {
+		const expected = recordValue(JSON.parse(patch.content) as unknown);
+		if (!expected) throw new Error("OpenClaw provider projection patch must be an object");
+		if (openClawConfigPatchIsApplied(context, expected)) return;
+	}
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
@@ -552,6 +563,7 @@ function applyOpenClawHostedProviderPatch(
 		context.home,
 		workspaceRoot,
 	);
+	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
 }
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
@@ -651,7 +663,7 @@ const HERMES_GENERATED_PROVIDER_FIELDS = [
 	"auth_type",
 ] as const;
 function applyHermesProviderConfig(
-	context: HermesConfigCommandContext,
+	context: HermesConfigTransaction,
 	patch: Record<string, unknown>,
 	deletedProviderIds: readonly string[],
 ): void {
@@ -662,7 +674,7 @@ function applyHermesProviderConfig(
 		reconcileHermesConfigValue(context, `model.${key}`, value === null ? undefined : value);
 	}
 	if (!Object.hasOwn(patchModel, "provider") && deletedProviderIds.length > 0) {
-		const currentProvider = getHermesResolvedConfigValue(context, "model.provider");
+		const currentProvider = getHermesResolvedConfigValue(context.context, "model.provider");
 		if (currentProvider.exists && typeof currentProvider.value !== "string") {
 			throw new Error("Hermes config field model.provider must be a string");
 		}

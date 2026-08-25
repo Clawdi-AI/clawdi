@@ -286,6 +286,41 @@ export function applySystemdRuntimeUpdate(
 	if (restartUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]);
 	}
+	if (
+		!activationChanged &&
+		system.present.every((unit) => {
+			const state = requiredSystemdUnitState(systemStates, "system", unit);
+			return (
+				state.loadState !== "not-found" &&
+				state.activeState === "active" &&
+				!state.needDaemonReload &&
+				systemdUnitEnabled(state)
+			);
+		}) &&
+		user.present.every((unit) => {
+			const state = requiredSystemdUnitState(userStates, "user", unit);
+			return (
+				state.loadState !== "not-found" &&
+				state.activeState === "active" &&
+				!state.needDaemonReload &&
+				systemdUnitEnabled(state)
+			);
+		})
+	) {
+		return {
+			applied: true,
+			activated: Object.fromEntries(
+				[
+					...system.present.filter((unit) => !NON_TRANSACTIONAL_SYSTEM_UNITS.has(unit)),
+					...user.present,
+				]
+					.map((unit) => [unit, after.system.get(unit) ?? after.user.get(unit)])
+					.filter((entry): entry is [string, string] => entry[1] !== undefined),
+			),
+			systemUnitsChanged: [],
+			userUnitsChanged: [],
+		};
+	}
 
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
@@ -340,10 +375,31 @@ function readSystemdRuntimeUnits(
 	scope: SystemdRuntimeScope,
 	units: readonly string[],
 ): Map<string, SystemdUnitManagerState> {
+	const uniqueUnits = [...new Set(units)].sort();
 	const states = new Map<string, SystemdUnitManagerState>();
-	for (const unit of [...new Set(units)].sort()) {
-		const state = systemdUnitManagerState(paths, scope, unit);
-		states.set(unit, state);
+	if (uniqueUnits.length === 0) return states;
+	const showArgs = [
+		"show",
+		...uniqueUnits,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=NeedDaemonReload",
+	];
+	const show = systemdCommandResult(paths, scope, showArgs);
+	assertCommandSucceeded(systemdCommandName(scope), showArgs, show);
+	const blocks = show.stdout
+		.trim()
+		.split(/\r?\n\s*\r?\n/)
+		.filter(Boolean);
+	if (blocks.length !== uniqueUnits.length) {
+		throw new Error(`systemd ${scope} returned incomplete batched manager state`);
+	}
+	const enabled = readSystemdUnitEnablement(paths, scope, uniqueUnits);
+	for (const [index, unit] of uniqueUnits.entries()) {
+		states.set(
+			unit,
+			parseSystemdUnitManagerState(scope, unit, blocks[index] ?? "", enabled.get(unit)),
+		);
 	}
 	return states;
 }
@@ -362,17 +418,16 @@ function systemdUnitManagerState(
 	scope: "system" | "user",
 	unit: string,
 ): SystemdUnitManagerState {
-	const showArgs = [
-		"show",
-		unit,
-		"--property=LoadState",
-		"--property=ActiveState",
-		"--property=NeedDaemonReload",
-	];
-	const show =
-		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
-	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
-	const properties = parseSystemctlShow(show.stdout);
+	return requiredSystemdUnitState(readSystemdRuntimeUnits(paths, scope, [unit]), scope, unit);
+}
+
+function parseSystemdUnitManagerState(
+	scope: SystemdRuntimeScope,
+	unit: string,
+	show: string,
+	enabled: boolean | undefined,
+): SystemdUnitManagerState {
+	const properties = parseSystemctlShow(show);
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
 	const needDaemonReload = properties.NeedDaemonReload;
@@ -389,19 +444,53 @@ function systemdUnitManagerState(
 		activeState,
 		needDaemonReload: needDaemonReload === "yes",
 	};
-	const enabledArgs = ["is-enabled", "--quiet", unit];
-	const enabled =
-		scope === "system"
-			? systemctlResult(enabledArgs)
-			: runtimeUserSystemctlResult(paths, enabledArgs);
-	if (enabled.status === null || enabled.error) {
-		assertCommandSucceeded(
-			scope === "system" ? systemctlPath() : "systemctl --user",
-			enabledArgs,
-			enabled,
-		);
+	return { ...managerState, enabled };
+}
+
+function readSystemdUnitEnablement(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: SystemdRuntimeScope,
+	units: readonly string[],
+): Map<string, boolean> {
+	const args = ["is-enabled", ...units];
+	const result = systemdCommandResult(paths, scope, args);
+	if (result.status === null || result.error) {
+		assertCommandSucceeded(systemdCommandName(scope), args, result);
 	}
-	return { ...managerState, enabled: enabled.status === 0 };
+	const output = result.stdout.trim().split(/\r?\n/);
+	return new Map(
+		units.map((unit, index) => {
+			const state = output.length === units.length ? output[index]?.trim() : undefined;
+			if (state === "enabled") return [unit, true];
+			if (state === "disabled") return [unit, false];
+			return [unit, probeSystemdUnitEnabled(paths, scope, unit)];
+		}),
+	);
+}
+
+function probeSystemdUnitEnabled(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: SystemdRuntimeScope,
+	unit: string,
+): boolean {
+	const args = ["is-enabled", "--quiet", unit];
+	const result = systemdCommandResult(paths, scope, args);
+	if (result.status === null || result.error) {
+		assertCommandSucceeded(systemdCommandName(scope), args, result);
+	}
+	return result.status === 0;
+}
+
+function systemdCommandResult(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: SystemdRuntimeScope,
+	args: string[],
+): CommandResult {
+	return scope === "system" ? systemctlResult(args) : runtimeUserSystemctlResult(paths, args);
+}
+
+function systemdCommandName(scope: SystemdRuntimeScope): string {
+	return scope === "system" ? systemctlPath() : "systemctl --user";
 }
 
 function systemdUnitEnabled(state: SystemdUnitManagerState): boolean {

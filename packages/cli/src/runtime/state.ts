@@ -268,7 +268,6 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		if (platformRoot) ensureDirectoryWithinTrustedRoot(platformRoot, dir, { mode });
 		else assertTrustedDirectory(dir, "systemd platform directory");
 	}
-	mkdirSync(paths.systemdUserRoot, { recursive: true });
 	assertRuntimePlatformRoots(paths);
 }
 

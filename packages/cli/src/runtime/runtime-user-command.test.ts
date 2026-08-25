@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
 	chmodSync,
-	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
 	statSync,
-	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +16,7 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
-	ensureRuntimeUserHomeOwnership,
+	resolveRuntimeUserIdentity,
 	runRuntimeUserCommand,
 	runtimeUserGid,
 	runtimeUserUid,
@@ -29,6 +27,57 @@ import {
 test("command existence follows shell resolution", () => {
 	expect(commandExists("command")).toBe(true);
 	expect(commandExists("clawdi-command-that-does-not-exist")).toBe(false);
+});
+
+test("resolves each runtime user identity once per process", () => {
+	const root = mkdtempSync(join(tmpdir(), "runtime-user-id-cache-"));
+	const bin = join(root, "bin");
+	const command = join(bin, "id");
+	const log = join(root, "id.log");
+	const previousPath = process.env.PATH;
+	const previousUid = process.env.CLAWDI_RUNTIME_UID;
+	const previousGid = process.env.CLAWDI_RUNTIME_GID;
+	const firstUser = `runtime-a-${root.split("-").at(-1)}`;
+	const secondUser = `runtime-b-${root.split("-").at(-1)}`;
+	try {
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			command,
+			`#!/bin/sh
+printf '%s %s\n' "$1" "$2" >> '${log}'
+case "$1" in
+  -u) printf '12345\n' ;;
+  -g) printf '23456\n' ;;
+  *) exit 64 ;;
+esac
+`,
+			{ mode: 0o755 },
+		);
+		process.env.PATH = `${bin}:/usr/bin:/bin`;
+		delete process.env.CLAWDI_RUNTIME_UID;
+		delete process.env.CLAWDI_RUNTIME_GID;
+
+		expect(resolveRuntimeUserIdentity(firstUser)).toEqual({ uid: 12345, gid: 23456 });
+		expect(resolveRuntimeUserIdentity(firstUser)).toEqual({ uid: 12345, gid: 23456 });
+		expect(runtimeUserUid(firstUser)).toBe(12345);
+		expect(runtimeUserGid(firstUser)).toBe(23456);
+		expect(resolveRuntimeUserIdentity(secondUser)).toEqual({ uid: 12345, gid: 23456 });
+
+		expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+			`-u ${firstUser}`,
+			`-g ${firstUser}`,
+			`-u ${secondUser}`,
+			`-g ${secondUser}`,
+		]);
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+		if (previousUid === undefined) delete process.env.CLAWDI_RUNTIME_UID;
+		else process.env.CLAWDI_RUNTIME_UID = previousUid;
+		if (previousGid === undefined) delete process.env.CLAWDI_RUNTIME_GID;
+		else process.env.CLAWDI_RUNTIME_GID = previousGid;
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("tenant tools inherit HOME but not platform location overrides", () => {
@@ -382,43 +431,6 @@ test("fully drops root identity when spawned during runtime-user file access", (
 	} finally {
 		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
 		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("migrates a legacy root-owned tenant home without following symlinks", () => {
-	if (process.geteuid?.() !== 0) return;
-	const root = mkdtempSync(join(tmpdir(), "runtime-user-home-migration-"));
-	const home = join(root, "home");
-	const systemdRoot = join(home, ".config", "systemd", "user");
-	const unit = join(systemdRoot, "hermes-gateway.service");
-	const outside = join(root, "platform-state");
-	const outsideLink = join(home, "platform-link");
-	try {
-		mkdirSync(systemdRoot, { recursive: true, mode: 0o700 });
-		writeFileSync(unit, "legacy\n", { mode: 0o600 });
-		writeFileSync(outside, "preserve\n", { mode: 0o600 });
-		symlinkSync(outside, outsideLink);
-		const identity = { uid: runtimeUserUid("nobody"), gid: runtimeUserGid("nobody") };
-
-		ensureRuntimeUserHomeOwnership(home, identity);
-
-		for (const path of [
-			home,
-			join(home, ".config"),
-			join(home, ".config", "systemd"),
-			systemdRoot,
-			unit,
-			outsideLink,
-		]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([identity.uid, identity.gid]);
-		}
-		expect(statSync(systemdRoot).mode & 0o777).toBe(0o700);
-		expect(statSync(unit).mode & 0o777).toBe(0o600);
-		expect([statSync(outside).uid, statSync(outside).gid]).toEqual([0, 0]);
-		expect(readFileSync(outside, "utf8")).toBe("preserve\n");
-	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
 });

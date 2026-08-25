@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { getHermesRawConfigValue, reconcileHermesConfigValue } from "./hermes-config";
+import {
+	getHermesRawConfigValue,
+	type HermesConfigTransaction,
+	reconcileHermesConfigValue,
+} from "./hermes-config";
 import { managedMcpHeaderPlaceholder } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, runtimeCommandPath } from "./manifest-install";
@@ -34,14 +38,15 @@ export function applyHostedMcpProjections(
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
+	hermesConfig: HermesConfigTransaction | null,
 ): void {
-	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations, workspaceRoot);
+	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations, hermesConfig);
 	for (const runtime of [...plan.runtimes].sort((left, right) =>
 		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
 	)) {
 		if (runtime.mutations.length === 0) continue;
 		if (runtime.name === "hermes") {
-			if (!runtime.commandPath || !executableExists(runtime.commandPath)) {
+			if (!runtime.commandPath || !executableExists(runtime.commandPath) || !hermesConfig) {
 				throw new Error("could not mutate managed Hermes MCP servers: runtime is unavailable");
 			}
 			const nextServers = { ...runtime.native.servers };
@@ -50,7 +55,7 @@ export function applyHostedMcpProjections(
 				else nextServers[mutation.serverName] = mutation.server;
 			}
 			reconcileHermesConfigValue(
-				{ command: runtime.commandPath, home: plan.home, cwd: workspaceRoot },
+				hermesConfig,
 				"mcp_servers",
 				Object.keys(nextServers).length > 0 ? nextServers : undefined,
 			);
@@ -92,7 +97,7 @@ function buildHostedMcpReconciliationPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
-	cwd = hostedRuntimeProjectionHome(manifest, paths),
+	hermesConfig: HermesConfigTransaction | null = null,
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -106,7 +111,7 @@ function buildHostedMcpReconciliationPlan(
 		}
 		const native =
 			name === "openclaw" || runtimeAvailable
-				? readHostedMcpNativeState(name, home, commandPath, cwd)
+				? readHostedMcpNativeState(name, home, commandPath, hermesConfig)
 				: { servers: {} };
 		const managedServerNames = new Set(
 			Object.entries(native.servers).flatMap(([serverName, server]) =>
@@ -152,11 +157,11 @@ function readHostedMcpNativeState(
 	name: HostedMcpTarget,
 	home: string,
 	commandPath: string | null,
-	cwd: string,
+	hermesConfig: HermesConfigTransaction | null,
 ): HostedMcpNativeState {
 	if (name === "hermes") {
-		if (!commandPath) throw new Error("Hermes config command is unavailable");
-		const current = getHermesRawConfigValue({ command: commandPath, home, cwd }, "mcp_servers");
+		if (!commandPath || !hermesConfig) throw new Error("Hermes config command is unavailable");
+		const current = getHermesRawConfigValue(hermesConfig, "mcp_servers");
 		if (!current.exists) return { servers: {} };
 		if (!isPlainRecord(current.value)) {
 			throw new Error("Hermes config field mcp_servers must be an object");
@@ -212,6 +217,7 @@ export function validateHostedMcpProjectionPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+	hermesConfig: HermesConfigTransaction | null,
 ): void {
-	buildHostedMcpReconciliationPlan(manifest, paths, observations);
+	buildHostedMcpReconciliationPlan(manifest, paths, observations, hermesConfig);
 }

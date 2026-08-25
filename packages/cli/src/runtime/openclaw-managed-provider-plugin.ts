@@ -9,6 +9,7 @@ import {
 	CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
 	type OpenClawHostedContext,
 } from "./hosted-openclaw-context";
+import { runtimeFileCurrentRevision } from "./manifest-install";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
@@ -16,6 +17,7 @@ export { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "./hosted-openclaw-co
 
 const PLUGIN_VERSION = "1.0.0";
 const COMMAND_TIMEOUT_MS = 120_000;
+const managedProviderPluginRevisions = new Map<string, string>();
 const managedOpenClawPluginInspectSchema = openClawPluginInspectSchema.extend({
 	install: openClawPluginInspectSchema.shape.install.optional(),
 });
@@ -230,8 +232,20 @@ function requireManagedOpenClawProviderMarker(context: OpenClawHostedContext): v
 export function ensureManagedOpenClawProviderPlugin(input: {
 	context: OpenClawHostedContext;
 	commandPath: string;
+	revision: string;
+	refreshCachedRuntimeProbes?: boolean;
 }): void {
 	const sourceDir = materializePluginSource(input.context);
+	const probeRevision = [
+		input.revision,
+		runtimeFileCurrentRevision(input.commandPath),
+		runtimeFileCurrentRevision(input.context.requireSdkExport("providerEnvVars")),
+	].join("\0");
+	if (
+		!input.refreshCachedRuntimeProbes &&
+		managedProviderPluginRevisions.get(input.context.home) === probeRevision
+	)
+		return;
 	let observation = inspectPlugin(input.commandPath, input.context.home);
 	if (
 		observation &&
@@ -241,6 +255,7 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 	) {
 		try {
 			requireManagedOpenClawProviderMarker(input.context);
+			managedProviderPluginRevisions.set(input.context.home, probeRevision);
 			return;
 		} catch {
 			observation = null;
@@ -288,4 +303,5 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 		);
 	}
 	requireManagedOpenClawProviderMarker(input.context);
+	managedProviderPluginRevisions.set(input.context.home, probeRevision);
 }

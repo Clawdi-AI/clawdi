@@ -28,15 +28,29 @@ import {
 	readOAuthCredentialLedger,
 	writeOAuthCredentialLedger,
 } from "../lib/oauth-credential-ledger";
-import type { OpenClawHostedContext } from "./hosted-openclaw-context";
+import {
+	type OpenClawHostedContext,
+	openClawRosterConfigRevision,
+} from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
-import { tail } from "./manifest-install";
+import { runtimeFileCurrentRevision, tail } from "./manifest-install";
 import { recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
+import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
+const openClawOwnerBrowserCapabilities = new Map<
+	string,
+	{ revision: string; supported: boolean }
+>();
+const openClawProviderAuthCapabilityRevisions = new Map<string, string>();
+const openClawManagedProviderAuthAgentDirs = new Map<
+	string,
+	{ revision: string; agentDirs: string[] }
+>();
+const openClawManagedProviderAuthCleanupRevisions = new Map<string, string>();
 interface RuntimeOAuthMaterial {
 	accessToken: string;
 	refreshToken: string;
@@ -191,9 +205,15 @@ const normalized = typeof sdk.normalizeDeviceBootstrapProfile === "function"
   : null;
 process.stdout.write(normalized?.purpose === "control-ui-owner" ? "supported" : "unsupported");
 `;
-export function openClawSupportsOwnerBrowserBootstrap(context: OpenClawHostedContext): boolean {
+export function openClawSupportsOwnerBrowserBootstrap(
+	context: OpenClawHostedContext,
+	revision: string,
+): boolean {
 	const sdkPath = context.sdk.deviceBootstrap;
 	if (!sdkPath) return false;
+	const capabilityRevision = [revision, runtimeFileCurrentRevision(sdkPath)].join("\0");
+	const cached = openClawOwnerBrowserCapabilities.get(context.home);
+	if (cached?.revision === capabilityRevision) return cached.supported;
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
@@ -208,8 +228,14 @@ export function openClawSupportsOwnerBrowserBootstrap(context: OpenClawHostedCon
 		);
 	}
 	const outcome = String(result.stdout ?? "").trim();
-	if (outcome === "supported") return true;
-	if (outcome === "unsupported") return false;
+	if (outcome === "supported" || outcome === "unsupported") {
+		const supported = outcome === "supported";
+		openClawOwnerBrowserCapabilities.set(context.home, {
+			revision: capabilityRevision,
+			supported,
+		});
+		return supported;
+	}
 	throw new Error("installed OpenClaw device-bootstrap capability probe returned invalid output");
 }
 const OPENCLAW_PROVIDER_AUTH_CAPABILITY_PROBE = `
@@ -279,10 +305,20 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 	manifest: RuntimeManifest;
 	secretValues: Record<string, string> | undefined;
 	context: OpenClawHostedContext;
+	revision: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, "openclaw", input.secretValues);
 	const cleanupManagedProvider = input.context.managedApiKeyProjection;
 	if (desired.length === 0 && !cleanupManagedProvider) return;
+	const capabilityRevision = [
+		input.revision,
+		runtimeFileCurrentRevision(input.context.sdk.providerAuth ?? ""),
+		runtimeFileCurrentRevision(input.context.sdk.configMutation ?? ""),
+		runtimeFileCurrentRevision(input.context.sdk.providerEnvVars ?? ""),
+	].join("\0");
+	if (openClawProviderAuthCapabilityRevisions.get(input.context.home) === capabilityRevision) {
+		return;
+	}
 	const requirement =
 		desired.length > 0 && cleanupManagedProvider
 			? "OpenClaw credential convergence"
@@ -302,6 +338,7 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 			}`,
 		);
 	}
+	openClawProviderAuthCapabilityRevisions.set(input.context.home, capabilityRevision);
 }
 function runOpenClawProviderAuthCommand(
 	context: OpenClawHostedContext,
@@ -349,7 +386,15 @@ function runOpenClawProviderAuthCommand(
 export function removeOpenClawManagedProviderAuthProfiles(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
+	revision: string,
 ): void {
+	const cleanupRevision = runtimeImpactRevision({
+		revision,
+		agentDirs: context.agentDirs.managed,
+		providerAuthSdk: runtimeFileCurrentRevision(context.sdk.providerAuth ?? ""),
+		configMutationSdk: runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
+	});
+	if (openClawManagedProviderAuthCleanupRevisions.get(context.home) === cleanupRevision) return;
 	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
@@ -376,10 +421,20 @@ export function removeOpenClawManagedProviderAuthProfiles(
 			}`,
 		);
 	}
+	openClawManagedProviderAuthCleanupRevisions.set(context.home, cleanupRevision);
 }
 export function discoverOpenClawManagedProviderAuthAgentDirs(
 	context: OpenClawHostedContext,
+	revision: string,
 ): string[] {
+	const discoveryRevision = [
+		revision,
+		openClawRosterConfigRevision(context.home),
+		runtimeFileCurrentRevision(context.sdk.providerAuth ?? ""),
+		runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
+	].join("\0");
+	const cached = openClawManagedProviderAuthAgentDirs.get(context.home);
+	if (cached?.revision === discoveryRevision) return [...cached.agentDirs];
 	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
@@ -413,7 +468,11 @@ export function discoverOpenClawManagedProviderAuthAgentDirs(
 	if (agentDirs.length !== output.agentDirs.length || agentDirs.length === 0) {
 		throw new Error("OpenClaw managed provider-auth store discovery returned invalid targets");
 	}
-	return agentDirs;
+	openClawManagedProviderAuthAgentDirs.set(context.home, {
+		revision: discoveryRevision,
+		agentDirs,
+	});
+	return [...agentDirs];
 }
 function runtimeOAuthLedgerOwnership(
 	ledger: OAuthCredentialLedger | null,

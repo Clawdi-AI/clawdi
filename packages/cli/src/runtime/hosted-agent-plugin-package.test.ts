@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -750,6 +751,13 @@ describe("Hosted Agent Plugin package preparation", () => {
 				run(input) {
 					calls.push(input.args);
 					if (input.args[1] === "list") {
+						if (!existsSync(installRoot)) {
+							return {
+								status: 0,
+								stdout: runtime === "hermes" ? "[]" : '{"plugins":[]}',
+								stderr: "",
+							};
+						}
 						if (runtime === "hermes") {
 							return {
 								status: 0,
@@ -808,6 +816,16 @@ describe("Hosted Agent Plugin package preparation", () => {
 							stderr: "",
 						};
 					}
+					if (runtime === "openclaw" && input.args[1] === "install") {
+						const source = input.args[2];
+						if (!source) throw new Error("missing native install source");
+						rmSync(installRoot, { recursive: true, force: true });
+						cpSync(source, installRoot, { recursive: true });
+						return { status: 0, stdout: "", stderr: "" };
+					}
+					if (runtime === "openclaw" && input.args[1] === "enable") {
+						return { status: 0, stdout: "", stderr: "" };
+					}
 					throw new Error(`unexpected native mutation: ${input.args.join(" ")}`);
 				},
 			};
@@ -821,6 +839,57 @@ describe("Hosted Agent Plugin package preparation", () => {
 			expect(transaction?.hasMutations).toBe(false);
 			expect(transaction?.apply()).toEqual(persistedReceipt);
 			expect(calls.every((args) => args[1] === "list" || args[1] === "inspect")).toBe(true);
+			const observedCalls = calls.length;
+			const cached = planHostedAgentPluginConvergence({
+				prepared,
+				home: runtimePaths.userHome,
+				commands: hostedAgentPluginCommands(runtimePaths.userHome),
+				runner,
+			}).transaction;
+			expect(cached?.hasMutations).toBe(false);
+			expect(cached?.apply()).toEqual(persistedReceipt);
+			expect(calls).toHaveLength(observedCalls);
+
+			if (runtime === "openclaw") {
+				rmSync(installRoot, { recursive: true });
+				const stillCached = planHostedAgentPluginConvergence({
+					prepared,
+					home: runtimePaths.userHome,
+					commands: hostedAgentPluginCommands(runtimePaths.userHome),
+					runner,
+				}).transaction;
+				expect(stillCached?.hasMutations).toBe(false);
+				expect(calls).toHaveLength(observedCalls);
+
+				const selfHeal = planHostedAgentPluginConvergence({
+					prepared,
+					home: runtimePaths.userHome,
+					commands: hostedAgentPluginCommands(runtimePaths.userHome),
+					runner,
+					refreshCachedRuntimeProbes: true,
+				}).transaction;
+				expect(selfHeal?.hasMutations).toBe(true);
+				expect(selfHeal?.apply()).toEqual(persistedReceipt);
+				expect(existsSync(join(installRoot, "plugin.json"))).toBe(true);
+			}
+
+			const revisedPlugin = {
+				...plugin,
+				installation: {
+					...plugin.installation,
+					ownershipIdentity: "f".repeat(64),
+				},
+			};
+			planHostedAgentPluginConvergence({
+				prepared: {
+					...prepared,
+					desired: new Map([["acme.tools", revisedPlugin]]),
+				},
+				home: runtimePaths.userHome,
+				commands: hostedAgentPluginCommands(runtimePaths.userHome),
+				runner,
+			});
+			expect(calls.length).toBeGreaterThan(observedCalls);
 		},
 	);
 });
