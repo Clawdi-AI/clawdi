@@ -19,6 +19,19 @@ export type AgentPluginInstallability = {
 	reason: string | null;
 };
 
+export type AgentPluginPrimaryAction = {
+	kind:
+		| "install"
+		| "installing"
+		| "waiting"
+		| "installed"
+		| "update"
+		| "retry"
+		| "failed"
+		| "unavailable";
+	label: string;
+};
+
 const EXACT_SEMVER_PATTERN =
 	/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
@@ -208,9 +221,8 @@ export function agentPluginStatusPresentation(
 export type AgentPluginActionState = {
 	status: ReturnType<typeof agentPluginStatusPresentation> | null;
 	installability: AgentPluginInstallability | null;
+	primaryAction: AgentPluginPrimaryAction | null;
 	hasUpdate: boolean;
-	canInstall: boolean;
-	canRetry: boolean;
 	version: string;
 };
 
@@ -218,19 +230,50 @@ export type AgentPluginActionState = {
 export function agentPluginActionState(
 	item: AgentPluginInventoryItem,
 	runtime: HostedRuntime,
+	now: Date = new Date(),
 ): AgentPluginActionState {
-	const status = item.desired ? agentPluginStatusPresentation(item.desired) : null;
+	const status = item.desired ? agentPluginStatusPresentation(item.desired, now) : null;
 	const installability = item.catalog ? agentPluginInstallability(item.catalog, runtime) : null;
 	const hasUpdate = pluginHasUpdate(item);
 	const installFailed = item.desired?.convergence === "failed";
+	const canInstall = Boolean(
+		item.catalog &&
+			installability?.installable &&
+			(!item.desired || (item.desired.convergence === "installed" && hasUpdate)),
+	);
+	const canRetry = Boolean(installFailed && item.catalog && installability?.installable);
+	let primaryAction: AgentPluginPrimaryAction | null = null;
+	if (!item.desired) {
+		primaryAction = installability
+			? {
+					kind: installability.installable ? "install" : "unavailable",
+					label: installability.label,
+				}
+			: null;
+	} else {
+		switch (item.desired.convergence) {
+			case "not_observed":
+				primaryAction = agentPluginIsStalled(item.desired, now)
+					? { kind: "waiting", label: "Waiting for agent" }
+					: { kind: "installing", label: "Installing…" };
+				break;
+			case "failed":
+				primaryAction = canRetry
+					? { kind: "retry", label: "Retry" }
+					: { kind: "failed", label: "Install failed" };
+				break;
+			case "installed":
+				primaryAction = canInstall
+					? { kind: "update", label: "Update" }
+					: { kind: "installed", label: "Installed" };
+				break;
+		}
+	}
 	return {
 		status,
 		installability,
+		primaryAction,
 		hasUpdate,
-		canRetry: Boolean(installFailed && item.catalog && installability?.installable),
-		canInstall: Boolean(
-			item.catalog && installability?.installable && !installFailed && (!item.desired || hasUpdate),
-		),
 		version:
 			hasUpdate && item.desired && item.catalog
 				? `v${item.desired.version} → v${item.catalog.version}`

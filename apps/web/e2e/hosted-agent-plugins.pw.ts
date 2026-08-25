@@ -143,33 +143,48 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 	const cardFor = (title: string) =>
 		page.getByRole("button", { name: `View ${title} details` }).locator("..");
 	const states = [
-		{ title: "Available Plugin", status: null, action: "Install" },
-		{ title: "Plugin Requiring Setup", status: null, action: "Requires setup" },
-		{ title: "Reserved Plugin", status: null, action: "Reserved" },
-		{ title: "Runtime Unavailable Plugin", status: null, action: "Unavailable" },
-		{ title: "Installed Plugin", status: "Installed", action: "Remove" },
-		{ title: "Update Available Plugin", status: "Update available", action: "Update" },
-		{ title: "Installing Plugin", status: "Installing", action: "Update" },
-		{ title: "Plugin Waiting for Agent", status: "Waiting for agent", action: "Update" },
-		{ title: "Failed Plugin", status: "Install failed", action: "Retry" },
-		{ title: "legacy-plugin", status: "Installed", action: "Remove" },
+		{ title: "Available Plugin", action: "Install", disabled: false, removable: false },
+		{ title: "Plugin Requiring Setup", action: "Requires setup", disabled: true, removable: false },
+		{ title: "Reserved Plugin", action: "Reserved", disabled: true, removable: false },
+		{
+			title: "Runtime Unavailable Plugin",
+			action: "Unavailable",
+			disabled: true,
+			removable: false,
+		},
+		{ title: "Installed Plugin", action: "Installed", disabled: true, removable: true },
+		{ title: "Update Available Plugin", action: "Update", disabled: false, removable: true },
+		{ title: "Installing Plugin", action: "Installing…", disabled: true, removable: true },
+		{
+			title: "Plugin Waiting for Agent",
+			action: "Waiting for agent",
+			disabled: true,
+			removable: true,
+		},
+		{ title: "Failed Plugin", action: "Retry", disabled: false, removable: true },
+		{ title: "legacy-plugin", action: "Installed", disabled: true, removable: true },
 	] as const;
 	for (const state of states) {
 		const card = cardFor(state.title);
 		await expect(card).toBeVisible();
-		await expect(card.getByRole("button", { name: state.action, exact: true })).toBeVisible();
-		const badges = card.locator('[data-slot="status-badge"]');
-		if (state.status) {
-			await expect(badges).toHaveCount(1);
-			await expect(badges).toHaveText(state.status);
+		const primaryAction = card.getByRole("button", { name: state.action, exact: true });
+		await expect(primaryAction).toBeVisible();
+		if (state.disabled) {
+			await expect(primaryAction).toBeDisabled();
 		} else {
-			await expect(badges).toHaveCount(0);
+			await expect(primaryAction).toBeEnabled();
+		}
+		if (state.removable) {
+			await expect(
+				card.getByRole("button", { name: `Remove ${state.title}`, exact: true }),
+			).toBeVisible();
 		}
 	}
-
-	for (const title of ["Installing Plugin", "Plugin Waiting for Agent", "Failed Plugin"]) {
-		await expect(cardFor(title).getByText("Update available", { exact: true })).toHaveCount(0);
-	}
+	await expect(cardFor("Failed Plugin").getByRole("button", { name: "Retry" })).toHaveAttribute(
+		"title",
+		"The agent could not apply this plugin.",
+	);
+	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 
 	const updateFooter = cardFor("Update Available Plugin").locator('[data-slot="entity-meta"]');
 	await expect(updateFooter).toContainText("Mysten Labs");
@@ -227,10 +242,19 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 			),
 		).toEqual([]);
 	}
+
+	await page.getByRole("button", { name: "View Plugin Waiting for Agent details" }).click();
+	await expect(page.getByRole("button", { name: "Waiting for agent", exact: true })).toBeDisabled();
+	await expect(page.getByRole("alert")).toContainText("Agent hasn't picked up this change");
+	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 });
 
 test("Agent Plugins opens and installs with the per-user capability", async ({ page }) => {
 	let installed = false;
+	let acceptInstall = () => {};
+	const installAccepted = new Promise<void>((resolve) => {
+		acceptInstall = resolve;
+	});
 	const desired = {
 		installation_id: "22222222-2222-4222-8222-222222222222",
 		agent_id: AGENT_ID,
@@ -281,7 +305,12 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await page.route(
 		`http://127.0.0.1:8000/v1/agents/${AGENT_ID}/agent-plugins/**`,
 		async (route) => {
-			installed = route.request().method() !== "DELETE";
+			if (route.request().method() === "PUT") {
+				await installAccepted;
+				installed = true;
+			} else {
+				installed = false;
+			}
 			await route.fulfill({
 				status: 202,
 				contentType: "application/json",
@@ -296,15 +325,26 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "Install", exact: true }).click();
-	await expect(page.getByText("Installing", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Installing…", exact: true })).toBeDisabled();
+	const desiredRefetched = page.waitForResponse(
+		(response) =>
+			response.request().method() === "GET" &&
+			response.url() === `http://127.0.0.1:8000/v1/agents/${AGENT_ID}/agent-plugins`,
+	);
+	acceptInstall();
+	await desiredRefetched;
+	await expect(page.getByRole("button", { name: "Installing…", exact: true })).toBeDisabled();
+	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 	await page.getByRole("button", { name: "View Sui Agent details" }).click();
 	await expect(page.getByRole("heading", { name: "Sui Agent", exact: true })).toBeVisible();
 	await expect(page.getByText("OpenClaw", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Hermes", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Installing…", exact: true })).toBeDisabled();
+	await expect(page.getByRole("alert")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Remove Sui Agent", exact: true })).toBeVisible();
 	await page.getByTestId("app-sidebar").getByRole("link", { name: "Plugins", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
-	await page.getByRole("button", { name: "Remove", exact: true }).click();
+	await page.getByRole("button", { name: "Remove Sui Agent", exact: true }).click();
 	await page.getByRole("button", { name: "Remove plugin", exact: true }).click();
 	await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
