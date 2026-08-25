@@ -16,7 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,7 @@ from app.models.channel import (
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
+    DELIVERY_STATUS_SUCCEEDED,
     ChannelAccount,
     ChannelBinding,
     ChannelBotAgentLink,
@@ -144,6 +145,10 @@ from app.services.channels import (
     telegram_reserved_commands_are_current,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
+from app.services.runtime_observed_evidence import (
+    RuntimeObservedEvidence,
+    load_runtime_observed_evidence,
+)
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.whatsapp_baileys import ensure_whatsapp_agent_credential
 from app.services.whatsapp_device_onboarding import (
@@ -1533,6 +1538,33 @@ async def _channel_health_items(
     account_ids = [account.id for account in accounts]
     recent_error_cutoff = datetime.now(UTC) - _CHANNEL_HEALTH_ERROR_WINDOW
 
+    runtime_link_rows = (
+        await db.execute(
+            select(
+                ChannelBotAgentLink.account_id,
+                ChannelBotAgentLink.agent_id,
+            ).where(
+                ChannelBotAgentLink.account_id.in_(account_ids),
+                ChannelBotAgentLink.user_id == user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+        )
+    ).all()
+    runtime_evidence_by_agent = await load_runtime_observed_evidence(
+        db,
+        environment_ids=[agent_id for _account_id, agent_id in runtime_link_rows],
+        owner_user_id=user_id,
+    )
+    runtime_evidence_by_account: dict[UUID, list[RuntimeObservedEvidence]] = {}
+    for account_id, agent_id in runtime_link_rows:
+        runtime_evidence_by_account.setdefault(account_id, []).append(
+            runtime_evidence_by_agent.get(
+                agent_id,
+                RuntimeObservedEvidence(status="missing", observed_at=None, converged=False),
+            )
+        )
+
     pending_inbox_rows = await db.execute(
         select(
             ChannelMessage.account_id,
@@ -1575,6 +1607,37 @@ async def _channel_health_items(
         for account_id, count, oldest_pending_at in pending_inbox_rows.all()
     }
 
+    successful_events = union_all(
+        select(
+            ChannelDebugEvent.account_id.label("account_id"),
+            ChannelDebugEvent.created_at.label("succeeded_at"),
+        ).where(
+            ChannelDebugEvent.account_id.in_(account_ids),
+            ChannelDebugEvent.user_id == user_id,
+            ChannelDebugEvent.outcome == "success",
+        ),
+        select(
+            ChannelDelivery.account_id.label("account_id"),
+            ChannelDelivery.updated_at.label("succeeded_at"),
+        ).where(
+            ChannelDelivery.account_id.in_(account_ids),
+            ChannelDelivery.user_id == user_id,
+            ChannelDelivery.status == DELIVERY_STATUS_SUCCEEDED,
+        ),
+    ).subquery()
+    latest_success = (
+        select(
+            successful_events.c.account_id,
+            func.max(successful_events.c.succeeded_at).label("succeeded_at"),
+        )
+        .group_by(successful_events.c.account_id)
+        .subquery()
+    )
+    last_success_rows = await db.execute(
+        select(latest_success.c.account_id, latest_success.c.succeeded_at)
+    )
+    last_success_by_account: dict[UUID, datetime] = dict(last_success_rows.tuples().all())
+
     delivery_rows = await db.execute(
         select(
             ChannelDelivery.account_id,
@@ -1585,14 +1648,19 @@ async def _channel_health_items(
             .filter(ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS)
             .label("in_progress_count"),
             func.count(ChannelDelivery.id)
-            .filter(ChannelDelivery.status == DELIVERY_STATUS_FAILED)
-            .label("failed_count"),
-            func.count(ChannelDelivery.id)
             .filter(
                 ChannelDelivery.status == DELIVERY_STATUS_FAILED,
                 ChannelDelivery.updated_at >= recent_error_cutoff,
+                or_(
+                    latest_success.c.succeeded_at.is_(None),
+                    ChannelDelivery.updated_at > latest_success.c.succeeded_at,
+                ),
             )
-            .label("recent_failed_count"),
+            .label("failed_count"),
+        )
+        .outerjoin(
+            latest_success,
+            latest_success.c.account_id == ChannelDelivery.account_id,
         )
         .where(
             ChannelDelivery.account_id.in_(account_ids),
@@ -1601,8 +1669,8 @@ async def _channel_health_items(
         .group_by(ChannelDelivery.account_id)
     )
     delivery_counts_by_account = {
-        account_id: (int(pending), int(in_progress), int(failed), int(recent_failed))
-        for account_id, pending, in_progress, failed, recent_failed in delivery_rows.all()
+        account_id: (int(pending), int(in_progress), int(failed))
+        for account_id, pending, in_progress, failed in delivery_rows.all()
     }
 
     message_rows = await db.execute(
@@ -1631,7 +1699,7 @@ async def _channel_health_items(
         if account_id is not None
     }
 
-    debug_error_ranked = (
+    debug_signal_ranked = (
         select(
             ChannelDebugEvent.account_id,
             ChannelDebugEvent.created_at,
@@ -1649,30 +1717,32 @@ async def _channel_health_items(
             ChannelDebugEvent.account_id.in_(account_ids),
             ChannelDebugEvent.user_id == user_id,
             or_(
+                ChannelDebugEvent.outcome == "success",
                 ChannelDebugEvent.outcome == "failure",
                 ChannelDebugEvent.error.is_not(None),
             ),
         )
         .subquery()
     )
-    debug_error_rows = await db.execute(
+    debug_signal_rows = await db.execute(
         select(
-            debug_error_ranked.c.account_id,
-            debug_error_ranked.c.created_at,
-            debug_error_ranked.c.stage,
-            debug_error_ranked.c.outcome,
-            debug_error_ranked.c.error,
-        ).where(debug_error_ranked.c.row_number == 1)
+            debug_signal_ranked.c.account_id,
+            debug_signal_ranked.c.created_at,
+            debug_signal_ranked.c.stage,
+            debug_signal_ranked.c.outcome,
+            debug_signal_ranked.c.error,
+        ).where(debug_signal_ranked.c.row_number == 1)
     )
-    debug_error_by_account = {
+    debug_signal_by_account = {
         account_id: (created_at, stage, outcome, error)
-        for account_id, created_at, stage, outcome, error in debug_error_rows.all()
+        for account_id, created_at, stage, outcome, error in debug_signal_rows.all()
     }
 
-    delivery_error_ranked = (
+    delivery_signal_ranked = (
         select(
             ChannelDelivery.account_id,
             ChannelDelivery.updated_at,
+            ChannelDelivery.status,
             ChannelDelivery.last_error,
             func.row_number()
             .over(
@@ -1684,31 +1754,37 @@ async def _channel_health_items(
         .where(
             ChannelDelivery.account_id.in_(account_ids),
             ChannelDelivery.user_id == user_id,
-            ChannelDelivery.last_error.is_not(None),
+            or_(
+                ChannelDelivery.status == DELIVERY_STATUS_SUCCEEDED,
+                ChannelDelivery.last_error.is_not(None),
+            ),
         )
         .subquery()
     )
-    delivery_error_rows = await db.execute(
+    delivery_signal_rows = await db.execute(
         select(
-            delivery_error_ranked.c.account_id,
-            delivery_error_ranked.c.updated_at,
-            delivery_error_ranked.c.last_error,
-        ).where(delivery_error_ranked.c.row_number == 1)
+            delivery_signal_ranked.c.account_id,
+            delivery_signal_ranked.c.updated_at,
+            delivery_signal_ranked.c.status,
+            delivery_signal_ranked.c.last_error,
+        ).where(delivery_signal_ranked.c.row_number == 1)
     )
-    delivery_error_by_account = {
-        account_id: (updated_at, last_error)
-        for account_id, updated_at, last_error in delivery_error_rows.all()
+    delivery_signal_by_account = {
+        account_id: (updated_at, delivery_status, last_error)
+        for account_id, updated_at, delivery_status, last_error in delivery_signal_rows.all()
     }
 
     return [
         _channel_health_item(
             account=account,
             pending_inbox_stats=pending_inbox_by_account.get(account.id, (0, None)),
-            delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0, 0)),
+            delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0)),
             last_message_at=last_message_by_account.get(account.id),
             last_event_at=last_event_by_account.get(account.id),
-            debug_error=debug_error_by_account.get(account.id),
-            delivery_error=delivery_error_by_account.get(account.id),
+            debug_signal=debug_signal_by_account.get(account.id),
+            delivery_signal=delivery_signal_by_account.get(account.id),
+            last_success_at=last_success_by_account.get(account.id),
+            runtime_evidence=runtime_evidence_by_account.get(account.id, []),
             recent_error_cutoff=recent_error_cutoff,
         )
         for account in accounts
@@ -1719,29 +1795,43 @@ def _channel_health_item(
     *,
     account: ChannelAccount,
     pending_inbox_stats: tuple[int, datetime | None],
-    delivery_counts: tuple[int, int, int, int],
+    delivery_counts: tuple[int, int, int],
     last_message_at: datetime | None,
     last_event_at: datetime | None,
-    debug_error: tuple[datetime, str, str, str | None] | None,
-    delivery_error: tuple[datetime, str] | None,
+    debug_signal: tuple[datetime, str, str, str | None] | None,
+    delivery_signal: tuple[datetime, str, str | None] | None,
+    last_success_at: datetime | None,
+    runtime_evidence: list[RuntimeObservedEvidence],
     recent_error_cutoff: datetime,
 ) -> ChannelHealthItemResponse:
     pending_inbox, oldest_pending_inbox_at = pending_inbox_stats
-    pending_deliveries, in_progress_deliveries, failed_deliveries, recent_failed_deliveries = (
-        delivery_counts
-    )
+    pending_deliveries, in_progress_deliveries, failed_deliveries = delivery_counts
     last_error_at = None
     last_error = None
     last_error_stage = None
     last_error_outcome = None
-    if debug_error is not None:
-        last_error_at, last_error_stage, last_error_outcome, raw_error = debug_error
+    if debug_signal is not None and (debug_signal[2] == "failure" or debug_signal[3] is not None):
+        last_error_at, last_error_stage, last_error_outcome, raw_error = debug_signal
         last_error = public_channel_operation_error(raw_error)
-    if delivery_error is not None and (last_error_at is None or delivery_error[0] > last_error_at):
-        last_error_at = delivery_error[0]
-        last_error = public_channel_delivery_error(delivery_error[1])
+    if (
+        delivery_signal is not None
+        and delivery_signal[1] != DELIVERY_STATUS_SUCCEEDED
+        and delivery_signal[2] is not None
+        and (last_error_at is None or delivery_signal[0] > last_error_at)
+    ):
+        last_error_at = delivery_signal[0]
+        last_error = public_channel_delivery_error(delivery_signal[2])
         last_error_stage = "delivery"
         last_error_outcome = "failure"
+    if (
+        last_error_at is not None
+        and last_success_at is not None
+        and last_success_at >= last_error_at
+    ):
+        last_error_at = None
+        last_error = None
+        last_error_stage = None
+        last_error_outcome = None
 
     native_transport = _native_transport_health(account)
     whatsapp_transport_connected = (
@@ -1749,17 +1839,42 @@ def _channel_health_item(
         and native_transport is not None
         and native_transport.get("available") is True
     )
+    whatsapp_transport_reconnecting = (
+        account.provider == CHANNEL_PROVIDER_WHATSAPP
+        and native_transport is not None
+        and native_transport.get("reconnecting") is True
+    )
     reasons: list[str] = []
     if account.status != CHANNEL_STATUS_ACTIVE:
         reasons.append("channel_disabled")
-    if failed_deliveries > 0 and (not whatsapp_transport_connected or recent_failed_deliveries > 0):
+    if failed_deliveries > 0:
         reasons.append("failed_deliveries")
-    if last_error is not None and (
-        not whatsapp_transport_connected
-        or last_error_at is None
-        or last_error_at >= recent_error_cutoff
+    if (
+        last_error is not None
+        and last_error_at is not None
+        and last_error_at >= recent_error_cutoff
     ):
         reasons.append("recent_error")
+    if account.provider == CHANNEL_PROVIDER_WHATSAPP and not whatsapp_transport_connected:
+        reasons.append(
+            "native_transport_reconnecting"
+            if whatsapp_transport_reconnecting
+            else "native_transport_unavailable"
+        )
+    if runtime_evidence:
+        statuses = {item.status for item in runtime_evidence}
+        if "error" in statuses:
+            reasons.append("runtime_observation_error")
+        elif "missing" in statuses:
+            reasons.append("runtime_observation_missing")
+        elif "stale" in statuses:
+            reasons.append("runtime_observation_stale")
+        elif "unknown" in statuses:
+            reasons.append("runtime_observation_unknown")
+        if not all(item.converged for item in runtime_evidence):
+            reasons.append("runtime_not_converged")
+    elif account.provider != CHANNEL_PROVIDER_WHATSAPP:
+        reasons.append("agent_not_linked")
     if in_progress_deliveries > 0:
         reasons.append("deliveries_in_progress")
     if pending_deliveries > 0:
@@ -1773,6 +1888,8 @@ def _channel_health_item(
             "channel_disabled",
             "failed_deliveries",
             "recent_error",
+            "native_transport_unavailable",
+            "runtime_observation_error",
         )
     ):
         health_status = "error"

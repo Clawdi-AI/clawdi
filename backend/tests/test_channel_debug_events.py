@@ -373,6 +373,7 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
         "available": False,
         "mode": "none",
         "reason": "provider-transport-unavailable",
+        "reconnecting": True,
         "supportsOutboundMessages": False,
     }
 
@@ -391,5 +392,6 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
         "available": True,
         "mode": "sidecar",
         "reason": None,
+        "reconnecting": False,
         "supportsOutboundMessages": True,
     }

@@ -44,6 +44,7 @@ from app.models.channel import (
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_PENDING,
+    DELIVERY_STATUS_SUCCEEDED,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     PAIR_CODE_STATUS_CLAIMED,
@@ -61,7 +62,7 @@ from app.models.channel import (
     ChannelSecret,
     ChannelWhatsAppAuthCert,
 )
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.routes import admin as admin_router
 from app.routes.channel_routers import discord as discord_router
@@ -79,6 +80,7 @@ from app.schemas.channel import ChannelAccountCreate, ChannelAgentLinkCreate
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
 from app.services import sync_events
+from app.services import whatsapp_provider_bridge as whatsapp_provider_bridge_service
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_wakeups import notify_channel_inbound_message_enqueued
@@ -120,7 +122,14 @@ from app.services.discord_gateway_worker import (
     record_discord_gateway_dispatch,
 )
 from app.services.discord_rate_limiter import DiscordRateLimiter
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_observation import retire_runtime_environment
+from app.services.runtime_source import (
+    expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
+    vault_key_identity,
+)
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError
 from app.services.whatsapp_baileys import (
@@ -137,6 +146,10 @@ from app.services.whatsapp_provider_bridge import (
     persist_whatsapp_provider_event,
     register_whatsapp_provider_transport,
     unregister_whatsapp_provider_transport,
+)
+from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOLS,
+    canonical_codex_tool_provider_graph,
 )
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
@@ -1676,13 +1689,14 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("failure_age", "expected_status", "expected_reasons"),
+    ("failure_age", "expected_status", "expected_reasons", "expected_failed_deliveries"),
     [
-        pytest.param(timedelta(days=10), "ok", [], id="historical-failure"),
+        pytest.param(timedelta(days=10), "ok", [], 0, id="historical-failure"),
         pytest.param(
             timedelta(minutes=1),
             "error",
             ["failed_deliveries", "recent_error"],
+            1,
             id="current-failure",
         ),
     ],
@@ -1694,6 +1708,7 @@ async def test_whatsapp_channel_health_only_surfaces_current_delivery_failures(
     failure_age: timedelta,
     expected_status: str,
     expected_reasons: list[str],
+    expected_failed_deliveries: int,
 ):
     class ConnectedWhatsAppTransport:
         connected = True
@@ -1759,9 +1774,339 @@ async def test_whatsapp_channel_health_only_surfaces_current_delivery_failures(
     assert health["reasons"] == expected_reasons
     assert health["pending_deliveries"] == 0
     assert health["in_progress_deliveries"] == 0
-    assert health["failed_deliveries"] == 1
+    assert health["failed_deliveries"] == expected_failed_deliveries
     assert health["last_error"] == "channel_delivery_failed"
     assert health["native_transport"]["available"] is True
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_channel_health_graces_transport_reconnection_after_restart(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class ConnectedWhatsAppTransport:
+        connected = True
+
+        async def relay_outbound_message(self, message):
+            return None
+
+        async def relay_raw_node(self, node):
+            return None
+
+        async def query_iq(self, node, timeout_ms):
+            return None
+
+    clock = [1_000.0]
+    monkeypatch.setattr(
+        whatsapp_provider_bridge_service,
+        "_PROVIDER_TRANSPORTS_STARTED_AT",
+        clock[0],
+    )
+    monkeypatch.setattr(
+        whatsapp_provider_bridge_service,
+        "_PROVIDER_TRANSPORT_UNAVAILABLE_SINCE",
+        {},
+    )
+    monkeypatch.setattr(
+        whatsapp_provider_bridge_service,
+        "_transport_clock",
+        lambda: clock[0],
+    )
+    created_response = await client.post(
+        "/v1/channels",
+        json={"provider": "whatsapp", "name": f"health-reconnect-{uuid4().hex}"},
+    )
+    assert created_response.status_code == 201, created_response.text
+    account_id = UUID(created_response.json()["id"])
+
+    try:
+        reconnecting_response = await client.get("/v1/channels/health")
+        reconnecting = next(
+            item
+            for item in reconnecting_response.json()["items"]
+            if item["account_id"] == str(account_id)
+        )
+        assert reconnecting["health_status"] == "warning"
+        assert reconnecting["reasons"] == ["native_transport_reconnecting"]
+        assert reconnecting["native_transport"]["reconnecting"] is True
+
+        clock[0] += 301
+        unavailable_response = await client.get("/v1/channels/health")
+        unavailable = next(
+            item
+            for item in unavailable_response.json()["items"]
+            if item["account_id"] == str(account_id)
+        )
+        assert unavailable["health_status"] == "error"
+        assert unavailable["reasons"] == ["native_transport_unavailable"]
+        assert unavailable["native_transport"]["reconnecting"] is False
+
+        register_whatsapp_provider_transport(account_id, ConnectedWhatsAppTransport())
+        connected_response = await client.get("/v1/channels/health")
+        connected = next(
+            item
+            for item in connected_response.json()["items"]
+            if item["account_id"] == str(account_id)
+        )
+        assert connected["health_status"] == "ok"
+        assert connected["reasons"] == []
+        assert connected["native_transport"]["available"] is True
+    finally:
+        unregister_whatsapp_provider_transport(account_id)
+
+
+@pytest.mark.asyncio
+async def test_non_whatsapp_channel_health_expires_failures_and_clears_them_after_success(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"health-window-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    account_id = UUID(created["id"])
+    link_id = UUID(created["agent_link_id"])
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    now = datetime.now(UTC)
+
+    historical_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id="historical-failure",
+        text="historical failure",
+        payload={},
+        created_at=now - timedelta(days=10),
+        updated_at=now - timedelta(days=10),
+    )
+    recent_failed_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id="recent-failure",
+        text="recent failure",
+        payload={},
+        created_at=now - timedelta(minutes=2),
+        updated_at=now - timedelta(minutes=2),
+    )
+    successful_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id="successful-delivery",
+        text="success",
+        payload={},
+        created_at=now - timedelta(minutes=1),
+        updated_at=now - timedelta(minutes=1),
+    )
+    db_session.add_all([historical_message, recent_failed_message, successful_message])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ChannelDelivery(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message_id=historical_message.id,
+                user_id=seed_user.id,
+                status=DELIVERY_STATUS_FAILED,
+                attempts=5,
+                max_attempts=5,
+                next_attempt_at=now - timedelta(days=10),
+                last_error="historical provider failure",
+                created_at=now - timedelta(days=10),
+                updated_at=now - timedelta(days=10),
+            ),
+            ChannelDelivery(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message_id=recent_failed_message.id,
+                user_id=seed_user.id,
+                status=DELIVERY_STATUS_FAILED,
+                attempts=5,
+                max_attempts=5,
+                next_attempt_at=now - timedelta(minutes=2),
+                last_error="recent provider failure",
+                created_at=now - timedelta(minutes=2),
+                updated_at=now - timedelta(minutes=2),
+            ),
+            ChannelDelivery(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message_id=successful_message.id,
+                user_id=seed_user.id,
+                status=DELIVERY_STATUS_SUCCEEDED,
+                attempts=1,
+                max_attempts=5,
+                next_attempt_at=now - timedelta(minutes=1),
+                created_at=now - timedelta(minutes=1),
+                updated_at=now - timedelta(minutes=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    await record_channel_debug_event(
+        db_session,
+        account=account,
+        user_id=seed_user.id,
+        provider="telegram",
+        direction="outbound",
+        stage="delivery",
+        outcome="failure",
+        error="provider rejected request",
+    )
+    await db_session.commit()
+    failed_response = await client.get("/v1/channels/health")
+    assert failed_response.status_code == 200, failed_response.text
+    failed_health = next(
+        item for item in failed_response.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert "recent_error" in failed_health["reasons"]
+
+    await record_channel_debug_event(
+        db_session,
+        account=account,
+        user_id=seed_user.id,
+        provider="telegram",
+        direction="outbound",
+        stage="delivery",
+        outcome="success",
+    )
+    await db_session.commit()
+    response = await client.get("/v1/channels/health")
+
+    assert response.status_code == 200, response.text
+    health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
+    assert health["failed_deliveries"] == 0
+    assert "failed_deliveries" not in health["reasons"]
+    assert "recent_error" not in health["reasons"]
+    assert health["last_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_channel_health_requires_fresh_converged_runtime_evidence(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"health-runtime-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    state = await db_session.get(HostedRuntimeState, channel_agent.id)
+    assert state is not None
+    state.tools = CANONICAL_CODEX_TOOLS
+    provider, payload = canonical_codex_tool_provider_graph(seed_user)
+    db_session.add_all([provider, payload])
+    await db_session.commit()
+
+    batch = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[channel_agent.id],
+        owner_user_id=seed_user.id,
+    )
+    rendered = render_runtime_source(
+        batch,
+        environment_id=channel_agent.id,
+        public_api_url=settings.public_api_url,
+        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+        decrypt_secrets=False,
+    )
+    observation = await db_session.get(HostedRuntimeConfigObservation, channel_agent.id)
+    assert observation is not None
+    observed_at = datetime.now(UTC)
+    generation = resolve_runtime_apply_generation(
+        generation=state.generation,
+        apply_generation=state.apply_generation,
+    )
+    etag = expected_runtime_bundle_v2_etag(rendered.source_revision)
+    observation.observed_at = observed_at
+    observation.observed_config_generation = generation
+    observation.observed_manifest_etag = etag
+    observation.observed_source_revision = rendered.source_revision
+    observation.diagnostics = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+        "reportedAt": observed_at.isoformat(),
+        "runtimeMode": "hosted",
+        "status": "ok",
+        "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
+        "applied": {
+            "etag": etag,
+            "sourceRevision": rendered.source_revision,
+            "generation": generation,
+            "instanceId": state.instance_id,
+            "appliedProviderIds": [],
+        },
+        "boot": None,
+        "cli": None,
+    }
+    await db_session.commit()
+
+    fresh_response = await client.get("/v1/channels/health")
+    fresh = next(
+        item for item in fresh_response.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert fresh["health_status"] == "ok"
+    assert fresh["reasons"] == []
+
+    observation.observed_at = observed_at - timedelta(
+        seconds=settings.runtime_observation_freshness_seconds + 1
+    )
+    await db_session.commit()
+    stale_response = await client.get("/v1/channels/health")
+    stale = next(
+        item for item in stale_response.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert stale["health_status"] == "warning"
+    assert "runtime_observation_stale" in stale["reasons"]
+
+
+@pytest.mark.asyncio
+async def test_channel_health_reports_an_unlinked_channel_without_implying_runtime_wait(
+    client: httpx.AsyncClient,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "telegram",
+            "name": f"health-unlinked-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    unlinked_response = await client.delete(
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}"
+    )
+    assert unlinked_response.status_code == 204, unlinked_response.text
+
+    response = await client.get("/v1/channels/health")
+    assert response.status_code == 200, response.text
+    health = next(item for item in response.json()["items"] if item["account_id"] == created["id"])
+    assert health["health_status"] == "warning"
+    assert health["reasons"] == ["agent_not_linked"]
 
 
 @pytest.mark.asyncio
@@ -1801,7 +2146,7 @@ async def test_channel_health_select_count_is_constant_across_accounts(
         await create_account(index)
     five_account_count = await health_select_count()
 
-    assert one_account_count == 7
+    assert one_account_count == 15
     assert five_account_count == one_account_count
 
 

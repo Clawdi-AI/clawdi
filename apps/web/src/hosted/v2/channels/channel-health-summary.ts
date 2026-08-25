@@ -54,9 +54,34 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 				detail: "A recent channel operation failed. Open the channel Health view for details.",
 			};
 		}
+		if (health.reasons?.includes("native_transport_unavailable")) {
+			return {
+				label: "Channel unavailable",
+				detail: "The channel transport is not available. Open the Health view for details.",
+			};
+		}
+		if (health.reasons?.includes("runtime_observation_error")) {
+			return {
+				label: "Runtime error",
+				detail: "The Agent runtime reported an error for this channel.",
+			};
+		}
 		return {
 			label: "Channel error",
 			detail: "Channel health reported an error. Open the channel Health view for details.",
+		};
+	}
+
+	if (health.reasons?.includes("native_transport_reconnecting")) {
+		return {
+			label: "Reconnecting",
+			detail: "The channel transport is reconnecting after a service restart.",
+		};
+	}
+	if (health.reasons?.includes("agent_not_linked")) {
+		return {
+			label: "Not linked",
+			detail: "This channel is not linked to an Agent.",
 		};
 	}
 
@@ -68,6 +93,30 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 				details.length > 1
 					? `Additional activity: ${details.slice(1).join("; ")}.`
 					: "This channel activity is still being processed.",
+		};
+	}
+	if (health.reasons?.includes("runtime_observation_missing")) {
+		return {
+			label: "Waiting for runtime",
+			detail: "No Agent runtime activity has been observed for this channel yet.",
+		};
+	}
+	if (health.reasons?.includes("runtime_observation_stale")) {
+		return {
+			label: "Runtime inactive",
+			detail: "The Agent runtime has not checked in recently.",
+		};
+	}
+	if (health.reasons?.includes("runtime_not_converged")) {
+		return {
+			label: "Applying channel",
+			detail: "The Agent runtime has not applied the current channel configuration yet.",
+		};
+	}
+	if (health.reasons?.includes("runtime_observation_unknown")) {
+		return {
+			label: "Runtime unverified",
+			detail: "The Agent runtime did not provide a usable channel health signal.",
 		};
 	}
 
