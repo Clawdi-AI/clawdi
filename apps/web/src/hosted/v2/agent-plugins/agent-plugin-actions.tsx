@@ -4,6 +4,7 @@ import { AlertCircle, Check, Clock3, Plus, RefreshCw, Trash2 } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 import {
 	type AgentPluginActionState,
 	type AgentPluginInventoryItem,
@@ -12,6 +13,28 @@ import {
 } from "./agent-plugin-model";
 
 export type AgentPluginPendingAction = "install" | "remove" | "retry" | null;
+
+const PRIMARY_ACTION_VARIANT = {
+	install: "default",
+	update: "outline",
+	retry: "destructive",
+	installing: "ghost",
+	waiting: "ghost",
+	installed: "ghost",
+	failed: "ghost",
+	unavailable: "ghost",
+} as const satisfies Record<
+	AgentPluginPrimaryAction["kind"],
+	"default" | "outline" | "destructive" | "ghost"
+>;
+
+const PASSIVE_ACTION_TONE: Partial<Record<AgentPluginPrimaryAction["kind"], string>> = {
+	installing: "text-warning-muted-foreground",
+	waiting: "text-warning-muted-foreground",
+	installed: "text-success-muted-foreground",
+	failed: "text-destructive-muted-foreground",
+	unavailable: "text-muted-foreground",
+};
 
 export function AgentPluginActions({
 	item,
@@ -106,10 +129,12 @@ function AgentPluginPrimaryButton({
 	return (
 		<Button
 			size="sm"
-			variant={
-				action.kind === "retry" ? "destructive" : action.kind === "install" ? "default" : "outline"
-			}
-			className="w-40"
+			variant={PRIMARY_ACTION_VARIANT[action.kind]}
+			className={cn(
+				"w-auto",
+				!interactive && "disabled:opacity-100",
+				PASSIVE_ACTION_TONE[action.kind],
+			)}
 			disabled={mutationsBlocked || !interactive}
 			title={description ?? undefined}
 			aria-busy={action.kind === "installing"}
