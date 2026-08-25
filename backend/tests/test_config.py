@@ -145,6 +145,11 @@ def test_runtime_observation_settings_require_positive_bounds(field: str):
         Settings(_env_file=None, **{field: 0})
 
 
+def test_runtime_observation_freshness_allows_two_heartbeat_intervals(monkeypatch):
+    monkeypatch.delenv("RUNTIME_OBSERVATION_FRESHNESS_SECONDS", raising=False)
+    assert Settings(_env_file=None).runtime_observation_freshness_seconds == 150
+
+
 def test_runtime_observation_hard_retention_cannot_precede_replay_horizon():
     with pytest.raises(ValidationError, match="hard_retention_days"):
         Settings(

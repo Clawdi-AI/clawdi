@@ -132,7 +132,7 @@ _MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024
 _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _SESSION_LOCAL_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"
-_RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
+_RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=settings.runtime_observation_freshness_seconds)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)

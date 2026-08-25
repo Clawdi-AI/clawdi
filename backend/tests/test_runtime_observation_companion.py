@@ -2306,7 +2306,10 @@ async def test_snapshot_and_high_water_share_one_repeatable_read_snapshot(
     assert first.stream_position < second.stream_position
     assert incremental["events"][0]["runtimeIdentity"]["bootSessionId"] == ("boot-session-0001")
     assert (
-        incremental["events"][0]["freshnessDeadline"] == (base + timedelta(seconds=91)).isoformat()
+        incremental["events"][0]["freshnessDeadline"]
+        == (
+            base + timedelta(seconds=1 + settings.runtime_observation_freshness_seconds)
+        ).isoformat()
     )
     assert set(incremental["events"][0]["evidenceReference"]) == {"eventId", "cursor"}
     assert "streamPosition" not in incremental

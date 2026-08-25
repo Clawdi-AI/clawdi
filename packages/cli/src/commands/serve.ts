@@ -437,9 +437,9 @@ function printAgentStatus(report: DaemonStatusReport): void {
 	console.log(`agent:   ${report.agent}`);
 	console.log(`state:   ${report.state_dir}`);
 	if (health.exists) {
-		// The 90s cutoff matches the dashboard's "online/offline"
-		// freshness window. A daemon writing `health` more recently
-		// than that AND posting heartbeats is what we call "live".
+		// The local health file has its own 90s freshness window. Cloud
+		// runtime evidence uses a wider two-heartbeat window because it
+		// also includes network delivery jitter.
 		console.log(
 			`health:  ${health.fresh ? "✓ live" : "stale"} (last write ${health.ageSeconds}s ago)`,
 		);
