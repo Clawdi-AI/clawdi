@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { log, toErrorMessage } from "../serve/log";
 import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
@@ -48,6 +49,7 @@ interface AttestedRuntimeObservationContext {
 interface ObservationSchedule {
 	nextAttemptAt: number;
 	convergenceWindowEnd: number | "closed" | null;
+	lastAttemptedAppliedReceipt: string | null;
 }
 
 export class HostedRuntimeObservationProducer {
@@ -184,12 +186,18 @@ export async function runRuntimeObservationProducer(
 			pruneRetiredIdentityEntries(activeAttempts, identityKey);
 			pruneRetiredIdentityEntries(schedules, identityKey);
 			if (identityKey && !activeAttempts.has(identityKey)) {
+				const appliedReceipt = readRuntimeWatchAppliedReceipt(paths);
 				const schedule = schedules.get(identityKey) ?? {
 					nextAttemptAt: 0,
 					convergenceWindowEnd: null,
+					lastAttemptedAppliedReceipt: null,
 				};
 				schedules.set(identityKey, schedule);
-				if (now() >= schedule.nextAttemptAt) {
+				if (
+					now() >= schedule.nextAttemptAt ||
+					(appliedReceipt !== null && appliedReceipt !== schedule.lastAttemptedAppliedReceipt)
+				) {
+					schedule.lastAttemptedAppliedReceipt = appliedReceipt;
 					const attempt = producer.sendOnce().then((result) => {
 						const completedAt = now();
 						let interval = OBSERVATION_INTERVAL_MS;
@@ -219,6 +227,22 @@ export async function runRuntimeObservationProducer(
 			log.info("daemon.runtime_observation_failed", { error: toErrorMessage(error) });
 		}
 		await delay(IDLE_RETRY_INTERVAL_MS, options.abort);
+	}
+}
+
+function readRuntimeWatchAppliedReceipt(paths: RuntimePaths): string | null {
+	let content: string;
+	try {
+		content = readFileSync(paths.runtimeWatchStatus, "utf-8");
+	} catch {
+		return null;
+	}
+	try {
+		const status: unknown = JSON.parse(content);
+		if (!isUnknownRecord(status) || !isUnknownRecord(status.event)) return null;
+		return status.event.status === "applied" ? content : null;
+	} catch {
+		return null;
 	}
 }
 

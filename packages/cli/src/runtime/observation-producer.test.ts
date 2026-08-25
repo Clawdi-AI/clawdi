@@ -521,6 +521,45 @@ describe("hosted runtime observation producer", () => {
 		]);
 	});
 
+	test("reports a successful converge without waiting for the steady cadence", async () => {
+		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "ok");
+		const abort = new AbortController();
+		const attempts: number[] = [];
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			contextPath: runtimeContextPath(paths),
+			submit: async () => {
+				attempts.push(clock);
+				if (attempts.length === 2) abort.abort();
+				return "accepted";
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (attempts.length === 1) {
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({
+							timestamp: "2026-07-22T00:01:00.000Z",
+							event: { status: "applied" },
+						}),
+					);
+				}
+			},
+		});
+
+		expect(attempts).toEqual([0, 1_000]);
+	});
+
 	test.each([
 		[
 			"bounds non-ok fast observations to ninety seconds",
