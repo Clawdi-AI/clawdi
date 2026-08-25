@@ -48,9 +48,11 @@ type PendingPluginMutation = {
 export function AgentPluginsSurface({
 	agentId,
 	runtime,
+	eventStreamActive = false,
 }: {
 	agentId: string;
 	runtime: HostedRuntime;
+	eventStreamActive?: boolean;
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -76,7 +78,9 @@ export function AgentPluginsSurface({
 		convergenceLog.current = { agentId, seen: new Map() };
 	}
 	const catalogQuery = api.useQuery("get", "/v1/plugin-catalog", {});
-	const desiredQuery = useQuery(agentPluginDesiredStateQueryOptions(api, agentId));
+	const desiredQuery = useQuery(
+		agentPluginDesiredStateQueryOptions(api, agentId, eventStreamActive),
+	);
 	const installMutation = api.useMutation(
 		"put",
 		"/v1/agents/{agent_id}/agent-plugins/{plugin_name}",

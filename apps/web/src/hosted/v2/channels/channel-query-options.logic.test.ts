@@ -11,6 +11,13 @@ describe("Agent channel links query behavior", () => {
 			refetchInterval: AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS,
 			refetchIntervalInBackground: false,
 		});
+		expect(
+			agentChannelLinksQueryBehavior("agent-1", { poll: true, eventStreamActive: true }),
+		).toEqual({
+			enabled: true,
+			refetchInterval: AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS * 10,
+			refetchIntervalInBackground: false,
+		});
 		expect(agentChannelLinksQueryBehavior("agent-1")).toEqual({
 			enabled: true,
 			refetchInterval: false,

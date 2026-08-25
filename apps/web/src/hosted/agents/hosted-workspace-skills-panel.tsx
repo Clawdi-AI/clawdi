@@ -35,6 +35,7 @@ import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 type WorkspaceSkillMutation =
@@ -64,11 +65,12 @@ function HostedWorkspaceSkillsPanelContent({
 	const $api = useOpenApi();
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
+	const eventStreamActive = useDeploymentEventStreamActive();
 	const actionLockedRef = useRef(false);
 	const [installOpen, setInstallOpen] = useState(false);
 	const [repoInput, setRepoInput] = useState("");
 	const [installError, setInstallError] = useState<string | null>(null);
-	const deploymentResolution = useAgentDeployment(agentId);
+	const deploymentResolution = useAgentDeployment(agentId, eventStreamActive);
 	const deployment = deploymentResolution.deployment;
 	const deploymentId = deployment?.resource.id ?? null;
 	const isConnectedAgent = deploymentResolution.membershipResolved && !deployment;

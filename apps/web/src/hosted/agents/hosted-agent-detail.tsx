@@ -116,6 +116,7 @@ import {
 	canQueryHostedAgentSessions,
 	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
+	hostedAgentSessionsRefetchInterval,
 } from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
@@ -303,6 +304,7 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
@@ -445,6 +447,7 @@ export function HostedAgentDetail({
 	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
+	eventStreamActive = false,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
@@ -456,6 +459,7 @@ export function HostedAgentDetail({
 	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
+	eventStreamActive?: boolean;
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -469,10 +473,13 @@ export function HostedAgentDetail({
 		...agentDetailQueryOptions($api, queryClient, environmentId),
 		enabled: cloudAgentId && deploymentProjectionQueryable,
 		refetchInterval: (query) =>
-			missingProjectionRefetchInterval(
-				query.state.error,
-				deploymentStatus,
-				query.state.fetchFailureCount,
+			eventStreamFallbackInterval(
+				missingProjectionRefetchInterval(
+					query.state.error,
+					deploymentStatus,
+					query.state.fetchFailureCount,
+				),
+				eventStreamActive,
 			),
 		refetchIntervalInBackground: false,
 	});
@@ -614,6 +621,7 @@ export function HostedAgentDetail({
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
+							eventStreamActive={eventStreamActive}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
@@ -634,7 +642,10 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} />
+						<HostedAgentSessionsTab
+							environmentId={environmentId}
+							eventStreamActive={eventStreamActive}
+						/>
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -652,7 +663,11 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{activeTab === "plugins" ? (
-						<AgentPluginsSurface agentId={environmentId} runtime={runtime} />
+						<AgentPluginsSurface
+							agentId={environmentId}
+							runtime={runtime}
+							eventStreamActive={eventStreamActive}
+						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab
@@ -669,6 +684,7 @@ export function HostedAgentDetail({
 								environmentId={environmentId}
 								agentType={runtime}
 								agentName={availableAgentTitle}
+								eventStreamActive={eventStreamActive}
 							/>
 						) : (
 							<ChannelsSyncState
@@ -780,7 +796,13 @@ function StoppedAgentState({
 	);
 }
 
-function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
+function HostedAgentSessionsTab({
+	environmentId,
+	eventStreamActive,
+}: {
+	environmentId: string;
+	eventStreamActive: boolean;
+}) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
@@ -796,6 +818,7 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 		placeholderData: keepPreviousData,
 		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
 		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
+		refetchInterval: hostedAgentSessionsRefetchInterval(eventStreamActive),
 	});
 	const total = sessions.data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -1156,6 +1179,7 @@ function OverviewTab({
 	sessionLink,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
+	eventStreamActive,
 }: {
 	agentId: string;
 	deployment: HostedDeployment;
@@ -1172,6 +1196,7 @@ function OverviewTab({
 	};
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
+	eventStreamActive: boolean;
 }) {
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
@@ -1220,7 +1245,9 @@ function OverviewTab({
 		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
 	});
-	const pluginDesiredState = useQuery(agentPluginDesiredStateQueryOptions(useOpenApi(), agentId));
+	const pluginDesiredState = useQuery(
+		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, eventStreamActive),
+	);
 	const pluginOverview = agentPluginOverviewState({
 		plugins: pluginDesiredState.data?.plugins,
 		isLoading: pluginDesiredState.isLoading,
@@ -2641,17 +2668,24 @@ function ChannelsTab({
 	environmentId,
 	agentType,
 	agentName,
+	eventStreamActive,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
 	agentName: string;
+	eventStreamActive: boolean;
 }) {
 	const api = useApi();
 	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(environmentId, isAgentRouteId(environmentId), true);
+	const linked = useAgentChannelLinks(
+		environmentId,
+		isAgentRouteId(environmentId),
+		true,
+		eventStreamActive,
+	);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const deleteChannel = useDeleteChannel();

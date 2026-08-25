@@ -885,6 +885,15 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			return fulfillJson(r, { items: [], has_more: false, next_cursor: null });
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
+			if (new URL(r.request().url()).searchParams.get("eventStreamHandoff") === "true") {
+				return fulfillJson(r, {
+					snapshot_isolation: "REPEATABLE READ",
+					read_only: true,
+					deployments: deployments.map((deployment) => readDeploymentFixture(deployment)),
+					operations: [],
+					event_stream_cursor: "e2e-cursor-0",
+				});
+			}
 			if (options.deploymentsResponse) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}

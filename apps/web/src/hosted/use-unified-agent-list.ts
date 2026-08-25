@@ -83,14 +83,17 @@ export function useUnifiedAgentList({
 	cloudEnvs,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
+	eventStreamActive = false,
 }: {
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
+	eventStreamActive?: boolean;
 }) {
 	const hosted = useHostedAgentTiles({
 		cloudEnvs,
 		includeDeployments: showCloudDeployments,
+		eventStreamActive,
 	});
 	const legacy = useLegacyEnvIds();
 	const selection = useMemo(

@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { useEffect } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
@@ -12,6 +13,7 @@ import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
+import { useDeploymentEventStream } from "@/hosted/use-deployment-event-stream";
 import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -180,6 +182,7 @@ export function HostedAgentsByCompute({
 	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
+	onEventStreamActiveChange,
 }: {
 	envsLoading: boolean;
 	selfManagedError?: unknown;
@@ -189,11 +192,18 @@ export function HostedAgentsByCompute({
 	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
+	onEventStreamActiveChange?: (active: boolean) => void;
 }) {
+	const eventStream = useDeploymentEventStream({ enabled: showCloudDeployments });
+	useEffect(() => {
+		onEventStreamActiveChange?.(eventStream.active);
+		return () => onEventStreamActiveChange?.(false);
+	}, [eventStream.active, onEventStreamActiveChange]);
 	const unified = useUnifiedAgentList({
 		cloudEnvs,
 		showCloudDeployments,
 		showLegacyAgents,
+		eventStreamActive: eventStream.active,
 	});
 	const hostedTiles = unified.hostedTiles;
 	const connectedTiles = unified.connectedTiles;

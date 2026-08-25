@@ -20,6 +20,7 @@ import {
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
+import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
 
 export async function runManualDeploymentRefetch(
@@ -52,6 +53,7 @@ export function AgentHome({
 }) {
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
+	const eventStreamActive = useDeploymentEventStreamActive();
 	const {
 		deployment,
 		environmentId: resolvedEnvId,
@@ -62,7 +64,7 @@ export function AgentHome({
 		deploymentTransitionEscalated,
 		error,
 		refetch,
-	} = useAgentDeployment(environmentId);
+	} = useAgentDeployment(environmentId, eventStreamActive);
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection =
@@ -168,6 +170,7 @@ export function AgentHome({
 				deploymentTransitionEscalated={deploymentTransitionEscalated}
 				isCheckingDeployment={manualChecking}
 				onCheckDeploymentAgain={() => void handleCheckAgain()}
+				eventStreamActive={eventStreamActive}
 			/>
 		);
 	}

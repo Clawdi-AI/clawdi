@@ -9,6 +9,7 @@ import {
 	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
 	agentProjectSkillsQueryEnabled,
 	agentProjectSkillsQueryKey,
+	agentSkillForegroundRefetchInterval,
 } from "./agent-skills-query";
 
 describe("Agent Project Skills query lifecycle", () => {
@@ -91,5 +92,6 @@ describe("Agent Project Skills query lifecycle", () => {
 		expect(agentProjectSkillsQueryEnabled(true, ["project-1"])).toBe(true);
 		expect(agentProjectSkillsQueryEnabled(false, ["project-1"])).toBe(false);
 		expect(agentProjectSkillsQueryEnabled(true, [])).toBe(false);
+		expect(agentSkillForegroundRefetchInterval(true, true)).toBe(100_000);
 	});
 });

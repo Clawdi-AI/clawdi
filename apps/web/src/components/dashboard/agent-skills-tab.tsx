@@ -16,6 +16,7 @@ import { displayProjectName } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
@@ -28,6 +29,7 @@ export function useAgentProjectSkills(
 	enabled = true,
 ) {
 	const api = useApi();
+	const eventStreamActive = useDeploymentEventStreamActive();
 	const bindings = useAgentProjectBindings(agentId, { enabled });
 	const scope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
 		if (!bindings.data) return { projectIds: [], error: null };
@@ -68,7 +70,10 @@ export function useAgentProjectSkills(
 		},
 		enabled: queryEnabled,
 		...AGENT_PROJECT_SKILLS_REFRESH_POLICY,
-		refetchInterval: agentSkillForegroundRefetchInterval(foregroundRefresh && queryEnabled),
+		refetchInterval: agentSkillForegroundRefetchInterval(
+			foregroundRefresh && queryEnabled,
+			eventStreamActive,
+		),
 	});
 
 	const skills = query.data;

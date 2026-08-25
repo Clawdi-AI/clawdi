@@ -1,4 +1,6 @@
 import { createFileRoute, notFound, Outlet, redirect } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
+import { loadHostedAgentEventStreamLayout } from "@/lib/agent-home-loader";
 import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
@@ -14,6 +16,15 @@ import {
 	parseAgentPathname,
 	validateAgentRouteSearch,
 } from "@/lib/agent-routes";
+
+const hostedEventStreamLayoutLoader = loadHostedAgentEventStreamLayout;
+const HostedAgentEventStreamLayout = hostedEventStreamLayoutLoader
+	? lazy(() =>
+			hostedEventStreamLayoutLoader().then((module) => ({
+				default: module.HostedAgentEventStreamLayout,
+			})),
+		)
+	: null;
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 	validateSearch: validateAgentRouteSearch,
@@ -91,5 +102,17 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 			});
 		}
 	},
-	component: Outlet,
+	component: AgentEventStreamRouteLayout,
 });
+
+function AgentEventStreamRouteLayout() {
+	const { id } = Route.useParams();
+	const outlet = <Outlet />;
+	return HostedAgentEventStreamLayout ? (
+		<Suspense fallback={outlet}>
+			<HostedAgentEventStreamLayout agentId={id}>{outlet}</HostedAgentEventStreamLayout>
+		</Suspense>
+	) : (
+		outlet
+	);
+}

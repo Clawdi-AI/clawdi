@@ -13,14 +13,17 @@ import { resolveHostedInventory } from "@/hosted/hosted-agent-resolution";
 export function useHostedDeploymentInventory({
 	enabled = true,
 	pollBillingRecoveryFor = null,
+	eventStreamActive = false,
 }: {
 	enabled?: boolean;
 	pollBillingRecoveryFor?: string | null;
+	eventStreamActive?: boolean;
 } = {}) {
 	const configured = isDeployApiConfigured();
 	const query = useHostedDeployments({
 		enabled,
 		pollBillingRecoveryFor,
+		eventStreamActive,
 	});
 	const resolution = useMemo(
 		() =>

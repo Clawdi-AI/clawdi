@@ -151,9 +151,10 @@ function toastDeploymentConflict(error: unknown): boolean {
 }
 
 /** Resolve the Hosted deployment bound to the canonical Agent UUID. */
-export function useAgentDeployment(agentId: string) {
+export function useAgentDeployment(agentId: string, eventStreamActive = false) {
 	const inventory = useHostedDeploymentInventory({
 		pollBillingRecoveryFor: agentId,
+		eventStreamActive,
 	});
 	const match = useMemo(
 		() => resolveAgentDeployment(inventory.deployments ?? [], agentId),
