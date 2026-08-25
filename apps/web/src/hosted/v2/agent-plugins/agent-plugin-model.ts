@@ -13,6 +13,11 @@ export type AgentPluginInventoryItem = {
 
 export type AgentPluginGroup = "installed" | "available";
 
+export type AgentPluginOverviewState =
+	| { kind: "loading" }
+	| { kind: "error" }
+	| { kind: "ready"; description: string };
+
 export type AgentPluginInstallability = {
 	installable: boolean;
 	label: string;
@@ -216,6 +221,47 @@ export function agentPluginStatusPresentation(
 							"This plugin is being installed. You can leave this page while it finishes.",
 					};
 	}
+}
+
+export function agentPluginOverviewState({
+	plugins,
+	isLoading,
+	error,
+}: {
+	plugins?: readonly AgentPluginDesiredState[];
+	isLoading: boolean;
+	error: unknown;
+}): AgentPluginOverviewState {
+	if (isLoading) return { kind: "loading" };
+	if (error) return { kind: "error" };
+	if (!plugins?.length) return { kind: "ready", description: "No plugins installed" };
+
+	let installed = 0;
+	let pending = 0;
+	let failed = 0;
+	for (const plugin of plugins) {
+		switch (plugin.convergence) {
+			case "installed":
+				installed += 1;
+				break;
+			case "not_observed":
+				pending += 1;
+				break;
+			case "failed":
+				failed += 1;
+				break;
+		}
+	}
+	return {
+		kind: "ready",
+		description: [
+			installed ? `${installed} installed` : null,
+			pending ? `${pending} pending` : null,
+			failed ? `${failed} failed` : null,
+		]
+			.filter((value): value is string => value !== null)
+			.join(" · "),
+	};
 }
 
 export type AgentPluginActionState = {

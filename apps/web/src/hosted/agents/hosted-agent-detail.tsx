@@ -220,6 +220,8 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
+import { agentPluginOverviewState } from "@/hosted/v2/agent-plugins/agent-plugin-model";
+import { agentPluginDesiredStateQueryOptions } from "@/hosted/v2/agent-plugins/agent-plugin-query";
 import { AgentPluginsSurface } from "@/hosted/v2/agent-plugins/agent-plugins-surface";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
@@ -302,7 +304,10 @@ import {
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import {
+	AGENT_SECTION_NAVIGATION_ITEMS,
+	hostedAgentVisibleSectionIds,
+} from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
@@ -492,9 +497,9 @@ export function HostedAgentDetail({
 		? agentDisplayName(agent)
 		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
 	const parsedTab = parseHostedAgentTab(section) ?? "overview";
-	const requestedTab = parsedTab === "plugins" && !canUseAgentPluginsUI ? "overview" : parsedTab;
 	const filesUrl = deploymentFilesUrl(deployment);
-	const activeTab = requestedTab === "files" && filesUrl === null ? "overview" : requestedTab;
+	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null, canUseAgentPluginsUI);
+	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
 	useSetBreadcrumbTitle(
 		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
 	);
@@ -608,6 +613,7 @@ export function HostedAgentDetail({
 							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
+							visibleSectionIds={visibleSectionIds}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
 						/>
@@ -1150,6 +1156,7 @@ function OverviewTab({
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
+	visibleSectionIds,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
 }: {
@@ -1166,6 +1173,7 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
+	visibleSectionIds: readonly AgentSectionId[];
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
 }) {
@@ -1216,6 +1224,27 @@ function OverviewTab({
 		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
 	});
+	const pluginsVisible = visibleSectionIds.includes("plugins");
+	const pluginDesiredState = useQuery(
+		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, { enabled: pluginsVisible }),
+	);
+	const pluginOverview = agentPluginOverviewState({
+		plugins: pluginDesiredState.data?.plugins,
+		isLoading: pluginDesiredState.isLoading,
+		error: shouldBlockQueryError(pluginDesiredState.error, pluginDesiredState.data)
+			? pluginDesiredState.error
+			: null,
+	});
+	const pluginsModule = {
+		description:
+			pluginOverview.kind === "loading" ? (
+				<OverviewDescriptionSkeleton label="plugins" />
+			) : pluginOverview.kind === "error" ? (
+				"Unavailable right now"
+			) : (
+				pluginOverview.description
+			),
+	};
 	const skillsModule = runtimeSkills.isLoading
 		? { description: <OverviewDescriptionSkeleton label="skills" /> }
 		: runtimeSkills.error
@@ -1303,6 +1332,7 @@ function OverviewTab({
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
+				visibleSectionIds={visibleSectionIds}
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {
@@ -1321,6 +1351,7 @@ function OverviewTab({
 							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
 							: null,
 					},
+					plugins: pluginsModule,
 					memories: memoriesModule,
 					vaults: {
 						...vaultsModule,

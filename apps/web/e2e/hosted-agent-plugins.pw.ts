@@ -61,11 +61,20 @@ test("Agent Plugins stays closed without the per-user capability", async ({ page
 	});
 
 	await page.goto(`/agents/${AGENT_ID}`);
-	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
+	await expect(
+		page.getByTestId("app-sidebar").getByRole("link", { name: "Plugins", exact: true }),
+	).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="plugins"]')).toHaveCount(0);
 
 	await page.goto(`/agents/${AGENT_ID}/plugins`);
 	await expect(page).toHaveURL(new RegExp(`/agents/${AGENT_ID}$`));
-	await expect(page.getByRole("link", { name: "Plugins", exact: true })).toHaveCount(0);
+
+	await page.goto(`/agents/${AGENT_ID}/plugins/sui`);
+	await expect(page).toHaveURL(new RegExp(`/agents/${AGENT_ID}$`));
+	await expect(
+		page.getByTestId("app-sidebar").getByRole("link", { name: "Plugins", exact: true }),
+	).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="plugins"]')).toHaveCount(0);
 });
 
 test("Agent Plugin cards keep every status and action readable", async ({ page }) => {
@@ -137,6 +146,11 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 			body: JSON.stringify({ plugins: desired }),
 		});
 	});
+
+	await page.goto(`/agents/${AGENT_ID}`);
+	await expect(page.locator('[data-overview-module="plugins"]')).toContainText(
+		"3 installed · 2 pending · 1 failed",
+	);
 
 	await page.setViewportSize({ width: 320, height: 844 });
 	await page.goto(`/agents/${AGENT_ID}/plugins`);
@@ -324,8 +338,27 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 		},
 	);
 
+	await page.setViewportSize({ width: 1440, height: 1000 });
 	await page.goto(`/agents/${AGENT_ID}`);
-	await page.getByRole("link", { name: "Plugins", exact: true }).click();
+	await expect(
+		page.getByTestId("app-sidebar").getByRole("link", { name: "Plugins", exact: true }),
+	).toBeVisible();
+	const overviewPlugins = page.locator('[data-overview-module="plugins"]');
+	await expect(overviewPlugins).toContainText("No plugins installed");
+	const workspaceModules = page.locator(
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-module]',
+	);
+	await expect(workspaceModules).toHaveCount(4);
+	const workspaceRows = await workspaceModules.evaluateAll((modules) => {
+		const rowCounts = new Map<number, number>();
+		for (const module of modules) {
+			const top = Math.round(module.getBoundingClientRect().top);
+			rowCounts.set(top, (rowCounts.get(top) ?? 0) + 1);
+		}
+		return [...rowCounts.values()].sort();
+	});
+	expect(workspaceRows).toEqual([2, 2]);
+	await overviewPlugins.getByRole("link", { name: "Plugins", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();
 

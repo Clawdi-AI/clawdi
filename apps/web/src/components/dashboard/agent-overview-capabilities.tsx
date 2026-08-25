@@ -10,6 +10,7 @@ import { agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
+	type AgentSectionId,
 } from "@/lib/navigation-model";
 import { cn } from "@/lib/utils";
 
@@ -109,13 +110,15 @@ export function OverviewMetadata({
 export function AgentOverviewCapabilities({
 	agentId,
 	variant,
+	visibleSectionIds,
 	content,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
+	visibleSectionIds?: readonly AgentSectionId[];
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
 }) {
-	const groups = agentOverviewGroups(variant);
+	const groups = agentOverviewGroups(variant, visibleSectionIds);
 	return (
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{groups.map((group) => (
@@ -212,10 +215,12 @@ function OverviewNavigationCard({
 
 export function AgentOverviewCapabilitiesSkeleton({
 	variant,
+	visibleSectionIds,
 }: {
 	variant: AgentNavigationVariant;
+	visibleSectionIds?: readonly AgentSectionId[];
 }) {
-	const groups = agentOverviewGroups(variant);
+	const groups = agentOverviewGroups(variant, visibleSectionIds);
 	return (
 		<div className="flex flex-col gap-8" aria-hidden="true" data-agent-overview-skeleton={variant}>
 			{groups.map((group) => (

@@ -3,6 +3,7 @@ import type { AgentPluginCatalogEntry, AgentPluginDesiredState } from "./agent-p
 import {
 	agentPluginActionState,
 	agentPluginInstallability,
+	agentPluginOverviewState,
 	agentPluginStatusPresentation,
 	assignAgentPluginGroups,
 	buildAgentPluginInventory,
@@ -50,6 +51,31 @@ function desired(
 }
 
 describe("Agent Plugin model", () => {
+	test("summarizes Overview loading, error, empty, and convergence states", () => {
+		expect(agentPluginOverviewState({ isLoading: true, error: null })).toEqual({
+			kind: "loading",
+		});
+		expect(agentPluginOverviewState({ isLoading: false, error: new Error("offline") })).toEqual({
+			kind: "error",
+		});
+		expect(agentPluginOverviewState({ plugins: [], isLoading: false, error: null })).toEqual({
+			kind: "ready",
+			description: "No plugins installed",
+		});
+		expect(
+			agentPluginOverviewState({
+				plugins: [
+					desired("installed-1"),
+					desired("installed-2"),
+					desired("pending", { convergence: "not_observed" }),
+					desired("failed", { convergence: "failed" }),
+				],
+				isLoading: false,
+				error: null,
+			}),
+		).toEqual({ kind: "ready", description: "2 installed · 1 pending · 1 failed" });
+	});
+
 	test("merges Store and desired state without dropping historical installations", () => {
 		const inventory = buildAgentPluginInventory(
 			[catalogEntry("sui"), catalogEntry("cetus")],

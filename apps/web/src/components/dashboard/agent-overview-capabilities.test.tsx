@@ -9,6 +9,7 @@ import {
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
 
 describe("overview card typography", () => {
 	test("uses the existing small Card title and description hierarchy", () => {
@@ -64,9 +65,19 @@ describe("overview modules", () => {
 		const hosted = renderToStaticMarkup(
 			createElement(AgentOverviewCapabilitiesSkeleton, { variant: "hosted" }),
 		);
+		const hostedWithPlugins = renderToStaticMarkup(
+			createElement(AgentOverviewCapabilitiesSkeleton, {
+				variant: "hosted",
+				visibleSectionIds: hostedAgentVisibleSectionIds(true, true),
+			}),
+		);
 
 		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(5);
 		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(7);
+		expect(hostedWithPlugins.match(/data-overview-module-skeleton=/g)).toHaveLength(8);
+		expect(hosted).not.toContain('data-overview-module-skeleton="plugins"');
+		expect(hostedWithPlugins).toContain('data-overview-module-skeleton="plugins"');
+		expect(hostedWithPlugins).toContain('data-overview-layout="two-column"');
 		expect(hosted).toContain("h-full min-w-0 py-3");
 		expect(hosted).toContain("grid-rows-1 content-center gap-0");
 		expect(hosted).not.toContain("h-40");

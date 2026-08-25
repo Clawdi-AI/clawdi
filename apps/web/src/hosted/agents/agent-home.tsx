@@ -15,6 +15,7 @@ import { defaultDeploymentRuntime, deploymentFilesUrl, isHostedRuntime } from "@
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
+	agentRouteBelongsToSection,
 	agentRouteOwnsSection,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
@@ -66,7 +67,9 @@ export function AgentHome({
 	} = useAgentDeployment(environmentId);
 	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
-	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
+	const ownsCurrentSection =
+		agentRouteOwnsSection(pathname, environmentId, section) ||
+		(section === "plugins" && agentRouteBelongsToSection(pathname, environmentId, section));
 	const hostedSectionIds = deployment
 		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null, canUseAgentPluginsUI)
 		: HOSTED_AGENT_SECTION_IDS;
@@ -75,8 +78,8 @@ export function AgentHome({
 		agentPluginsAccessPending || hostedSectionIds.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
-	// Only the exact current section may redirect an unsupported surface; a
-	// stale rendered match cannot rewrite a newer route.
+	// Canonicalize only the exact section root, plus Plugins detail routes that
+	// share its capability gate. A stale rendered match cannot rewrite a newer route.
 	useEffect(() => {
 		if (!ownsCurrentSection) return;
 

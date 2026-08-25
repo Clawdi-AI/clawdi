@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { agentOverviewGroups } from "@/lib/agent-capabilities";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import {
+	AGENT_SECTION_NAVIGATION_ITEMS,
+	hostedAgentVisibleSectionIds,
+} from "@/lib/navigation-model";
 
 describe("agent overview registry", () => {
 	test("only registers supported sections with real summaries", () => {
@@ -13,6 +16,10 @@ describe("agent overview registry", () => {
 	test("separates workspace, shared, and hosted tool summaries", () => {
 		const connected = agentOverviewGroups("connected");
 		const hosted = agentOverviewGroups("hosted");
+		const hostedWithPlugins = agentOverviewGroups(
+			"hosted",
+			hostedAgentVisibleSectionIds(true, true),
+		);
 		expect(connected.map((group) => group.id)).toEqual(["workspace", "shared"]);
 		expect(hosted.map((group) => group.id)).toEqual(["workspace", "shared", "operate"]);
 		expect(connected[0]?.modules.map((module) => module.id)).toEqual([
@@ -22,6 +29,16 @@ describe("agent overview registry", () => {
 		]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);
 		expect(hosted[0]?.layout).toBe(connected[0]?.layout);
+		expect(hostedWithPlugins[0]?.modules.map((module) => module.id)).toEqual([
+			"projects",
+			"skills",
+			"vaults",
+			"plugins",
+		]);
+		expect(hostedWithPlugins[0]?.layout).toBe("two-column");
+		expect(agentOverviewGroups("connected", ["plugins"])[0]?.modules).toEqual(
+			connected[0]?.modules,
+		);
 		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
 		expect(hosted[1]?.modules).toEqual(connected[1]?.modules);
 		expect(hosted[2]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);
