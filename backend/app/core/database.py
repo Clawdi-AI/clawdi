@@ -20,6 +20,14 @@ engine = create_async_engine(
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
     pool_pre_ping=True,
+    # Alembic creates a separate synchronous engine, so long-running DDL does
+    # not inherit these runtime request safeguards.
+    connect_args={
+        "server_settings": {
+            "statement_timeout": "120s",
+            "idle_in_transaction_session_timeout": "5min",
+        }
+    },
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
