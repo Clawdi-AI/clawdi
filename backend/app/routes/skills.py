@@ -22,6 +22,7 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory, get_session
@@ -86,7 +87,6 @@ from app.services.sync_events import (
     AGENT_SKILL_CHANGED_EVENT,
     AGENT_SKILL_DELETED_EVENT,
     bump_skills_revision,
-    get_skills_revision,
 )
 from app.services.tar_utils import (
     SkillTextValidationError,
@@ -397,12 +397,12 @@ async def _list_skills_with_db(
     # a committed Skill mutation. Both the caller revision (kept as the first
     # ETag segment for CLI 0.13.13) and every visible owner's revision come
     # from this database snapshot before a 304 is considered.
-    revision = await get_skills_revision(db, auth.user_id)
     (
+        revision,
         visible_revision_fingerprint,
         metadata_fingerprint,
         project_meta,
-    ) = await _visible_skills_etag_state(db, visible_project_ids)
+    ) = await _skills_etag_state(db, auth.user_id, visible_project_ids)
     if (auth.is_cli or auth.oauth_cli) and visible_project_ids:
         has_agent_project = any(
             meta["kind"] == PROJECT_KIND_ENVIRONMENT for meta in project_meta.values()
@@ -645,45 +645,59 @@ async def _resolve_legacy_skill(
     return skill
 
 
-async def _visible_skills_etag_state(
+async def _skills_etag_state(
     db: AsyncSession,
+    caller_user_id: UUID,
     visible_project_ids: list[UUID],
-) -> tuple[str, str, dict[UUID, _ProjectSkillMetadata]]:
-    """Load current owner revisions and all response-visible metadata.
+) -> tuple[int, str, str, dict[UUID, _ProjectSkillMetadata]]:
+    """Load the caller revision, owner revisions, and visible metadata.
 
     `users.skills_revision` is bumped on the owner account when a skill
     changes. For shared projects, the recipient's own revision does not
     move. Project and Agent metadata have no shared revision counter, so hash
-    their actual projected values. Both fingerprints cover the full visible
-    set and therefore remain identical across pages.
+    their actual projected values. The caller User is the query root so its
+    current revision is returned from the same snapshot even when the visible
+    project set is empty.
     """
-    if not visible_project_ids:
-        return "none", "none", {}
-
+    caller = aliased(User, name="caller_user")
+    owner = aliased(User, name="project_owner")
     rows = (
         await db.execute(
             select(
-                Project.id,
-                Project.user_id,
-                User.skills_revision,
+                caller.skills_revision.label("caller_skills_revision"),
+                Project.id.label("project_id"),
+                Project.user_id.label("project_user_id"),
+                owner.skills_revision.label("owner_skills_revision"),
                 Project.name,
                 Project.kind,
                 Project.origin_environment_id,
                 AgentEnvironment.machine_name,
             )
-            .join(User, User.id == Project.user_id)
+            .select_from(caller)
+            .outerjoin(Project, Project.id.in_(visible_project_ids))
+            .outerjoin(owner, owner.id == Project.user_id)
             .outerjoin(
                 AgentEnvironment,
                 AgentEnvironment.id == Project.origin_environment_id,
             )
-            .where(Project.id.in_(visible_project_ids))
+            .where(caller.id == caller_user_id)
         )
     ).all()
-    owner_revisions = {row.user_id: int(row.skills_revision or 0) for row in rows}
-    owner_parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in owner_revisions.items())
-    visible_revision_fingerprint = hashlib.sha256(":".join(owner_parts).encode()).hexdigest()[:16]
+    if not rows:
+        raise RuntimeError("Authenticated user disappeared during the skills snapshot")
 
-    rows_by_project_id = {row.id: row for row in rows}
+    revision = int(rows[0].caller_skills_revision or 0)
+    owner_revisions = {
+        row.project_user_id: int(row.owner_skills_revision or 0)
+        for row in rows
+        if row.project_user_id is not None
+    }
+    owner_parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in owner_revisions.items())
+    visible_revision_fingerprint = (
+        hashlib.sha256(":".join(owner_parts).encode()).hexdigest()[:16] if owner_parts else "none"
+    )
+
+    rows_by_project_id = {row.project_id: row for row in rows if row.project_id is not None}
     metadata_values: list[list[str | None]] = []
     project_meta: dict[UUID, _ProjectSkillMetadata] = {}
     for project_id in sorted(set(visible_project_ids), key=str):
@@ -707,14 +721,18 @@ async def _visible_skills_etag_state(
             "environment_id": environment_id,
             "machine_name": row.machine_name,
         }
-    metadata_fingerprint = hashlib.sha256(
-        json.dumps(
-            metadata_values,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()[:16]
-    return visible_revision_fingerprint, metadata_fingerprint, project_meta
+    metadata_fingerprint = (
+        hashlib.sha256(
+            json.dumps(
+                metadata_values,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()[:16]
+        if metadata_values
+        else "none"
+    )
+    return revision, visible_revision_fingerprint, metadata_fingerprint, project_meta
 
 
 async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:

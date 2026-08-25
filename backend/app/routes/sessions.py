@@ -20,7 +20,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, update
+from sqlalchemy import case, func, or_, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -368,21 +368,17 @@ async def _list_agent_identities(
         ).where(AgentProjectBinding.project_id == project_id)
     result = await db.execute(stmt)
     envs = result.scalars().all()
-    states_by_env: dict[UUID, HostedRuntimeState] = {}
+    hosted_deployment_ids: dict[UUID, str] = {}
     env_ids = [env.id for env in envs]
     if not agent_response and env_ids:
-        states = (
-            (
-                await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        states_by_env = {state.environment_id: state for state in states}
+        hosted_deployment_ids = await _hosted_deployment_ids(db, env_ids)
     payload = [
-        _identity_response(e, states_by_env.get(e.id), agent_response=agent_response) for e in envs
+        _identity_response(
+            e,
+            hosted_deployment_ids.get(e.id),
+            agent_response=agent_response,
+        )
+        for e in envs
     ]
     etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
@@ -477,7 +473,7 @@ async def _get_agent_identity(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     row = (
         await db.execute(
-            select(AgentEnvironment, HostedRuntimeState)
+            select(AgentEnvironment, HostedRuntimeState.deployment_id)
             .outerjoin(
                 HostedRuntimeState,
                 HostedRuntimeState.environment_id == AgentEnvironment.id,
@@ -490,7 +486,7 @@ async def _get_agent_identity(
     ).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    env, state = row
+    env, hosted_deployment_id = row
     if env.archived_at is not None:
         # The owner may distinguish their retained, disconnected identity from
         # a random id. The user_id predicate above and bound-id fence before the
@@ -503,7 +499,11 @@ async def _get_agent_identity(
                 "message": "Agent is disconnected",
             },
         )
-    payload = _identity_response(env, state, agent_response=agent_response)
+    payload = _identity_response(
+        env,
+        hosted_deployment_id,
+        agent_response=agent_response,
+    )
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
@@ -606,7 +606,10 @@ async def list_environment_runtime_observed(
         setattr(counts, health.status, getattr(counts, health.status) + 1)
         items.append(
             RuntimeObservedSummaryItemResponse(
-                environment=_env_to_response(env, state),
+                environment=_env_to_response(
+                    env,
+                    state.deployment_id if state is not None else None,
+                ),
                 desired=(
                     _runtime_observed_desired(
                         state,
@@ -690,20 +693,13 @@ async def _reorder_agent_identities(
     await db.commit()
 
     env_ids = [env.id for env in ordered]
-    states_by_env: dict[UUID, HostedRuntimeState] = {}
-    if env_ids:
-        states = (
-            (
-                await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        states_by_env = {state.environment_id: state for state in states}
+    hosted_deployment_ids = await _hosted_deployment_ids(db, env_ids) if not agent_response else {}
     return [
-        _identity_response(env, states_by_env.get(env.id), agent_response=agent_response)
+        _identity_response(
+            env,
+            hosted_deployment_ids.get(env.id),
+            agent_response=agent_response,
+        )
         for env in ordered
     ]
 
@@ -823,12 +819,14 @@ async def _update_agent_identity(
     await db.commit()
     await db.refresh(env)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -892,12 +890,14 @@ async def _clear_agent_avatar(
     await db.refresh(env)
     await _delete_managed_avatar_key_best_effort(old_avatar_key)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.delete("/agents/{agent_id}/avatar", response_model=AgentResponse)
@@ -987,12 +987,14 @@ async def _upload_agent_avatar(
     await db.refresh(env)
     await _delete_managed_avatar_key_best_effort(old_avatar_key)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.post("/agents/{agent_id}/avatar", response_model=AgentResponse)
@@ -1078,7 +1080,10 @@ async def get_environment_runtime_observed(
         )
     ).scalar_one_or_none()
     return RuntimeObservedResponse(
-        environment=_env_to_response(env, state),
+        environment=_env_to_response(
+            env,
+            state.deployment_id if state is not None else None,
+        ),
         desired=(
             _runtime_observed_desired(state, source_revision=source_revision)
             if state is not None
@@ -1238,19 +1243,35 @@ async def get_public_asset(asset_key: str) -> Response:
 
 def _env_to_response(
     env: AgentEnvironment,
-    hosted_state: HostedRuntimeState | None = None,
+    hosted_deployment_id: str | None = None,
 ) -> EnvironmentResponse:
-    resolved_hosted_deployment_id = hosted_state.deployment_id if hosted_state is not None else None
     # Deprecated signal: dashboards now classify agents through their control
     # plane's ownership surface. Kept (runtime-state-derived only) for older
     # API consumers until the field is removed from EnvironmentResponse.
-    hosted_managed = resolved_hosted_deployment_id is not None
+    hosted_managed = hosted_deployment_id is not None
     agent = _agent_to_response(env)
     return EnvironmentResponse(
         **agent.model_dump(),
         hosted_managed=hosted_managed,
-        hosted_deployment_id=resolved_hosted_deployment_id,
+        hosted_deployment_id=hosted_deployment_id,
     )
+
+
+async def _hosted_deployment_ids(
+    db: AsyncSession,
+    environment_ids: list[UUID],
+) -> dict[UUID, str]:
+    if not environment_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                HostedRuntimeState.environment_id,
+                HostedRuntimeState.deployment_id,
+            ).where(HostedRuntimeState.environment_id.in_(environment_ids))
+        )
+    ).all()
+    return {environment_id: deployment_id for environment_id, deployment_id in rows}
 
 
 def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
@@ -1284,14 +1305,14 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
 
 @overload
 def _identity_response(
-    env: AgentEnvironment, hosted_state: HostedRuntimeState | None, *, agent_response: Literal[True]
+    env: AgentEnvironment, hosted_deployment_id: str | None, *, agent_response: Literal[True]
 ) -> AgentResponse: ...
 
 
 @overload
 def _identity_response(
     env: AgentEnvironment,
-    hosted_state: HostedRuntimeState | None,
+    hosted_deployment_id: str | None,
     *,
     agent_response: Literal[False],
 ) -> EnvironmentResponse: ...
@@ -1299,13 +1320,13 @@ def _identity_response(
 
 def _identity_response(
     env: AgentEnvironment,
-    hosted_state: HostedRuntimeState | None,
+    hosted_deployment_id: str | None,
     *,
     agent_response: bool,
 ) -> AgentResponse | EnvironmentResponse:
     if agent_response:
         return _agent_to_response(env)
-    return _env_to_response(env, hosted_state)
+    return _env_to_response(env, hosted_deployment_id)
 
 
 def _agent_name_from_fields(
@@ -1914,111 +1935,147 @@ async def sync_heartbeat(
     light endpoint: validate ownership / env-id binding, update a
     handful of columns, commit. No heavy queries.
     """
-    env = (
-        await db.execute(
-            select(AgentEnvironment).where(
-                AgentEnvironment.id == agent_id,
-                AgentEnvironment.user_id == auth.user_id,
-                active_agent_filter(),
-            )
-        )
-    ).scalar_one_or_none()
-    if env is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
-
-    # If the deploy-key is bound to a specific env, refuse calls
-    # for any other env. Resource-level project alone wasn't enough
-    # — without this, a key from pod A could heartbeat under
-    # pod B's id and corrupt B's observability fields.
-    if (
+    binding_matches = not (
         auth.is_cli
         and auth.api_key is not None
         and auth.api_key.environment_id is not None
         and auth.api_key.environment_id != agent_id
-    ):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "api key bound to a different environment",
-        )
+    )
 
     # Conditional write: skip the UPDATE entirely when nothing
     # interesting has changed since the prior heartbeat. Daemons
-    # heartbeat every 30s; with N daemons per user × M users
+    # heartbeat every 30-60s; with N daemons per user × M users
     # this was the single highest-write hot path in the backend.
     # Now we only commit when last_sync_error flips, queue HWM
     # advances, dropped delta is non-zero, or sync_enabled needs
     # to flip on — all real state-change signals. last_sync_at
     # advances on every commit (so the dashboard's "live" badge
-    # transitions still fire) but we throttle commits to one per
-    # 30s of *content change*, not one per heartbeat. The badge
+    # transitions still fire) but unchanged state writes happen at
+    # most once per 40s, not once per heartbeat. The badge
     # logic on the dashboard tolerates last_sync_at being stale
     # by up to ~90s.
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
     runtime_observed = body.runtime_observed
-    hosted_state = None
+    hosted_runtime_exists = False
     observation = None
     runtime_observed_values = None
     observed_changed = False
-    if runtime_observed is not None:
+    if runtime_observed is not None and binding_matches:
         runtime_observed_values = _runtime_observed_columns(
             runtime_observed,
             observed_at=now,
         )
         row = (
             await db.execute(
-                select(HostedRuntimeState, HostedRuntimeConfigObservation)
+                select(
+                    HostedRuntimeState.environment_id,
+                    HostedRuntimeConfigObservation,
+                )
                 .outerjoin(
                     HostedRuntimeConfigObservation,
                     HostedRuntimeConfigObservation.environment_id
                     == HostedRuntimeState.environment_id,
                 )
-                .where(HostedRuntimeState.environment_id == agent_id)
+                .join(
+                    AgentEnvironment,
+                    AgentEnvironment.id == HostedRuntimeState.environment_id,
+                )
+                .where(
+                    HostedRuntimeState.environment_id == agent_id,
+                    AgentEnvironment.user_id == auth.user_id,
+                    active_agent_filter(),
+                )
             )
         ).first()
         if row is not None:
-            hosted_state, observation = row
+            hosted_runtime_exists = True
+            _, observation = row
             observed_changed = _runtime_observation_changed(observation, runtime_observed_values)
-    has_state_change = (
-        env.last_sync_error != new_error
-        or (new_revision is not None and env.last_revision_seen != new_revision)
-        or (
-            body.queue_depth is not None
-            and body.queue_depth > env.queue_depth_high_water_since_start
-        )
-        or bool(body.dropped_count_delta)
-        or not env.sync_enabled
-        or observed_changed
-    )
-    # Even with no state change, refresh last_sync_at on a bounded
-    # cadence. The dashboard freshness cutoff is 90s; 40s keeps new
-    # 60s clients live while preventing old 30s clients from writing
-    # on every heartbeat.
-    last = env.last_sync_at
-    needs_freshness_refresh = (
-        last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
-    )
-    if not has_state_change and not needs_freshness_refresh:
-        return
-    env.last_sync_at = now
-    env.last_sync_error = new_error
+
+    write_conditions = [
+        AgentEnvironment.last_sync_error.is_distinct_from(new_error),
+        AgentEnvironment.sync_enabled.is_(False),
+        AgentEnvironment.last_sync_at.is_(None),
+        AgentEnvironment.last_sync_at < now - _HEARTBEAT_FRESHNESS_WRITE_INTERVAL,
+    ]
     if new_revision is not None:
-        env.last_revision_seen = new_revision
-    if body.queue_depth is not None and body.queue_depth > env.queue_depth_high_water_since_start:
-        env.queue_depth_high_water_since_start = body.queue_depth
+        write_conditions.append(AgentEnvironment.last_revision_seen.is_distinct_from(new_revision))
+    if body.queue_depth is not None:
+        write_conditions.append(
+            body.queue_depth > AgentEnvironment.queue_depth_high_water_since_start
+        )
+    if body.dropped_count_delta or observed_changed:
+        write_conditions.append(true())
+
+    update_values: dict[str, Any] = {
+        "last_sync_at": now,
+        "last_sync_error": new_error,
+        "sync_enabled": True,
+        "updated_at": func.now(),
+    }
+    if new_revision is not None:
+        update_values["last_revision_seen"] = new_revision
+    if body.queue_depth is not None:
+        update_values["queue_depth_high_water_since_start"] = func.greatest(
+            AgentEnvironment.queue_depth_high_water_since_start,
+            body.queue_depth,
+        )
     if body.dropped_count_delta:
-        env.dropped_count_since_start = (
-            env.dropped_count_since_start or 0
-        ) + body.dropped_count_delta
-    # A heartbeat IS the user opting in: they ran `clawdi daemon` (or
-    # installed the launchd / systemd unit) and the daemon is
-    # successfully posting liveness. The `sync_enabled` flag was a
-    # canary toggle so existing envs wouldn't auto-pick-up sync at
-    # rollout — it has done its job once an actual heartbeat arrives.
-    if not env.sync_enabled:
-        env.sync_enabled = True
-    if hosted_state is not None and runtime_observed_values is not None:
+        update_values["dropped_count_since_start"] = (
+            AgentEnvironment.dropped_count_since_start + body.dropped_count_delta
+        )
+
+    # One statement owns the active/owner check and the conditional mutation.
+    # The data-modifying CTE keeps unchanged heartbeats at one round trip while
+    # preserving the legacy distinction between a same-owner binding mismatch
+    # (403) and an unavailable/cross-owner Agent (404). Database expressions
+    # make queue HWM and dropped deltas atomic under concurrent heartbeats.
+    heartbeat_target = (
+        select(AgentEnvironment.id)
+        .where(
+            AgentEnvironment.id == agent_id,
+            AgentEnvironment.user_id == auth.user_id,
+            active_agent_filter(),
+        )
+        .cte("heartbeat_target")
+    )
+    if binding_matches:
+        heartbeat_update = (
+            update(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == heartbeat_target.c.id,
+                AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
+                or_(*write_conditions),
+            )
+            .values(**update_values)
+            .returning(AgentEnvironment.id)
+            .cte("heartbeat_update")
+        )
+        target_exists, heartbeat_updated = (
+            await db.execute(
+                select(
+                    select(heartbeat_target.c.id).exists(),
+                    select(heartbeat_update.c.id).exists(),
+                )
+            )
+        ).one()
+    else:
+        target_exists = await db.scalar(select(select(heartbeat_target.c.id).exists()))
+        heartbeat_updated = False
+    if not target_exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
+    if not binding_matches:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "api key bound to a different environment",
+        )
+    if not heartbeat_updated:
+        return
+
+    if hosted_runtime_exists and runtime_observed_values is not None:
         insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
             environment_id=agent_id,
             **runtime_observed_values,

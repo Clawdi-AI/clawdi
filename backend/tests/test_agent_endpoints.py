@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session
@@ -195,6 +195,57 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
         json={"environment_ids": [second_id, agent_id]},
     )
     _assert_agent_list_response_matches_environment(reordered_agents, reordered_environments)
+
+
+@pytest.mark.asyncio
+async def test_environment_detail_projects_only_hosted_deployment_id(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+):
+    agent_id = await _register_agent(client)
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=uuid.UUID(agent_id),
+            deployment_id="dep-narrow-environment-read",
+            instance_id="iid-narrow-environment-read",
+            generation=1,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+            locale=_TEST_LOCALE,
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes={"wide": {"payload": "not-needed-by-environment-response"}},
+            skills={"entries": {"wide": {"enabled": True}}},
+            tools={"catalog": "not-needed-by-environment-response"},
+        )
+    )
+    await db_session.commit()
+
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _params, _context, _many) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        response = await client.get(f"/api/environments/{agent_id}")
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["hosted_managed"] is True
+    assert response.json()["hosted_deployment_id"] == "dep-narrow-environment-read"
+    selects = [
+        statement.lower()
+        for statement in statements
+        if statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(selects) == 1
+    statement = selects[0]
+    assert "hosted_runtime_states.deployment_id" in statement
+    for unneeded_column in ("runtimes", "live_sync", "recovery", "mcp", "skills", "tools"):
+        assert f"hosted_runtime_states.{unneeded_column}" not in statement
 
 
 @pytest.mark.asyncio

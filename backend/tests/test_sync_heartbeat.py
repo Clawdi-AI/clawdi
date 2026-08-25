@@ -13,6 +13,7 @@ disguise a broken sync as healthy.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -22,8 +23,8 @@ import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
 
 from app.core.auth import AuthContext, get_auth
@@ -404,6 +405,88 @@ async def test_heartbeat_dropped_count_accumulates(client: httpx.AsyncClient):
     )
     detail = (await client.get(f"/v1/environments/{env_id}")).json()
     assert detail["dropped_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_state_update_is_one_database_statement(
+    client: httpx.AsyncClient,
+    engine: AsyncEngine,
+    seed_user,
+):
+    env_id = uuid.UUID(await _create_env(client))
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _params, _context, _many) -> None:
+        statements.append(statement)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        async with session_factory() as request_db:
+            await session_routes.sync_heartbeat(
+                env_id,
+                session_routes.SyncHeartbeatRequest(),
+                AuthContext(user=seed_user),
+                request_db,
+            )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    assert len(statements) == 1
+    assert "heartbeat_target" in statements[0]
+    assert "UPDATE agent_environments" in statements[0]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_heartbeat_dropped_deltas_accumulate_atomically(
+    client: httpx.AsyncClient,
+    engine: AsyncEngine,
+    seed_user,
+):
+    env_id = uuid.UUID(await _create_env(client))
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    updates_issued = asyncio.Event()
+    update_count = 0
+
+    def observe_update(_conn, _cursor, statement, _params, _context, _many) -> None:
+        nonlocal update_count
+        if "UPDATE agent_environments" not in statement:
+            return
+        update_count += 1
+        if update_count == 2:
+            updates_issued.set()
+
+    async def heartbeat(delta: int) -> None:
+        async with session_factory() as request_db:
+            await session_routes.sync_heartbeat(
+                env_id,
+                session_routes.SyncHeartbeatRequest(dropped_count_delta=delta),
+                AuthContext(user=seed_user),
+                request_db,
+            )
+
+    tasks: list[asyncio.Task[None]] = []
+    async with session_factory() as blocker:
+        await blocker.execute(
+            select(AgentEnvironment.id).where(AgentEnvironment.id == env_id).with_for_update()
+        )
+        event.listen(engine.sync_engine, "before_cursor_execute", observe_update)
+        try:
+            tasks = [asyncio.create_task(heartbeat(2)), asyncio.create_task(heartbeat(3))]
+            await asyncio.wait_for(updates_issued.wait(), timeout=2)
+        finally:
+            await blocker.rollback()
+            event.remove(engine.sync_engine, "before_cursor_execute", observe_update)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = [task.result() for task in tasks]
+    assert results == [None, None]
+    async with session_factory() as verify_db:
+        dropped_count = await verify_db.scalar(
+            select(AgentEnvironment.dropped_count_since_start).where(AgentEnvironment.id == env_id)
+        )
+    assert dropped_count == 5
 
 
 @pytest.mark.asyncio
