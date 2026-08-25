@@ -352,9 +352,8 @@ candidate has no separate active/previous link state or hand-built chroot.
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,
 `0700` directories, and dotfiles. The entire tenant home, including user units
-and official runtime configuration, belongs to the tenant UID/GID. Hosted
-convergence recursively migrates legacy root-owned home trees without following
-symlinks. Candidate directories and binaries remain root-owned outside the
+and official runtime configuration, belongs to the tenant UID/GID. Candidate
+directories and binaries remain root-owned outside the
 tenant home. The root-authored JWT
 configuration is a `root:<runtime group>` `0440` file below a root-only `0700`
 directory, so other tenant processes cannot traverse to it; systemd publishes

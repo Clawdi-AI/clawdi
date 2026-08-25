@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, chownSync, constants, lstatSync, mkdirSync } from "node:fs";
+import { accessSync, chownSync, constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -368,20 +368,6 @@ export function runtimeEgressGid(): number {
 function positiveLinuxIdEnv(key: string, fallback: number): number {
 	const raw = process.env[key]?.trim();
 	return raw ? parsePositiveLinuxId(raw, key) : fallback;
-}
-
-export function ensureRuntimeUserHomeOwnership(path: string, identity: RuntimeUserIdentity): void {
-	mkdirSync(path, { recursive: true });
-	const node = lstatSync(path);
-	if (!node.isDirectory() || node.isSymbolicLink()) {
-		throw new Error(`runtime-user home must be a real directory: ${path}`);
-	}
-	if (!runningAsRoot()) return;
-	if (identity.uid === 0 || identity.gid === 0) {
-		throw new Error("runtime user resolved to a root filesystem identity");
-	}
-	// SUNSET: remove after all 0.13.92/0.14.14 hosts have migrated their root-owned tenant trees.
-	execFileSync("chown", ["-hR", "-P", `${identity.uid}:${identity.gid}`, "--", path]);
 }
 
 export function makeRuntimeUserOwned(path: string): void {

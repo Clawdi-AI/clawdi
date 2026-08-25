@@ -24,11 +24,7 @@ import {
 	prepareHostedAgentPluginTransaction,
 } from "./hosted-agent-plugin-runtime";
 import { AGENT_PLUGINS_SCHEMA_1_0_0 } from "./manifest-resources";
-import {
-	ensureRuntimeUserHomeOwnership,
-	runtimeUserGid,
-	runtimeUserUid,
-} from "./runtime-user-command";
+import { runtimeUserGid, runtimeUserUid } from "./runtime-user-command";
 
 type CommandInput = Parameters<HostedAgentPluginCommandRunner["run"]>[0];
 
@@ -410,7 +406,7 @@ function desiredState(
 const commands = { openclaw: "/runtime/openclaw", hermes: "/runtime/hermes" };
 
 describe("Hosted Agent Plugin native reconciliation", () => {
-	test("observes installed plugin bytes only through the repaired runtime-user identity", () => {
+	test("observes tenant-owned plugin bytes through the runtime-user identity", () => {
 		if (process.geteuid?.() !== 0) return;
 		const runner = new FakeNativeRunner();
 		const desired = plugin("acme.tools", "1.2.3", "8".repeat(64));
@@ -439,28 +435,13 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		const previousRuntimeGid = process.env.CLAWDI_RUNTIME_GID;
 		try {
 			chmodSync(runtimeTestRoot, 0o755);
-			for (const path of [runner.liveHome, stateRoot, join(stateRoot, "extensions")]) {
+			for (const path of [runner.liveHome, stateRoot, join(stateRoot, "extensions"), installRoot]) {
 				chownSync(path, runtimeUid, runtimeGid);
 			}
-			chownSync(installRoot, 0, 0);
-			chmodSync(installRoot, 0o700);
 			process.env.CLAWDI_RUNTIME_USER = "nobody";
 			process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
 			process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
 
-			expect(() =>
-				prepareHostedAgentPluginTransaction({
-					prepared,
-					home: runner.liveHome,
-					commands,
-					runner,
-				}),
-			).toThrow();
-
-			ensureRuntimeUserHomeOwnership(stateRoot, {
-				uid: runtimeUserUid("nobody"),
-				gid: runtimeUserGid("nobody"),
-			});
 			expect(() =>
 				prepareHostedAgentPluginTransaction({
 					prepared,

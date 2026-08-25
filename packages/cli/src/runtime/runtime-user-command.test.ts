@@ -1,15 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	chmodSync,
-	lstatSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,9 +8,7 @@ import {
 	clearTenantToolLocationOverrides,
 	commandExists,
 	createPrivilegeDropResolver,
-	ensureRuntimeUserHomeOwnership,
 	runRuntimeUserCommand,
-	runtimeUserGid,
 	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
@@ -382,43 +370,6 @@ test("fully drops root identity when spawned during runtime-user file access", (
 	} finally {
 		if (previousRuntimeUser === undefined) delete process.env.CLAWDI_RUNTIME_USER;
 		else process.env.CLAWDI_RUNTIME_USER = previousRuntimeUser;
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("migrates a legacy root-owned tenant home without following symlinks", () => {
-	if (process.geteuid?.() !== 0) return;
-	const root = mkdtempSync(join(tmpdir(), "runtime-user-home-migration-"));
-	const home = join(root, "home");
-	const systemdRoot = join(home, ".config", "systemd", "user");
-	const unit = join(systemdRoot, "hermes-gateway.service");
-	const outside = join(root, "platform-state");
-	const outsideLink = join(home, "platform-link");
-	try {
-		mkdirSync(systemdRoot, { recursive: true, mode: 0o700 });
-		writeFileSync(unit, "legacy\n", { mode: 0o600 });
-		writeFileSync(outside, "preserve\n", { mode: 0o600 });
-		symlinkSync(outside, outsideLink);
-		const identity = { uid: runtimeUserUid("nobody"), gid: runtimeUserGid("nobody") };
-
-		ensureRuntimeUserHomeOwnership(home, identity);
-
-		for (const path of [
-			home,
-			join(home, ".config"),
-			join(home, ".config", "systemd"),
-			systemdRoot,
-			unit,
-			outsideLink,
-		]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([identity.uid, identity.gid]);
-		}
-		expect(statSync(systemdRoot).mode & 0o777).toBe(0o700);
-		expect(statSync(unit).mode & 0o777).toBe(0o600);
-		expect([statSync(outside).uid, statSync(outside).gid]).toEqual([0, 0]);
-		expect(readFileSync(outside, "utf8")).toBe("preserve\n");
-	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
 });

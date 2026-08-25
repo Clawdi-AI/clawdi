@@ -6,8 +6,6 @@ import {
 	chownSync,
 	cpSync,
 	existsSync,
-	lchownSync,
-	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -4199,7 +4197,7 @@ exit 0
 		expect(readlinkSync(commandPath)).toBe(commandTarget);
 	});
 
-	test("migrates legacy root-owned systemd files into the UID 10001 tenant tree", () => {
+	test("0.14.18 does not recursively chown tenant home and keeps tenant writes owned", () => {
 		const numericPrivilegeToolPath = ["/usr/bin/set", "priv"].join("");
 		if (process.geteuid?.() !== 0 || !existsSync(numericPrivilegeToolPath)) return;
 		const paths = tempRuntimePaths();
@@ -4207,45 +4205,17 @@ exit 0
 		const runtimeUid = 10_001;
 		const runtimeGid = 10_001;
 		const appRoot = join(paths.userHome, ".openclaw");
+		const localRoot = join(paths.userHome, ".local");
 		const binDir = join(paths.userHome, ".local", "bin");
 		const commandPath = join(binDir, "openclaw");
-		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
-		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
-		const unitBackupPath = `${unitPath}.bak`;
-		const dropInPath = join(
-			paths.systemdUserRoot,
-			"openclaw-gateway.service.d",
-			"10-clawdi-hosted.conf",
-		);
-		const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
-		const enablementPath = join(wantsRoot, "openclaw-gateway.service");
-		const tenantOwnedPaths = [
-			appRoot,
-			binDir,
-			commandPath,
-			dirname(dirname(paths.systemdUserRoot)),
-			dirname(paths.systemdUserRoot),
-			wantsRoot,
-			paths.systemdUserRoot,
-			unitPath,
-			unitBackupPath,
-			gatewayEnvironment,
-			dirname(dropInPath),
-			dropInPath,
-		];
 		const skillProjectionLog = join(appRoot, "skill-projection-owners.log");
+		const rootOwnedSentinel = join(paths.userHome, "root-owned-sentinel");
 
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.userHome, { recursive: true });
-		chownSync(paths.userHome, runtimeUid, runtimeGid);
-		chmodSync(paths.userHome, 0o700);
 		mkdirSync(paths.clawdiHome, { recursive: true });
-		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
-		chmodSync(paths.clawdiHome, 0o700);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(appRoot, { recursive: true });
-		mkdirSync(dirname(dropInPath), { recursive: true });
-		mkdirSync(wantsRoot, { recursive: true });
 		writeFileSync(
 			commandPath,
 			`#!/usr/bin/env bash
@@ -4258,42 +4228,26 @@ case "$*" in
   "agents list --json")
     printf '[{"id":"main","workspace":"%s"}]\\n' "$HOME/.openclaw/workspace"
     ;;
-			"skills install "*)
-			    : > '${skillProjectionLog}'
-			    ${tenantOwnedPaths.map((path) => `stat -c '%u:%g' '${path}' >> '${skillProjectionLog}'`).join("\n    ")}
+  "skills install "*)
+    printf '%s:%s\\n' "$(id -u)" "$(id -g)" > '${skillProjectionLog}'
     exit 45
-    ;;
-  "gateway install --force --json")
-    unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
-    cp "$unit" "$unit.bak"
-    printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > "$unit"
-    printf '%s\\n' 'OPENCLAW_OFFICIAL_USER_STATE=1' > "$HOME/.openclaw/gateway.systemd.env"
-    chmod 0600 "$HOME/.openclaw/gateway.systemd.env"
-    printf '{"ok":true}\\n'
     ;;
   *) exit 64 ;;
 esac
 `,
 		);
-		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
-		writeFileSync(unitBackupPath, "previous official backup\n");
-		writeFileSync(dropInPath, "[Service]\nEnvironment=PREVIOUS=1\n");
-		symlinkSync("../openclaw-gateway.service", enablementPath);
-		writeFileSync(gatewayEnvironment, "PREVIOUS_OFFICIAL_STATE=1\n");
-		for (const path of [appRoot, binDir]) {
-			chownSync(path, 0, 0);
-			chmodSync(path, 0o700);
+		chmodSync(commandPath, 0o700);
+		for (const path of [
+			paths.userHome,
+			paths.clawdiHome,
+			localRoot,
+			binDir,
+			appRoot,
+			commandPath,
+		]) {
+			chownSync(path, runtimeUid, runtimeGid);
 		}
-		for (const path of tenantOwnedPaths) {
-			if (lstatSync(path).isSymbolicLink()) continue;
-			chownSync(path, 0, 0);
-			chmodSync(path, 0o700);
-		}
-		lchownSync(enablementPath, 0, 0);
-		chmodSync(unitPath, 0o600);
-		chmodSync(unitBackupPath, 0o600);
-		chmodSync(dropInPath, 0o600);
-		chmodSync(gatewayEnvironment, 0o600);
+		writeFileSync(rootOwnedSentinel, "preserve root ownership\n", { mode: 0o600 });
 
 		process.env.CLAWDI_RUNTIME_USER = "clawdi";
 		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
@@ -4338,40 +4292,18 @@ esac
 		expect(result.resourceProjectionErrors.join("\n")).toContain(
 			"OpenClaw official Skill install failed: exit code 45 without output",
 		);
-		expect(readFileSync(skillProjectionLog, "utf8").trim().split("\n")).toEqual(
-			tenantOwnedPaths.map(() => `${runtimeUid}:${runtimeGid}`),
-		);
-		for (const path of [...tenantOwnedPaths, enablementPath]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-		}
-		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
-		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
-		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
+		expect(readFileSync(skillProjectionLog, "utf8")).toBe(`${runtimeUid}:${runtimeGid}\n`);
+		expect([statSync(skillProjectionLog).uid, statSync(skillProjectionLog).gid]).toEqual([
+			runtimeUid,
+			runtimeGid,
+		]);
+		expect(readFileSync(rootOwnedSentinel, "utf8")).toBe("preserve root ownership\n");
+		expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
+		expect(statSync(rootOwnedSentinel).mode & 0o777).toBe(0o600);
 		expect([statSync(paths.daemonAuthToken).uid, statSync(paths.daemonAuthToken).gid]).toEqual([
 			0, 0,
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
-
-		const installed = convergeRuntimeManifest(
-			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-installer-boundary"),
-			paths,
-			{
-				hostedRuntimeContract,
-				systemdApply: {
-					activateEgressPrerequisite: successfulPrerequisiteActivation,
-					activate: () => {
-						return successfulPrerequisiteActivation();
-					},
-				},
-			},
-		);
-		expect(installed.installErrors).toEqual([]);
-		for (const path of [...tenantOwnedPaths, enablementPath]) {
-			const node = lstatSync(path);
-			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
-		}
-		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

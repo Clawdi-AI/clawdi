@@ -108,11 +108,7 @@ import {
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
-import {
-	ensureRuntimeUserHomeOwnership,
-	executableExists,
-	withRuntimeUserFileAccess,
-} from "./runtime-user-command";
+import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { ensureRuntimePlatformDirectory } from "./state";
 
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
@@ -202,9 +198,6 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	// SUNSET: remove the recursive migration after every 0.13.92/0.14.14 host has
-	// converged once; those releases could leave tenant HOME trees root-owned.
-	ensureRuntimeUserHomeOwnership(projectionHome, hostedRuntimeContract.identity);
 	if (manifest.runtimes.openclaw?.enabled === true) {
 		withRuntimeUserFileAccess(() => {
 			for (const path of [
