@@ -374,6 +374,10 @@ async def test_qr_lifecycle_is_idempotent_and_finishes_only_after_connection(
     }
     assert account.encrypted_provider_token is None
     assert account.provider_token_nonce is None
+    assert get_whatsapp_provider_transport(channel_account_id) is None
+    registry = get_active_whatsapp_sidecar_registry()
+    assert registry is not None
+    await registry.reconcile_custom_ownership(db_session)
     assert get_whatsapp_provider_transport(channel_account_id) is not None
     assert whatsapp_provider_transport_status(channel_account_id).available is True
     relayed_message_id, relay_details = await relay_whatsapp_provider_payload(
@@ -804,6 +808,7 @@ async def test_restart_fails_closed_on_durable_session_revision_drift(
 @pytest.mark.asyncio
 async def test_connected_ingress_pump_uses_the_durable_channel_account_id(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -844,6 +849,9 @@ async def test_connected_ingress_pump_uses_the_durable_channel_account_id(
 
     connected = await client.get(f"/v1/channels/whatsapp/onboarding/sessions/{session_id}")
     durable_account_id = UUID(connected.json()["channel_account_id"])
+    registry = get_active_whatsapp_sidecar_registry()
+    assert registry is not None
+    await registry.reconcile_custom_ownership(db_session)
     await asyncio.wait_for(persisted.wait(), timeout=2)
     await asyncio.wait_for(fake.provider_acknowledged.wait(), timeout=2)
 
@@ -1103,6 +1111,10 @@ async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     fake.current = WhatsAppSidecarPairingStatus(status="connected", registered=True)
     connected = await client.get(f"/v1/channels/whatsapp/onboarding/sessions/{session_id}")
     account_id = UUID(connected.json()["channel_account_id"])
+    registry = get_active_whatsapp_sidecar_registry()
+    assert registry is not None
+    await registry.reconcile_custom_ownership(db_session)
+    assert registry.custom_binding(account_id) == provider_session_id
     fake.logout_result = WhatsAppSidecarPairingStatus(
         status="connected",
         registered=True,
@@ -1114,14 +1126,12 @@ async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     account = await db_session.get(ChannelAccount, account_id)
     assert account is not None
     assert account.archived_at is None
-    registry = get_active_whatsapp_sidecar_registry()
-    assert registry is not None
     assert registry.custom_binding(account_id) == provider_session_id
     assert get_whatsapp_provider_transport(account_id) is not None
 
     fake.current = WhatsAppSidecarPairingStatus(status="disconnected", registered=True)
     fake.last_disconnect_reason = "remote_logged_out"
-    await registry.reconcile_custom_ownership()
+    await registry.reconcile_custom_ownership(db_session)
     assert registry.custom_session_is_blocked(provider_session_id) is True
 
     deleted = await client.delete(f"/v1/channels/{account_id}")

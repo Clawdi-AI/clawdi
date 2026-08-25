@@ -12367,24 +12367,11 @@ class _WhatsAppPairLinkRegistry:
     def managed_is_bound(self, account_id: UUID) -> bool:
         return self._bound and account_id == self._account_id
 
-    def managed_account_revision(self, account_id: UUID) -> str | None:
-        return self._revision if account_id == self._account_id else None
-
-    def get_managed_client(self, account_id: UUID) -> _WhatsAppPairLinkSidecar | None:
-        return self._client if account_id == self._account_id else None
-
-    def custom_session_revision(self, session_id: UUID) -> str | None:
+    def session_revision(self, session_id: UUID) -> str | None:
         return self._revision if session_id == self._account_id else None
 
-    def get_custom_lifecycle_client(
-        self,
-        session_id: UUID,
-        *,
-        config_revision: str,
-    ) -> _WhatsAppPairLinkSidecar | None:
-        if session_id != self._account_id or config_revision != self._revision:
-            return None
-        return self._client
+    def session_client(self, session_id: UUID) -> _WhatsAppPairLinkSidecar | None:
+        return self._client if session_id == self._account_id else None
 
 
 async def _create_whatsapp_pair_target(
@@ -12432,7 +12419,7 @@ async def test_whatsapp_pair_code_returns_click_to_chat_for_bound_public_managed
         )
     )
     registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
-    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_clients", lambda: registry)
 
     response = await client.post(
         f"/v1/channels/{account.id}/pair-codes",
@@ -12469,7 +12456,7 @@ async def test_whatsapp_pair_code_uses_durable_phone_when_sidecar_is_unavailable
     await db_session.commit()
     sidecar = _WhatsAppPairLinkSidecar(WhatsAppSidecarUnavailableError("unavailable"))
     registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
-    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_clients", lambda: registry)
 
     response = await client.post(
         f"/v1/channels/{account.id}/pair-codes",
@@ -12511,7 +12498,7 @@ async def test_whatsapp_pair_code_never_links_to_a_private_custom_identity(
         )
     )
     registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
-    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_clients", lambda: registry)
 
     response = await client.post(
         f"/v1/channels/{account.id}/pair-codes",

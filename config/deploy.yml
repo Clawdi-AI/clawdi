@@ -50,10 +50,16 @@ servers:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>
     options:
-      memory: 4g # embedding model (~1.6G resident) + launch-load headroom
+      memory: 6g # two API workers, each with a local embedding model
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
       # tini as PID 1 reaps orphaned subprocesses (zombie prevention).
       init: true
+    env:
+      clear:
+        WEB_CONCURRENCY: 2
+        # SQLAlchemy owns one pool per worker; preserve the prior aggregate cap.
+        DB_POOL_SIZE: 10
+        DB_MAX_OVERFLOW: 10
   channels-worker:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>

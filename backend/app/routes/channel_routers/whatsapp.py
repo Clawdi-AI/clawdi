@@ -73,7 +73,7 @@ from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderBridge,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
-from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
 
 router = APIRouter(prefix="/channels/whatsapp", tags=["channels"])
 
@@ -415,16 +415,16 @@ async def _resolve_whatsapp_noise_lid(
 
 
 async def _authenticated_sidecar_health(account: ChannelAccount) -> WhatsAppSidecarHealth:
-    registry = get_active_whatsapp_sidecar_registry()
+    registry = get_active_whatsapp_sidecar_clients()
     config = account.config if isinstance(account.config, dict) else {}
     revision = config.get("sidecar_config_revision")
     if registry is None or not isinstance(revision, str):
         raise WhatsAppSidecarProtocolError("WhatsApp sidecar identity is unavailable")
     mode = config.get("connection_mode")
     if mode == "baileys_managed":
-        if registry.managed_account_revision(account.id) != revision:
+        if registry.session_revision(account.id) != revision:
             raise WhatsAppSidecarProtocolError("managed WhatsApp sidecar revision mismatch")
-        client = registry.get_managed_client(account.id)
+        client = registry.session_client(account.id)
     elif mode == "baileys_custom":
         raw_session_id = config.get("sidecar_account_id")
         try:
@@ -432,8 +432,8 @@ async def _authenticated_sidecar_health(account: ChannelAccount) -> WhatsAppSide
         except ValueError:
             session_id = None
         client = (
-            registry.get_custom_lifecycle_client(session_id, config_revision=revision)
-            if session_id is not None
+            registry.session_client(session_id)
+            if session_id is not None and registry.session_revision(session_id) == revision
             else None
         )
     else:

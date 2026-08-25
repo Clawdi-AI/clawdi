@@ -231,7 +231,7 @@ from app.services.whatsapp_managed_onboarding import (
     get_platform_whatsapp_pairing,
     start_platform_whatsapp_pairing,
 )
-from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
 
 logger = logging.getLogger(__name__)
 
@@ -1882,7 +1882,7 @@ async def admin_start_platform_whatsapp_pairing(
         account_id=body.account_id,
         request_id=body.request_id,
         name=body.name,
-        registry=get_active_whatsapp_sidecar_registry(),
+        registry=get_active_whatsapp_sidecar_clients(),
     )
     record_control_plane_audit(
         db,
@@ -1910,7 +1910,7 @@ async def admin_get_platform_whatsapp_pairing(
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _no_store(response)
     result = await get_platform_whatsapp_pairing(
-        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_clients()
     )
     return result
 
@@ -1927,7 +1927,7 @@ async def admin_cancel_platform_whatsapp_pairing(
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _no_store(response)
     result = await cancel_platform_whatsapp_pairing(
-        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_clients()
     )
     record_control_plane_audit(
         db,
@@ -2180,7 +2180,7 @@ async def admin_delete_channel(
     await require_whatsapp_logout_for_archive(
         db,
         account=account,
-        registry=get_active_whatsapp_sidecar_registry(),
+        registry=get_active_whatsapp_sidecar_clients(),
     )
     await archive_channel_account(db, account=account)
     if account.provider in RUNTIME_CHANNEL_PROVIDERS:

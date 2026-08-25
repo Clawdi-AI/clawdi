@@ -160,7 +160,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppSidecarError,
     whatsapp_phone_number_from_pn_jid,
 )
-from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -677,7 +677,7 @@ async def delete_channel(
     await require_whatsapp_logout_for_archive(
         db,
         account=account,
-        registry=get_active_whatsapp_sidecar_registry(),
+        registry=get_active_whatsapp_sidecar_clients(),
     )
     await archive_channel_account(db, account=account)
     for link in active_links:
@@ -721,10 +721,10 @@ async def _whatsapp_pair_deep_link(
         )
         if trusted_phone_number is not None:
             return f"https://wa.me/{trusted_phone_number}?text={quote(pairing_command, safe='')}"
-    registry = get_active_whatsapp_sidecar_registry()
-    if registry is None or registry.managed_account_revision(account.id) != configured_revision:
+    registry = get_active_whatsapp_sidecar_clients()
+    if registry is None or registry.session_revision(account.id) != configured_revision:
         return None
-    client = registry.get_managed_client(account.id)
+    client = registry.session_client(account.id)
     if client is None:
         return None
     try:
@@ -749,7 +749,7 @@ async def create_channel_pair_code(
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     await require_whatsapp_custom_link_ready(
         account,
-        registry=get_active_whatsapp_sidecar_registry(),
+        registry=get_active_whatsapp_sidecar_clients(),
     )
     if (
         account.provider == CHANNEL_PROVIDER_TELEGRAM
@@ -896,7 +896,7 @@ async def create_channel_agent_link(
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     await require_whatsapp_custom_link_ready(
         account,
-        registry=get_active_whatsapp_sidecar_registry(),
+        registry=get_active_whatsapp_sidecar_clients(),
     )
     agent_id = await _resolve_agent_id_for_link(db, auth=auth, requested_agent_id=body.agent_id)
     link, agent_token = await get_or_create_bot_agent_link(

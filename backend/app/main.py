@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
 from app.core.config import settings
-from app.core.database import async_session_factory, get_session
+from app.core.database import get_session
 from app.core.logging_config import configure_application_logging
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
@@ -69,13 +69,8 @@ from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorru
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
-from app.services.plugin_catalog import PluginCatalogSyncWorker
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
-from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
-from app.services.whatsapp_managed_onboarding import (
-    expire_stale_platform_whatsapp_pairing_sessions,
-)
-from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
+from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarClientPool
 
 configure_application_logging()
 log = logging.getLogger(__name__)
@@ -108,69 +103,19 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     finishes before the first embedding call, that call is fast.
     """
     background: set[asyncio.Task[None]] = set()
-    whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
+    whatsapp_sidecars = ConfiguredWhatsAppSidecarClientPool(
         settings.channel_whatsapp_baileys_sidecar_token.get_secret_value(),
         base_url=settings.channel_whatsapp_baileys_sidecar_url or None,
     )
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
-        if whatsapp_sidecars.enabled:
-            await whatsapp_sidecars.reconcile_custom_ownership()
-            await whatsapp_sidecars.reconcile_managed_ownership()
     except Exception:
         await whatsapp_sidecars.stop()
         await stop_postgres_listener()
         raise
 
     await warm_clerk_jwks()
-
-    if settings.plugin_catalog_sync_enabled:
-        catalog_worker = PluginCatalogSyncWorker(
-            async_session_factory,
-            interval_seconds=settings.plugin_catalog_sync_interval_seconds,
-            timeout_seconds=settings.plugin_catalog_sync_timeout_seconds,
-        )
-        task = asyncio.create_task(
-            catalog_worker.run_forever(),
-            name="plugin-catalog-sync",
-        )
-        background.add(task)
-        task.add_done_callback(background.discard)
-
-    if whatsapp_sidecars.enabled:
-
-        async def _expire_whatsapp_onboarding() -> None:
-            while True:
-                await asyncio.sleep(15)
-                try:
-                    await whatsapp_sidecars.reconcile_custom_ownership()
-                    await whatsapp_sidecars.reconcile_managed_ownership()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception("WhatsApp sidecar ownership reconciliation failed")
-                try:
-                    async with async_session_factory() as db:
-                        await expire_stale_whatsapp_onboarding_sessions(
-                            db,
-                            registry=whatsapp_sidecars,
-                        )
-                        await expire_stale_platform_whatsapp_pairing_sessions(
-                            db,
-                            registry=whatsapp_sidecars,
-                        )
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception("WhatsApp onboarding expiry sweep failed")
-
-        task = asyncio.create_task(
-            _expire_whatsapp_onboarding(),
-            name="whatsapp-onboarding-expiry",
-        )
-        background.add(task)
-        task.add_done_callback(background.discard)
 
     if settings.memory_embedding_mode.lower() == "local":
 
