@@ -368,21 +368,17 @@ async def _list_agent_identities(
         ).where(AgentProjectBinding.project_id == project_id)
     result = await db.execute(stmt)
     envs = result.scalars().all()
-    states_by_env: dict[UUID, HostedRuntimeState] = {}
+    hosted_deployment_ids: dict[UUID, str] = {}
     env_ids = [env.id for env in envs]
     if not agent_response and env_ids:
-        states = (
-            (
-                await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        states_by_env = {state.environment_id: state for state in states}
+        hosted_deployment_ids = await _hosted_deployment_ids(db, env_ids)
     payload = [
-        _identity_response(e, states_by_env.get(e.id), agent_response=agent_response) for e in envs
+        _identity_response(
+            e,
+            hosted_deployment_ids.get(e.id),
+            agent_response=agent_response,
+        )
+        for e in envs
     ]
     etag = strong_json_etag([item.model_dump(mode="json") for item in payload])
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
@@ -477,7 +473,7 @@ async def _get_agent_identity(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     row = (
         await db.execute(
-            select(AgentEnvironment, HostedRuntimeState)
+            select(AgentEnvironment, HostedRuntimeState.deployment_id)
             .outerjoin(
                 HostedRuntimeState,
                 HostedRuntimeState.environment_id == AgentEnvironment.id,
@@ -490,7 +486,7 @@ async def _get_agent_identity(
     ).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    env, state = row
+    env, hosted_deployment_id = row
     if env.archived_at is not None:
         # The owner may distinguish their retained, disconnected identity from
         # a random id. The user_id predicate above and bound-id fence before the
@@ -503,7 +499,11 @@ async def _get_agent_identity(
                 "message": "Agent is disconnected",
             },
         )
-    payload = _identity_response(env, state, agent_response=agent_response)
+    payload = _identity_response(
+        env,
+        hosted_deployment_id,
+        agent_response=agent_response,
+    )
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
     if if_none_match_contains(request.headers.get("if-none-match"), etag):
@@ -690,20 +690,13 @@ async def _reorder_agent_identities(
     await db.commit()
 
     env_ids = [env.id for env in ordered]
-    states_by_env: dict[UUID, HostedRuntimeState] = {}
-    if env_ids:
-        states = (
-            (
-                await db.execute(
-                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        states_by_env = {state.environment_id: state for state in states}
+    hosted_deployment_ids = await _hosted_deployment_ids(db, env_ids) if not agent_response else {}
     return [
-        _identity_response(env, states_by_env.get(env.id), agent_response=agent_response)
+        _identity_response(
+            env,
+            hosted_deployment_ids.get(env.id),
+            agent_response=agent_response,
+        )
         for env in ordered
     ]
 
@@ -823,12 +816,14 @@ async def _update_agent_identity(
     await db.commit()
     await db.refresh(env)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.patch("/agents/{agent_id}", response_model=AgentResponse)
@@ -892,12 +887,14 @@ async def _clear_agent_avatar(
     await db.refresh(env)
     await _delete_managed_avatar_key_best_effort(old_avatar_key)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.delete("/agents/{agent_id}/avatar", response_model=AgentResponse)
@@ -987,12 +984,14 @@ async def _upload_agent_avatar(
     await db.refresh(env)
     await _delete_managed_avatar_key_best_effort(old_avatar_key)
 
-    state = (
-        await db.execute(
-            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == agent_id)
-        )
-    ).scalar_one_or_none()
-    return _identity_response(env, state, agent_response=agent_response)
+    hosted_deployment_ids = (
+        await _hosted_deployment_ids(db, [agent_id]) if not agent_response else {}
+    )
+    return _identity_response(
+        env,
+        hosted_deployment_ids.get(agent_id),
+        agent_response=agent_response,
+    )
 
 
 @router.post("/agents/{agent_id}/avatar", response_model=AgentResponse)
@@ -1240,17 +1239,43 @@ def _env_to_response(
     env: AgentEnvironment,
     hosted_state: HostedRuntimeState | None = None,
 ) -> EnvironmentResponse:
-    resolved_hosted_deployment_id = hosted_state.deployment_id if hosted_state is not None else None
+    return _env_to_response_with_deployment_id(
+        env,
+        hosted_state.deployment_id if hosted_state is not None else None,
+    )
+
+
+def _env_to_response_with_deployment_id(
+    env: AgentEnvironment,
+    hosted_deployment_id: str | None,
+) -> EnvironmentResponse:
     # Deprecated signal: dashboards now classify agents through their control
     # plane's ownership surface. Kept (runtime-state-derived only) for older
     # API consumers until the field is removed from EnvironmentResponse.
-    hosted_managed = resolved_hosted_deployment_id is not None
+    hosted_managed = hosted_deployment_id is not None
     agent = _agent_to_response(env)
     return EnvironmentResponse(
         **agent.model_dump(),
         hosted_managed=hosted_managed,
-        hosted_deployment_id=resolved_hosted_deployment_id,
+        hosted_deployment_id=hosted_deployment_id,
     )
+
+
+async def _hosted_deployment_ids(
+    db: AsyncSession,
+    environment_ids: list[UUID],
+) -> dict[UUID, str]:
+    if not environment_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                HostedRuntimeState.environment_id,
+                HostedRuntimeState.deployment_id,
+            ).where(HostedRuntimeState.environment_id.in_(environment_ids))
+        )
+    ).all()
+    return {environment_id: deployment_id for environment_id, deployment_id in rows}
 
 
 def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
@@ -1284,14 +1309,14 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
 
 @overload
 def _identity_response(
-    env: AgentEnvironment, hosted_state: HostedRuntimeState | None, *, agent_response: Literal[True]
+    env: AgentEnvironment, hosted_deployment_id: str | None, *, agent_response: Literal[True]
 ) -> AgentResponse: ...
 
 
 @overload
 def _identity_response(
     env: AgentEnvironment,
-    hosted_state: HostedRuntimeState | None,
+    hosted_deployment_id: str | None,
     *,
     agent_response: Literal[False],
 ) -> EnvironmentResponse: ...
@@ -1299,13 +1324,13 @@ def _identity_response(
 
 def _identity_response(
     env: AgentEnvironment,
-    hosted_state: HostedRuntimeState | None,
+    hosted_deployment_id: str | None,
     *,
     agent_response: bool,
 ) -> AgentResponse | EnvironmentResponse:
     if agent_response:
         return _agent_to_response(env)
-    return _env_to_response(env, hosted_state)
+    return _env_to_response_with_deployment_id(env, hosted_deployment_id)
 
 
 def _agent_name_from_fields(

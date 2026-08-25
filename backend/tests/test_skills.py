@@ -15,7 +15,9 @@ import uuid
 import httpx
 import pytest
 import yaml
-from sqlalchemy import select
+from fastapi.responses import Response
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.auth import AuthContext
 from app.core.skill_sync_protocol import (
@@ -1290,6 +1292,60 @@ async def test_bound_api_key_skills_etag_reads_current_db_revision(
     changed_etag = changed.headers["etag"]
     assert changed_etag != etag
     assert int(changed_etag.strip('"').split(":", 1)[0]) == int(first_revision) + 1
+
+
+@pytest.mark.asyncio
+async def test_skills_304_loads_etag_state_in_one_snapshot_query(
+    engine,
+    seed_user,
+    project_id: str,
+):
+    from app.models.api_key import ApiKey
+
+    project_uuid = uuid.UUID(project_id)
+    auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(user_id=seed_user.id),
+        api_key_project_id=project_uuid,
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def list_with_etag(if_none_match: str | None) -> Response:
+        async with session_factory() as db:
+            result = await skill_routes._list_skills_with_db(
+                auth=auth,
+                db=db,
+                q=None,
+                page=1,
+                page_size=200,
+                include_content=False,
+                project_id=project_uuid,
+                if_none_match=if_none_match,
+                skill_sync_protocol=None,
+            )
+        assert isinstance(result, Response)
+        return result
+
+    first = await list_with_etag(None)
+    etag = first.headers["etag"]
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _params, _context, _many) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        replay = await list_with_etag(etag)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    assert replay.status_code == 304
+    selects = [
+        statement for statement in statements if statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert len(selects) == 1
+    assert "caller_skills_revision" in selects[0]
+    assert "owner_skills_revision" in selects[0]
 
 
 @pytest.mark.asyncio
