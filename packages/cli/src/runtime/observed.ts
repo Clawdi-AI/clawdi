@@ -152,13 +152,13 @@ function runtimeConvergeError(watchStatus: JsonRecord | null): string | null {
 function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObservedCli | null {
 	if (!value) return null;
 	return {
-		status: value.status ?? null,
-		source: value.source ?? null,
-		packageSpec: value.packageSpec ?? null,
-		registry: value.registry ?? null,
-		activePath: value.activePath ?? null,
-		activeTarget: value.activeTarget ?? null,
-		version: value.version ?? null,
+		status: value.status,
+		source: value.source,
+		packageSpec: value.packageSpec,
+		registry: value.registry,
+		activePath: value.activePath,
+		activeTarget: value.activeTarget,
+		version: value.version,
 	};
 }
 

@@ -96,48 +96,28 @@ const runtimeCliBadSchema = z
 
 type RuntimeCliBad = z.infer<typeof runtimeCliBadSchema>;
 
-const cliBootstrapV1Schema = z
+const runtimeCliStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.cliNpmBootstrapStatus.v1"),
 		generatedAt: z.string().min(1),
 		status: z.literal("installed"),
 		source: z.literal("npm"),
-		packageSpec: z.string().min(1),
-		registry: z.string().min(1).nullable(),
+		packageSpec: hostedCliPackageSpecSchema,
+		registry: z.literal(NPM_REGISTRY),
 		npmPrefix: z.string().min(1),
 		npmCache: z.string().min(1),
 		activePath: z.string().min(1),
 		activeTarget: z.string().min(1),
 		version: z.string().min(1),
-		verification: runtimeCliVerificationSchema.optional(),
+		verification: runtimeCliVerificationSchema,
+		previous: runtimeCliTargetSchema.nullable(),
+		bad: runtimeCliBadSchema.nullable(),
 		error: z.string().nullable(),
 	})
 	.strict();
 
-const runtimeCliBootstrapStatusSchema = cliBootstrapV1Schema
-	.partial()
-	.extend({
-		status: z.string().optional(),
-		source: z.string().optional(),
-		verification: runtimeCliVerificationSchema.loose().optional(),
-		previous: runtimeCliTargetSchema.loose().nullable().optional(),
-		bad: runtimeCliBadSchema.loose().nullable().optional(),
-	})
-	.loose();
-
-export type RuntimeCliBootstrapStatus = z.infer<typeof runtimeCliBootstrapStatusSchema>;
-
-const runtimeCliStateSchema = cliBootstrapV1Schema
-	.extend({
-		packageSpec: hostedCliPackageSpecSchema,
-		registry: z.literal(NPM_REGISTRY),
-		verification: runtimeCliVerificationSchema,
-		previous: runtimeCliTargetSchema.nullable(),
-		bad: runtimeCliBadSchema.nullable(),
-	})
-	.strict();
-
-type RuntimeCliState = z.infer<typeof runtimeCliStateSchema>;
+export type RuntimeCliBootstrapStatus = z.infer<typeof runtimeCliStateSchema>;
+type RuntimeCliState = RuntimeCliBootstrapStatus;
 
 interface VerifiedCliTarget extends RuntimeCliTarget {
 	verification: RuntimeCliVerification;
@@ -314,7 +294,6 @@ export function reconcilePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	runningVersion?: string,
 ): RuntimeCliReconciliationResult {
-	discardLegacyUpgradeState(paths);
 	const status = readRuntimeCliBootstrapStatus(paths);
 	let state = parseCliState(paths, status);
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
@@ -371,9 +350,7 @@ export function readRuntimeCliBootstrapStatus(
 ): RuntimeCliBootstrapStatus | null {
 	if (!existsSync(paths.cliBootstrapStatus)) return null;
 	try {
-		return runtimeCliBootstrapStatusSchema.parse(
-			JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")),
-		);
+		return runtimeCliStateSchema.parse(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")));
 	} catch (error) {
 		log.warn("runtime.cli_bootstrap_status_invalid", {
 			path: paths.cliBootstrapStatus,
@@ -553,10 +530,6 @@ function reconciliationResult(
 			activeVersion !== undefined &&
 			activeVersion !== runningVersion,
 	};
-}
-
-function discardLegacyUpgradeState(paths: RuntimePaths): void {
-	if (existsSync(paths.cliUpgradeState)) rmSync(paths.cliUpgradeState, { force: true });
 }
 
 function validateRegistry(value: string | undefined): void {

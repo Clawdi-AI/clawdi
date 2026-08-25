@@ -48,35 +48,6 @@ function appliedStateFixture() {
 	};
 }
 
-function releasedAppliedStateFixture(version: "0.13.92" | "0.14.14") {
-	return {
-		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
-		appliedAt: `2026-07-${version === "0.13.92" ? "13" : "14"}T06:00:00.000Z`,
-		instanceId: `hri_${version.replaceAll(".", "_")}`,
-		etag: `"release-${version}"`,
-		sourceRevision: "c".repeat(64),
-		generation: version === "0.13.92" ? 13 : 14,
-		contentIdentity: {
-			sourcePath: "https://runtime.test/v1/runtime/manifest",
-			sha256: "a".repeat(64),
-		},
-		egressSidecarSecretRevision: "e".repeat(64),
-		daemonAuthTokenRevision: "d".repeat(64),
-		daemonProgramRevision: "d".repeat(32),
-		userProcessRevisionAliases: {
-			"openclaw-gateway.service": {
-				desiredRevision: "d".repeat(32),
-				processRevision: "a".repeat(32),
-			},
-		},
-		providerIds: ["clawdi-default", "default"],
-		projectedProviderIds: {
-			hermes: ["clawdi-default"],
-			openclaw: ["default"],
-		},
-	};
-}
-
 afterEach(() => {
 	process.env = { ...originalEnv };
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -117,22 +88,7 @@ describe("runtime applied state", () => {
 		).toBe(false);
 	});
 
-	for (const version of ["0.13.92", "0.14.14"] as const) {
-		test(`migrates the ${version} released applied-state format`, () => {
-			const migrated = runtimeAppliedStateSchema.parse(releasedAppliedStateFixture(version));
-			expect(migrated.activated).toEqual({});
-			for (const field of [
-				"egressSidecarSecretRevision",
-				"daemonAuthTokenRevision",
-				"daemonProgramRevision",
-				"userProcessRevisionAliases",
-			]) {
-				expect(Object.hasOwn(migrated, field)).toBe(false);
-			}
-		});
-	}
-
-	test("reads old state through the named fallback and preserves explicit apply generation", () => {
+	test("preserves explicit apply generation", () => {
 		const state = appliedStateFixture();
 		const complete = {
 			...state,

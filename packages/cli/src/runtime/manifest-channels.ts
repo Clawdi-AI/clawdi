@@ -25,7 +25,7 @@ import {
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
-import { hasExactKeys, isPlainRecord, recordValue } from "./manifest-shared";
+import { isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
 	runRuntimeUserCommand,
@@ -45,7 +45,6 @@ import {
 	parseManagedWhatsAppSocketMetadataJson,
 } from "./whatsapp-upstream-contract";
 
-const LEGACY_MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
 export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
@@ -140,7 +139,6 @@ function materializeManagedWhatsAppAuthDir(
 			dirMode: 0o700,
 		},
 	);
-	rmSync(join(credential.authDir, LEGACY_MANAGED_WHATSAPP_AUTH_MARKER), { force: true });
 }
 
 interface ManagedWhatsAppAuthDirInspection {
@@ -292,17 +290,9 @@ export function readManagedWhatsAppAuthMetadata(
 			return null;
 		}
 		try {
-			const socketMetadata = recordValue(
+			parseManagedWhatsAppSocketMetadataJson(
 				additionalData[CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY],
 			);
-			const normalizedSocketMetadata =
-				socketMetadata &&
-				hasExactKeys(socketMetadata, ["authCert", "capability", "schemaVersion"]) &&
-				typeof socketMetadata.capability === "string" &&
-				/^clawdi_[a-f0-9]{32}$/.test(socketMetadata.capability)
-					? { schemaVersion: socketMetadata.schemaVersion, authCert: socketMetadata.authCert }
-					: socketMetadata;
-			parseManagedWhatsAppSocketMetadataJson(normalizedSocketMetadata);
 			const credentialMetadata = Object.hasOwn(
 				additionalData,
 				CLAWDI_MANAGED_WHATSAPP_CREDENTIAL_METADATA_KEY,

@@ -1,8 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
-import { log, toErrorMessage } from "../serve/log";
 import type { HostPolicyReadResult } from "./host-policy";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
@@ -81,7 +80,6 @@ export interface RuntimeBootStatus {
 		cliManagedBin: string;
 		cliNpmPrefix: string;
 		cliBootstrapStatus: string;
-		cliUpgradeState: string;
 		bootStatus: string;
 		runtimeWatchStatus: string;
 		runRoot: string;
@@ -115,7 +113,6 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cliManagedBin: paths.cliManagedBin,
 		cliNpmPrefix: paths.cliNpmPrefix,
 		cliBootstrapStatus: paths.cliBootstrapStatus,
-		cliUpgradeState: paths.cliUpgradeState,
 		bootStatus: paths.bootStatus,
 		runtimeWatchStatus: paths.runtimeWatchStatus,
 		runRoot: paths.runRoot,
@@ -208,14 +205,6 @@ export function writeRuntimePlatformFileAtomic(
 	writePrivateFileAtomic(path, content, { ...options, trustedRoot });
 }
 
-function removeRetiredRuntimeState(path: string): void {
-	try {
-		rmSync(path, { force: true, recursive: true });
-	} catch (error) {
-		log.warn("runtime.retired_state_cleanup_failed", { path, error: toErrorMessage(error) });
-	}
-}
-
 export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 	for (const [path, systemdPath, mode] of [
 		[paths.configurationRoot, DEFAULT_CONFIGURATION_ROOT, 0o700],
@@ -239,20 +228,6 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 			chmodSync(path, mode);
 		}
 	}
-	// SUNSET: remove state written before 0.14.14 once the fleet has upgraded.
-	for (const path of [
-		join(paths.configurationRoot, "clawdi.json"),
-		join(paths.configurationRoot, "runtime-live-sync-agents.json"),
-		join(paths.configurationRoot, "projections"),
-		join(paths.serviceStateRoot, "sync"),
-		join(paths.serviceStateRoot, "install-inventory"),
-		join(paths.statusRoot, "cloud-status.json"),
-		join(paths.statusRoot, "cloud-result.json"),
-		join(paths.statusRoot, "egress-engine.json"),
-		join(paths.statusRoot, "runtime-install-receipts.json"),
-		join(paths.cacheRoot, "channels.etag"),
-	])
-		removeRetiredRuntimeState(path);
 	for (const [dir, mode] of [
 		[paths.statusRoot, 0o755],
 		[paths.runConfigRoot, 0o755],

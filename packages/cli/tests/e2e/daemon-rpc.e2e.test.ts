@@ -293,6 +293,7 @@ function createFixture(): Fixture {
 				sourcePath: "https://runtime.test/v1/runtime/manifest",
 				sha256: "b".repeat(64),
 			},
+			activated: {},
 			providerIds: ["managed"],
 			projectedProviderIds: { codex: ["managed"] },
 		})}\n`,
