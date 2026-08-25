@@ -703,12 +703,12 @@ def _on_postgres_notification(
     _broadcast(envelope.user_id, envelope.event)
 
 
-def _on_channel_delivery_enqueued(_pid: int, _channel: str, _payload: str) -> None:
-    channel_deliveries_enqueued.signal()
+def _on_channel_delivery_enqueued(_pid: int, _channel: str, payload: str) -> None:
+    channel_deliveries_enqueued.signal(payload)
 
 
-def _on_channel_inbound_message_enqueued(_pid: int, _channel: str, _payload: str) -> None:
-    channel_inbound_messages_enqueued.signal()
+def _on_channel_inbound_message_enqueued(_pid: int, _channel: str, payload: str) -> None:
+    channel_inbound_messages_enqueued.signal(payload)
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:

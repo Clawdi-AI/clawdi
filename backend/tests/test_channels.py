@@ -102,6 +102,7 @@ from app.services.channels import (
     record_discord_dispatch,
     send_provider_outbound_payload,
     telegram_direct_messages_topic_id_from_update,
+    telegram_message_reference_value,
     telegram_message_thread_id_from_update,
     wait_for_telegram_updates,
 )
@@ -5995,7 +5996,10 @@ async def test_telegram_get_updates_wait_helper_sees_new_committed_update(
                 )
             )
             await insert_session.flush()
-            await notify_channel_inbound_message_enqueued(insert_session)
+            await notify_channel_inbound_message_enqueued(
+                insert_session,
+                account_id=created["id"],
+            )
             await insert_session.commit()
 
         updates = await asyncio.wait_for(pending, timeout=1)
@@ -8538,6 +8542,79 @@ async def test_telegram_native_attach_multipart_is_forwarded_byte_for_byte_and_r
 
     assert reuse.status_code == 200
     assert len(_FakeProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_proxy_releases_transaction_during_provider_io(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-provider-transaction",
+        chat_id="42",
+    )
+
+    class TransactionObservingProviderClient(_FakeProviderClient):
+        fail = False
+
+        async def request(self, method, url, **kwargs):
+            assert not db_session.in_transaction()
+            if self.fail:
+                raise httpx.ConnectError("network down")
+            return await super().request(method, url, **kwargs)
+
+    _reset_fake_provider_client(
+        {
+            "ok": True,
+            "result": {
+                "message_id": 71,
+                "chat": {"id": 42, "type": "private"},
+                "document": {"file_id": "transaction-safe-file"},
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        TransactionObservingProviderClient,
+    )
+
+    sent = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "document": "https://example.test/report.pdf"},
+    )
+
+    assert sent.status_code == 200
+    assert not db_session.in_transaction()
+    references = set(
+        await db_session.scalars(
+            select(ChannelAgentReference.ref_value).where(
+                ChannelAgentReference.account_id == UUID(created["id"]),
+                ChannelAgentReference.ref_value.in_(
+                    {"transaction-safe-file", telegram_message_reference_value("42", 71)}
+                ),
+            )
+        )
+    )
+    assert references == {
+        "transaction-safe-file",
+        telegram_message_reference_value("42", 71),
+    }
+    await db_session.rollback()
+
+    TransactionObservingProviderClient.fail = True
+    failed = await client.post(
+        _telegram_bot_path(created, "sendChatAction"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "action": "typing"},
+    )
+
+    assert failed.status_code == 502
+    assert not db_session.in_transaction()
 
 
 @pytest.mark.asyncio

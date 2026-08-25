@@ -15,21 +15,26 @@ CHANNEL_INBOUND_MESSAGES_ENQUEUED = "channel_inbound_messages_enqueued"
 
 
 class ChannelWakeup:
-    """Process-local broadcast subscription for PostgreSQL notifications."""
+    """Process-local keyed subscription for PostgreSQL notifications."""
 
     def __init__(self) -> None:
-        self._waiters: set[asyncio.Event] = set()
+        self._waiters: dict[str, set[asyncio.Event]] = {}
 
-    def subscribe(self) -> asyncio.Event:
+    def subscribe(self, key: str) -> asyncio.Event:
         waiter = asyncio.Event()
-        self._waiters.add(waiter)
+        self._waiters.setdefault(key, set()).add(waiter)
         return waiter
 
-    def unsubscribe(self, waiter: asyncio.Event) -> None:
-        self._waiters.discard(waiter)
+    def unsubscribe(self, key: str, waiter: asyncio.Event) -> None:
+        waiters = self._waiters.get(key)
+        if waiters is None:
+            return
+        waiters.discard(waiter)
+        if not waiters:
+            del self._waiters[key]
 
-    def signal(self) -> None:
-        for waiter in self._waiters:
+    def signal(self, key: str) -> None:
+        for waiter in self._waiters.get(key, ()):
             waiter.set()
 
 
@@ -40,6 +45,7 @@ channel_inbound_messages_enqueued = ChannelWakeup()
 async def wait_for_channel_inbound_messages[T](
     fetch: Callable[[], Awaitable[list[T]]],
     *,
+    account_id: str,
     timeout_seconds: int | float | None,
     fallback_poll_seconds: float | None = None,
     wakeup: ChannelWakeup | None = None,
@@ -56,7 +62,7 @@ async def wait_for_channel_inbound_messages[T](
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     source = wakeup or channel_inbound_messages_enqueued
-    notified = source.subscribe()
+    notified = source.subscribe(account_id)
     try:
         while True:
             # Clearing before the query is load-bearing. A commit notification
@@ -76,21 +82,25 @@ async def wait_for_channel_inbound_messages[T](
             except TimeoutError:
                 pass
     finally:
-        source.unsubscribe(notified)
+        source.unsubscribe(account_id, notified)
 
 
 async def notify_channel_delivery_enqueued(db: AsyncSession) -> None:
     """Wake delivery workers after the surrounding transaction commits."""
-    await _notify_channel_work_enqueued(db, CHANNEL_DELIVERIES_ENQUEUED)
+    await _notify_channel_work_enqueued(
+        db,
+        CHANNEL_DELIVERIES_ENQUEUED,
+        CHANNEL_DELIVERIES_ENQUEUED,
+    )
 
 
-async def notify_channel_inbound_message_enqueued(db: AsyncSession) -> None:
+async def notify_channel_inbound_message_enqueued(db: AsyncSession, *, account_id: str) -> None:
     """Wake inbox consumers after the surrounding transaction commits."""
-    await _notify_channel_work_enqueued(db, CHANNEL_INBOUND_MESSAGES_ENQUEUED)
+    await _notify_channel_work_enqueued(db, CHANNEL_INBOUND_MESSAGES_ENQUEUED, account_id)
 
 
-async def _notify_channel_work_enqueued(db: AsyncSession, channel: str) -> None:
+async def _notify_channel_work_enqueued(db: AsyncSession, channel: str, key: str) -> None:
     await db.execute(
-        text("SELECT pg_notify(:channel, '')"),
-        {"channel": channel},
+        text("SELECT pg_notify(:channel, :key)"),
+        {"channel": channel, "key": key},
     )

@@ -40,6 +40,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
 from app.services.channel_wakeups import (
+    CHANNEL_DELIVERIES_ENQUEUED,
     channel_deliveries_enqueued,
     channel_inbound_messages_enqueued,
     notify_channel_delivery_enqueued,
@@ -719,12 +720,13 @@ async def test_postgres_listener_ignores_malformed_notification_before_valid_eve
 
 @pytest.mark.asyncio
 async def test_postgres_listener_wakes_channel_consumers(db_session: AsyncSession):
-    delivery_waiter = channel_deliveries_enqueued.subscribe()
-    inbound_waiter = channel_inbound_messages_enqueued.subscribe()
+    account_id = "00000000-0000-4000-8000-000000000901"
+    delivery_waiter = channel_deliveries_enqueued.subscribe(CHANNEL_DELIVERIES_ENQUEUED)
+    inbound_waiter = channel_inbound_messages_enqueued.subscribe(account_id)
     await sync_events.start_postgres_listener()
     try:
         await notify_channel_delivery_enqueued(db_session)
-        await notify_channel_inbound_message_enqueued(db_session)
+        await notify_channel_inbound_message_enqueued(db_session, account_id=account_id)
         await asyncio.sleep(0)
         assert not delivery_waiter.is_set()
         assert not inbound_waiter.is_set()
@@ -735,8 +737,8 @@ async def test_postgres_listener_wakes_channel_consumers(db_session: AsyncSessio
         await asyncio.wait_for(inbound_waiter.wait(), timeout=2)
     finally:
         await sync_events.stop_postgres_listener()
-        channel_deliveries_enqueued.unsubscribe(delivery_waiter)
-        channel_inbound_messages_enqueued.unsubscribe(inbound_waiter)
+        channel_deliveries_enqueued.unsubscribe(CHANNEL_DELIVERIES_ENQUEUED, delivery_waiter)
+        channel_inbound_messages_enqueued.unsubscribe(account_id, inbound_waiter)
 
 
 @pytest.mark.asyncio
