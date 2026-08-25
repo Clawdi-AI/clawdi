@@ -112,11 +112,16 @@ export function hostedRuntimeStatusView(
 export function useHostedAgentTiles({
 	cloudEnvs,
 	includeDeployments = true,
+	eventStreamActive = false,
 }: {
 	cloudEnvs: Env[];
 	includeDeployments?: boolean;
+	eventStreamActive?: boolean;
 }) {
-	const inventory = useHostedDeploymentInventory({ enabled: includeDeployments });
+	const inventory = useHostedDeploymentInventory({
+		enabled: includeDeployments,
+		eventStreamActive,
+	});
 	const deployments = inventory.deployments ?? EMPTY_DEPLOYMENTS;
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead

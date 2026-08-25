@@ -303,6 +303,7 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
@@ -445,6 +446,7 @@ export function HostedAgentDetail({
 	deploymentTransitionEscalated,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
+	eventStreamActive = false,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
@@ -456,6 +458,7 @@ export function HostedAgentDetail({
 	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
+	eventStreamActive?: boolean;
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -469,10 +472,13 @@ export function HostedAgentDetail({
 		...agentDetailQueryOptions($api, queryClient, environmentId),
 		enabled: cloudAgentId && deploymentProjectionQueryable,
 		refetchInterval: (query) =>
-			missingProjectionRefetchInterval(
-				query.state.error,
-				deploymentStatus,
-				query.state.fetchFailureCount,
+			eventStreamFallbackInterval(
+				missingProjectionRefetchInterval(
+					query.state.error,
+					deploymentStatus,
+					query.state.fetchFailureCount,
+				),
+				eventStreamActive,
 			),
 		refetchIntervalInBackground: false,
 	});
@@ -614,6 +620,7 @@ export function HostedAgentDetail({
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
+							eventStreamActive={eventStreamActive}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
@@ -652,7 +659,11 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{activeTab === "plugins" ? (
-						<AgentPluginsSurface agentId={environmentId} runtime={runtime} />
+						<AgentPluginsSurface
+							agentId={environmentId}
+							runtime={runtime}
+							eventStreamActive={eventStreamActive}
+						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab
@@ -1156,6 +1167,7 @@ function OverviewTab({
 	sessionLink,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
+	eventStreamActive,
 }: {
 	agentId: string;
 	deployment: HostedDeployment;
@@ -1172,6 +1184,7 @@ function OverviewTab({
 	};
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
+	eventStreamActive: boolean;
 }) {
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
@@ -1220,7 +1233,9 @@ function OverviewTab({
 		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
 	});
-	const pluginDesiredState = useQuery(agentPluginDesiredStateQueryOptions(useOpenApi(), agentId));
+	const pluginDesiredState = useQuery(
+		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, eventStreamActive),
+	);
 	const pluginOverview = agentPluginOverviewState({
 		plugins: pluginDesiredState.data?.plugins,
 		isLoading: pluginDesiredState.isLoading,

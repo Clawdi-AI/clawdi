@@ -72,7 +72,6 @@ describe("hosted agent sessions refresh", () => {
 			refetchInterval: 30_000,
 			refetchIntervalInBackground: false,
 		});
-
 		environmentManager.setIsServer(() => false);
 		focusManager.setFocused(false);
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

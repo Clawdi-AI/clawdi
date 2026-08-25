@@ -37,6 +37,7 @@ import {
 	isTransitionalStatus,
 	type SettlingTracker,
 } from "@/hosted/deployment-status";
+import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
@@ -437,9 +438,11 @@ export function billingRecoveryRefetchIntervalFor(
 export function useHostedDeployments({
 	enabled = true,
 	pollBillingRecoveryFor = null,
+	eventStreamActive = false,
 }: {
 	enabled?: boolean;
 	pollBillingRecoveryFor?: string | null;
+	eventStreamActive?: boolean;
 } = {}) {
 	const client = useBillingClient();
 	const transitionTrackersRef = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
@@ -462,7 +465,10 @@ export function useHostedDeployments({
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
-			return shortestRefetchInterval(inventoryInterval, billingInterval);
+			return eventStreamFallbackInterval(
+				shortestRefetchInterval(inventoryInterval, billingInterval),
+				eventStreamActive,
+			);
 		},
 		...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	});

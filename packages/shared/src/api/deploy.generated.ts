@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Events */
+        get: operations["list_v2_events_v2_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/ai-providers/managed/models": {
         parameters: {
             query?: never;
@@ -141,6 +158,23 @@ export interface paths {
         head?: never;
         /** Update V2 Deployment */
         patch: operations["update_v2_deployment_v2_deployments__deployment_id__patch"];
+        trace?: never;
+    };
+    "/v2/deployments/{deployment_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List V2 Deployment Events */
+        get: operations["list_v2_deployment_events_v2_deployments__deployment_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v2/deployments/{deployment_id}/terminal": {
@@ -785,6 +819,39 @@ export interface components {
             /** Fundinginvoiceid */
             fundingInvoiceId?: string | null;
         };
+        /** ConditionChangedEventData */
+        ConditionChangedEventData: {
+            condition: components["schemas"]["DeploymentCondition"];
+        };
+        /** DeliveryLineageAdvancedEventData */
+        DeliveryLineageAdvancedEventData: {
+            /** Delivery Root Request Id */
+            delivery_root_request_id: string;
+            /** Predecessor Operation Name */
+            predecessor_operation_name: string;
+            /** Successor Operation Name */
+            successor_operation_name: string;
+            /** Active Generation */
+            active_generation: number;
+            /** Lineage Version */
+            lineage_version: number;
+        };
+        /** DeliveryTerminatedEventData */
+        DeliveryTerminatedEventData: {
+            /** Delivery Root Request Id */
+            delivery_root_request_id: string;
+            /** Active Operation Name */
+            active_operation_name: string;
+            /** Lineage Version */
+            lineage_version: number;
+            /**
+             * Lineage State
+             * @enum {string}
+             */
+            lineage_state: "succeeded" | "failed" | "terminated";
+            /** Disposition Id */
+            disposition_id?: number | null;
+        };
         /** DeploymentCondition */
         DeploymentCondition: {
             /**
@@ -816,6 +883,59 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * DeploymentEventEnvelope
+         * @description Typed immutable event envelope read from ``deployment_events``.
+         */
+        DeploymentEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /** Tenant Ref */
+            tenant_ref?: string | null;
+            /** Stream Sequence */
+            stream_sequence: number;
+            /**
+             * Deployment Id
+             * Format: sqid
+             * @example hdep_K8fJ3pQm
+             */
+            deployment_id: string;
+            /** Deployment Sequence */
+            deployment_sequence: number;
+            event_type: components["schemas"]["DeploymentEventType"];
+            /** Reason */
+            reason: string;
+            /** Resource Name */
+            resource_name: string;
+            /** Metadata Generation */
+            metadata_generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Operation Name */
+            operation_name?: string | null;
+            /** Data */
+            data: components["schemas"]["OperationAcceptedEventData"] | components["schemas"]["OperationCancelRequestedEventData"] | components["schemas"]["OperatorRepairRequestedEventData"] | components["schemas"]["OperationStartedEventData"] | components["schemas"]["OperationTerminalEventData"] | components["schemas"]["DeliveryLineageAdvancedEventData"] | components["schemas"]["DeliveryTerminatedEventData"] | components["schemas"]["StateChangedEventData"] | components["schemas"]["ConditionChangedEventData"] | components["schemas"]["DriftEventData"] | components["schemas"]["ReconcileQuarantinedEventData"];
+            failure?: components["schemas"]["LifecycleFailureOccurrence"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** DeploymentEventPage */
+        DeploymentEventPage: {
+            /** Events */
+            events: components["schemas"]["DeploymentEventEnvelope"][];
+            /** Nextcursor */
+            nextCursor: string;
+            /** Hasmore */
+            hasMore: boolean;
+        };
+        /**
+         * DeploymentEventType
+         * @enum {string}
+         */
+        DeploymentEventType: "deployment.operation.accepted" | "deployment.operation.cancel_requested" | "deployment.reconcile.repair_requested" | "deployment.operation.started" | "deployment.operation.succeeded" | "deployment.operation.failed" | "deployment.operation.aborted" | "deployment.operation.cancelled" | "deployment.delivery.lineage_advanced" | "deployment.delivery.terminated" | "deployment.state.changed" | "deployment.condition.changed" | "deployment.drift.detected" | "deployment.drift.repaired" | "deployment.reconcile.quarantined";
         /** DeploymentMetadata */
         DeploymentMetadata: {
             /** Generation */
@@ -889,6 +1009,13 @@ export interface components {
             /** Disk Gib */
             disk_gib: number;
         };
+        /** DriftEventData */
+        DriftEventData: {
+            /** Drift Fingerprint */
+            drift_fingerprint: string;
+            /** Reconcile Attempt Id */
+            reconcile_attempt_id?: number | null;
+        };
         /** EmptyResponse */
         EmptyResponse: {
             /**
@@ -896,6 +1023,37 @@ export interface components {
              * @constant
              */
             "@type": "type.googleapis.com/google.protobuf.Empty";
+        };
+        /** EventCursorExpiredProblem */
+        EventCursorExpiredProblem: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+            /** Instance */
+            instance?: string | null;
+            /** Code */
+            code: string;
+            /** Phase */
+            phase?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            resetBoundary: components["schemas"]["EventCursorResetBoundary"];
+        };
+        /** EventCursorResetBoundary */
+        EventCursorResetBoundary: {
+            /** Replayfloorcursor */
+            replayFloorCursor: string;
+            /**
+             * Snapshotrequired
+             * @default true
+             * @constant
+             */
+            snapshotRequired: true;
         };
         /**
          * EventStreamSnapshotHandoff
@@ -1131,6 +1289,78 @@ export interface components {
             /** Response */
             response?: components["schemas"]["DeploymentOperationResponse"] | components["schemas"]["EmptyResponse"] | null;
         };
+        /** OperationAcceptedEventData */
+        OperationAcceptedEventData: {
+            /** Operation Name */
+            operation_name: string;
+            /**
+             * Verb
+             * @enum {string}
+             */
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "migrate_runtime_context" | "rename" | "delete" | "reset_runtime_ui_access" | "migrate_image" | "rollback_image";
+            /** Target Generation */
+            target_generation: number;
+        };
+        /** OperationCancelRequestedEventData */
+        OperationCancelRequestedEventData: {
+            /** Operation Name */
+            operation_name: string;
+            /** Cancel Request Id */
+            cancel_request_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Request Fingerprint */
+            request_fingerprint: string;
+        };
+        /** OperationStartedEventData */
+        OperationStartedEventData: {
+            /** Operation Name */
+            operation_name: string;
+            /** Reconcile Attempt Id */
+            reconcile_attempt_id: number;
+        };
+        /** OperationTerminalEventData */
+        OperationTerminalEventData: {
+            /** Operation Name */
+            operation_name: string;
+            /** Result Fingerprint */
+            result_fingerprint: string;
+            /** Successor Operation Name */
+            successor_operation_name?: string | null;
+        };
+        /** OperatorRepairRequestedEventData */
+        OperatorRepairRequestedEventData: {
+            /** Repair Request Id */
+            repair_request_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Request Fingerprint */
+            request_fingerprint: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "retry_retraction" | "verify_absent" | "rearm_external_ports_delete";
+            /** Intent Versions */
+            intent_versions: [
+                number,
+                string
+            ][];
+            /**
+             * Stage Versions
+             * @default []
+             */
+            stage_versions: [
+                number,
+                string
+            ][];
+            /** Boundary Version */
+            boundary_version?: string | null;
+            /** Reason */
+            reason: string;
+            /** Authorization Scope Fingerprint */
+            authorization_scope_fingerprint: string;
+        };
         /** PortSpec */
         PortSpec: {
             /** Name */
@@ -1155,6 +1385,13 @@ export interface components {
             provider_id: string;
             /** Model */
             model: string;
+        };
+        /** ReconcileQuarantinedEventData */
+        ReconcileQuarantinedEventData: {
+            /** Reconcile Attempt Id */
+            reconcile_attempt_id: number;
+            /** Consecutive Failures */
+            consecutive_failures: number;
         };
         /** RuntimeConfiguration */
         RuntimeConfiguration: {
@@ -1204,6 +1441,19 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
+        };
+        /** StateChangedEventData */
+        StateChangedEventData: {
+            /**
+             * Previous State
+             * @enum {string}
+             */
+            previous_state: "creating" | "starting" | "running" | "stopping" | "stopped" | "restarting" | "updating" | "deleting" | "deleted" | "failed";
+            /**
+             * Current State
+             * @enum {string}
+             */
+            current_state: "creating" | "starting" | "running" | "stopping" | "stopped" | "restarting" | "updating" | "deleting" | "deleted" | "failed";
         };
         /** TerminalProviderIdentity */
         TerminalProviderIdentity: {
@@ -2935,6 +3185,68 @@ export interface operations {
             };
         };
     };
+    list_v2_events_v2_events_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                Accept?: string;
+                "Last-Event-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentEventPage"];
+                };
+            };
+            /** @description The event cursor is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The event cursor is bound to another scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The event cursor is outside the replay window. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCursorExpiredProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_v2_managed_model_catalog_v2_ai_providers_managed_models_get: {
         parameters: {
             query?: never;
@@ -3347,6 +3659,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+        };
+    };
+    list_v2_deployment_events_v2_deployments__deployment_id__events_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                Accept?: string;
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentEventPage"];
+                };
+            };
+            /** @description The event cursor is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The event cursor is bound to another scope. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The event cursor is outside the replay window. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCursorExpiredProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

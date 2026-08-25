@@ -6,6 +6,7 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
+	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
@@ -505,6 +506,35 @@ export function createBillingClient(
 				params: { path: { deployment_id: id } },
 			}),
 		);
+	const getDeploymentEventStreamHandoff = async (signal?: AbortSignal) =>
+		unwrapDeploymentEventStreamSnapshotHandoff(
+			unwrapDeploy(
+				await api.GET("/v2/deployments", {
+					params: { query: { eventStreamHandoff: true } },
+					signal,
+				}),
+			),
+		);
+	const openDeploymentEventStream = async (
+		deploymentId: string | null,
+		cursor: string,
+		signal: AbortSignal,
+	): Promise<Response> => {
+		const token = await getToken();
+		const headers = new Headers({
+			Accept: "text/event-stream",
+			"Last-Event-ID": cursor,
+		});
+		if (token) headers.set("Authorization", `Bearer ${token}`);
+		const path = deploymentId
+			? `/v2/deployments/${encodeURIComponent(deploymentId)}/events`
+			: "/v2/events";
+		return fetch(new URL(path, `${ROOT_BASE_URL}/`), {
+			headers,
+			signal,
+			cache: "no-store",
+		});
+	};
 
 	const getOperation = async (
 		operationId: string,
@@ -920,6 +950,8 @@ export function createBillingClient(
 
 		listDeployments: async (): Promise<HostedDeployment[]> =>
 			unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),
+		getDeploymentEventStreamHandoff,
+		openDeploymentEventStream,
 		getDeployment,
 		waitForDeploymentRequest,
 		createDeployment: async (

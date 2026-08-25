@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -9,6 +9,8 @@ import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const AGENTS_POLL_INTERVAL_MS = 10_000;
+const AGENTS_EVENT_STREAM_FALLBACK_INTERVAL_MS = 100_000;
 
 /**
  * Flat index of every agent — self-managed (connected) and, for hosted users,
@@ -30,6 +32,7 @@ const HostedAgentsByCompute = IS_HOSTED_BUILD
 export default function AgentsIndexPage() {
 	const api = useOpenApi();
 	const hostedAccess = useProductAccess();
+	const [hostedEventStreamActive, setHostedEventStreamActive] = useState(false);
 	const {
 		data: environments,
 		isLoading: envsLoading,
@@ -42,7 +45,9 @@ export default function AgentsIndexPage() {
 		{
 			// Match the Overview/agent-detail 10s cadence so the live status badges
 			// stay live on this list too.
-			refetchInterval: 10_000,
+			refetchInterval: hostedEventStreamActive
+				? AGENTS_EVENT_STREAM_FALLBACK_INTERVAL_MS
+				: AGENTS_POLL_INTERVAL_MS,
 			refetchIntervalInBackground: false,
 		},
 	);
@@ -75,6 +80,7 @@ export default function AgentsIndexPage() {
 						canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
+						onEventStreamActiveChange={setHostedEventStreamActive}
 					/>
 				</Suspense>
 			) : (
