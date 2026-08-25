@@ -652,6 +652,7 @@ async def telegram_file_api(
         )
 
     provider_token = decrypt_provider_token(account)
+    await db.rollback()
     base_url = settings.channel_telegram_api_base_url.strip()
     await _validate_telegram_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}/file/bot{provider_token}/{file_path}"
@@ -2187,8 +2188,11 @@ async def _handle_telegram_get_file(
             "Forbidden: file_id is not bound to this bot",
             403,
         )
+    account_id = account.id
+    provider_token = decrypt_provider_token(account)
+    await db.rollback()
     response = await _telegram_provider_response(
-        account=account,
+        provider_token=provider_token,
         method="getFile",
         request=request,
         raw_body=raw_body,
@@ -2205,6 +2209,7 @@ async def _handle_telegram_get_file(
         and file_path
     ):
         try:
+            account = await get_active_channel_account(db, account_id=account_id)
             await record_channel_agent_reference(
                 db,
                 account=account,
@@ -2217,12 +2222,12 @@ async def _handle_telegram_get_file(
         except Exception:
             log.exception(
                 "telegram_reference_recording_failed account_id=%s link_id=%s method=getFile",
-                account.id,
+                account_id,
                 bot_agent_link_id,
             )
             await _rollback_telegram_reference_recording(
                 db,
-                account_id=account.id,
+                account_id=account_id,
                 bot_agent_link_id=bot_agent_link_id,
                 method="getFile",
             )
@@ -2253,8 +2258,10 @@ async def _handle_telegram_callback_answer(
             "Forbidden: callback_query_id is not bound to this bot",
             403,
         )
+    provider_token = decrypt_provider_token(account)
+    await db.rollback()
     response = await _telegram_provider_response(
-        account=account,
+        provider_token=provider_token,
         method=method,
         request=request,
         raw_body=raw_body,
@@ -2536,8 +2543,11 @@ async def _proxy_telegram_bot_method(
             and "message_thread_id" in request_params
             and "direct_messages_topic_id" not in request_params
         )
+    account_id = account.id
+    provider_token = decrypt_provider_token(account)
+    await db.rollback()
     response = await _telegram_provider_response(
-        account=account,
+        provider_token=provider_token,
         method=method,
         request=request,
         raw_body=raw_body,
@@ -2553,6 +2563,7 @@ async def _proxy_telegram_bot_method(
             )
             if file_ids or message_references:
                 try:
+                    account = await get_active_channel_account(db, account_id=account_id)
                     for file_id in sorted(file_ids):
                         await record_channel_agent_reference(
                             db,
@@ -2573,13 +2584,13 @@ async def _proxy_telegram_bot_method(
                 except Exception:
                     log.exception(
                         "telegram_reference_recording_failed account_id=%s link_id=%s method=%s",
-                        account.id,
+                        account_id,
                         bot_agent_link_id,
                         method,
                     )
                     await _rollback_telegram_reference_recording(
                         db,
-                        account_id=account.id,
+                        account_id=account_id,
                         bot_agent_link_id=bot_agent_link_id,
                         method=method,
                     )
@@ -2631,13 +2642,12 @@ def _telegram_result_message_references(
 
 async def _telegram_provider_response(
     *,
-    account: ChannelAccount,
+    provider_token: str,
     method: str,
     request: Request,
     raw_body: bytes,
     translate_direct_topic: bool = False,
 ) -> httpx.Response:
-    provider_token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
     await _validate_telegram_provider_base_url(base_url)
     url = httpx.URL(f"{base_url.rstrip('/')}/bot{provider_token}/{method}")
