@@ -55,10 +55,8 @@ function desiredPlugin(name: string, overrides: Partial<DesiredPlugin> = {}): De
 	};
 }
 
-test("Agent Plugins stays closed without the per-user capability", async ({ page }) => {
-	await stubHostedApi(page, {
-		deployments: [deployment],
-	});
+test("Connected Agents reject Agent Plugins routes", async ({ page }) => {
+	await stubHostedApi(page);
 
 	await page.goto(`/agents/${AGENT_ID}`);
 	await expect(
@@ -129,7 +127,6 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		}),
 	];
 	await stubHostedApi(page, {
-		canUseAgentPluginsUI: true,
 		deployments: [deployment],
 	});
 	await page.route("http://127.0.0.1:8000/v1/plugin-catalog", async (route) => {
@@ -268,7 +265,7 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 });
 
-test("Agent Plugins opens and installs with the per-user capability", async ({ page }) => {
+test("Hosted Agent Plugins opens and installs from the overview", async ({ page }) => {
 	let installed = false;
 	let acceptInstall = () => {};
 	const installAccepted = new Promise<void>((resolve) => {
@@ -288,7 +285,6 @@ test("Agent Plugins opens and installs with the per-user capability", async ({ p
 		updated_at: new Date().toISOString(),
 	};
 	await stubHostedApi(page, {
-		canUseAgentPluginsUI: true,
 		deployments: [deployment],
 	});
 	await page.route("http://127.0.0.1:8000/v1/plugin-catalog", async (route) => {

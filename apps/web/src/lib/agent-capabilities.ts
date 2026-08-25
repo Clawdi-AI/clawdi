@@ -3,8 +3,6 @@ import {
 	AGENT_SHARED_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
-	HOSTED_AGENT_SECTION_IDS,
-	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
 
 export type AgentOverviewModuleId =
@@ -46,8 +44,6 @@ const SHARED_RESOURCES = AGENT_SHARED_SECTION_IDS.map((section) => ({
 	section,
 }));
 
-const HOSTED_NAVIGATION_SECTIONS = new Set<AgentSectionId>(HOSTED_AGENT_SECTION_IDS);
-
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [
 		{
@@ -67,7 +63,7 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "three-column",
+			layout: "two-column",
 			modules: HOSTED_WORKSPACE_RESOURCES,
 		},
 		{
@@ -90,24 +86,6 @@ const AGENT_OVERVIEW_GROUPS = {
 
 export function agentOverviewGroups(
 	variant: AgentNavigationVariant,
-	visibleSectionIds?: readonly AgentSectionId[],
 ): readonly AgentOverviewGroup[] {
-	const groups = AGENT_OVERVIEW_GROUPS[variant];
-	if (variant !== "hosted") return groups;
-
-	const visibleSections = new Set(visibleSectionIds ?? hostedAgentVisibleSectionIds(true));
-	return groups.map((group) => {
-		const modules = group.modules.filter(
-			(module) =>
-				!HOSTED_NAVIGATION_SECTIONS.has(module.section) || visibleSections.has(module.section),
-		);
-		return {
-			...group,
-			layout:
-				group.id === "workspace" && modules.some((module) => module.id === "plugins")
-					? "two-column"
-					: group.layout,
-			modules,
-		};
-	});
+	return AGENT_OVERVIEW_GROUPS[variant];
 }

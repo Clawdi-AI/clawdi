@@ -13,7 +13,6 @@ export interface HostedProductAccess {
 	canUseLegacyHostedDashboard: boolean;
 	legacyHostedAccessStatus: LegacyHostedAccessStatus;
 	canCreateCloudAgents: boolean;
-	canUseAgentPluginsUI: boolean;
 	/**
 	 * Back-compat alias for the rollout flag. New code should choose the
 	 * narrower `canCreateCloudAgents` name so existing deployment management
@@ -62,6 +61,5 @@ export function hostedProductAccessFromProfile(
 		legacyHostedAccessStatus,
 		canCreateCloudAgents,
 		canUseCloudAgents: canCreateCloudAgents,
-		canUseAgentPluginsUI: capabilities?.can_use_agent_plugins_ui === true,
 	};
 }

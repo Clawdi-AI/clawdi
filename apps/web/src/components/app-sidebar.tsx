@@ -485,7 +485,7 @@ function AgentFocusSections({
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 }) {
-	const { legacyDashboardUrl, canUseAgentPluginsUI } = useProductAccess();
+	const { legacyDashboardUrl } = useProductAccess();
 	const legacyDashboardHref = kind === "legacy" ? legacyDashboardUrl : null;
 	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
 		? [
@@ -507,7 +507,7 @@ function AgentFocusSections({
 			variant={kind === "cloud" ? "hosted" : "connected"}
 			visibleSectionIds={
 				kind === "cloud"
-					? hostedAgentVisibleSectionIds(filesAvailable === true, canUseAgentPluginsUI)
+					? hostedAgentVisibleSectionIds(filesAvailable === true)
 					: undefined
 			}
 			activeSection={activeSection}

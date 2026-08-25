@@ -1255,11 +1255,6 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
-            /**
-             * Can Use Agent Plugins Ui
-             * @default false
-             */
-            can_use_agent_plugins_ui: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {

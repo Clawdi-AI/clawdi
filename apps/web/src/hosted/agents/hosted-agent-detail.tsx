@@ -459,7 +459,6 @@ export function HostedAgentDetail({
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const { canUseAgentPluginsUI } = useProductAccess();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
@@ -498,7 +497,7 @@ export function HostedAgentDetail({
 		: agentDisplayName({ default_name: deployment.resource.name, agent_type: runtime });
 	const parsedTab = parseHostedAgentTab(section) ?? "overview";
 	const filesUrl = deploymentFilesUrl(deployment);
-	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null, canUseAgentPluginsUI);
+	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null);
 	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
 	useSetBreadcrumbTitle(
 		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
@@ -613,7 +612,6 @@ export function HostedAgentDetail({
 							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
-							visibleSectionIds={visibleSectionIds}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
 						/>
@@ -1156,7 +1154,6 @@ function OverviewTab({
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
-	visibleSectionIds,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
 }: {
@@ -1173,7 +1170,6 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
-	visibleSectionIds: readonly AgentSectionId[];
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
 }) {
@@ -1224,10 +1220,7 @@ function OverviewTab({
 		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
 	});
-	const pluginsVisible = visibleSectionIds.includes("plugins");
-	const pluginDesiredState = useQuery(
-		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, { enabled: pluginsVisible }),
-	);
+	const pluginDesiredState = useQuery(agentPluginDesiredStateQueryOptions(useOpenApi(), agentId));
 	const pluginOverview = agentPluginOverviewState({
 		plugins: pluginDesiredState.data?.plugins,
 		isLoading: pluginDesiredState.isLoading,
@@ -1332,7 +1325,6 @@ function OverviewTab({
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
-				visibleSectionIds={visibleSectionIds}
 				content={{
 					projects: overviewProjectsModule({
 						bindings: {

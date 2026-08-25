@@ -211,9 +211,9 @@ describe("sidebar navigation model", () => {
 			"settings",
 		]);
 		expect(hostedAgentVisibleSectionIds(false)).not.toContain("files");
+		expect(hostedAgentVisibleSectionIds(false)).toContain("plugins");
 		expect(hostedAgentVisibleSectionIds(true)).toContain("files");
-		expect(hostedAgentVisibleSectionIds(true)).not.toContain("plugins");
-		expect(hostedAgentVisibleSectionIds(true, true)).toContain("plugins");
+		expect(hostedAgentVisibleSectionIds(true)).toContain("plugins");
 
 		expect(groupShape(agentNavigationGroups("hosted", ["overview"]))).toEqual([
 			{
