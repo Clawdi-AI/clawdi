@@ -505,11 +505,7 @@ function AgentFocusSections({
 		<AgentSectionList
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
-			visibleSectionIds={
-				kind === "cloud"
-					? hostedAgentVisibleSectionIds(filesAvailable === true)
-					: undefined
-			}
+			visibleSectionIds={kind === "cloud" ? hostedAgentVisibleSectionIds(filesAvailable === true) : undefined}
 			activeSection={activeSection}
 			primaryProject={primaryProject}
 			extraPrimaryItems={extraPrimaryItems}

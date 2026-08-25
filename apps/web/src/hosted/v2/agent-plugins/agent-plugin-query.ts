@@ -9,10 +9,7 @@ export const AGENT_PLUGIN_DESIRED_QUERY_KEY = [
 const ACTIVE_INSTALL_POLL_MS = 5_000;
 const STALLED_INSTALL_POLL_MS = 60_000;
 
-export function agentPluginDesiredStateQueryOptions(
-	api: OpenApiClient,
-	agentId: string,
-) {
+export function agentPluginDesiredStateQueryOptions(api: OpenApiClient, agentId: string) {
 	return api.queryOptions(
 		"get",
 		"/v1/agents/{agent_id}/agent-plugins",
