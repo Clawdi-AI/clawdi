@@ -78,8 +78,10 @@ from app.routes.channel_routers.shared import discord_gateway_dispatch
 from app.schemas.channel import ChannelAccountCreate, ChannelAgentLinkCreate
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
+from app.services import sync_events
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
+from app.services.channel_wakeups import notify_channel_inbound_message_enqueued
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import (
     ChannelAgentContext,
@@ -5550,42 +5552,51 @@ async def test_telegram_get_updates_wait_helper_sees_new_committed_update(
             offset=2,
             limit=100,
             timeout_seconds=1,
-            poll_interval_seconds=0.005,
+            poll_interval_seconds=30,
         )
     )
-    await asyncio.sleep(0.01)
-    async with sessionmaker() as insert_session:
-        binding = (
-            await insert_session.execute(
-                select(ChannelBinding).where(
-                    ChannelBinding.account_id == UUID(created["id"]),
-                    ChannelBinding.external_chat_id == "222",
+    await sync_events.start_postgres_listener()
+    try:
+        await asyncio.sleep(0.01)
+        async with sessionmaker() as insert_session:
+            binding = (
+                await insert_session.execute(
+                    select(ChannelBinding).where(
+                        ChannelBinding.account_id == UUID(created["id"]),
+                        ChannelBinding.external_chat_id == "222",
+                    )
+                )
+            ).scalar_one()
+            insert_session.add(
+                ChannelMessage(
+                    account_id=binding.account_id,
+                    bot_agent_link_id=binding.bot_agent_link_id,
+                    binding_id=binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    external_chat_id="222",
+                    provider_message_id="2",
+                    text="arrived during long poll",
+                    payload={
+                        "update_id": 2,
+                        "message": {
+                            "message_id": 2,
+                            "text": "arrived during long poll",
+                            "chat": {"id": 222, "type": "private"},
+                        },
+                    },
                 )
             )
-        ).scalar_one()
-        insert_session.add(
-            ChannelMessage(
-                account_id=binding.account_id,
-                bot_agent_link_id=binding.bot_agent_link_id,
-                binding_id=binding.id,
-                user_id=binding.user_id,
-                direction=MESSAGE_DIRECTION_INBOUND,
-                external_chat_id="222",
-                provider_message_id="2",
-                text="arrived during long poll",
-                payload={
-                    "update_id": 2,
-                    "message": {
-                        "message_id": 2,
-                        "text": "arrived during long poll",
-                        "chat": {"id": 222, "type": "private"},
-                    },
-                },
-            )
-        )
-        await insert_session.commit()
+            await insert_session.flush()
+            await notify_channel_inbound_message_enqueued(insert_session)
+            await insert_session.commit()
 
-    updates = await pending
+        updates = await asyncio.wait_for(pending, timeout=1)
+    finally:
+        await sync_events.stop_postgres_listener()
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
     assert updates == [
         {
@@ -5602,6 +5613,7 @@ async def test_telegram_get_updates_wait_helper_sees_new_committed_update(
 @pytest.mark.asyncio
 async def test_telegram_bot_api_get_updates_long_poll_times_out_empty(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     created = await _create_paired_telegram_channel(
         client,
@@ -5610,6 +5622,16 @@ async def test_telegram_bot_api_get_updates_long_poll_times_out_empty(
         provider_token=None,
     )
 
+    calls = 0
+    original_dequeue = channel_service.dequeue_telegram_updates
+
+    async def observed_dequeue(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original_dequeue(*args, **kwargs)
+
+    monkeypatch.setattr(channel_service, "dequeue_telegram_updates", observed_dequeue)
+    monkeypatch.setattr(settings, "channel_long_poll_interval_seconds", 5.0)
     updates = await client.get(
         _telegram_bot_path(created, "getUpdates"),
         headers=_telegram_agent_headers(created),
@@ -5618,6 +5640,9 @@ async def test_telegram_bot_api_get_updates_long_poll_times_out_empty(
 
     assert updates.status_code == 200
     assert updates.json() == {"ok": True, "result": []}
+    # One initial read, plus at most one deadline recheck. The previous 5 ms
+    # test fallback opened roughly ten sessions over this 50 ms long poll.
+    assert 1 <= calls <= 2
 
 
 @pytest.mark.asyncio

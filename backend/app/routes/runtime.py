@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import io
 import tarfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote
 from uuid import UUID
@@ -65,6 +66,13 @@ _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
 file_store = get_file_store()
 
 
+@dataclass(frozen=True, slots=True)
+class _RuntimeManifestSnapshot:
+    source: RenderedRuntimeSource | None
+    etag: str | None
+    repair_link_ids: tuple[UUID, ...]
+
+
 @router.get("/manifest")
 async def get_runtime_manifest(
     request: Request,
@@ -89,28 +97,31 @@ async def get_runtime_manifest(
     project_agent_plugin_github_release_sources = (
         RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY in capabilities
     )
+    if_none_match = request.headers.get("if-none-match")
     try:
-        source, repair_link_ids = await _render_runtime_source_snapshot(
+        snapshot = await _render_runtime_source_snapshot(
             environment_id=environment_id,
             owner_user_id=auth.user_id,
+            if_none_match=if_none_match,
             project_agent_plugins=project_agent_plugins,
             project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
         )
-        if repair_link_ids:
+        if snapshot.repair_link_ids:
             await ensure_runtime_whatsapp_credentials(
                 db,
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
-                link_ids=repair_link_ids,
+                link_ids=snapshot.repair_link_ids,
             )
             await db.commit()
-            source, repair_link_ids = await _render_runtime_source_snapshot(
+            snapshot = await _render_runtime_source_snapshot(
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
+                if_none_match=if_none_match,
                 project_agent_plugins=project_agent_plugins,
                 project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
             )
-        if source is None:
+        if snapshot.repair_link_ids or snapshot.etag is None:
             raise RuntimeSourceError(
                 "Active runtime WhatsApp Link has no synthetic credential material"
             )
@@ -119,16 +130,15 @@ async def get_runtime_manifest(
     except RuntimeSourceError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
-    payload = render_runtime_bundle(source)
-    etag = expected_runtime_bundle_v2_etag(source.source_revision)
     headers = {
-        "ETag": etag,
+        "ETag": snapshot.etag,
         "Cache-Control": _RUNTIME_MANIFEST_CACHE_CONTROL,
         "Vary": _RUNTIME_MANIFEST_VARY,
         "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     }
-    if if_none_match_contains(request.headers.get("if-none-match"), etag):
+    if snapshot.source is None:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    payload = render_runtime_bundle(snapshot.source)
     return JSONResponse(payload, headers=headers)
 
 
@@ -136,9 +146,10 @@ async def _render_runtime_source_snapshot(
     *,
     environment_id: UUID,
     owner_user_id: UUID,
+    if_none_match: str | None,
     project_agent_plugins: bool,
     project_agent_plugin_github_release_sources: bool,
-) -> tuple[RenderedRuntimeSource | None, tuple[UUID, ...]]:
+) -> _RuntimeManifestSnapshot:
     async with runtime_snapshot_session() as source_db:
         batch = await load_runtime_source_batch(
             source_db,
@@ -150,19 +161,35 @@ async def _render_runtime_source_snapshot(
             environment_id=environment_id,
         )
         if repair_link_ids:
-            return None, repair_link_ids
-        return (
-            render_runtime_source(
-                batch,
-                environment_id=environment_id,
-                public_api_url=settings.public_api_url,
-                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-                decrypt_secrets=True,
-                project_agent_plugins=project_agent_plugins,
-                project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
-            ),
-            (),
+            return _RuntimeManifestSnapshot(
+                source=None,
+                etag=None,
+                repair_link_ids=repair_link_ids,
+            )
+        source_without_secrets = render_runtime_source(
+            batch,
+            environment_id=environment_id,
+            public_api_url=settings.public_api_url,
+            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+            decrypt_secrets=False,
+            project_agent_plugins=project_agent_plugins,
+            project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
         )
+        etag = expected_runtime_bundle_v2_etag(source_without_secrets.source_revision)
+        if if_none_match_contains(if_none_match, etag):
+            return _RuntimeManifestSnapshot(source=None, etag=etag, repair_link_ids=())
+        source = render_runtime_source(
+            batch,
+            environment_id=environment_id,
+            public_api_url=settings.public_api_url,
+            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+            decrypt_secrets=True,
+            project_agent_plugins=project_agent_plugins,
+            project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
+        )
+        if source.source_revision != source_without_secrets.source_revision:
+            raise RuntimeSourceError("Runtime source revision depends on secret decryption")
+        return _RuntimeManifestSnapshot(source=source, etag=etag, repair_link_ids=())
 
 
 def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID | None) -> UUID:

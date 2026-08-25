@@ -114,12 +114,13 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
 
 @pytest.mark.asyncio
 async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
-    client: httpx.AsyncClient, db_session, seed_user
+    client: httpx.AsyncClient, db_session, engine, seed_user
 ):
     import hashlib
     import uuid
 
     from fastapi import HTTPException
+    from sqlalchemy import event
 
     from app.core.auth import _api_key_auth_cache, _auth_via_api_key
     from app.services.agent_environments import (
@@ -147,7 +148,22 @@ async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
         environment_id=registered.env.id,
     )
     assert await _auth_via_api_key(minted.raw_key, db_session) is not None
-    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+
+    statements: list[str] = []
+
+    def capture_statement(_connection, _cursor, statement: str, *_args) -> None:
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+
+    assert len(statements) == 2
+    assert "pg_advisory_xact_lock_shared" in statements[0]
+    assert "LEFT OUTER JOIN users" in statements[1]
+    assert "LEFT OUTER JOIN agent_environments" in statements[1]
     key_hash = hashlib.sha256(minted.raw_key.encode()).hexdigest()
     assert key_hash not in _api_key_auth_cache
 
@@ -155,6 +171,74 @@ async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
     assert disconnected.status_code == 204, disconnected.text
     with pytest.raises(HTTPException) as exc_info:
         await _auth_via_api_key(minted.raw_key, db_session)
+    assert exc_info.value.status_code == 401
+    assert "revoked" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_agent_key_revalidation_refreshes_revocation_after_last_used_commit(
+    db_session,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.core.auth import _auth_via_api_key
+    from app.services.agent_environments import (
+        local_machine_registration_key,
+        register_agent_environment,
+    )
+    from app.services.api_key import mint_api_key
+
+    machine_id = f"revalidation-{uuid.uuid4().hex}"
+    registered = await register_agent_environment(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=machine_id,
+        machine_name="Revalidation Agent",
+        agent_type="codex",
+        agent_version="1.0.0",
+        os_name="linux",
+        sort_order=0,
+        registration_key=local_machine_registration_key(machine_id, "codex"),
+    )
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="revalidation key",
+        environment_id=registered.env.id,
+    )
+    await db_session.commit()
+
+    original_commit = db_session.commit
+    revoke_injected = False
+
+    async def commit_then_revoke() -> None:
+        nonlocal revoke_injected
+        await original_commit()
+        if revoke_injected:
+            return
+        revoke_injected = True
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessionmaker() as revoke_session:
+            await revoke_session.execute(
+                update(ApiKey)
+                .where(ApiKey.id == minted.api_key.id)
+                .values(revoked_at=datetime.now(UTC))
+            )
+            await revoke_session.commit()
+
+    monkeypatch.setattr(db_session, "commit", commit_then_revoke)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _auth_via_api_key(minted.raw_key, db_session)
+
+    assert revoke_injected is True
     assert exc_info.value.status_code == 401
     assert "revoked" in str(exc_info.value.detail).lower()
 

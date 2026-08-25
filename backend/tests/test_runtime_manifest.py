@@ -45,6 +45,7 @@ from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
+from app.routes import runtime as runtime_routes
 from app.routes.admin import _admin_upsert_runtime_state
 from app.routes.sessions import (
     _runtime_observed_desired,
@@ -4097,6 +4098,56 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
     assert unsupported.status_code == 406
     assert unsupported.headers["cache-control"] == "no-store"
     assert unsupported.headers["vary"] == "Accept"
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_conditional_render_skips_secrets_and_bundle(
+    admin_client,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="conditional-render")
+    render_calls: list[tuple[bool, str]] = []
+    bundle_calls: list[str] = []
+    original_render_source = runtime_routes.render_runtime_source
+    original_render_bundle = runtime_routes.render_runtime_bundle
+
+    def tracked_render_source(*args, **kwargs):
+        source = original_render_source(*args, **kwargs)
+        render_calls.append((kwargs["decrypt_secrets"], source.source_revision))
+        return source
+
+    def tracked_render_bundle(source):
+        bundle_calls.append(source.source_revision)
+        return original_render_bundle(source)
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get("/v1/runtime/manifest")
+        assert initial.status_code == 200, initial.text
+        monkeypatch.setattr(runtime_routes, "render_runtime_source", tracked_render_source)
+        monkeypatch.setattr(runtime_routes, "render_runtime_bundle", tracked_render_bundle)
+
+        not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+        assert not_modified.status_code == 304, not_modified.text
+        assert render_calls == [(False, initial.json()["sourceRevision"])]
+        assert bundle_calls == []
+
+        render_calls.clear()
+        refreshed = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json() == initial.json()
+    assert render_calls == [
+        (False, initial.json()["sourceRevision"]),
+        (True, initial.json()["sourceRevision"]),
+    ]
+    assert bundle_calls == [initial.json()["sourceRevision"]]
 
 
 @pytest.mark.asyncio
