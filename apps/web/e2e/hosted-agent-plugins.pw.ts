@@ -185,6 +185,11 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		"The agent could not apply this plugin.",
 	);
 	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
+	expect(
+		await cardFor("Installed Plugin")
+			.getByRole("button", { name: "Installed", exact: true })
+			.evaluate((button) => button.getBoundingClientRect().width),
+	).toBeLessThan(120);
 
 	const updateFooter = cardFor("Update Available Plugin").locator('[data-slot="entity-meta"]');
 	await expect(updateFooter).toContainText("Mysten Labs");
