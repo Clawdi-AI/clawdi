@@ -34,6 +34,10 @@ _PROVIDER_EVENTS_PATH = "/v1/provider-events"
 _PROVIDER_EVENTS_ACK_PATH = "/v1/provider-events/ack"
 _PROVIDER_EVENTS_MAX_WAIT_MS = 8_000
 _PROVIDER_EVENTS_READ_TIMEOUT_SECONDS = 10.0
+_MAX_PROVIDER_EVENTS_JSON_BYTES = 8 * 1024 * 1024
+_MAX_PROVIDER_EVENT_ID_LENGTH = 300
+_MAX_PROVIDER_EVENT_NAME_LENGTH = 4096
+_MAX_PROVIDER_EVENT_PROTO_BASE64_LENGTH = 4 * 1024 * 1024
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 type _NativeNodeValue = (
@@ -137,6 +141,15 @@ class WhatsAppProviderMessageEvent:
     push_name: str | None
     message_timestamp: int | None
     message_proto: bytes
+
+
+@dataclass(frozen=True)
+class WhatsAppRejectedProviderEvent:
+    sequence: int
+    reason: Literal["invalid_schema", "identity_too_long", "payload_too_large"]
+
+
+type WhatsAppProviderEvent = WhatsAppProviderMessageEvent | WhatsAppRejectedProviderEvent
 
 
 @dataclass(frozen=True)
@@ -415,7 +428,7 @@ class WhatsAppBaileysSidecarClient:
         *,
         limit: int = 100,
         wait_ms: int = 0,
-    ) -> list[WhatsAppProviderMessageEvent]:
+    ) -> list[WhatsAppProviderEvent]:
         if not 0 <= wait_ms <= _PROVIDER_EVENTS_MAX_WAIT_MS:
             raise ValueError("baileys provider events wait must be between 0 and 8000 milliseconds")
         response = await self._request(
@@ -424,6 +437,8 @@ class WhatsAppBaileysSidecarClient:
             params={"limit": limit, "waitMs": wait_ms},
             timeout=httpx.Timeout(_PROVIDER_EVENTS_READ_TIMEOUT_SECONDS),
         )
+        if len(response.content) > _MAX_PROVIDER_EVENTS_JSON_BYTES:
+            raise WhatsAppSidecarProtocolError("Baileys provider events response too large")
         data = _response_json(response)
         if not isinstance(data, dict):
             raise ValueError("baileys provider events response must contain an event list")
@@ -803,49 +818,65 @@ def _pairing_status(value: Mapping[str, JsonValue]) -> WhatsAppSidecarPairingSta
     )
 
 
-def _provider_message_event(value: JsonValue) -> WhatsAppProviderMessageEvent:
+def _provider_message_event(value: JsonValue) -> WhatsAppProviderEvent:
     if not isinstance(value, dict):
-        raise ValueError("baileys provider event must be an object")
+        raise WhatsAppSidecarProtocolError("Baileys provider event has no sequence")
     sequence = value.get("sequence")
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
-        raise ValueError("baileys provider event sequence must be positive")
+        raise WhatsAppSidecarProtocolError("Baileys provider event has no sequence")
     if value.get("eventType") != "messages.upsert" or value.get("fromMe") is not False:
-        raise ValueError("unsupported baileys provider event")
-    message_id = _required_event_str(value, "messageId")
-    remote_jid = _required_event_str(value, "remoteJid")
-    raw_proto = _required_event_str(value, "messageProtoBase64")
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
+    message_id = _event_str(value, "messageId")
+    remote_jid = _event_str(value, "remoteJid")
+    raw_proto = _event_str(value, "messageProtoBase64")
+    if message_id is None or remote_jid is None or raw_proto is None:
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
+    if any(len(item) > _MAX_PROVIDER_EVENT_ID_LENGTH for item in (message_id, remote_jid)):
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="identity_too_long")
+    if len(raw_proto) > _MAX_PROVIDER_EVENT_PROTO_BASE64_LENGTH:
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="payload_too_large")
     try:
         message_proto = base64.b64decode(raw_proto, validate=True)
-    except ValueError as exc:
-        raise ValueError("baileys provider event proto must be base64") from exc
+    except ValueError:
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
     if not message_proto:
-        raise ValueError("baileys provider event proto must not be empty")
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
     timestamp = value.get("messageTimestamp")
     if timestamp is not None and (
         isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 1
     ):
-        raise ValueError("baileys provider event timestamp must be positive")
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
+    optional_identity_keys = ("remoteJidAlt", "participant", "participantAlt")
+    optional_identities = tuple(_event_str(value, key) for key in optional_identity_keys)
+    if any(
+        value.get(key) is not None and item is None
+        for key, item in zip(optional_identity_keys, optional_identities, strict=True)
+    ):
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
+    if any(
+        item is not None and len(item) > _MAX_PROVIDER_EVENT_ID_LENGTH
+        for item in optional_identities
+    ):
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="identity_too_long")
+    push_name = _event_str(value, "pushName")
+    if value.get("pushName") is not None and push_name is None:
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="invalid_schema")
+    if push_name is not None and len(push_name) > _MAX_PROVIDER_EVENT_NAME_LENGTH:
+        return WhatsAppRejectedProviderEvent(sequence=sequence, reason="identity_too_long")
     return WhatsAppProviderMessageEvent(
         sequence=sequence,
         message_id=message_id,
         remote_jid=remote_jid,
-        remote_jid_alt=_optional_event_str(value, "remoteJidAlt"),
-        participant=_optional_event_str(value, "participant"),
-        participant_alt=_optional_event_str(value, "participantAlt"),
-        push_name=_optional_event_str(value, "pushName"),
+        remote_jid_alt=optional_identities[0],
+        participant=optional_identities[1],
+        participant_alt=optional_identities[2],
+        push_name=push_name,
         message_timestamp=timestamp,
         message_proto=message_proto,
     )
 
 
-def _required_event_str(value: Mapping[str, JsonValue], key: str) -> str:
-    item = _optional_event_str(value, key)
-    if item is None:
-        raise ValueError(f"baileys provider event {key} is required")
-    return item
-
-
-def _optional_event_str(value: Mapping[str, JsonValue], key: str) -> str | None:
+def _event_str(value: Mapping[str, JsonValue], key: str) -> str | None:
     item = value.get(key)
     return item if isinstance(item, str) and item else None
 

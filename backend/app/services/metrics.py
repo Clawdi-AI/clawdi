@@ -44,6 +44,12 @@ ingress_errors = Counter(
     ["channel", "bot_id"],
     registry=registry,
 )
+provider_ingress_terminal_events = Counter(
+    "msg_router_provider_ingress_terminal_events_total",
+    "Provider ingress events terminally acknowledged without durable admission",
+    ["channel", "reason"],
+    registry=registry,
+)
 proxy_latency = Histogram(
     "msg_router_proxy_latency_seconds",
     "Outbound proxy request latency in seconds",

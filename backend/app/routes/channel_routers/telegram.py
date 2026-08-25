@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
@@ -424,16 +424,21 @@ async def telegram_bot_api(
             0.0,
             min(float(timeout or 0), settings.channel_long_poll_max_seconds),
         )
+        account_id = account.id
+        bot_agent_link_id = agent.link.id
+        # End the request-scoped authentication transaction before parking the
+        # request. Each poll below owns a fresh, short transaction so newly
+        # committed updates are visible without pinning a pooled connection.
+        await db.rollback()
         updates = await wait_for_telegram_updates(
-            db,
-            account=account,
-            bot_agent_link_id=agent.link.id,
+            async_session_factory,
+            account_id=account_id,
+            bot_agent_link_id=bot_agent_link_id,
             offset=offset,
             limit=limit,
             allowed_updates=allowed_updates(params.get("allowed_updates")),
             timeout_seconds=timeout_seconds,
         )
-        await db.commit()
         return telegram_ok(updates)
     if method_key == "setwebhook":
         webhook_url = optional_str(params.get("url"))

@@ -1244,7 +1244,8 @@ async def test_whatsapp_provider_ingress_preserves_proto_aliases_and_account_ded
         name="wa-provider-ingress",
     )
     lid_jid = "7826185388106@lid"
-    message_proto = whatsapp_text_message_proto("hello from physical provider")
+    text = "x" * 5_000
+    message_proto = whatsapp_text_message_proto(text)
     event = WhatsAppProviderMessageEvent(
         sequence=1,
         message_id="physical-inbound-1",
@@ -1282,7 +1283,7 @@ async def test_whatsapp_provider_ingress_preserves_proto_aliases_and_account_ded
     assert messages[0].direction == MESSAGE_DIRECTION_INBOUND
     assert messages[0].binding_id == binding.id
     assert messages[0].external_chat_id == binding.external_chat_id
-    assert messages[0].text == "hello from physical provider"
+    assert messages[0].text == text
     assert messages[0].payload["messageProtoBase64"] == base64.b64encode(message_proto).decode(
         "ascii"
     )

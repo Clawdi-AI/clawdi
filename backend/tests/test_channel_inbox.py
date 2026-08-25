@@ -5,9 +5,10 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.services.channels as channel_service
 from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
@@ -128,7 +129,7 @@ async def test_channel_inbox_assigns_monotonic_sequences_and_dequeues_by_account
 
     events = await dequeue_channel_inbox_events(
         db_session,
-        account=account,
+        account_id=account.id,
         after_sequence=0,
         limit=100,
     )
@@ -136,7 +137,7 @@ async def test_channel_inbox_assigns_monotonic_sequences_and_dequeues_by_account
 
     after_first = await dequeue_channel_inbox_events(
         db_session,
-        account=account,
+        account_id=account.id,
         after_sequence=first.inbox_sequence,
         limit=100,
     )
@@ -144,7 +145,7 @@ async def test_channel_inbox_assigns_monotonic_sequences_and_dequeues_by_account
 
     limited = await dequeue_channel_inbox_events(
         db_session,
-        account=account,
+        account_id=account.id,
         after_sequence=0,
         limit=1,
     )
@@ -188,7 +189,7 @@ async def test_channel_inbox_ack_marks_events_through_sequence_for_account_only(
     )
     remaining = await dequeue_channel_inbox_events(
         db_session,
-        account=account,
+        account_id=account.id,
         after_sequence=0,
         limit=100,
     )
@@ -534,7 +535,7 @@ async def test_telegram_inbox_uses_update_id_offset_and_drains_filtered_updates(
 
     updates = await dequeue_telegram_updates(
         db_session,
-        account=account,
+        account_id=account.id,
         offset=101,
         limit=100,
         allowed_updates={"callback_query"},
@@ -559,7 +560,7 @@ async def test_telegram_inbox_uses_update_id_offset_and_drains_filtered_updates(
     assert (
         await dequeue_telegram_updates(
             db_session,
-            account=account,
+            account_id=account.id,
             offset=106,
             limit=100,
         )
@@ -603,7 +604,7 @@ async def test_telegram_inbox_terminally_consumes_updates_older_than_official_re
 
     updates = await dequeue_telegram_updates(
         db_session,
-        account=account,
+        account_id=account.id,
         offset=None,
         limit=100,
     )
@@ -631,23 +632,97 @@ async def test_channel_inbox_wait_polls_until_new_committed_event(
     await db_session.commit()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
-    async with sessionmaker() as wait_session:
-        wait_account = await wait_session.get(ChannelAccount, account.id)
-        assert wait_account is not None
+    pending = asyncio.create_task(
+        wait_for_channel_inbox_events(
+            sessionmaker,
+            account_id=account.id,
+            after_sequence=0,
+            limit=10,
+            timeout_seconds=1,
+            poll_interval_seconds=0.005,
+        )
+    )
+
+    await asyncio.sleep(0.01)
+    await _add_message(db_session, account=account, binding=binding, text="delayed")
+    await db_session.commit()
+    events = await pending
+
+    assert [event.text for event in events] == ["delayed"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_wait_has_no_transaction_during_sleep_or_after_cancellation(
+    engine,
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, _binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="telegram-cancelled-wait",
+    )
+    account_id = account.id
+    await db_session.commit()
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    first_poll_finished = asyncio.Event()
+    poll_backend_pid: int | None = None
+    original_dequeue = channel_service.dequeue_telegram_updates
+
+    async def observed_dequeue(db: AsyncSession, **kwargs):
+        nonlocal poll_backend_pid
+        pid = await db.scalar(select(func.pg_backend_pid()))
+        assert isinstance(pid, int)
+        poll_backend_pid = pid
+        updates = await original_dequeue(db, **kwargs)
+        first_poll_finished.set()
+        return updates
+
+    monkeypatch.setattr(channel_service, "dequeue_telegram_updates", observed_dequeue)
+    async with engine.connect() as observer:
         pending = asyncio.create_task(
-            wait_for_channel_inbox_events(
-                wait_session,
-                account=wait_account,
-                after_sequence=0,
-                limit=10,
-                timeout_seconds=1,
-                poll_interval_seconds=0.005,
+            channel_service.wait_for_telegram_updates(
+                sessionmaker,
+                account_id=account_id,
+                offset=None,
+                limit=100,
+                timeout_seconds=30,
+                poll_interval_seconds=30,
             )
         )
 
-        await asyncio.sleep(0.01)
-        await _add_message(db_session, account=account, binding=binding, text="delayed")
-        await db_session.commit()
-        events = await pending
+        async def wait_until_poll_connection_is_idle() -> None:
+            while True:
+                assert poll_backend_pid is not None
+                row = (
+                    await observer.execute(
+                        text(
+                            """
+                            SELECT state, xact_start
+                            FROM pg_stat_activity
+                            WHERE pid = :backend_pid
+                            """
+                        ),
+                        {"backend_pid": poll_backend_pid},
+                    )
+                ).one()
+                await observer.rollback()
+                if row.state == "idle" and row.xact_start is None:
+                    return
+                await asyncio.sleep(0.01)
 
-    assert [event.text for event in events] == ["delayed"]
+        try:
+            await asyncio.wait_for(first_poll_finished.wait(), timeout=2)
+            await asyncio.wait_for(wait_until_poll_connection_is_idle(), timeout=2)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            await asyncio.wait_for(wait_until_poll_connection_is_idle(), timeout=2)
+        finally:
+            if not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
