@@ -131,7 +131,6 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _SESSION_LOCAL_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=settings.runtime_observation_freshness_seconds)
-_HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
 _RELATED_REFS_ADAPTER: TypeAdapter[dict[str, list[str]]] = TypeAdapter(dict[str, list[str]])
@@ -1937,18 +1936,10 @@ async def sync_heartbeat(
             "api key bound to a different environment",
         )
 
-    # Conditional write: skip the UPDATE entirely when nothing
-    # interesting has changed since the prior heartbeat. Daemons
-    # heartbeat every 30s; with N daemons per user × M users
-    # this was the single highest-write hot path in the backend.
-    # Now we only commit when last_sync_error flips, queue HWM
-    # advances, dropped delta is non-zero, or sync_enabled needs
-    # to flip on — all real state-change signals. last_sync_at
-    # advances on every commit (so the dashboard's "live" badge
-    # transitions still fire) but we throttle commits to one per
-    # 30s of *content change*, not one per heartbeat. The badge
-    # logic on the dashboard tolerates last_sync_at being stale
-    # by up to ~90s.
+    # Persist each 60 +/- 15s report. The 150s freshness window is at
+    # least twice the maximum 75s report interval, so one missed beat
+    # does not mark a live daemon stale. last_sync_at is not indexed,
+    # keeping the normal AgentEnvironment write eligible for HOT update.
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
@@ -1976,27 +1967,6 @@ async def sync_heartbeat(
         if row is not None:
             hosted_state, observation = row
             observed_changed = _runtime_observation_changed(observation, runtime_observed_values)
-    has_state_change = (
-        env.last_sync_error != new_error
-        or (new_revision is not None and env.last_revision_seen != new_revision)
-        or (
-            body.queue_depth is not None
-            and body.queue_depth > env.queue_depth_high_water_since_start
-        )
-        or bool(body.dropped_count_delta)
-        or not env.sync_enabled
-        or observed_changed
-    )
-    # Even with no state change, refresh last_sync_at on a bounded
-    # cadence. The dashboard freshness cutoff is 90s; 40s keeps new
-    # 60s clients live while preventing old 30s clients from writing
-    # on every heartbeat.
-    last = env.last_sync_at
-    needs_freshness_refresh = (
-        last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
-    )
-    if not has_state_change and not needs_freshness_refresh:
-        return
     env.last_sync_at = now
     env.last_sync_error = new_error
     if new_revision is not None:
@@ -2015,27 +1985,36 @@ async def sync_heartbeat(
     if not env.sync_enabled:
         env.sync_enabled = True
     if hosted_state is not None and runtime_observed_values is not None:
-        insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
-            environment_id=agent_id,
-            **runtime_observed_values,
-        )
-        await db.execute(
-            insert_observation.on_conflict_do_update(
-                index_elements=[HostedRuntimeConfigObservation.environment_id],
-                set_={
-                    "observed_at": insert_observation.excluded.observed_at,
-                    "observed_config_generation": (
-                        insert_observation.excluded.observed_config_generation
-                    ),
-                    "observed_manifest_etag": (insert_observation.excluded.observed_manifest_etag),
-                    "observed_source_revision": (
-                        insert_observation.excluded.observed_source_revision
-                    ),
-                    "diagnostics": insert_observation.excluded.diagnostics,
-                    "updated_at": func.now(),
-                },
+        if observed_changed:
+            insert_observation = pg_insert(HostedRuntimeConfigObservation).values(
+                environment_id=agent_id,
+                **runtime_observed_values,
             )
-        )
+            await db.execute(
+                insert_observation.on_conflict_do_update(
+                    index_elements=[HostedRuntimeConfigObservation.environment_id],
+                    set_={
+                        "observed_at": insert_observation.excluded.observed_at,
+                        "observed_config_generation": (
+                            insert_observation.excluded.observed_config_generation
+                        ),
+                        "observed_manifest_etag": (
+                            insert_observation.excluded.observed_manifest_etag
+                        ),
+                        "observed_source_revision": (
+                            insert_observation.excluded.observed_source_revision
+                        ),
+                        "diagnostics": insert_observation.excluded.diagnostics,
+                        "updated_at": func.now(),
+                    },
+                )
+            )
+        else:
+            await db.execute(
+                update(HostedRuntimeConfigObservation)
+                .where(HostedRuntimeConfigObservation.environment_id == agent_id)
+                .values(observed_at=now)
+            )
     await db.commit()
 
 

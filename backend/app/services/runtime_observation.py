@@ -281,13 +281,26 @@ async def require_active_runtime_environment_fence(
 
 def _canonical_observation_payload(value: RuntimeObservationEventV2) -> tuple[dict[str, Any], str]:
     payload = value.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    return payload, _canonical_json_hash(payload)
+
+
+def _canonical_json_hash(value: dict[str, Any]) -> str:
     encoded = json.dumps(
-        payload,
+        value,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")
-    return payload, hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _observation_semantic_hash(payload: dict[str, Any]) -> str:
+    semantic_payload = {
+        key: item
+        for key, item in payload.items()
+        if key not in {"eventId", "sequence", "reportedAt", "capturedAt"}
+    }
+    return _canonical_json_hash(semantic_payload)
 
 
 def _companion_identity(value: RuntimeObservationEventV2) -> RuntimeApplyIdentity:
@@ -354,6 +367,7 @@ async def ingest_runtime_observation(
             "runtime observation capturedAt is outside the accepted transport age",
         )
     payload, payload_hash = _canonical_observation_payload(value)
+    semantic_hash = _observation_semantic_hash(payload)
     freshness_deadline = captured_at + timedelta(
         seconds=settings.runtime_observation_freshness_seconds
     )
@@ -384,6 +398,71 @@ async def ingest_runtime_observation(
             409,
             "runtime_observation_identity_conflict",
             "boot session is already bound to another apply identity",
+        )
+
+    if (
+        head is not None
+        and value.sequence == head.highest_sequence
+        and value.event_id == head.last_seen_event_id
+        and payload_hash == head.last_seen_payload_hash
+    ):
+        return RuntimeObservationIngestResult(
+            event_id=value.event_id,
+            stream_position=head.latest_stream_position,
+            duplicate=True,
+            outcome="duplicate_replay",
+        )
+
+    if head is not None and head.state != RUNTIME_OBSERVATION_HEAD_ACTIVE:
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_environment_retired",
+            "retired boot-session tombstones are immutable",
+        )
+    if head is not None and value.predecessor_boot_session_id is not None:
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_observation_handoff_conflict",
+            "boot-session handoff is only valid when creating its successor",
+        )
+    if (
+        head is not None
+        and value.successor_boot_session_id is not None
+        and head.authorized_successor_boot_session_id is not None
+        and head.authorized_successor_boot_session_id != value.successor_boot_session_id
+    ):
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_observation_successor_conflict",
+            "boot session already authorizes another successor",
+        )
+
+    if head is not None and value.sequence == head.highest_sequence:
+        raise RuntimeObservationProtocolError(
+            409,
+            "runtime_observation_event_conflict",
+            "runtime observation identity was reused with different event data",
+        )
+
+    if (
+        head is not None
+        and head.latest_semantic_hash == semantic_hash
+        and value.sequence > head.highest_sequence
+        and head.captured_at is not None
+        and captured_at >= _utc(head.captured_at)
+    ):
+        head.highest_sequence = value.sequence
+        head.last_seen_event_id = value.event_id
+        head.last_seen_payload_hash = payload_hash
+        head.last_seen_received_at = now
+        head.captured_at = captured_at
+        head.freshness_deadline = freshness_deadline
+        await db.flush()
+        return RuntimeObservationIngestResult(
+            event_id=value.event_id,
+            stream_position=head.latest_stream_position,
+            duplicate=False,
+            outcome="accepted_head_advanced",
         )
 
     async def duplicate_or_conflict() -> RuntimeObservationIngestResult:
@@ -439,30 +518,6 @@ async def ingest_runtime_observation(
     )
     if existing_by_event is not None or existing_by_sequence is not None:
         return await duplicate_or_conflict()
-
-    if head is not None and head.state != RUNTIME_OBSERVATION_HEAD_ACTIVE:
-        raise RuntimeObservationProtocolError(
-            409,
-            "runtime_environment_retired",
-            "retired boot-session tombstones are immutable",
-        )
-    if head is not None and value.predecessor_boot_session_id is not None:
-        raise RuntimeObservationProtocolError(
-            409,
-            "runtime_observation_handoff_conflict",
-            "boot-session handoff is only valid when creating its successor",
-        )
-    if (
-        head is not None
-        and value.successor_boot_session_id is not None
-        and head.authorized_successor_boot_session_id is not None
-        and head.authorized_successor_boot_session_id != value.successor_boot_session_id
-    ):
-        raise RuntimeObservationProtocolError(
-            409,
-            "runtime_observation_successor_conflict",
-            "boot session already authorizes another successor",
-        )
 
     predecessor: V2RuntimeObservationHead | None = None
     if head is None and value.predecessor_boot_session_id is not None:
@@ -536,6 +591,10 @@ async def ingest_runtime_observation(
             latest_stream_position=inbox.id,
             latest_event_id=value.event_id,
             latest_payload_hash=payload_hash,
+            last_seen_event_id=value.event_id,
+            last_seen_payload_hash=payload_hash,
+            last_seen_received_at=now,
+            latest_semantic_hash=semantic_hash,
             captured_at=captured_at,
             freshness_deadline=freshness_deadline,
             health=value.status,
@@ -557,6 +616,10 @@ async def ingest_runtime_observation(
             head.latest_stream_position = inbox.id
             head.latest_event_id = value.event_id
             head.latest_payload_hash = payload_hash
+            head.last_seen_event_id = value.event_id
+            head.last_seen_payload_hash = payload_hash
+            head.last_seen_received_at = now
+            head.latest_semantic_hash = semantic_hash
             head.captured_at = captured_at
             head.freshness_deadline = freshness_deadline
             head.health = value.status
@@ -1539,6 +1602,15 @@ async def expire_runtime_observation_payloads(
             and all(consumer.state == RUNTIME_OBSERVATION_CURSOR_ACTIVE for consumer in consumers)
             else 0
         )
+        fresh_head_inbox_ids = set(
+            await db.scalars(
+                select(V2RuntimeObservationHead.latest_inbox_id).where(
+                    V2RuntimeObservationHead.environment_id == environment_id,
+                    V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                    V2RuntimeObservationHead.freshness_deadline >= current,
+                )
+            )
+        )
         candidates = list(
             (
                 await db.execute(
@@ -1558,6 +1630,8 @@ async def expire_runtime_observation_payloads(
         ids: list[int] = []
         hard_cap_forced = False
         for event in candidates:
+            if event.id in fresh_head_inbox_ids:
+                break
             hard_cap_eligible = _utc(event.received_at) < hard_cutoff
             replay_eligible = (
                 bool(consumers)
@@ -1633,6 +1707,14 @@ async def expire_runtime_observation_payloads(
         ).all()
         compacted = len(compacted_ids)
         if compacted:
+            await db.execute(
+                update(V2RuntimeObservationHead)
+                .where(
+                    V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                    V2RuntimeObservationHead.latest_inbox_id.in_(compacted_ids),
+                )
+                .values(latest_semantic_hash=None)
+            )
             floor_position = max(ids)
             if floor_position > fence.replay_floor_stream_position:
                 floor_session_high_waters = await _load_session_high_waters(db, environment_id)

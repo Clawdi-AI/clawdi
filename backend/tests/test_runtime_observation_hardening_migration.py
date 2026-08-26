@@ -14,12 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "a6d2f4c8b1e7"
 MIGRATION_FILENAME = f"{REVISION}_harden_v2_runtime_observation_boundary.py"
+COALESCING_MIGRATION_FILENAME = "c8a4e1d7f2b6_coalesce_runtime_heartbeats.py"
 
 
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
+def _load_migration(filename: str, module_name: str):
+    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / filename
     spec = importlib.util.spec_from_file_location(
-        "runtime_observation_hardening_migration",
+        module_name,
         migration_path,
     )
     assert spec is not None and spec.loader is not None
@@ -31,7 +32,14 @@ def _load_migration():
 def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and_round_trips(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = _load_migration(
+        MIGRATION_FILENAME,
+        "runtime_observation_hardening_migration",
+    )
+    coalescing_migration = _load_migration(
+        COALESCING_MIGRATION_FILENAME,
+        "runtime_observation_coalescing_migration",
+    )
     schema = f"runtime_observation_hardening_{uuid.uuid4().hex}"
     tables = (
         "api_keys",
@@ -44,6 +52,7 @@ def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and
 
     def run(sync_conn: sa.Connection) -> None:
         old_op = migration.op
+        old_coalescing_op = coalescing_migration.op
         sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
         try:
             for table in tables:
@@ -113,6 +122,11 @@ def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and
                     DROP COLUMN IF EXISTS reported_at;
                     ALTER TABLE v2_runtime_observation_inbox
                     DROP COLUMN IF EXISTS payload_purged_at;
+                    ALTER TABLE v2_runtime_observation_heads
+                    DROP COLUMN IF EXISTS last_seen_event_id,
+                    DROP COLUMN IF EXISTS last_seen_payload_hash,
+                    DROP COLUMN IF EXISTS last_seen_received_at,
+                    DROP COLUMN IF EXISTS latest_semantic_hash;
                     """
                 )
             )
@@ -639,6 +653,45 @@ def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and
                 == inbox_id
             )
 
+            sync_conn.execute(
+                sa.text(
+                    """
+                    UPDATE v2_runtime_observation_heads
+                    SET state = 'retired', latest_inbox_id = NULL,
+                        captured_at = NULL, freshness_deadline = NULL,
+                        health = NULL, tombstoned_at = now()
+                    WHERE environment_id = :environment_id
+                      AND boot_session_id = 'guard-session'
+                    """
+                ),
+                {"environment_id": environment_id},
+            )
+            coalescing_migration.op = Operations(MigrationContext.configure(sync_conn))
+            coalescing_migration.upgrade()
+            last_seen = sync_conn.execute(
+                sa.text(
+                    """
+                    SELECT last_seen_event_id, last_seen_payload_hash,
+                           last_seen_received_at
+                    FROM v2_runtime_observation_heads
+                    WHERE environment_id = :environment_id
+                      AND boot_session_id = 'guard-session'
+                    """
+                ),
+                {"environment_id": environment_id},
+            ).one()
+            assert last_seen.last_seen_event_id == "guard-event"
+            assert last_seen.last_seen_payload_hash == "b" * 64
+            assert last_seen.last_seen_received_at is not None
+            coalescing_migration.downgrade()
+            sync_conn.execute(
+                sa.text(
+                    "UPDATE v2_runtime_observation_heads SET updated_at = updated_at "
+                    "WHERE environment_id = :environment_id"
+                ),
+                {"environment_id": environment_id},
+            )
+
             migration.downgrade()
             downgraded_receipt = sync_conn.scalar(
                 sa.text(
@@ -699,6 +752,7 @@ def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and
             migration.downgrade()
         finally:
             migration.op = old_op
+            coalescing_migration.op = old_coalescing_op
             sync_conn.execute(sa.text("SET search_path TO public"))
             sync_conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
 

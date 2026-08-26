@@ -1457,7 +1457,7 @@ async def test_runtime_observed_endpoint_safely_degrades_invalid_stored_diagnost
 
 
 @pytest.mark.asyncio
-async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
+async def test_sync_heartbeat_refreshes_freshness_without_rewriting_diagnostics(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ):
@@ -1485,7 +1485,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
     assert first.status_code == 204, first.text
     observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
     assert observation is not None
-    first_updated_at = observation.updated_at
+    first_observed_at = observation.observed_at
     first_diagnostics = observation.diagnostics
 
     second = await client.post(
@@ -1499,7 +1499,7 @@ async def test_sync_heartbeat_ignores_reported_at_only_observed_changes(
     )
     assert second.status_code == 204, second.text
     await db_session.refresh(observation)
-    assert observation.updated_at == first_updated_at
+    assert observation.observed_at > first_observed_at
     assert observation.diagnostics == first_diagnostics
 
 

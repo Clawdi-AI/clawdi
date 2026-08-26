@@ -87,8 +87,8 @@ async def _latest_agent_plugin_observations(
         await db.execute(
             select(
                 V2RuntimeObservationInbox.diagnostics,
-                V2RuntimeObservationInbox.captured_at,
-                V2RuntimeObservationInbox.received_at,
+                V2RuntimeObservationHead.captured_at.label("captured_at"),
+                V2RuntimeObservationHead.last_seen_received_at.label("received_at"),
             )
             .join(
                 V2RuntimeObservationHead,
@@ -97,7 +97,7 @@ async def _latest_agent_plugin_observations(
             .where(
                 V2RuntimeObservationHead.environment_id == agent_id,
                 V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
-                V2RuntimeObservationInbox.freshness_deadline >= datetime.now(UTC),
+                V2RuntimeObservationHead.freshness_deadline >= datetime.now(UTC),
             )
             .order_by(V2RuntimeObservationHead.latest_stream_position.desc())
             .limit(1)

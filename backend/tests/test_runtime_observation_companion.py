@@ -92,6 +92,7 @@ def _payload(
     predecessor_boot_session_id: str | None = None,
     status: str = "ok",
     error: str | None = None,
+    vary_semantics: bool = True,
 ) -> RuntimeObservationEventV2:
     captured = captured_at or datetime.now(UTC)
     return RuntimeObservationEventV2.model_validate(
@@ -111,6 +112,7 @@ def _payload(
             "boot": None,
             "cli": None,
             "error": error,
+            "convergeError": f"test sequence {sequence}" if vary_semantics else None,
             "generation": generation,
             "manifestETag": manifest_etag,
             "applyReceiptId": apply_receipt_id,
@@ -149,6 +151,20 @@ def _rotated_identity() -> RuntimeApplyIdentity:
         apply_receipt_id="apply-receipt-00000002",
         boot_nonce="boot-nonce-0000000002",
     )
+
+
+def test_runtime_observation_semantic_hash_ignores_only_transport_fields() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True, exclude_unset=True)
+    payload["futureDiagnostic"] = {"state": "present"}
+    baseline = runtime_observation_service._observation_semantic_hash(payload)
+    transport_fields = {"eventId", "sequence", "reportedAt", "capturedAt"}
+
+    for field in transport_fields:
+        changed = {**payload, field: [payload[field], "changed"]}
+        assert runtime_observation_service._observation_semantic_hash(changed) == baseline
+    for field in payload.keys() - transport_fields:
+        changed = {**payload, field: [payload[field], "changed"]}
+        assert runtime_observation_service._observation_semantic_hash(changed) != baseline
 
 
 def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> None:
@@ -337,7 +353,11 @@ async def test_unique_regressions_enter_inbox_without_regressing_head(
     await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
-        value=_payload(sequence=3, captured_at=base + timedelta(seconds=3)),
+        value=_payload(
+            sequence=3,
+            captured_at=base + timedelta(seconds=3),
+            error="sequence 3 evidence",
+        ),
         received_at=base + timedelta(seconds=3),
     )
     await db_session.commit()
@@ -359,13 +379,21 @@ async def test_unique_regressions_enter_inbox_without_regressing_head(
     lower_sequence = await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
-        value=_payload(sequence=2, captured_at=base + timedelta(seconds=2)),
+        value=_payload(
+            sequence=2,
+            captured_at=base + timedelta(seconds=2),
+            error="sequence 2 evidence",
+        ),
         received_at=base + timedelta(seconds=5),
     )
     regressing_capture = await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
-        value=_payload(sequence=4, captured_at=base + timedelta(seconds=2)),
+        value=_payload(
+            sequence=4,
+            captured_at=base + timedelta(seconds=2),
+            error="sequence 4 evidence",
+        ),
         received_at=base + timedelta(seconds=5),
     )
     assert lower_sequence.duplicate is False
@@ -403,6 +431,203 @@ async def test_unique_regressions_enter_inbox_without_regressing_head(
     assert head is not None
     assert head.highest_sequence == 3
     assert head.captured_at == base + timedelta(seconds=3)
+
+
+@pytest.mark.asyncio
+async def test_unchanged_heartbeats_refresh_head_without_appending_inbox(
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    environment, _ = await _provision_environment(db_session, seed_user)
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="heartbeat-coalescing-controller",
+    )
+    base = datetime.now(UTC)
+    first_payload = _payload(sequence=1, captured_at=base, vary_semantics=False)
+    first = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=first_payload,
+        received_at=base,
+    )
+    await db_session.commit()
+
+    async def inbox_count() -> int:
+        return await db_session.scalar(
+            select(func.count())
+            .select_from(V2RuntimeObservationInbox)
+            .where(V2RuntimeObservationInbox.environment_id == environment.id)
+        )
+
+    assert await inbox_count() == 1
+
+    unchanged_payload = _payload(
+        sequence=2,
+        captured_at=base + timedelta(seconds=60),
+        vary_semantics=False,
+    )
+    unchanged = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=unchanged_payload,
+        received_at=base + timedelta(seconds=60),
+    )
+    await db_session.commit()
+
+    assert unchanged.outcome == "accepted_head_advanced"
+    assert unchanged.stream_position == first.stream_position
+    assert await inbox_count() == 1
+    head = await db_session.get(
+        V2RuntimeObservationHead,
+        {"environment_id": environment.id, "boot_session_id": "boot-session-0001"},
+    )
+    assert head is not None
+    assert head.highest_sequence == 2
+    assert head.latest_inbox_id == first.stream_position
+    assert head.last_seen_event_id == unchanged_payload.event_id
+    assert head.last_seen_received_at == base + timedelta(seconds=60)
+    assert head.captured_at == base + timedelta(seconds=60)
+    assert head.freshness_deadline == base + timedelta(seconds=210)
+
+    retry = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=unchanged_payload,
+        received_at=base + timedelta(seconds=61),
+    )
+    assert retry.outcome == "duplicate_replay"
+    assert retry.stream_position == first.stream_position
+    assert await inbox_count() == 1
+
+    recovered_at = base + timedelta(minutes=10)
+    assert head.freshness_deadline < recovered_at
+    recovered = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(sequence=3, captured_at=recovered_at, vary_semantics=False),
+        received_at=recovered_at,
+    )
+    await db_session.commit()
+    assert recovered.stream_position == first.stream_position
+    assert await inbox_count() == 1
+    await db_session.refresh(head)
+    assert head.captured_at == recovered_at
+    assert head.freshness_deadline == recovered_at + timedelta(
+        seconds=settings.runtime_observation_freshness_seconds
+    )
+
+    page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="heartbeat-coalescing-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+    assert len(page["events"]) == 1
+    assert page["heads"][0]["sequence"] == 3
+    assert page["heads"][0]["evidenceReference"] == page["events"][0]["evidenceReference"]
+    assert page["heads"][0]["payloadHash"] == page["events"][0]["payloadHash"]
+    assert page["heads"][0]["capturedAt"] == recovered_at.isoformat()
+    assert (
+        page["heads"][0]["freshnessDeadline"]
+        == (
+            recovered_at + timedelta(seconds=settings.runtime_observation_freshness_seconds)
+        ).isoformat()
+    )
+    fence = await db_session.get(V2RuntimeEnvironmentFence, environment.id)
+    assert fence is not None and fence.stream_high_water == first.stream_position
+
+    changed = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            sequence=4,
+            captured_at=recovered_at + timedelta(seconds=60),
+            status="error",
+            error="runtime unavailable",
+            vary_semantics=False,
+        ),
+        received_at=recovered_at + timedelta(seconds=60),
+    )
+    await db_session.commit()
+    assert changed.stream_position > first.stream_position
+    assert await inbox_count() == 2
+
+
+@pytest.mark.asyncio
+async def test_first_heartbeat_after_restart_still_appends(
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    predecessor = _payload(
+        sequence=1,
+        boot_session_id="boot-session-predecessor",
+        successor_boot_session_id="boot-session-successor",
+        captured_at=base,
+        vary_semantics=False,
+    )
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=predecessor,
+        received_at=base,
+    )
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            sequence=2,
+            boot_session_id="boot-session-predecessor",
+            successor_boot_session_id="boot-session-successor",
+            captured_at=base + timedelta(seconds=60),
+            vary_semantics=False,
+        ),
+        received_at=base + timedelta(seconds=60),
+    )
+    successor = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            sequence=1,
+            boot_session_id="boot-session-successor",
+            successor_boot_session_id="boot-session-next",
+            predecessor_boot_session_id="boot-session-predecessor",
+            captured_at=base + timedelta(seconds=61),
+            vary_semantics=False,
+        ),
+        received_at=base + timedelta(seconds=61),
+    )
+    await db_session.commit()
+
+    inbox_count = await db_session.scalar(
+        select(func.count())
+        .select_from(V2RuntimeObservationInbox)
+        .where(V2RuntimeObservationInbox.environment_id == environment.id)
+    )
+    assert successor.outcome == "accepted_head_created"
+    assert inbox_count == 2
+    heads = {
+        head.boot_session_id: head
+        for head in (
+            await db_session.scalars(
+                select(V2RuntimeObservationHead).where(
+                    V2RuntimeObservationHead.environment_id == environment.id
+                )
+            )
+        ).all()
+    }
+    assert heads["boot-session-predecessor"].state == "retired"
+    assert heads["boot-session-predecessor"].highest_sequence == 2
+    assert heads["boot-session-successor"].state == "active"
 
 
 @pytest.mark.asyncio
@@ -1893,7 +2118,7 @@ async def test_late_and_unknown_consumers_get_persisted_reset_boundaries(
 
 
 @pytest.mark.asyncio
-async def test_hard_cap_without_consumers_persists_floor_for_late_registration(
+async def test_hard_cap_preserves_fresh_head_then_rehydrates_stale_evidence(
     db_session: AsyncSession,
     seed_user,
 ):
@@ -1902,15 +2127,33 @@ async def test_hard_cap_without_consumers_persists_floor_for_late_registration(
     event = await ingest_runtime_observation(
         db_session,
         environment_id=environment.id,
-        value=_payload(captured_at=captured),
+        value=_payload(captured_at=captured, vary_semantics=False),
         received_at=captured,
+    )
+    refreshed_at = captured + timedelta(days=31)
+    refreshed = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            sequence=2,
+            captured_at=refreshed_at,
+            vary_semantics=False,
+        ),
+        received_at=refreshed_at,
     )
     await db_session.commit()
 
+    assert refreshed.stream_position == event.stream_position
+    assert await expire_runtime_observation_payloads(db_session, now=refreshed_at) == 0
+    await db_session.commit()
+    retained = await db_session.get(V2RuntimeObservationInbox, event.stream_position)
+    assert retained is not None and retained.payload_purged_at is None
+
+    stale_at = refreshed_at + timedelta(seconds=settings.runtime_observation_freshness_seconds + 1)
     assert (
         await expire_runtime_observation_payloads(
             db_session,
-            now=captured + timedelta(days=31),
+            now=stale_at,
         )
         == 1
     )
@@ -1919,7 +2162,7 @@ async def test_hard_cap_without_consumers_persists_floor_for_late_registration(
     fence = await db_session.get(V2RuntimeEnvironmentFence, environment.id)
     assert fence is not None
     assert fence.replay_floor_stream_position == event.stream_position
-    assert fence.replay_floor_session_high_waters == {"boot-session-0001": 1}
+    assert fence.replay_floor_session_high_waters == {"boot-session-0001": 2}
     assert (
         await db_session.scalar(
             select(func.count())
@@ -1939,7 +2182,7 @@ async def test_hard_cap_without_consumers_persists_floor_for_late_registration(
         )
     assert late.value.code == "observation_cursor_expired"
     assert late.value.metadata is not None
-    assert late.value.metadata["sessionHighWaterMarks"] == {"boot-session-0001": 1}
+    assert late.value.metadata["sessionHighWaterMarks"] == {"boot-session-0001": 2}
     assert late.value.metadata["resetBoundary"] is not None
     await db_session.commit()
 
@@ -1953,6 +2196,28 @@ async def test_hard_cap_without_consumers_persists_floor_for_late_registration(
     assert cursor is not None
     assert cursor.state == "expired"
     assert cursor.expiry_boundary_stream_position == event.stream_position
+
+    head = await db_session.get(
+        V2RuntimeObservationHead,
+        {"environment_id": environment.id, "boot_session_id": "boot-session-0001"},
+    )
+    assert head is not None and head.latest_semantic_hash is None
+    recovered = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(sequence=3, captured_at=stale_at, vary_semantics=False),
+        received_at=stale_at,
+    )
+    await db_session.commit()
+    assert recovered.stream_position > event.stream_position
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(V2RuntimeObservationInbox)
+            .where(V2RuntimeObservationInbox.environment_id == environment.id)
+        )
+        == 2
+    )
 
 
 @pytest.mark.asyncio
