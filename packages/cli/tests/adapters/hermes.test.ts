@@ -47,7 +47,7 @@ describe("HermesAdapter.detect", () => {
 describe("HermesAdapter.collectSessions", () => {
 	it("returns the plain-string-model session with correct token counters", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		const plain = sessions.find((s) => s.localSessionId === "s-plain");
 		expect(plain).toBeDefined();
 		expect(plain).toMatchObject({
@@ -64,13 +64,13 @@ describe("HermesAdapter.collectSessions", () => {
 		expect(plain?.messages[0]?.content).toBe("hello");
 		expect(plain?.messages[1]?.role).toBe("assistant");
 		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
-		expect((await a.resolveSession("s-plain"))?.messages).toEqual(plain?.messages);
-		expect(await a.resolveSession("missing-session")).toBeNull();
+		expect((await a.sessions.resolve("s-plain"))?.messages).toEqual(plain?.messages);
+		expect(await a.sessions.resolve("missing-session")).toBeNull();
 	});
 
 	it("parses a JSON-blob model field via parseModelField", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json).toBeDefined();
 		expect(json?.model).toBe("gpt-5.3-codex");
@@ -87,7 +87,7 @@ describe("HermesAdapter.collectSessions", () => {
 		db.close();
 
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		const json = sessions.find((s) => s.localSessionId === "s-json");
 		expect(json?.model).toBe("gpt-5.3-codex");
 		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
@@ -95,26 +95,26 @@ describe("HermesAdapter.collectSessions", () => {
 
 	it("skips sessions with no extractable messages", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions.find((s) => s.localSessionId === "s-empty")).toBeUndefined();
 	});
 
 	it("orders sessions by started_at DESC", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		// s-json started later than s-plain; s-empty is filtered out
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["s-json", "s-plain"]);
 	});
 
 	it("projectPath is null for every Hermes session (by design)", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		for (const s of sessions) expect(s.projectPath).toBeNull();
 	});
 
 	it("rawFilePath includes the session id anchor", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions[0]?.rawFilePath).toContain("state.db#");
 	});
 });
@@ -122,7 +122,7 @@ describe("HermesAdapter.collectSessions", () => {
 describe("HermesAdapter.collectSkills", () => {
 	it("finds a nested skill at skills/core/demo/SKILL.md and skips SKIP_DIRS at every depth", async () => {
 		const a = new HermesAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		// `core/demo` is the real nested skill. The fixture also plants
 		// `skills/node_modules/bad/SKILL.md` — Hermes' scanner recurses, so
 		// SKIP_DIRS must apply at the root level AND block the recursion.
@@ -149,18 +149,18 @@ describe("HermesAdapter.collectSkills", () => {
 		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
 
 		const a = new HermesAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 
 		expect(keys).toEqual(["core/demo"]);
-		expect(await a.listSkillKeys()).toEqual(["core/demo"]);
+		expect(await a.skills.listKeys()).toEqual(["core/demo"]);
 	});
 
 	it("returns empty when skills dir is missing", async () => {
 		// Point HOME at a fresh tmpdir with no .hermes/
 		process.env.HOME = `/tmp/clawdi-empty-${Date.now()}`;
 		const a = new HermesAdapter();
-		expect(await a.collectSkills()).toEqual([]);
+		expect(await a.skills.collect()).toEqual([]);
 	});
 });
 
@@ -174,7 +174,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 		// Remove source first so we can tell it was re-extracted.
 		const a = new HermesAdapter();
-		await a.writeSkillArchive("demo", tarBytes);
+		await a.skills.writeArchive("demo", tarBytes);
 
 		const extracted = join(tmpHome, ".hermes", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
@@ -196,7 +196,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		const tarBytes = await tarSkillDir(join(skillsRoot, "core", "demo"));
 
 		const adapter = new HermesAdapter();
-		await expect(adapter.writeSharedSkillArchive("demo", "owner", tarBytes)).rejects.toThrow(
+		await expect(adapter.skills.writeSharedArchive("demo", "owner", tarBytes)).rejects.toThrow(
 			"Skill shared is reserved by a managed Skill owner",
 		);
 		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
@@ -205,7 +205,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {
 		const a = new HermesAdapter();
-		const p = a.getSkillPath("foo");
+		const p = a.skills.path("foo");
 		expect(p).toBe(join(tmpHome, ".hermes", "skills", "foo", "SKILL.md"));
 	});
 });

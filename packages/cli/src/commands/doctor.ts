@@ -2,11 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
-import { ClaudeCodeAdapter } from "../adapters/claude-code";
-import { CodexAdapter } from "../adapters/codex";
-import { HermesAdapter } from "../adapters/hermes";
-import { OpenClawAdapter } from "../adapters/openclaw";
-import { adapterRegistry } from "../adapters/registry";
+import { adapterRegistry, allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 
@@ -63,12 +59,7 @@ async function checkApiReachable(): Promise<Check> {
 }
 
 async function checkAgents(): Promise<Check[]> {
-	const adapters: AgentAdapter[] = [
-		new ClaudeCodeAdapter(),
-		new HermesAdapter(),
-		new OpenClawAdapter(),
-		new CodexAdapter(),
-	];
+	const adapters: AgentAdapter[] = allAdapterEntries().map((entry) => entry.create());
 	const results: Check[] = [];
 	for (const a of adapters) {
 		const label = adapterRegistry[a.agentType].displayName;

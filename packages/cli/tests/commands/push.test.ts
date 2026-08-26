@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentType } from "../../src/adapters/agent-types";
 import { push } from "../../src/commands/push";
+import { readFencedSessionEntry, readSessionsLock } from "../../src/lib/sessions-lock";
 import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
@@ -309,10 +310,13 @@ describe("push — Claude Code fixture", () => {
 		expect(
 			captured.filter((request) => request.path.endsWith(`/${localSessionId}/upload`)),
 		).toHaveLength(0);
-		const lock = JSON.parse(
-			readFileSync(join(tmpHome, ".clawdi", "sessions-lock.json"), "utf-8"),
-		) as { sessions: Record<string, { hash: string }> };
-		expect(lock.sessions[`claude_code:${localSessionId}`]?.hash).toBe(submitted[0]?.content_hash);
+		const lockEntry = readFencedSessionEntry(readSessionsLock(), {
+			apiOrigin: "http://localhost:8000",
+			environmentId: "env-test",
+			adapter: "claude_code",
+			sourceSessionKey: localSessionId,
+		});
+		expect(lockEntry?.local_hash).toBe(submitted[0]?.content_hash);
 	});
 });
 
@@ -574,5 +578,32 @@ describe("push — --all flag fan-out", () => {
 		const batches = captured.filter((c) => c.path === "/v1/sessions/batch");
 		expect(batches).toHaveLength(1);
 		expect(batchSessions(batches[0])).toHaveLength(1);
+	});
+
+	it("multi-agent push skips unsupported modules without aborting supported agents", async () => {
+		setup("claude_code");
+		writeFileSync(
+			join(tmpHome, ".clawdi", "environments", "pi.json"),
+			JSON.stringify({ id: "env-pi", agentType: "pi" }),
+		);
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/v1/agents/env-test/skills/sync/upload",
+				response: () => jsonResponse({ skill_key: "demo", version: 1, file_count: 1 }),
+			},
+		]);
+		try {
+			await push({ modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+
+		expect(captured.some((call) => call.path === "/v1/agents/env-test/skills/sync/upload")).toBe(
+			true,
+		);
+		expect(captured.some((call) => call.path === "/v1/agents/env-pi")).toBe(false);
+		expect(process.exitCode).toBe(0);
 	});
 });

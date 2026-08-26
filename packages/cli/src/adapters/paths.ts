@@ -54,6 +54,15 @@ export function getHermesHome(): string {
 	return process.env.HERMES_HOME?.trim() || join(home(), ".hermes");
 }
 
+/** Pi coding agent: honors `$PI_CODING_AGENT_DIR`; fallback `~/.pi/agent`. */
+export function getPiHome(): string {
+	return process.env.PI_CODING_AGENT_DIR?.trim() || join(home(), ".pi", "agent");
+}
+
+export function getPiSessionsDir(): string {
+	return join(getPiHome(), "sessions");
+}
+
 /**
  * OpenClaw: honors `$OPENCLAW_STATE_DIR`, else probes home-relative names
  * (`.openclaw` → `.clawdbot` → `.moltbot` — same multi-name fallback

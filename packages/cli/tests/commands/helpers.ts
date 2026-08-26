@@ -75,13 +75,21 @@ export function mockFetch(
 		const capturedHeaders = Object.fromEntries(headers.entries());
 		const contentType = headers.get("content-type") ?? "";
 		const rawBody = isRequest ? input.body : init?.body;
-		const isMultipart = rawBody instanceof FormData;
+		let multipart = rawBody instanceof FormData ? rawBody : null;
+		if (!multipart && isRequest && contentType.includes("multipart/form-data")) {
+			try {
+				multipart = await input.clone().formData();
+			} catch {
+				// Keep the request observable even if the runtime cannot decode its body.
+			}
+		}
+		const isMultipart = multipart !== null || contentType.includes("multipart/form-data");
 
 		let body: unknown;
 		let multipartFields: Record<string, string> | undefined;
-		if (isMultipart) {
+		if (multipart) {
 			multipartFields = {};
-			for (const [key, value] of rawBody.entries()) {
+			for (const [key, value] of multipart.entries()) {
 				if (typeof value === "string") multipartFields[key] = value;
 			}
 		}

@@ -11,7 +11,7 @@ import {
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
-	AgentAdapter,
+	AgentAdapterCore,
 	RawSession,
 	RawSkill,
 	SessionMessage,
@@ -19,19 +19,8 @@ import type {
 	SessionScanResult,
 } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
+import { openReadonlySqlite } from "./sqlite";
 import { readCommandVersion } from "./version";
-
-/**
- * Minimal SQLite shape that both `bun:sqlite` and Node's built-in
- * `node:sqlite` implement. Enough for our read-only Hermes access pattern.
- */
-interface SqliteStatement {
-	all(...params: unknown[]): unknown[];
-}
-interface SqliteDatabase {
-	prepare(sql: string): SqliteStatement;
-	close(): void;
-}
 
 interface SessionRow {
 	id: string;
@@ -50,27 +39,6 @@ interface MessageRow {
 	role: string;
 	content: string;
 	timestamp: number;
-}
-
-/**
- * Open a Hermes SQLite db using the runtime's built-in binding:
- * - Under Bun: `bun:sqlite` (built-in, the dev/test default).
- * - Under the supported Node 24+ runtime: `node:sqlite` (built-in).
- *
- * Neither cross-loads — Bun has no `node:sqlite` (oven-sh/bun#15561) and
- * Node has no `bun:sqlite`. Importing lazily means users who never touch
- * Hermes don't pay the load cost.
- *
- * Both expose a `prepare(sql).all(args)` surface, so call sites stay
- * runtime-agnostic.
- */
-async function openHermesDb(path: string): Promise<SqliteDatabase> {
-	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-		const { Database } = await import("bun:sqlite");
-		return new Database(path, { readonly: true }) as unknown as SqliteDatabase;
-	}
-	const { DatabaseSync } = await import("node:sqlite");
-	return new DatabaseSync(path, { readOnly: true }) as unknown as SqliteDatabase;
 }
 
 function hermesDir() {
@@ -110,8 +78,26 @@ function parseModelField(raw: string | null): string | null {
 	return raw;
 }
 
-export class HermesAdapter implements AgentAdapter {
+export class HermesAdapter implements AgentAdapterCore {
 	readonly agentType = "hermes" as const;
+	readonly sessions = {
+		contentProtocol: "snapshot-v1" as const,
+		collect: (request: SessionScanRequest) => this.collectSessions(request),
+		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		watchPaths: () => this.getSessionsWatchPaths(),
+	};
+	readonly skills = {
+		collect: () => this.collectSkills(),
+		listKeys: () => this.listSkillKeys(),
+		path: (key: string) => this.getSkillPath(key),
+		rootDir: () => this.getSkillsRootDir(),
+		sharedPath: (skillKey: string, ownerHandle: string) =>
+			this.getSharedSkillPath(skillKey, ownerHandle),
+		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
+		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
+			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
+		remove: (key: string) => this.removeLocalSkill(key),
+	};
 
 	async detect(): Promise<boolean> {
 		// Hermes stores state in a SQLite db. The dir alone may exist as a
@@ -123,7 +109,7 @@ export class HermesAdapter implements AgentAdapter {
 		return readCommandVersion("hermes", ["--version"]);
 	}
 
-	async collectSessions(_request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(_request: SessionScanRequest): Promise<SessionScanResult> {
 		// Hermes' SQLite is a single file with no per-row stat info, so we
 		// always scan the whole `sessions` table. Cost is negligible
 		// (dozens to hundreds of rows). `projectFilter` has no analogue
@@ -131,13 +117,13 @@ export class HermesAdapter implements AgentAdapter {
 		return { sessions: await this.collectCurrentSessions(), dedupedCount: 0, coverage: "complete" };
 	}
 
-	async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		return (await this.collectCurrentSessions(localSessionId))[0] ?? null;
 	}
 
 	private async collectCurrentSessions(localSessionId?: string): Promise<RawSession[]> {
 		if (!existsSync(stateDbPath())) return [];
-		const db = await openHermesDb(stateDbPath());
+		const db = await openReadonlySqlite(stateDbPath());
 		try {
 			const selectSessions = `
 				SELECT id, source, model, title, started_at, ended_at,
@@ -210,7 +196,7 @@ export class HermesAdapter implements AgentAdapter {
 		}
 	}
 
-	async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(): Promise<RawSkill[]> {
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(skillsDir(), "clawdi"),
 			id: "clawdi",
@@ -257,22 +243,22 @@ export class HermesAdapter implements AgentAdapter {
 		}
 	}
 
-	getSkillPath(key: string): string {
+	private getSkillPath(key: string): string {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
-	getSkillsRootDir(): string {
+	private getSkillsRootDir(): string {
 		return skillsDir();
 	}
 
-	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
 		// Hermes nests skills under category dirs; route shared
 		// project content into a dedicated `shared/` category so it
 		// doesn't intermix with user-authored categories.
 		return join(skillsDir(), "shared", `${skillKey}__${ownerHandle}`);
 	}
 
-	async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(): Promise<string[]> {
 		// Hermes nests skills under category dirs:
 		//   `~/.hermes/skills/category/foo/SKILL.md`
 		// Recurse — same logic `_scanSkillsDir` uses for the
@@ -307,7 +293,7 @@ export class HermesAdapter implements AgentAdapter {
 		return out;
 	}
 
-	getSessionsWatchPaths(): string[] {
+	private getSessionsWatchPaths(): string[] {
 		// SQLite may keep committed session rows in WAL or rollback-journal
 		// sidecars while state.db itself remains unchanged. All three paths
 		// therefore belong to one global quiescence window; missing sidecars
@@ -316,14 +302,14 @@ export class HermesAdapter implements AgentAdapter {
 		return [database, `${database}-wal`, `${database}-journal`];
 	}
 
-	async removeLocalSkill(key: string): Promise<void> {
+	private async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
 		mutateUserSkillTarget(dir, key, () => {
 			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		});
 	}
 
-	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
+	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
 		const targetDir = join(root, key);
 		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
@@ -331,7 +317,7 @@ export class HermesAdapter implements AgentAdapter {
 		);
 	}
 
-	async writeSharedSkillArchive(
+	private async writeSharedSkillArchive(
 		key: string,
 		ownerHandle: string,
 		tarGzBytes: Buffer,

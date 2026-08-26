@@ -36,7 +36,12 @@ function AgentSkillDetailRoute() {
 
 	if (!projectId) {
 		return (
-			<AgentResourceRouteGate agentId={id} returnHref={returnHref} returnLabel="Projects">
+			<AgentResourceRouteGate
+				agentId={id}
+				returnHref={returnHref}
+				returnLabel="Projects"
+				requiredAdapterModule="skills"
+			>
 				<LegacyAgentSkillProjectCanonicalizer agentId={id} skillKey={skillKey} />
 			</AgentResourceRouteGate>
 		);
@@ -47,6 +52,7 @@ function AgentSkillDetailRoute() {
 			agentId={id}
 			returnHref={returnHref}
 			returnLabel="Projects"
+			requiredAdapterModule="skills"
 			projectAccess={{ projectId }}
 		>
 			<SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />

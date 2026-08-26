@@ -8,11 +8,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -116,6 +118,9 @@ class AgentEnvironment(Base, TimestampMixin):
     project_skill_reconcile_observed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Derived from the adapter's actual complete modules. NULL is retained for
+    # legacy Connected rows and all Hosted rows.
+    adapter_modules: Mapped[list[str] | None] = mapped_column(ARRAY(String(20)))
 
     # Default project this env's daemon writes into. Phase-1 migration
     # creates one env-local project per env and points this column at
@@ -137,18 +142,45 @@ class AgentEnvironment(Base, TimestampMixin):
 class SessionSyncSuppression(Base):
     __tablename__ = "session_sync_suppressions"
 
+    __table_args__ = (
+        Index(
+            "uq_session_sync_suppressions_legacy",
+            "user_id",
+            "local_session_id",
+            unique=True,
+            postgresql_where=text("origin_environment_id IS NULL"),
+        ),
+        Index(
+            "uq_session_sync_suppressions_origin",
+            "user_id",
+            "origin_environment_id",
+            "local_session_id",
+            unique=True,
+            postgresql_where=text("origin_environment_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
     )
-    local_session_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    # NULL rows are legacy wildcard suppressions. Current deletes always write
+    # the immutable origin so equal source-local IDs from other Agents remain live.
+    origin_environment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    local_session_id: Mapped[str] = mapped_column(String(200))
 
 
 class Session(Base, TimestampMixin):
     __tablename__ = "sessions"
     __table_args__ = (
-        UniqueConstraint("user_id", "local_session_id", name="uq_sessions_user_local"),
+        UniqueConstraint(
+            "user_id",
+            "origin_environment_id",
+            "local_session_id",
+            name="uq_sessions_user_origin_local",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -161,6 +193,11 @@ class Session(Base, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("agent_environments.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    # Immutable ingest identity. Unlike environment_id this is deliberately
+    # not a foreign key, so archiving/deleting an Agent cannot erase origin.
+    origin_environment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
     )
     local_session_id: Mapped[str] = mapped_column(String(200), nullable=False)
     project_path: Mapped[str | None] = mapped_column(Text)
@@ -195,11 +232,17 @@ class Session(Base, TimestampMixin):
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     status: Mapped[str] = mapped_column(String(20), server_default="completed")
     file_key: Mapped[str | None] = mapped_column(Text)
-    # SHA-256 hex of the messages JSON the CLI uploaded. Used by the batch
-    # endpoint to skip content re-upload when the local copy is unchanged,
-    # and by `clawdi pull` to diff cloud state against local sidecars.
+    # SHA-256 of snapshot bytes, or the committed events-v1 head hash. Used
+    # by batch/list compatibility consumers to identify current content.
     content_hash: Mapped[str | None] = mapped_column(String(64))
     content_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_protocol: Mapped[str] = mapped_column(
+        String(20), server_default="snapshot-v1", nullable=False
+    )
+    event_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    event_revision: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    event_head_hash: Mapped[str | None] = mapped_column(String(64))
 
     # Extracted external entities surfaced in the session sidebar. Schema:
     #   {"prs": ["owner/repo#123"], "repos": [...], "branches": [...]}
@@ -217,3 +260,92 @@ class Session(Base, TimestampMixin):
     # Python None → SQL NULL, and the coalesce preserves the
     # server-computed value across re-pushes.
     related_refs: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+
+
+class SessionEventGeneration(Base, TimestampMixin):
+    __tablename__ = "session_event_generations"
+    __table_args__ = (
+        UniqueConstraint("session_id", "append_id", name="uq_session_event_generation_append"),
+        Index(
+            "ix_session_event_generations_status_created_at",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_session_event_generations_status_superseded_at",
+            "status",
+            "superseded_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    append_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    base_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    final_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    final_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SessionEventChunk(Base, TimestampMixin):
+    __tablename__ = "session_event_chunks"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "start_seq", name="uq_session_event_chunk_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("session_event_generations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    start_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_key: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SessionEventAppendReceipt(Base, TimestampMixin):
+    __tablename__ = "session_event_append_receipts"
+    __table_args__ = (
+        UniqueConstraint("session_id", "append_id", name="uq_session_event_append_receipt"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    append_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("session_event_generations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)

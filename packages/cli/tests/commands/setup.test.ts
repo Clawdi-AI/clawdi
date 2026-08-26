@@ -45,6 +45,7 @@ const ENV_KEYS = [
 	"CLAWDI_SERVE_MODE",
 	"CLAWDI_SERVE_DEBUG",
 	"HERMES_TEST_MCP_TOKEN",
+	"PI_CODING_AGENT_DIR",
 ] as const;
 
 let envSnapshot: Partial<Record<(typeof ENV_KEYS)[number], string>> = {};
@@ -127,6 +128,36 @@ afterEach(() => {
 });
 
 describe("setup daemon install", () => {
+	it("registers MCP when the idempotency probe fails", async () => {
+		installEnvironmentMock("env-codex-probe");
+		writeExecutable(
+			join(home, "bin", "codex"),
+			'#!/bin/sh\nif [ "$*" = "mcp list" ]; then exit 9; fi\nif [ "$*" = "mcp add clawdi -- clawdi mcp" ]; then printf "%s\\n" "$*" > "$HOME/codex-mcp-register"; fi\nexit 0\n',
+		);
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(readFileSync(join(home, "codex-mcp-register"), "utf-8").trim()).toBe(
+			"mcp add clawdi -- clawdi mcp",
+		);
+		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
+	});
+
+	it("registers Pi as sessions-only without installing Skill or MCP state", async () => {
+		const { captured } = installEnvironmentMock("env-pi");
+		process.env.PI_CODING_AGENT_DIR = join(home, "pi-agent");
+
+		await setup({ agent: "pi", yes: true, daemon: false });
+
+		const registration = captured.find((req) => req.method === "POST" && req.path === "/v1/agents");
+		expect(registration?.body).toMatchObject({
+			agent_type: "pi",
+			adapter_modules: ["sessions"],
+		});
+		expect(existsSync(join(home, "pi-agent", "skills"))).toBe(false);
+		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
+	});
+
 	it("defaults to installing one daemon unit for all registered agents", async () => {
 		seedRegisteredAgent("claude_code", "env-claude");
 		seedDaemonUnit("claude_code");

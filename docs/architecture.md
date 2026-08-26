@@ -8,11 +8,11 @@ For contributor commands, start in [`AGENTS.md`](../AGENTS.md).
 
 ```text
 Self-managed machine
-  Claude Code / Codex / Hermes / OpenClaw
+  Claude Code / Codex / Hermes / OpenClaw / Pi
         | local files + stdio MCP
         v
   clawdi CLI
-    adapters: claude_code, codex, hermes, openclaw
+    adapters: claude_code, codex, hermes, openclaw, pi
     commands: setup, push, pull, run, daemon, mcp
         |
         | HTTPS /v1, bearer API key
@@ -135,10 +135,12 @@ Adapter roots are verified in `packages/cli/src/adapters/*`:
 | Codex | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | `~/.codex/skills/<key>/SKILL.md` except `.system/` | `codex --version` |
 | Hermes | `$HERMES_HOME/state.db` or `~/.hermes/state.db` | `$HERMES_HOME/skills/<category>/<key>/SKILL.md` | `hermes --version` |
 | OpenClaw | `$OPENCLAW_STATE_DIR/agents/<id>/sessions/` or `~/.openclaw/agents/<id>/sessions/` | `agents/<id>/skills/<key>/SKILL.md` | `openclaw --version` |
+| Pi | `$PI_CODING_AGENT_DIR/sessions/**/*.jsonl` or `~/.pi/agent/sessions/**/*.jsonl` | — | `pi --version` |
 
-`AgentAdapter` also exposes skill-key listing, session watch paths, shared-skill
-paths, local skill removal, and `buildRunCommand`; do not document a smaller
-interface than `packages/cli/src/adapters/base.ts`.
+`AgentAdapter` is core identity plus at least one complete `sessions` or
+`skills` module. Methods inside a present module are mandatory. MCP lifecycle
+belongs to the registry, not either data module. Pi is the first sessions-only
+consumer; the other four adapters expose both modules.
 
 ## Sync Engine
 
@@ -159,8 +161,9 @@ Target selection:
 3. Adapter detection.
 4. Prompt when more than one candidate remains.
 
-Sync state is client-side under `~/.clawdi/`, including session state and a
-versioned Skill projection ledger fenced by stable Agent and resolved Agent
+Sync state is client-side under `~/.clawdi/`, including Session state fenced by
+API origin, stable Agent, adapter, and source key, plus a versioned Skill
+projection ledger fenced by stable Agent and resolved Agent
 Project identity. Only an exact successful Agent claim authorizes a later
 projection delete. After Project reassignment, the durable queue deletes that
 Agent's claimed row from the old Project before projecting current local state
@@ -179,14 +182,24 @@ claims.
 
 ## Sessions
 
-The `sessions` table stores metadata: user, stable agent id as
-`environment_id`, local session id, project path, timestamps, model/token
-counts, status, content hash, and `file_key`.
+The `sessions` table stores metadata, mutable stable-agent attribution in
+`environment_id`, and immutable ingest identity in `origin_environment_id`.
+Uniqueness and object keys include the immutable origin, so equal local IDs from
+different Agents cannot collide.
 
-Raw transcript bodies are stored in the object store. Public session sharing is
-controlled by `session_permissions`; public reads use `/v1/public/sessions/*`.
-Deleting an Agent sets `sessions.environment_id` to NULL instead of deleting
-history.
+Legacy `snapshot-v1` message arrays remain readable. `events-v1` stores strict
+Message/ToolCall/ToolResult NDJSON in immutable generation chunks with a DB
+chunk index, revision, count, and canonical chained head. Append writes only new
+objects; truncation stages a generation and CAS-commits it. Private `/events`
+reads rich content, while `/content`, public sharing, exports, and memory inputs
+project only user/assistant text. Attachment parts identify either a safe
+external reference or an explicit metadata-only record; this protocol does not
+store attachment bodies or local paths. Hidden reasoning and encrypted provider
+state are excluded before upload. A worker removes abandoned staging generations
+after one day and superseded committed generations after a seven-day read grace
+period; the current generation is never eligible. Deleting an Agent nulls `environment_id`
+without deleting history; deletion suppression remains fenced to immutable
+origin, with legacy origin-less suppressions read as wildcards.
 
 ## Projects And Agent Use
 

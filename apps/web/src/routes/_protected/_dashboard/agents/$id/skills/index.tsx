@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AgentProjectResourceCanonicalizer } from "@/components/dashboard/agent-project-resource-canonicalizer";
+import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-route-gate";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 
 // Explicit index route for the agent Skills tab. Without it the bare
@@ -16,5 +18,14 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/"
 function AgentSkillsRoute() {
 	const { id } = Route.useParams();
 	const search = Route.useSearch();
-	return <AgentProjectResourceCanonicalizer agentId={id} resource="skills" routeSearch={search} />;
+	return (
+		<AgentResourceRouteGate
+			agentId={id}
+			returnHref={agentSectionHref(id, "projects")}
+			returnLabel="Projects"
+			requiredAdapterModule="skills"
+		>
+			<AgentProjectResourceCanonicalizer agentId={id} resource="skills" routeSearch={search} />
+		</AgentResourceRouteGate>
+	);
 }

@@ -54,6 +54,7 @@ from app.routes.public_sessions import (
 from app.routes.runtime import router as runtime_router
 from app.routes.runtime_observation_v2 import router as runtime_observation_v2_router
 from app.routes.search import router as search_router
+from app.routes.session_events import router as session_events_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
@@ -317,6 +318,7 @@ _VERSIONED_ROUTERS = (
     audit_router,
     channels_router,
     cli_auth_router,
+    session_events_router,
     sessions_router,
     public_sessions_router,
     dashboard_router,

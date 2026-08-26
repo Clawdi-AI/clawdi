@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
+import { connectedAdapterHasModule } from "@/lib/adapter-modules";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
@@ -89,6 +90,8 @@ export function ConnectedAgentDetail({
 		refetch: refetchAgent,
 	} = useQuery(agentDetailQueryOptions($api, queryClient, id));
 
+	const supportsSessions = connectedAdapterHasModule(agent?.adapter_modules, "sessions");
+	const supportsSkills = connectedAdapterHasModule(agent?.adapter_modules, "skills");
 	const overviewEnabled = activeTab === "overview" && Boolean(agent);
 	const overviewProjects = useAgentProjectBindings(id, { enabled: overviewEnabled });
 	const projectBindings = overviewProjects.data;
@@ -101,7 +104,7 @@ export function ConnectedAgentDetail({
 		refetch: refetchOverviewSessions,
 	} = useQuery({
 		...sessionListQueryOptions($api, { environment_id: id, page_size: 3 }),
-		enabled: overviewEnabled,
+		enabled: overviewEnabled && supportsSessions,
 	});
 
 	const {
@@ -111,7 +114,7 @@ export function ConnectedAgentDetail({
 		refetch: refetchSessions,
 	} = useQuery({
 		...sessionListQueryOptions($api, { environment_id: id, page_size: 50 }),
-		enabled: activeTab === "sessions" && Boolean(agent),
+		enabled: activeTab === "sessions" && Boolean(agent) && supportsSessions,
 	});
 
 	const blockingAgentError =
@@ -163,7 +166,7 @@ export function ConnectedAgentDetail({
 	const skillsModule = useOverviewWorkspaceSkillsModule({
 		projectId: workspaceProjectId,
 		resolution: workspaceResolution,
-		enabled: overviewEnabled,
+		enabled: overviewEnabled && supportsSkills,
 	});
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
@@ -188,6 +191,11 @@ export function ConnectedAgentDetail({
 				)
 			) : isLoading ? (
 				<AgentDetailContentSkeleton variant="connected" section={activeTab} />
+			) : agent && activeTab === "sessions" && !supportsSessions ? (
+				<DetailNotFound
+					title="Sessions unavailable"
+					message="This Connected Agent does not provide session sync."
+				/>
 			) : agent ? (
 				<section className="flex flex-col gap-6">
 					{activeTab === "projects" ? null : (
@@ -225,39 +233,41 @@ export function ConnectedAgentDetail({
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
 							<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
-								<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
-									<div className="flex items-center justify-between">
-										<h2 id="connected-recent-sessions" className="text-sm font-semibold">
-											Recent sessions
-										</h2>
-										<Button
-											render={<Link {...agentSectionLink(id, "sessions")} />}
-											nativeButton={false}
-											variant="ghost"
-											size="sm"
-											className="text-muted-foreground"
-										>
-											View all
-											<ArrowRight />
-										</Button>
+								{supportsSessions ? (
+									<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+										<div className="flex items-center justify-between">
+											<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+												Recent sessions
+											</h2>
+											<Button
+												render={<Link {...agentSectionLink(id, "sessions")} />}
+												nativeButton={false}
+												variant="ghost"
+												size="sm"
+												className="text-muted-foreground"
+											>
+												View all
+												<ArrowRight />
+											</Button>
+										</div>
+										<section aria-labelledby="connected-recent-sessions" className="min-w-0">
+											{blockingOverviewSessionsError ? (
+												<OverviewModuleError
+													label="Sessions"
+													onRetry={() => void refetchOverviewSessions()}
+												/>
+											) : (
+												<OverviewSessionList
+													sessions={overviewSessionsPage?.items ?? []}
+													isLoading={overviewSessionsLoading}
+													emptyMessage="No recent sessions"
+													sessionLink={(session) => scopedSessionLink(session.id)}
+												/>
+											)}
+										</section>
 									</div>
-									<section aria-labelledby="connected-recent-sessions" className="min-w-0">
-										{blockingOverviewSessionsError ? (
-											<OverviewModuleError
-												label="Sessions"
-												onRetry={() => void refetchOverviewSessions()}
-											/>
-										) : (
-											<OverviewSessionList
-												sessions={overviewSessionsPage?.items ?? []}
-												isLoading={overviewSessionsLoading}
-												emptyMessage="No recent sessions"
-												sessionLink={(session) => scopedSessionLink(session.id)}
-											/>
-										)}
-									</section>
-								</div>
-								<div className="@3xl/main:row-start-2">
+								) : null}
+								<div className={cn(supportsSessions && "@3xl/main:row-start-2")}>
 									<AgentOverviewStatusCard
 										agentId={id}
 										section="settings"
@@ -292,12 +302,16 @@ export function ConnectedAgentDetail({
 											error: blockingProjectBindingsError,
 										},
 									}),
-									skills: {
-										...skillsModule,
-										link: workspaceProjectId
-											? agentProjectResourceLink(id, workspaceProjectId, "skills")
-											: null,
-									},
+									...(supportsSkills
+										? {
+												skills: {
+													...skillsModule,
+													link: workspaceProjectId
+														? agentProjectResourceLink(id, workspaceProjectId, "skills")
+														: null,
+												},
+											}
+										: {}),
 									memories: memoriesModule,
 									vaults: {
 										...vaultsModule,

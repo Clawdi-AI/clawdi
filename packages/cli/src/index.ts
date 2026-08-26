@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
+import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { loadAuthTokenFile } from "./lib/auth-token-file.js";
 import { handleError } from "./lib/errors.js";
@@ -65,6 +66,7 @@ Environment:
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
   OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
+  PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI
 
 Docs: https://github.com/Clawdi-AI/clawdi`,
@@ -248,7 +250,7 @@ configCmd
 program
 	.command("setup")
 	.description("Detect installed agents, register this machine, and install daemons")
-	.option("--agent <type>", "Agent type (claude_code, codex, openclaw, hermes)")
+	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
 	.option("-y, --yes", "Register every detected agent without prompting")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
 	.addHelpText(
@@ -263,7 +265,7 @@ program
 program
 	.command("teardown")
 	.description("Reverse setup: remove env file, bundled skill, and MCP entry")
-	.option("--agent <type>", "Tear down a single agent (claude_code, codex, openclaw, hermes)")
+	.option("--agent <type>", `Tear down a single agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option("--all", "Tear down every registered agent")
 	.option("--keep-skill", "Don't remove the bundled clawdi skill from the agent")
 	.option("--keep-mcp", "Don't remove the MCP server registration")
@@ -305,7 +307,7 @@ program
 		"--all",
 		"Push everything: every module, every registered agent, every project (each axis still narrowable via --modules / --agent / --project)",
 	)
-	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
+	.option("--agent <type>", `Narrow to one agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option("--all-agents", "Push from every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview without uploading")
 	.addHelpText(
@@ -337,7 +339,7 @@ program
 		"-p, --project <id-or-slug>",
 		"Import Skills from an explicit Custom/personal Project (Agent Workspaces are rejected)",
 	)
-	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
+	.option("--agent <type>", `Narrow to one agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"--all",
 		"Pull everything: every module, every registered agent (still narrowable via --modules / --agent)",
@@ -1002,10 +1004,7 @@ skillCmd
 skillCmd
 	.command("add <path>")
 	.description("Upload a skill directory or single .md file")
-	.option(
-		"-a, --agent <type>",
-		"Upload to an Agent Workspace (claude_code, codex, hermes, openclaw)",
-	)
+	.option("-a, --agent <type>", `Upload to an Agent Workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
 		"Upload to an explicit project (UUID, slug, or name). Mutex with --agent.",
@@ -1023,7 +1022,7 @@ skillCmd
 skillCmd
 	.command("install <repo>")
 	.description("Install a skill from GitHub (owner/repo or owner/repo/path)")
-	.option("-a, --agent <type>", "Install to a single agent (claude_code, codex, hermes, openclaw)")
+	.option("-a, --agent <type>", `Install to a single agent (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
 		"Install into an explicit owned project (UUID, slug, or name). Mutex with --agent.",
@@ -1045,10 +1044,7 @@ Examples:
 skillCmd
 	.command("rm <key>")
 	.description("Remove a skill from the cloud")
-	.option(
-		"-a, --agent <type>",
-		"Remove from an Agent Workspace (claude_code, codex, hermes, openclaw)",
-	)
+	.option("-a, --agent <type>", `Remove from an Agent Workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
 		"Remove from an explicit owned project (UUID, slug, or name). Mutex with --agent.",
@@ -1077,7 +1073,7 @@ const sessionCmd = program
 sessionCmd
 	.command("list")
 	.description("List local agent sessions (use before `clawdi push` to preview)")
-	.option("--agent <type>", "Single agent (claude_code, codex, hermes, openclaw)")
+	.option("--agent <type>", `Single agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option("--all-agents", "List sessions from every registered agent (default)")
 	.option("--project <path>", "Restrict to one project path")
 	.option("--all", "List sessions from all projects (default when --project not set)")

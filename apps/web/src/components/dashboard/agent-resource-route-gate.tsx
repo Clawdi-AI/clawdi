@@ -8,6 +8,8 @@ import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Skeleton } from "@/components/ui/skeleton";
+import { type AdapterModule, connectedAdapterHasModule } from "@/lib/adapter-modules";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
@@ -20,23 +22,29 @@ export function AgentResourceRouteGate({
 	returnHref,
 	returnLabel,
 	projectAccess,
+	requiredAdapterModule,
 	children,
 }: {
 	agentId: string;
 	returnHref: string;
 	returnLabel: string;
 	projectAccess?: { projectId: string | null | undefined };
+	requiredAdapterModule?: AdapterModule;
 	children: ReactNode;
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
+	const ownership = useAgentOwnership();
 	const agent = useQuery(agentDetailQueryOptions($api, queryClient, agentId));
+	const ownershipKind = agent.data
+		? agentOwnershipKindFromId(agent.data.id, ownership)
+		: "unresolved";
 	const blockingError =
 		isApiNotFoundError(agent.error) || shouldBlockQueryError(agent.error, agent.data)
 			? agent.error
 			: null;
 
-	if (agent.isLoading) {
+	if (agent.isLoading || (requiredAdapterModule && ownershipKind === "unresolved")) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
 				<DetailBackLink href="/agents" label="Agents" mobileOnly={false} />
@@ -69,6 +77,23 @@ export function AgentResourceRouteGate({
 						title="Couldn't verify Agent access"
 					/>
 				)}
+			</div>
+		);
+	}
+
+	if (
+		requiredAdapterModule &&
+		ownershipKind !== "cloud" &&
+		!connectedAdapterHasModule(agent.data.adapter_modules, requiredAdapterModule)
+	) {
+		const label = requiredAdapterModule === "sessions" ? "Sessions" : "Skills";
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
+				<DetailBackLink href={returnHref} label={returnLabel} mobileOnly={false} />
+				<DetailNotFound
+					title={`${label} unavailable`}
+					message={`This Connected Agent does not provide ${label.toLowerCase()} sync.`}
+				/>
 			</div>
 		);
 	}

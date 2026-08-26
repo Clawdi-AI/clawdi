@@ -1,0 +1,6 @@
+{"type":"session","id":"legacy-session","timestamp":"2025-01-01T00:00:00.000Z","cwd":"/workspace/legacy"}
+{"type":"message","timestamp":"2025-01-01T00:00:01.000Z","message":{"role":"user","content":"old legacy prompt","timestamp":1735689601000}}
+{"type":"message","timestamp":"2025-01-01T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"old legacy answer"}],"model":"legacy-model","timestamp":1735689602000}}
+{"type":"message","timestamp":"2025-01-01T00:00:03.000Z","message":{"role":"user","content":"kept legacy prompt","timestamp":1735689603000}}
+{"type":"compaction","timestamp":"2025-01-01T00:00:04.000Z","summary":"Legacy visible summary","firstKeptEntryIndex":3,"tokensBefore":900}
+{"type":"message","timestamp":"2025-01-01T00:00:05.000Z","message":{"role":"hookMessage","content":"visible migrated hook","display":true,"timestamp":1735689605000}}

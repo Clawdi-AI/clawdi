@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
@@ -19,7 +18,6 @@ import {
 	migrateLegacyLocalSetupSkill,
 	releaseManagedSkill,
 } from "../runtime/managed-skill-reservation";
-import { reconcileLocalHermesMcp } from "./hermes-mcp";
 
 export async function teardown(opts: {
 	agent?: string;
@@ -118,6 +116,7 @@ async function resolveTargets(opts: {
 
 async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; keepMcp: boolean }) {
 	const label = adapterRegistry[agentType].displayName;
+	const adapter = adapterRegistry[agentType].create();
 
 	// 1. Local env file
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
@@ -136,7 +135,7 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 	//    needs to add that endpoint first.
 
 	// 3. Bundled skill
-	const skillDir = builtinSkillTargetDir(agentType);
+	const skillDir = adapter.skills ? builtinSkillTargetDir(agentType) : null;
 	if (skillDir) {
 		try {
 			migrateLegacyLocalSetupSkill({
@@ -164,37 +163,6 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 
 	// 4. MCP registration
 	if (!opts.keepMcp) {
-		await unregisterMcpServer(agentType);
-	}
-}
-
-async function unregisterMcpServer(agentType: AgentType) {
-	if (agentType === "claude_code")
-		return unregisterViaCli("Claude Code", "claude mcp remove clawdi");
-	if (agentType === "codex") return unregisterViaCli("Codex", "codex mcp remove clawdi");
-	if (agentType === "hermes") return unregisterHermesMcp();
-	if (agentType === "openclaw") return unregisterViaCli("OpenClaw", "openclaw mcp unset clawdi");
-}
-
-function unregisterViaCli(label: string, cmd: string) {
-	try {
-		execSync(cmd, { stdio: "pipe", env: process.env });
-		p.log.success(`${label}: removed MCP server registration`);
-	} catch {
-		// `mcp remove` returns non-zero if the entry didn't exist — that's fine.
-		p.log.info(`${label}: MCP server already absent (or removal not supported)`);
-	}
-}
-
-function unregisterHermesMcp() {
-	try {
-		if (reconcileLocalHermesMcp(false)) {
-			p.log.success("Hermes: removed MCP server registration");
-		} else {
-			p.log.info("Hermes: MCP server already absent");
-		}
-	} catch (e) {
-		p.log.warn(`Hermes: could not remove MCP server registration (${errMessage(e)})`);
-		p.log.info("  Check with: hermes config get mcp_servers --json");
+		await adapterRegistry[agentType].mcpLifecycle?.unregister();
 	}
 }

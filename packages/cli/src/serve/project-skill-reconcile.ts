@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
-import type { AgentAdapter } from "../adapters/base";
+import type { SkillModule } from "../adapters/base";
 import { type ApiClient, unwrap } from "../lib/api-client";
 import { readBoundedResponseBytes } from "../lib/github-skill-archive";
 import {
@@ -68,10 +68,10 @@ function priorInput(
 }
 
 async function snapshotOwnedTarget(
-	adapter: Pick<AgentAdapter, "getSkillPath">,
+	adapter: SkillModule,
 	input: MaterializationInput,
 ): Promise<Buffer> {
-	const directory = dirname(adapter.getSkillPath(input.localSkillKey));
+	const directory = dirname(adapter.path(input.localSkillKey));
 	if (!existsSync(join(directory, "SKILL.md"))) {
 		throw new Error(`Project Skill ${input.localSkillKey} is missing from this Agent`);
 	}
@@ -135,10 +135,8 @@ async function downloadDesiredArchive(
 export async function reconcileConnectedProjectSkills(input: {
 	api: ApiClient;
 	agentId: string;
-	adapter: Pick<
-		AgentAdapter,
-		"agentType" | "getSkillPath" | "listSkillKeys" | "writeSkillArchive" | "removeLocalSkill"
-	>;
+	agentType: string;
+	skills: SkillModule;
 }): Promise<void> {
 	unwrap(
 		await input.api.PUT("/v1/runtime/project-skill-capability", {
@@ -161,22 +159,22 @@ export async function reconcileConnectedProjectSkills(input: {
 		desiredByKey.set(desired.skill_key, desired);
 	}
 
-	const localKeys = new Set(await input.adapter.listSkillKeys());
+	const localKeys = new Set(await input.skills.listKeys());
 	const ownedReceipts = readProjectSkillMaterializationsForReconcile(
-		input.adapter.agentType,
+		input.agentType,
 		input.agentId,
 	);
 	const priorByKey = new Map<string, PriorMaterialization>();
 	const missingOwnedKeys = new Set<string>();
 	for (const receipt of ownedReceipts) {
-		const receiptInput = priorInput(input.adapter.agentType, input.agentId, receipt);
-		if (!existsSync(input.adapter.getSkillPath(receipt.local_skill_key))) {
+		const receiptInput = priorInput(input.agentType, input.agentId, receipt);
+		if (!existsSync(input.skills.path(receipt.local_skill_key))) {
 			missingOwnedKeys.add(receipt.local_skill_key);
 			continue;
 		}
 		priorByKey.set(receipt.local_skill_key, {
 			input: receiptInput,
-			archive: await snapshotOwnedTarget(input.adapter, receiptInput),
+			archive: await snapshotOwnedTarget(input.skills, receiptInput),
 		});
 	}
 
@@ -184,9 +182,9 @@ export async function reconcileConnectedProjectSkills(input: {
 	for (const desired of [...desiredByKey.values()].sort((a, b) =>
 		a.skill_key.localeCompare(b.skill_key),
 	)) {
-		const next = desiredInput(input.adapter.agentType, input.agentId, desired);
+		const next = desiredInput(input.agentType, input.agentId, desired);
 		const receipt = readProjectSkillMaterialization({
-			agentType: input.adapter.agentType,
+			agentType: input.agentType,
 			localSkillKey: desired.skill_key,
 		});
 		if (!receipt && localKeys.has(desired.skill_key)) {
@@ -209,9 +207,7 @@ export async function reconcileConnectedProjectSkills(input: {
 	}
 	for (const receipt of ownedReceipts) {
 		if (!missingOwnedKeys.has(receipt.local_skill_key)) continue;
-		removeExactProjectSkillMaterialization(
-			priorInput(input.adapter.agentType, input.agentId, receipt),
-		);
+		removeExactProjectSkillMaterialization(priorInput(input.agentType, input.agentId, receipt));
 	}
 
 	const applied: Array<
@@ -224,14 +220,14 @@ export async function reconcileConnectedProjectSkills(input: {
 		)) {
 			const desired = desiredByKey.get(skillKey);
 			if (!desired) throw new Error("Project Skill inventory changed during reconcile");
-			const next = desiredInput(input.adapter.agentType, input.agentId, desired);
+			const next = desiredInput(input.agentType, input.agentId, desired);
 			const prior = priorByKey.get(skillKey);
 			await commitProjectSkillMaterialization(next, () =>
-				input.adapter.writeSkillArchive(skillKey, archive),
+				input.skills.writeArchive(skillKey, archive),
 			);
 			applied.push({ kind: "installed", input: next, ...(prior ? { prior } : {}) });
 			const installedHash = await computeSkillFolderHash(
-				dirname(input.adapter.getSkillPath(skillKey)),
+				dirname(input.skills.path(skillKey)),
 				undefined,
 				skillKey,
 			);
@@ -243,7 +239,7 @@ export async function reconcileConnectedProjectSkills(input: {
 			a.input.localSkillKey.localeCompare(b.input.localSkillKey),
 		)) {
 			if (desiredByKey.has(prior.input.localSkillKey)) continue;
-			await input.adapter.removeLocalSkill(prior.input.localSkillKey);
+			await input.skills.remove(prior.input.localSkillKey);
 			applied.push({ kind: "removed", prior });
 			if (!removeExactProjectSkillMaterialization(prior.input)) {
 				throw new Error(
@@ -256,19 +252,19 @@ export async function reconcileConnectedProjectSkills(input: {
 		for (const operation of applied.reverse()) {
 			try {
 				if (operation.kind === "removed") {
-					await input.adapter.writeSkillArchive(
+					await input.skills.writeArchive(
 						operation.prior.input.localSkillKey,
 						operation.prior.archive,
 					);
 					recordProjectSkillMaterialization(operation.prior.input);
 				} else if (operation.prior) {
-					await input.adapter.writeSkillArchive(
+					await input.skills.writeArchive(
 						operation.prior.input.localSkillKey,
 						operation.prior.archive,
 					);
 					recordProjectSkillMaterialization(operation.prior.input);
 				} else {
-					await input.adapter.removeLocalSkill(operation.input.localSkillKey);
+					await input.skills.remove(operation.input.localSkillKey);
 					removeExactProjectSkillMaterialization(operation.input);
 				}
 			} catch (rollbackError) {

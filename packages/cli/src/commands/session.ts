@@ -55,13 +55,22 @@ export async function sessionList(opts: SessionListOpts) {
 	const collected: ListedSession[] = [];
 	for (const agentType of targetTypes) {
 		const adapter = adapterForType(agentType);
-		if (!adapter) continue;
+		if (!adapter?.sessions) {
+			if (opts.agent) {
+				console.error(
+					chalk.red(`${adapterRegistry[agentType].displayName} does not support local sessions.`),
+				);
+				process.exitCode = 1;
+				return;
+			}
+			continue;
+		}
 		let sessions: RawSession[];
 		try {
 			// `list` command silently benefits from dedupe — no user-facing
 			// counter needed since the listing project itself is dedupe's
 			// purpose (don't show users two near-identical rows).
-			const result = await adapter.collectSessions({ kind: "complete", projectFilter });
+			const result = await adapter.sessions.collect({ kind: "complete", projectFilter });
 			sessions = result.sessions;
 		} catch {
 			continue;

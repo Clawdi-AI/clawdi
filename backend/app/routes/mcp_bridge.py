@@ -58,6 +58,7 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     load_session_messages,
+    session_has_uploaded_content,
 )
 from app.services.session_export import session_to_markdown
 from app.services.vault_crypto import decrypt
@@ -836,10 +837,10 @@ async def _tool_session_read(
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
         session, agent_type = row
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
     try:
-        messages = await load_session_messages(session, file_store)
+        messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:

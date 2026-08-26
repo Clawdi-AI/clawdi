@@ -34,15 +34,30 @@
  * listings never authorize destructive inference.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
-import type { AgentAdapter, RawSession, SessionScanRequest } from "../adapters/base";
+import type {
+	AgentAdapter,
+	RawSession,
+	SessionModule,
+	SessionScanRequest,
+	SkillModule,
+} from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { canonicalApiOrigin } from "../lib/api-origin";
 import { computeLastActivityIso } from "../lib/session-activity";
-import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
+import {
+	negotiateSessionProtocol,
+	persistSuppressedSession,
+	planSessionUpload,
+	type SelectedSessionProtocol,
+	sessionFence,
+	sessionPlanIsDurablyBlocked,
+	syncSessionContent,
+} from "../lib/session-upload";
+import { readSessionsLock, type SessionFence } from "../lib/sessions-lock";
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
@@ -62,7 +77,7 @@ export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observatio
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { reconcileConnectedProjectSkills } from "./project-skill-reconcile";
-import { type QueueItem, RetryQueue } from "./queue";
+import { hasSessionFence, type QueueItem, RetryQueue } from "./queue";
 import { type SessionWatchEvent, watchSessions } from "./sessions-watcher";
 import {
 	consumeSse,
@@ -246,10 +261,9 @@ interface StableSessionEnqueueOptions {
 	queue: Pick<RetryQueue, "enqueue">;
 	lastPushedHash: ReadonlyMap<string, string>;
 	inFlightHash: Map<string, string>;
-}
-
-function sessionContentHash(session: RawSession): string {
-	return createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+	protocol: SelectedSessionProtocol;
+	fenceFor(session: RawSession): SessionFence;
+	onBlocked?(session: RawSession, message: string): void;
 }
 
 export async function enqueueChangedSessionsAfterStability(
@@ -259,7 +273,14 @@ export async function enqueueChangedSessionsAfterStability(
 	let enqueued = 0;
 	for (const session of opts.sessions) {
 		if (opts.abort.aborted) return enqueued;
-		const hash = sessionContentHash(session);
+		const plan = planSessionUpload(session, opts.protocol);
+		const hash = plan.localHash;
+		const fence = opts.fenceFor(session);
+		const blocked = sessionPlanIsDurablyBlocked(fence, plan);
+		if (blocked) {
+			opts.onBlocked?.(session, blocked);
+			continue;
+		}
 		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
 		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
 		if (opts.abort.aborted) return enqueued;
@@ -267,6 +288,10 @@ export async function enqueueChangedSessionsAfterStability(
 			kind: "session_push",
 			local_session_id: session.localSessionId,
 			content_hash: hash,
+			api_origin: fence.apiOrigin,
+			environment_id: fence.environmentId,
+			adapter: fence.adapter,
+			source_session_key: fence.sourceSessionKey,
 			enqueued_at: new Date().toISOString(),
 			attempts: 0,
 		});
@@ -291,117 +316,154 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
-	const connectedProjectSkillDelivery = connectedProjectSkillDeliveryEnabled(
-		process.env.CLAWDI_RUNTIME_MODE,
-	);
-	// Pass the engine's abort signal so any in-flight HTTP call
-	// (heartbeat, project refresh, Skill projection, etc.) unwinds
-	// immediately when SSE auth fails or shutdown is requested,
-	// instead of running its own per-request timeout to
-	// completion.
+	const skills = opts.adapter.skills;
+	const sessions = opts.adapter.sessions;
+	if (!sessions && !skills) throw new Error(`${opts.adapter.agentType} has no sync modules`);
+
 	const api = new ApiClient({ abortSignal: opts.abort });
-	// Shutdown-path client: NO abort signal. Used for the final
-	// auth-failure heartbeat below. The daemon-wide abort fires on
-	// the same call site that wants to send this heartbeat, so
-	// reusing `api` would have the abort cancel the request before
-	// it reaches the server — the dashboard then sees the daemon
-	// go stale with no `last_sync_error`, exactly the signal the
-	// heartbeat is meant to deliver. Keeping a small unsignalled
-	// client around is cheaper than recomputing the auth header
-	// inside `triggerAuthFailureAbort` itself.
 	const shutdownApi = new ApiClient();
-	// `inFlightSessionHash` is consumed by the watcher's enqueue
-	// dedup AND by the queue's onEvict hook below. Declared up-front
-	// so the queue's eviction callback can clear stale entries: when
-	// the queue evicts a session_push (only happens when the offline
-	// queue is full of session_push items), we MUST clear the in-
-	// flight hash so the next watcher tick re-enqueues. Without it,
-	// the dedup map keeps the dropped session out forever.
+	const health = new SyncHealth();
 	const inFlightSessionHash = new Map<string, string>();
 	const queue = new RetryQueue({
 		agentType: opts.adapter.agentType,
 		onEvict: (item) => {
-			if (item.kind === "session_push") {
-				const cur = inFlightSessionHash.get(item.local_session_id);
-				if (cur === item.content_hash) {
-					inFlightSessionHash.delete(item.local_session_id);
-				}
+			if (item.kind !== "session_push") return;
+			if (inFlightSessionHash.get(item.local_session_id) === item.content_hash) {
+				inFlightSessionHash.delete(item.local_session_id);
 			}
 		},
 	});
 	queue.load();
 
-	// Exact, identity-fenced projection claims. Unlike the legacy hash cache,
-	// these entries prove that this Agent successfully projected a local key
-	// into its current Project and therefore authorize an absence report.
-	const lastPushedHash = new Map<string, string>();
-	let lastSeenRevision: number | null = null;
-	let lastReconciledListingEtag: string | null = null;
-	const syncHealth = new SyncHealth();
-
-	// Last content hash we pushed for each session, keyed by
-	// local_session_id. Lets the sessions watcher dedup: if the
-	// adapter re-enumerates and reports the same content hash we
-	// already shipped, we skip enqueue. Hydrated at boot from the
-	// same `~/.clawdi/sessions-lock.json` `clawdi push` writes,
-	// so a daemon restart doesn't re-push every session it
-	// already shipped.
-	//
-	// Two-map split: `lastPushedSessionHash` is the source of truth
-	// — only written after a successful upload (on disk via the
-	// session lock). `inFlightSessionHash` is a touch-storm guard
-	// for the watcher: once a hash is enqueued we suppress re-
-	// enqueue of the same hash on subsequent ticks, but we DO
-	// remove the in-flight entry on drop / evict / project-mismatch
-	// so the next watcher tick re-enqueues fresh.
-	//
-	// Pre-split the code stamped `lastPushedSessionHash` at enqueue
-	// time. If the queue then dropped (4xx, max attempts, FIFO
-	// eviction during a long offline window) the watcher's dedup
-	// kept skipping that session FOREVER — silent permanent loss.
-	const lastPushedSessionHash = new Map<string, string>();
-	// `inFlightSessionHash` was declared up-front (above queue
-	// construction) so the queue's onEvict hook can clear stale
-	// hashes when a session_push gets evicted. Reference is the
-	// same Map instance.
-	{
-		const lock = readSessionsLock();
-		for (const [k, v] of Object.entries(lock.sessions)) {
-			// Lock keys are `<agent_type>:<local_session_id>`. We
-			// only care about entries for the agent we're serving.
-			const prefix = `${opts.adapter.agentType}:`;
-			if (k.startsWith(prefix) && v?.hash) {
-				lastPushedSessionHash.set(k.slice(prefix.length), v.hash);
-			}
-		}
-		log.info("engine.sessions_lock_loaded", {
-			session_count: lastPushedSessionHash.size,
-		});
-	}
-
-	const rootDir = opts.adapter.getSkillsRootDir();
-
 	const stateDir = getServeStateDir(opts.adapter.agentType);
 	await mkdir(stateDir, { recursive: true });
-
 	log.info("engine.start", {
 		environment_id: opts.environmentId,
 		agent_type: opts.adapter.agentType,
-		root_dir: rootDir,
+		modules: [sessions ? "sessions" : null, skills ? "skills" : null].filter(Boolean),
 		state_dir: stateDir,
 	});
+
+	let lastSeenRevision: number | null = null;
 	const stopForDisconnectedAgent = (hint: string): void => {
 		log.info("engine.agent_disconnected", {
 			environment_id: opts.environmentId,
 			hint,
 		});
-		// Exit status 2 is the supervisor's established no-restart control
-		// outcome, not an application-crash classification. On macOS,
-		// KeepAlive requires the same best-effort self-unload used for auth.
 		process.exitCode = 2;
 		removeLaunchdDaemonSupervision(opts.adapter.agentType);
 		opts.abortController.abort();
 	};
+
+	let authFailureFired = false;
+	const triggerAuthFailureAbort = (origin: string): void => {
+		if (authFailureFired) return;
+		authFailureFired = true;
+		log.error("engine.auth_failed", { origin });
+		health.set("transport", "auth", "auth_revoked: api key rejected by server");
+		void shutdownApi
+			.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+				params: { path: { agent_id: opts.environmentId } },
+				body: {
+					queue_depth: queue.highWaterMark,
+					dropped_count_delta: 0,
+					last_revision_seen: lastSeenRevision,
+					last_sync_error: health.project(),
+				},
+			})
+			.catch(() => {
+				/* best effort */
+			});
+		process.exitCode = 2;
+		removeLaunchdDaemonSupervision(opts.adapter.agentType);
+		opts.abortController.abort();
+	};
+
+	const common: CommonSyncRuntime = {
+		api,
+		queue,
+		health,
+		inFlightSessionHash,
+		stopForDisconnectedAgent,
+		triggerAuthFailureAbort,
+		setLastSeenRevision: (revision) => {
+			lastSeenRevision = revision;
+		},
+	};
+	const sessionSync = sessions ? await prepareSessionSync(opts, sessions, common) : null;
+	const skillSync = skills ? await prepareSkillSync(opts, skills, common) : null;
+	if (opts.abort.aborted) return;
+	const moduleTasks: Promise<void>[] = [];
+	if (sessions && sessionSync) moduleTasks.push(runSessionSync(opts, sessions, sessionSync));
+	if (skills && skillSync) moduleTasks.push(runSkillSync(opts, skills, skillSync));
+
+	await Promise.all([
+		...moduleTasks,
+		drainQueueLoop(
+			opts,
+			api,
+			queue,
+			{
+				sessions: sessionSync?.queueModule ?? null,
+				skills: skillSync?.queueModule ?? null,
+			},
+			skillSync?.lastPushedHash ?? new Map(),
+			sessionSync?.lastPushedHash ?? new Map(),
+			inFlightSessionHash,
+			health,
+			triggerAuthFailureAbort,
+		),
+		heartbeatLoop(opts, api, queue, opts.abort, () => ({
+			last_revision_seen: lastSeenRevision,
+			last_sync_error: health.project(),
+		})),
+	]);
+	log.info("engine.stop", {});
+}
+
+interface CommonSyncRuntime {
+	api: ApiClient;
+	queue: RetryQueue;
+	health: SyncHealth;
+	inFlightSessionHash: Map<string, string>;
+	stopForDisconnectedAgent(hint: string): void;
+	triggerAuthFailureAbort(origin: string): void;
+	setLastSeenRevision(revision: number | null): void;
+}
+
+interface PreparedSkillSync {
+	queueModule: { module: SkillModule; getProjectId: () => string };
+	lastPushedHash: Map<string, string>;
+	run(): Promise<void>;
+}
+
+async function prepareSkillSync(
+	opts: EngineOpts,
+	skills: SkillModule,
+	common: CommonSyncRuntime,
+): Promise<PreparedSkillSync | null> {
+	const connectedProjectSkillDelivery = connectedProjectSkillDeliveryEnabled(
+		process.env.CLAWDI_RUNTIME_MODE,
+	);
+	const {
+		api,
+		queue,
+		health: syncHealth,
+		stopForDisconnectedAgent,
+		triggerAuthFailureAbort,
+	} = common;
+
+	// Exact, identity-fenced projection claims. Unlike the legacy hash cache,
+	// these entries prove that this Agent successfully projected a local key
+	// into its current Project and therefore authorize an absence report.
+	const lastPushedHash = new Map<string, string>();
+	const updateLastSeenRevision = (revision: number | null): void => {
+		common.setLastSeenRevision(revision);
+	};
+	let lastReconciledListingEtag: string | null = null;
+
+	const rootDir = skills.rootDir();
+	log.info("engine.skills_start", { root_dir: rootDir });
 
 	// Fetch this Agent's default_project_id at boot. Projection requests are
 	// Agent-scoped, while the durable claim and absence report are additionally
@@ -440,7 +502,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		const stopHint = agentLookupStopHint(e);
 		if (stopHint !== null) {
 			stopForDisconnectedAgent(stopHint);
-			return;
+			return null;
 		}
 		if (isAuthFailure(e)) {
 			log.error("engine.auth_failed", { origin: "boot_project_fetch" });
@@ -451,7 +513,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// the daemon every 10s.
 			removeLaunchdDaemonSupervision(opts.adapter.agentType);
 			opts.abortController.abort();
-			return;
+			return null;
 		}
 		throw e;
 	}
@@ -477,7 +539,8 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				await reconcileConnectedProjectSkills({
 					api,
 					agentId: opts.environmentId,
-					adapter: opts.adapter,
+					agentType: opts.adapter.agentType,
+					skills,
 				});
 			}
 		})().finally(() => {
@@ -497,64 +560,6 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			});
 		}
 	}
-
-	// Single auth-failure exit path shared by SSE, listing, heartbeat, and
-	// projection drains. The flag prevents redundant heartbeats/log spam.
-	let authFailureFired = false;
-	const triggerAuthFailureAbort = (origin: string): void => {
-		if (authFailureFired) return;
-		authFailureFired = true;
-		log.error("engine.auth_failed", { origin });
-		// Set the user-visible error BEFORE the abort so a final-
-		// best-effort heartbeat (sent on the way down) carries the
-		// reason. Without this the dashboard just shows "paused" / no
-		// error and the user has no idea their key was revoked.
-		syncHealth.set("transport", "auth", "auth_revoked: api key rejected by server");
-		// Best-effort final heartbeat. We don't await — the abort
-		// fires on the same tick — but kicking off the POST before
-		// the abort gives the request a fighting chance to land.
-		// Use the shutdownApi (no abortSignal) so the daemon-wide
-		// abort below doesn't cancel this exact request mid-flight;
-		// otherwise the dashboard never sees the
-		// `auth_revoked` `last_sync_error` and the daemon just
-		// "goes stale" silently.
-		void shutdownApi
-			.POST("/v1/agents/{agent_id}/sync-heartbeat", {
-				params: { path: { agent_id: opts.environmentId } },
-				body: {
-					// Report the peak since boot, not current depth.
-					// The dashboard's "queue depth high water"
-					// indicator should reflect transient spikes the
-					// daemon saw between heartbeats; sampling
-					// `queue.depth` at heartbeat time misses spikes
-					// that drained before the next sample.
-					queue_depth: queue.highWaterMark,
-					dropped_count_delta: 0,
-					last_revision_seen: lastSeenRevision,
-					last_sync_error: syncHealth.project(),
-				},
-			})
-			.catch(() => {
-				/* best effort */
-			});
-		// Exit 2: the systemd unit (see installer.ts) carries
-		// `RestartPreventExitStatus=2` to opt out of restart for
-		// genuinely-broken configs. Auth-revoked is the canonical
-		// such state — the key won't fix itself, restarting every
-		// 10s in a tight loop just spams the journal and the
-		// /api/sync/events endpoint with handshakes that 401. Code
-		// 1 (default failure) would have been respawned forever.
-		process.exitCode = 2;
-		// macOS launchd has no `RestartPreventExitStatus` equivalent
-		// — its `KeepAlive=true` respawns on ANY exit, including our
-		// deliberate 2. Self-unload via `launchctl remove <label>`
-		// before exiting so launchd drops us from supervision and
-		// the same revoked key isn't retried every 10s. Best-effort:
-		// failures (non-installed daemon, no launchctl in PATH) just
-		// fall through to the abort + exit 2 path below.
-		removeLaunchdDaemonSupervision(opts.adapter.agentType);
-		opts.abortController.abort();
-	};
 
 	// Periodically re-fetch the env's default_project_id so a
 	// runtime reassignment (rare in v1's 1:1 model, but possible
@@ -591,6 +596,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					// the latest local bytes; it never redirects a stale item.
 					await reconcileAgentSkillProjection({
 						opts,
+						skills,
 						queue,
 						claims: lastPushedHash,
 						projectId: fresh,
@@ -603,6 +609,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 						const catchUp = await reconcileAgentSkillProjectionListing({
 							api,
 							opts,
+							skills,
 							queue,
 							claims: lastPushedHash,
 							projectId: fresh,
@@ -610,7 +617,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 						});
 						if (catchUp.complete) {
 							lastReconciledListingEtag = catchUp.etag;
-							lastSeenRevision = catchUp.revision;
+							updateLastSeenRevision(catchUp.revision);
 						}
 					} catch (error) {
 						log.warn("engine.project_change_listing_failed", {
@@ -662,12 +669,13 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	try {
 		await initialAgentProjectionSync(
 			opts,
+			skills,
 			api,
 			queue,
 			lastPushedHash,
 			defaultProjectId,
 			(rev, etag) => {
-				lastSeenRevision = rev;
+				updateLastSeenRevision(rev);
 				lastReconciledListingEtag = etag;
 			},
 			syncHealth,
@@ -678,14 +686,14 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// Wait for the abort to propagate so the heartbeat lands
 			// before the process exits. The same shape SSE / drain /
 			// reconcile use after triggerAuthFailureAbort.
-			return;
+			return null;
 		}
 		throw e;
 	}
 	// Push side: wire watcher → enqueue.
 	const onLocalChange = (skillKey: string) => {
 		const scanResource = `skill_scan:${skillKey}`;
-		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultProjectId)
+		void enqueueIfChanged(opts, skills, queue, lastPushedHash, skillKey, () => defaultProjectId)
 			.then(() => {
 				syncHealth.clear("push", scanResource);
 			})
@@ -706,6 +714,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					inventoryScanRequested = false;
 					await reconcileAgentSkillProjection({
 						opts,
+						skills,
 						queue,
 						claims: lastPushedHash,
 						projectId: defaultProjectId,
@@ -746,7 +755,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			});
 			return;
 		}
-		lastSeenRevision = event.skills_revision;
+		updateLastSeenRevision(event.skills_revision);
 		log.debug("engine.sse_skill_invalidation", {
 			type: event.type,
 			skill_key: event.skill_key,
@@ -759,6 +768,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// report authoritative local absence. Never consume Cloud bytes.
 			await reconcileAgentSkillProjection({
 				opts,
+				skills,
 				queue,
 				claims: lastPushedHash,
 				projectId: defaultProjectId,
@@ -778,174 +788,227 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 	};
 
-	const onSessionsStable = async (event?: SessionWatchEvent) => {
+	return {
+		queueModule: { module: skills, getProjectId: () => defaultProjectId },
+		lastPushedHash,
+		run: async () => {
+			await Promise.all([
+				watchSkills({
+					rootDir,
+					abort: opts.abort,
+					onSkillChanged: onLocalChange,
+					forcePoll: opts.forcePollWatcher,
+					// Map a changed path-from-root to its owning skill_key.
+					// Walks up from the leaf looking for SKILL.md so a
+					// Hermes nested edit at `category/foo/SKILL.md`
+					// resolves to `category/foo` (not `category`). For
+					// flat adapters the path's first component already has
+					// SKILL.md, so the walk returns immediately. Returns
+					// `null` for paths that don't live inside any skill yet
+					// (e.g. a freshly-mkdir'd category before its SKILL.md
+					// lands) — the caller skips emission rather than
+					// pushing a bogus key.
+					resolveSkillKey: (pathFromRoot) => resolveOwningSkillKey(rootDir, pathFromRoot),
+					// Same intent as `resolveSkillKey` but for poll-mode
+					// snapshots. Poll mode samples the full set of
+					// skill_keys instead of resolving from a changed
+					// path, so it needs the adapter's own enumerator
+					// (Hermes recurses into category dirs; flat adapters
+					// do a top-level walk). Without this the poll
+					// snapshot tracks only `category` (a directory
+					// without its own SKILL.md) and any nested edit
+					// either reports the wrong key OR is missed entirely
+					// because the dir's own mtime didn't change.
+					listSkillKeys: () => skills.listKeys(),
+					onInventoryChanged: onSkillInventoryChanged,
+				}),
+				consumeSse({
+					apiUrl: api.baseUrl,
+					apiKey: api.apiKey,
+					getAccessToken: () => api.getAccessToken(),
+					abort: opts.abort,
+					onEvent: onServerEvent,
+					onConnect: () => {
+						syncHealth.clear("transport", "sse");
+					},
+					onDisconnect: (info) => {
+						const nextError = lastSyncErrorForSseReconnect(info);
+						if (nextError !== null) syncHealth.set("transport", "sse", nextError);
+					},
+					onAuthFailure: () => triggerAuthFailureAbort("sse_channel"),
+				}),
+				refreshDefaultProjectIdLoop(opts.abort),
+				// Safety-net for Skills. The local scan recovers evicted watcher work;
+				// the strong-ETag Agent-Project listing catches mixed-version generic
+				// alias writes whose live-only SSE event was missed during disconnect.
+				// A 304 supplies no new per-key migration evidence. Periodic cycles force
+				// a complete 200 so evicted or lost work can be derived again at the same
+				// revision. Cloud bytes are never read or applied locally.
+				(async () => {
+					while (!opts.abort.aborted) {
+						await sleep(reconcileDelayMs(), opts.abort);
+						if (opts.abort.aborted) return;
+						try {
+							await reconcileProjectSkills();
+							syncHealth.clear("projection", "project_skills");
+							await reconcileAgentSkillProjection({
+								opts,
+								skills,
+								queue,
+								claims: lastPushedHash,
+								projectId: defaultProjectId,
+							});
+							const catchUp = await reconcileAgentSkillProjectionListing({
+								api,
+								opts,
+								skills,
+								queue,
+								claims: lastPushedHash,
+								projectId: defaultProjectId,
+								previousEtag: lastReconciledListingEtag,
+								forceComplete: true,
+							});
+							if (catchUp.complete) {
+								lastReconciledListingEtag = catchUp.etag;
+								updateLastSeenRevision(catchUp.revision);
+								syncHealth.clear("projection", "listing");
+							} else {
+								syncHealth.set(
+									"projection",
+									"listing",
+									"reconcile: cloud skill listing was incomplete or unfenced",
+								);
+							}
+							syncHealth.clear("push", "skills_scan");
+						} catch (e) {
+							syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(e)}`);
+							log.warn("engine.skills_rescan_failed", { error: toErrorMessage(e) });
+						}
+					}
+				})(),
+			]);
+		},
+	};
+}
+
+async function runSkillSync(
+	_opts: EngineOpts,
+	skills: SkillModule,
+	prepared: PreparedSkillSync,
+): Promise<void> {
+	if (prepared.queueModule.module !== skills)
+		throw new Error("Skills module changed during startup");
+	await prepared.run();
+}
+
+interface PreparedSessionSync {
+	queueModule: { module: SessionModule; protocol: SelectedSessionProtocol };
+	lastPushedHash: Map<string, string>;
+	run(): Promise<void>;
+}
+
+async function prepareSessionSync(
+	opts: EngineOpts,
+	sessions: SessionModule,
+	common: CommonSyncRuntime,
+): Promise<PreparedSessionSync> {
+	const { api, queue, health, inFlightSessionHash } = common;
+	const protocol = await negotiateSessionProtocol(api, sessions);
+	const lastPushedSessionHash = loadFencedSessionHashes(api, opts);
+
+	const onSessionsStable = async (event?: SessionWatchEvent): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
 			const request: SessionScanRequest = event?.kind === "paths" ? event : { kind: "complete" };
-			const result = await opts.adapter.collectSessions(request);
+			const result = await sessions.collect(request);
 			const enqueued = await enqueueChangedSessionsAfterStability({
 				abort: opts.abort,
 				sessions: result.sessions,
 				queue,
 				lastPushedHash: lastPushedSessionHash,
 				inFlightHash: inFlightSessionHash,
+				protocol,
+				fenceFor: (session) =>
+					sessionFence(api, {
+						environmentId: opts.environmentId,
+						adapter: opts.adapter.agentType,
+						sourceSessionKey: session.localSessionId,
+					}),
+				onBlocked: (session, message) => {
+					health.set("push", `session:${session.localSessionId}`, `blocked: ${message}`);
+					lastPushedSessionHash.set(
+						session.localSessionId,
+						planSessionUpload(session, protocol).localHash,
+					);
+				},
 			});
-			if (opts.abort.aborted) return;
 			if (result.coverage === "complete") {
-				syncHealth.clearAbsent(
+				health.clearAbsent(
 					"push",
 					"session:",
 					new Set(result.sessions.map((session) => `session:${session.localSessionId}`)),
 				);
 			}
-			syncHealth.clear("push", "session_scan");
-			if (enqueued > 0) {
-				log.info("engine.sessions_enqueued", { count: enqueued });
-			}
-		} catch (e) {
+			health.clear("push", "session_scan");
+			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
+		} catch (error) {
 			if (opts.abort.aborted) return;
-			syncHealth.set("push", "session_scan", `session scan: ${toErrorMessage(e)}`);
-			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(e) });
+			health.set("push", "session_scan", `session scan: ${toErrorMessage(error)}`);
+			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(error) });
 		}
 	};
 
-	// Run all background tasks concurrently.
-	await Promise.all([
-		watchSkills({
-			rootDir,
-			abort: opts.abort,
-			onSkillChanged: onLocalChange,
-			forcePoll: opts.forcePollWatcher,
-			// Map a changed path-from-root to its owning skill_key.
-			// Walks up from the leaf looking for SKILL.md so a
-			// Hermes nested edit at `category/foo/SKILL.md`
-			// resolves to `category/foo` (not `category`). For
-			// flat adapters the path's first component already has
-			// SKILL.md, so the walk returns immediately. Returns
-			// `null` for paths that don't live inside any skill yet
-			// (e.g. a freshly-mkdir'd category before its SKILL.md
-			// lands) — the caller skips emission rather than
-			// pushing a bogus key.
-			resolveSkillKey: (pathFromRoot) => resolveOwningSkillKey(rootDir, pathFromRoot),
-			// Same intent as `resolveSkillKey` but for poll-mode
-			// snapshots. Poll mode samples the full set of
-			// skill_keys instead of resolving from a changed
-			// path, so it needs the adapter's own enumerator
-			// (Hermes recurses into category dirs; flat adapters
-			// do a top-level walk). Without this the poll
-			// snapshot tracks only `category` (a directory
-			// without its own SKILL.md) and any nested edit
-			// either reports the wrong key OR is missed entirely
-			// because the dir's own mtime didn't change.
-			listSkillKeys: () => opts.adapter.listSkillKeys(),
-			onInventoryChanged: onSkillInventoryChanged,
-		}),
-		watchSessions({
-			paths: opts.adapter.getSessionsWatchPaths(),
-			abort: opts.abort,
-			onPathStable: (change) => {
-				if (opts.abort.aborted) return;
-				// Fire-and-forget — onPathStable is a sync callback
-				// from the watcher, but the enumeration can be slow
-				// (hundreds of JSONLs). Catch errors here so a
-				// transient FS error never breaks the watcher loop.
-				void onSessionsStable(change);
-			},
-			forcePoll: opts.forcePollWatcher,
-		}),
-		consumeSse({
-			apiUrl: api.baseUrl,
-			apiKey: api.apiKey,
-			getAccessToken: () => api.getAccessToken(),
-			abort: opts.abort,
-			onEvent: onServerEvent,
-			onConnect: () => {
-				syncHealth.clear("transport", "sse");
-			},
-			onDisconnect: (info) => {
-				const nextError = lastSyncErrorForSseReconnect(info);
-				if (nextError !== null) syncHealth.set("transport", "sse", nextError);
-			},
-			onAuthFailure: () => triggerAuthFailureAbort("sse_channel"),
-		}),
-		drainQueueLoop(
-			opts,
-			api,
-			queue,
-			lastPushedHash,
-			lastPushedSessionHash,
-			inFlightSessionHash,
-			() => defaultProjectId,
-			syncHealth,
-			triggerAuthFailureAbort,
-		),
-		heartbeatLoop(opts, api, queue, opts.abort, () => ({
-			last_revision_seen: lastSeenRevision,
-			last_sync_error: syncHealth.project(),
-		})),
-		refreshDefaultProjectIdLoop(opts.abort),
-		// Safety-net periodic sessions rescan. After a 4xx drop we
-		// clear inFlightSessionHash, but the watcher only fires on
-		// fs change — if the file isn't rewritten the session
-		// stays unsynced forever. A 5min full re-enumerate catches
-		// these. Cheap (just stat + hash) and the inFlight/lastPushed
-		// dedup keeps it from re-enqueuing unchanged content.
-		(async () => {
-			while (!opts.abort.aborted) {
-				await sleep(5 * 60_000, opts.abort);
-				if (opts.abort.aborted) return;
-				await onSessionsStable();
-			}
-		})(),
-		// Safety-net for Skills. The local scan recovers evicted watcher work;
-		// the strong-ETag Agent-Project listing catches mixed-version generic
-		// alias writes whose live-only SSE event was missed during disconnect.
-		// A 304 supplies no new per-key migration evidence. Periodic cycles force
-		// a complete 200 so evicted or lost work can be derived again at the same
-		// revision. Cloud bytes are never read or applied locally.
-		(async () => {
-			while (!opts.abort.aborted) {
-				await sleep(reconcileDelayMs(), opts.abort);
-				if (opts.abort.aborted) return;
-				try {
-					await reconcileProjectSkills();
-					syncHealth.clear("projection", "project_skills");
-					await reconcileAgentSkillProjection({
-						opts,
-						queue,
-						claims: lastPushedHash,
-						projectId: defaultProjectId,
-					});
-					const catchUp = await reconcileAgentSkillProjectionListing({
-						api,
-						opts,
-						queue,
-						claims: lastPushedHash,
-						projectId: defaultProjectId,
-						previousEtag: lastReconciledListingEtag,
-						forceComplete: true,
-					});
-					if (catchUp.complete) {
-						lastReconciledListingEtag = catchUp.etag;
-						lastSeenRevision = catchUp.revision;
-						syncHealth.clear("projection", "listing");
-					} else {
-						syncHealth.set(
-							"projection",
-							"listing",
-							"reconcile: cloud skill listing was incomplete or unfenced",
-						);
+	await onSessionsStable();
+	return {
+		queueModule: { module: sessions, protocol },
+		lastPushedHash: lastPushedSessionHash,
+		run: async () => {
+			await Promise.all([
+				watchSessions({
+					paths: sessions.watchPaths(),
+					abort: opts.abort,
+					onPathStable: (change) => {
+						if (!opts.abort.aborted) void onSessionsStable(change);
+					},
+					forcePoll: opts.forcePollWatcher,
+				}),
+				(async () => {
+					while (!opts.abort.aborted) {
+						await sleep(RECONCILE_INTERVAL_MS, opts.abort);
+						if (!opts.abort.aborted) await onSessionsStable();
 					}
-					syncHealth.clear("push", "skills_scan");
-				} catch (e) {
-					syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(e)}`);
-					log.warn("engine.skills_rescan_failed", { error: toErrorMessage(e) });
-				}
-			}
-		})(),
-	]);
+				})(),
+			]);
+		},
+	};
+}
 
-	log.info("engine.stop", {});
+async function runSessionSync(
+	_opts: EngineOpts,
+	sessions: SessionModule,
+	prepared: PreparedSessionSync,
+): Promise<void> {
+	if (prepared.queueModule.module !== sessions)
+		throw new Error("Sessions module changed during startup");
+	await prepared.run();
+}
+
+function loadFencedSessionHashes(api: ApiClient, opts: EngineOpts): Map<string, string> {
+	const hashes = new Map<string, string>();
+	const lock = readSessionsLock();
+	if (lock.version !== 2) return hashes;
+	for (const value of Object.values(lock.sessions)) {
+		if (
+			"local_hash" in value &&
+			value.api_origin === canonicalApiOrigin(api.baseUrl) &&
+			value.environment_id === opts.environmentId &&
+			value.adapter === opts.adapter.agentType &&
+			value.pending === undefined
+		) {
+			hashes.set(value.source_session_key, value.local_hash);
+		}
+	}
+	return hashes;
 }
 
 function enqueueMaterializedSkillClaimCleanup(
@@ -985,6 +1048,7 @@ function enqueueMaterializedSkillClaimCleanup(
 
 async function enqueueIfChanged(
 	opts: EngineOpts,
+	skills: SkillModule,
 	queue: RetryQueue,
 	lastPushedHash: Map<string, string>,
 	skillKey: string,
@@ -1004,9 +1068,9 @@ async function enqueueIfChanged(
 		log.debug("engine.project_skill_materialization_skipped", { skill_key: skillKey });
 		return;
 	}
-	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
+	const dir = join(skills.rootDir(), skillKey);
 	const projectId = getProjectId();
-	if (isReservedSkill(opts, skillKey) || !existsSync(join(dir, "SKILL.md"))) {
+	if (isReservedSkill(skills, skillKey) || !existsSync(join(dir, "SKILL.md"))) {
 		if (!lastPushedHash.has(skillKey)) return;
 		const version = queue.enqueue({
 			kind: "skill_delete",
@@ -1161,10 +1225,13 @@ async function drainQueueLoop(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
+	modules: {
+		sessions: { module: SessionModule; protocol: SelectedSessionProtocol } | null;
+		skills: { module: SkillModule; getProjectId: () => string } | null;
+	},
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	getProjectId: () => string,
 	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
@@ -1207,13 +1274,19 @@ async function drainQueueLoop(
 				api,
 				queue,
 				item,
+				modules,
 				lastPushedHash,
 				lastPushedSessionHash,
 				inFlightSessionHash,
-				getProjectId(),
 			);
 			if (outcome === "applied" || outcome === "absent") {
 				health.clear("push", healthResource(item));
+			} else if (outcome === "blocked") {
+				health.set(
+					"push",
+					healthResource(item),
+					`blocked: ${item.kind === "session_push" ? `session ${item.local_session_id}` : `skill ${item.skill_key}`} exceeds an upload limit`,
+				);
 			} else {
 				health.setIfAbsent(
 					"push",
@@ -1345,19 +1418,28 @@ async function drainQueueLoop(
 	}
 }
 
-type QueueProcessOutcome = "applied" | "absent" | "not_applied";
+type QueueProcessOutcome = "applied" | "absent" | "blocked" | "not_applied";
 
 export async function processQueueItem(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
 	item: QueueItem,
+	modules: {
+		sessions: { module: SessionModule; protocol: SelectedSessionProtocol } | null;
+		skills: { module: SkillModule; getProjectId: () => string } | null;
+	},
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	projectId: string,
 ): Promise<QueueProcessOutcome> {
 	if (item.kind === "skill_push" || item.kind === "skill_delete") {
+		if (!modules.skills) {
+			log.warn("engine.queue_module_missing_dropped", { kind: item.kind, module: "skills" });
+			queue.markDoneIfVersion(item);
+			return "not_applied";
+		}
+		const projectId = modules.skills.getProjectId();
 		const materialization = readProjectSkillMaterialization({
 			agentType: opts.adapter.agentType,
 			localSkillKey: item.skill_key,
@@ -1446,7 +1528,14 @@ export async function processQueueItem(
 				skillKey: item.skill_key,
 			});
 			queue.markDoneIfVersion(item);
-			await enqueueIfChanged(opts, queue, lastPushedHash, item.skill_key, () => projectId);
+			await enqueueIfChanged(
+				opts,
+				modules.skills.module,
+				queue,
+				lastPushedHash,
+				item.skill_key,
+				() => projectId,
+			);
 			return "applied";
 		}
 		if (item.kind === "skill_delete") {
@@ -1467,11 +1556,18 @@ export async function processQueueItem(
 			}
 			log.info("engine.skill_projection_deleted", { skill_key: item.skill_key });
 			if (item.project_id !== projectId) {
-				await enqueueIfChanged(opts, queue, lastPushedHash, item.skill_key, () => projectId);
+				await enqueueIfChanged(
+					opts,
+					modules.skills.module,
+					queue,
+					lastPushedHash,
+					item.skill_key,
+					() => projectId,
+				);
 			}
 			return "applied";
 		}
-		if (isReservedSkill(opts, item.skill_key)) {
+		if (isReservedSkill(modules.skills.module, item.skill_key)) {
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
@@ -1485,7 +1581,7 @@ export async function processQueueItem(
 		}
 		// Every accepted Skill item is Agent+Project fenced above. The current
 		// item can now safely project the latest local bytes.
-		await uploadSkillFromQueue(opts, api, item, lastPushedHash, projectId);
+		await uploadSkillFromQueue(opts, modules.skills.module, api, item, lastPushedHash, projectId);
 		// markDoneIfVersion — if a newer version of the same
 		// skill_key was enqueued while we were uploading, leave
 		// it in the queue so the next drain picks it up. The
@@ -1501,7 +1597,38 @@ export async function processQueueItem(
 		return "applied";
 	}
 	if (item.kind === "session_push") {
-		const result = await uploadSessionFromQueue(opts, api, item);
+		if (!modules.sessions) {
+			log.warn("engine.queue_module_missing_dropped", { kind: item.kind, module: "sessions" });
+			queue.markDoneIfVersion(item);
+			return "not_applied";
+		}
+		const expectedFence = sessionFence(api, {
+			environmentId: opts.environmentId,
+			adapter: opts.adapter.agentType,
+			sourceSessionKey: item.source_session_key ?? item.local_session_id,
+		});
+		if (
+			!hasSessionFence(item) ||
+			item.api_origin !== expectedFence.apiOrigin ||
+			item.environment_id !== expectedFence.environmentId ||
+			item.adapter !== expectedFence.adapter ||
+			item.source_session_key !== expectedFence.sourceSessionKey
+		) {
+			log.warn("engine.queue_identity_mismatch_dropped", {
+				kind: item.kind,
+				local_session_id: item.local_session_id,
+			});
+			queue.markDoneIfVersion(item);
+			return "not_applied";
+		}
+		const result = await uploadSessionFromQueue(
+			opts,
+			modules.sessions.module,
+			modules.sessions.protocol,
+			api,
+			item,
+			expectedFence,
+		);
 		// Move the hash from in-flight (touch-storm guard) to
 		// confirmed-pushed (source of truth for re-enqueue dedup).
 		// Doing this AFTER the upload returns means a queue evict /
@@ -1520,7 +1647,7 @@ export async function processQueueItem(
 		// independently decides whether resource health is resolved.
 		// Leave the in-memory state untouched so the next watcher
 		// tick can decide.
-		if (result.outcome === "applied") {
+		if (result.outcome === "applied" || result.outcome === "blocked") {
 			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
 		}
 		const cur = inFlightSessionHash.get(item.local_session_id);
@@ -1554,12 +1681,18 @@ export async function processQueueItem(
  * counterpart that this borrows from. */
 async function uploadSessionFromQueue(
 	opts: EngineOpts,
+	sessions: SessionModule,
+	protocol: SelectedSessionProtocol,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "session_push" }>,
+	fence: SessionFence,
 ): Promise<
-	{ outcome: "applied"; actualHash: string } | { outcome: "absent" } | { outcome: "not_applied" }
+	| { outcome: "applied" | "blocked"; actualHash: string }
+	| { outcome: "absent" }
+	| { outcome: "not_applied" }
 > {
-	const session = await opts.adapter.resolveSession(item.local_session_id);
+	if (!hasSessionFence(item)) return { outcome: "not_applied" };
+	const session = await sessions.resolve(item.source_session_key);
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
 		return { outcome: "absent" };
@@ -1571,17 +1704,10 @@ async function uploadSessionFromQueue(
 		log.debug("engine.session_empty", { local_session_id: item.local_session_id });
 	}
 
-	// Recompute the hash from the actual bytes we're about to
-	// upload. The queued `item.content_hash` was captured by the
-	// watcher; if a chat append landed between enqueue and drain
-	// (active conversation, common case), `session.messages` is
-	// the newer state but `item.content_hash` is stale. Sending
-	// the stale hash + new bytes leaves the row's `content_hash`
-	// describing different bytes than the blob — a future push
-	// short-circuits on the cached hash and never re-uploads. The
-	// skill_push path already follows this pattern (recompute at
-	// upload time); align session_push.
-	const actualHash = sessionContentHash(session);
+	// Resolve the current backing store and derive a fresh canonical plan. The
+	// queued hash/cursor is only a wake-up hint and never an append fence.
+	const plan = planSessionUpload(session, protocol);
+	const actualHash = plan.localHash;
 
 	const result = unwrap(
 		await api.POST("/v1/sessions/batch", {
@@ -1603,7 +1729,8 @@ async function uploadSessionFromQueue(
 						models_used: session.modelsUsed,
 						summary: session.summary,
 						status: "completed",
-						content_hash: actualHash,
+						content_protocol: plan.protocol,
+						content_hash: plan.protocol === "snapshot-v1" ? plan.localHash : null,
 					},
 				],
 			},
@@ -1625,32 +1752,24 @@ async function uploadSessionFromQueue(
 	}
 
 	const suppressed = result.suppressed?.includes(session.localSessionId) ?? false;
-	if (
-		!suppressed &&
-		result.needs_content.includes(session.localSessionId) &&
-		session.messages.length > 0
-	) {
-		const contentBuf = Buffer.from(JSON.stringify(session.messages), "utf-8");
-		await api.uploadSessionContent(
-			session.localSessionId,
-			contentBuf,
-			`${session.localSessionId}.json`,
-		);
+	if (suppressed) {
+		persistSuppressedSession(fence, plan);
+	} else {
+		const content = await syncSessionContent({
+			api,
+			fence,
+			session,
+			plan,
+			needsSnapshotContent: result.needs_content.includes(session.localSessionId),
+		});
+		if (content.status === "blocked") {
+			log.warn("engine.session_sync_blocked", {
+				local_session_id: session.localSessionId,
+				error: content.message,
+			});
+			return { outcome: "blocked", actualHash };
+		}
 	}
-
-	// Persist the content_hash so a daemon restart doesn't re-push
-	// every session it already shipped. Same lock file `clawdi push`
-	// uses; reads/writes intentionally share state with the manual
-	// command. Use the recomputed `actualHash` so the on-disk lock
-	// matches what we actually uploaded — caching `item.content_hash`
-	// (the stale watcher snapshot) would short-circuit a future
-	// re-push on the wrong hash, leaving the cloud row out of sync
-	// with the local file.
-	const lock = readSessionsLock();
-	lock.sessions[cacheKey(opts.adapter.agentType, session.localSessionId)] = {
-		hash: actualHash,
-	};
-	writeSessionsLock(lock);
 
 	if (suppressed) {
 		log.info("engine.session_sync_suppressed", {
@@ -1669,12 +1788,13 @@ async function uploadSessionFromQueue(
 
 async function uploadSkillFromQueue(
 	opts: EngineOpts,
+	skills: SkillModule,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
 	projectId: string,
 ): Promise<void> {
-	const dir = join(opts.adapter.getSkillsRootDir(), item.skill_key);
+	const dir = join(skills.rootDir(), item.skill_key);
 	// Recompute the hash from the live directory at upload time
 	// rather than trusting `item.new_hash`. The watcher's hash
 	// could have aged out: enqueue stamps a hash, then the user
@@ -1875,8 +1995,9 @@ export async function reconcileAgentSkillProjectionListing(input: {
 	api: ApiClient;
 	opts: {
 		environmentId: string;
-		adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir" | "listSkillKeys">;
+		adapter: Pick<AgentAdapter, "agentType">;
 	};
+	skills: SkillModule;
 	queue: RetryQueue;
 	claims: Map<string, string>;
 	projectId: string;
@@ -1908,6 +2029,7 @@ export async function reconcileAgentSkillProjectionListing(input: {
 	}
 	await reconcileAgentSkillProjection({
 		opts: input.opts,
+		skills: input.skills,
 		queue: input.queue,
 		claims: input.claims,
 		projectId: input.projectId,
@@ -1924,8 +2046,9 @@ export async function reconcileAgentSkillProjectionListing(input: {
 export async function reconcileAgentSkillProjection(input: {
 	opts: {
 		environmentId: string;
-		adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir" | "listSkillKeys">;
+		adapter: Pick<AgentAdapter, "agentType">;
 	};
+	skills: SkillModule;
 	queue: RetryQueue;
 	claims: Map<string, string>;
 	projectId: string;
@@ -1933,9 +2056,9 @@ export async function reconcileAgentSkillProjection(input: {
 	 * migration evidence for removing unclaimed legacy Agent-Project rows. */
 	trustedLegacyRemoteKeys?: ReadonlySet<string>;
 }): Promise<void> {
-	const { opts, queue, claims, projectId } = input;
-	const rootDir = opts.adapter.getSkillsRootDir();
-	const localKeys = new Set(filterValidSkillKeysForSync(await opts.adapter.listSkillKeys()));
+	const { opts, skills, queue, claims, projectId } = input;
+	const rootDir = skills.rootDir();
+	const localKeys = new Set(filterValidSkillKeysForSync(await skills.listKeys()));
 	const exactAgentClaims = readSkillProjectionClaimsForAgent(
 		opts.adapter.agentType,
 		opts.environmentId,
@@ -1963,7 +2086,7 @@ export async function reconcileAgentSkillProjection(input: {
 			enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
 			continue;
 		}
-		const reserved = isReservedSkill(opts, skillKey);
+		const reserved = isReservedSkill(skills, skillKey);
 		if (reserved || !localKeys.has(skillKey)) {
 			if (
 				claims.has(skillKey) ||
@@ -2028,6 +2151,7 @@ export async function reconcileAgentSkillProjection(input: {
 
 async function initialAgentProjectionSync(
 	opts: EngineOpts,
+	skills: SkillModule,
 	api: ApiClient,
 	queue: RetryQueue,
 	claims: Map<string, string>,
@@ -2035,11 +2159,12 @@ async function initialAgentProjectionSync(
 	setRevision: (rev: number, etag: string) => void,
 	health: SyncHealth,
 ): Promise<void> {
-	await reconcileAgentSkillProjection({ opts, queue, claims, projectId });
+	await reconcileAgentSkillProjection({ opts, skills, queue, claims, projectId });
 	try {
 		const catchUp = await reconcileAgentSkillProjectionListing({
 			api,
 			opts,
+			skills,
 			queue,
 			claims,
 			projectId,
@@ -2139,11 +2264,8 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
 // bundled-`clawdi` filtering inline. See base.ts AgentAdapter
 // docstring for the contract.
 
-function isReservedSkill(
-	opts: { adapter: Pick<AgentAdapter, "getSkillsRootDir"> },
-	skillKey: string,
-): boolean {
-	return shouldIgnoreUserSkill(join(opts.adapter.getSkillsRootDir(), skillKey), skillKey);
+function isReservedSkill(skills: SkillModule, skillKey: string): boolean {
+	return shouldIgnoreUserSkill(join(skills.rootDir(), skillKey), skillKey);
 }
 
 /** Heartbeat sender. Fires immediately on boot then every

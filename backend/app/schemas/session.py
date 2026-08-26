@@ -116,6 +116,7 @@ class SessionCreate(BaseModel):
     # Optional so old clients that don't compute hashes still get inserted;
     # legacy rows with NULL hash are always treated as "needs content".
     content_hash: str | None = None
+    content_protocol: Literal["snapshot-v1", "events-v1"] = "snapshot-v1"
 
     @model_validator(mode="wrap")
     @classmethod
@@ -221,6 +222,18 @@ class EnvironmentCreate(BaseModel):
     agent_type: str
     agent_version: str | None = None
     os: str
+    adapter_modules: list[Literal["sessions", "skills"]] | None = Field(
+        default=None, min_length=1, max_length=2
+    )
+
+    @field_validator("adapter_modules", mode="after")
+    @classmethod
+    def _unique_adapter_modules(
+        cls, value: list[Literal["sessions", "skills"]] | None
+    ) -> list[Literal["sessions", "skills"]] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("adapter_modules must not contain duplicates")
+        return value
 
 
 class EnvironmentCreatedResponse(BaseModel):
@@ -288,6 +301,7 @@ class AgentResponse(BaseModel):
     # Stringified for JSON (UUIDs serialise as strings via
     # FastAPI default).
     default_project_id: str
+    adapter_modules: list[Literal["sessions", "skills"]] | None = None
 
 
 class EnvironmentResponse(AgentResponse):
@@ -485,6 +499,8 @@ class SessionListItemResponse(BaseModel):
     # Surfaced so `clawdi pull` can diff cloud vs. local sidecar without
     # downloading the content body.
     content_hash: str | None = None
+    content_protocol: Literal["snapshot-v1", "events-v1"] = "snapshot-v1"
+    event_head_hash: str | None = None
     # True when an active `kind='link'` row exists in `session_permissions`
     # for this session. Computed via EXISTS subquery in the list/detail
     # query — there is NO denormalized `sessions.visibility` column.

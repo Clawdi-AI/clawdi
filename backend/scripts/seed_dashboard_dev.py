@@ -387,6 +387,7 @@ def _session(
     return Session(
         user_id=user_id,
         environment_id=environment_id,
+        origin_environment_id=environment_id,
         local_session_id=local_session_id,
         project_path=project_path,
         started_at=started_at,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from collections.abc import Sequence
@@ -905,6 +906,68 @@ async def test_session_upload_records_content_hash_and_uploaded_at(
 
 
 @pytest.mark.asyncio
+async def test_session_upload_hash_fence_rejects_late_content_and_keeps_legacy_compatible(
+    client: httpx.AsyncClient,
+):
+    import hashlib
+
+    env_id = await _register_env(client)
+    started = datetime.now(UTC).isoformat()
+    h2_bytes = b'[{"role":"user","content":"H2"}]'
+    h3_bytes = b'[{"role":"user","content":"H3"}]'
+    h4_bytes = b'[{"role":"user","content":"legacy H4"}]'
+    h2 = hashlib.sha256(h2_bytes).hexdigest()
+    h3 = hashlib.sha256(h3_bytes).hexdigest()
+    h4 = hashlib.sha256(h4_bytes).hexdigest()
+
+    async def announce(content_hash: str, message_count: int) -> None:
+        response = await client.post(
+            "/v1/sessions/batch",
+            json={
+                "sessions": [
+                    {
+                        "environment_id": env_id,
+                        "local_session_id": "sess-upload-cas",
+                        "started_at": started,
+                        "message_count": message_count,
+                        "content_hash": content_hash,
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    await announce(h2, 2)
+    await announce(h3, 3)
+
+    late_h2 = await client.post(
+        "/v1/sessions/sess-upload-cas/upload",
+        data={"environment_id": env_id, "expected_content_hash": h2},
+        files={"file": ("session.json", h2_bytes, "application/json")},
+    )
+    assert late_h2.status_code == 409, late_h2.text
+    assert late_h2.json()["detail"]["code"] == "session_content_hash_mismatch"
+
+    current_h3 = await client.post(
+        "/v1/sessions/sess-upload-cas/upload",
+        data={"environment_id": env_id, "expected_content_hash": h3},
+        files={"file": ("session.json", h3_bytes, "application/json")},
+    )
+    assert current_h3.status_code == 200, current_h3.text
+    assert current_h3.json()["content_hash"] == h3
+
+    # The new fields are additive. A deployed client that omits them keeps
+    # the historical full-upload behavior against an upgraded server.
+    await announce(h4, 4)
+    legacy = await client.post(
+        "/v1/sessions/sess-upload-cas/upload",
+        files={"file": ("session.json", h4_bytes, "application/json")},
+    )
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["content_hash"] == h4
+
+
+@pytest.mark.asyncio
 async def test_session_messages_endpoint_paginates_long_conversations(
     client: httpx.AsyncClient,
 ):
@@ -1260,19 +1323,14 @@ async def _register_env_named(
 
 
 @pytest.mark.asyncio
-async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.AsyncClient):
-    """Reproduces the round-29 P2: an unbound CLI key (e.g. dashboard
-    JWT, multi-agent CLI key) writing `s.environment_id=Y` for a
-    `local_session_id` that already lives in env=X must NOT slip
-    through. Without the cross-env mismatch guard, the upsert WHERE
-    turned the conflict into a no-op but the response still said
-    `created`/`needs_content`; the client's follow-up content upload
-    then stamped Y's bytes onto X's row (the upload endpoint
-    resolves rows by `local_session_id` alone). 409 stops it at
-    request time so the client gets a clean error code."""
+async def test_session_batch_isolates_equal_local_ids_by_immutable_origin(
+    client: httpx.AsyncClient,
+):
     env_a = await _register_env_named(client, "machine-A")
     env_b = await _register_env_named(client, "machine-B", agent_type="codex")
     started = datetime.now(UTC).isoformat()
+    content = b"[]"
+    content_hash = hashlib.sha256(content).hexdigest()
 
     # Land a session in env A first.
     r1 = await client.post(
@@ -1285,16 +1343,20 @@ async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.Asy
                     "started_at": started,
                     "message_count": 1,
                     "model": "claude-opus-4",
+                    "content_hash": content_hash,
                 }
             ]
         },
     )
     assert r1.status_code == 200, r1.text
+    upload_a = await client.post(
+        "/v1/sessions/shared-id/upload",
+        data={"environment_id": env_a, "expected_content_hash": content_hash},
+        files={"file": ("shared-id.json", content, "application/json")},
+    )
+    assert upload_a.status_code == 200, upload_a.text
 
-    # Now try to "rebind" the same local_session_id to env B. This
-    # is what an unbound CLI key would do if a sibling agent on a
-    # different machine accidentally generated the same id, or if
-    # a deploy-key dashboard write tried to retarget it.
+    # The same source-local ID from another Agent is a distinct session.
     r2 = await client.post(
         "/v1/sessions/batch",
         json={
@@ -1305,51 +1367,33 @@ async def test_session_batch_rejects_cross_env_rebind_with_409(client: httpx.Asy
                     "started_at": started,
                     "message_count": 5,
                     "model": "gpt-5",
+                    "content_hash": content_hash,
                 }
             ]
         },
     )
-    assert r2.status_code == 409, r2.text
-    detail = r2.json()["detail"]
-    assert detail["code"] == "session_env_mismatch"
-    assert "shared-id" in detail["offending_local_session_ids"]
-
-    # Defense check: the original row's env did NOT change. Without the
-    # 409 the upsert WHERE silently no-ops, which would still leave
-    # env=A — so this assertion is necessary to prove the new path
-    # fails closed at request time, not just that the data didn't
-    # corrupt by accident.
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["created"] == 1
+    upload_b = await client.post(
+        "/v1/sessions/shared-id/upload",
+        data={"environment_id": env_b, "expected_content_hash": content_hash},
+        files={"file": ("shared-id.json", content, "application/json")},
+    )
+    assert upload_b.status_code == 200, upload_b.text
+    assert upload_a.json()["file_key"] != upload_b.json()["file_key"]
     listing = (await client.get(f"/v1/sessions?environment_id={env_a}")).json()
     assert listing["total"] == 1
     assert listing["items"][0]["local_session_id"] == "shared-id"
     listing_b = (await client.get(f"/v1/sessions?environment_id={env_b}")).json()
-    assert listing_b["total"] == 0
+    assert listing_b["total"] == 1
+    assert listing_b["items"][0]["local_session_id"] == "shared-id"
 
 
 @pytest.mark.asyncio
-async def test_session_batch_response_lists_rejected_session_ids(
+async def test_session_batch_updates_only_matching_origin(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
-    """Round-46 P2 regression: when the upsert filtered a row out
-    at the conflict-WHERE step (cross-env race no-op), pre-fix
-    the response just dropped the id from `needs_content`. CLI
-    callers treated that as success, wrote the lock, and the
-    loser never retried. The schema now has `rejected: list[str]`
-    so the CLI can skip the lock for those ids and retry on the
-    next push.
-
-    We exercise the path by directly inserting a winner row
-    with env=A under a `local_session_id`, then submitting a
-    batch with env=B for the same id. Pre-fix the second writer
-    saw a 200 with no needs_content; post-fix the response
-    surfaces the id in `rejected`.
-
-    (Note: in production the pre-fetch FOR UPDATE 409s the
-    second batch BEFORE the upsert when the row is already
-    visible — this test reproduces the rare race window where
-    both batches arrived in parallel and only one saw an
-    existing row. We trigger it via a direct DB insert to
-    deterministically simulate that window.)"""
+    """An existing row from another origin cannot affect batch diffing."""
     from app.models.session import Session
 
     env_a = await _register_env_named(client, "machine-a", agent_type="claude-code")
@@ -1363,6 +1407,7 @@ async def test_session_batch_response_lists_rejected_session_ids(
         Session(
             user_id=seed_user.id,
             environment_id=__import__("uuid").UUID(env_a),
+            origin_environment_id=__import__("uuid").UUID(env_a),
             local_session_id="race-id",
             project_path=None,
             started_at=datetime.now(UTC),
@@ -1372,11 +1417,6 @@ async def test_session_batch_response_lists_rejected_session_ids(
     )
     await db_session.commit()
 
-    # Loser tries env B for the same id. The pre-fetch sees the
-    # winner row → cross-env mismatch guard fires → 409 (clean
-    # reject path, this confirms the primary path works). The
-    # `rejected` field carries the same id for any tooling that
-    # wants to introspect the body.
     payload = {
         "sessions": [
             {
@@ -1389,11 +1429,9 @@ async def test_session_batch_response_lists_rejected_session_ids(
         ]
     }
     r = await client.post("/v1/sessions/batch", json=payload)
-    # Pre-fetch path catches it as 409 (the winner is visible).
-    assert r.status_code == 409, r.text
-    detail = r.json()["detail"]
-    assert detail["code"] == "session_env_mismatch"
-    assert "race-id" in detail["offending_local_session_ids"]
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] == 1
+    assert r.json()["rejected"] == []
 
 
 @pytest.mark.asyncio
@@ -1421,21 +1459,10 @@ async def test_session_batch_response_carries_rejected_field_shape(client: httpx
 
 
 @pytest.mark.asyncio
-async def test_session_batch_orphan_session_can_be_adopted_by_new_env(
+async def test_session_batch_rejects_legacy_session_without_immutable_origin(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
-    """Round-33 P2 regression: a session row with
-    `environment_id IS NULL` (orphaned by `ON DELETE SET NULL`
-    after the original env was deleted, or legacy row from before
-    project_id existed) MUST be adoptable by a fresh env push.
-    Pre-fix the upsert WHERE checked
-    `existing.env IS NOT DISTINCT FROM incoming.env`; NULL
-    against a real UUID is FALSE, so the conflict was a no-op,
-    PG omitted the row from RETURNING, and the response loop
-    silently dropped the id from `needs_content`. The client
-    treated the session as synced and never re-uploaded —
-    orphaned forever.
-    """
+    """Ambiguous legacy rows are never silently adopted by a new Agent."""
     from app.models.session import Session
 
     # Land an orphan row directly: env_id NULL, no file_key.
@@ -1470,31 +1497,20 @@ async def test_session_batch_orphan_session_can_be_adopted_by_new_env(
         ]
     }
     r = await client.post("/v1/sessions/batch", json=payload)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    # The orphan was adopted: row is now updated, env_id set, and
-    # the client gets told to upload content for it. Pre-fix the
-    # response had `updated=0, needs_content=[]` — the silent
-    # drop the codex finding describes.
-    assert body["updated"] == 1, body
-    assert "orphan-1" in body["needs_content"], body
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "session_origin_unknown"
 
-    # Defense check: the row's env_id is NOW the new env, content_hash
-    # got refreshed. Without the WHERE allowing NULL adoption, the row
-    # would still have env_id=NULL and the original hash. Bind by
-    # user_id too — the test DB persists across tests within a file
-    # via the seed_user teardown, and a same-named row under another
-    # user would trip MultipleResultsFound.
     row = await db_session.execute(
         text(
-            "SELECT environment_id, content_hash FROM sessions "
+            "SELECT environment_id, origin_environment_id, content_hash FROM sessions "
             "WHERE local_session_id = 'orphan-1' AND user_id = :uid"
         ),
         {"uid": seed_user.id},
     )
     fetched = row.one()
-    assert str(fetched.environment_id) == env_id
-    assert fetched.content_hash == "b" * 64
+    assert fetched.environment_id is None
+    assert fetched.origin_environment_id is None
+    assert fetched.content_hash == "a" * 64
 
 
 @pytest.mark.asyncio

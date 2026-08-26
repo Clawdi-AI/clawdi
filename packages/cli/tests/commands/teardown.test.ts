@@ -226,7 +226,7 @@ describe("teardown — flag behavior", () => {
 		mkdirSync(target, { recursive: true });
 		writeFileSync(skillPath, "---\nname: clawdi\ndescription: User Skill\n---\n");
 		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("clawdi");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).toContain("clawdi");
 		await teardown({ agent: "claude_code", yes: true, keepMcp: true });
 		expect(existsSync(skillPath)).toBe(true);
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");

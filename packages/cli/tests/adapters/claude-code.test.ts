@@ -76,7 +76,7 @@ describe("ClaudeCodeAdapter.detect", () => {
 describe("ClaudeCodeAdapter.collectSessions", () => {
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
-		const { sessions, dedupedCount } = await a.collectSessions({ kind: "complete" });
+		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions).toHaveLength(1);
 		expect(dedupedCount).toBe(0);
 		const s = sessions[0]!;
@@ -97,19 +97,19 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 
 	it("extracts text from array content blocks (type:text)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		const texts = sessions[0]?.messages.map((m) => m.content);
 		expect(texts).toEqual(["hello", "world", "one more", "done"]);
 	});
 
 	it("filters by projectFilter (matching cwd → encoded dir)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const matched = await a.collectSessions({
+		const matched = await a.sessions.collect({
 			kind: "complete",
 			projectFilter: "/Users/fixture/project",
 		});
 		expect(matched.sessions).toHaveLength(1);
-		const notMatched = await a.collectSessions({
+		const notMatched = await a.sessions.collect({
 			kind: "complete",
 			projectFilter: "/Users/other/project",
 		});
@@ -120,14 +120,14 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		const shortPath = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "short.jsonl");
 		writeFileSync(shortPath, `${JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" })}\n`);
 		const a = new ClaudeCodeAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		// original long session still counts, short file is skipped
 		expect(sessions).toHaveLength(1);
 	});
 
 	it("first user message populates the summary (capped at 200 chars)", async () => {
 		const a = new ClaudeCodeAdapter();
-		const s = (await a.collectSessions({ kind: "complete" })).sessions[0]!;
+		const s = (await a.sessions.collect({ kind: "complete" })).sessions[0]!;
 		expect(s.summary).toBe("hello");
 	});
 
@@ -144,7 +144,7 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 			"-Users-fixture-project",
 			"11111111-2222-3333-4444-555555555555.jsonl",
 		);
-		const result = await new ClaudeCodeAdapter().collectSessions({
+		const result = await new ClaudeCodeAdapter().sessions.collect({
 			kind: "paths",
 			paths: [changedPath],
 		});
@@ -220,7 +220,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		const predecessorUuids = uuidRange("queued", 12);
 		writeResumeSessionFile({ cwd, sessionId: "queued-predecessor", uuids: predecessorUuids });
 		const adapter = new ClaudeCodeAdapter();
-		expect(await adapter.resolveSession("queued-predecessor")).not.toBeNull();
+		expect(await adapter.sessions.resolve("queued-predecessor")).not.toBeNull();
 
 		writeResumeSessionFile({
 			cwd,
@@ -228,8 +228,8 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 			uuids: [...predecessorUuids, ...uuidRange("new", 4)],
 		});
 
-		expect(await adapter.resolveSession("queued-predecessor")).toBeNull();
-		expect((await adapter.resolveSession("new-successor"))?.localSessionId).toBe("new-successor");
+		expect(await adapter.sessions.resolve("queued-predecessor")).toBeNull();
+		expect((await adapter.sessions.resolve("new-successor"))?.localSessionId).toBe("new-successor");
 	});
 
 	it("dedupes A when A.uuids ⊂ B.uuids in the same project (resume chain)", async () => {
@@ -246,7 +246,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		});
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(1);
 		expect(result.sessions.map((s) => s.localSessionId)).toEqual(["bbbb-bbbb"]);
@@ -263,7 +263,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "cccc-cccc", uuids: cUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(2);
 		expect(result.sessions.map((s) => s.localSessionId)).toEqual(["cccc-cccc"]);
@@ -285,7 +285,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		});
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete" });
+		const result = await adapter.sessions.collect({ kind: "complete" });
 		// project to just the two we wrote — the fixture's pre-existing session
 		// would otherwise pad the result count
 		const ours = result.sessions.filter((s) =>
@@ -306,7 +306,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "bbbb-bbbb", uuids: bUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
@@ -321,7 +321,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "bbbb-bbbb", uuids: bUuids });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
@@ -332,7 +332,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		writeResumeSessionFile({ cwd, sessionId: "aaaa-aaaa", uuids: uuidRange("u", 15) });
 
 		const adapter = new ClaudeCodeAdapter();
-		const result = await adapter.collectSessions({ kind: "complete", projectFilter: cwd });
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
 		expect(result.dedupedCount).toBe(0);
 		expect(result.sessions).toHaveLength(1);
@@ -342,7 +342,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 describe("ClaudeCodeAdapter.collectSkills", () => {
 	it("finds top-level skill directories with SKILL.md and skips SKIP_DIRS", async () => {
 		const a = new ClaudeCodeAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 		// `node_modules` sits in the fixture as a negative case — the SKIP_DIRS
 		// filter must drop it. `demo` is the one real skill.
@@ -358,18 +358,18 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
 
 		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain(
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain(
 			".clawdi-previous-test",
 		);
-		expect(await adapter.listSkillKeys()).not.toContain(".clawdi-previous-test");
+		expect(await adapter.skills.listKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {
 		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
 		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), legacy, { recursive: true });
 		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("clawdi");
-		expect(await adapter.listSkillKeys()).not.toContain("clawdi");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain("clawdi");
+		expect(await adapter.skills.listKeys()).not.toContain("clawdi");
 		expect(managedSkillReservationState(legacy, "clawdi")).toBe("reserved");
 
 		releaseManagedSkill({
@@ -378,19 +378,19 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 			manager: "local-setup",
 			removeTarget: () => undefined,
 		});
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("clawdi");
-		expect(await adapter.listSkillKeys()).toContain("clawdi");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).toContain("clawdi");
+		expect(await adapter.skills.listKeys()).toContain("clawdi");
 	});
 
 	it("does not adopt a future clawdi Skill after an absent migration", async () => {
 		const adapter = new ClaudeCodeAdapter();
 		const target = join(tmpHome, ".claude", "skills", "clawdi");
-		expect(await adapter.listSkillKeys()).not.toContain("clawdi");
+		expect(await adapter.skills.listKeys()).not.toContain("clawdi");
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "# User Skill\n");
 
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("clawdi");
-		expect(await adapter.listSkillKeys()).toContain("clawdi");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).toContain("clawdi");
+		expect(await adapter.skills.listKeys()).toContain("clawdi");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 });
@@ -401,7 +401,7 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 		const bytes = await tarSkillDir(src);
 
 		const a = new ClaudeCodeAdapter();
-		await a.writeSkillArchive("demo", bytes);
+		await a.skills.writeArchive("demo", bytes);
 
 		const extracted = join(tmpHome, ".claude", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
@@ -420,8 +420,8 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 		});
 		const adapter = new ClaudeCodeAdapter();
 
-		await expect(adapter.writeSkillArchive("demo", bytes)).rejects.toThrow("reserved");
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("demo");
+		await expect(adapter.skills.writeArchive("demo", bytes)).rejects.toThrow("reserved");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain("demo");
 
 		releaseManagedSkill({
 			targetDir: target,
@@ -429,15 +429,15 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 			manager: "local-setup",
 			removeTarget: () => rmSync(target, { recursive: true, force: true }),
 		});
-		await adapter.writeSkillArchive("demo", bytes);
+		await adapter.skills.writeArchive("demo", bytes);
 
 		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toContain("name: demo");
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("demo");
-		expect(await adapter.listSkillKeys()).toContain("demo");
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).toContain("demo");
+		expect(await adapter.skills.listKeys()).toContain("demo");
 	});
 
 	it("getSkillPath returns skills/<key>/SKILL.md under Claude home", () => {
 		const a = new ClaudeCodeAdapter();
-		expect(a.getSkillPath("xyz")).toBe(join(tmpHome, ".claude", "skills", "xyz", "SKILL.md"));
+		expect(a.skills.path("xyz")).toBe(join(tmpHome, ".claude", "skills", "xyz", "SKILL.md"));
 	});
 });

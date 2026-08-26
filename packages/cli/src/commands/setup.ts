@@ -1,11 +1,10 @@
-import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import type { AgentAdapter } from "../adapters/base";
+import { type AgentAdapter, adapterModuleNames } from "../adapters/base";
 import {
 	AGENT_TYPES,
 	type AgentType,
@@ -31,7 +30,6 @@ import {
 	listInstalledAgents,
 	uninstall as uninstallDaemonService,
 } from "../serve/installer";
-import { reconcileLocalHermesMcp } from "./hermes-mcp";
 
 interface SetupOpts {
 	agent?: string;
@@ -62,12 +60,13 @@ export async function setup(opts: SetupOpts) {
 			return;
 		}
 		const type = opts.agent as AgentType;
-		if (!(await registerEnv(api, type, null, machineId, machineName))) {
+		const adapter = adapterRegistry[type].create();
+		if (!(await registerEnv(api, adapter, await adapter.getVersion(), machineId, machineName))) {
 			process.exitCode = 1;
 			return;
 		}
-		await registerMcpServer(type);
-		await installBuiltinSkill(type);
+		await adapterRegistry[type].mcpLifecycle?.register();
+		if (adapter.skills) await installBuiltinSkill(type);
 		if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents();
 		return;
 	}
@@ -130,13 +129,13 @@ export async function setup(opts: SetupOpts) {
 	let registeredCount = 0;
 	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
-		if (!(await registerEnv(api, adapter.agentType, version, machineId, machineName))) {
+		if (!(await registerEnv(api, adapter, version, machineId, machineName))) {
 			failedCount += 1;
 			continue;
 		}
 		registeredCount += 1;
-		await registerMcpServer(adapter.agentType);
-		await installBuiltinSkill(adapter.agentType);
+		await adapterRegistry[adapter.agentType].mcpLifecycle?.register();
+		if (adapter.skills) await installBuiltinSkill(adapter.agentType);
 	}
 	if (registeredCount > 0 && (await shouldInstallDaemons(opts))) {
 		installDaemonsForRegisteredAgents();
@@ -146,11 +145,12 @@ export async function setup(opts: SetupOpts) {
 
 async function registerEnv(
 	api: ApiClient,
-	agentType: AgentType,
+	adapter: AgentAdapter,
 	agentVersion: string | null,
 	machineId: string,
 	machineName: string,
 ): Promise<boolean> {
+	const agentType = adapter.agentType;
 	try {
 		const env = unwrap(
 			await api.POST("/v1/agents", {
@@ -160,6 +160,7 @@ async function registerEnv(
 					agent_type: agentType,
 					agent_version: agentVersion,
 					os: process.platform,
+					adapter_modules: adapterModuleNames(adapter),
 				},
 			}),
 		);
@@ -295,97 +296,5 @@ async function installBuiltinSkill(agentType: AgentType) {
 		);
 	} catch (error) {
 		console.log(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
-	}
-}
-
-async function registerMcpServer(agentType: AgentType) {
-	if (agentType === "hermes") return registerHermesMcp();
-	if (agentType === "openclaw") return registerOpenClawMcp();
-	if (agentType === "codex") return registerCodexMcp();
-	if (agentType !== "claude_code") return;
-
-	// Check if already registered. `claude mcp list` prints entries like
-	// `  clawdi:   stdio  ...` — match the name as its own token at the start
-	// of a line to avoid false hits from unrelated server names containing
-	// the substring "clawdi:".
-	try {
-		const list = execSync("claude mcp list", { encoding: "utf-8", stdio: "pipe" });
-		if (/^\s*clawdi:\s/m.test(list)) {
-			console.log(chalk.gray("✓ MCP server already registered"));
-			return;
-		}
-	} catch {
-		// claude command not found or failed, try registering anyway
-	}
-
-	const mcpConfig = JSON.stringify({
-		type: "stdio",
-		command: "clawdi",
-		args: ["mcp"],
-	});
-
-	try {
-		// `--scope user` is Claude Code CLI terminology: register MCP
-		// at user level (not project-local). This is unrelated to
-		// Clawdi Project data boundaries.
-		execSync(`claude mcp add-json clawdi '${mcpConfig}' --scope user`, {
-			stdio: "pipe",
-		});
-		console.log(chalk.green("✓ MCP server registered in Claude Code"));
-	} catch {
-		console.log(chalk.yellow("⚠ Could not auto-register MCP server."));
-		console.log(
-			chalk.gray(`  Run manually: claude mcp add-json clawdi '${mcpConfig}' --scope user`),
-		);
-	}
-}
-
-async function registerHermesMcp() {
-	try {
-		if (!reconcileLocalHermesMcp(true)) {
-			console.log(chalk.gray("✓ MCP server already registered in Hermes"));
-			return;
-		}
-		console.log(chalk.green("✓ MCP server registered in Hermes"));
-	} catch (e) {
-		console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(e)}`));
-		console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
-	}
-}
-
-function registerCodexMcp() {
-	try {
-		const list = execSync("codex mcp list", { encoding: "utf-8", stdio: "pipe" });
-		if (/^\s*clawdi\b/m.test(list)) {
-			console.log(chalk.gray("✓ MCP server already registered in Codex"));
-			return;
-		}
-	} catch {
-		// codex not on PATH or subcommand failed — fall through and try `add` anyway.
-	}
-
-	try {
-		execSync("codex mcp add clawdi -- clawdi mcp", { stdio: "pipe" });
-		console.log(chalk.green("✓ MCP server registered in Codex"));
-	} catch {
-		console.log(chalk.yellow("⚠ Could not auto-register MCP server in Codex."));
-		console.log(chalk.gray("  Run manually: codex mcp add clawdi -- clawdi mcp"));
-	}
-}
-
-function registerOpenClawMcp() {
-	const mcpConfig = JSON.stringify({
-		command: "clawdi",
-		args: ["mcp"],
-	});
-
-	try {
-		// OpenClaw exposes a non-interactive config setter, so prefer its native
-		// CLI over editing ~/.openclaw/openclaw.json directly.
-		execSync(`openclaw mcp set clawdi '${mcpConfig}'`, { stdio: "pipe", env: process.env });
-		console.log(chalk.green("✓ MCP server registered in OpenClaw"));
-	} catch {
-		console.log(chalk.yellow("⚠ Could not auto-register MCP server in OpenClaw."));
-		console.log(chalk.gray(`  Run manually: openclaw mcp set clawdi '${mcpConfig}'`));
 	}
 }
