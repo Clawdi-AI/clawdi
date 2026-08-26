@@ -83,8 +83,8 @@ Four PostgreSQL tables form the additive companion boundary:
 | Table | Contract |
 | --- | --- |
 | `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, immutable final retirement receipt/high-waters, and the durable runtime-state cleanup receipt. |
-| `v2_runtime_observation_inbox` | Immutable accepted identities with the five-field boot identity, boot-scoped sequence, global event id, timestamps, payload hash, and health. Private diagnostic payloads may be compacted in place after retention eligibility, while identity and hash columns remain permanently unique. |
-| `v2_runtime_observation_heads` | One immutable boot-session binding with non-regressing accepted sequence, stream position, capture time, and freshness; retirement compacts it to a tombstone. |
+| `v2_runtime_observation_inbox` | Immutable change evidence with the five-field boot identity, boot-scoped sequence, global event id, timestamps, payload hash, and health. Private diagnostic payloads may be compacted in place after retention eligibility; a fresh active head keeps its current projection readable, while compaction of a stale head forces the next heartbeat to restore change evidence. |
+| `v2_runtime_observation_heads` | One immutable boot-session binding with non-regressing accepted sequence, change-event stream position, last-seen capture time, and freshness. Semantically unchanged heartbeats refresh this row without appending inbox evidence; retirement compacts it to a tombstone. |
 | `v2_runtime_observation_consumer_cursors` | Environment-and-consumer ACK state, replay horizon, and explicit fail-closed expiry/reset boundary used by safe prefix retention. |
 
 Strict-v2 credential provisioning is only available through

@@ -251,6 +251,14 @@ class V2RuntimeObservationHead(Base, TimestampMixin):
             "health IS NULL OR health IN ('ok', 'error', 'unknown')",
             name="ck_v2_runtime_observation_heads_health",
         ),
+        CheckConstraint(
+            "last_seen_payload_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_v2_runtime_observation_heads_last_seen_payload_hash",
+        ),
+        CheckConstraint(
+            "latest_semantic_hash IS NULL OR latest_semantic_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_v2_runtime_observation_heads_semantic_hash",
+        ),
     )
 
     environment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
@@ -266,6 +274,10 @@ class V2RuntimeObservationHead(Base, TimestampMixin):
     latest_stream_position: Mapped[int] = mapped_column(BigInteger, nullable=False)
     latest_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
     latest_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_seen_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    last_seen_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_seen_received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    latest_semantic_hash: Mapped[str | None] = mapped_column(String(64))
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     freshness_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     health: Mapped[str | None] = mapped_column(String(16))
