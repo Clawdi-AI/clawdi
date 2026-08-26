@@ -59,6 +59,7 @@ from app.services.runtime_source_authority import load_persisted_runtime_source_
 from app.services.runtime_source_revision import (
     persisted_runtime_source_revision,
     repair_runtime_source_revision,
+    runtime_source_contract_revision,
 )
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.tar_utils import reroot_skill_archive, tar_from_content
@@ -236,7 +237,10 @@ async def _render_runtime_source_snapshot(
                 )
             )
         except RuntimeSourceError:
-            if expected_revision is not None:
+            if (
+                expected_revision is not None
+                or expected_contract != runtime_source_contract_revision()
+            ):
                 repaired = await repair_runtime_source_revision(
                     db,
                     environment_id=environment_id,

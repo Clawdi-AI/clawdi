@@ -36,7 +36,10 @@ from app.models.user import User
 from app.routes import sessions as session_routes
 from app.schemas.session import RuntimeObservedResponse
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
-from app.services.runtime_source_revision import refresh_runtime_source_revisions
+from app.services.runtime_source_revision import (
+    refresh_runtime_source_revisions,
+    runtime_source_contract_revision,
+)
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
@@ -833,6 +836,54 @@ async def test_mcp_inventory_exposes_only_proven_user_declarations(
     malformed = await client.get(f"/v1/agents/{env_id}/mcp")
     assert malformed.status_code == 503, malformed.text
     assert malformed.json() == {"detail": "Managed MCP inventory is temporarily unavailable."}
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_treats_unbackfilled_revision_as_pending(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = canonical_hosted_runtime_state(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-revision-pending",
+        instance_id="iid-revision-pending",
+        generation=4,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+        locale=_TEST_LOCALE,
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes=_test_runtimes(),
+    )
+    db_session.add(state)
+    await db_session.commit()
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": _runtime_observed(
+                applied_generation=4,
+                applied_instance_id="iid-revision-pending",
+            )
+        },
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    detail = (await client.get(f"/v1/agents/{env_id}/runtime-observed")).json()
+    summary = (await client.get("/v1/agents/runtime-observed")).json()
+    summary_item = next(item for item in summary["items"] if item["environment"]["id"] == env_id)
+    for payload in (detail, summary_item):
+        assert payload["desired"]["desired_source_revision"] is None
+        assert payload["health"]["status"] == "unknown"
+        assert "desired_source_revision_missing" in payload["health"]["reasons"]
+        assert "desired_source_invalid" not in payload["health"]["reasons"]
+        assert "desired_cli_version_invalid" not in payload["health"]["reasons"]
+
+    state.source_revision_contract = runtime_source_contract_revision()
+    await db_session.commit()
+    failed = (await client.get(f"/v1/agents/{env_id}/runtime-observed")).json()
+    assert "desired_source_invalid" in failed["health"]["reasons"]
+    assert "desired_source_revision_missing" not in failed["health"]["reasons"]
 
 
 @pytest.mark.asyncio

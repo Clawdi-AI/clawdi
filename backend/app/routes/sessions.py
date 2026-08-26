@@ -108,7 +108,10 @@ from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
-from app.services.runtime_source_revision import persisted_runtime_source_revision
+from app.services.runtime_source_revision import (
+    persisted_runtime_source_error,
+    persisted_runtime_source_revision,
+)
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
@@ -555,11 +558,11 @@ async def list_environment_runtime_observed(
         states_by_env = {state.environment_id: state for state in states}
         for state in states:
             revision = persisted_runtime_source_revision(state)
-            if revision is None:
-                source_errors.add(state.environment_id)
-                continue
-            source_revisions[state.environment_id] = revision
             desired_cli_specs[state.environment_id] = state.cli_package_spec
+            if revision is not None:
+                source_revisions[state.environment_id] = revision
+            elif persisted_runtime_source_error(state):
+                source_errors.add(state.environment_id)
         observations = (
             (
                 await db.execute(
@@ -1035,10 +1038,8 @@ async def get_environment_runtime_observed(
     env, state = row
 
     source_revision = persisted_runtime_source_revision(state) if state is not None else None
-    source_error = state is not None and source_revision is None
-    desired_cli_package_spec = (
-        state.cli_package_spec if source_revision is not None and state is not None else None
-    )
+    source_error = state is not None and persisted_runtime_source_error(state)
+    desired_cli_package_spec = state.cli_package_spec if state is not None else None
     observation = (
         await db.execute(
             select(HostedRuntimeConfigObservation).where(

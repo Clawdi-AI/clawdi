@@ -90,6 +90,9 @@ from app.services.whatsapp_baileys import (
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
+# Renderer contract: bump this value whenever emitted desired-state material changes.
+# A bump makes each Agent render and backfill once on its next manifest poll, spreading
+# the fleet work naturally. Forgetting it can make an old ETag return 304 indefinitely.
 RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v1"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"

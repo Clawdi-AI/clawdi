@@ -216,12 +216,17 @@ MUTATION_AUTHORITIES = (
     (
         "app/routes/projects.py",
         "archive_project",
-        "queue_project_runtime_manifest_changed",
+        "queue_runtime_manifests_changed",
     ),
     (
         "app/services/principal_lifecycle.py",
         "complete_principal_cleanup",
-        "queue_project_runtime_manifest_changed",
+        "queue_runtime_manifests_changed",
+    ),
+    (
+        "app/services/agent_lifecycle.py",
+        "reactivate_agent_and_project",
+        "queue_environment_runtime_manifest_changed",
     ),
     ("app/routes/skills.py", "refresh_project_skill", "bump_skills_revision"),
     ("app/routes/skills.py", "_do_upload_skill", "bump_skills_revision"),

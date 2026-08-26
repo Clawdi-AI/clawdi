@@ -2065,17 +2065,16 @@ async def admin_update_channel(
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
         if account.status != previous_status and account.provider in RUNTIME_CHANNEL_PROVIDERS:
-            targets = list(
-                (
-                    await db.execute(
-                        select(ChannelBotAgentLink.user_id, ChannelBotAgentLink.agent_id).where(
-                            ChannelBotAgentLink.account_id == account.id,
-                            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                            ChannelBotAgentLink.archived_at.is_(None),
-                        )
+            rows = (
+                await db.execute(
+                    select(ChannelBotAgentLink.user_id, ChannelBotAgentLink.agent_id).where(
+                        ChannelBotAgentLink.account_id == account.id,
+                        ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                        ChannelBotAgentLink.archived_at.is_(None),
                     )
-                ).all()
-            )
+                )
+            ).all()
+            targets = [(user_id, agent_id) for user_id, agent_id in rows]
             await queue_runtime_manifests_changed(db, targets)
         record_control_plane_audit(
             db,

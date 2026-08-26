@@ -61,6 +61,7 @@ import json
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
@@ -327,6 +328,26 @@ async def queue_runtime_manifests_changed(
     )
     for user_id, environment_id in targets:
         _queue_runtime_manifest_changed(db, user_id, environment_id)
+
+
+async def active_runtime_manifest_targets(
+    db: AsyncSession,
+    environment_ids: Iterable[UUID],
+) -> list[tuple[UUID, UUID]]:
+    requested_ids = sorted(set(environment_ids), key=str)
+    if not requested_ids:
+        return []
+    rows = (
+        await db.execute(
+            select(AgentEnvironment.user_id, AgentEnvironment.id)
+            .where(
+                AgentEnvironment.id.in_(requested_ids),
+                AgentEnvironment.archived_at.is_(None),
+            )
+            .order_by(AgentEnvironment.id)
+        )
+    ).all()
+    return [(user_id, environment_id) for user_id, environment_id in rows]
 
 
 async def queue_runtime_manifest_changed(

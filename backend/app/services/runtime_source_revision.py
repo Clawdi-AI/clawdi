@@ -39,6 +39,13 @@ def persisted_runtime_source_revision(state: HostedRuntimeState) -> str | None:
     return state.source_revision
 
 
+def persisted_runtime_source_error(state: HostedRuntimeState) -> bool:
+    return (
+        state.source_revision is None
+        and state.source_revision_contract == runtime_source_contract_revision()
+    )
+
+
 async def refresh_runtime_source_revisions(
     db: AsyncSession,
     environment_ids: Iterable[UUID],
@@ -78,8 +85,6 @@ async def refresh_runtime_source_revisions(
             )
         revisions[environment_id] = revision
         state = row.state
-        if revision is None and state.source_revision is None:
-            continue
         if (
             state.source_revision == revision
             and state.source_revision_contract == contract_revision

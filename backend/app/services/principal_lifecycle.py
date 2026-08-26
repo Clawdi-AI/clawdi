@@ -51,9 +51,12 @@ from app.services.ai_provider_auth_transition import transition_ai_provider_auth
 from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
 from app.services.project_runtime_skills import (
     lock_project_runtime_graphs,
-    queue_project_runtime_manifest_changed,
 )
 from app.services.runtime_observation import retire_runtime_environment
+from app.services.sync_events import (
+    active_runtime_manifest_targets,
+    queue_runtime_manifests_changed,
+)
 
 
 class PrincipalTerminatedError(RuntimeError):
@@ -757,9 +760,8 @@ async def complete_principal_cleanup(
         return PrincipalCleanupResult(user_disabled=False)
 
     # Owner deletion removes every other user's access to the owner's Projects.
-    # Take all Project locks before any affected Agent lock, notify managed
-    # Agents, and remove their links in this same transaction. Otherwise those
-    # Agents would keep a stale desired bundle until their next periodic poll.
+    # Take all Project locks before any affected Agent lock, capture surviving
+    # targets, and refresh them after removing the links in this transaction.
     owned_project_id_values = tuple(
         (
             await db.scalars(
@@ -767,9 +769,12 @@ async def complete_principal_cleanup(
             )
         ).all()
     )
-    await lock_project_runtime_graphs(db, owned_project_id_values)
-    for project_id in owned_project_id_values:
-        await queue_project_runtime_manifest_changed(db, project_id=project_id)
+    affected_agent_ids = await lock_project_runtime_graphs(db, owned_project_id_values)
+    affected_targets = [
+        target
+        for target in await active_runtime_manifest_targets(db, affected_agent_ids)
+        if target[0] != user.id
+    ]
     if owned_project_id_values:
         await db.execute(
             delete(AgentProjectBinding).where(
@@ -777,6 +782,7 @@ async def complete_principal_cleanup(
                 AgentProjectBinding.binding_type == "context",
             )
         )
+        await queue_runtime_manifests_changed(db, affected_targets)
 
     key_ids = tuple(
         (
