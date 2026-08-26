@@ -113,7 +113,7 @@ export function AgentPluginsSurface({
 				body: { version: item.catalog.version },
 			});
 			await refreshDesired();
-			toast.success(updating ? "Plugin update started" : "Plugin installation started");
+			toast.success(updating ? "Plugin updated" : "Plugin installed");
 		} catch (error) {
 			toast.error(updating ? "Couldn't update plugin" : "Couldn't install plugin", {
 				description: normalizeApiError(error),
@@ -133,7 +133,7 @@ export function AgentPluginsSurface({
 				params: { path: { agent_id: agentId, plugin_name: item.name } },
 			});
 			await refreshDesired();
-			toast.success("Plugin removal started");
+			toast.success("Plugin removed");
 			if (selectedPlugin === item.name) closePlugin();
 		} catch (error) {
 			toast.error("Couldn't remove plugin", { description: normalizeApiError(error) });
@@ -160,7 +160,7 @@ export function AgentPluginsSurface({
 				body: { version: item.catalog.version },
 			});
 			await refreshDesired();
-			toast.success("Plugin retry started");
+			toast.success("Plugin installed");
 		} catch (error) {
 			toast.error("Couldn't retry plugin", { description: normalizeApiError(error) });
 			throw error;
