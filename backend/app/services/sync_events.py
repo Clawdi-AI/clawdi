@@ -82,6 +82,7 @@ from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desi
 from app.services.channel_wakeups import (
     CHANNEL_DELIVERIES_ENQUEUED,
     CHANNEL_INBOUND_MESSAGES_ENQUEUED,
+    ChannelWakeup,
     channel_deliveries_enqueued,
     channel_inbound_messages_enqueued,
 )
@@ -96,6 +97,7 @@ from app.services.postgres_listener import PostgresListener, connect_postgres_li
 log = logging.getLogger(__name__)
 
 _POSTGRES_CHANNEL = "clawdi_sync_events"
+SYNC_SUBSCRIPTIONS_CHANGED = "sync_subscriptions_changed"
 _PROCESS_TOKEN = uuid4().hex
 _POSTGRES_PAYLOAD_LIMIT_BYTES = 7900
 
@@ -129,11 +131,10 @@ class _Subscriber:
 
     `visible_project_ids` is mutable — an out-of-band refresh
     task on the SSE channel re-queries `project_ids_visible_to`
-    every 30s and replaces the field, so a runtime env-project
-    reassignment converges within one refresh cycle. Without
-    this, a deploy key whose env is reassigned to a different
-    project would keep receiving event metadata for its former
-    project until the connection drops.
+    after a keyed mutation notification, with a slow fallback poll. Without
+    this, a deploy key whose env is reassigned to a different project would
+    keep receiving event metadata for its former project until the connection
+    drops.
     """
 
     queue: SyncEventQueue = field(default_factory=lambda: asyncio.Queue(maxsize=64))
@@ -160,6 +161,23 @@ _subscribers: dict[UUID, list[_Subscriber]] = defaultdict(list)
 # lock around read+write — these calls don't await between
 # count and append.
 _subscribe_lock = asyncio.Lock()
+
+# Visibility and revocation mutations wake only streams owned by the affected
+# user. PostgreSQL carries the signal across workers; this keyed process-local
+# registry is the same waiter primitive used by channel long polling.
+sync_subscriptions_changed = ChannelWakeup()
+
+
+async def notify_sync_subscriptions_changed(
+    db: AsyncSession,
+    user_ids: Iterable[UUID],
+) -> None:
+    """Wake affected SSE subscriptions after the transaction commits."""
+    for user_id in set(user_ids):
+        await db.execute(
+            text("SELECT pg_notify(:channel, :key)"),
+            {"channel": SYNC_SUBSCRIPTIONS_CHANGED, "key": str(user_id)},
+        )
 
 
 async def try_subscribe(
@@ -683,6 +701,7 @@ async def _postgres_listener_loop(
                     _POSTGRES_CHANNEL: _on_postgres_notification,
                     CHANNEL_DELIVERIES_ENQUEUED: _on_channel_delivery_enqueued,
                     CHANNEL_INBOUND_MESSAGES_ENQUEUED: _on_channel_inbound_message_enqueued,
+                    SYNC_SUBSCRIPTIONS_CHANGED: _on_sync_subscriptions_changed,
                 },
                 terminated.set,
             )
@@ -754,6 +773,10 @@ def _on_channel_delivery_enqueued(_pid: int, _channel: str, payload: str) -> Non
 
 def _on_channel_inbound_message_enqueued(_pid: int, _channel: str, payload: str) -> None:
     channel_inbound_messages_enqueued.signal(payload)
+
+
+def _on_sync_subscriptions_changed(_pid: int, _channel: str, payload: str) -> None:
+    sync_subscriptions_changed.signal(payload)
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project_membership import ProjectMembership
 from app.models.user import User
+from app.services.sync_events import notify_sync_subscriptions_changed
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _TRIM_DASHES = re.compile(r"^-+|-+$")
@@ -154,4 +155,5 @@ async def ensure_viewer_membership(
     )
     db.add(membership)
     await db.flush()
+    await notify_sync_subscriptions_changed(db, [member_user_id])
     return membership

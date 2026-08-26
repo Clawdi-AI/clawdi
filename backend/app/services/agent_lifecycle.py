@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_key import ApiKey
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
-from app.services.sync_events import queue_environment_runtime_manifest_changed
+from app.services.sync_events import (
+    notify_sync_subscriptions_changed,
+    queue_environment_runtime_manifest_changed,
+)
 
 
 class AgentLifecycleBoundaryError(RuntimeError):
@@ -85,6 +88,7 @@ async def archive_agent_and_project(
         ).all()
     )
     await db.execute(update(ApiKey).where(ApiKey.id.in_(key_ids)).values(revoked_at=archived_at))
+    await notify_sync_subscriptions_changed(db, [locked_agent.user_id])
     return tuple(key_ids)
 
 
@@ -126,6 +130,7 @@ async def reactivate_agent_and_project(db: AsyncSession, *, agent: AgentEnvironm
         raise AgentLifecycleBoundaryError("Agent Project is shared by another Agent")
     locked_agent.archived_at = None
     project.archived_at = None
+    await notify_sync_subscriptions_changed(db, [locked_agent.user_id])
     await queue_environment_runtime_manifest_changed(
         db,
         locked_agent.user_id,

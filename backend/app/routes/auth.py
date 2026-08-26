@@ -17,6 +17,7 @@ from app.schemas.api_key import (
 from app.schemas.problem import AccountSuspendedProblem
 from app.schemas.user import CurrentUserResponse
 from app.services.api_key import mint_api_key
+from app.services.sync_events import notify_sync_subscriptions_changed
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -136,6 +137,7 @@ async def revoke_api_key(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Managed API keys cannot be revoked here")
 
     api_key.revoked_at = datetime.now(UTC)
+    await notify_sync_subscriptions_changed(db, [api_key.user_id])
     await db.commit()
     invalidate_api_key_auth_cache(api_key.id)
     return ApiKeyRevokeResponse(status="revoked")

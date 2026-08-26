@@ -42,6 +42,7 @@ from app.services.sharing import (
     safe_owner_display,
     token_prefix,
 )
+from app.services.sync_events import notify_sync_subscriptions_changed
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +434,7 @@ async def remove_member(
         project_id=project_id,
         user_ids=[member_user_id],
     )
+    await notify_sync_subscriptions_changed(db, [member_user_id])
     await db.commit()
     return ProjectMemberRemoveResponse(
         status="removed",
@@ -474,6 +476,7 @@ async def leave_project(
         project_id=project_id,
         user_ids=[auth.user_id],
     )
+    await notify_sync_subscriptions_changed(db, [auth.user_id])
     await db.commit()
     return ProjectLeaveResponse(
         status="left",
@@ -536,6 +539,7 @@ async def unshare_project(
     for member in members:
         await db.delete(member)
 
+    await notify_sync_subscriptions_changed(db, member_user_ids)
     await db.commit()
     return UnshareResponse(
         links_revoked=len(active_links),

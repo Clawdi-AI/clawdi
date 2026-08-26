@@ -37,6 +37,7 @@ from app.services.project_runtime_skills import (
 from app.services.sharing import safe_owner_display, safe_owner_handle
 from app.services.sync_events import (
     active_runtime_manifest_targets,
+    notify_sync_subscriptions_changed,
     queue_runtime_manifests_changed,
 )
 
@@ -301,6 +302,7 @@ async def create_project(
     )
     db.add(project)
     try:
+        await notify_sync_subscriptions_changed(db, [user_id])
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -549,6 +551,17 @@ async def archive_project(
             "Only user-created Projects can be archived",
         )
     targets = await active_runtime_manifest_targets(db, agent_ids)
+    member_user_ids = list(
+        (
+            await db.execute(
+                select(ProjectMembership.member_user_id).where(
+                    ProjectMembership.project_id == project_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     await db.execute(
         delete(AgentProjectBinding).where(
             AgentProjectBinding.project_id == project_id,
@@ -556,6 +569,7 @@ async def archive_project(
         )
     )
     project.archived_at = datetime.now(UTC)
+    await notify_sync_subscriptions_changed(db, [auth.user_id, *member_user_ids])
     await queue_runtime_manifests_changed(db, targets)
     await db.commit()
     return ProjectArchiveResponse(unlinked_agent_count=len(agent_ids))

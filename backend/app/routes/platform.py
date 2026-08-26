@@ -94,6 +94,7 @@ from app.services.runtime_source import RuntimeSourceError, RuntimeSourceNotFoun
 from app.services.runtime_source_authority import load_runtime_source_authority
 from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
+    notify_sync_subscriptions_changed,
     queue_environment_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
@@ -1311,6 +1312,7 @@ async def platform_revoke_api_key(
     already_revoked = api_key.revoked_at is not None
     if not already_revoked:
         api_key.revoked_at = datetime.now(UTC)
+        await notify_sync_subscriptions_changed(db, [api_key.user_id])
     response = ApiKeyRevokeResponse(status="revoked")
     await _complete_mutation(
         db,

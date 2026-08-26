@@ -55,6 +55,7 @@ from app.services.project_runtime_skills import (
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.sync_events import (
     active_runtime_manifest_targets,
+    notify_sync_subscriptions_changed,
     queue_runtime_manifests_changed,
 )
 
@@ -922,7 +923,7 @@ async def complete_principal_cleanup(
     )
 
     owned_project_ids = select(Project.id).where(Project.user_id == user.id)
-    deleted_membership_ids = tuple(
+    deleted_membership_user_ids = tuple(
         (
             await db.scalars(
                 delete(ProjectMembership)
@@ -932,7 +933,7 @@ async def complete_principal_cleanup(
                         ProjectMembership.project_id.in_(owned_project_ids),
                     )
                 )
-                .returning(ProjectMembership.id)
+                .returning(ProjectMembership.member_user_id)
             )
         ).all()
     )
@@ -1040,9 +1041,13 @@ async def complete_principal_cleanup(
     if not attempt_already_recorded:
         lifecycle.cleanup_attempts += 1
     _mark_principal_cleanup_complete(lifecycle, completed_at=current_time)
+    await notify_sync_subscriptions_changed(
+        db,
+        {user.id, *deleted_membership_user_ids},
+    )
     await db.flush()
     project_access_revoked = (
-        len(deleted_membership_ids) + len(deleted_invitation_ids) + len(revoked_share_link_ids)
+        len(deleted_membership_user_ids) + len(deleted_invitation_ids) + len(revoked_share_link_ids)
     )
     return PrincipalCleanupResult(
         user_disabled=True,

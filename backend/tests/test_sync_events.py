@@ -21,14 +21,17 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException, Request
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Message
 
+from app.core.auth import AuthContext
+from app.core.database import engine as app_engine
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
@@ -61,6 +64,27 @@ def _connected_request() -> Request:
         return {"type": "http.request", "body": b"", "more_body": False}
 
     return Request({"type": "http"}, receive)
+
+
+async def _open_api_key_stream(
+    db_session: AsyncSession,
+    user: User,
+) -> tuple[ApiKey, AuthContext, AsyncIterator[bytes]]:
+    from app.routes import sync as sync_route
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(
+        db_session,
+        user_id=user.id,
+        label="sync refresh test",
+        commit=False,
+    )
+    await db_session.commit()
+    auth = AuthContext(user=user, api_key=minted.api_key)
+    response = await sync_route.events(_connected_request(), auth, None)
+    iterator = response.body_iterator.__aiter__()
+    assert await iterator.__anext__() == b": connected\n\n"
+    return minted.api_key, auth, iterator
 
 
 @pytest.mark.parametrize(
@@ -274,6 +298,92 @@ async def test_stream_returns_when_revoked_event_set():
     revoked.set()
     with pytest.raises(StopAsyncIteration):
         await gen.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_api_key_revoke_notification_closes_only_affected_user_stream(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.routes.auth import revoke_api_key
+
+    api_key, _auth, iterator = await _open_api_key_stream(db_session, seed_user)
+    other_user_id = uuid.uuid4()
+    other_waiter = sync_events.sync_subscriptions_changed.subscribe(str(other_user_id))
+    await sync_events.start_postgres_listener()
+    try:
+        response = await revoke_api_key(
+            str(api_key.id),
+            AuthContext(user=seed_user),
+            db_session,
+        )
+        assert response.status == "revoked"
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(iterator.__anext__(), timeout=2)
+        assert not other_waiter.is_set()
+    finally:
+        await iterator.aclose()
+        await sync_events.stop_postgres_listener()
+        sync_events.sync_subscriptions_changed.unsubscribe(str(other_user_id), other_waiter)
+
+
+@pytest.mark.asyncio
+async def test_api_key_revoke_fallback_closes_stream_when_notification_is_lost(
+    db_session: AsyncSession,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.routes import sync as sync_route
+
+    monkeypatch.setattr(sync_route, "SUBSCRIPTION_REFRESH_FALLBACK_INTERVAL_S", 0.01)
+    api_key, _auth, iterator = await _open_api_key_stream(db_session, seed_user)
+    try:
+        # Simulate durable state changing while its PostgreSQL notification is
+        # lost: bypass every mutation helper and update the row directly.
+        await db_session.execute(
+            update(ApiKey).where(ApiKey.id == api_key.id).values(revoked_at=datetime.now(UTC))
+        )
+        await db_session.commit()
+
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(iterator.__anext__(), timeout=1)
+    finally:
+        await iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sync_stream_queries_only_after_keyed_refresh_signal(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    _api_key, _auth, iterator = await _open_api_key_stream(db_session, seed_user)
+    refresh_statements: list[str] = []
+
+    def capture_refresh_statement(_connection, _cursor, statement: str, *_args) -> None:
+        if any(
+            table in statement
+            for table in ("FROM api_keys", "FROM projects", "FROM project_memberships")
+        ):
+            refresh_statements.append(statement)
+
+    event.listen(app_engine.sync_engine, "before_cursor_execute", capture_refresh_statement)
+    try:
+        await asyncio.sleep(0.05)
+        assert refresh_statements == []
+
+        sync_events.sync_subscriptions_changed.signal(str(seed_user.id))
+        deadline = asyncio.get_running_loop().time() + 1
+        while len(refresh_statements) < 3 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+
+        # One api_key check plus the existing owned/shared Project visibility
+        # reads. No private 30-second loop continues querying afterward.
+        assert len(refresh_statements) == 3
+        await asyncio.sleep(0.05)
+        assert len(refresh_statements) == 3
+    finally:
+        event.remove(app_engine.sync_engine, "before_cursor_execute", capture_refresh_statement)
+        await iterator.aclose()
 
 
 @pytest.mark.asyncio
