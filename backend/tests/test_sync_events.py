@@ -550,7 +550,7 @@ async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
     )
     try:
         await db_session.execute(select(User.id).where(User.id == user_id))
-        sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
+        await sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
         assert queue.empty()
         await db_session.commit()
         assert queue.get_nowait() == {
@@ -559,7 +559,7 @@ async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
         }
 
         await db_session.execute(select(User.id).where(User.id == user_id))
-        sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
+        await sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
         assert queue.empty()
         await db_session.rollback()
         assert queue.empty()

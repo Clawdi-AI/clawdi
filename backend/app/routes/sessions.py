@@ -34,7 +34,7 @@ from app.core.auth import (
     require_web_auth,
 )
 from app.core.config import settings
-from app.core.database import get_session, runtime_snapshot_session
+from app.core.database import get_session
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -107,13 +107,8 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
-from app.services.runtime_source import (
-    RuntimeSourceError,
-    expected_runtime_bundle_v2_etag,
-    load_runtime_source_batch,
-    render_runtime_source,
-    vault_key_identity,
-)
+from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from app.services.runtime_source_revision import persisted_runtime_source_revision
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
@@ -550,32 +545,21 @@ async def list_environment_runtime_observed(
     desired_cli_specs: dict[UUID, str] = {}
     observations_by_env: dict[UUID, HostedRuntimeConfigObservation] = {}
     if env_ids:
-        async with runtime_snapshot_session() as source_db:
-            source_batch = await load_runtime_source_batch(
-                source_db,
-                environment_ids=env_ids,
-                owner_user_id=auth.user_id,
-            )
-            states_by_env = {
-                environment_id: row.state
-                for environment_id, row in source_batch.rows.items()
-                if row.state is not None
-            }
-            key_identity = vault_key_identity(settings.vault_encryption_key)
-            for environment_id in source_batch.rows:
-                try:
-                    rendered = render_runtime_source(
-                        source_batch,
-                        environment_id=environment_id,
-                        public_api_url=settings.public_api_url,
-                        vault_key_identity=key_identity,
-                        decrypt_secrets=False,
-                    )
-                except RuntimeSourceError:
-                    source_errors.add(environment_id)
-                    continue
-                source_revisions[environment_id] = rendered.source_revision
-                desired_cli_specs[environment_id] = rendered.manifest["clawdiCli"]["packageSpec"]
+        states = list(
+            (
+                await db.execute(
+                    select(HostedRuntimeState).where(HostedRuntimeState.environment_id.in_(env_ids))
+                )
+            ).scalars()
+        )
+        states_by_env = {state.environment_id: state for state in states}
+        for state in states:
+            revision = persisted_runtime_source_revision(state)
+            if revision is None:
+                source_errors.add(state.environment_id)
+                continue
+            source_revisions[state.environment_id] = revision
+            desired_cli_specs[state.environment_id] = state.cli_package_spec
         observations = (
             (
                 await db.execute(
@@ -1032,43 +1016,29 @@ async def get_environment_runtime_observed(
     if bound_env is not None and environment_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
-    env = (
+    row = (
         await db.execute(
-            select(AgentEnvironment).where(
+            select(AgentEnvironment, HostedRuntimeState)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == auth.user_id,
                 active_agent_filter(),
             )
         )
-    ).scalar_one_or_none()
-    if env is None:
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    env, state = row
 
-    source_revision = None
-    source_error = False
-    desired_cli_package_spec = None
-    async with runtime_snapshot_session() as source_db:
-        source_batch = await load_runtime_source_batch(
-            source_db,
-            environment_ids=[environment_id],
-            owner_user_id=auth.user_id,
-        )
-        source_row = source_batch.rows.get(environment_id)
-        state = source_row.state if source_row is not None else None
-        if state is not None:
-            try:
-                rendered = render_runtime_source(
-                    source_batch,
-                    environment_id=environment_id,
-                    public_api_url=settings.public_api_url,
-                    vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-                    decrypt_secrets=False,
-                )
-            except RuntimeSourceError:
-                source_error = True
-            else:
-                source_revision = rendered.source_revision
-                desired_cli_package_spec = rendered.manifest["clawdiCli"]["packageSpec"]
+    source_revision = persisted_runtime_source_revision(state) if state is not None else None
+    source_error = state is not None and source_revision is None
+    desired_cli_package_spec = (
+        state.cli_package_spec if source_revision is not None and state is not None else None
+    )
     observation = (
         await db.execute(
             select(HostedRuntimeConfigObservation).where(

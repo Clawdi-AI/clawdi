@@ -1055,7 +1055,7 @@ async def platform_upsert_runtime_state(
             desired=body.secret_values,
         )
     if changed_fields:
-        queue_runtime_manifest_changed(db, agent.user_id, agent_id)
+        await queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     response = PlatformRuntimeStateResponse(
         environment_id=agent_id,
         deployment_id=body.deployment_id,
@@ -1161,7 +1161,7 @@ async def platform_delete_runtime_state(
             environment_id=agent_id,
         )
         await db.delete(runtime_state)
-        queue_runtime_manifest_changed(db, agent.user_id, agent_id)
+        await queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     await _complete_mutation(
         db,
         operation="runtime_state.delete",

@@ -124,12 +124,8 @@ from app.services.discord_gateway_worker import (
 from app.services.discord_rate_limiter import DiscordRateLimiter
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_observation import retire_runtime_environment
-from app.services.runtime_source import (
-    expected_runtime_bundle_v2_etag,
-    load_runtime_source_batch,
-    render_runtime_source,
-    vault_key_identity,
-)
+from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from app.services.runtime_source_revision import refresh_runtime_source_revisions
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError
 from app.services.whatsapp_baileys import (
@@ -581,20 +577,10 @@ async def _converge_hosted_runtime(
     assert state is not None
     state.tools = CANONICAL_CODEX_TOOLS
     await ensure_canonical_codex_tool_provider(db_session, user)
+    revisions = await refresh_runtime_source_revisions(db_session, [agent_id])
+    source_revision = revisions[agent_id]
+    assert source_revision is not None
     await db_session.commit()
-
-    batch = await load_runtime_source_batch(
-        db_session,
-        environment_ids=[agent_id],
-        owner_user_id=user.id,
-    )
-    rendered = render_runtime_source(
-        batch,
-        environment_id=agent_id,
-        public_api_url=settings.public_api_url,
-        vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-        decrypt_secrets=False,
-    )
     observation = await db_session.get(HostedRuntimeConfigObservation, agent_id)
     assert observation is not None
     observed_at = datetime.now(UTC)
@@ -602,11 +588,11 @@ async def _converge_hosted_runtime(
         generation=state.generation,
         apply_generation=state.apply_generation,
     )
-    etag = expected_runtime_bundle_v2_etag(rendered.source_revision)
+    etag = expected_runtime_bundle_v2_etag(source_revision)
     observation.observed_at = observed_at
     observation.observed_config_generation = generation
     observation.observed_manifest_etag = etag
-    observation.observed_source_revision = rendered.source_revision
+    observation.observed_source_revision = source_revision
     observation.diagnostics = {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
         "reportedAt": observed_at.isoformat(),
@@ -615,7 +601,7 @@ async def _converge_hosted_runtime(
         "activeCliVersion": state.cli_package_spec.removeprefix("clawdi@"),
         "applied": {
             "etag": etag,
-            "sourceRevision": rendered.source_revision,
+            "sourceRevision": source_revision,
             "generation": generation,
             "instanceId": state.instance_id,
             "appliedProviderIds": [],
@@ -2161,7 +2147,7 @@ async def test_channel_health_select_count_is_constant_across_accounts(
         await create_account(index)
     five_account_count = await health_select_count()
 
-    assert one_account_count == 15
+    assert one_account_count == 10
     assert five_account_count == one_account_count
 
 
@@ -4325,7 +4311,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert public_item["binding_count"] == 1
     assert other_private["id"] not in by_account_id
     assert other_user_listing.status_code == 404
-    assert select_count == 8
+    assert select_count == 3
 
 
 @pytest.mark.asyncio

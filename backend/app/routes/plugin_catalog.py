@@ -351,7 +351,7 @@ async def put_agent_plugin_desired_state(
             row.updated_at = datetime.now(UTC)
             changed = True
     if changed:
-        queue_runtime_manifest_changed(db, auth.user_id, agent_id)
+        await queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.flush()
     await db.refresh(row)
     observations, observed_at, received_at = await _latest_agent_plugin_observations(
@@ -411,7 +411,7 @@ async def delete_agent_plugin_desired_state(
     resource_id = str(row.id) if row is not None else None
     if row is not None:
         await db.delete(row)
-        queue_runtime_manifest_changed(db, auth.user_id, agent_id)
+        await queue_runtime_manifest_changed(db, auth.user_id, agent_id)
     record_control_plane_audit(
         db,
         actor_type="user",

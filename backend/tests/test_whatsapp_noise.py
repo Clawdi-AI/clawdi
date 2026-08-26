@@ -193,6 +193,8 @@ async def test_whatsapp_noise_prefers_current_account_identity(
         db_session,
         account=account,
         credential=stored.credential,
+        user_id=channel_agent.user_id,
+        environment_id=channel_agent.id,
     )
 
     assert lid == "900000000000002:1@lid"

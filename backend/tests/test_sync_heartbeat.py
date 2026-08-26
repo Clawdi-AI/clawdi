@@ -36,6 +36,7 @@ from app.models.user import User
 from app.routes import sessions as session_routes
 from app.schemas.session import RuntimeObservedResponse
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from app.services.runtime_source_revision import refresh_runtime_source_revisions
 from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
@@ -134,6 +135,18 @@ async def _create_env(client: httpx.AsyncClient) -> str:
     r = await client.post("/v1/environments", json=body)
     assert r.status_code == 200, r.text
     return r.json()["id"]
+
+
+async def _persist_runtime_source_revision(
+    db_session: AsyncSession,
+    environment_id: str,
+) -> str:
+    parsed_id = uuid.UUID(environment_id)
+    revisions = await refresh_runtime_source_revisions(db_session, [parsed_id])
+    await db_session.commit()
+    revision = revisions[parsed_id]
+    assert revision is not None
+    return revision
 
 
 @pytest.mark.asyncio
@@ -564,6 +577,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     )
     db_session.add(state)
     await db_session.commit()
+    await _persist_runtime_source_revision(db_session, env_id)
 
     desired_source_revision = (
         await client.get(f"/v1/environments/{env_id}/runtime-observed")
@@ -841,6 +855,7 @@ async def test_runtime_health_fences_stale_instance_source_and_freshness(
     )
     db_session.add(state)
     await db_session.commit()
+    await _persist_runtime_source_revision(db_session, env_id)
     desired_source_revision = (await client.get(f"/v1/agents/{env_id}/runtime-observed")).json()[
         "desired"
     ]["desired_source_revision"]
@@ -1003,6 +1018,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
         )
     )
     await db_session.commit()
+    await _persist_runtime_source_revision(db_session, env_id)
     desired = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()["desired"]
     source_revision = desired["desired_source_revision"]
 
@@ -1107,6 +1123,7 @@ async def test_v2_health_requires_expected_etag_and_exact_source_provider_set(
         )
     )
     await db_session.commit()
+    await _persist_runtime_source_revision(db_session, env_id)
     desired = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()["desired"]
     source_revision = desired["desired_source_revision"]
 
@@ -1611,6 +1628,11 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
                 runtimes=_test_runtimes(),
             ),
         ]
+    )
+    await db_session.commit()
+    await refresh_runtime_source_revisions(
+        db_session,
+        [uuid.UUID(ok_env_id), uuid.UUID(error_env_id)],
     )
     await db_session.commit()
     ok_observed = _runtime_observed(applied_generation=1)

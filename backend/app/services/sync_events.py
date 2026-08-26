@@ -300,7 +300,7 @@ def _payload_uuid(value: object) -> UUID | None:
     return None
 
 
-def queue_runtime_manifest_changed(
+def _queue_runtime_manifest_changed(
     db: AsyncSession,
     user_id: UUID,
     environment_id: UUID,
@@ -311,6 +311,30 @@ def queue_runtime_manifest_changed(
         "environment_id": str(environment_id),
     }
     _queue_for_commit(db, user_id, payload, deduplicate=True)
+
+
+async def queue_runtime_manifests_changed(
+    db: AsyncSession,
+    targets: list[tuple[UUID, UUID]],
+) -> None:
+    if not targets:
+        return
+    from app.services.runtime_source_revision import refresh_runtime_source_revisions
+
+    await refresh_runtime_source_revisions(
+        db,
+        [environment_id for _user_id, environment_id in targets],
+    )
+    for user_id, environment_id in targets:
+        _queue_runtime_manifest_changed(db, user_id, environment_id)
+
+
+async def queue_runtime_manifest_changed(
+    db: AsyncSession,
+    user_id: UUID,
+    environment_id: UUID,
+) -> None:
+    await queue_runtime_manifests_changed(db, [(user_id, environment_id)])
 
 
 async def queue_environment_runtime_manifest_changed(
@@ -330,7 +354,7 @@ async def queue_environment_runtime_manifest_changed(
     ).scalar_one_or_none()
     if agent is None:
         return False
-    queue_runtime_manifest_changed(db, user_id, environment_id)
+    await queue_runtime_manifest_changed(db, user_id, environment_id)
     return True
 
 
@@ -354,13 +378,13 @@ async def queue_provider_runtime_manifest_changed(
         .scalars()
         .all()
     )
-    affected: list[UUID] = []
+    targets: list[tuple[UUID, UUID]] = []
     for state in states:
         if not _runtime_state_may_use_provider(state, provider_id):
             continue
-        queue_runtime_manifest_changed(db, user_id, state.environment_id)
-        affected.append(state.environment_id)
-    return affected
+        targets.append((user_id, state.environment_id))
+    await queue_runtime_manifests_changed(db, targets)
+    return [environment_id for _user_id, environment_id in targets]
 
 
 def runtime_manifest_provider_non_auth_signature(

@@ -219,6 +219,7 @@ from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
+    queue_runtime_manifests_changed,
     runtime_manifest_provider_non_auth_signature,
 )
 from app.services.user_provisioning import (
@@ -1962,6 +1963,7 @@ async def admin_update_channel(
 ) -> AdminChannelResponse:
     account, owner = await _admin_get_channel_row(db, account_id=account_id)
     updates = set(body.model_fields_set)
+    previous_status = account.status
     if "name" in updates:
         account.name = body.name or account.name
     if "status" in updates and body.status is not None:
@@ -2062,6 +2064,19 @@ async def admin_update_channel(
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
+        if account.status != previous_status and account.provider in RUNTIME_CHANNEL_PROVIDERS:
+            targets = list(
+                (
+                    await db.execute(
+                        select(ChannelBotAgentLink.user_id, ChannelBotAgentLink.agent_id).where(
+                            ChannelBotAgentLink.account_id == account.id,
+                            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                            ChannelBotAgentLink.archived_at.is_(None),
+                        )
+                    )
+                ).all()
+            )
+            await queue_runtime_manifests_changed(db, targets)
         record_control_plane_audit(
             db,
             actor_type="admin",
@@ -2591,7 +2606,7 @@ async def _admin_upsert_runtime_state(
         },
     )
     if changed_fields:
-        queue_runtime_manifest_changed(db, env.user_id, environment_id)
+        await queue_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.commit()
     logger.info(
         "admin_runtime_state_upserted target_clerk_id=%s environment_id=%s "
@@ -2728,7 +2743,7 @@ async def _admin_delete_runtime_state(
             environment_id=environment_id,
         )
         await db.delete(state)
-        queue_runtime_manifest_changed(db, env.user_id, environment_id)
+        await queue_runtime_manifest_changed(db, env.user_id, environment_id)
 
     record_control_plane_audit(
         db,

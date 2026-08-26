@@ -90,6 +90,7 @@ from app.services.whatsapp_baileys import (
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
+RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v1"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
@@ -987,6 +988,7 @@ def render_runtime_source(
             )
 
     descriptor: dict[str, object] = {
+        "rendererRevision": RUNTIME_SOURCE_RENDERER_REVISION,
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
         "manifest": manifest,
         "channelBindings": bindings,
