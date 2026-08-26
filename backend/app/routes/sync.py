@@ -39,9 +39,12 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory
@@ -50,6 +53,7 @@ from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_HEADER,
     resolve_skill_sync_protocol,
 )
+from app.models.api_key import ApiKey
 from app.services import sync_events
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -134,7 +138,7 @@ async def _stream(
     subscriber's visible projects) and emits heartbeats so proxies
     don't nuke the connection during quiet periods. Returns when
     the client disconnects, when `revoked` fires (api_key
-    revocation noticed by the periodic refresher), or whichever
+    revocation noticed by the subscription refresher), or whichever
     happens first."""
     yield b": connected\n\n"
     while True:
@@ -179,14 +183,19 @@ async def _stream(
         yield f"event: {event_payload['type']}\ndata: {payload}\n\n".encode()
 
 
-# Cadence at which the SSE channel re-queries the caller's
-# `project_ids_visible_to` to catch runtime project reassignment.
-# Without this, a deploy key whose env's default_project_id changed
-# mid-stream would keep receiving events for the old project until
-# disconnection. Aligned with the daemon's own
-# `refreshDefaultProjectIdLoop` (HEARTBEAT_INTERVAL_MS) so client
-# and server converge on the new project at the same cadence.
-PROJECT_VISIBILITY_REFRESH_INTERVAL_S = 30.0
+# Notifications drive normal refreshes. This slow poll only catches a lost
+# PostgreSQL notification or a listener outage.
+SUBSCRIPTION_REFRESH_FALLBACK_INTERVAL_S = 5 * 60.0
+
+
+async def _api_key_inactive_reason(db: AsyncSession, api_key_id: UUID) -> str | None:
+    result = await db.execute(select(ApiKey.id, ApiKey.revoked_at).where(ApiKey.id == api_key_id))
+    row = result.first()
+    if row is None:
+        return "deleted"
+    if row.revoked_at is not None:
+        return "revoked"
+    return None
 
 
 @router.get("/events")
@@ -220,32 +229,41 @@ async def events(
     if _oauth_cli_access_expired(auth):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth access token has expired")
 
-    # Resolve the caller's initial visible-project set, then atomic
-    # cap-and-subscribe. The cap check + register pair is wrapped
-    # in a lock inside `try_subscribe` so concurrent handshakes
-    # can't both pass a stale count read and exceed the cap.
-    async with async_session_factory() as initial_db:
-        initial_visible = frozenset(await project_ids_visible_to(initial_db, auth))
-    subscription = await sync_events.try_subscribe(
-        user_id,
-        initial_visible,
-        max_per_user=PER_USER_CONNECTION_CAP,
-        api_key_id=auth.api_key.id if auth.api_key is not None else None,
-        # Per-key cap only applies to Agent API keys. Unbound
-        # CLI keys are user-level (one key shared across N daemons
-        # via `clawdi daemon install --all`), so any small per-key
-        # cap would silently 429 later local agents on a multi-agent
-        # machine. Bound keys use `try_subscribe`'s single default
-        # authority of 3: skill sync + runtime watch + one diagnostic.
-        is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),
-        environment_id=(auth.api_key.environment_id if auth.api_key is not None else None),
-    )
-    if subscription is None:
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="too many concurrent sync subscriptions for this user",
-            headers={"Retry-After": "30"},
+    refresh_key = str(user_id)
+    refresh_requested = sync_events.sync_subscriptions_changed.subscribe(refresh_key)
+    try:
+        # Subscribe to mutation wakeups before the initial reads. A commit that
+        # crosses the handshake either appears in these reads or leaves the
+        # waiter set for an immediate recheck.
+        async with async_session_factory() as initial_db:
+            if auth.api_key is not None:
+                inactive_reason = await _api_key_inactive_reason(initial_db, auth.api_key.id)
+                if inactive_reason is not None:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key is revoked")
+            initial_visible = frozenset(await project_ids_visible_to(initial_db, auth))
+        subscription = await sync_events.try_subscribe(
+            user_id,
+            initial_visible,
+            max_per_user=PER_USER_CONNECTION_CAP,
+            api_key_id=auth.api_key.id if auth.api_key is not None else None,
+            # Per-key cap only applies to Agent API keys. Unbound
+            # CLI keys are user-level (one key shared across N daemons
+            # via `clawdi daemon install --all`), so any small per-key
+            # cap would silently 429 later local agents on a multi-agent
+            # machine. Bound keys use `try_subscribe`'s single default
+            # authority of 3: skill sync + runtime watch + one diagnostic.
+            is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),
+            environment_id=(auth.api_key.environment_id if auth.api_key is not None else None),
         )
+        if subscription is None:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="too many concurrent sync subscriptions for this user",
+                headers={"Retry-After": "30"},
+            )
+    except BaseException:
+        sync_events.sync_subscriptions_changed.unsubscribe(refresh_key, refresh_requested)
+        raise
     queue, subscriber = subscription
 
     log.info(
@@ -255,7 +273,7 @@ async def events(
         sync_events.connection_count(user_id),
     )
 
-    # Set when the periodic refresher notices the caller's api_key
+    # Set when the event-driven refresher notices the caller's api_key
     # was revoked. Closes the auth-after-handshake window where a
     # subscriber kept receiving `skill_changed` / `skill_deleted`
     # invalidations, which wake an Agent-authoritative local rescan and Cloud
@@ -263,9 +281,10 @@ async def events(
     revoked = asyncio.Event()
 
     async def refresh_visibility() -> None:
-        """Periodically re-query the caller's visible project set
-        and re-check api_key revocation. Closes both the cross-
-        project leak window when an env's default_project_id changes
+        """Refresh after a committed mutation or the slow fallback timeout.
+
+        Re-checks both project visibility and api_key revocation, closing the
+        cross-project leak window when an env's default_project_id changes
         mid-stream AND the post-revocation auth window.
 
         Opens its own short-lived `async_session_factory()` per
@@ -274,12 +293,17 @@ async def events(
         session for the lifetime of its stream — a few hundred
         daemons would exhaust the pool.
         """
-        from sqlalchemy import select
-
-        from app.models.api_key import ApiKey
-
         while True:
-            await asyncio.sleep(PROJECT_VISIBILITY_REFRESH_INTERVAL_S)
+            try:
+                await asyncio.wait_for(
+                    refresh_requested.wait(),
+                    timeout=SUBSCRIPTION_REFRESH_FALLBACK_INTERVAL_S,
+                )
+            except TimeoutError:
+                pass
+            # Clear before querying. A mutation committed during the reads sets
+            # the waiter again and forces another pass.
+            refresh_requested.clear()
             try:
                 async with async_session_factory() as refresh_db:
                     # Revocation check first — if the key is dead, the
@@ -292,21 +316,14 @@ async def events(
                     # or_none()` returning None would be silently
                     # interpreted as "still valid".
                     if auth.api_key is not None:
-                        result = await refresh_db.execute(
-                            select(ApiKey.id, ApiKey.revoked_at).where(ApiKey.id == auth.api_key.id)
+                        inactive_reason = await _api_key_inactive_reason(
+                            refresh_db,
+                            auth.api_key.id,
                         )
-                        row = result.first()
-                        if row is None:
+                        if inactive_reason is not None:
                             log.info(
-                                "sync events: api_key row deleted mid-stream user=%s key=%s",
-                                user_id,
-                                auth.api_key.id,
-                            )
-                            revoked.set()
-                            return
-                        if row.revoked_at is not None:
-                            log.info(
-                                "sync events: api_key revoked mid-stream user=%s key=%s",
+                                "sync events: api_key %s mid-stream user=%s key=%s",
+                                inactive_reason,
                                 user_id,
                                 auth.api_key.id,
                             )
@@ -340,12 +357,18 @@ async def events(
             try:
                 await _cancel_and_wait(refresh_task, expiry_task)
             finally:
-                sync_events.unsubscribe(user_id, queue)
-                log.info(
-                    "sync events: unsubscribed user=%s remaining=%s",
-                    user_id,
-                    sync_events.connection_count(user_id),
-                )
+                try:
+                    sync_events.sync_subscriptions_changed.unsubscribe(
+                        refresh_key,
+                        refresh_requested,
+                    )
+                finally:
+                    sync_events.unsubscribe(user_id, queue)
+                    log.info(
+                        "sync events: unsubscribed user=%s remaining=%s",
+                        user_id,
+                        sync_events.connection_count(user_id),
+                    )
 
     # `text/event-stream` is the SSE content type. `X-Accel-Buffering:
     # no` disables nginx response buffering on the off chance an

@@ -216,6 +216,7 @@ from app.services.runtime_source import RuntimeSourceError, RuntimeSourceNotFoun
 from app.services.runtime_source_authority import load_runtime_source_authority
 from app.services.runtime_state_cleanup import lock_runtime_state_write_fence
 from app.services.sync_events import (
+    notify_sync_subscriptions_changed,
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
@@ -983,6 +984,7 @@ async def admin_revoke_api_key(
         return ApiKeyRevokeResponse(status="revoked")
 
     api_key.revoked_at = datetime.now(UTC)
+    await notify_sync_subscriptions_changed(db, [api_key.user_id])
     record_control_plane_audit(
         db,
         actor_type="admin",
