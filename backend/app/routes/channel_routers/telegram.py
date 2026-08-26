@@ -80,6 +80,7 @@ from app.services.channels import (
     find_existing_inbound_provider_event,
     find_platform_channel_runtime_marker,
     get_active_channel_account,
+    get_channel_provider_http_client,
     lock_channel_binding_identity,
     parse_channel_control_command,
     pending_channel_inbox_count,
@@ -657,8 +658,7 @@ async def telegram_file_api(
     await _validate_telegram_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}/file/bot{provider_token}/{file_path}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
+        response = await get_channel_provider_http_client().get(url, timeout=30.0)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1878,8 +1878,11 @@ async def _post_telegram_bot_payload(
     await _validate_telegram_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}/bot{provider_token}/{method}"
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            return await client.post(url, json=payload)
+        return await get_channel_provider_http_client().post(
+            url,
+            json=payload,
+            timeout=20.0,
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2667,13 +2670,13 @@ async def _telegram_provider_response(
         url = url.copy_with(query=query_string)
     try:
         with track_proxy_latency("telegram", method):
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.request(
-                    request.method,
-                    url,
-                    content=raw_body if raw_body else None,
-                    headers=headers,
-                )
+            response = await get_channel_provider_http_client().request(
+                request.method,
+                url,
+                content=raw_body if raw_body else None,
+                headers=headers,
+                timeout=30.0,
+            )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel="telegram", method=method).inc()
         raise HTTPException(

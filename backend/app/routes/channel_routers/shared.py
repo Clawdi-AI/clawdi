@@ -45,6 +45,7 @@ from app.services.channels import (
     channel_webhook_url,
     decrypt_provider_token,
     find_binding,
+    get_channel_provider_http_client,
     resolve_channel_agent_by_token,
 )
 from app.services.discord_rate_limiter import discord_rate_limiter
@@ -1406,22 +1407,22 @@ async def request_discord_provider(
         )
     try:
         with track_proxy_latency("discord", method):
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(account_scope, method, normalized_path)
-                response = await client.request(
-                    method,
-                    url,
-                    content=body,
-                    headers=headers,
-                    params=query_params,
-                )
-                discord_rate_limiter.observe(
-                    account_scope,
-                    method,
-                    normalized_path,
-                    _discord_rate_limit_response_headers(response),
-                    response.status_code,
-                )
+            discord_rate_limiter.consume(account_scope, method, normalized_path)
+            response = await get_channel_provider_http_client().request(
+                method,
+                url,
+                content=body,
+                headers=headers,
+                params=query_params,
+                timeout=20.0,
+            )
+            discord_rate_limiter.observe(
+                account_scope,
+                method,
+                normalized_path,
+                _discord_rate_limit_response_headers(response),
+                response.status_code,
+            )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel="discord", method=method).inc()
         raise HTTPException(
