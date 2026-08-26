@@ -25,6 +25,7 @@ import {
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
 	runtimePublicContentRevision,
+	runtimeWatchPollDelayMs,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
 import {
@@ -116,6 +117,14 @@ const TEST_PROCESS_UID = process.getuid?.() ?? 1_000;
 const TEST_PROCESS_GID = process.getgid?.() ?? 1_000;
 const TEST_RUNNING_CLI_VERSION = getCliVersion();
 const TEST_RUNNING_CLI_SPEC = `clawdi@${TEST_RUNNING_CLI_VERSION}`;
+
+describe("runtime watch poll delay", () => {
+	it("jitters each fallback poll between half and one-and-a-half intervals", () => {
+		expect([0, 0.5, 1].map((value) => runtimeWatchPollDelayMs(15_000, () => value))).toEqual([
+			7_500, 15_000, 22_500,
+		]);
+	});
+});
 
 function testHostedRuntimeContract(paths: RuntimePaths) {
 	if (!process.env.CLAWDI_RUNTIME_USER) process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
