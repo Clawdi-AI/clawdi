@@ -28,15 +28,6 @@ export function useAiProviders() {
 	return useOpenApi().useQuery("get", "/v1/ai-providers", {});
 }
 
-export function useProviderRuntimeObserved() {
-	return useOpenApi().useQuery(
-		"get",
-		"/v1/agents/runtime-observed",
-		{},
-		{ refetchInterval: 30_000 },
-	);
-}
-
 export function useUserAiProviders({ enabled = true }: { enabled?: boolean } = {}) {
 	return useOpenApi().useQuery(
 		"get",

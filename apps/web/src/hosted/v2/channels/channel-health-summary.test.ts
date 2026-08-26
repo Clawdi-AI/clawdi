@@ -42,25 +42,35 @@ describe("channel health summaries", () => {
 			channelHealthSummary(health({ health_status: "warning", reasons: ["future_health_reason"] })),
 		).toEqual({
 			label: "Needs attention",
-			detail:
-				"Channel health reported an unrecognized warning. Open the channel Health view for details.",
+			detail: "Clawdi found an issue with this channel. Open Health for details.",
 		});
 	});
 
-	test("degrades missing and stale runtime evidence instead of claiming healthy", () => {
-		expect(
-			channelHealthSummary(
-				health({ health_status: "warning", reasons: ["runtime_observation_missing"] }),
-			),
-		).toEqual({
-			label: "Waiting for runtime",
-			detail: "No Agent runtime activity has been observed for this channel yet.",
-		});
-		expect(
-			channelHealthSummary(
-				health({ health_status: "warning", reasons: ["runtime_observation_stale"] }),
-			).label,
-		).toBe("Runtime inactive");
+	test("describes setup and offline states without exposing runtime internals", () => {
+		const cases = [
+			[
+				"runtime_observation_missing",
+				"Setting up",
+				"The channel is waiting for the Agent to finish setup.",
+			],
+			["runtime_observation_stale", "Agent offline", "The linked Agent is not currently online."],
+			[
+				"runtime_not_converged",
+				"Setting up",
+				"The Agent is still applying this channel's settings.",
+			],
+			[
+				"runtime_observation_unknown",
+				"Status unavailable",
+				"Clawdi couldn't verify this channel's status.",
+			],
+		] as const;
+
+		for (const [reason, label, detail] of cases) {
+			const summary = channelHealthSummary(health({ health_status: "warning", reasons: [reason] }));
+			expect(summary).toEqual({ label, detail });
+			expect(`${summary.label} ${summary.detail}`).not.toMatch(/runtime|observation|converged/i);
+		}
 	});
 
 	test("distinguishes reconnection and an unlinked channel from missing runtime evidence", () => {
@@ -70,7 +80,7 @@ describe("channel health summaries", () => {
 			),
 		).toEqual({
 			label: "Reconnecting",
-			detail: "The channel transport is reconnecting after a service restart.",
+			detail: "This channel is reconnecting. Messages may be delayed.",
 		});
 		expect(
 			channelHealthSummary(health({ health_status: "warning", reasons: ["agent_not_linked"] })),
@@ -89,5 +99,13 @@ describe("channel health summaries", () => {
 		expect(
 			channelHealthSummary(health({ health_status: "error", reasons: ["channel_disabled"] })).label,
 		).toBe("Channel disabled");
+		expect(
+			channelHealthSummary(
+				health({ health_status: "error", reasons: ["runtime_observation_error"] }),
+			),
+		).toEqual({
+			label: "Channel unavailable",
+			detail: "The Agent reported a problem with this channel. Open Health for details.",
+		});
 	});
 });
