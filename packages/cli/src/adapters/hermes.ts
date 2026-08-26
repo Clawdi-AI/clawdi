@@ -74,32 +74,45 @@ interface TableInfoRow {
 	pk: number;
 }
 
-const MODERN_MESSAGE_COLUMNS = new Set([
-	"id",
-	"session_id",
-	"role",
-	"content",
-	"tool_call_id",
-	"tool_calls",
-	"tool_name",
-	"timestamp",
-	"_compressed_summary",
-	"active",
-	"compacted",
-	"display_kind",
-	"display_metadata",
-]);
+const MODERN_MESSAGE_CORE_COLUMNS = ["session_id", "role", "content", "timestamp"] as const;
+
+const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
+	["tool_call_id", "NULL"],
+	["tool_calls", "NULL"],
+	["tool_name", "NULL"],
+	["_compressed_summary", "0"],
+	["active", "1"],
+	["compacted", "0"],
+	["display_kind", "NULL"],
+	["display_metadata", "NULL"],
+] as const;
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 
-function hasStableModernMessageIds(db: ReadonlySqliteDatabase): boolean {
-	const columns = db.prepare("PRAGMA table_info(messages)").all() as TableInfoRow[];
+function messageTableInfo(db: ReadonlySqliteDatabase): TableInfoRow[] {
+	return db.prepare("PRAGMA table_info(messages)").all() as TableInfoRow[];
+}
+
+function hasStableModernMessageIds(columns: readonly TableInfoRow[]): boolean {
 	const id = columns.find((column) => column.name === "id");
 	return (
 		id?.pk === 1 &&
 		id.type.trim().toUpperCase() === "INTEGER" &&
-		[...MODERN_MESSAGE_COLUMNS].every((name) => columns.some((column) => column.name === name))
+		MODERN_MESSAGE_CORE_COLUMNS.every((name) => columns.some((column) => column.name === name))
 	);
+}
+
+function modernMessageSelectColumns(columns: readonly TableInfoRow[]): string {
+	const names = new Set(columns.map((column) => column.name));
+	return [
+		"id",
+		"role",
+		"content",
+		...MODERN_MESSAGE_OPTIONAL_COLUMNS.map(([name, fallback]) =>
+			names.has(name) ? name : `${fallback} AS ${name}`,
+		),
+		"timestamp",
+	].join(", ");
 }
 
 function decodeHermesContent(content: string | null): unknown {
@@ -111,25 +124,39 @@ function decodeHermesContent(content: string | null): unknown {
 	}
 }
 
+const CLOSED_REASONING_BLOCK =
+	/<(think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>[\s\S]*?<\/\1>/gi;
+const OPEN_REASONING_TAG = /<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>/gi;
+const ORPHAN_REASONING_CLOSE =
+	/<\/(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>[ \t\r\n]*/gi;
+
 function stripHiddenReasoning(text: string): string {
-	return text
-		.replace(/<REASONING_SCRATCHPAD>[\s\S]*?(?:<\/REASONING_SCRATCHPAD>|$)/gi, "")
-		.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "");
+	let visible = text.replace(CLOSED_REASONING_BLOCK, "");
+	for (const match of visible.matchAll(OPEN_REASONING_TAG)) {
+		const index = match.index;
+		const lineStart = visible.lastIndexOf("\n", index - 1) + 1;
+		if (visible.slice(lineStart, index).trim().length === 0) {
+			visible = visible.slice(0, index);
+			break;
+		}
+	}
+	return visible.replace(ORPHAN_REASONING_CLOSE, "");
 }
 
-function safeHermesContent(content: string | null): unknown {
+function safeHermesContent(content: string | null, scrubReasoning: boolean): unknown {
 	const decoded = decodeHermesContent(content);
+	if (!scrubReasoning) return decoded;
 	if (typeof decoded === "string") return stripHiddenReasoning(decoded);
-	if (!Array.isArray(decoded)) return decoded;
-	return decoded.map((item) => {
+	const scrubBlock = (item: unknown): unknown => {
 		const block = jsonObject(item);
 		if (!block || typeof block.text !== "string") return item;
 		return { ...block, text: stripHiddenReasoning(block.text) };
-	});
+	};
+	return Array.isArray(decoded) ? decoded.map(scrubBlock) : scrubBlock(decoded);
 }
 
-function hermesContentParts(content: string | null): SessionContentPart[] {
-	return visibleContentParts(safeHermesContent(content)).filter(
+function hermesContentParts(content: string | null, scrubReasoning: boolean): SessionContentPart[] {
+	return visibleContentParts(safeHermesContent(content, scrubReasoning)).filter(
 		(part) => part.type !== "text" || part.text.length > 0,
 	);
 }
@@ -220,8 +247,13 @@ function hermesEventDrafts(
 	});
 	const drafts: SessionEventDraft[] = [];
 	const calls = parseToolCalls(row.tool_calls);
-	if (row.role === "user" || row.role === "assistant" || row.role === "system") {
-		const parts = hermesContentParts(row.content);
+	if (
+		row.role === "user" ||
+		row.role === "assistant" ||
+		row.role === "system" ||
+		row.role === "developer"
+	) {
+		const parts = hermesContentParts(row.content, row.role === "assistant");
 		if (parts.length > 0 || calls.length === 0) {
 			drafts.push({
 				type: "message",
@@ -261,7 +293,7 @@ function hermesEventDrafts(
 			call_id: row.tool_call_id ?? `hermes:${sessionKey}:${row.id}:tool-result`,
 			...(row.tool_name ? { name: row.tool_name } : {}),
 			status: "completed",
-			...toolResultContent(safeHermesContent(row.content)),
+			...toolResultContent(safeHermesContent(row.content, false)),
 			source: source(0),
 			semantics,
 			...(timestamp ? { timestamp } : {}),
@@ -342,7 +374,7 @@ export class HermesAdapter implements AgentAdapterCore {
 		if (!existsSync(stateDbPath())) return "snapshot-v1";
 		const db = await openReadonlySqlite(stateDbPath());
 		try {
-			return hasStableModernMessageIds(db) ? "events-v1" : "snapshot-v1";
+			return hasStableModernMessageIds(messageTableInfo(db)) ? "events-v1" : "snapshot-v1";
 		} finally {
 			db.close();
 		}
@@ -364,7 +396,8 @@ export class HermesAdapter implements AgentAdapterCore {
 		if (!existsSync(stateDbPath())) return [];
 		const db = await openReadonlySqlite(stateDbPath());
 		try {
-			const modern = hasStableModernMessageIds(db);
+			const messageColumns = messageTableInfo(db);
+			const modern = hasStableModernMessageIds(messageColumns);
 			const selectSessions = `
 				SELECT id, source, model, title, started_at, ended_at,
 				       message_count, input_tokens, output_tokens, cache_read_tokens
@@ -378,9 +411,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			const msgStmt = db.prepare(
 				modern
 					? `
-						SELECT id, role, content, tool_call_id, tool_calls, tool_name,
-						       timestamp, _compressed_summary,
-						       active, compacted, display_kind, display_metadata
+						SELECT ${modernMessageSelectColumns(messageColumns)}
 						FROM messages
 						WHERE session_id = ?
 						ORDER BY id ASC

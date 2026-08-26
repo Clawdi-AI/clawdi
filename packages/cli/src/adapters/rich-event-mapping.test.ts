@@ -58,13 +58,19 @@ describe("rich event mapping", () => {
 			{
 				ok: true,
 				items: [{ id: 1 }],
+				password: "domain password value",
+				api_key: "tool-returned key",
+				authorization: "tool-returned authorization",
+				encrypted_business_value: "durable ciphertext",
 				reasoning: "hidden reasoning",
 				encrypted_content: "opaque continuation",
 			},
 		]);
 
 		expect(mapped.parts).toEqual([{ type: "text", text: "visible result" }]);
-		expect(mapped.result_json).toBe('[{"items":[{"id":1}],"ok":true}]');
+		expect(mapped.result_json).toBe(
+			'[{"api_key":"tool-returned key","authorization":"tool-returned authorization","encrypted_business_value":"durable ciphertext","items":[{"id":1}],"ok":true,"password":"domain password value"}]',
+		);
 		expect(JSON.stringify(mapped)).not.toContain("hidden reasoning");
 		expect(JSON.stringify(mapped)).not.toContain("opaque continuation");
 	});

@@ -70,18 +70,10 @@ const CONTENT_BLOCK_TYPES = new Set([
 ]);
 
 const HIDDEN_STRUCTURE_KEYS = new Set([
-	"accesstoken",
-	"apikey",
-	"authorization",
-	"cookie",
-	"credentials",
 	"encryptedcontent",
 	"encryptedreasoning",
-	"password",
 	"redactedthinking",
-	"refreshtoken",
 	"reasoning",
-	"secret",
 	"signature",
 	"thinking",
 	"thinkingsignature",
@@ -229,9 +221,7 @@ function safeToolStructure(value: unknown): unknown | undefined {
 	const result: JsonObject = {};
 	for (const [key, item] of Object.entries(object)) {
 		const normalizedKey = key.replaceAll(/[^a-zA-Z0-9]/g, "").toLowerCase();
-		if (normalizedKey.startsWith("encrypted") || HIDDEN_STRUCTURE_KEYS.has(normalizedKey)) {
-			continue;
-		}
+		if (HIDDEN_STRUCTURE_KEYS.has(normalizedKey)) continue;
 		const safe = safeToolStructure(item);
 		if (safe !== undefined) result[key] = safe;
 	}

@@ -109,7 +109,7 @@ describe("HermesAdapter.collectSessions", () => {
 			type: "tool_call",
 			call_id: "call-search",
 			name: "search",
-			arguments_json: '{"query":"Hermes"}',
+			arguments_json: '{"api_key":"sk-tool-secret","query":"Hermes"}',
 			semantics: { lifecycle: "compacted" },
 		});
 		expect(events[3]).toMatchObject({
@@ -122,7 +122,7 @@ describe("HermesAdapter.collectSessions", () => {
 			call_id: "call-search",
 			name: "search",
 			parts: [{ type: "text", text: "Found one result" }],
-			result_json: '[{"items":[{"id":1}],"ok":true}]',
+			result_json: '[{"items":[{"id":1}],"ok":true,"password":"result-secret"}]',
 			semantics: { lifecycle: "compacted" },
 		});
 		expect(events[7]).toMatchObject({
@@ -159,19 +159,20 @@ describe("HermesAdapter.collectSessions", () => {
 			source: { record_id: "12" },
 			semantics: { lifecycle: "compacted" },
 		});
+		expect(events[12]).toMatchObject({
+			type: "tool_result",
+			result_json: '{"authorization":"Bearer secret","lines":42,"ok":true}',
+		});
 
 		const serialized = JSON.stringify(session);
 		for (const hidden of [
 			"sk-model-secret",
 			"sk-config-secret",
-			"sk-tool-secret",
 			"hidden row reasoning",
 			"hidden inline reasoning",
 			"provider envelope secret",
 			"display-secret",
 			"metadata-secret",
-			"result-secret",
-			"Bearer secret",
 		]) {
 			expect(serialized).not.toContain(hidden);
 		}
@@ -199,6 +200,124 @@ describe("HermesAdapter.collectSessions", () => {
 			type: "message",
 			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
 		});
+	});
+
+	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.exec(`
+			DROP TABLE messages;
+			CREATE TABLE messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT,
+				timestamp REAL NOT NULL
+			);
+			INSERT INTO messages (session_id, role, content, timestamp) VALUES
+				('s-modern', 'developer', '<think>literal developer content', 1776247201),
+				('s-modern', 'assistant', 'Visible answer', 1776247202);
+		`);
+		db.close();
+
+		const adapter = new HermesAdapter();
+		expect(await adapter.sessions.contentProtocol()).toBe("events-v1");
+		const session = await adapter.sessions.resolve("s-modern");
+		expect(session?.events).toMatchObject([
+			{
+				type: "message",
+				role: "developer",
+				parts: [{ type: "text", text: "<think>literal developer content" }],
+				source: { record_id: "1", record_seq: 1 },
+				semantics: {
+					lifecycle: "active",
+					display: "message",
+					compressed_summary: false,
+				},
+			},
+			{
+				type: "message",
+				role: "assistant",
+				source: { record_id: "2", record_seq: 2 },
+			},
+		]);
+	});
+
+	it("scrubs upstream reasoning tags only from assistant model output", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		const insert = db.prepare(
+			"INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, timestamp, active, compacted) VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
+		);
+		insert.run("s-modern", "user", "<thinking>literal user content", null, null, 1776247261);
+		insert.run("s-modern", "system", "<thought>literal system content", null, null, 1776247262);
+		insert.run(
+			"s-modern",
+			"tool",
+			"<REASONING_SCRATCHPAD>literal tool content",
+			"call-literal",
+			"literal_tool",
+			1776247263,
+		);
+		insert.run(
+			"s-modern",
+			"assistant",
+			"<think>hidden think</think><thinking>hidden thinking</thinking><reasoning>hidden reasoning</reasoning><thought>hidden thought</thought><REASONING_SCRATCHPAD>hidden scratchpad</REASONING_SCRATCHPAD>Visible assistant",
+			null,
+			null,
+			1776247264,
+		);
+		insert.run(
+			"s-modern",
+			"assistant",
+			'Use the <think> element in prose.\nconst tag = "<reasoning>";\n  <thought>hidden tail',
+			null,
+			null,
+			1776247265,
+		);
+		db.close();
+
+		const events = (await new HermesAdapter().sessions.resolve("s-modern"))?.events ?? [];
+		const added = events.filter((event) => event.source.record_seq > 12);
+		expect(added).toMatchObject([
+			{
+				type: "message",
+				role: "user",
+				parts: [{ type: "text", text: "<thinking>literal user content" }],
+			},
+			{
+				type: "message",
+				role: "system",
+				parts: [{ type: "text", text: "<thought>literal system content" }],
+			},
+			{
+				type: "tool_result",
+				parts: [{ type: "text", text: "<REASONING_SCRATCHPAD>literal tool content" }],
+			},
+			{
+				type: "message",
+				role: "assistant",
+				parts: [{ type: "text", text: "Visible assistant" }],
+			},
+			{
+				type: "message",
+				role: "assistant",
+				parts: [
+					{
+						type: "text",
+						text: 'Use the <think> element in prose.\nconst tag = "<reasoning>";\n  ',
+					},
+				],
+			},
+		]);
+		for (const hidden of [
+			"hidden think",
+			"hidden thinking",
+			"hidden reasoning",
+			"hidden thought",
+			"hidden scratchpad",
+			"hidden tail",
+		]) {
+			expect(JSON.stringify(added)).not.toContain(hidden);
+		}
 	});
 
 	it("falls back to snapshot-v1 for a legacy messages table without stable ids", async () => {
