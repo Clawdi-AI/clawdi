@@ -108,7 +108,7 @@ export function NewAgentButton({
 							onRetry={() => {
 								void hostedAccess.refetch();
 							}}
-							title="Couldn't check Agent setup access"
+							title="Couldn't check if Agent setup is available"
 						/>
 					) : null}
 					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>

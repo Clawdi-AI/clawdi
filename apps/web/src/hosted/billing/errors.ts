@@ -376,7 +376,7 @@ export function isPaymentMethodRequiredError(error: unknown): boolean {
 export function normalizeBillingError(error: unknown): string {
 	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) {
-		return "Your Wallet balance is too low. Top up or enable auto-reload before Clawdi AI or wallet-funded compute is interrupted.";
+		return "Your Wallet balance is too low. Top up or turn on auto-reload to keep Clawdi AI and hosted Agents running.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"
@@ -392,16 +392,16 @@ export function normalizeBillingError(error: unknown): string {
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;
 		if (code === FUNDING_AUTHORITY_INCONSISTENT_CODE) {
-			return "Subscription billing details need reconciliation. Contact support before changing this subscription.";
+			return "This subscription's billing details need review. Contact support before making changes.";
 		}
 		if (code === "open_refund_debt") {
-			return "Top up your Wallet to continue. New funds repay refund debt before compute charges.";
+			return "Top up your Wallet to continue. New funds first cover the outstanding balance.";
 		}
 		if (code === "deploy_request_funding_conflict") {
-			return "This Agent setup is already linked to another payment attempt.";
+			return "This Agent is already being set up with another payment.";
 		}
 		if (code === "idempotency_key_reused") {
-			return "This attempt conflicts with an earlier request. Review the details and submit again for a fresh attempt.";
+			return "This request conflicts with an earlier one. Check the details and submit again.";
 		}
 		if (typeof code === "string") {
 			return "The billing request could not be completed. Refresh and try again.";
@@ -411,9 +411,9 @@ export function normalizeBillingError(error: unknown): string {
 			if (error.detail === "payment_method_required") {
 				return "Add a payment method and try again.";
 			}
-			return "The billing request could not be completed. Review the details and try again.";
+			return "The billing request could not be completed. Check your information and try again.";
 		}
-		return "The billing request could not be completed. Review the details and try again.";
+		return "The billing request could not be completed. Check your information and try again.";
 	}
 	if (error instanceof Error) {
 		return "The billing request could not be completed. Try again.";

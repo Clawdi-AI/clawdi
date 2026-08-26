@@ -986,14 +986,14 @@ export function DeployWizard() {
 
 	const deployLabel =
 		subscriptionSource?.mode === "existing"
-			? "Set up Agent"
+			? "Set up an Agent"
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
 						? "Top up Wallet"
 						: "Pay & set up"
 					: "Continue"
-				: "Set up Agent";
+				: "Set up an Agent";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);

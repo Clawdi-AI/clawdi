@@ -466,7 +466,7 @@ export function WhatsAppSessionState({
 				description={
 					repairing
 						? "The WhatsApp device is available again. Existing Custom bot settings, Agent Links, paired chats, and history stay unchanged."
-						: "It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
+						: "It's now under Custom bots. To use it, link it to an Agent and pair an authorized chat."
 				}
 			/>
 		);

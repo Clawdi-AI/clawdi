@@ -345,8 +345,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 					<AlertDialogHeader>
 						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Anyone who has not already joined through this link will lose access to it. Existing
-							Viewers stay connected until you remove them from People.
+							People who haven&apos;t joined yet won&apos;t be able to use this link. Existing
+							Viewers keep access until you remove them from People.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

@@ -156,9 +156,9 @@ export function PlanComparison({
 									</FeatureRow>
 								) : null}
 								<FeatureRow>
-									Managed confidential compute · one Agent type (OpenClaw or Hermes)
+									Private hosting managed by Clawdi · choose OpenClaw or Hermes
 								</FeatureRow>
-								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+								<FeatureRow>Use your own API key and pay your AI provider directly</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>
@@ -193,9 +193,9 @@ export function PlanComparison({
 									</FeatureRow>
 								) : null}
 								<FeatureRow>
-									Managed confidential compute · one Agent type (OpenClaw or Hermes)
+									Private hosting managed by Clawdi · choose OpenClaw or Hermes
 								</FeatureRow>
-								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+								<FeatureRow>Use your own API key and pay your AI provider directly</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>

@@ -283,8 +283,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			{ch.provider === "discord" && !providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Verify Discord credentials">
 					Clawdi stores Discord credentials during setup but does not verify them with Discord. Send
-					a test message and confirm activity and health before relying on this channel. To replace
-					credentials, remove the channel and reconnect it.
+					a test message and confirm its activity and status before relying on this channel. To
+					replace credentials, remove the channel and reconnect it.
 				</InfoCard>
 			) : null}
 

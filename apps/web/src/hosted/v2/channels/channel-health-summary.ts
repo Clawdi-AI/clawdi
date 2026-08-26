@@ -50,7 +50,7 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 		}
 		if (health.reasons?.includes("recent_error")) {
 			return {
-				label: "Recent error",
+				label: "Recent issue",
 				detail: "A recent channel action failed. Open Status for details.",
 			};
 		}
@@ -67,7 +67,7 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 			};
 		}
 		return {
-			label: "Channel error",
+			label: "Needs attention",
 			detail: "Clawdi found a problem with this channel. Open Status for details.",
 		};
 	}

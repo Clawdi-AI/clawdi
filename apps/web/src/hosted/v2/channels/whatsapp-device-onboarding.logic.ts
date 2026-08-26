@@ -43,7 +43,7 @@ export function whatsappReadinessMessage(
 		case "managed_sidecar_required":
 			return "This Agent doesn't support linked WhatsApp devices.";
 		case "temporarily_unavailable":
-			return "Linked-device support is temporarily unavailable.";
+			return "Linked WhatsApp devices are temporarily unavailable.";
 		default:
 			return "Linked WhatsApp devices aren't available for this Agent.";
 	}

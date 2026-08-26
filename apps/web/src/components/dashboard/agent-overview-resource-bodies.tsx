@@ -145,9 +145,9 @@ export function useOverviewConnectorsModule({
 	) : connections.error ? (
 		"Unavailable right now"
 	) : connectedAppCount ? (
-		`${connectedAppCount} available · all Agents`
+		`${connectedAppCount} ${connectedAppCount === 1 ? "app" : "apps"} available to all Agents`
 	) : (
-		"No apps available · all Agents"
+		"No apps available to any Agent"
 	);
 	return { description };
 }

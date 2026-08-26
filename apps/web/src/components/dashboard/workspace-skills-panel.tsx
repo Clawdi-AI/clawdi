@@ -74,7 +74,7 @@ export function ConnectedWorkspaceSkillsPanel({
 					}
 				>
 					<span>
-						This connected Agent manages its own files. Run the command on the Agent machine; Skills
+						This Agent stores its files on your machine or server. Run the command there; Skills
 						appear here after the next sync.
 					</span>
 					{pageHeader ? null : (

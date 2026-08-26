@@ -259,7 +259,9 @@ function ConnectedRail({
 }) {
 	return (
 		<section className="space-y-3">
-			<SectionLabel count={activeCount > 0 ? `${activeCount} active` : undefined}>
+			<SectionLabel
+				count={activeCount > 0 ? `${activeCount} ${activeCount === 1 ? "app" : "apps"}` : undefined}
+			>
 				Ready to use
 			</SectionLabel>
 			{error ? (
