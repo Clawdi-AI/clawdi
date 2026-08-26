@@ -178,6 +178,7 @@ import {
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import "./deploy-wizard.css";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -1111,7 +1112,12 @@ export function DeployWizard() {
 	);
 
 	return (
-		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
+		<div
+			data-hosted="true"
+			data-v2="true"
+			data-mava-launcher="hidden"
+			className={DEPLOY_PAGE_CLASS}
+		>
 			{/* Guard only while idle: a submission in flight continues server-side
 			    (checkout-return recovers it), and the acceptance navigation is the
 			    wizard's own exit, not an abandonment. */}
