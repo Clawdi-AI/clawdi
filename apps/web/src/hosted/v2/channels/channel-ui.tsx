@@ -4,10 +4,9 @@ import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-rea
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { channelRuntimeStatus } from "@/hosted/v2/channels/channel-edit-client.logic";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelAgentLink, ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
+import type { ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
 import { cn } from "@/lib/utils";
 
 export const CHANNEL_DESTRUCTIVE_ACTION_CLASS =
@@ -88,19 +87,6 @@ export function ChannelStatusBadge({ status, className }: { status: string; clas
 
 export function isNormalChannelStatus(status: string | null | undefined): boolean {
 	return ["active", "connected", "paired"].includes(status?.toLowerCase() ?? "");
-}
-
-export function ChannelRuntimeStatusBadge({
-	status,
-}: {
-	status: ChannelAgentLink["runtime_status"];
-}) {
-	const runtimeStatus = channelRuntimeStatus({ runtime_status: status });
-	return (
-		<StatusBadge status={runtimeStatus === "connected" ? "success" : "warning"}>
-			{runtimeStatus === "connected" ? "Connected" : "Connecting…"}
-		</StatusBadge>
-	);
 }
 
 const DELIVERY_TONE: Record<string, StatusTone> = {

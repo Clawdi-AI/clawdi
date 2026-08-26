@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-	AuthBadge,
-	ProviderObservedBadge,
-	ProviderReadinessBadge,
-} from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { AuthBadge, ProviderReadinessBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
 
 const providerPageSource = readFileSync(
 	new URL("./ai-providers-page.tsx", import.meta.url),
@@ -48,36 +44,5 @@ describe("ProviderReadinessBadge", () => {
 		expect(markup).toContain("Ready");
 		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="success"');
-	});
-});
-
-describe("ProviderObservedBadge", () => {
-	test("uses green only for observed runtime success", () => {
-		const ok = renderToStaticMarkup(
-			createElement(ProviderObservedBadge, {
-				health: { status: "ok", agentCount: 1, reason: null },
-			}),
-		);
-		const unknown = renderToStaticMarkup(
-			createElement(ProviderObservedBadge, {
-				health: { status: "unobserved", agentCount: 1, reason: null },
-			}),
-		);
-
-		expect(ok).toContain("Observed OK");
-		expect(ok).toContain('data-status="success"');
-		expect(unknown).toContain("Not observed");
-		expect(unknown).toContain('data-status="neutral"');
-	});
-
-	test("renders observed failures as degraded", () => {
-		const markup = renderToStaticMarkup(
-			createElement(ProviderObservedBadge, {
-				health: { status: "degraded", agentCount: 1, reason: "Credential unavailable." },
-			}),
-		);
-
-		expect(markup).toContain("Degraded");
-		expect(markup).toContain('data-status="destructive"');
 	});
 });

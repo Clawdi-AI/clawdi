@@ -150,16 +150,12 @@ export function useWhatsAppOnboardingActions() {
 	return { start, refresh, pairingCode, cancel, retry, repair };
 }
 
-export function useChannelAgentLinks(id: string, poll = false) {
+export function useChannelAgentLinks(id: string) {
 	return useOpenApi().useQuery(
 		"get",
 		"/v1/channels/{account_id}/agent-links",
 		{ params: { path: { account_id: id } } },
-		{
-			enabled: Boolean(id),
-			refetchInterval: poll ? AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS : false,
-			refetchIntervalInBackground: false,
-		},
+		{ enabled: Boolean(id) },
 	);
 }
 

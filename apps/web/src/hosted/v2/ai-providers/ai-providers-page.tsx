@@ -33,20 +33,16 @@ import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog"
 import {
 	useDeleteProvider,
 	useProviderRemovalImpact,
-	useProviderRuntimeObserved,
 	useUserAiProviders,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
 	AuthBadge,
 	ManagedProviderCard,
 	ProviderIcon,
-	ProviderObservedBadge,
 	ProviderReadinessBadge,
-	providerObservedDescription,
 } from "@/hosted/v2/ai-providers/ai-providers-ui";
-import { MANAGED_PROVIDER_ID, providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
+import { providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
 import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
-import { providerObservedHealth } from "@/hosted/v2/ai-providers/provider-observed-health";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -57,7 +53,6 @@ const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
 	const providers = useUserAiProviders();
-	const runtimeObserved = useProviderRuntimeObserved();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
@@ -88,9 +83,7 @@ export function AiProvidersPage() {
 
 			<div className="flex flex-col gap-2">
 				<SectionLabel>Clawdi</SectionLabel>
-				<ManagedProviderCard
-					observedHealth={providerObservedHealth(MANAGED_PROVIDER_ID, runtimeObserved.data)}
-				/>
+				<ManagedProviderCard />
 			</div>
 
 			<div className="flex flex-col gap-2">
@@ -134,7 +127,6 @@ export function AiProvidersPage() {
 							<ProviderCard
 								key={provider.provider_id}
 								provider={provider}
-								observedHealth={providerObservedHealth(provider.provider_id, runtimeObserved.data)}
 								onEdit={() => {
 									setEditing(provider);
 									setAddOpen(true);
@@ -150,15 +142,7 @@ export function AiProvidersPage() {
 	);
 }
 
-function ProviderCard({
-	provider,
-	observedHealth,
-	onEdit,
-}: {
-	provider: AiProvider;
-	observedHealth: ReturnType<typeof providerObservedHealth>;
-	onEdit: () => void;
-}) {
+function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () => void }) {
 	const presentation = providerPresentation(provider);
 	const deployable =
 		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
@@ -173,7 +157,6 @@ function ProviderCard({
 					<span className="inline-flex items-center gap-1.5">
 						<AuthBadge auth={provider.auth} />
 						<ProviderReadinessBadge deployable={deployable} />
-						<ProviderObservedBadge health={observedHealth} />
 					</span>
 				}
 				meta={[
@@ -185,7 +168,6 @@ function ProviderCard({
 							: provider.usable
 								? "This setup isn't available for hosted agents. Review Advanced settings."
 								: "Finish setup before assigning this provider to an agent.",
-					providerObservedDescription(observedHealth),
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">

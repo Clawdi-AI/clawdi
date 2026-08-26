@@ -5,7 +5,6 @@ const source = (relativePath: string) =>
 	readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
-const channelDetail = source("./channel-detail-page.tsx");
 const linkedChannelRow = agentDetail.slice(
 	agentDetail.indexOf("function LinkedChannelRow"),
 	agentDetail.indexOf("// ── Settings / Compute"),
@@ -17,14 +16,6 @@ const queryCache = source("./channel-query-cache.ts");
 const queryGuide = source("../../../../../../docs/openapi-react-query.md");
 
 describe("Telegram and Discord channel convergence contract", () => {
-	test("renders runtime convergence status on both sides of the Agent link", () => {
-		expect(agentDetail).toContain(
-			'<ChannelRuntimeStatusBadge key="runtime-status" status={link.runtime_status} />',
-		);
-		expect(channelDetail).toContain("<ChannelRuntimeStatusBadge");
-		expect(channelDetail).toContain("status={link.runtime_status}");
-	});
-
 	test("keeps Pair exact and paired chats as the only clickable relationship badge", () => {
 		expect(linkedChannelRow).toContain('{creatingPairCode ? "Generating…" : "Pair"}');
 		expect(linkedChannelRow).not.toContain("Pair Telegram");

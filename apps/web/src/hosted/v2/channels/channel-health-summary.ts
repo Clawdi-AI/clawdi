@@ -57,13 +57,13 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 		if (health.reasons?.includes("native_transport_unavailable")) {
 			return {
 				label: "Channel unavailable",
-				detail: "The channel transport is not available. Open the Health view for details.",
+				detail: "This channel is currently unavailable. Open Health for details.",
 			};
 		}
 		if (health.reasons?.includes("runtime_observation_error")) {
 			return {
-				label: "Runtime error",
-				detail: "The Agent runtime reported an error for this channel.",
+				label: "Channel unavailable",
+				detail: "The Agent reported a problem with this channel. Open Health for details.",
 			};
 		}
 		return {
@@ -75,7 +75,7 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 	if (health.reasons?.includes("native_transport_reconnecting")) {
 		return {
 			label: "Reconnecting",
-			detail: "The channel transport is reconnecting after a service restart.",
+			detail: "This channel is reconnecting. Messages may be delayed.",
 		};
 	}
 	if (health.reasons?.includes("agent_not_linked")) {
@@ -97,32 +97,31 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 	}
 	if (health.reasons?.includes("runtime_observation_missing")) {
 		return {
-			label: "Waiting for runtime",
-			detail: "No Agent runtime activity has been observed for this channel yet.",
+			label: "Setting up",
+			detail: "The channel is waiting for the Agent to finish setup.",
 		};
 	}
 	if (health.reasons?.includes("runtime_observation_stale")) {
 		return {
-			label: "Runtime inactive",
-			detail: "The Agent runtime has not checked in recently.",
+			label: "Agent offline",
+			detail: "The linked Agent is not currently online.",
 		};
 	}
 	if (health.reasons?.includes("runtime_not_converged")) {
 		return {
-			label: "Applying channel",
-			detail: "The Agent runtime has not applied the current channel configuration yet.",
+			label: "Setting up",
+			detail: "The Agent is still applying this channel's settings.",
 		};
 	}
 	if (health.reasons?.includes("runtime_observation_unknown")) {
 		return {
-			label: "Runtime unverified",
-			detail: "The Agent runtime did not provide a usable channel health signal.",
+			label: "Status unavailable",
+			detail: "Clawdi couldn't verify this channel's status.",
 		};
 	}
 
 	return {
 		label: "Needs attention",
-		detail:
-			"Channel health reported an unrecognized warning. Open the channel Health view for details.",
+		detail: "Clawdi found an issue with this channel. Open Health for details.",
 	};
 }
