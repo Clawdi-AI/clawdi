@@ -2221,6 +2221,60 @@ async def test_hard_cap_preserves_fresh_head_then_rehydrates_stale_evidence(
 
 
 @pytest.mark.asyncio
+async def test_fresh_heads_do_not_starve_later_retention_candidates(
+    db_session: AsyncSession,
+    seed_user,
+):
+    current = datetime.now(UTC)
+    captured = current - timedelta(days=31)
+    batch_size = 4
+    environments = [
+        (await _provision_environment(db_session, seed_user))[0] for _ in range(batch_size + 1)
+    ]
+    blockers = sorted(environments, key=lambda environment: environment.id)[:batch_size]
+    target = max(environments, key=lambda environment: environment.id)
+    accepted_by_environment = {}
+
+    for environment in environments:
+        accepted_by_environment[environment.id] = await ingest_runtime_observation(
+            db_session,
+            environment_id=environment.id,
+            value=_payload(captured_at=captured, vary_semantics=False),
+            received_at=captured,
+        )
+    for environment in blockers:
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=environment.id,
+            value=_payload(sequence=2, captured_at=current, vary_semantics=False),
+            received_at=current,
+        )
+    await db_session.commit()
+
+    assert (
+        await expire_runtime_observation_payloads(
+            db_session,
+            now=current,
+            batch_size=batch_size,
+        )
+        == 1
+    )
+    await db_session.commit()
+
+    target_inbox = await db_session.get(
+        V2RuntimeObservationInbox,
+        accepted_by_environment[target.id].stream_position,
+    )
+    assert target_inbox is not None and target_inbox.payload_purged_at == current
+    for environment in blockers:
+        blocker_inbox = await db_session.get(
+            V2RuntimeObservationInbox,
+            accepted_by_environment[environment.id].stream_position,
+        )
+        assert blocker_inbox is not None and blocker_inbox.payload_purged_at is None
+
+
+@pytest.mark.asyncio
 async def test_current_epoch_cursor_below_replay_floor_expires_before_read(
     db_session: AsyncSession,
     seed_user,

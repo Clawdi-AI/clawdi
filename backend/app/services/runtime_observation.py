@@ -12,7 +12,7 @@ from typing import Any
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -413,6 +413,8 @@ async def ingest_runtime_observation(
             outcome="duplicate_replay",
         )
 
+    # Protocol guards precede historical replay lookup. Delayed retired or handoff
+    # replays can return 409, which the strictly ordered producer cannot reach.
     if head is not None and head.state != RUNTIME_OBSERVATION_HEAD_ACTIVE:
         raise RuntimeObservationProtocolError(
             409,
@@ -444,6 +446,8 @@ async def ingest_runtime_observation(
             "runtime observation identity was reused with different event data",
         )
 
+    # Coalesced transport IDs are not stream evidence, so global event-ID lookup is
+    # skipped; cross-environment reuse cannot forge an inbox event.
     if (
         head is not None
         and head.latest_semantic_hash == semantic_hash
@@ -1557,6 +1561,13 @@ async def expire_runtime_observation_payloads(
                 .where(
                     V2RuntimeObservationInbox.received_at < replay_cutoff,
                     V2RuntimeObservationInbox.payload_purged_at.is_(None),
+                    ~exists().where(
+                        V2RuntimeObservationHead.environment_id
+                        == V2RuntimeObservationInbox.environment_id,
+                        V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                        V2RuntimeObservationHead.freshness_deadline >= current,
+                        V2RuntimeObservationHead.latest_inbox_id == V2RuntimeObservationInbox.id,
+                    ),
                 )
                 .distinct()
                 .order_by(V2RuntimeObservationInbox.environment_id)
