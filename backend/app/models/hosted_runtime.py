@@ -36,6 +36,8 @@ class HostedRuntimeState(Base, TimestampMixin):
     instance_id: Mapped[str] = mapped_column(String(200), nullable=False)
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
     apply_generation: Mapped[int | None] = mapped_column(Integer)
+    source_revision: Mapped[str | None] = mapped_column(String(64))
+    source_revision_contract: Mapped[str | None] = mapped_column(String(64))
     cli_package_spec: Mapped[str] = mapped_column(String(200), nullable=False)
     locale: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
     system: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)

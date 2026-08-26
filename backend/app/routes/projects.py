@@ -33,9 +33,12 @@ from app.services.agent_lifecycle import active_project_filter
 from app.services.project_runtime_skills import (
     lock_project_change,
     lock_project_runtime_graph,
-    queue_project_runtime_manifest_changed,
 )
 from app.services.sharing import safe_owner_display, safe_owner_handle
+from app.services.sync_events import (
+    active_runtime_manifest_targets,
+    queue_runtime_manifests_changed,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -545,7 +548,7 @@ async def archive_project(
             status.HTTP_409_CONFLICT,
             "Only user-created Projects can be archived",
         )
-    await queue_project_runtime_manifest_changed(db, project_id=project_id)
+    targets = await active_runtime_manifest_targets(db, agent_ids)
     await db.execute(
         delete(AgentProjectBinding).where(
             AgentProjectBinding.project_id == project_id,
@@ -553,5 +556,6 @@ async def archive_project(
         )
     )
     project.archived_at = datetime.now(UTC)
+    await queue_runtime_manifests_changed(db, targets)
     await db.commit()
     return ProjectArchiveResponse(unlinked_agent_count=len(agent_ids))

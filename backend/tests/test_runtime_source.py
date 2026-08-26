@@ -30,6 +30,7 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_ID,
 )
 from app.services.runtime_source import (
+    RUNTIME_SOURCE_RENDERER_REVISION,
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
@@ -1262,4 +1263,18 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
         decrypt_secrets=True,
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
-    assert render_runtime_bundle(source) == json.loads(fixture_path.read_text())
+    golden = json.loads(fixture_path.read_text())
+    expected_revision = "81572b32d67e9f7386e58ea17899c71cf0864b85d874dcd9ccb76fa8a4f90a78"
+    assert (
+        RUNTIME_SOURCE_RENDERER_REVISION,
+        source.source_revision,
+        golden["sourceRevision"],
+    ) == (
+        "runtime-source.v1",
+        expected_revision,
+        expected_revision,
+    ), (
+        "Renderer output changed: bump RUNTIME_SOURCE_RENDERER_REVISION and update "
+        "the golden source revision"
+    )
+    assert render_runtime_bundle(source) == golden

@@ -2711,6 +2711,11 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     async def fake_get_telegram_bot_username(_provider_token: str):
         return rotated_identity["username"]
 
+    queued_runtime_targets: list[tuple[UUID, UUID]] = []
+
+    async def capture_runtime_targets(_db, targets):
+        queued_runtime_targets.extend(targets)
+
     monkeypatch.setattr(
         "app.routes.admin.configure_telegram_provider_webhook",
         fake_configure_telegram_provider_webhook,
@@ -2718,6 +2723,10 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     monkeypatch.setattr(
         "app.routes.admin.get_telegram_bot_username",
         fake_get_telegram_bot_username,
+    )
+    monkeypatch.setattr(
+        "app.routes.admin.queue_runtime_manifests_changed",
+        capture_runtime_targets,
     )
 
     created = await admin_client.post(
@@ -2855,6 +2864,14 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     assert rotated.status_code == 200
     await db_session.refresh(account)
     assert verify_hashed_token(rotated.json()["webhook_secret"], account.webhook_secret_hash)
+
+    disabled = await admin_client.patch(
+        f"/v1/admin/channels/{body['id']}",
+        headers=_AUTH,
+        json={"status": "disabled"},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert queued_runtime_targets == [(seed_user.id, channel_agent.id)]
 
     deleted = await admin_client.delete(f"/v1/admin/channels/{body['id']}", headers=_AUTH)
     assert deleted.status_code == 204

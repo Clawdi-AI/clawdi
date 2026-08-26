@@ -55,6 +55,13 @@ from app.services.runtime_source import (
     runtime_whatsapp_credential_repair_link_ids,
     vault_key_identity,
 )
+from app.services.runtime_source_authority import load_persisted_runtime_source_authority
+from app.services.runtime_source_revision import (
+    persisted_runtime_source_revision,
+    repair_runtime_source_revision,
+    runtime_source_contract_revision,
+)
+from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.tar_utils import reroot_skill_archive, tar_from_content
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
@@ -100,6 +107,7 @@ async def get_runtime_manifest(
     if_none_match = request.headers.get("if-none-match")
     try:
         snapshot = await _render_runtime_source_snapshot(
+            db=db,
             environment_id=environment_id,
             owner_user_id=auth.user_id,
             if_none_match=if_none_match,
@@ -113,8 +121,14 @@ async def get_runtime_manifest(
                 owner_user_id=auth.user_id,
                 link_ids=snapshot.repair_link_ids,
             )
+            await queue_environment_runtime_manifest_changed(
+                db,
+                auth.user_id,
+                environment_id,
+            )
             await db.commit()
             snapshot = await _render_runtime_source_snapshot(
+                db=db,
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
                 if_none_match=if_none_match,
@@ -144,12 +158,37 @@ async def get_runtime_manifest(
 
 async def _render_runtime_source_snapshot(
     *,
+    db: AsyncSession,
     environment_id: UUID,
     owner_user_id: UUID,
     if_none_match: str | None,
     project_agent_plugins: bool,
     project_agent_plugin_github_release_sources: bool,
 ) -> _RuntimeManifestSnapshot:
+    canonical_projection = project_agent_plugins and project_agent_plugin_github_release_sources
+    if if_none_match is not None:
+        async with runtime_snapshot_session() as source_db:
+            authority = await load_persisted_runtime_source_authority(
+                source_db,
+                environment_id=environment_id,
+                owner_user_id=owner_user_id,
+            )
+        if (
+            authority.matches_projection(
+                project_agent_plugins=project_agent_plugins,
+                project_agent_plugin_github_release_sources=(
+                    project_agent_plugin_github_release_sources
+                ),
+            )
+            and authority.etag is not None
+            and if_none_match_contains(if_none_match, authority.etag)
+        ):
+            return _RuntimeManifestSnapshot(
+                source=None,
+                etag=authority.etag,
+                repair_link_ids=(),
+            )
+
     async with runtime_snapshot_session() as source_db:
         batch = await load_runtime_source_batch(
             source_db,
@@ -166,30 +205,83 @@ async def _render_runtime_source_snapshot(
                 etag=None,
                 repair_link_ids=repair_link_ids,
             )
-        source_without_secrets = render_runtime_source(
-            batch,
-            environment_id=environment_id,
-            public_api_url=settings.public_api_url,
-            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-            decrypt_secrets=False,
-            project_agent_plugins=project_agent_plugins,
-            project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
-        )
+        source_row = batch.rows.get(environment_id)
+        if source_row is None:
+            raise RuntimeSourceNotFoundError("Agent environment not found")
+        state = source_row.state
+        if state is None:
+            raise RuntimeSourceNotFoundError("Hosted runtime state not found")
+        expected_revision = state.source_revision
+        expected_contract = state.source_revision_contract
+        try:
+            canonical_source = render_runtime_source(
+                batch,
+                environment_id=environment_id,
+                public_api_url=settings.public_api_url,
+                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                decrypt_secrets=False,
+            )
+            source_without_secrets = (
+                canonical_source
+                if canonical_projection
+                else render_runtime_source(
+                    batch,
+                    environment_id=environment_id,
+                    public_api_url=settings.public_api_url,
+                    vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                    decrypt_secrets=False,
+                    project_agent_plugins=project_agent_plugins,
+                    project_agent_plugin_github_release_sources=(
+                        project_agent_plugin_github_release_sources
+                    ),
+                )
+            )
+        except RuntimeSourceError:
+            if (
+                expected_revision is not None
+                or expected_contract != runtime_source_contract_revision()
+            ):
+                repaired = await repair_runtime_source_revision(
+                    db,
+                    environment_id=environment_id,
+                    expected_revision=expected_revision,
+                    expected_contract=expected_contract,
+                    computed_revision=None,
+                )
+                if repaired:
+                    await db.commit()
+            raise
         etag = expected_runtime_bundle_v2_etag(source_without_secrets.source_revision)
-        if if_none_match_contains(if_none_match, etag):
-            return _RuntimeManifestSnapshot(source=None, etag=etag, repair_link_ids=())
-        source = render_runtime_source(
-            batch,
+        source = None
+        if not if_none_match_contains(if_none_match, etag):
+            source = render_runtime_source(
+                batch,
+                environment_id=environment_id,
+                public_api_url=settings.public_api_url,
+                vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+                decrypt_secrets=True,
+                project_agent_plugins=project_agent_plugins,
+                project_agent_plugin_github_release_sources=(
+                    project_agent_plugin_github_release_sources
+                ),
+            )
+            if source.source_revision != source_without_secrets.source_revision:
+                raise RuntimeSourceError("Runtime source revision depends on secret decryption")
+
+    if (
+        expected_revision != canonical_source.source_revision
+        or persisted_runtime_source_revision(state) is None
+    ):
+        repaired = await repair_runtime_source_revision(
+            db,
             environment_id=environment_id,
-            public_api_url=settings.public_api_url,
-            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-            decrypt_secrets=True,
-            project_agent_plugins=project_agent_plugins,
-            project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
+            expected_revision=expected_revision,
+            expected_contract=expected_contract,
+            computed_revision=canonical_source.source_revision,
         )
-        if source.source_revision != source_without_secrets.source_revision:
-            raise RuntimeSourceError("Runtime source revision depends on secret decryption")
-        return _RuntimeManifestSnapshot(source=source, etag=etag, repair_link_ids=())
+        if repaired:
+            await db.commit()
+    return _RuntimeManifestSnapshot(source=source, etag=etag, repair_link_ids=())
 
 
 def _authorized_environment_id(auth: AuthContext, requested_environment_id: UUID | None) -> UUID:

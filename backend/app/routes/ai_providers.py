@@ -130,6 +130,7 @@ from app.services.platform_contract import (
 )
 from app.services.private_ip import is_private_hostname
 from app.services.sync_events import (
+    queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
     runtime_manifest_provider_non_auth_signature,
 )
@@ -1368,10 +1369,23 @@ async def resolve_ai_provider_auth(
                 status.HTTP_409_CONFLICT,
                 "OAuth auth resolve requires an explicit Agent runtime consumer",
             )
+        previous_consumer = (
+            payload.consumer_environment_id,
+            payload.consumer_runtime,
+        )
         try:
             await claim_oauth_payload(db, payload=payload, consumer=consumer)
         except OAuthCredentialClaimConflict as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        if previous_consumer != (
+            payload.consumer_environment_id,
+            payload.consumer_runtime,
+        ):
+            await queue_environment_runtime_manifest_changed(
+                db,
+                auth.user_id,
+                consumer.environment_id,
+            )
         plaintext = decrypt(payload.encrypted_payload, payload.nonce)
         await db.commit()
     else:

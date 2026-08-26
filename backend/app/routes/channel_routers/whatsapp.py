@@ -24,6 +24,7 @@ from app.models.channel import (
     ChannelAccount,
     ChannelAgentCredential,
     ChannelMessage,
+    ChannelWhatsAppAuthCert,
 )
 from app.routes.channel_routers.shared import (
     extract_bearer_token,
@@ -39,6 +40,7 @@ from app.services.channels import (
     resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
 )
+from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.whatsapp_baileys import (
     BinaryNode,
     WhatsAppInboxPump,
@@ -131,9 +133,21 @@ async def _run_whatsapp_baileys_websocket(
         if account.provider != CHANNEL_PROVIDER_WHATSAPP:
             await websocket.close(code=1008)
             return
+        had_auth_cert = await db.scalar(
+            select(ChannelWhatsAppAuthCert.id).where(
+                ChannelWhatsAppAuthCert.account_id == account.id
+            )
+        )
         auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
+        if had_auth_cert is None:
+            await queue_environment_runtime_manifest_changed(
+                db,
+                agent.link.user_id,
+                agent.link.agent_id,
+            )
         await db.commit()
         tenant_user_id = agent.link.user_id
+        tenant_agent_id = agent.link.agent_id
 
     session_revoked = asyncio.Event()
     session_revocation_lock = asyncio.Lock()
@@ -185,6 +199,8 @@ async def _run_whatsapp_baileys_websocket(
                 db,
                 account=resolved_account,
                 credential=credential,
+                user_id=tenant_user_id,
+                environment_id=tenant_agent_id,
             )
             return WhatsAppNoiseTenant(
                 tenant_id=str(credential.bot_agent_link_id),
@@ -386,6 +402,8 @@ async def _resolve_whatsapp_noise_lid(
     *,
     account: ChannelAccount,
     credential: ChannelAgentCredential,
+    user_id: UUID,
+    environment_id: UUID,
 ) -> str:
     account_changed = False
     identity = whatsapp_self_identity_from_config(account.config)
@@ -409,6 +427,12 @@ async def _resolve_whatsapp_noise_lid(
         credential=credential,
         self_identity=identity,
     )
+    if changed:
+        await queue_environment_runtime_manifest_changed(
+            db,
+            user_id,
+            environment_id,
+        )
     if changed or account_changed:
         await db.commit()
     return identity["lid"]

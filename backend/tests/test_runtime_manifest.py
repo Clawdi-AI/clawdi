@@ -39,8 +39,14 @@ from app.models.channel import (
     ChannelBotAgentLink,
     ChannelWhatsAppAuthCert,
 )
-from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.hosted_runtime import (
+    HostedRuntimeConfigObservation,
+    HostedRuntimeSecret,
+    HostedRuntimeState,
+)
+from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
@@ -61,16 +67,23 @@ from app.schemas.runtime import (
     validate_clawdi_cli_package_spec,
 )
 from app.services import sync_events
+from app.services.agent_lifecycle import archive_agent_and_project, reactivate_agent_and_project
 from app.services.audit import _sanitize_audit_details
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
+from app.services.principal_lifecycle import complete_principal_cleanup
 from app.services.runtime_source import (
+    RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
     expected_runtime_bundle_v2_etag,
+    load_runtime_source_batch,
+    render_runtime_source,
     runtime_manifest_issued_at,
+    vault_key_identity,
 )
+from app.services.runtime_source_revision import refresh_runtime_source_revisions
 from app.services.vault_crypto import decrypt, encrypt
 from scripts.seed_dashboard_dev import (
     _create_hosted_runtime_graph,
@@ -2678,6 +2691,11 @@ async def test_runtime_manifest_provider_label_is_not_projected_but_projected_fi
     assert label_only.headers["etag"] == initial_etag
 
     provider.base_url = "https://provider-b.test/v1"
+    await sync_events.queue_provider_runtime_manifest_changed(
+        db_session,
+        seed_user.id,
+        provider.provider_id,
+    )
     await db_session.commit()
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         projected_change = await client.get(
@@ -4129,12 +4147,28 @@ async def test_runtime_manifest_conditional_render_skips_secrets_and_bundle(
         monkeypatch.setattr(runtime_routes, "render_runtime_source", tracked_render_source)
         monkeypatch.setattr(runtime_routes, "render_runtime_bundle", tracked_render_bundle)
 
-        not_modified = await client.get(
-            "/v1/runtime/manifest",
-            headers={"If-None-Match": initial.headers["etag"]},
-        )
+        source_selects = 0
+
+        def count_source_selects(_connection, _cursor, statement, _params, _context, _many):
+            nonlocal source_selects
+            if statement.lstrip().upper().startswith("SELECT"):
+                source_selects += 1
+
+        event.listen(runtime_engine.sync_engine, "before_cursor_execute", count_source_selects)
+        try:
+            not_modified = await client.get(
+                "/v1/runtime/manifest",
+                headers={"If-None-Match": initial.headers["etag"]},
+            )
+        finally:
+            event.remove(
+                runtime_engine.sync_engine,
+                "before_cursor_execute",
+                count_source_selects,
+            )
         assert not_modified.status_code == 304, not_modified.text
-        assert render_calls == [(False, initial.json()["sourceRevision"])]
+        assert source_selects == 1
+        assert render_calls == []
         assert bundle_calls == []
 
         render_calls.clear()
@@ -4145,9 +4179,174 @@ async def test_runtime_manifest_conditional_render_skips_secrets_and_bundle(
     assert refreshed.json() == initial.json()
     assert render_calls == [
         (False, initial.json()["sourceRevision"]),
+        (False, initial.json()["sourceRevision"]),
         (True, initial.json()["sourceRevision"]),
     ]
     assert bundle_calls == [initial.json()["sourceRevision"]]
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_write_persists_revision_before_next_manifest(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    environment_id = env.id
+    capabilities = {
+        RUNTIME_CAPABILITIES_HEADER: ", ".join(
+            (
+                RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+            )
+        )
+    }
+    api_key = ApiKey(user_id=seed_user.id, environment_id=environment_id, label="revision-write")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get("/v1/runtime/manifest", headers=capabilities)
+    app.dependency_overrides.clear()
+    assert initial.status_code == 200, initial.text
+
+    state = await db_session.get(HostedRuntimeState, environment_id)
+    assert state is not None
+    previous_revision = state.source_revision
+    body = _runtime_state_body(
+        str(environment_id),
+        deployment_id=state.deployment_id,
+        instance_id=state.instance_id,
+        generation=state.generation + 1,
+        runtimes=state.runtimes,
+    )
+    updated = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+    assert updated.status_code == 200, updated.text
+    await db_session.refresh(state)
+    assert state.source_revision is not None
+    assert state.source_revision != previous_revision
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        delivered = await client.get(
+            "/v1/runtime/manifest",
+            headers={**capabilities, "If-None-Match": initial.headers["etag"]},
+        )
+    app.dependency_overrides.clear()
+    assert delivered.status_code == 200, delivered.text
+    assert delivered.json()["sourceRevision"] == state.source_revision
+
+
+@pytest.mark.asyncio
+async def test_concurrent_source_refresh_persists_complete_revision(
+    admin_client,
+    db_session,
+    engine,
+    seed_user,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    environment_id = env.id
+    first = HostedRuntimeSecret(
+        environment_id=environment_id,
+        secret_ref="secret://runtime/concurrent-first",
+        encrypted_value=b"first-v1",
+        nonce=b"first-nonce",
+    )
+    second = HostedRuntimeSecret(
+        environment_id=environment_id,
+        secret_ref="secret://runtime/concurrent-second",
+        encrypted_value=b"second-v1",
+        nonce=b"second-nonce",
+    )
+    db_session.add_all([first, second])
+    await db_session.flush()
+    await refresh_runtime_source_revisions(db_session, [environment_id])
+    await db_session.commit()
+
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as first_db, sessionmaker() as second_db:
+        first_row = await first_db.get(HostedRuntimeSecret, first.id)
+        second_row = await second_db.get(HostedRuntimeSecret, second.id)
+        assert first_row is not None
+        assert second_row is not None
+        first_row.encrypted_value = b"first-v2"
+        second_row.encrypted_value = b"second-v2"
+        await first_db.flush()
+        await first_db.execute(
+            select(HostedRuntimeState.environment_id)
+            .where(HostedRuntimeState.environment_id == environment_id)
+            .with_for_update()
+        )
+        await second_db.flush()
+
+        second_refresh = asyncio.create_task(
+            refresh_runtime_source_revisions(second_db, [environment_id])
+        )
+        try:
+            await asyncio.sleep(0.05)
+            assert not second_refresh.done()
+            await refresh_runtime_source_revisions(first_db, [environment_id])
+            await first_db.commit()
+            await second_refresh
+            await second_db.commit()
+        finally:
+            if not second_refresh.done():
+                second_refresh.cancel()
+                await asyncio.gather(second_refresh, return_exceptions=True)
+
+    async with sessionmaker() as verify_db:
+        batch = await load_runtime_source_batch(
+            verify_db,
+            environment_ids=[environment_id],
+            owner_user_id=seed_user.id,
+        )
+        rendered = render_runtime_source(
+            batch,
+            environment_id=environment_id,
+            public_api_url=settings.public_api_url,
+            vault_key_identity=vault_key_identity(settings.vault_encryption_key),
+            decrypt_secrets=False,
+        )
+        state = await verify_db.get(HostedRuntimeState, environment_id)
+        assert state is not None
+        assert state.source_revision == rendered.source_revision
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_repairs_stale_persisted_revision(
+    admin_client,
+    db_session,
+    seed_user,
+    caplog: pytest.LogCaptureFixture,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    environment_id = env.id
+    state = await db_session.get(HostedRuntimeState, environment_id)
+    assert state is not None
+    state.source_revision = "f" * 64
+    await db_session.commit()
+
+    capabilities = {
+        RUNTIME_CAPABILITIES_HEADER: ", ".join(
+            (
+                RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+            )
+        )
+    }
+    caplog.set_level("WARNING", logger="app.services.runtime_source_revision")
+    api_key = ApiKey(user_id=seed_user.id, environment_id=environment_id, label="revision-repair")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest", headers=capabilities)
+    app.dependency_overrides.clear()
+    assert response.status_code == 200, response.text
+
+    db_session.expire_all()
+    repaired = await db_session.get(HostedRuntimeState, environment_id)
+    assert repaired is not None
+    assert repaired.source_revision == response.json()["sourceRevision"]
+    assert repaired.source_revision != "f" * 64
+    assert "repaired stale runtime source revision" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -4277,6 +4476,11 @@ async def test_runtime_bundle_emits_explicit_apply_generation_and_revalidates_ap
         initial = await client.get("/v1/runtime/manifest")
         initial_body = initial.json()
         state.apply_generation = 3
+        await sync_events.queue_runtime_manifest_changed(
+            db_session,
+            seed_user.id,
+            env.id,
+        )
         await db_session.commit()
         advanced = await client.get(
             "/v1/runtime/manifest",
@@ -4292,6 +4496,210 @@ async def test_runtime_bundle_emits_explicit_apply_generation_and_revalidates_ap
     assert advanced.json()["manifest"]["generation"] == state.generation
     assert advanced.json()["sourceRevision"] != initial_body["sourceRevision"]
     assert advanced.headers["etag"] != initial.headers["etag"]
+
+
+@pytest.mark.asyncio
+async def test_archiving_linked_project_revalidates_manifest_without_project_skill(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"archive-project-runtime-{uuid4().hex[:8]}",
+        machine_name="Archive Project runtime",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    project = Project(
+        user_id=seed_user.id,
+        name="Archived runtime Project",
+        slug=f"archived-runtime-{uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    skill_key = "archive-project-skill"
+    db_session.add_all(
+        [
+            Skill(
+                user_id=seed_user.id,
+                project_id=project.id,
+                skill_key=skill_key,
+                name=skill_key,
+                description="Removed when its Project is archived",
+                version=1,
+                content_hash="a" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, label="archive-project-runtime")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
+        archived = await client.delete(f"/v1/projects/{project.id}")
+        delivered = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+    app.dependency_overrides.clear()
+
+    assert initial.status_code == 200, initial.text
+    assert skill_key in initial.json()["manifest"]["skills"]["entries"]
+    assert archived.status_code == 200, archived.text
+    assert delivered.status_code == 200, delivered.text
+    assert delivered.headers["etag"] != initial.headers["etag"]
+    assert "skills" not in delivered.json()["manifest"]
+
+
+@pytest.mark.asyncio
+async def test_owner_cleanup_revalidates_member_manifest_without_project_skill(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"owner-cleanup-runtime-{uuid4().hex[:8]}",
+        machine_name="Owner cleanup runtime",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(admin_client, str(env.id))
+    now = datetime.now(UTC)
+    nonce = uuid4().hex
+    owner = User(
+        clerk_id=f"runtime-deleted-owner-{nonce}",
+        clerk_issuer="https://runtime-manifest.clerk.example.test",
+        email=f"runtime-deleted-owner-{nonce}@test.dev",
+        name="Runtime deleted owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    project = Project(
+        user_id=owner.id,
+        name="Deleted owner Project",
+        slug=f"deleted-owner-runtime-{nonce[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(project)
+    await db_session.flush()
+    skill_key = "deleted-owner-skill"
+    lifecycle = PrincipalLifecycle(
+        issuer=owner.clerk_issuer,
+        subject=owner.clerk_id,
+        user_id=owner.id,
+        terminated_at=now,
+        next_cleanup_attempt_at=now,
+    )
+    db_session.add_all(
+        [
+            lifecycle,
+            ProjectMembership(
+                project_id=project.id,
+                member_user_id=seed_user.id,
+                role="viewer",
+                joined_via="invite",
+                joined_at=now,
+                resolved_owner_handle="runtime-deleted-owner",
+            ),
+            Skill(
+                user_id=owner.id,
+                project_id=project.id,
+                skill_key=skill_key,
+                name=skill_key,
+                description="Removed when its owner is deleted",
+                version=1,
+                content_hash="b" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+            AgentProjectBinding(
+                agent_id=env.id,
+                project_id=project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, label="owner-cleanup-runtime")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
+        await complete_principal_cleanup(db_session, lifecycle_id=lifecycle.id, now=now)
+        await db_session.commit()
+        delivered = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+    app.dependency_overrides.clear()
+
+    assert initial.status_code == 200, initial.text
+    assert skill_key in initial.json()["manifest"]["skills"]["entries"]
+    assert delivered.status_code == 200, delivered.text
+    assert delivered.headers["etag"] != initial.headers["etag"]
+    assert "skills" not in delivered.json()["manifest"]
+
+
+@pytest.mark.asyncio
+async def test_reactivating_agent_refreshes_changes_made_while_archived(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, provider, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    api_key = ApiKey(user_id=seed_user.id, label="reactivation-runtime")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+        )
+        await archive_agent_and_project(db_session, agent=env)
+        await db_session.commit()
+        provider.base_url = "https://reactivated-provider.test/v1"
+        await sync_events.queue_provider_runtime_manifest_changed(
+            db_session,
+            seed_user.id,
+            provider.provider_id,
+        )
+        await db_session.commit()
+        await reactivate_agent_and_project(db_session, agent=env)
+        await db_session.commit()
+        delivered = await client.get(
+            "/v1/runtime/manifest",
+            params={"environment_id": str(env.id)},
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+    app.dependency_overrides.clear()
+
+    assert initial.status_code == 200, initial.text
+    assert delivered.status_code == 200, delivered.text
+    assert delivered.headers["etag"] != initial.headers["etag"]
+    assert delivered.json()["manifest"]["providers"]["clawdi"]["baseUrl"] == (
+        "https://reactivated-provider.test/v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -5111,6 +5519,11 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
             AiProviderAuthPayload.provider_id == CANONICAL_CODEX_TOOL_PROVIDER_ID,
         )
         .values(encrypted_payload=ciphertext, nonce=nonce)
+    )
+    await sync_events.queue_provider_runtime_manifest_changed(
+        db_session,
+        seed_user.id,
+        CANONICAL_CODEX_TOOL_PROVIDER_ID,
     )
     await db_session.commit()
 

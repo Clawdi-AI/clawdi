@@ -25,7 +25,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import PersistedHostedRuntimeSkills
-from app.services.sync_events import queue_runtime_manifest_changed
+from app.services.sync_events import queue_runtime_manifests_changed
 
 # OpenClaw's native `skills install --as` contract accepts this slug shape.
 # Source keys may be namespaced. The SKILL.md name is the local install identity
@@ -551,11 +551,9 @@ async def queue_project_runtime_manifest_changed(
             )
         )
     ).all()
-    affected: list[UUID] = []
-    for user_id, agent_id in rows:
-        queue_runtime_manifest_changed(db, user_id, agent_id)
-        affected.append(agent_id)
-    return affected
+    targets = [(user_id, agent_id) for user_id, agent_id in rows]
+    await queue_runtime_manifests_changed(db, targets)
+    return [agent_id for _user_id, agent_id in targets]
 
 
 def project_skill_file_signature(

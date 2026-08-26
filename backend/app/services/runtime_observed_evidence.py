@@ -6,19 +6,16 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.session import AgentEnvironment
 from app.schemas.runtime_observed import HostedRuntimeObserved, HostedRuntimeObservedV2
 from app.services.runtime_generation import resolve_runtime_apply_generation
-from app.services.runtime_source import (
-    RuntimeSourceError,
-    expected_runtime_bundle_v2_etag,
-    load_runtime_source_batch,
-    render_runtime_source,
-    vault_key_identity,
-)
+from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from app.services.runtime_source_revision import persisted_runtime_source_revision
 
 RuntimeEvidenceStatus = Literal["ok", "error", "unknown", "missing", "stale"]
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
@@ -53,31 +50,37 @@ async def load_runtime_observed_evidence(
     if not requested_ids:
         return {}
 
-    batch = await load_runtime_source_batch(
-        db,
-        environment_ids=requested_ids,
-        owner_user_id=owner_user_id,
-    )
+    rows = (
+        await db.execute(
+            select(HostedRuntimeState, HostedRuntimeConfigObservation)
+            .join(
+                AgentEnvironment,
+                AgentEnvironment.id == HostedRuntimeState.environment_id,
+            )
+            .outerjoin(
+                HostedRuntimeConfigObservation,
+                HostedRuntimeConfigObservation.environment_id == HostedRuntimeState.environment_id,
+            )
+            .where(
+                HostedRuntimeState.environment_id.in_(requested_ids),
+                AgentEnvironment.user_id == owner_user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
+        )
+    ).all()
+    by_environment = {state.environment_id: (state, observation) for state, observation in rows}
     current = now or datetime.now(UTC)
     freshness = timedelta(seconds=settings.runtime_observation_freshness_seconds)
     evidence: dict[UUID, RuntimeObservedEvidence] = {}
     for environment_id in requested_ids:
-        row = batch.rows.get(environment_id)
-        desired_source_revision = None
-        if row is not None and row.state is not None:
-            try:
-                desired_source_revision = render_runtime_source(
-                    batch,
-                    environment_id=environment_id,
-                    public_api_url=settings.public_api_url,
-                    vault_key_identity=vault_key_identity(settings.vault_encryption_key),
-                    decrypt_secrets=False,
-                ).source_revision
-            except RuntimeSourceError:
-                pass
+        row = by_environment.get(environment_id)
+        state, observation = row if row is not None else (None, None)
+        desired_source_revision = (
+            persisted_runtime_source_revision(state) if state is not None else None
+        )
         evidence[environment_id] = _runtime_observed_evidence(
-            state=row.state if row is not None else None,
-            observation=row.observation if row is not None else None,
+            state=state,
+            observation=observation,
             desired_source_revision=desired_source_revision,
             current=current,
             freshness=freshness,
