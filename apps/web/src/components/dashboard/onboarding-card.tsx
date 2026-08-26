@@ -32,10 +32,10 @@ export function OnboardingCard({
 			: "Let's connect your first agent";
 	const description = isAdditionalAgent
 		? canDeployOnClawdi
-			? "Deploy another agent on Clawdi, or connect an agent on your machine."
+			? "Set up another Agent on Clawdi, or add one from your machine."
 			: "Connect another agent on your machine and manage it from this dashboard."
 		: canDeployOnClawdi
-			? "Deploy on Clawdi in minutes, or connect an agent on your machine."
+			? "Set up an Agent on Clawdi, or add one from your machine."
 			: "Connect an agent on your machine and manage it from this dashboard.";
 
 	return (

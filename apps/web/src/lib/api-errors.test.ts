@@ -151,5 +151,8 @@ describe("normalizeApiError", () => {
 
 	test("unknown shapes get a safe fallback", () => {
 		expect(normalizeApiError(null)).toMatch(/something went wrong/i);
+		expect(normalizeApiError(new Error("internal request detail"))).not.toContain(
+			"internal request detail",
+		);
 	});
 });

@@ -462,10 +462,10 @@ export function WhatsAppSessionState({
 		return (
 			<CenteredState
 				icon={<CheckCircle2 className="size-7 text-success" />}
-				title="WhatsApp account connected"
+				title="WhatsApp account is ready"
 				description={
 					repairing
-						? "The WhatsApp device is reconnected. Existing Custom bot settings, Agent Links, paired chats, and history stay unchanged."
+						? "The WhatsApp device is available again. Existing Custom bot settings, Agent Links, paired chats, and history stay unchanged."
 						: "It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
 				}
 			/>
@@ -511,7 +511,7 @@ export function WhatsAppSessionState({
 				<CopyablePairingCode value={session.pairing_code} label="WhatsApp pairing code" />
 				<p className="text-xs text-muted-foreground">
 					This links the WhatsApp account for the phone number you entered. Keep waiting until
-					Clawdi confirms Connected.
+					Clawdi shows that the account is ready.
 				</p>
 			</div>
 		);

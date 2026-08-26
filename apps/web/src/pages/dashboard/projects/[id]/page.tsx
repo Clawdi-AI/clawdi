@@ -1681,7 +1681,7 @@ function ManageProjectAgentsDialog({
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
 						<Bot className="size-4" />
-						<AlertTitle>No agents connected</AlertTitle>
+						<AlertTitle>No Agents available</AlertTitle>
 						<AlertDescription>
 							Add an Agent from Overview first, then link this Project here or from the Agent&apos;s{" "}
 							{AGENT_PROJECTS_SECTION_LABEL} section.

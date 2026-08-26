@@ -64,7 +64,7 @@ export default function AgentsIndexPage() {
 
 	return (
 		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-6 px-4 lg:px-6`}>
-			<PageHeader title="Agents" description="Every agent connected to your account." />
+			<PageHeader title="Agents" description="Every Agent in your account." />
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
 			) : hostedSectionEnabled && HostedAgentsByCompute ? (

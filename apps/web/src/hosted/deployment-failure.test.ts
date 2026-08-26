@@ -197,7 +197,7 @@ describe("deploymentFailureReason", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: "Clawdi is checking the runtime. Open Compute settings for details.",
+			reason: "Clawdi is checking this Agent. Open Agent settings for details.",
 			failedVerb: null,
 			retryable: true,
 			code: "runtime_readiness_timeout",
@@ -205,7 +205,7 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Temporarily unavailable",
 			failedVerb: null,
-			description: "Clawdi is checking the runtime. Open Compute settings for details.",
+			description: "Clawdi is checking this Agent. Open Agent settings for details.",
 			status: {
 				kind: "runtime_unavailable",
 				label: "Temporarily unavailable",
@@ -235,7 +235,7 @@ describe("deploymentFailureReason", () => {
 			{
 				code: "runtime_readiness_timeout",
 				title: "Temporarily unavailable",
-				reason: "Clawdi is checking the runtime. Open Compute settings for details.",
+				reason: "Clawdi is checking this Agent. Open Agent settings for details.",
 			},
 			{
 				code: "operation_aborted",

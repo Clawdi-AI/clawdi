@@ -42,7 +42,7 @@ describe("channel health summaries", () => {
 			channelHealthSummary(health({ health_status: "warning", reasons: ["future_health_reason"] })),
 		).toEqual({
 			label: "Needs attention",
-			detail: "Clawdi found an issue with this channel. Open Health for details.",
+			detail: "Clawdi found an issue with this channel. Open Status for details.",
 		});
 	});
 
@@ -105,7 +105,7 @@ describe("channel health summaries", () => {
 			),
 		).toEqual({
 			label: "Channel unavailable",
-			detail: "The Agent reported a problem with this channel. Open Health for details.",
+			detail: "The Agent reported a problem with this channel. Open Status for details.",
 		});
 	});
 });

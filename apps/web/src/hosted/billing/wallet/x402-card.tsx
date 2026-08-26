@@ -55,11 +55,11 @@ type PendingAction = "binding" | "unbinding" | "offer" | "payment" | "refresh" |
 
 function canonicalBindingAddress(binding: WalletBinding): Address | null {
 	if (!binding.bound) {
-		if (binding.address) throw new Error("Invalid wallet binding response.");
+		if (binding.address) throw new Error("Clawdi couldn't connect this wallet. Try again.");
 		return null;
 	}
 	if (!binding.address || !isAddress(binding.address)) {
-		throw new Error("Invalid wallet binding response.");
+		throw new Error("Clawdi couldn't connect this wallet. Try again.");
 	}
 	return getAddress(binding.address);
 }
@@ -76,14 +76,14 @@ function validateChallenge(challenge: {
 		challenge.message.length > 16_384 ||
 		!Number.isFinite(expiresAt)
 	) {
-		throw new Error("Hosted returned an invalid wallet binding challenge.");
+		throw new Error("Clawdi couldn't verify this wallet connection. Try again.");
 	}
 }
 
 function validateTopupAttempt(attempt: X402TopupAttempt): X402TopupAttempt {
 	const expiresAt = Date.parse(attempt.expires_at);
 	if (!TOPUP_ATTEMPT_ID.test(attempt.attempt_id) || !Number.isFinite(expiresAt)) {
-		throw new Error("Hosted returned an invalid x402 payment attempt.");
+		throw new Error("Clawdi couldn't start this payment. Try again.");
 	}
 	return attempt;
 }
@@ -232,7 +232,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 				signature,
 			});
 			if (canonicalBindingAddress(verified) !== signer.address) {
-				throw new Error("Hosted returned a mismatched wallet binding.");
+				throw new Error("The selected wallet changed. Select it again and retry.");
 			}
 			queryClient.setQueryData(billingKeys.walletBinding, verified);
 			setConnection(signer);
@@ -272,7 +272,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			const signer = await connectBrowserWallet();
 			if (signer.address !== boundAddress) {
 				setConnection(signer);
-				toast.error("Connected wallet doesn’t match", {
+				toast.error("Selected wallet doesn’t match", {
 					description: "Connect the verified address or change the Wallet binding.",
 				});
 				return;
@@ -345,7 +345,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			invalidateWalletData(queryClient);
 			if (error instanceof X402PaymentError && error.code === "payment_outcome_unknown") {
 				setUnknownAttemptId(offer.attemptId);
-				toast.warning("Payment outcome needs verification", { description: error.message });
+				toast.warning("Payment needs a quick check", {
+					description: "Refresh the Wallet before trying another payment.",
+				});
 				await refreshAfterUnknownOutcome();
 			} else {
 				toast.error("USDC top-up didn’t complete", { description: paymentErrorMessage(error) });
@@ -445,9 +447,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<div className="min-w-0 break-all font-mono text-xs">
 								{boundAddress ?? "Not bound"}
 							</div>
-							<div className="text-muted-foreground">Connected wallet</div>
+							<div className="text-muted-foreground">Selected wallet</div>
 							<div className="min-w-0 break-all font-mono text-xs">
-								{connectedAddress ?? "Not connected"}
+								{connectedAddress ?? "No wallet selected"}
 							</div>
 						</div>
 					)}
@@ -509,7 +511,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					{connectedAddress && boundAddress && !connectionMatches ? (
 						<Alert variant="destructive">
 							<AlertCircle aria-hidden />
-							<AlertTitle>Connected wallet doesn’t match</AlertTitle>
+							<AlertTitle>Selected wallet doesn’t match</AlertTitle>
 							<AlertDescription>
 								Connect the verified address or change the Wallet binding before paying.
 							</AlertDescription>

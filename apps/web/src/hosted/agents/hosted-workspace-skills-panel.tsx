@@ -93,7 +93,7 @@ function HostedWorkspaceSkillsPanelContent({
 	const status = useQuery({
 		queryKey: statusKey,
 		queryFn: () => {
-			if (!deploymentId) throw new Error("Deployment is not available");
+			if (!deploymentId) throw new Error("This agent isn't available right now.");
 			return billingClient.listWorkspaceSkills(deploymentId);
 		},
 		enabled: Boolean(deploymentId),
@@ -167,8 +167,8 @@ function HostedWorkspaceSkillsPanelContent({
 			void runMutation({ action: "install", ...request, path: request.path ?? undefined }).catch(
 				() => {},
 			);
-		} catch (error) {
-			setInstallError(error instanceof Error ? error.message : "Enter a valid GitHub repository.");
+		} catch {
+			setInstallError("Couldn't add this Skill. Check the GitHub repository and try again.");
 		}
 	};
 	const renderPageState = (content: ReactNode, actions?: ReactNode) =>
@@ -225,11 +225,11 @@ function HostedWorkspaceSkillsPanelContent({
 	if (deploymentResolution.error || !deployment) {
 		return renderPageState(
 			<ApiErrorPanel
-				error={deploymentResolution.error ?? new Error("Hosted deployment not found")}
+				error={deploymentResolution.error ?? new Error("Agent not found")}
 				onRetry={() => {
 					void deploymentResolution.refetch();
 				}}
-				title="Couldn't load the Agent runtime"
+				title="Couldn't load this Agent"
 			/>,
 		);
 	}

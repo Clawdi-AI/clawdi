@@ -40,35 +40,35 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 	if (health.health_status === "error") {
 		if (health.failed_deliveries > 0) {
 			const failed = countLabel(health.failed_deliveries, "failed delivery", "failed deliveries");
-			return { label: failed, detail: "Open the channel Health view for error details." };
+			return { label: failed, detail: "Open Status for details." };
 		}
 		if (health.reasons?.includes("channel_disabled")) {
 			return {
 				label: "Channel disabled",
-				detail: "This channel is disabled. Open the channel Health view for details.",
+				detail: "This channel is disabled. Open Status for details.",
 			};
 		}
 		if (health.reasons?.includes("recent_error")) {
 			return {
 				label: "Recent error",
-				detail: "A recent channel operation failed. Open the channel Health view for details.",
+				detail: "A recent channel action failed. Open Status for details.",
 			};
 		}
 		if (health.reasons?.includes("native_transport_unavailable")) {
 			return {
 				label: "Channel unavailable",
-				detail: "This channel is currently unavailable. Open Health for details.",
+				detail: "This channel is currently unavailable. Open Status for details.",
 			};
 		}
 		if (health.reasons?.includes("runtime_observation_error")) {
 			return {
 				label: "Channel unavailable",
-				detail: "The Agent reported a problem with this channel. Open Health for details.",
+				detail: "The Agent reported a problem with this channel. Open Status for details.",
 			};
 		}
 		return {
 			label: "Channel error",
-			detail: "Channel health reported an error. Open the channel Health view for details.",
+			detail: "Clawdi found a problem with this channel. Open Status for details.",
 		};
 	}
 
@@ -122,6 +122,6 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 
 	return {
 		label: "Needs attention",
-		detail: "Clawdi found an issue with this channel. Open Health for details.",
+		detail: "Clawdi found an issue with this channel. Open Status for details.",
 	};
 }

@@ -148,6 +148,6 @@ export function aiBindingBuildErrorCopy(
 	}
 	return {
 		title: mode === "create" ? "Provider unavailable" : "Provider configuration is invalid",
-		description: error instanceof Error ? error.message : "Check provider configuration.",
+		description: "Check provider configuration.",
 	};
 }

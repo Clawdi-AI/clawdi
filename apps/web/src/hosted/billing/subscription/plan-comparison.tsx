@@ -156,7 +156,7 @@ export function PlanComparison({
 									</FeatureRow>
 								) : null}
 								<FeatureRow>
-									Managed confidential compute · one runtime (OpenClaw or Hermes)
+									Managed confidential compute · one Agent type (OpenClaw or Hermes)
 								</FeatureRow>
 								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 							</ul>
@@ -193,7 +193,7 @@ export function PlanComparison({
 									</FeatureRow>
 								) : null}
 								<FeatureRow>
-									Managed confidential compute · one runtime (OpenClaw or Hermes)
+									Managed confidential compute · one Agent type (OpenClaw or Hermes)
 								</FeatureRow>
 								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 							</ul>

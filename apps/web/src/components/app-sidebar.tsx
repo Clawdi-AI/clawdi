@@ -1164,19 +1164,16 @@ function agentHeaderMeta(
 } {
 	const sourceDetail =
 		kind === "cloud" ? agentSourceKindLabel("hosted") : kind === "legacy" ? "Legacy" : null;
-	// Legacy v1 agents run in a hosted runtime image too, so both hosted
-	// kinds get the "runtime" suffix.
-	const runtime = kind === "legacy";
 	const typeLabel = agentTypeLabel(agent.agent_type);
 	const version = agentVersionLabel(agent.agent_version);
 	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
 	const activityLabel = relativeSeen ? `last seen ${relativeSeen}` : "never seen";
-	const visible = [runtime ? `${typeLabel} runtime` : typeLabel, agent.os?.trim() || null].filter(
+	const visible = [typeLabel, agent.os?.trim() || null].filter(
 		(item): item is string => Boolean(item),
 	);
 	const detail = [
 		sourceDetail,
-		runtime ? `${typeLabel} runtime` : typeLabel,
+		typeLabel,
 		version,
 		agent.os?.trim() || null,
 	].filter((item): item is string => Boolean(item));

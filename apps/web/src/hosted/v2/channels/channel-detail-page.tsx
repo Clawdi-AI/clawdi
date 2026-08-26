@@ -295,8 +295,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			<Tabs defaultValue="activity" className="min-w-0">
 				<TabsList className="h-auto flex-wrap justify-start">
 					<TabsTrigger value="activity">Activity</TabsTrigger>
-					<TabsTrigger value="health">Health</TabsTrigger>
-					{providerUnavailable ? null : <TabsTrigger value="commands">Commands</TabsTrigger>}
+					<TabsTrigger value="health">Status</TabsTrigger>
+					{providerUnavailable ? null : <TabsTrigger value="commands">Bot commands</TabsTrigger>}
 				</TabsList>
 
 				<TabsContent value="activity" className={LIST_TAB_CLASS}>
@@ -469,19 +469,21 @@ function HealthTab({ accountId }: { accountId: string }) {
 			<ApiErrorPanel
 				error={health.error}
 				onRetry={() => health.refetch()}
-				title="Couldn't load health"
+				title="Couldn't load status"
 			/>
 		);
 	}
 	const h = health.data?.items.find((x) => x.account_id === accountId);
 	if (!h)
-		return <EmptyState title="No health data" description="Health metrics aren't available yet." />;
+		return (
+			<EmptyState title="Status unavailable" description="Channel details aren't available yet." />
+		);
 
 	const stats = [
-		{ label: "Pending inbox", value: h.pending_inbox },
-		{ label: "Pending deliveries", value: h.pending_deliveries },
-		{ label: "In progress", value: h.in_progress_deliveries },
-		{ label: "Failed deliveries", value: h.failed_deliveries },
+		{ label: "Waiting to receive", value: h.pending_inbox },
+		{ label: "Waiting to send", value: h.pending_deliveries },
+		{ label: "Sending", value: h.in_progress_deliveries },
+		{ label: "Failed", value: h.failed_deliveries },
 	];
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
 	const summary = channelHealthSummary(h);
@@ -512,16 +514,16 @@ function HealthTab({ accountId }: { accountId: string }) {
 				>
 					<div className="flex items-center gap-1.5 text-sm font-medium text-destructive">
 						<TriangleAlert className="size-4" />
-						Last error
+						Recent issue
 					</div>
 					<p className="text-sm text-destructive/90">{errorSummary}</p>
-					<p className="text-xs text-muted-foreground">Reported {relativeTime(h.last_error_at)}</p>
+					<p className="text-xs text-muted-foreground">Seen {relativeTime(h.last_error_at)}</p>
 				</div>
 			) : null}
 
 			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
-					<SectionLabel className="mb-3 px-0">Message transport</SectionLabel>
+					<SectionLabel className="mb-3 px-0">Messaging</SectionLabel>
 					<dl className="grid gap-3 text-sm sm:grid-cols-3">
 						<div>
 							<dt className="text-xs text-muted-foreground">Status</dt>
@@ -570,22 +572,22 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 
 	return (
 		<div className="flex flex-col gap-4">
-			<InfoCard icon={KeyRound} title="Pairing commands">
+			<InfoCard icon={KeyRound} title="Bot commands">
 				{supportsCommands
-					? `Publish Clawdi’s pairing commands to ${meta.label}.`
-					: `${meta.label} doesn't support pairing commands.`}
+					? `Publish Clawdi’s bot commands to ${meta.label}.`
+					: `${meta.label} doesn't support bot commands.`}
 			</InfoCard>
 
 			{supportsCommands ? (
 				<>
 					<Button onClick={syncCommands} disabled={syncing}>
 						{syncing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
-						{syncing ? "Syncing…" : "Sync commands"}
+						{syncing ? "Publishing…" : "Publish commands"}
 					</Button>
 					{commands.length > 0 ? (
 						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
 							<div className="text-xs font-medium text-success-muted-foreground">
-								Synced {commands.length} command{commands.length === 1 ? "" : "s"}
+								Published {commands.length} command{commands.length === 1 ? "" : "s"}
 							</div>
 							{commands.map((c) => (
 								<div key={String(c.name)} className="flex items-baseline gap-2 text-sm">
@@ -595,10 +597,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 							))}
 						</div>
 					) : sync.data ? (
-						<EmptyState
-							variant="inset"
-							description="Command sync completed. No pairing commands were returned."
-						/>
+						<EmptyState variant="inset" description="No bot commands are available to publish." />
 					) : null}
 				</>
 			) : null}

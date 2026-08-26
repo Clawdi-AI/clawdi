@@ -171,7 +171,7 @@ export function agentPluginInstallability(
 				return {
 					installable: false,
 					label: "Unavailable",
-					reason: "This plugin does not support a hosted runtime.",
+					reason: "This plugin isn't available for this Agent.",
 				};
 		}
 	}

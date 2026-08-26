@@ -100,7 +100,6 @@ export function isApiNetworkError(error: unknown): boolean {
  * makes snake_case error codes readable while passing real sentences through.
  */
 export function normalizeApiError(error: unknown): string {
-	if (typeof error === "string") return error;
 	if (error instanceof ApiNetworkError) {
 		return error.kind === "timeout"
 			? "This is taking longer than usual. Check your connection and try again."
@@ -123,7 +122,6 @@ export function normalizeApiError(error: unknown): string {
 		}
 		return message;
 	}
-	if (error instanceof Error) return error.message;
 	return "Something went wrong. Please try again.";
 }
 

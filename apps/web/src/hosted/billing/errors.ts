@@ -398,7 +398,7 @@ export function normalizeBillingError(error: unknown): string {
 			return "Top up your Wallet to continue. New funds repay refund debt before compute charges.";
 		}
 		if (code === "deploy_request_funding_conflict") {
-			return "This deploy request is already linked to a different payment flow.";
+			return "This Agent setup is already linked to another payment attempt.";
 		}
 		if (code === "idempotency_key_reused") {
 			return "This attempt conflicts with an earlier request. Review the details and submit again for a fresh attempt.";
@@ -413,9 +413,11 @@ export function normalizeBillingError(error: unknown): string {
 			}
 			return "The billing request could not be completed. Review the details and try again.";
 		}
-		return error.detail;
+		return "The billing request could not be completed. Review the details and try again.";
 	}
-	if (error instanceof Error) return error.message;
+	if (error instanceof Error) {
+		return "The billing request could not be completed. Try again.";
+	}
 	return "Something went wrong. Please try again.";
 }
 

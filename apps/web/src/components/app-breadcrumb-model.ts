@@ -31,7 +31,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	vaults: "Vaults",
 	connectors: "Connectors",
 	channels: "Channels",
-	deploy: "Deploy an Agent",
+	deploy: "Set up an Agent",
 	agents: "Agents",
 	"ai-providers": "AI Providers",
 };

@@ -293,10 +293,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 								</p>
 								<ul className="space-y-1 text-foreground">
 									{affectedAgents.map((agent) => (
-										<li key={agent.deployment_id}>
-											{agent.name}{" "}
-											<span className="text-muted-foreground">{agent.deployment_id}</span>
-										</li>
+										<li key={agent.deployment_id}>{agent.name}</li>
 									))}
 								</ul>
 							</>

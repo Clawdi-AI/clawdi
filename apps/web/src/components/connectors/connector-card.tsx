@@ -42,7 +42,7 @@ export function ConnectorCard({
 			title={app.display_name}
 			titleAdornment={
 				isConnected ? (
-					<Check className="size-3.5 shrink-0 text-success" aria-label="Connected" />
+					<Check className="size-3.5 shrink-0 text-success" aria-label="Ready" />
 				) : undefined
 			}
 			meta={app.description}

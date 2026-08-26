@@ -75,7 +75,7 @@ describe("DeploymentStatus", () => {
 		});
 	});
 
-	test("preserves and labels unknown statuses", () => {
+	test("preserves unknown statuses without exposing them to users", () => {
 		const status = parseDeploymentStatus("queued_for_drain");
 		expect(status).toEqual({
 			kind: "unknown",
@@ -83,7 +83,7 @@ describe("DeploymentStatus", () => {
 			known: false,
 			reason: "unrecognized",
 		});
-		expect(deploymentStatusLabel(status)).toBe("Queued For Drain");
+		expect(deploymentStatusLabel(status)).toBe("Status unavailable");
 		expect(deploymentStatusTone(status)).toBe("warning");
 	});
 

@@ -285,7 +285,7 @@ export function StripeCheckoutDialog({
 			try {
 				const nextStripe = await getStripe(key);
 				if (!nextStripe) {
-					throw new Error("Stripe.js failed to initialize.");
+					throw new Error("Stripe couldn't load. Refresh and try again.");
 				}
 				if (cancelled) return;
 				setStripe(nextStripe);

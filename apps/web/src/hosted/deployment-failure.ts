@@ -12,7 +12,7 @@ const PLAN_CHANGE_FAILURE_REASON =
 	"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.";
 const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
 const RUNTIME_UNAVAILABLE_REASON =
-	"Clawdi is checking the runtime. Open Compute settings for details.";
+	"Clawdi is checking this Agent. Open Agent settings for details.";
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -106,7 +106,7 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 		case "restart":
 			return "Agent restart";
 		case "reset_runtime_ui_access":
-			return "Runtime UI access reset";
+			return "Dashboard access reset";
 		case "update":
 		case "migrate_runtime_context":
 			return "Agent update";
@@ -119,9 +119,8 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 		case "plan_change":
 			return "Plan change";
 		case "migrate_image":
-			return "Agent image migration";
 		case "rollback_image":
-			return "Agent image rollback";
+			return "Agent maintenance";
 		case null:
 			return "Agent action";
 	}
@@ -235,7 +234,8 @@ export function deploymentFailurePresentation(
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: `Review the reason below. There is no safe one-click retry for this ${operationName} failure.`,
+				description:
+					"The change did not finish. Check the latest agent status. If the problem continues, contact support.",
 				status: FAILED_STATUS,
 				remediation: { kind: "none", label: null },
 			};

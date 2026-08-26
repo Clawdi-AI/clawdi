@@ -48,6 +48,15 @@ function formatName(raw: string): string {
 		.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function connectionStatusLabel(status: string): string {
+	const normalized = status.trim().toLowerCase();
+	if (["active", "connected", "ready"].includes(normalized)) return "Ready";
+	if (["pending", "initiated", "connecting"].includes(normalized)) return "Finishing setup";
+	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect needed";
+	if (["failed", "error"].includes(normalized)) return "Needs attention";
+	return "Status unavailable";
+}
+
 /**
  * Same Suspense pattern as `connectors/page.tsx`: nuqs's
  * `useQueryStates` reads URL state under the hood. Wrapping the body keeps
@@ -176,7 +185,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const [credsOpen, setCredsOpen] = useState(false);
 	const authFlow = app ? getConnectorAuthFlow(app.auth_type) : null;
 	const isSetupBlocked = !!app?.connect_disabled;
-	const setupBlockedReason = app?.connect_disabled_reason || "This connector needs admin setup.";
 	const hasUnsupportedAuthType = !!app && authFlow === null;
 	const usesNoAuth = authFlow === "no_auth";
 	const usesCredentialsForm = authFlow === "credentials";
@@ -190,14 +198,14 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
 		if (isSetupBlocked) {
-			toast.error("Connector Setup Required", {
-				description: setupBlockedReason,
+			toast.error("Connector needs setup", {
+				description: "Contact your administrator before connecting this account.",
 			});
 			return;
 		}
 		if (hasUnsupportedAuthType) {
-			toast.error("Connector Metadata Error", {
-				description: `${displayName} did not return a supported auth type.`,
+			toast.error("Connector setup unavailable", {
+				description: `Clawdi can't set up ${displayName} right now. Refresh and try again.`,
 			});
 			return;
 		}
@@ -315,7 +323,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					isReady ? (
 						<Badge variant="secondary">
 							<Check />
-							{usesNoAuth ? "Ready" : "Connected"}
+							Ready
 						</Badge>
 					) : undefined
 				}
@@ -325,13 +333,13 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Connected accounts"
+					title="Accounts"
 					count={
 						usesNoAuth
 							? "No account required"
 							: isConnectionsLoading
 								? "Checking accounts"
-								: `${activeConnections.length} connected`
+								: `${activeConnections.length} ${activeConnections.length === 1 ? "account" : "accounts"}`
 					}
 					description={
 						usesNoAuth
@@ -382,23 +390,25 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (
 						<ApiErrorPanel
-							error="This connector did not return a supported auth type. Refresh the page and try again."
+							error="Clawdi can't set up this connector right now. Refresh the page and try again."
 							onRetry={() => {
 								void appQ.refetch();
 							}}
-							title="Connector metadata error"
+							title="Connector setup unavailable"
 						/>
 					) : activeConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
-								<AlertTitle>Connector setup required</AlertTitle>
-								<AlertDescription>{setupBlockedReason}</AlertDescription>
+								<AlertTitle>Connector needs setup</AlertTitle>
+								<AlertDescription>
+									Contact your administrator before connecting this account.
+								</AlertDescription>
 							</Alert>
 						) : (
 							<EmptyState
 								variant="inset"
-								description="No connected accounts yet."
+								description="No accounts yet."
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
 										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
@@ -421,7 +431,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 											{c.account_display || `Account ${c.id.slice(-6)}`}
 										</p>
 										<p className="mt-0.5 text-xs text-muted-foreground">
-											{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+											{connectionStatusLabel(c.status)}
 										</p>
 									</div>
 									<ConfirmAction
@@ -541,7 +551,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available after you add an account."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -562,7 +572,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available after you add an account."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -582,7 +592,7 @@ function ConnectorToolsList({
 					count="0 tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available after you add an account."
 							: "Tools this connector exposes."
 					}
 				/>

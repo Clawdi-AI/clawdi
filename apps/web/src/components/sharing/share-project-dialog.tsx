@@ -212,9 +212,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			toast.error(
 				e instanceof ApiError && e.status === 409
 					? "Set a display name on your profile before sharing."
-					: e instanceof Error
-						? e.message
-						: "Couldn't create link",
+					: "Couldn't create link. Try again.",
 			);
 			throw e;
 		}

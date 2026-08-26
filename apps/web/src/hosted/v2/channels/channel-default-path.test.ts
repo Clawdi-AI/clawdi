@@ -111,8 +111,8 @@ describe("global Channels inventory", () => {
 	test("describes command publishing as bot-owned configuration", () => {
 		const channelDetail = source("./channel-detail-page.tsx");
 
-		expect(channelDetail).toContain('title="Pairing commands"');
-		expect(channelDetail).toContain("Publish Clawdi’s pairing commands to");
+		expect(channelDetail).toContain('title="Bot commands"');
+		expect(channelDetail).toContain("Publish Clawdi’s bot commands to");
 		expect(channelDetail).not.toContain("Publish this agent's slash commands");
 		expect(channelDetail).not.toContain("The agent returned no commands");
 	});

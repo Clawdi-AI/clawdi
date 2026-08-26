@@ -309,7 +309,7 @@ describe("unified list consumers", () => {
 		expect(homepage).not.toContain("useHostedAgentTiles({");
 		expect(homepage).toContain("<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />");
 		expect(homepage).toContain("<WelcomeWalletCard />");
-		expect(onboarding).toContain("Deploy on Clawdi");
+		expect(onboarding).toContain("Set up an Agent on Clawdi");
 		expect(onboarding).toContain("Connect an agent on your machine");
 	});
 });

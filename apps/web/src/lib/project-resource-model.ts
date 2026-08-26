@@ -99,7 +99,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Sessions",
 		singularLabel: "Session",
 		navLabel: "Sessions",
-		description: "Conversation history synced from connected agents.",
+		description: "Conversation history synced from your Agents.",
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.sessions,

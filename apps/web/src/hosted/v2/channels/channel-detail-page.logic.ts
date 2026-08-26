@@ -66,7 +66,7 @@ export function nativeTransportSummary(transport: Record<string, unknown>): Nati
 		transport.mode === "sidecar"
 			? "Managed connection"
 			: transport.mode === "none"
-				? "Not connected"
+				? "Unavailable"
 				: "Details unavailable";
 	const delivery =
 		transport.supportsOutboundMessages === true

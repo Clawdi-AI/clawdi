@@ -40,7 +40,7 @@ describe("dashboard agent onboarding", () => {
 
 	test("uses one gated deploy-or-connect experience for first and additional agents", () => {
 		expect(onboardingSource).toContain("{canDeployOnClawdi ? (");
-		expect(onboardingSource).toContain("Deploy on Clawdi");
+		expect(onboardingSource).toContain("Set up an Agent on Clawdi");
 		expect(onboardingSource).toContain("Connect an agent on your machine");
 		expect(onboardingSource).toContain("<AddAgentDialog");
 		expect(onboardingSource).toContain("onClick={() => setConnectOpen(true)}");
@@ -58,7 +58,7 @@ describe("dashboard agent onboarding", () => {
 		);
 		expect(newAgentSource).toContain("{canDeployOnClawdi ? (");
 		expect(newAgentSource).toContain(
-			'title={checkingDeployAccess ? "Checking deploy access" : "Deploy on Clawdi"}',
+			'title={checkingDeployAccess ? "Checking access" : "Set up on Clawdi"}',
 		);
 		expect(newAgentSource).toContain('title="Connect an agent on your machine"');
 		expect(newAgentSource).not.toContain("Connect your own agent");

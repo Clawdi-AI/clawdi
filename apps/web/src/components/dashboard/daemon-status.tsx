@@ -175,9 +175,9 @@ export function daemonStatusVisual(
 	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
 	const tooltip = isHosted
 		? kind === "set-up"
-			? "Sync activates on the next image rollout."
+			? "Sync will start after the agent’s next update."
 			: kind === "paused"
-				? "Pod isn't checking in. Manage it from agent settings."
+				? "The agent isn't checking in. Manage it from Agent settings."
 				: STATUS_TOOLTIP[kind]
 		: STATUS_TOOLTIP[kind];
 
@@ -353,7 +353,7 @@ function SyncHelpDialog({
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
-						? "Sync paused — hosted runtime isn't checking in"
+						? "Sync is paused"
 						: "Sync paused — daemon isn't checking in";
 
 	return (
@@ -373,14 +373,11 @@ function SyncHelpDialog({
 							// a dead-end.
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
-									This agent runs on Clawdi&apos;s infrastructure. Live sync activates automatically
-									once the hosted runtime is on the latest agent image. New deploys are already on
-									the latest image; older runtimes activate after their next restart.
+									Live sync will turn on automatically after this Agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
-									Nothing to install or configure on your side. The first heartbeat will flip this
-									badge to <span className="font-medium">Live sync</span> within a minute or two of
-									runtime start.
+									There&apos;s nothing to install. This status should change to{" "}
+									<span className="font-medium">Live sync</span> within a few minutes.
 								</p>
 							</div>
 						) : (
@@ -402,15 +399,20 @@ function SyncHelpDialog({
 							{status === "errored" && env.last_sync_error ? (
 								<div className="space-y-2">
 									<p className="text-sm font-medium text-destructive">What went wrong</p>
-									<code className="block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive/90">
-										{formatErrorForDisplay(env.last_sync_error)}
-									</code>
+									{isHosted ? (
+										<p className="text-sm text-destructive/90">
+											Clawdi couldn&apos;t sync the latest changes.
+										</p>
+									) : (
+										<code className="block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive/90">
+											{formatErrorForDisplay(env.last_sync_error)}
+										</code>
+									)}
 									{isErroredAndStale ? (
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Daemon stopped after this error. The runtime runs on Clawdi&apos;s
-													infrastructure — restart it from agent settings to recover.
+													The Agent stopped checking in. Restart it from Agent settings.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
@@ -431,31 +433,25 @@ function SyncHelpDialog({
 										// state and let the next file save do the rest.
 										<>
 											<p className="text-xs text-muted-foreground">
-												This won&apos;t auto-recover — the daemon dropped the change after the
-												server rejected it. Common cause: skill folder bigger than the 25 MB upload
-												cap (check for{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-2xs">node_modules</code>,{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-2xs">.git</code>, build
-												output). Fix the source and re-save to retry — the daemon is still healthy
-												and will pick up the next edit.
+												{isHosted
+													? "The latest change couldn't be synced. Check that each Skill is smaller than 25 MB, then save it again."
+													: "This change couldn't be synced. Fix the source, then save it again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isRetryExhaustedError(env.last_sync_error) ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												The daemon retried for a few minutes and gave up — usually a network outage
-												or backend hiccup. The next 5-minute rescan re-queues the change
-												automatically once connectivity is back; no source edit needed.
-												{isHosted ? null : " If your network looks fine, check:"}
+												Clawdi will try again automatically when the connection is back.
+												{isHosted ? null : " If your connection looks fine, check:"}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												The daemon will keep retrying. If the error persists, restart the hosted
-												runtime from agent settings.
+												Clawdi will keep trying. If the problem continues, restart the Agent from
+												Agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
@@ -475,8 +471,8 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											The hosted runtime isn&apos;t checking in. It may be restarting, suspended, or
-											out of memory — manage it from agent settings.
+											The Agent isn&apos;t checking in. It may still be starting or may have
+											stopped.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
 									</div>

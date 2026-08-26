@@ -98,7 +98,7 @@ export function NewAgentButton({
 						<DialogTitle>New agent</DialogTitle>
 						<DialogDescription>
 							{canDeployOnClawdi
-								? "Deploy on Clawdi, or connect an agent on your machine."
+								? "Set up an Agent on Clawdi, or add one from your machine."
 								: "Connect an agent on your machine."}
 						</DialogDescription>
 					</DialogHeader>
@@ -108,14 +108,14 @@ export function NewAgentButton({
 							onRetry={() => {
 								void hostedAccess.refetch();
 							}}
-							title="Couldn't verify deploy access"
+							title="Couldn't check Agent setup access"
 						/>
 					) : null}
 					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>
 						{canDeployOnClawdi ? (
 							<ChoiceCard
 								icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
-								title={checkingDeployAccess ? "Checking deploy access" : "Deploy on Clawdi"}
+								title={checkingDeployAccess ? "Checking access" : "Set up on Clawdi"}
 								description="Clawdi runs and manages it — pick a framework and go live in minutes."
 								onClick={chooseDeploy}
 							/>

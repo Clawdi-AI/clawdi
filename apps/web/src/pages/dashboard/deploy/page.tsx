@@ -28,7 +28,7 @@ export default function Page() {
 function DeployRouteSkeleton() {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
-			<PageHeader title="Deploy an Agent" description="Preparing your compute options…" />
+			<PageHeader title="Set up an Agent" description="Preparing your options…" />
 			{Array.from({ length: 4 }).map((_, sectionIndex) => (
 				<section key={sectionIndex} className="flex flex-col gap-4">
 					<div className="flex max-w-2xl flex-col gap-2">

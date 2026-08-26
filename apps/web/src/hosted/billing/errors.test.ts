@@ -134,7 +134,7 @@ describe("normalizeBillingError", () => {
 		expect(isInsufficientBalanceError(missingCode)).toBe(false);
 	});
 
-	test("snake_case codes stay internal while real sentences pass through", () => {
+	test("backend details stay internal", () => {
 		const paymentMethodRequired = new BillingApiError(400, "payment_method_required");
 		expect(normalizeBillingError(paymentMethodRequired)).toBe(
 			"Add a payment method and try again.",
@@ -150,7 +150,7 @@ describe("normalizeBillingError", () => {
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),
-		).toBe("That code has already been used.");
+		).toBe("The billing request could not be completed. Review the details and try again.");
 	});
 
 	test("structured wallet errors never expose raw JSON or internal codes", () => {

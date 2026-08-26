@@ -70,7 +70,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 			)}
 			<Skeleton className="h-10 w-full max-w-xl" />
 			<section className="space-y-3">
-				<SectionLabel>Connected</SectionLabel>
+				<SectionLabel>Ready to use</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 4 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
@@ -260,7 +260,7 @@ function ConnectedRail({
 	return (
 		<section className="space-y-3">
 			<SectionLabel count={activeCount > 0 ? `${activeCount} active` : undefined}>
-				Connected
+				Ready to use
 			</SectionLabel>
 			{error ? (
 				// Without this, a connections-fetch failure makes the rail
