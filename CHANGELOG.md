@@ -10,6 +10,14 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.19
+
+Package: `clawdi@0.14.19`
+
+### Changed
+
+- The manifest fallback polling interval is now uniformly jittered around its 15-second average. Fleets no longer phase-align into synchronized request bursts after rollouts, which removes the shared ~1s latency floor those bursts imposed on the control plane.
+
 ## Clawdi CLI v0.14.18
 
 Package: `clawdi@0.14.18`
