@@ -28,6 +28,7 @@ _AGENT_TYPE_LABELS = {
     "claude_code": "Claude Code",
     "claude-code": "Claude Code",
     "codex": "Codex",
+    "pi": "Pi",
 }
 
 
@@ -53,6 +54,7 @@ def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
     agent.connected_agent_registered_at = None
     agent.project_skill_reconcile_version = None
     agent.project_skill_reconcile_observed_at = None
+    agent.adapter_modules = None
 
 
 async def register_agent_environment(

@@ -46,6 +46,7 @@ interface PullOpts {
  */
 interface AgentPullScan {
 	agentType: AgentType;
+	modules: (typeof DOWN_MODULES)[number][];
 	/** Explicit Cloud-owned Project to import Skills from; null when Skills
 	 * are not part of this pull. */
 	skillProjectId: string | null;
@@ -101,6 +102,8 @@ export async function pull(opts: PullOpts) {
 	// Cloud-owned Project, pull only mirrors sessions.
 	let modules = parseModules(opts.modules, DOWN_MODULES);
 	if (!modules) return;
+	const explicitlySelectedModules = opts.modules !== undefined;
+	const strictModuleSelection = explicitlySelectedModules && targetTypes.length === 1;
 	if (!opts.project && modules.includes("skills")) {
 		if (modules.length === 1) {
 			p.log.error(
@@ -119,6 +122,17 @@ export async function pull(opts: PullOpts) {
 		process.exitCode = 1;
 		return;
 	}
+	if (strictModuleSelection && modules.includes("skills")) {
+		for (const agentType of targetTypes) {
+			const adapter = adapterForType(agentType);
+			if (!adapter?.skills) {
+				p.log.error(`${adapterRegistry[agentType].displayName} does not support skills.`);
+				p.outro(chalk.red("Aborted."));
+				process.exitCode = 1;
+				return;
+			}
+		}
+	}
 
 	const api = new ApiClient();
 	// Read once before the loop, mutate as explicit imports land, persist once
@@ -133,25 +147,40 @@ export async function pull(opts: PullOpts) {
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
 	const scans: AgentPullScan[] = [];
+	const moduleSkips: Array<{ agentType: AgentType; modules: string[] }> = [];
 	try {
 		for (const agentType of targetTypes) {
-			scans.push(await scanOneAgent(api, agentType, modules, opts, skillsLock));
+			const adapter = adapterForType(agentType);
+			const availableModules = modules.filter(
+				(module) => module === "sessions" || adapter?.skills !== undefined,
+			);
+			const missing = modules.filter((module) => !availableModules.includes(module));
+			if (explicitlySelectedModules && missing.length > 0) {
+				moduleSkips.push({ agentType, modules: missing });
+			}
+			if (availableModules.length === 0) continue;
+			scans.push(await scanOneAgent(api, agentType, availableModules, opts, skillsLock));
 		}
 	} catch (e) {
 		scanSpinner.stop("Scan failed.");
 		throw e;
 	}
 	scanSpinner.stop("Scan complete.");
+	for (const skip of moduleSkips) {
+		p.log.warn(
+			`${adapterRegistry[skip.agentType].displayName} skipped unsupported ${skip.modules.join(", ")}.`,
+		);
+	}
 
 	// Combined per-agent summary, visible in full before downloads begin.
 	for (const scan of scans) {
 		const name = adapterRegistry[scan.agentType].displayName;
 		const bits: string[] = [];
-		if (modules.includes("skills")) {
+		if (scan.modules.includes("skills")) {
 			const sync = scan.skillsInSync > 0 ? ` (${scan.skillsInSync} in sync)` : "";
 			bits.push(`${scan.skills.length} skill import${scan.skills.length === 1 ? "" : "s"}${sync}`);
 		}
-		if (modules.includes("sessions")) {
+		if (scan.modules.includes("sessions")) {
 			const sync = scan.sessionsUnchanged > 0 ? ` (${scan.sessionsUnchanged} unchanged)` : "";
 			bits.push(`${scan.sessions.length} session${scan.sessions.length === 1 ? "" : "s"}${sync}`);
 		}
@@ -274,7 +303,7 @@ async function scanOneAgent(
 			}
 		}
 
-		if (adapter && skillProjectId) {
+		if (adapter?.skills && skillProjectId) {
 			for (const skill of await fetchCloudSkills(api, skillProjectId)) {
 				// A Project import is unchanged only when the hash, local path, and
 				// exact durable materialization marker all agree. Legacy caches are
@@ -284,11 +313,11 @@ async function scanOneAgent(
 					: skillCacheKey(agentType, skill.skill_key);
 				const cached = skillsLock.skills[cacheKey]?.hash;
 				const localPath = sharedOwnerHandle
-					? adapter.getSharedSkillPath(skill.skill_key, sharedOwnerHandle)
-					: adapter.getSkillPath(skill.skill_key);
+					? adapter.skills.sharedPath(skill.skill_key, sharedOwnerHandle)
+					: adapter.skills.path(skill.skill_key);
 				const localDirectory = sharedOwnerHandle ? localPath : dirname(localPath);
 				const localSkillKey = canonicalMaterializedSkillKey(
-					relative(adapter.getSkillsRootDir(), localDirectory),
+					relative(adapter.skills.rootDir(), localDirectory),
 				);
 				const localExists = existsSync(localPath);
 				const materializationIsExact = hasExactProjectSkillMaterialization({
@@ -316,9 +345,10 @@ async function scanOneAgent(
 		const mirrorDir = sessionMirrorDir(agentType);
 		for (const remote of await fetchCloudSessions(api, agentType)) {
 			const sidecar = readSidecar(mirrorDir, remote.local_session_id);
+			const remoteHash = remoteSessionSyncHash(remote);
 			if (!sidecar) {
 				sessions.push({ remote, reason: "new" });
-			} else if (!remote.content_hash || sidecar.content_hash !== remote.content_hash) {
+			} else if (!remoteHash || (sidecar.sync_hash ?? sidecar.content_hash) !== remoteHash) {
 				// Null/missing remote hash → must download (legacy rows
 				// pre-dating the column have nothing to compare).
 				sessions.push({ remote, reason: "updated" });
@@ -330,6 +360,7 @@ async function scanOneAgent(
 
 	return {
 		agentType,
+		modules: modules as (typeof DOWN_MODULES)[number][],
 		skillProjectId,
 		sharedOwnerHandle,
 		projectQualifiedSkillCache: Boolean(opts.project),
@@ -349,7 +380,8 @@ async function applyOneAgentPull(
 	let skillsImported = 0;
 	if (scan.skills.length > 0 && scan.skillProjectId && skillsLock) {
 		const adapter = adapterForType(scan.agentType);
-		if (adapter) {
+		const skills = adapter?.skills;
+		if (skills) {
 			for (const skill of scan.skills) {
 				const safeKey = sanitizeMetadata(skill.skill_key);
 				try {
@@ -361,10 +393,10 @@ async function applyOneAgentPull(
 						},
 					);
 					const localSkillDirectory = scan.sharedOwnerHandle
-						? adapter.getSharedSkillPath(skill.skill_key, scan.sharedOwnerHandle)
-						: dirname(adapter.getSkillPath(skill.skill_key));
+						? skills.sharedPath(skill.skill_key, scan.sharedOwnerHandle)
+						: dirname(skills.path(skill.skill_key));
 					const localSkillKey = canonicalMaterializedSkillKey(
-						relative(adapter.getSkillsRootDir(), localSkillDirectory),
+						relative(skills.rootDir(), localSkillDirectory),
 					);
 					// Persist the source authority before committing any bytes. If
 					// ledger persistence fails, the Agent filesystem stays untouched;
@@ -379,8 +411,8 @@ async function applyOneAgentPull(
 						},
 						() =>
 							scan.sharedOwnerHandle
-								? adapter.writeSharedSkillArchive(skill.skill_key, scan.sharedOwnerHandle, tarBytes)
-								: adapter.writeSkillArchive(skill.skill_key, tarBytes),
+								? skills.writeSharedArchive(skill.skill_key, scan.sharedOwnerHandle, tarBytes)
+								: skills.writeArchive(skill.skill_key, tarBytes),
 					);
 					await retireAgentProjectionClaims(api, scan.agentType, localSkillKey);
 					const cacheKey = scan.projectQualifiedSkillCache
@@ -391,8 +423,8 @@ async function applyOneAgentPull(
 					};
 					const skillDir = dirname(
 						scan.sharedOwnerHandle
-							? adapter.getSharedSkillPath(skill.skill_key, scan.sharedOwnerHandle)
-							: adapter.getSkillPath(skill.skill_key),
+							? skills.sharedPath(skill.skill_key, scan.sharedOwnerHandle)
+							: skills.path(skill.skill_key),
 					);
 					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 					skillsImported++;
@@ -510,6 +542,14 @@ interface SessionMirrorMeta {
 	model: string | null;
 	summary: string | null;
 	content_hash: string | null;
+	content_protocol?: "snapshot-v1" | "events-v1";
+	sync_hash?: string | null;
+}
+
+function remoteSessionSyncHash(remote: SessionListItem): string | null {
+	return remote.content_protocol === "events-v1"
+		? (remote.event_head_hash ?? null)
+		: (remote.content_hash ?? null);
 }
 
 function sessionMirrorDir(agentType: AgentType): string {
@@ -549,6 +589,8 @@ function writeMirrorAtomic(mirrorDir: string, remote: SessionListItem, body: Buf
 		model: remote.model,
 		summary: remote.summary,
 		content_hash: remote.content_hash ?? null,
+		content_protocol: remote.content_protocol,
+		sync_hash: remoteSessionSyncHash(remote),
 	};
 	writeFileSync(metaTmp, `${JSON.stringify(meta, null, 2)}\n`, { mode: 0o600 });
 

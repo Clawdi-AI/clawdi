@@ -595,9 +595,10 @@ export async function inboxForgetCommand(projectId: string): Promise<void> {
 	let removed = 0;
 	for (const entry of allAdapterEntries()) {
 		const adapter = entry.create();
+		if (!adapter.skills) continue;
 		for (const key of skillKeys) {
 			if (preserveAllForOwner || preservedKeys.has(key)) continue;
-			const path = adapter.getSharedSkillPath(key, token.owner_handle);
+			const path = adapter.skills.sharedPath(key, token.owner_handle);
 			try {
 				rmSync(path, { recursive: true, force: true });
 				removed++;

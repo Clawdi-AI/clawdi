@@ -59,6 +59,7 @@ async def _create_session(
     session = Session(
         user_id=user_id,
         environment_id=environment_id,
+        origin_environment_id=environment_id,
         local_session_id=local_session_id,
         started_at=now,
         last_activity_at=now,
@@ -71,7 +72,15 @@ async def _create_session(
 
 
 async def _is_suppressed(db: AsyncSession, user_id: uuid.UUID, local_id: str) -> bool:
-    return await db.get(SessionSyncSuppression, (user_id, local_id)) is not None
+    return (
+        await db.scalar(
+            select(SessionSyncSuppression.id).where(
+                SessionSyncSuppression.user_id == user_id,
+                SessionSyncSuppression.local_session_id == local_id,
+            )
+        )
+        is not None
+    )
 
 
 async def _register_env(client: httpx.AsyncClient) -> uuid.UUID:
@@ -116,7 +125,7 @@ async def test_delete_session_is_durable_and_preserves_memories(
 
     environment_id = await _register_env(client)
     local_session_id = f"z-delete-{uuid.uuid4().hex}"
-    content_key = f"sessions/{seed_user.id}/{local_session_id}.json"
+    content_key = f"sessions/{seed_user.id}/{environment_id}/{local_session_id}.json"
     await sessions_route.file_store.put(content_key, b"[]")
     session = await _create_session(
         db_session,
@@ -252,6 +261,50 @@ async def test_delete_session_storage_failure_is_retryable(
     assert await db_session.scalar(select(Session.id).where(Session.id == session_id)) == session_id
     assert not await _is_suppressed(db_session, user_id, local_session_id)
     assert await file_store.exists(content_key)
+
+
+@pytest.mark.asyncio
+async def test_delete_suppression_is_fenced_to_immutable_origin(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    environment_a = await _register_env(client)
+    environment_b = await _register_env(client)
+    local_session_id = f"shared-{uuid.uuid4().hex}"
+
+    for environment_id in (environment_a, environment_b):
+        response = await client.post(
+            "/v1/sessions/batch",
+            json=_batch_body(environment_id, [local_session_id]).model_dump(mode="json"),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["created"] == 1
+
+    session_a = await db_session.scalar(
+        select(Session).where(
+            Session.user_id == seed_user.id,
+            Session.origin_environment_id == environment_a,
+            Session.local_session_id == local_session_id,
+        )
+    )
+    assert session_a is not None
+    assert (await client.delete(f"/v1/sessions/{session_a.id}")).status_code == 204
+
+    suppressed = await client.post(
+        "/v1/sessions/batch",
+        json=_batch_body(environment_a, [local_session_id]).model_dump(mode="json"),
+    )
+    assert suppressed.status_code == 200, suppressed.text
+    assert suppressed.json()["suppressed"] == [local_session_id]
+
+    other_origin = await client.post(
+        "/v1/sessions/batch",
+        json=_batch_body(environment_b, [local_session_id]).model_dump(mode="json"),
+    )
+    assert other_origin.status_code == 200, other_origin.text
+    assert other_origin.json()["suppressed"] == []
+    assert other_origin.json()["created"] == 0
 
 
 @pytest.mark.asyncio

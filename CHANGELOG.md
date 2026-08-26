@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Unreleased
+
+### Added
+
+- Pi is now available as a Connected sessions-only adapter, including active-branch and compaction-aware JSONL ingestion.
+- Rich Session upload preserves visible messages and structured tool calls/results through an incremental, retry-safe event protocol when the server supports it. Attachments are explicit external references or metadata-only records in this release; attachment bytes, local paths, hidden reasoning, and encrypted continuation state are never uploaded.
+
+### Changed
+
+- Local adapters now advertise complete Sessions and Skills modules. Setup, sync, commands, and Connected dashboard routes only start or show modules the adapter actually supports.
+- Session uploads are fenced by Cloud origin, Agent origin, adapter, source identity, and exact stored-content receipts. Oversized legacy Sessions now enter durable blocked health instead of retrying indefinitely.
+
 ## Clawdi CLI v0.14.19
 
 Package: `clawdi@0.14.19`

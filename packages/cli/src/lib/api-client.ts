@@ -14,6 +14,13 @@ import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
 type SessionUploadResponse = components["schemas"]["SessionUploadResponse"];
+type SessionUploadCapabilitiesResponse = components["schemas"]["SessionUploadCapabilitiesResponse"];
+type SessionEventHeadResponse = components["schemas"]["SessionEventHeadResponse"];
+type SessionEventGenerationCreate = components["schemas"]["SessionEventGenerationCreate"];
+type SessionEventGenerationResponse = components["schemas"]["SessionEventGenerationResponse"];
+type SessionEventChunkResponse = components["schemas"]["SessionEventChunkResponse"];
+type SessionEventCommitRequest = components["schemas"]["SessionEventCommitRequest"];
+type SessionEventAppendResponse = components["schemas"]["SessionEventAppendResponse"];
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
@@ -439,12 +446,114 @@ export class ApiClient {
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
+		fence?: { environmentId: string; expectedContentHash: string },
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
 			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
-			{},
+			fence
+				? {
+						environment_id: fence.environmentId,
+						expected_content_hash: fence.expectedContentHash,
+					}
+				: {},
 			file,
 			filename,
+		);
+	}
+
+	async getSessionUploadCapabilities(): Promise<SessionUploadCapabilitiesResponse | null> {
+		const result = await this.GET("/v1/sessions/upload-capabilities");
+		if (result.response.status === 404) return null;
+		return unwrap(result);
+	}
+
+	async getSessionEventHead(
+		localSessionId: string,
+		environmentId: string,
+	): Promise<SessionEventHeadResponse> {
+		return unwrap(
+			await this.GET("/v1/sessions/{local_session_id}/events/head", {
+				params: {
+					path: { local_session_id: localSessionId },
+					query: { environment_id: environmentId },
+				},
+			}),
+		);
+	}
+
+	async stageSessionEventGeneration(
+		localSessionId: string,
+		body: SessionEventGenerationCreate,
+	): Promise<SessionEventGenerationResponse> {
+		return unwrap(
+			await this.POST("/v1/sessions/{local_session_id}/events/generations", {
+				params: { path: { local_session_id: localSessionId } },
+				body,
+			}),
+		);
+	}
+
+	async uploadSessionEventGenerationChunk(input: {
+		localSessionId: string;
+		generation: string;
+		startSeq: number;
+		baseHeadHash: string;
+		contentHash: string;
+		file: Buffer;
+	}): Promise<SessionEventChunkResponse> {
+		return this.multipartRequest<SessionEventChunkResponse>(
+			"PUT",
+			`/v1/sessions/${encodeURIComponent(input.localSessionId)}/events/generations/${encodeURIComponent(input.generation)}/chunks/${input.startSeq}`,
+			{ base_head_hash: input.baseHeadHash, content_hash: input.contentHash },
+			input.file,
+			`${input.startSeq}.ndjson`,
+		);
+	}
+
+	async commitSessionEventGeneration(
+		localSessionId: string,
+		generation: string,
+		body: SessionEventCommitRequest,
+	): Promise<SessionEventAppendResponse> {
+		return unwrap(
+			await this.POST("/v1/sessions/{local_session_id}/events/generations/{generation_id}/commit", {
+				params: {
+					path: { local_session_id: localSessionId, generation_id: generation },
+				},
+				body,
+			}),
+		);
+	}
+
+	async appendSessionEvents(input: {
+		localSessionId: string;
+		environmentId: string;
+		appendId: string;
+		generation: string;
+		baseRevision: number;
+		baseCount: number;
+		baseHeadHash: string;
+		finalCount: number;
+		finalHeadHash: string;
+		contentHash: string;
+		file: Buffer;
+	}): Promise<SessionEventAppendResponse> {
+		return this.multipartRequest<SessionEventAppendResponse>(
+			"POST",
+			`/v1/sessions/${encodeURIComponent(input.localSessionId)}/events/append`,
+			{
+				environment_id: input.environmentId,
+				append_id: input.appendId,
+				generation: input.generation,
+				base_revision: String(input.baseRevision),
+				base_count: String(input.baseCount),
+				base_head_hash: input.baseHeadHash,
+				final_count: String(input.finalCount),
+				final_head_hash: input.finalHeadHash,
+				content_hash: input.contentHash,
+			},
+			input.file,
+			`${input.baseCount}.ndjson`,
 		);
 	}
 
@@ -455,6 +564,17 @@ export class ApiClient {
 
 	/** Shared multipart POST; never retried (non-idempotent). */
 	private async multipartPost<T>(
+		path: string,
+		fields: Record<string, string>,
+		file: Buffer,
+		filename: string,
+		extraHeaders?: Record<string, string>,
+	): Promise<T> {
+		return this.multipartRequest("POST", path, fields, file, filename, extraHeaders);
+	}
+
+	private async multipartRequest<T>(
+		method: "POST" | "PUT",
 		path: string,
 		fields: Record<string, string>,
 		file: Buffer,
@@ -483,15 +603,17 @@ export class ApiClient {
 			const headers: Record<string, string> = {
 				Authorization: `Bearer ${accessToken}`,
 				"User-Agent": USER_AGENT,
+				"X-Request-ID": randomUUID(),
 				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 				...(extraHeaders ?? {}),
 			};
-			const res = await fetch(`${this.baseUrl}${path}`, {
-				method: "POST",
+			const request = new Request(`${this.baseUrl}${path}`, {
+				method,
 				headers,
 				body: formData,
 				signal: controller.signal,
 			});
+			const res = await retryingFetch(request, DEFAULT_TIMEOUT_MS, controller.signal);
 			if (!res.ok) {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });

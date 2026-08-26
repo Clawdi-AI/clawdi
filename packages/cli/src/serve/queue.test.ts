@@ -16,6 +16,15 @@ import { RetryQueue } from "./queue";
 const tmp = mkdtempSync(join(tmpdir(), "clawdi-queue-test-"));
 const originalStateDir = process.env.CLAWDI_STATE_DIR;
 
+function sessionFence(sourceSessionKey: string) {
+	return {
+		api_origin: "https://cloud.example.test",
+		environment_id: "test-agent",
+		adapter: "claude_code" as const,
+		source_session_key: sourceSessionKey,
+	};
+}
+
 afterAll(() => {
 	rmSync(tmp, { recursive: true, force: true });
 	if (originalStateDir === undefined) delete process.env.CLAWDI_STATE_DIR;
@@ -532,6 +541,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code", maxItems: 2 });
 		q.enqueue({
 			kind: "session_push",
+			...sessionFence("s1"),
 			local_session_id: "s1",
 			content_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -572,6 +582,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
 		q.enqueue({
 			kind: "session_push",
+			...sessionFence("session-a"),
 			local_session_id: "session-a",
 			content_hash: "session-hash",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -609,6 +620,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "session_push",
+			...sessionFence("alpha"),
 			local_session_id: "alpha",
 			content_hash: "h1",
 			enqueued_at: "2026-01-01T00:00:00Z",
@@ -616,6 +628,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "session_push",
+			...sessionFence("beta"),
 			local_session_id: "beta",
 			content_hash: "h2",
 			enqueued_at: "2026-01-01T00:00:00Z",

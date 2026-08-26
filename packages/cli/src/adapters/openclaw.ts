@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
+import {
+	projectEventsToMessages,
+	type SessionEventDraft,
+	sequenceSessionEvents,
+} from "../lib/session-events";
 import { extractTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -17,10 +22,9 @@ import {
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
-	AgentAdapter,
+	AgentAdapterCore,
 	RawSession,
 	RawSkill,
-	SessionMessage,
 	SessionScanRequest,
 	SessionScanResult,
 } from "./base";
@@ -30,6 +34,16 @@ import {
 	resolveOpenClawAgentWorkspace,
 } from "./openclaw-workspace";
 import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
+import {
+	canonicalStructuredString,
+	completeJsonlRecords,
+	type JsonObject,
+	jsonObject,
+	jsonString,
+	stableRecordId,
+	toolResultContent,
+	visibleContentParts,
+} from "./rich-event-mapping";
 import { readCommandVersion } from "./version";
 
 function openclawDir() {
@@ -125,26 +139,127 @@ interface TranscriptLine {
 	modelId?: string;
 }
 
-function extractText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.filter(
-				(b): b is { type: string; text: string } =>
-					typeof b === "object" &&
-					b !== null &&
-					"type" in b &&
-					b.type === "text" &&
-					typeof (b as { text?: unknown }).text === "string",
-			)
-			.map((b) => b.text)
-			.join("\n");
+function openClawEventDrafts(
+	raw: JsonObject,
+	sessionKey: string,
+	recordSeq: number,
+	currentModel: string | null,
+): SessionEventDraft[] {
+	const timestampValue = raw.timestamp;
+	const timestamp =
+		typeof timestampValue === "number"
+			? new Date(timestampValue).toISOString()
+			: (jsonString(timestampValue) ?? undefined);
+	const recordId = stableRecordId(raw, recordSeq);
+	const eventSource = (partIndex?: number) => ({
+		adapter: "openclaw" as const,
+		session_key: sessionKey,
+		record_id: recordId,
+		record_seq: recordSeq,
+		...(partIndex === undefined ? {} : { part_index: partIndex }),
+	});
+	if (raw.type === "model_change") {
+		const model = jsonString(raw.modelId);
+		return model
+			? [
+					{
+						type: "message",
+						role: "system",
+						parts: [{ type: "text", text: `Model changed to ${model}.` }],
+						model,
+						source: eventSource(),
+						...(timestamp ? { timestamp } : {}),
+					},
+				]
+			: [];
 	}
-	return "";
+	if (raw.type !== "message") return [];
+	const message = jsonObject(raw.message);
+	if (!message) return [];
+	const role = jsonString(message.role);
+	const model = jsonString(message.model) ?? currentModel ?? undefined;
+	const drafts: SessionEventDraft[] = [];
+	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
+		const parts = visibleContentParts(message.content);
+		if (parts.length > 0) {
+			drafts.push({
+				type: "message",
+				role,
+				parts,
+				source: eventSource(0),
+				...(timestamp ? { timestamp } : {}),
+				...(role === "assistant" && model ? { model } : {}),
+			});
+		}
+	}
+	const blocks = Array.isArray(message.content) ? message.content : [];
+	for (let index = 0; index < blocks.length; index++) {
+		const block = jsonObject(blocks[index]);
+		if (!block) continue;
+		if (role === "assistant" && (block.type === "toolCall" || block.type === "tool_use")) {
+			const callId = jsonString(block.id);
+			const name = jsonString(block.name);
+			if (!callId || !name) continue;
+			drafts.push({
+				type: "tool_call",
+				call_id: callId,
+				name,
+				arguments_json: canonicalStructuredString(block.arguments ?? block.input),
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+				...(model ? { model } : {}),
+			});
+		}
+		if (role === "user" && block.type === "tool_result") {
+			const callId = jsonString(block.tool_use_id);
+			if (!callId) continue;
+			drafts.push({
+				type: "tool_result",
+				call_id: callId,
+				status: block.is_error === true ? "error" : "completed",
+				...toolResultContent(block.content, block.details),
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+			});
+		}
+	}
+	if (role === "toolResult") {
+		const callId = jsonString(message.toolCallId);
+		if (callId)
+			drafts.push({
+				type: "tool_result",
+				call_id: callId,
+				...(jsonString(message.toolName) ? { name: jsonString(message.toolName) as string } : {}),
+				status: message.isError === true ? "error" : "completed",
+				...toolResultContent(message.content, message.details),
+				source: eventSource(),
+				...(timestamp ? { timestamp } : {}),
+			});
+	}
+	// OpenClaw `thinking` blocks are intentionally ignored.
+	return drafts;
 }
 
-export class OpenClawAdapter implements AgentAdapter {
+export class OpenClawAdapter implements AgentAdapterCore {
 	readonly agentType = "openclaw" as const;
+	readonly sessions = {
+		contentProtocol: async () => "events-v1" as const,
+		collect: (request: SessionScanRequest) => this.collectSessions(request),
+		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		watchPaths: () => this.getSessionsWatchPaths(),
+	};
+	readonly skills = {
+		collect: () => this.collectSkills(),
+		listKeys: () => this.listSkillKeys(),
+		path: (key: string) => this.getSkillPath(key),
+		rootDir: () => this.getSkillsRootDir(),
+		sharedPath: (skillKey: string, ownerHandle: string) =>
+			this.getSharedSkillPath(skillKey, ownerHandle),
+		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
+		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
+			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
+		remove: (key: string) => this.removeLocalSkill(key),
+	};
 
 	async detect(): Promise<boolean> {
 		// OpenClaw creates `agents/{id}/` per agent. Detection succeeds when
@@ -163,7 +278,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		);
 	}
 
-	async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
 		if (request.kind === "complete") {
 			const { result } = await this.collectSessionsMatching(request);
 			return { ...result, coverage: "complete" };
@@ -194,7 +309,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		return { ...collection.result, coverage: "partial" };
 	}
 
-	async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		return (
 			(await this.collectSessionsMatching({}, undefined, localSessionId)).result.sessions[0] ?? null
 		);
@@ -227,6 +342,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		const matchedTranscriptPaths = new Set<string>();
 
 		for (const agentRoot of agentDirs) {
+			const sourceAgentId = basename(agentRoot);
 			const sessionsDirForAgent = join(agentRoot, "sessions");
 			const indexPath = join(sessionsDirForAgent, "sessions.json");
 			if (!existsSync(indexPath)) continue;
@@ -262,7 +378,7 @@ export class OpenClawAdapter implements AgentAdapter {
 				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
 				if (transcriptPaths) matchedTranscriptPaths.add(normalizedTranscriptPath);
 
-				const messages: SessionMessage[] = [];
+				let events = [] as import("./base").SessionEvent[];
 				let startedAt: Date | null = null;
 				let endedAt: Date | null = null;
 				const modelsUsed = new Set<string>();
@@ -279,14 +395,18 @@ export class OpenClawAdapter implements AgentAdapter {
 					}
 				} else {
 					try {
-						const lines = readFileSync(transcriptPath, "utf-8").split("\n").filter(Boolean);
-						for (const line of lines) {
-							let parsed: TranscriptLine;
-							try {
-								parsed = JSON.parse(line);
-							} catch {
-								continue;
-							}
+						const transcriptContent = readFileSync(transcriptPath, "utf-8");
+						const drafts: SessionEventDraft[] = [];
+						for (const { data: raw, recordSeq } of completeJsonlRecords(transcriptContent)) {
+							const parsed = raw as TranscriptLine;
+							drafts.push(
+								...openClawEventDrafts(
+									raw,
+									`${sourceAgentId}:${sessionId}`,
+									recordSeq,
+									currentModel,
+								),
+							);
 
 							const ts = parsed.timestamp
 								? new Date(
@@ -303,26 +423,15 @@ export class OpenClawAdapter implements AgentAdapter {
 							if (parsed.type === "model_change" && parsed.modelId) {
 								modelsUsed.add(parsed.modelId);
 								currentModel = parsed.modelId;
-								continue;
 							}
-
-							if (parsed.type !== "message") continue;
-							const role = parsed.message?.role;
-							if (role !== "user" && role !== "assistant") continue;
-							const text = extractText(parsed.message?.content);
-							if (!text) continue;
-							messages.push({
-								role,
-								content: text,
-								model: role === "assistant" ? (currentModel ?? undefined) : undefined,
-								timestamp: ts?.toISOString(),
-							});
 						}
+						events = sequenceSessionEvents(drafts);
 					} catch {
 						// Unreadable transcript — fall through with whatever we have.
 					}
 				}
 
+				const messages = projectEventsToMessages(events);
 				if (messages.length === 0) continue;
 
 				// Defensive fallback: a transcript with messages but no timestamps at all
@@ -354,6 +463,7 @@ export class OpenClawAdapter implements AgentAdapter {
 					durationSeconds,
 					summary,
 					messages,
+					events,
 					rawFilePath: existsSync(transcriptPath) ? transcriptPath : indexPath,
 				});
 			}
@@ -367,7 +477,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		};
 	}
 
-	async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(): Promise<RawSkill[]> {
 		const skills: RawSkill[] = [];
 		const seen = new Map<string, string>(); // skillKey → first-winning agentDir
 		migrateLegacyLocalSetupSkill({
@@ -429,19 +539,19 @@ export class OpenClawAdapter implements AgentAdapter {
 		return skills;
 	}
 
-	getSkillPath(key: string): string {
+	private getSkillPath(key: string): string {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
-	getSkillsRootDir(): string {
+	private getSkillsRootDir(): string {
 		return skillsDir();
 	}
 
-	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
 		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
 	}
 
-	async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(): Promise<string[]> {
 		// Restricted to the CURRENT agent's `skillsDir()` —
 		// `collectSkills` walks every agent dir for `clawdi push`
 		// (one-shot, batch view), but the daemon's hot path is
@@ -473,21 +583,21 @@ export class OpenClawAdapter implements AgentAdapter {
 		return out;
 	}
 
-	getSessionsWatchPaths(): string[] {
+	private getSessionsWatchPaths(): string[] {
 		const paths = listAgentDirs()
 			.map((dir) => join(dir, "sessions"))
 			.filter((path) => existsSync(path));
 		return paths.length > 0 ? paths : [sessionsDir()];
 	}
 
-	async removeLocalSkill(key: string): Promise<void> {
+	private async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
 		mutateUserSkillTarget(dir, key, () => {
 			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		});
 	}
 
-	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
+	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		await this.installOfficialSkillArchive(key, key, tarGzBytes);
 	}
 
@@ -556,7 +666,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		}
 	}
 
-	async writeSharedSkillArchive(
+	private async writeSharedSkillArchive(
 		key: string,
 		ownerHandle: string,
 		tarGzBytes: Buffer,

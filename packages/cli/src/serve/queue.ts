@@ -29,6 +29,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { AgentType } from "../adapters/agent-types";
 import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
@@ -55,6 +56,18 @@ type SkillOperationBase = ItemBase & {
 	project_id?: string;
 };
 
+type SessionOperationBase = ItemBase & {
+	kind: "session_push";
+	local_session_id: string;
+	content_hash: string;
+	// Optional only for legacy queue.jsonl rows. New enqueue inputs require the
+	// complete origin fence and the drain boundary rejects missing fields.
+	api_origin?: string;
+	environment_id?: string;
+	adapter?: AgentType;
+	source_session_key?: string;
+};
+
 export type QueueItem =
 	| (SkillOperationBase & {
 			kind: "skill_push";
@@ -65,11 +78,7 @@ export type QueueItem =
 	| (SkillOperationBase & {
 			kind: "skill_delete";
 	  })
-	| (ItemBase & {
-			kind: "session_push";
-			local_session_id: string;
-			content_hash: string;
-	  });
+	| SessionOperationBase;
 
 /** What the caller passes to `enqueue()` — same as a QueueItem
  * minus the `version` field, which the queue stamps itself. New
@@ -84,7 +93,15 @@ type QueueItemInput =
 			agent_id: string;
 			project_id: string;
 	  })
-	| Omit<Extract<QueueItem, { kind: "session_push" }>, "version">;
+	| (Omit<
+			Extract<QueueItem, { kind: "session_push" }>,
+			"version" | "api_origin" | "environment_id" | "adapter" | "source_session_key"
+	  > & {
+			api_origin: string;
+			environment_id: string;
+			adapter: AgentType;
+			source_session_key: string;
+	  });
 
 const DEFAULT_MAX_ITEMS = 500;
 
@@ -161,6 +178,11 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 	if (r.kind === "session_push") {
 		if (typeof r.local_session_id !== "string") return false;
 		if (typeof r.content_hash !== "string") return false;
+		if (r.api_origin !== undefined && typeof r.api_origin !== "string") return false;
+		if (r.environment_id !== undefined && typeof r.environment_id !== "string") return false;
+		if (r.adapter !== undefined && !isAgentType(r.adapter)) return false;
+		if (r.source_session_key !== undefined && typeof r.source_session_key !== "string")
+			return false;
 		return true;
 	}
 	return false;
@@ -523,9 +545,43 @@ function sameKey(a: QueueItem, b: QueueItem): boolean {
 		return a.skill_key === b.skill_key;
 	}
 	if (a.kind === "session_push" && b.kind === "session_push") {
+		if (hasSessionFence(a) && hasSessionFence(b)) {
+			return (
+				a.api_origin === b.api_origin &&
+				a.environment_id === b.environment_id &&
+				a.adapter === b.adapter &&
+				a.source_session_key === b.source_session_key
+			);
+		}
 		return a.local_session_id === b.local_session_id;
 	}
 	return false;
+}
+
+export function hasSessionFence(
+	item: Extract<QueueItem, { kind: "session_push" }>,
+): item is Extract<QueueItem, { kind: "session_push" }> & {
+	api_origin: string;
+	environment_id: string;
+	adapter: AgentType;
+	source_session_key: string;
+} {
+	return (
+		typeof item.api_origin === "string" &&
+		typeof item.environment_id === "string" &&
+		item.adapter !== undefined &&
+		typeof item.source_session_key === "string"
+	);
+}
+
+function isAgentType(value: unknown): value is AgentType {
+	return (
+		value === "claude_code" ||
+		value === "codex" ||
+		value === "openclaw" ||
+		value === "hermes" ||
+		value === "pi"
+	);
 }
 
 function isSkillOperation(

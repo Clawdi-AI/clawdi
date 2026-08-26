@@ -22,6 +22,7 @@ from app.services.metrics import metrics_content_type, render_metrics
 from app.services.plugin_catalog import PluginCatalogSyncWorker
 from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
+from app.services.session_event_retention_worker import SessionEventRetentionWorker
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
 from app.services.whatsapp_managed_onboarding import (
@@ -148,6 +149,7 @@ def build_channel_workers() -> tuple[
     PrincipalLifecycleCleanupWorker,
     ChannelMessageRetentionWorker,
     RuntimeObservationRetentionWorker,
+    SessionEventRetentionWorker,
 ]:
     """Build the Clawdi-owned channel worker stack.
 
@@ -163,6 +165,7 @@ def build_channel_workers() -> tuple[
         PrincipalLifecycleCleanupWorker(async_session_factory),
         ChannelMessageRetentionWorker(async_session_factory),
         RuntimeObservationRetentionWorker(async_session_factory),
+        SessionEventRetentionWorker(async_session_factory),
     )
 
 

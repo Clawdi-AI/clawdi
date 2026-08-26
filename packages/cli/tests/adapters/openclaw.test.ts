@@ -135,7 +135,7 @@ describe("OpenClawAdapter.detect", () => {
 describe("OpenClawAdapter.collectSessions", () => {
 	it("parses the fixture session with index metadata + transcript messages", async () => {
 		const a = new OpenClawAdapter();
-		const { sessions, dedupedCount } = await a.collectSessions({ kind: "complete" });
+		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions).toHaveLength(1);
 		expect(dedupedCount).toBe(0);
 		const s = sessions[0]!;
@@ -159,18 +159,18 @@ describe("OpenClawAdapter.collectSessions", () => {
 
 	it("uses displayName as summary", async () => {
 		const a = new OpenClawAdapter();
-		const s = (await a.collectSessions({ kind: "complete" })).sessions[0]!;
+		const s = (await a.sessions.collect({ kind: "complete" })).sessions[0]!;
 		expect(s.summary).toBe("Fixture session");
 	});
 
 	it("filters by projectFilter matching acp.cwd", async () => {
 		const a = new OpenClawAdapter();
 		expect(
-			(await a.collectSessions({ kind: "complete", projectFilter: "/Users/fixture/project" }))
+			(await a.sessions.collect({ kind: "complete", projectFilter: "/Users/fixture/project" }))
 				.sessions,
 		).toHaveLength(1);
 		expect(
-			(await a.collectSessions({ kind: "complete", projectFilter: "/Users/other/project" }))
+			(await a.sessions.collect({ kind: "complete", projectFilter: "/Users/other/project" }))
 				.sessions,
 		).toHaveLength(0);
 	});
@@ -184,7 +184,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		// accident.)
 		rmSync(join(tmpHome, ".openclaw", "agents", "main"), { recursive: true, force: true });
 		const a = new OpenClawAdapter();
-		expect((await a.collectSessions({ kind: "complete" })).sessions).toEqual([]);
+		expect((await a.sessions.collect({ kind: "complete" })).sessions).toEqual([]);
 	});
 
 	it("scans every agents/<id>/ subdir (issue #28)", async () => {
@@ -192,7 +192,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		// are picked up without setting OPENCLAW_AGENT_ID.
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		const a = new OpenClawAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		const ids = sessions.map((s) => s.localSessionId).sort();
 		expect(ids).toEqual(["oc-financial-001", "oc-session-001"]);
 	});
@@ -202,16 +202,14 @@ describe("OpenClawAdapter.collectSessions", () => {
 		const adapter = new OpenClawAdapter();
 		const mainSessions = join(tmpHome, ".openclaw", "agents", "main", "sessions");
 		const financialSessions = join(tmpHome, ".openclaw", "agents", "financial", "sessions");
-		expect(adapter.getSessionsWatchPaths().sort()).toEqual(
-			[mainSessions, financialSessions].sort(),
-		);
-		const bounded = await adapter.collectSessions({
+		expect(adapter.sessions.watchPaths().sort()).toEqual([mainSessions, financialSessions].sort());
+		const bounded = await adapter.sessions.collect({
 			kind: "paths",
 			paths: [join(financialSessions, "oc-financial-001.jsonl")],
 		});
 		expect(bounded.coverage).toBe("partial");
 		expect(bounded.sessions.map((session) => session.localSessionId)).toEqual(["oc-financial-001"]);
-		const ambiguous = await adapter.collectSessions({
+		const ambiguous = await adapter.sessions.collect({
 			kind: "paths",
 			paths: [
 				join(financialSessions, "sessions.json"),
@@ -268,7 +266,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		);
 
 		const a = new OpenClawAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions).toHaveLength(1);
 		const s = sessions[0]!;
 		// localSessionId must be the UUID, not the composite index key.
@@ -281,7 +279,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		process.env.OPENCLAW_AGENT_ID = "financial";
 		const a = new OpenClawAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["oc-financial-001"]);
 	});
 });
@@ -289,7 +287,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 describe("OpenClawAdapter.collectSkills", () => {
 	it("finds demo skill under agents/<id>/skills/ and skips SKIP_DIRS", async () => {
 		const a = new OpenClawAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		// Fixture has demo/ (real) and node_modules/ (SKIP_DIRS sentinel).
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
 	});
@@ -307,16 +305,16 @@ describe("OpenClawAdapter.collectSkills", () => {
 		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
 
 		const adapter = new OpenClawAdapter();
-		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain(
+		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain(
 			".clawdi-previous-test",
 		);
-		expect(await adapter.listSkillKeys()).not.toContain(".clawdi-previous-test");
+		expect(await adapter.skills.listKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		const a = new OpenClawAdapter();
-		const keys = (await a.collectSkills()).map((s) => s.skillKey).sort();
+		const keys = (await a.skills.collect()).map((s) => s.skillKey).sort();
 		expect(keys).toEqual(["demo", "fin-skill"]);
 	});
 });
@@ -326,7 +324,7 @@ describe("OpenClawAdapter.writeSkillArchive + getSkillPath", () => {
 		const bytes = await tarSkillDir(join(tmpHome, ".openclaw", "agents", "main", "skills", "demo"));
 
 		const a = new OpenClawAdapter();
-		await a.writeSkillArchive("demo", bytes);
+		await a.skills.writeArchive("demo", bytes);
 
 		const extracted = join(tmpHome, ".openclaw", "agents", "main", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);

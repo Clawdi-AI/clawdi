@@ -4,9 +4,17 @@ import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
 import { HermesAdapter } from "./hermes";
+import {
+	claudeMcpLifecycle,
+	codexMcpLifecycle,
+	hermesMcpLifecycle,
+	type McpLifecycle,
+	openClawMcpLifecycle,
+} from "./mcp-lifecycle";
 import { OpenClawAdapter } from "./openclaw";
 import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
-import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome } from "./paths";
+import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome, getPiHome } from "./paths";
+import { PiAdapter } from "./pi";
 
 export { AGENT_TYPES, type AgentType } from "./agent-types";
 
@@ -18,6 +26,8 @@ export interface AdapterRegistryEntry {
 	home: () => string;
 	/** Construct an adapter instance. */
 	create: () => AgentAdapter;
+	/** Optional local MCP lifecycle. Both actions are one indivisible contract. */
+	mcpLifecycle?: McpLifecycle;
 }
 
 // Registry: every `AgentType` must have exactly one entry — `Record<AgentType, …>`
@@ -28,26 +38,41 @@ export const adapterRegistry: Record<AgentType, AdapterRegistryEntry> = {
 		envFileName: "claude_code.json",
 		home: getClaudeHome,
 		create: () => new ClaudeCodeAdapter(),
+		mcpLifecycle: claudeMcpLifecycle,
 	},
 	codex: {
 		displayName: "Codex",
 		envFileName: "codex.json",
 		home: getCodexHome,
 		create: () => new CodexAdapter(),
+		mcpLifecycle: codexMcpLifecycle,
 	},
 	openclaw: {
 		displayName: "OpenClaw",
 		envFileName: "openclaw.json",
 		home: getOpenClawHome,
 		create: () => new OpenClawAdapter(),
+		mcpLifecycle: openClawMcpLifecycle,
 	},
 	hermes: {
 		displayName: "Hermes",
 		envFileName: "hermes.json",
 		home: getHermesHome,
 		create: () => new HermesAdapter(),
+		mcpLifecycle: hermesMcpLifecycle,
+	},
+	pi: {
+		displayName: "Pi",
+		envFileName: "pi.json",
+		home: getPiHome,
+		create: () => new PiAdapter(),
 	},
 };
+
+export const AGENT_TYPE_HELP_LABEL = AGENT_TYPES.join(", ");
+export const SKILL_AGENT_TYPE_HELP_LABEL = AGENT_TYPES.filter(
+	(agentType) => adapterRegistry[agentType].create().skills !== undefined,
+).join(", ");
 
 /** Registry entry annotated with its agent type — convenience for iteration. */
 export interface AnnotatedAdapterEntry extends AdapterRegistryEntry {

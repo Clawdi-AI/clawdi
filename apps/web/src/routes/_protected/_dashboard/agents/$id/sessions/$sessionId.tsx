@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-route-gate";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 import AgentSessionDetailPage from "@/pages/dashboard/agents/agent-session-detail-page";
 
@@ -9,5 +11,14 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/sessions
 
 function AgentSessionDetailRoute() {
 	const { id, sessionId } = Route.useParams();
-	return <AgentSessionDetailPage agentId={id} sessionId={sessionId} />;
+	return (
+		<AgentResourceRouteGate
+			agentId={id}
+			returnHref={agentSectionHref(id, "overview")}
+			returnLabel="Agent overview"
+			requiredAdapterModule="sessions"
+		>
+			<AgentSessionDetailPage agentId={id} sessionId={sessionId} />
+		</AgentResourceRouteGate>
+	);
 }

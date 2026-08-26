@@ -11,6 +11,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Path,
     Query,
@@ -20,7 +21,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, update
+from sqlalchemy import case, func, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from app.core.auth import (
     get_auth,
     invalidate_api_key_auth_cache,
     is_connected_agent_principal,
+    require_any_scope,
     require_scope,
     require_web_auth,
 )
@@ -39,7 +41,12 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.memory import Memory
-from app.models.session import AgentEnvironment, Session, SessionSyncSuppression
+from app.models.session import (
+    AgentEnvironment,
+    Session,
+    SessionEventChunk,
+    SessionSyncSuppression,
+)
 from app.models.session_permission import (
     PERMISSION_KIND_LINK,
     PERMISSION_KINDS,
@@ -116,6 +123,7 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     load_session_messages,
+    session_has_uploaded_content,
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
@@ -276,6 +284,7 @@ async def _register_agent_identity(
         # Existing Hosted V2 state or a Legacy V1 environment-bound key prevents
         # an account-level CLI token from reclassifying that Agent identity.
         registered.env.connected_agent_registered_at = datetime.now(UTC)
+        registered.env.adapter_modules = body.adapter_modules
     else:
         # A managed or environment-bound registration is positive evidence
         # against the Connected runtime shape; do not retain its observations.
@@ -288,11 +297,11 @@ async def _register_agent_identity(
 async def register_agent(
     body: EnvironmentCreate,
     # Daemons register themselves on `clawdi setup`; they hold a
-    # write-scoped key. Without `require_scope`, a read-only key
+    # write-scoped key. Without a write-scope gate, a read-only key
     # could create new agent rows that the rest of the heartbeat /
     # session path then refuses to write — half-registered ghosts
     # in the dashboard.
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
     return await _register_agent_identity(body, auth, db)
@@ -301,7 +310,7 @@ async def register_agent(
 @router.post("/environments", deprecated=True)
 async def register_environment(
     body: EnvironmentCreate,
-    auth: AuthContext = Depends(require_scope("skills:write")),
+    auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
     return await _register_agent_identity(body, auth, db)
@@ -1274,6 +1283,7 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
         # backfills any legacy row missing this column before the
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
+        adapter_modules=env.adapter_modules,
     )
 
 
@@ -1342,7 +1352,12 @@ async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
 
 
 def _session_content_key(session: Session) -> str:
-    return f"sessions/{session.user_id}/{session.local_session_id}.json"
+    if session.origin_environment_id is None:
+        return f"sessions/{session.user_id}/{session.local_session_id}.json"
+    return (
+        f"sessions/{session.user_id}/{session.origin_environment_id}/"
+        f"{session.local_session_id}.json"
+    )
 
 
 async def _next_environment_sort_order(db: AsyncSession, user_id: UUID) -> int:
@@ -2027,7 +2042,7 @@ async def batch_create_sessions(
 ) -> SessionBatchResponse:
     """Ingest a batch of sessions from a CLI sync.
 
-    Upserts every row by `(user_id, local_session_id)`. The response tells
+    Upserts every row by `(user_id, origin_environment_id, local_session_id)`. The response tells
     the client which sessions still need a content upload — either because
     the stored hash differs from the one just sent, or because no content
     has ever been uploaded for that row (`file_key IS NULL`).
@@ -2112,62 +2127,98 @@ async def batch_create_sessions(
             },
         )
 
-    # Pre-fetch the existing rows for diffing. One indexed lookup against
-    # `uq_sessions_user_local` per batch — cheap, and keeps the diff logic
-    # in Python where it's testable. Doing the diff via a CTE on the upsert
+    # Pre-fetch existing rows for diffing. The immutable origin is part of
+    # session identity, so equal source-local IDs from two Agents remain
+    # independent. Legacy rows without an origin are included only to reject
+    # ambiguous adoption explicitly.
+    # Keep the diff logic in Python where it's testable. Doing it via an upsert CTE
     # would be slightly faster but much harder to read and harder to keep
     # in lockstep with the SessionBatchResponse contract.
     #
-    # Also includes `environment_id` so the env-binding check below can
-    # see what env each row currently lives in. The unique key is
-    # `(user_id, local_session_id)` — without that check, a bound env-A
-    # api_key could send a payload with `local_session_id` matching an
-    # existing env-B row; the payload-side env match passes (it claims
-    # env-A), and the upsert's ON CONFLICT path then overwrites
-    # environment_id from B to A. Bound key effectively steals the row.
-    #
     # Lock in deterministic id order so concurrent batches do not deadlock.
-    # `with_for_update()` also serializes this read with Session upload/delete
-    # and closes the TOCTOU between the env-binding
-    # check below and the upsert that follows. Without the row lock,
-    # a concurrent JWT (dashboard) write could rebind environment_id
-    # in the gap; the bound-key check would pass on the stale read,
-    # then the upsert overwrites again. Locking the rows for the rest
-    # of this transaction makes the (read, check, write) sequence
-    # atomic from the perspective of any other writer.
+    # `with_for_update()` also serializes this read with upload/delete and
+    # keeps the pre-upsert snapshot stable for categorization.
     incoming_ids = list(dict.fromkeys(s.local_session_id for s in body.sessions))
+    incoming_pairs = list(
+        dict.fromkeys((s.environment_id, s.local_session_id) for s in body.sessions)
+    )
     existing_rows = (
         await db.execute(
             select(
                 Session.local_session_id,
                 Session.environment_id,
+                Session.origin_environment_id,
                 Session.content_hash,
                 Session.file_key,
+                Session.content_protocol,
             )
             .where(
                 Session.user_id == auth.user_id,
-                Session.local_session_id.in_(incoming_ids),
+                or_(
+                    tuple_(Session.origin_environment_id, Session.local_session_id).in_(
+                        incoming_pairs
+                    ),
+                    # Rows whose immutable origin predates this column must
+                    # still serialize with delete/suppression. Their identity
+                    # cannot be proven, so they are locked and rejected below
+                    # instead of being silently adopted by a new Agent.
+                    (
+                        Session.origin_environment_id.is_(None)
+                        & Session.local_session_id.in_(incoming_ids)
+                    ),
+                ),
             )
             .order_by(Session.local_session_id)
             .with_for_update()
         )
     ).all()
-    suppressed_ids = set(
-        (
-            await db.execute(
-                select(SessionSyncSuppression.local_session_id).where(
-                    SessionSyncSuppression.user_id == auth.user_id,
-                    SessionSyncSuppression.local_session_id.in_(incoming_ids),
-                )
+    suppression_rows = (
+        await db.execute(
+            select(
+                SessionSyncSuppression.origin_environment_id,
+                SessionSyncSuppression.local_session_id,
+            ).where(
+                SessionSyncSuppression.user_id == auth.user_id,
+                SessionSyncSuppression.local_session_id.in_(incoming_ids),
+                or_(
+                    SessionSyncSuppression.origin_environment_id.is_(None),
+                    tuple_(
+                        SessionSyncSuppression.origin_environment_id,
+                        SessionSyncSuppression.local_session_id,
+                    ).in_(incoming_pairs),
+                ),
             )
         )
-        .scalars()
-        .all()
+    ).all()
+    legacy_suppressed_ids = {
+        row.local_session_id for row in suppression_rows if row.origin_environment_id is None
+    }
+    exact_suppressed_pairs = {
+        (row.origin_environment_id, row.local_session_id)
+        for row in suppression_rows
+        if row.origin_environment_id is not None
+    }
+
+    def is_suppressed(environment_id: UUID | None, local_session_id: str) -> bool:
+        return (
+            local_session_id in legacy_suppressed_ids
+            or (environment_id, local_session_id) in exact_suppressed_pairs
+        )
+
+    suppressed = list(
+        dict.fromkeys(
+            s.local_session_id
+            for s in body.sessions
+            if is_suppressed(s.environment_id, s.local_session_id)
+        )
     )
-    suppressed = [local_id for local_id in incoming_ids if local_id in suppressed_ids]
-    active_sessions = [s for s in body.sessions if s.local_session_id not in suppressed_ids]
+    active_sessions = [
+        s for s in body.sessions if not is_suppressed(s.environment_id, s.local_session_id)
+    ]
     active_existing_rows = [
-        row for row in existing_rows if row.local_session_id not in suppressed_ids
+        row
+        for row in existing_rows
+        if not is_suppressed(row.origin_environment_id, row.local_session_id)
     ]
     if not active_sessions:
         await db.commit()
@@ -2180,73 +2231,31 @@ async def batch_create_sessions(
             suppressed=suppressed,
         )
 
-    existing_by_id = {row.local_session_id: row for row in active_existing_rows}
-
-    # Bound-key cross-env steal guard. Reject if any pre-existing row
-    # belongs to an env other than the one the caller is bound to.
-    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
-        bound = auth.api_key.environment_id
-        stolen = [
-            row.local_session_id
-            for row in active_existing_rows
-            if row.environment_id is not None and row.environment_id != bound
-        ]
-        if stolen:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "env_binding_violation",
-                    "message": (
-                        "Some local_session_ids in this batch belong to a "
-                        "different environment. Bound API keys cannot rebind "
-                        "sessions across environments."
-                    ),
-                    "bound_environment_id": str(bound),
-                    "offending_local_session_ids": stolen,
-                },
-            )
-
-    # Cross-env mismatch guard for ALL callers (bound and unbound).
-    # The bound check above only fires when the caller is bound; an
-    # UNBOUND CLI key (multi-agent / dashboard JWT) writing
-    # `s.environment_id=Y` for a row that already lives in env=X
-    # would slip past it. Without this check the upsert WHERE below
-    # turns the conflict into a no-op (correctly), but the response
-    # is still computed from the pre-upsert snapshot — the caller
-    # gets `created`/`needs_content` and then POSTs upload content
-    # to `/v1/sessions/{local_session_id}/upload`, which resolves
-    # the row by `local_session_id` alone and stamps the new bytes
-    # onto the OTHER env's row. Cross-env data corruption.
-    incoming_env_by_id = {s.local_session_id: s.environment_id for s in active_sessions}
-    mismatched = [
-        row.local_session_id
-        for row in active_existing_rows
-        if (
-            row.environment_id is not None
-            and incoming_env_by_id.get(row.local_session_id) is not None
-            and row.environment_id != incoming_env_by_id[row.local_session_id]
-        )
-    ]
-    if mismatched:
+    unknown_origin_ids = sorted(
+        {row.local_session_id for row in active_existing_rows if row.origin_environment_id is None}
+    )
+    if unknown_origin_ids:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
-                "code": "session_env_mismatch",
+                "code": "session_origin_unknown",
                 "message": (
-                    "Some local_session_ids in this batch already live in a "
-                    "different environment. Sessions are pinned to the env "
-                    "that first wrote them; either delete the offending "
-                    "sessions from the dashboard or push with the correct "
-                    "environment_id."
+                    "Existing session identity predates immutable Agent origins; "
+                    "delete it before uploading a replacement."
                 ),
-                "offending_local_session_ids": mismatched,
+                "offending_local_session_ids": unknown_origin_ids,
             },
         )
+
+    existing_by_pair = {
+        (row.origin_environment_id, row.local_session_id): row for row in active_existing_rows
+    }
 
     rows = [
         {
             "user_id": auth.user_id,
             "environment_id": s.environment_id,
+            "origin_environment_id": s.environment_id,
             "local_session_id": s.local_session_id,
             "project_path": s.project_path,
             "started_at": s.started_at,
@@ -2263,6 +2272,9 @@ async def batch_create_sessions(
             "tags": s.tags,
             "status": s.status,
             "content_hash": s.content_hash,
+            # Batch announces an events-v1 intent but never upgrades the row.
+            # The generation CAS commit is the only protocol transition.
+            "content_protocol": "snapshot-v1",
         }
         for s in active_sessions
     ]
@@ -2284,9 +2296,23 @@ async def batch_create_sessions(
     # `prev.file_key is None` branch (see needs_content categorization
     # below) re-enqueues the upload. Hash unchanged → file_key kept,
     # so a no-op re-push doesn't churn the blob.
-    hash_changed = Session.content_hash.is_distinct_from(insert_stmt.excluded.content_hash)
+    event_pairs = [
+        (s.environment_id, s.local_session_id)
+        for s in active_sessions
+        if s.content_protocol == "events-v1"
+    ]
+    events_requested = tuple_(
+        insert_stmt.excluded.origin_environment_id,
+        insert_stmt.excluded.local_session_id,
+    ).in_(event_pairs)
+    events_committed = Session.content_protocol == "events-v1"
+    hash_changed = (
+        ~events_requested
+        & ~events_committed
+        & Session.content_hash.is_distinct_from(insert_stmt.excluded.content_hash)
+    )
     upsert_stmt = insert_stmt.on_conflict_do_update(
-        constraint="uq_sessions_user_local",
+        constraint="uq_sessions_user_origin_local",
         set_={
             "environment_id": insert_stmt.excluded.environment_id,
             "project_path": insert_stmt.excluded.project_path,
@@ -2311,9 +2337,23 @@ async def batch_create_sessions(
             "summary": insert_stmt.excluded.summary,
             "tags": insert_stmt.excluded.tags,
             "status": insert_stmt.excluded.status,
-            "content_hash": insert_stmt.excluded.content_hash,
-            "file_key": case((hash_changed, None), else_=Session.file_key),
-            "content_uploaded_at": case((hash_changed, None), else_=Session.content_uploaded_at),
+            # Protocol changes only in the generation commit route. Batch may
+            # refresh metadata, but cannot upgrade early or downgrade events.
+            "content_protocol": Session.content_protocol,
+            "content_hash": case(
+                (events_requested | events_committed, Session.content_hash),
+                else_=insert_stmt.excluded.content_hash,
+            ),
+            "file_key": case(
+                (events_requested | events_committed, Session.file_key),
+                (hash_changed, None),
+                else_=Session.file_key,
+            ),
+            "content_uploaded_at": case(
+                (events_requested | events_committed, Session.content_uploaded_at),
+                (hash_changed, None),
+                else_=Session.content_uploaded_at,
+            ),
             # Only bump `updated_at` when the content actually changed.
             # Without this, a re-push of unchanged sessions (e.g. empty
             # client cache, multi-machine sync, manual cache reset) would
@@ -2323,58 +2363,17 @@ async def batch_create_sessions(
             # behave correctly: they get a real bump on first proper push.
             "updated_at": case((hash_changed, func.now()), else_=Session.updated_at),
         },
-        # Refuse cross-env rebinds at the conflict step itself. The
-        # pre-fetch FOR UPDATE check above guards the case where the
-        # row already exists, but two Agent API keys racing on a
-        # never-before-seen `local_session_id` BOTH pass the pre-
-        # check (no row to lock). The first INSERT wins; the second
-        # falls through to ON CONFLICT and would otherwise overwrite
-        # `environment_id`. The `WHERE` here makes the upsert a no-op
-        # if the existing row's env doesn't match the incoming one,
-        # so the second writer's row stays bound to the FIRST writer's
-        # env. Combined with the post-upsert categorization below
-        # (which still sees the correct `prev.environment_id`), the
-        # second writer just gets `unchanged`/`updated` for its own
-        # metadata edits without changing the env binding.
-        #
-        # Two allow-cases:
-        #   (a) `environment_id` matches the incoming env (same
-        #       writer or legitimate same-env update). NULL=NULL
-        #       counts as a match via IS NOT DISTINCT FROM, so a
-        #       legacy push with no env_id still updates an
-        #       env_id-NULL row.
-        #   (b) Existing row has `environment_id IS NULL` —
-        #       orphaned by `ON DELETE SET NULL` after its
-        #       original env was deleted, OR a legacy row from
-        #       before project_id existed. A new env adopting the
-        #       orphan is the right outcome (otherwise the row
-        #       stays unreachable forever; the client would
-        #       silently drop it from `needs_content` and the
-        #       session would never re-upload).
-        where=or_(
-            Session.environment_id.is_(None),
-            Session.environment_id.is_not_distinct_from(insert_stmt.excluded.environment_id),
-        ),
     )
     # Concurrent `DELETE /v1/environments/{id}` between the pre-flight
     # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
     # FK violation specifically; anything else (we no longer hit unique
     # collisions because of the upsert) bubbles as a plain 500.
-    # RETURNING the local_session_ids that PG actually wrote. When
-    # the conflict-WHERE rejects a row (cross-env race the
-    # pre-fetch couldn't catch — see comment on the upsert WHERE),
-    # PG omits that row from RETURNING. The set difference vs the
-    # incoming ids gives us no-ops, which we must exclude from the
-    # response below. Without this, the loser of a two-bound-keys
-    # race on a never-before-seen `local_session_id` gets told its
-    # row was `created` and that it should upload content; the
-    # follow-up POST `/v1/sessions/{local_session_id}/upload` then
-    # 404s because the row that DID land belongs to the winner's
-    # env (not visible to the loser). Worse, an unbound caller in
-    # the same race window would bypass the pre-check and stamp
-    # bytes onto the winner's row.
     try:
-        upserted_id_rows = (await db.execute(upsert_stmt.returning(Session.local_session_id))).all()
+        upserted_id_rows = (
+            await db.execute(
+                upsert_stmt.returning(Session.origin_environment_id, Session.local_session_id)
+            )
+        ).all()
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
@@ -2401,34 +2400,36 @@ async def batch_create_sessions(
     unchanged = 0
     needs_content: list[str] = []
     rejected: list[str] = []
-    upserted_ids = {row[0] for row in upserted_id_rows}
+    upserted_pairs = {(row[0], row[1]) for row in upserted_id_rows}
     for s in active_sessions:
-        if s.local_session_id not in upserted_ids:
-            # Upsert filtered this row out at the conflict-WHERE
-            # step (cross-env race window: pre-fetch saw no row,
-            # the first writer landed its INSERT, our second
-            # writer's ON CONFLICT mismatched env). Surface the
-            # id explicitly so the CLI/daemon doesn't write a
-            # stale lock entry under the assumption that any
-            # 200-without-needs_content id was successfully
-            # synced. Loser retries on the next change; the next
-            # batch's pre-fetch will see the winner's row and
-            # return a clean 409 `session_env_mismatch`.
+        pair = (s.environment_id, s.local_session_id)
+        if pair not in upserted_pairs:
+            # Kept for response compatibility and defensive handling of a
+            # future conditional upsert. The current origin-fenced upsert
+            # writes every active pair.
             rejected.append(s.local_session_id)
             continue
-        prev = existing_by_id.get(s.local_session_id)
+        prev = existing_by_pair.get(pair)
         if prev is None:
             created += 1
-            needs_content.append(s.local_session_id)
+            if s.content_protocol == "snapshot-v1":
+                needs_content.append(s.local_session_id)
+        elif prev.content_protocol == "events-v1":
+            # A legacy client still announces snapshot-v1. Metadata may be
+            # refreshed, but an already committed event generation is the
+            # authoritative content and must never trigger legacy /upload.
+            unchanged += 1
         elif prev.file_key is None:
             # Row existed but never had content uploaded (e.g. previous
             # upload failed mid-flight). Treat as updated — metadata may
             # have changed too, and definitely needs content.
             updated += 1
-            needs_content.append(s.local_session_id)
+            if s.content_protocol == "snapshot-v1":
+                needs_content.append(s.local_session_id)
         elif prev.content_hash is None or prev.content_hash != s.content_hash:
             updated += 1
-            needs_content.append(s.local_session_id)
+            if s.content_protocol == "snapshot-v1":
+                needs_content.append(s.local_session_id)
         else:
             unchanged += 1
 
@@ -2746,7 +2747,7 @@ async def get_session_detail(
             machine_name=machine_name,
             is_shared=bool(is_shared),
         ).model_dump(),
-        has_content=bool(session.file_key),
+        has_content=session_has_uploaded_content(session),
     )
 
 
@@ -2769,8 +2770,17 @@ async def delete_session(
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
+    event_file_keys = list(
+        (
+            await db.execute(
+                select(SessionEventChunk.file_key).where(SessionEventChunk.session_id == session.id)
+            )
+        ).scalars()
+    )
     try:
-        await file_store.delete(_session_content_key(session))
+        await file_store.delete(session.file_key or _session_content_key(session))
+        for file_key in event_file_keys:
+            await file_store.delete(file_key)
     except Exception:
         log.exception("session_content_delete_failed session_id=%s", session.id)
         await db.rollback()
@@ -2782,6 +2792,7 @@ async def delete_session(
     try:
         suppression = pg_insert(SessionSyncSuppression).values(
             user_id=auth.user_id,
+            origin_environment_id=session.origin_environment_id,
             local_session_id=session.local_session_id,
         )
         await db.execute(suppression.on_conflict_do_nothing())
@@ -2805,6 +2816,8 @@ async def upload_session_content(
     # Constrained to safe filename chars so the legacy object key remains
     # inside the user's Session prefix.
     local_session_id: str = Path(..., pattern=_SESSION_LOCAL_ID_PATTERN),
+    environment_id: UUID | None = Form(default=None),
+    expected_content_hash: str | None = Form(default=None, pattern=r"^[0-9a-f]{64}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
     db: AsyncSession = Depends(get_session),
@@ -2820,11 +2833,30 @@ async def upload_session_content(
         # `environment_id` (orphan from a since-deleted env) is
         # treated as "not yours" — without this an orphaned
         # session would be a silent shared write target.
-        stmt = stmt.where(Session.environment_id == bound_env)
-    result = await db.execute(stmt.with_for_update())
-    session = result.scalar_one_or_none()
-    if not session:
+        stmt = stmt.where(Session.origin_environment_id == bound_env)
+    elif environment_id is not None:
+        stmt = stmt.where(Session.origin_environment_id == environment_id)
+    sessions = list((await db.execute(stmt.with_for_update())).scalars())
+    if not sessions:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if len(sessions) != 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "session_origin_required",
+                "message": (
+                    "More than one Agent owns this local_session_id; "
+                    "use an environment-bound credential."
+                ),
+            },
+        )
+    session = sessions[0]
+
+    if session.content_protocol == "events-v1":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Session has been upgraded to events-v1",
+        )
 
     # Stream the upload in bounded chunks, refusing once total
     # bytes cross the cap. The global `BodySizeLimitMiddleware`
@@ -2855,6 +2887,21 @@ async def upload_session_content(
     # DB↔file-store drift: even if a multipart proxy mangles bytes, the
     # hash on disk matches the hash in the row.
     content_hash = hashlib.sha256(data).hexdigest()
+
+    # New clients submit the hash announced in the preceding batch as a CAS
+    # fence. Keeping this field optional preserves deployed clients' original
+    # upload behavior while preventing delayed H2 from replacing newer H3.
+    if expected_content_hash is not None and (
+        expected_content_hash != content_hash or session.content_hash != expected_content_hash
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "session_content_hash_mismatch",
+                "expected_content_hash": session.content_hash,
+                "received_content_hash": content_hash,
+            },
+        )
 
     fk = _session_content_key(session)
     await file_store.put(fk, data)
@@ -2908,32 +2955,16 @@ async def get_session_content(
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
-
     try:
-        data = await file_store.get(session.file_key)
-    except Exception:
-        # Logging the underlying error keeps storage failures
-        # (S3 timeouts, permission errors, missing keys) visible
-        # in server logs instead of being permanently swallowed
-        # behind a generic 404. Client still sees a 404 — internal
-        # storage detail must not leak in the response.
-        log.exception(
-            "session_content_fetch_failed file_key=%s",
-            session.file_key,
-        )
+        raw = await load_session_messages(session, file_store, db)
+    except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
-
-    # Session content was written by the CLI; if it's not valid JSON or not
-    # the expected shape, something went wrong on upload — surface a generic
-    # server error to the client and log the detail server-side so we don't
-    # leak stored-data shape assumptions.
-    try:
-        raw = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
-    except ValidationError:
-        log.exception("session %s content is not valid JSON", session_id)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+    except SessionContentInvalid:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+        ) from None
 
     return [SessionMessageResponse.model_validate(m) for m in raw]
 
@@ -2973,7 +3004,7 @@ async def get_session_messages(
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     # Shared loader handles the (file_key, content_hash)-keyed cache,
@@ -2982,7 +3013,7 @@ async def get_session_messages(
     # share the same cache — a popular shared link must not re-parse
     # a 10 MB JSON blob per visitor.
     try:
-        raw = await load_session_messages(session, file_store)
+        raw = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -3034,31 +3065,20 @@ async def extract_session_memories(
     session = (await db.execute(stmt)).scalar_one_or_none()
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Session content has not been uploaded",
         )
 
     try:
-        data = await file_store.get(session.file_key)
-    except Exception:
-        # Logging the underlying error keeps storage failures
-        # (S3 timeouts, permission errors, missing keys) visible
-        # in server logs instead of being permanently swallowed
-        # behind a generic 404. Client still sees a 404 — internal
-        # storage detail must not leak in the response.
-        log.exception(
-            "session_content_fetch_failed file_key=%s",
-            session.file_key,
-        )
+        messages = await load_session_messages(session, file_store, db)
+    except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
-
-    try:
-        messages = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
-    except ValidationError:
-        log.exception("session %s content is not valid JSON", session.id)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
+    except SessionContentInvalid:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+        ) from None
 
     client = memory_extraction.create_memory_extraction_client(
         base_url=settings.llm_base_url or None,
@@ -3140,11 +3160,11 @@ async def export_owned_session_markdown(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     session, agent_type = row
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     try:
-        messages = await load_session_messages(session, file_store)
+        messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -3379,6 +3399,8 @@ def _session_to_response(
         tags=s.tags,
         status=s.status,
         content_hash=s.content_hash,
+        content_protocol=s.content_protocol,
+        event_head_hash=s.event_head_hash,
         is_shared=is_shared,
         related_refs=_related_refs_response(s.related_refs),
     )

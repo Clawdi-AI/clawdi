@@ -44,6 +44,7 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     load_session_messages,
+    session_has_uploaded_content,
 )
 from app.services.session_export import (
     public_session_base_fields,
@@ -161,11 +162,11 @@ async def get_shared_session_messages(
     """
     session, _, _ = await resolve_session_for_view(db, session_id, visitor)
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     try:
-        raw = await load_session_messages(session, file_store)
+        raw = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -203,11 +204,11 @@ async def export_shared_session_markdown(
     """
     session, agent_type, _ = await resolve_session_for_view(db, session_id, visitor)
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     try:
-        messages = await load_session_messages(session, file_store)
+        messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -248,11 +249,11 @@ async def export_shared_session_json(
     response.headers["Cache-Control"] = PUBLIC_SESSION_EXPORT_CACHE_CONTROL
     session, agent_type, _ = await resolve_session_for_view(db, session_id, visitor)
 
-    if not session.file_key:
+    if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     try:
-        messages = await load_session_messages(session, file_store)
+        messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:

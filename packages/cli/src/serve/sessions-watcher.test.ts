@@ -559,7 +559,7 @@ test("Hermes WAL commits change the production watch signature while state.db st
 		database.exec("CREATE TABLE session_writes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
 		database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		const adapter = new HermesAdapter();
-		const paths = adapter.getSessionsWatchPaths();
+		const paths = adapter.sessions.watchPaths();
 		expect(paths).toEqual([databasePath, `${databasePath}-wal`, `${databasePath}-journal`]);
 		const mainBefore = await sessionPathSignature(databasePath);
 		const walBefore = await sessionPathSignature(`${databasePath}-wal`);

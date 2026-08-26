@@ -1102,6 +1102,25 @@ def require_scope(*needed: str):
     return _check
 
 
+def require_any_scope(*accepted: str):
+    """Require at least one accepted scope for scoped CLI keys."""
+
+    async def _check(auth: AuthContext = Depends(get_auth)) -> AuthContext:
+        if not auth.is_cli or auth.api_key is None:
+            return auth
+        scopes = auth.api_key.scopes
+        if scopes is None and not is_runtime_deployment_principal(auth):
+            return auth
+        if scopes is not None and any(scope in scopes for scope in accepted):
+            return auth
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"missing one of scopes: {', '.join(accepted)}",
+        )
+
+    return _check
+
+
 async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """Require a legacy API key or the first-party OAuth CLI identity."""
     if not auth.is_cli and not auth.oauth_cli:

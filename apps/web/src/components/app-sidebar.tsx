@@ -87,6 +87,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
+import { connectedAdapterHasModule } from "@/lib/adapter-modules";
 import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import {
 	type AgentOwnershipKind,
@@ -99,6 +100,7 @@ import {
 	agentProjectResourceHref,
 	agentRouteIdsEqual,
 	agentSectionHref,
+	CONNECTED_AGENT_SECTION_IDS,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -366,6 +368,7 @@ function AgentSectionList({
 	visibleSectionIds,
 	activeSection,
 	primaryProject,
+	allowWorkspaceSkills = true,
 	extraPrimaryItems = [],
 	onNavigate,
 }: {
@@ -374,6 +377,7 @@ function AgentSectionList({
 	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
+	allowWorkspaceSkills?: boolean;
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
@@ -414,18 +418,20 @@ function AgentSectionList({
 		? activeSection
 		: "overview";
 	const primaryProjectItems = primaryProject
-		? (["skills", "vaults"] as const).map((section): SidebarNavItem => {
-				const item = AGENT_SECTION_NAVIGATION_ITEMS[section];
-				return {
-					id: `primary-project-${section}`,
-					label: item.label,
-					href: agentProjectResourceHref(agentId, primaryProject.id, section),
-					icon: item.icon,
-					tint: item.tint,
-					tooltip: `${item.label} in Workspace`,
-					active: activePrimaryProjectResource === section,
-				};
-			})
+		? (["skills", "vaults"] as const)
+				.filter((section) => allowWorkspaceSkills || section !== "skills")
+				.map((section): SidebarNavItem => {
+					const item = AGENT_SECTION_NAVIGATION_ITEMS[section];
+					return {
+						id: `primary-project-${section}`,
+						label: item.label,
+						href: agentProjectResourceHref(agentId, primaryProject.id, section),
+						icon: item.icon,
+						tint: item.tint,
+						tooltip: `${item.label} in Workspace`,
+						active: activePrimaryProjectResource === section,
+					};
+				})
 		: [];
 
 	return (
@@ -473,6 +479,7 @@ function AgentSectionList({
 function AgentFocusSections({
 	agentId,
 	kind,
+	adapterModules,
 	filesAvailable,
 	activeSection,
 	primaryProject,
@@ -480,6 +487,7 @@ function AgentFocusSections({
 }: {
 	agentId: string;
 	kind: Exclude<AgentChromeKind, "unresolved">;
+	adapterModules?: SidebarEnvironment["adapter_modules"];
 	filesAvailable?: boolean;
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
@@ -487,6 +495,11 @@ function AgentFocusSections({
 }) {
 	const { legacyDashboardUrl } = useProductAccess();
 	const legacyDashboardHref = kind === "legacy" ? legacyDashboardUrl : null;
+	const connectedVisibleSectionIds = CONNECTED_AGENT_SECTION_IDS.filter(
+		(section) => section !== "sessions" || connectedAdapterHasModule(adapterModules, "sessions"),
+	);
+	const allowWorkspaceSkills =
+		kind === "cloud" || connectedAdapterHasModule(adapterModules, "skills");
 	const extraPrimaryItems: SidebarNavItem[] = legacyDashboardHref
 		? [
 				{
@@ -506,10 +519,13 @@ function AgentFocusSections({
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
 			visibleSectionIds={
-				kind === "cloud" ? hostedAgentVisibleSectionIds(filesAvailable === true) : undefined
+				kind === "cloud"
+					? hostedAgentVisibleSectionIds(filesAvailable === true)
+					: connectedVisibleSectionIds
 			}
 			activeSection={activeSection}
 			primaryProject={primaryProject}
+			allowWorkspaceSkills={allowWorkspaceSkills}
 			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
 		/>
@@ -608,6 +624,7 @@ function SidebarMainNavigation({
 			<AgentFocusSections
 				agentId={activeAgentId}
 				kind={activeAgentKind}
+				adapterModules={activeAgentTile.env?.adapter_modules}
 				filesAvailable={activeAgentTile.filesAvailable}
 				activeSection={activeSection}
 				primaryProject={primaryProject}

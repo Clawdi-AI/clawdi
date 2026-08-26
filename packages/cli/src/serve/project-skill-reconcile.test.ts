@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SkillModule } from "../adapters/base";
 import { CodexAdapter } from "../adapters/codex";
 import { ApiClient } from "../lib/api-client";
 import {
@@ -123,10 +124,11 @@ describe("Connected Project Skill reconcile", () => {
 		await reconcileConnectedProjectSkills({
 			api: new ApiClient({ requireAuth: false }),
 			agentId,
-			adapter,
+			agentType: adapter.agentType,
+			skills: adapter.skills,
 		});
 
-		expect(readFileSync(adapter.getSkillPath("alpha"), "utf8")).toContain("# Alpha");
+		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toContain("# Alpha");
 		expect(archiveRequests).toHaveLength(1);
 		expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
 			{ project_skill_reconcile_version: 1 },
@@ -148,16 +150,17 @@ describe("Connected Project Skill reconcile", () => {
 		const { archiveRequests } = serveInventory([alpha]);
 		const adapter = new CodexAdapter();
 		mkdirSync(join(process.env.CODEX_HOME ?? "", "skills", "alpha"), { recursive: true });
-		writeFileSync(adapter.getSkillPath("alpha"), "# Local Workspace Skill\n");
+		writeFileSync(adapter.skills.path("alpha"), "# Local Workspace Skill\n");
 
 		await expect(
 			reconcileConnectedProjectSkills({
 				api: new ApiClient({ requireAuth: false }),
 				agentId,
-				adapter,
+				agentType: adapter.agentType,
+				skills: adapter.skills,
 			}),
 		).rejects.toThrow("already exists in this Agent's Workspace");
-		expect(readFileSync(adapter.getSkillPath("alpha"), "utf8")).toBe("# Local Workspace Skill\n");
+		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toBe("# Local Workspace Skill\n");
 		expect(archiveRequests).toHaveLength(0);
 	});
 
@@ -168,11 +171,12 @@ describe("Connected Project Skill reconcile", () => {
 		await reconcileConnectedProjectSkills({
 			api: new ApiClient({ requireAuth: false }),
 			agentId,
-			adapter,
+			agentType: adapter.agentType,
+			skills: adapter.skills,
 		});
 
 		const explicit = await desiredSkill("explicit", "Explicit");
-		await adapter.writeSkillArchive("explicit", explicit.archive);
+		await adapter.skills.writeArchive("explicit", explicit.archive);
 		recordProjectSkillMaterialization({
 			agentType: "codex",
 			localSkillKey: "explicit",
@@ -184,14 +188,15 @@ describe("Connected Project Skill reconcile", () => {
 		await reconcileConnectedProjectSkills({
 			api: new ApiClient({ requireAuth: false }),
 			agentId,
-			adapter,
+			agentType: adapter.agentType,
+			skills: adapter.skills,
 		});
 
-		expect(existsSync(adapter.getSkillPath("alpha"))).toBe(false);
+		expect(existsSync(adapter.skills.path("alpha"))).toBe(false);
 		expect(
 			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" }),
 		).toBeNull();
-		expect(readFileSync(adapter.getSkillPath("explicit"), "utf8")).toContain("# Explicit");
+		expect(readFileSync(adapter.skills.path("explicit"), "utf8")).toContain("# Explicit");
 		expect(
 			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "explicit" }),
 		).not.toBeNull();
@@ -202,14 +207,11 @@ describe("Connected Project Skill reconcile", () => {
 		const beta = await desiredSkill("beta", "Beta");
 		serveInventory([alpha, beta]);
 		const adapter = new CodexAdapter();
-		const failingAdapter = {
-			agentType: adapter.agentType,
-			getSkillPath: (key: string) => adapter.getSkillPath(key),
-			listSkillKeys: () => adapter.listSkillKeys(),
-			removeLocalSkill: (key: string) => adapter.removeLocalSkill(key),
-			writeSkillArchive: async (key: string, archive: Buffer) => {
+		const failingSkills: SkillModule = {
+			...adapter.skills,
+			writeArchive: async (key: string, archive: Buffer) => {
 				if (key === "beta") throw new Error("injected native install failure");
-				await adapter.writeSkillArchive(key, archive);
+				await adapter.skills.writeArchive(key, archive);
 			},
 		};
 
@@ -217,11 +219,12 @@ describe("Connected Project Skill reconcile", () => {
 			reconcileConnectedProjectSkills({
 				api: new ApiClient({ requireAuth: false }),
 				agentId,
-				adapter: failingAdapter,
+				agentType: adapter.agentType,
+				skills: failingSkills,
 			}),
 		).rejects.toThrow("injected native install failure");
-		expect(existsSync(adapter.getSkillPath("alpha"))).toBe(false);
-		expect(existsSync(adapter.getSkillPath("beta"))).toBe(false);
+		expect(existsSync(adapter.skills.path("alpha"))).toBe(false);
+		expect(existsSync(adapter.skills.path("beta"))).toBe(false);
 		expect(
 			readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" }),
 		).toBeNull();

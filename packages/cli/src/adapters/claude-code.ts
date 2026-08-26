@@ -2,6 +2,11 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
+import {
+	projectEventsToMessages,
+	type SessionEventDraft,
+	sequenceSessionEvents,
+} from "../lib/session-events";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -10,14 +15,23 @@ import {
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
-	AgentAdapter,
+	AgentAdapterCore,
 	RawSession,
 	RawSkill,
-	SessionMessage,
 	SessionScanRequest,
 	SessionScanResult,
 } from "./base";
 import { getClaudeHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
+import {
+	canonicalStructuredString,
+	completeJsonlRecords,
+	type JsonObject,
+	jsonObject,
+	jsonString,
+	stableRecordId,
+	toolResultContent,
+	visibleContentParts,
+} from "./rich-event-mapping";
 import { readCommandVersion } from "./version";
 
 function claudeDir() {
@@ -46,6 +60,74 @@ interface SessionJsonlEntry {
 	uuid?: string;
 }
 
+function claudeEventDrafts(
+	raw: JsonObject,
+	sessionKey: string,
+	recordSeq: number,
+): SessionEventDraft[] {
+	const message = jsonObject(raw.message);
+	if (!message) return [];
+	const role = jsonString(message.role);
+	const timestamp = jsonString(raw.timestamp) ?? undefined;
+	const model = jsonString(message.model) ?? undefined;
+	const recordId = stableRecordId(raw, recordSeq);
+	const eventSource = (partIndex?: number) => ({
+		adapter: "claude_code" as const,
+		session_key: sessionKey,
+		record_id: recordId,
+		record_seq: recordSeq,
+		...(partIndex === undefined ? {} : { part_index: partIndex }),
+	});
+	const drafts: SessionEventDraft[] = [];
+	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
+		const parts = visibleContentParts(message.content);
+		if (parts.length > 0) {
+			drafts.push({
+				type: "message",
+				role,
+				parts,
+				source: eventSource(0),
+				...(timestamp ? { timestamp } : {}),
+				...(role === "assistant" && model ? { model } : {}),
+			});
+		}
+	}
+	const blocks = Array.isArray(message.content) ? message.content : [];
+	for (let index = 0; index < blocks.length; index++) {
+		const block = jsonObject(blocks[index]);
+		if (!block) continue;
+		if (role === "assistant" && block.type === "tool_use") {
+			const callId = jsonString(block.id);
+			const name = jsonString(block.name);
+			if (!callId || !name) continue;
+			drafts.push({
+				type: "tool_call",
+				call_id: callId,
+				name,
+				arguments_json: canonicalStructuredString(block.input),
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+				...(model ? { model } : {}),
+			});
+		}
+		if (role === "user" && block.type === "tool_result") {
+			const callId = jsonString(block.tool_use_id);
+			if (!callId) continue;
+			const result = toolResultContent(block.content);
+			drafts.push({
+				type: "tool_result",
+				call_id: callId,
+				status: block.is_error === true ? "error" : "completed",
+				...result,
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+			});
+		}
+		// `thinking` and `redacted_thinking` blocks never produce events.
+	}
+	return drafts;
+}
+
 /**
  * Internal-only intermediate shape produced by `parseSessionJsonl`. The
  * `uuidSet` lives in a sibling `Map<RawSession, Set<string>>` for the dedupe
@@ -55,8 +137,26 @@ type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath"> & {
 	uuidSet: Set<string>;
 };
 
-export class ClaudeCodeAdapter implements AgentAdapter {
+export class ClaudeCodeAdapter implements AgentAdapterCore {
 	readonly agentType = "claude_code" as const;
+	readonly sessions = {
+		contentProtocol: async () => "events-v1" as const,
+		collect: (request: SessionScanRequest) => this.collectSessions(request),
+		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		watchPaths: () => this.getSessionsWatchPaths(),
+	};
+	readonly skills = {
+		collect: () => this.collectSkills(),
+		listKeys: () => this.listSkillKeys(),
+		path: (key: string) => this.getSkillPath(key),
+		rootDir: () => this.getSkillsRootDir(),
+		sharedPath: (skillKey: string, ownerHandle: string) =>
+			this.getSharedSkillPath(skillKey, ownerHandle),
+		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
+		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
+			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
+		remove: (key: string) => this.removeLocalSkill(key),
+	};
 
 	async detect(): Promise<boolean> {
 		// Bare `~/.claude/` may exist from gstack/other tools or be a stale
@@ -89,7 +189,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return absPath.replace(/\//g, "-");
 	}
 
-	async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
 		if (!existsSync(projectsDir())) {
 			return { sessions: [], dedupedCount: 0, coverage: "complete" };
 		}
@@ -139,7 +239,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		);
 	}
 
-	async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
 		if (!existsSync(projectsDir()) || basename(localSessionId) !== localSessionId) return null;
 		const matches: Array<{ filePath: string; projectDirName: string }> = [];
 		for (const projectDir of readdirSync(projectsDir(), { withFileTypes: true })) {
@@ -209,8 +309,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	private parseSessionJsonl(filePath: string, _projectDirName: string): ParsedSession | null {
 		const content = readFileSync(filePath, "utf-8");
-		const lines = content.split("\n").filter(Boolean);
-		if (lines.length < 3) return null;
+		const records = completeJsonlRecords(content);
+		if (records.length < 3) return null;
 
 		let inputTokens = 0;
 		let outputTokens = 0;
@@ -221,12 +321,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
 		let firstUserMessage: string | null = null;
-		const messages: SessionMessage[] = [];
+		const rawEntries: Array<{ raw: JsonObject; recordSeq: number }> = [];
 		const uuidSet = new Set<string>();
 
-		for (const line of lines) {
+		for (const { data: raw, recordSeq } of records) {
 			try {
-				const entry: SessionJsonlEntry = JSON.parse(line);
+				const entry = raw as SessionJsonlEntry;
+				rawEntries.push({ raw, recordSeq });
 				const msg = entry.message;
 				const role = msg?.role;
 
@@ -240,27 +341,6 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 				if (entry.cwd && !projectPath) {
 					projectPath = entry.cwd;
-				}
-
-				if (role === "user" || role === "assistant") {
-					const c = msg?.content;
-					let text = "";
-					if (typeof c === "string") {
-						text = c;
-					} else if (Array.isArray(c)) {
-						text = c
-							.filter((b): b is { type: "text"; text: string } => b.type === "text" && !!b.text)
-							.map((b) => b.text)
-							.join("\n");
-					}
-					if (text) {
-						messages.push({
-							role: role as "user" | "assistant",
-							content: text,
-							model: role === "assistant" ? msg?.model : undefined,
-							timestamp: entry.timestamp,
-						});
-					}
 				}
 
 				if (role === "user" && !firstUserMessage) {
@@ -289,6 +369,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 				// Skip unparseable lines
 			}
 		}
+		const sourceSessionKey = basename(filePath, ".jsonl");
+		const events = sequenceSessionEvents(
+			rawEntries.flatMap(({ raw, recordSeq }) =>
+				claudeEventDrafts(raw, sourceSessionKey, recordSeq),
+			),
+		);
+		const messages = projectEventsToMessages(events);
 
 		if (!startedAt || messages.length === 0) return null;
 
@@ -306,12 +393,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			modelsUsed: [...modelsUsed],
 			summary: firstUserMessage,
 			messages,
+			events,
 			durationSeconds,
 			uuidSet,
 		};
 	}
 
-	async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(): Promise<RawSkill[]> {
 		const skillsDir = join(claudeDir(), "skills");
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(skillsDir, "clawdi"),
@@ -349,19 +437,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return skills;
 	}
 
-	getSkillPath(key: string): string {
+	private getSkillPath(key: string): string {
 		return join(claudeDir(), "skills", key, "SKILL.md");
 	}
 
-	getSkillsRootDir(): string {
+	private getSkillsRootDir(): string {
 		return join(claudeDir(), "skills");
 	}
 
-	getSharedSkillPath(skillKey: string, ownerHandle: string): string {
+	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
 		return join(claudeDir(), "skills", `${skillKey}__${ownerHandle}`);
 	}
 
-	async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(): Promise<string[]> {
 		// Flat layout: top-level dirs under skills/. Mirrors the
 		// filtering of `collectSkills` so the daemon's hot-path
 		// rescan returns the same set the bulk push would consider
@@ -387,7 +475,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return out;
 	}
 
-	getSessionsWatchPaths(): string[] {
+	private getSessionsWatchPaths(): string[] {
 		// Claude Code dumps each conversation as a JSONL file under
 		// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. New
 		// projects appear as new subdirs; the watcher attaches
@@ -395,14 +483,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		return [projectsDir()];
 	}
 
-	async removeLocalSkill(key: string): Promise<void> {
+	private async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(claudeDir(), "skills", key);
 		mutateUserSkillTarget(dir, key, () => {
 			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		});
 	}
 
-	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
+	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
 		const targetDir = join(skillsDir, key);
 		await replaceSkillArchiveTarGz(key, skillsDir, targetDir, tarGzBytes, undefined, (mutation) =>
@@ -410,7 +498,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		);
 	}
 
-	async writeSharedSkillArchive(
+	private async writeSharedSkillArchive(
 		key: string,
 		ownerHandle: string,
 		tarGzBytes: Buffer,

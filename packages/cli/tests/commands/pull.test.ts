@@ -98,6 +98,77 @@ function cloudProjectList(kind: "workspace" | "personal" | "environment" = "work
 }
 
 describe("pull — Hermes fixture", () => {
+	it("uses the event head for repeat pulls while reading legacy snapshot sidecars", async () => {
+		setup("hermes");
+		const mirrorDir = join(tmpHome, ".clawdi", "sessions", "hermes");
+		mkdirSync(mirrorDir, { recursive: true });
+		writeFileSync(
+			join(mirrorDir, "legacy-snapshot.meta.json"),
+			JSON.stringify({ content_hash: "snapshot-hash" }),
+		);
+		writeFileSync(join(mirrorDir, "legacy-snapshot.json"), "[]\n");
+		const sessions = [
+			{
+				id: "event-session-id",
+				local_session_id: "event-session",
+				agent_type: "hermes",
+				machine_name: "Test Mac",
+				project_path: "/tmp/project",
+				started_at: "2026-08-25T00:00:00.000Z",
+				ended_at: null,
+				message_count: 1,
+				model: null,
+				summary: null,
+				content_hash: null,
+				content_protocol: "events-v1",
+				event_head_hash: "e".repeat(64),
+			},
+			{
+				id: "snapshot-session-id",
+				local_session_id: "legacy-snapshot",
+				agent_type: "hermes",
+				machine_name: "Test Mac",
+				project_path: "/tmp/project",
+				started_at: "2026-08-25T00:00:00.000Z",
+				ended_at: null,
+				message_count: 1,
+				model: null,
+				summary: null,
+				content_hash: "snapshot-hash",
+				content_protocol: "snapshot-v1",
+				event_head_hash: null,
+			},
+		];
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/sessions",
+				response: () => jsonResponse({ items: sessions, total: sessions.length }),
+			},
+			{
+				method: "GET",
+				path: "/v1/sessions/event-session-id/content",
+				response: () => jsonResponse([{ role: "user", content: "safe projection" }]),
+			},
+		]);
+		try {
+			await pull({ agent: "hermes", modules: "sessions" });
+			await pull({ agent: "hermes", modules: "sessions" });
+		} finally {
+			restore();
+		}
+
+		expect(
+			captured.filter((request) => request.path === "/v1/sessions/event-session-id/content"),
+		).toHaveLength(1);
+		expect(
+			JSON.parse(readFileSync(join(mirrorDir, "event-session.meta.json"), "utf-8")),
+		).toMatchObject({
+			content_protocol: "events-v1",
+			sync_hash: "e".repeat(64),
+		});
+	});
+
 	it("bounds cloud session pagination if the backend keeps returning full pages", async () => {
 		setup("hermes");
 		const page = Array.from({ length: 200 }, (_, index) => ({
@@ -356,6 +427,26 @@ content
 		}
 		expect(process.exitCode).toBe(1);
 		expect(captured).toHaveLength(0);
+	});
+
+	it("multi-agent pull skips unsupported modules without aborting supported agents", async () => {
+		setup("claude_code");
+		writeFileSync(
+			join(tmpHome, ".clawdi", "environments", "pi.json"),
+			JSON.stringify({ id: "env-pi", agentType: "pi" }),
+		);
+		const { captured, restore } = mockFetch([
+			cloudProjectList(),
+			{ method: "GET", path: "/v1/skills", response: () => jsonResponse({ items: [] }) },
+		]);
+		try {
+			await pull({ modules: "skills", project: TEST_PROJECT_ID, all: true });
+		} finally {
+			restore();
+		}
+
+		expect(captured.some((call) => call.path.startsWith("/v1/projects"))).toBe(true);
+		expect(process.exitCode).toBe(0);
 	});
 
 	it("rejects an explicit Agent Project as a Skill import source", async () => {

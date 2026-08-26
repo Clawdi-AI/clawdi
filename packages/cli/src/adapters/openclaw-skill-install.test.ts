@@ -58,8 +58,8 @@ cp -R "$source_dir" '${workspace}/skills/'"$skill_id"
 	const bytes = readFileSync(archive);
 	const adapter = new OpenClawAdapter();
 
-	await adapter.writeSkillArchive("review-pr", bytes);
-	await adapter.writeSharedSkillArchive("review-pr", "alice-a3b4", bytes);
+	await adapter.skills.writeArchive("review-pr", bytes);
+	await adapter.skills.writeSharedArchive("review-pr", "alice-a3b4", bytes);
 
 	expect(existsSync(join(workspace, "skills", "review-pr", "SKILL.md"))).toBe(true);
 	expect(existsSync(join(workspace, "skills", "review-pr__alice-a3b4", "SKILL.md"))).toBe(true);
@@ -104,7 +104,7 @@ exit 23
 	if (packed.status !== 0) throw new Error("test tar creation failed");
 
 	await expect(
-		new OpenClawAdapter().writeSkillArchive("review-pr", readFileSync(archive)),
+		new OpenClawAdapter().skills.writeArchive("review-pr", readFileSync(archive)),
 	).rejects.toThrow("OpenClaw official Skill install failed");
 	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Original\n");
 });

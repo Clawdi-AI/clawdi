@@ -474,9 +474,10 @@ describe("inboxForgetCommand", () => {
 			last_seen_skill_keys: ["deploy-tools"],
 		});
 
-		const dirs = allAdapterEntries().map((entry) =>
-			entry.create().getSharedSkillPath("deploy-tools", "alice-a3b4"),
-		);
+		const dirs = allAdapterEntries().flatMap((entry) => {
+			const skills = entry.create().skills;
+			return skills ? [skills.sharedPath("deploy-tools", "alice-a3b4")] : [];
+		});
 		for (const dir of dirs) {
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(join(dir, "SKILL.md"), "shared");

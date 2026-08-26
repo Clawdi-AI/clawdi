@@ -19,8 +19,16 @@ from collections import OrderedDict
 from typing import Protocol
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.session import Session
+from app.models.session import Session, SessionEventChunk
+from app.schemas.session_events import SessionEvent
+from app.services.session_events import (
+    EMPTY_EVENT_HEAD,
+    project_safe_messages,
+    validate_event_chunk,
+)
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +64,13 @@ class SessionContentInvalid(Exception):
     """The stored content isn't a JSON array of messages — corrupted upload."""
 
 
+def session_has_uploaded_content(session: Session) -> bool:
+    return bool(
+        session.file_key
+        or (session.content_protocol == "events-v1" and session.event_generation_id is not None)
+    )
+
+
 def _cache_get(key: tuple[str, str]) -> list[SessionMessageValue] | None:
     now = time.monotonic()
     with _messages_cache_lock:
@@ -83,6 +98,7 @@ def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
 async def load_session_messages(
     session: Session,
     file_store: _FileStoreLike,
+    db: AsyncSession | None = None,
 ) -> list[SessionMessageValue]:
     """Fetch and parse the session's messages array.
 
@@ -94,6 +110,51 @@ async def load_session_messages(
     - `SessionContentInvalid`: JSON decode failure or non-list payload.
       Indicates an upload corruption; route layer returns 500.
     """
+    if session.content_protocol == "events-v1" and session.event_generation_id is not None:
+        if db is None:
+            raise SessionContentInvalid("events-v1 content requires a database session")
+        cache_key = (
+            f"events-v1:{session.event_generation_id}",
+            session.event_head_hash or EMPTY_EVENT_HEAD,
+        )
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
+        chunks = list(
+            (
+                await db.execute(
+                    select(SessionEventChunk)
+                    .where(SessionEventChunk.generation_id == session.event_generation_id)
+                    .order_by(SessionEventChunk.start_seq)
+                )
+            ).scalars()
+        )
+        events: list[SessionEvent] = []
+        next_seq = 0
+        head = EMPTY_EVENT_HEAD
+        for chunk in chunks:
+            if chunk.start_seq != next_seq or chunk.base_head_hash != head:
+                raise SessionContentInvalid("events-v1 chunk index is not continuous")
+            try:
+                data = await file_store.get(chunk.file_key)
+                validated = validate_event_chunk(data, start_seq=next_seq, base_head_hash=head)
+            except Exception as exc:
+                log.exception("session_event_chunk_fetch_failed file_key=%s", chunk.file_key)
+                raise SessionContentInvalid("events-v1 chunk is unavailable or invalid") from exc
+            if (
+                validated.content_hash != chunk.content_hash
+                or validated.result_head_hash != chunk.result_head_hash
+            ):
+                raise SessionContentInvalid("events-v1 chunk hash drift")
+            events.extend(validated.events)
+            next_seq = chunk.end_seq + 1
+            head = chunk.result_head_hash
+        if next_seq != session.event_count or head != (session.event_head_hash or EMPTY_EVENT_HEAD):
+            raise SessionContentInvalid("events-v1 head does not match its chunk index")
+        projected = _SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events))
+        _cache_put(cache_key, projected)
+        return projected
+
     if not session.file_key:
         raise SessionContentMissing(f"session {session.id} has no uploaded content")
 

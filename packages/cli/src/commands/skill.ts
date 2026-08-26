@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import type { AgentAdapter } from "../adapters/base";
+import type { AgentAdapter, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
@@ -70,10 +70,19 @@ async function fetchAllSkills(api: ApiClient, projectId?: string): Promise<Skill
 	return items;
 }
 
+type SkillCapableAdapter = AgentAdapter & { readonly skills: SkillModule };
+
 interface SkillMutationTarget {
 	projectId: string;
 	agentId?: string;
-	adapter?: AgentAdapter;
+	adapter?: SkillCapableAdapter;
+}
+
+function requireSkillsAdapter(adapter: AgentAdapter): SkillCapableAdapter {
+	if (!adapter.skills) {
+		throw new Error(`${adapterRegistry[adapter.agentType].displayName} does not support Skills.`);
+	}
+	return adapter as SkillCapableAdapter;
 }
 
 async function resolveAgentProjectTarget(
@@ -109,7 +118,7 @@ async function resolveAgentProjectTarget(
 	}
 	const entry = adapterRegistry[agent.agent_type as keyof typeof adapterRegistry];
 	if (!entry) throw new Error(`Unknown agent "${agent.agent_type}".`);
-	return { projectId, agentId, adapter: entry.create() };
+	return { projectId, agentId, adapter: requireSkillsAdapter(entry.create()) };
 }
 
 async function resolveSkillMutationTarget(
@@ -133,7 +142,7 @@ async function resolveSkillMutationTarget(
 		return {
 			projectId: await fetchProjectIdForEnv(api, agentId),
 			agentId,
-			adapter: entry.create(),
+			adapter: requireSkillsAdapter(entry.create()),
 		};
 	}
 
@@ -166,18 +175,18 @@ export { readBoundedResponseBytes };
 async function installGithubSkillForAgent(
 	api: ApiClient,
 	source: Extract<ParsedSource, { type: "github" }>,
-	target: SkillMutationTarget & { agentId: string; adapter: AgentAdapter },
+	target: SkillMutationTarget & { agentId: string; adapter: SkillCapableAdapter },
 ): Promise<void> {
 	const downloaded = await fetchGithubSkillArchive(source);
 
 	// Local activation is authoritative and guarded by the adapter's managed
 	// reservation boundary. No Cloud mutation occurs if this commit fails.
-	await target.adapter.writeSkillArchive(downloaded.skillKey, downloaded.tarBytes);
+	await target.adapter.skills.writeArchive(downloaded.skillKey, downloaded.tarBytes);
 	removeProjectSkillMaterialization({
 		agentType: target.adapter.agentType,
 		localSkillKey: downloaded.skillKey,
 	});
-	const committedDir = dirname(target.adapter.getSkillPath(downloaded.skillKey));
+	const committedDir = dirname(target.adapter.skills.path(downloaded.skillKey));
 	const committedSnapshot = await snapshotSkillArchive(
 		committedDir,
 		undefined,
@@ -368,12 +377,12 @@ export async function skillAdd(
 		// The real adapter target is the commit point. An arbitrary source
 		// directory is only input; it cannot become an Agent projection until
 		// its validated archive has atomically activated under the skills root.
-		await target.adapter.writeSkillArchive(skillKey, tarBytes);
+		await target.adapter.skills.writeArchive(skillKey, tarBytes);
 		removeProjectSkillMaterialization({
 			agentType: target.adapter.agentType,
 			localSkillKey: skillKey,
 		});
-		const committedDir = dirname(target.adapter.getSkillPath(skillKey));
+		const committedDir = dirname(target.adapter.skills.path(skillKey));
 		const committedSnapshot = await snapshotSkillArchive(committedDir, undefined, skillKey);
 		try {
 			result = await api.uploadAgentSkill(
@@ -493,7 +502,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		// Filesystem absence is authoritative. The adapter mutation is guarded
 		// by managed-Skill reservations, so a reserved target fails before any
 		// Cloud delete can be reported.
-		await target.adapter.removeLocalSkill(key);
+		await target.adapter.skills.remove(key);
 		if (materialization) {
 			removeProjectSkillMaterialization({
 				agentType: target.adapter.agentType,

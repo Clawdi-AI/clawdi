@@ -832,6 +832,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/upload-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Session Upload Capabilities */
+        get: operations["session_upload_capabilities_v1_sessions_upload_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{local_session_id}/events/head": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session Event Head */
+        get: operations["get_session_event_head_v1_sessions__local_session_id__events_head_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{local_session_id}/events/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stage Session Event Generation */
+        post: operations["stage_session_event_generation_v1_sessions__local_session_id__events_generations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{local_session_id}/events/generations/{generation_id}/chunks/{start_seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload Session Event Generation Chunk */
+        put: operations["upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{local_session_id}/events/generations/{generation_id}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit Session Event Generation */
+        post: operations["commit_session_event_generation_v1_sessions__local_session_id__events_generations__generation_id__commit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{local_session_id}/events/append": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append Session Events */
+        post: operations["append_session_events_v1_sessions__local_session_id__events_append_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{session_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session Events */
+        get: operations["get_session_events_v1_sessions__session_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -1132,7 +1251,7 @@ export interface paths {
          * Batch Create Sessions
          * @description Ingest a batch of sessions from a CLI sync.
          *
-         *     Upserts every row by `(user_id, local_session_id)`. The response tells
+         *     Upserts every row by `(user_id, origin_environment_id, local_session_id)`. The response tells
          *     the client which sessions still need a content upload — either because
          *     the stored hash differs from the one just sent, or because no content
          *     has ever been uploaded for that row (`file_key IS NULL`).
@@ -3497,6 +3616,8 @@ export interface components {
             explicit_identity: boolean;
             /** Default Project Id */
             default_project_id: string;
+            /** Adapter Modules */
+            adapter_modules?: ("sessions" | "skills")[] | null;
         };
         /** AgentRuntimeObservedDesiredResponse */
         AgentRuntimeObservedDesiredResponse: {
@@ -4259,6 +4380,38 @@ export interface components {
              */
             status: "reordered";
         };
+        /** Body_append_session_events_v1_sessions__local_session_id__events_append_post */
+        Body_append_session_events_v1_sessions__local_session_id__events_append_post: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /**
+             * Append Id
+             * Format: uuid
+             */
+            append_id: string;
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /** Base Revision */
+            base_revision: number;
+            /** Base Count */
+            base_count: number;
+            /** Base Head Hash */
+            base_head_hash: string;
+            /** Final Count */
+            final_count: number;
+            /** Final Head Hash */
+            final_head_hash: string;
+            /** Content Hash */
+            content_hash: string;
+            /** File */
+            file: string;
+        };
         /** Body_upload_agent_avatar_v1_agents__agent_id__avatar_post */
         Body_upload_agent_avatar_v1_agents__agent_id__avatar_post: {
             /** File */
@@ -4280,6 +4433,19 @@ export interface components {
         };
         /** Body_upload_session_content_v1_sessions__local_session_id__upload_post */
         Body_upload_session_content_v1_sessions__local_session_id__upload_post: {
+            /** Environment Id */
+            environment_id?: string | null;
+            /** Expected Content Hash */
+            expected_content_hash?: string | null;
+            /** File */
+            file: string;
+        };
+        /** Body_upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put */
+        Body_upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put: {
+            /** Base Head Hash */
+            base_head_hash: string;
+            /** Content Hash */
+            content_hash: string;
             /** File */
             file: string;
         };
@@ -5313,6 +5479,8 @@ export interface components {
             agent_version?: string | null;
             /** Os */
             os: string;
+            /** Adapter Modules */
+            adapter_modules?: ("sessions" | "skills")[] | null;
         };
         /** EnvironmentCreatedResponse */
         EnvironmentCreatedResponse: {
@@ -5379,6 +5547,8 @@ export interface components {
             explicit_identity: boolean;
             /** Default Project Id */
             default_project_id: string;
+            /** Adapter Modules */
+            adapter_modules?: ("sessions" | "skills")[] | null;
             /**
              * Hosted Managed
              * @description Deprecated. True only when this environment has direct hosted runtime desired state in Cloud API. This no longer infers hosted ownership from machine_id, machine_name, or sibling runtime metadata; dashboard consumers should use control-plane ownership sets instead.
@@ -7370,6 +7540,31 @@ export interface components {
             /** Results */
             results: components["schemas"]["SearchHit"][];
         };
+        /** SessionAttachmentPart */
+        SessionAttachmentPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "attachment";
+            /** Attachment Id */
+            attachment_id: string;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "external" | "metadata_only";
+            /** Uri */
+            uri?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Media Type */
+            media_type?: string | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Sha256 */
+            sha256?: string | null;
+        };
         /** SessionBatchRequest */
         SessionBatchRequest: {
             /** Sessions */
@@ -7453,6 +7648,12 @@ export interface components {
             status: string;
             /** Content Hash */
             content_hash?: string | null;
+            /**
+             * Content Protocol
+             * @default snapshot-v1
+             * @enum {string}
+             */
+            content_protocol: "snapshot-v1" | "events-v1";
         };
         /** SessionDetailResponse */
         SessionDetailResponse: {
@@ -7512,6 +7713,14 @@ export interface components {
             /** Content Hash */
             content_hash?: string | null;
             /**
+             * Content Protocol
+             * @default snapshot-v1
+             * @enum {string}
+             */
+            content_protocol: "snapshot-v1" | "events-v1";
+            /** Event Head Hash */
+            event_head_hash?: string | null;
+            /**
              * Is Shared
              * @default false
              */
@@ -7522,6 +7731,187 @@ export interface components {
             } | null;
             /** Has Content */
             has_content: boolean;
+        };
+        /** SessionEventAppendResponse */
+        SessionEventAppendResponse: {
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /** Revision */
+            revision: number;
+            /** Count */
+            count: number;
+            /** Head Hash */
+            head_hash: string;
+        };
+        /** SessionEventChunkResponse */
+        SessionEventChunkResponse: {
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /** Start Seq */
+            start_seq: number;
+            /** End Seq */
+            end_seq: number;
+            /** Count */
+            count: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Result Head Hash */
+            result_head_hash: string;
+        };
+        /** SessionEventCommitRequest */
+        SessionEventCommitRequest: {
+            /**
+             * Append Id
+             * Format: uuid
+             */
+            append_id: string;
+            /** Base Generation */
+            base_generation: string | null;
+            /** Base Revision */
+            base_revision: number;
+            /** Base Count */
+            base_count: number;
+            /** Base Head Hash */
+            base_head_hash: string;
+            /** Final Count */
+            final_count: number;
+            /** Final Head Hash */
+            final_head_hash: string;
+        };
+        /** SessionEventDisplayMetadata */
+        SessionEventDisplayMetadata: {
+            /** Task Count */
+            task_count?: number | null;
+            /** Attempt */
+            attempt?: number | null;
+            /** Reactions */
+            reactions?: components["schemas"]["SessionEventReaction"][] | null;
+        };
+        /** SessionEventGenerationCreate */
+        SessionEventGenerationCreate: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /**
+             * Append Id
+             * Format: uuid
+             */
+            append_id: string;
+            /** Base Generation */
+            base_generation: string | null;
+            /** Base Revision */
+            base_revision: number;
+            /** Base Count */
+            base_count: number;
+            /** Base Head Hash */
+            base_head_hash: string;
+            /** Final Count */
+            final_count: number;
+            /** Final Head Hash */
+            final_head_hash: string;
+        };
+        /** SessionEventGenerationResponse */
+        SessionEventGenerationResponse: {
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "staging" | "committed";
+        };
+        /** SessionEventHeadResponse */
+        SessionEventHeadResponse: {
+            /**
+             * Protocol
+             * @enum {string}
+             */
+            protocol: "snapshot-v1" | "events-v1";
+            /** Generation */
+            generation: string | null;
+            /** Revision */
+            revision: number;
+            /** Count */
+            count: number;
+            /** Head Hash */
+            head_hash: string;
+        };
+        /** SessionEventReaction */
+        SessionEventReaction: {
+            /** Emoji */
+            emoji: string;
+            /** Author */
+            author: string;
+            /** At */
+            at?: string | null;
+            /** Seen */
+            seen?: boolean | null;
+        };
+        /** SessionEventSemantics */
+        SessionEventSemantics: {
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "active" | "compacted" | "inactive";
+            /**
+             * Display
+             * @enum {string}
+             */
+            display: "message" | "event" | "hidden";
+            /** Compressed Summary */
+            compressed_summary: boolean;
+            /** Display Kind */
+            display_kind?: string | null;
+            display_metadata?: components["schemas"]["SessionEventDisplayMetadata"] | null;
+        };
+        /** SessionEventSource */
+        SessionEventSource: {
+            /**
+             * Adapter
+             * @enum {string}
+             */
+            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi";
+            /** Session Key */
+            session_key: string;
+            /** Record Id */
+            record_id: string;
+            /** Record Seq */
+            record_seq?: number | null;
+            /** Part Index */
+            part_index?: number | null;
+        };
+        /** SessionEventsResponse */
+        SessionEventsResponse: {
+            /**
+             * Generation
+             * Format: uuid
+             */
+            generation: string;
+            /** Revision */
+            revision: number;
+            /** Count */
+            count: number;
+            /** Head Hash */
+            head_hash: string;
+            /** Events */
+            events: (components["schemas"]["SessionMessageEvent"] | components["schemas"]["SessionToolCallEvent"] | components["schemas"]["SessionToolResultEvent"])[];
         };
         /**
          * SessionExtractResponse
@@ -7589,6 +7979,14 @@ export interface components {
             /** Content Hash */
             content_hash?: string | null;
             /**
+             * Content Protocol
+             * @default snapshot-v1
+             * @enum {string}
+             */
+            content_protocol: "snapshot-v1" | "events-v1";
+            /** Event Head Hash */
+            event_head_hash?: string | null;
+            /**
              * Is Shared
              * @default false
              */
@@ -7597,6 +7995,31 @@ export interface components {
             related_refs?: {
                 [key: string]: string[];
             } | null;
+        };
+        /** SessionMessageEvent */
+        SessionMessageEvent: {
+            /** Seq */
+            seq: number;
+            /** Event Id */
+            event_id: string;
+            source: components["schemas"]["SessionEventSource"];
+            /** Timestamp */
+            timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message";
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant" | "system" | "developer";
+            /** Parts */
+            parts: (components["schemas"]["SessionTextPart"] | components["schemas"]["SessionAttachmentPart"])[];
+            /** Model */
+            model?: string | null;
         };
         /**
          * SessionMessageResponse
@@ -7710,6 +8133,78 @@ export interface components {
         SessionPermissionsResponse: {
             /** Permissions */
             permissions: components["schemas"]["SessionPermissionResponse"][];
+        };
+        /** SessionTextPart */
+        SessionTextPart: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+            /** Text */
+            text: string;
+        };
+        /** SessionToolCallEvent */
+        SessionToolCallEvent: {
+            /** Seq */
+            seq: number;
+            /** Event Id */
+            event_id: string;
+            source: components["schemas"]["SessionEventSource"];
+            /** Timestamp */
+            timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_call";
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name: string;
+            /** Arguments Json */
+            arguments_json?: string | null;
+            /** Model */
+            model?: string | null;
+        };
+        /** SessionToolResultEvent */
+        SessionToolResultEvent: {
+            /** Seq */
+            seq: number;
+            /** Event Id */
+            event_id: string;
+            source: components["schemas"]["SessionEventSource"];
+            /** Timestamp */
+            timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_result";
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "error";
+            /** Parts */
+            parts: (components["schemas"]["SessionTextPart"] | components["schemas"]["SessionAttachmentPart"])[];
+            /** Result Json */
+            result_json?: string | null;
+        };
+        /** SessionUploadCapabilitiesResponse */
+        SessionUploadCapabilitiesResponse: {
+            /** Protocols */
+            protocols: ("snapshot-v1" | "events-v1")[];
+            /** Event Chunk Target Bytes */
+            event_chunk_target_bytes: number;
+            /** Event Chunk Max Bytes */
+            event_chunk_max_bytes: number;
         };
         /** SessionUploadResponse */
         SessionUploadResponse: {
@@ -10010,6 +10505,233 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceTerminalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_upload_capabilities_v1_sessions_upload_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionUploadCapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    get_session_event_head_v1_sessions__local_session_id__events_head_get: {
+        parameters: {
+            query: {
+                environment_id: string;
+            };
+            header?: never;
+            path: {
+                local_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventHeadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stage_session_event_generation_v1_sessions__local_session_id__events_generations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                local_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionEventGenerationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventGenerationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                local_session_id: string;
+                generation_id: string;
+                start_seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventChunkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commit_session_event_generation_v1_sessions__local_session_id__events_generations__generation_id__commit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                local_session_id: string;
+                generation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionEventCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventAppendResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_session_events_v1_sessions__local_session_id__events_append_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                local_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_append_session_events_v1_sessions__local_session_id__events_append_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventAppendResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_events_v1_sessions__session_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEventsResponse"];
                 };
             };
             /** @description Validation Error */

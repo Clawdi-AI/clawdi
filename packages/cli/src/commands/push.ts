@@ -7,7 +7,6 @@ import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
-import { sha256Hex } from "../lib/hash";
 import { parseModules } from "../lib/prompts";
 import {
 	adapterForType,
@@ -17,11 +16,16 @@ import {
 } from "../lib/select-adapter";
 import { computeLastActivityIso } from "../lib/session-activity";
 import {
-	cacheKey,
-	readSessionsLock,
-	type SessionsLock,
-	writeSessionsLock,
-} from "../lib/sessions-lock";
+	negotiateSessionProtocol,
+	persistSuppressedSession,
+	planSessionUpload,
+	type SelectedSessionProtocol,
+	type SessionUploadPlan,
+	sessionFence,
+	sessionPlanIsDurablyBlocked,
+	syncSessionContent,
+} from "../lib/session-upload";
+import { readFencedSessionEntry, readSessionsLock, type SessionsLock } from "../lib/sessions-lock";
 import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
@@ -66,10 +70,14 @@ interface AgentUploadResult {
  */
 interface AgentScanResult {
 	agentType: AgentType;
+	modules: (typeof UP_MODULES)[number][];
 	envId: string | null;
 	sessions: RawSession[];
+	sessionPlans: Map<string, SessionUploadPlan>;
+	sessionProtocol: SelectedSessionProtocol | null;
 	skills: RawSkill[];
 	sessionsCacheSkipped: number;
+	sessionsBlocked: number;
 	skillsCacheSkipped: number;
 	/** Per-agent advisories (hermes filter notice, first-run hint,
 	 * exclusion summary) — collected during the scan and rendered
@@ -81,6 +89,15 @@ interface AgentScanResult {
 /** Whether a scan turned up anything to actually upload. */
 function scanHasWork(scan: AgentScanResult): boolean {
 	return scan.sessions.length > 0 || scan.skills.length > 0;
+}
+
+function supportsPushModule(
+	adapter: AgentAdapter,
+	module: string,
+): module is (typeof UP_MODULES)[number] {
+	if (module === "sessions") return adapter.sessions !== undefined;
+	if (module === "skills") return adapter.skills !== undefined;
+	return false;
 }
 
 export async function push(opts: PushOpts) {
@@ -122,6 +139,8 @@ export async function push(opts: PushOpts) {
 	// multi-select prompt to block an agent harness on.
 	const modules = parseModules(opts.modules, UP_MODULES);
 	if (!modules) return;
+	const explicitlySelectedModules = opts.modules !== undefined;
+	const strictModuleSelection = explicitlySelectedModules && targetTypes.length === 1;
 
 	const moduleState = readModuleState();
 	const sessionsLock = readSessionsLock();
@@ -142,12 +161,23 @@ export async function push(opts: PushOpts) {
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
 	const scans: AgentScanResult[] = [];
+	const moduleSkips: Array<{ agentType: AgentType; modules: string[] }> = [];
 	let scanError: string | null = null;
 	try {
 		for (const agentType of targetTypes) {
 			const adapter = adapterForType(agentType);
 			if (!adapter) continue;
-			const scan = await scanOneAgent(adapter, modules, opts, projectFilter, sessionsLock);
+			const availableModules = modules.filter((module) => supportsPushModule(adapter, module));
+			const missing = modules.filter((module) => !supportsPushModule(adapter, module));
+			if (strictModuleSelection && missing.length > 0) {
+				scanError = `${adapterRegistry[agentType].displayName} does not support ${missing.join(", ")}.`;
+				break;
+			}
+			if (explicitlySelectedModules && missing.length > 0) {
+				moduleSkips.push({ agentType, modules: missing });
+			}
+			if (availableModules.length === 0) continue;
+			const scan = await scanOneAgent(adapter, availableModules, opts, projectFilter, sessionsLock);
 			if ("error" in scan) {
 				scanError = scan.error;
 				break;
@@ -169,17 +199,27 @@ export async function push(opts: PushOpts) {
 		process.exitCode = 1;
 		return;
 	}
+	for (const skip of moduleSkips) {
+		p.log.warn(
+			`${adapterRegistry[skip.agentType].displayName} skipped unsupported ${skip.modules.join(", ")}.`,
+		);
+	}
 
 	// Combined per-agent summary: every target agent, its counts, and
 	// any advisories — visible in full before uploads begin.
 	for (const scan of scans) {
 		const name = adapterRegistry[scan.agentType].displayName;
 		const bits: string[] = [];
-		if (modules.includes("sessions")) {
+		if (scan.modules.includes("sessions")) {
 			const sync = scan.sessionsCacheSkipped > 0 ? ` (${scan.sessionsCacheSkipped} in sync)` : "";
 			bits.push(`${scan.sessions.length} session${scan.sessions.length === 1 ? "" : "s"}${sync}`);
+			if (scan.sessionsBlocked > 0) {
+				bits.push(
+					`${scan.sessionsBlocked} session${scan.sessionsBlocked === 1 ? "" : "s"} blocked`,
+				);
+			}
 		}
-		if (modules.includes("skills")) {
+		if (scan.modules.includes("skills")) {
 			const sync = scan.skillsCacheSkipped > 0 ? ` (${scan.skillsCacheSkipped} in sync)` : "";
 			bits.push(`${scan.skills.length} skill${scan.skills.length === 1 ? "" : "s"}${sync}`);
 		}
@@ -224,7 +264,7 @@ export async function push(opts: PushOpts) {
 		if (toUpload.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
 		}
-		const result = await uploadOneAgent(scan, moduleState, sessionsLock);
+		const result = await uploadOneAgent(scan, moduleState);
 		if (result === "aborted") {
 			aborted = true;
 			break;
@@ -238,11 +278,6 @@ export async function push(opts: PushOpts) {
 	}
 
 	writeModuleState(moduleState);
-	// Persist content-hash caches once per push command, even if the
-	// loop aborted partway — entries we mutated for successful agents
-	// are still valid and would otherwise be lost on the next push.
-	writeSessionsLock(sessionsLock);
-
 	if (aborted) {
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
@@ -327,6 +362,9 @@ async function scanOneAgent(
 	}
 
 	const notes: string[] = [];
+	const sessionPlans = new Map<string, SessionUploadPlan>();
+	let sessionProtocol: SelectedSessionProtocol | null = null;
+	const sessionApi = new ApiClient({ requireAuth: !opts.dryRun });
 	const excludeSet = new Set<string>(
 		(opts.excludeProject ?? []).map((path) => normalizeProject(path)),
 	);
@@ -344,13 +382,17 @@ async function scanOneAgent(
 	let sessions: RawSession[] = [];
 	const skills: RawSkill[] = [];
 	let skillsCacheSkipped = 0;
-	if (modules.includes("sessions")) {
+	const sessionsModule = modules.includes("sessions") ? adapter.sessions : undefined;
+	if (sessionsModule) {
 		// `collectSessions` also reports a `dedupedCount` (resume chains it
 		// collapsed). That's internal housekeeping — not actionable and not
 		// perceptible to the user — so it isn't surfaced.
-		sessions = (await adapter.collectSessions({ kind: "complete", projectFilter })).sessions;
+		sessionProtocol = opts.dryRun
+			? await sessionsModule.contentProtocol()
+			: await negotiateSessionProtocol(sessionApi, sessionsModule);
+		sessions = (await sessionsModule.collect({ kind: "complete", projectFilter })).sessions;
 	}
-	if (modules.includes("skills")) {
+	if (modules.includes("skills") && adapter.skills) {
 		// Always route local Skills through the authenticated Agent claim
 		// boundary. Legacy hash-only lock entries are not ownership evidence;
 		// skipping on them would leave same-byte Cloud rows unclaimed.
@@ -361,7 +403,7 @@ async function scanOneAgent(
 			const skillProjectId = await fetchProjectIdForEnv(new ApiClient(), envId);
 			exactClaims = readSkillProjectionState(agentType, envId, skillProjectId).claims;
 		}
-		for (const skill of await adapter.collectSkills()) {
+		for (const skill of await adapter.skills.collect()) {
 			if (!isValidSkillKey(skill.skillKey)) {
 				invalidSkillCount++;
 				continue;
@@ -388,13 +430,6 @@ async function scanOneAgent(
 				`Skipped ${projectMaterializationCount} Project-owned skill ${projectMaterializationCount === 1 ? "reference" : "references"}; update them from their source Project.`,
 			);
 		}
-	}
-
-	// Fingerprint each session's content. The server's batch endpoint
-	// compares this against the stored `content_hash` to decide whether
-	// the body needs reupload, so we hash exactly the bytes we'd send.
-	for (const s of sessions) {
-		s.contentHash = sha256Hex(JSON.stringify(s.messages));
 	}
 
 	// Apply --exclude-project after scan. Exact-equality match on normalized
@@ -430,13 +465,35 @@ async function scanOneAgent(
 	// the per-entity diff that replaces the old global mtime cursor; project
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
-	if (modules.includes("sessions")) {
+	let sessionsBlocked = 0;
+	if (sessionsModule && sessionProtocol) {
 		const before = sessions.length;
 		sessions = sessions.filter((s) => {
-			const cached = sessionsLock.sessions[cacheKey(agentType, s.localSessionId)];
-			return cached?.hash !== s.contentHash;
+			const plan = planSessionUpload(s, sessionProtocol);
+			sessionPlans.set(s.localSessionId, plan);
+			if (!envId) return true;
+			const fence = sessionFence(sessionApi, {
+				environmentId: envId,
+				adapter: agentType,
+				sourceSessionKey: s.localSessionId,
+			});
+			const blocked = sessionPlanIsDurablyBlocked(fence, plan);
+			if (blocked) {
+				sessionsBlocked += 1;
+				notes.push(blocked);
+				return false;
+			}
+			const cached = readFencedSessionEntry(sessionsLock, fence);
+			return !(
+				cached?.protocol === plan.protocol &&
+				cached.local_hash === plan.localHash &&
+				cached.pending === undefined
+			);
 		});
-		sessionsCacheSkipped = before - sessions.length;
+		sessionsCacheSkipped = before - sessions.length - sessionsBlocked;
+		for (const id of [...sessionPlans.keys()]) {
+			if (!sessions.some((session) => session.localSessionId === id)) sessionPlans.delete(id);
+		}
 	}
 
 	// Guidance when nothing matched at all.
@@ -462,7 +519,28 @@ async function scanOneAgent(
 		}
 	}
 
-	return { agentType, envId, sessions, skills, sessionsCacheSkipped, skillsCacheSkipped, notes };
+	return {
+		agentType,
+		modules: modules as (typeof UP_MODULES)[number][],
+		envId,
+		sessions,
+		sessionPlans,
+		sessionProtocol,
+		skills,
+		sessionsCacheSkipped,
+		sessionsBlocked,
+		skillsCacheSkipped,
+		notes,
+	};
+}
+
+function requireSessionPlan(
+	plans: ReadonlyMap<string, SessionUploadPlan>,
+	localSessionId: string,
+): SessionUploadPlan {
+	const plan = plans.get(localSessionId);
+	if (!plan) throw new Error(`internal error: missing upload plan for ${localSessionId}`);
+	return plan;
 }
 
 /**
@@ -473,9 +551,8 @@ async function scanOneAgent(
 async function uploadOneAgent(
 	scan: AgentScanResult,
 	moduleState: ModuleState,
-	sessionsLock: SessionsLock,
 ): Promise<AgentUploadResult | "aborted"> {
-	const { agentType, envId, sessions, skills } = scan;
+	const { agentType, envId, sessions, sessionPlans, skills } = scan;
 
 	if (!envId) {
 		p.log.error("Environment id missing — rerun `clawdi setup`.");
@@ -514,24 +591,28 @@ async function uploadOneAgent(
 				const result = unwrap(
 					await api.POST("/v1/sessions/batch", {
 						body: {
-							sessions: chunk.map((s) => ({
-								environment_id: envId,
-								local_session_id: s.localSessionId,
-								project_path: s.projectPath,
-								started_at: s.startedAt.toISOString(),
-								ended_at: s.endedAt?.toISOString() ?? null,
-								last_activity_at: computeLastActivityIso(s),
-								duration_seconds: s.durationSeconds,
-								message_count: s.messageCount,
-								input_tokens: s.inputTokens,
-								output_tokens: s.outputTokens,
-								cache_read_tokens: s.cacheReadTokens,
-								model: s.model,
-								models_used: s.modelsUsed,
-								summary: s.summary,
-								status: "completed",
-								content_hash: s.contentHash ?? null,
-							})),
+							sessions: chunk.map((s) => {
+								const plan = requireSessionPlan(sessionPlans, s.localSessionId);
+								return {
+									environment_id: envId,
+									local_session_id: s.localSessionId,
+									project_path: s.projectPath,
+									started_at: s.startedAt.toISOString(),
+									ended_at: s.endedAt?.toISOString() ?? null,
+									last_activity_at: computeLastActivityIso(s),
+									duration_seconds: s.durationSeconds,
+									message_count: s.messageCount,
+									input_tokens: s.inputTokens,
+									output_tokens: s.outputTokens,
+									cache_read_tokens: s.cacheReadTokens,
+									model: s.model,
+									models_used: s.modelsUsed,
+									summary: s.summary,
+									status: "completed",
+									content_protocol: plan.protocol,
+									content_hash: plan.protocol === "snapshot-v1" ? plan.localHash : null,
+								};
+							}),
 						},
 					}),
 				);
@@ -573,54 +654,47 @@ async function uploadOneAgent(
 			throw e;
 		}
 
-		// Track which uploads actually landed bytes on the server. Caching
-		// a hash for a session whose upload threw would be a silent footgun:
-		// next push sees cache hit → skips → server still has metadata
-		// without file_key → forever broken until cache is wiped.
-		const uploadedIds = new Set<string>();
-		if (needsContent.size > 0) {
+		if (sessions.some((session) => !rejectedIds.has(session.localSessionId))) {
 			const contentSpinner = p.spinner();
 			contentSpinner.start(
-				`Uploading content for ${needsContent.size} session${needsContent.size === 1 ? "" : "s"}...`,
+				`Syncing content for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 			);
 			for (const s of sessions) {
-				if (!needsContent.has(s.localSessionId)) continue;
-				if (s.messages.length === 0) continue;
+				const id = s.localSessionId;
+				if (rejectedIds.has(id)) continue;
+				const plan = requireSessionPlan(sessionPlans, id);
+				const fence = sessionFence(api, {
+					environmentId: envId,
+					adapter: agentType,
+					sourceSessionKey: id,
+				});
+				if (suppressedIds.has(id)) {
+					persistSuppressedSession(fence, plan);
+					continue;
+				}
 				try {
-					const content = Buffer.from(JSON.stringify(s.messages), "utf-8");
-					await api.uploadSessionContent(s.localSessionId, content, `${s.localSessionId}.json`);
-					uploadedIds.add(s.localSessionId);
-					contentUploaded++;
-					contentSpinner.message(`Uploading content (${contentUploaded}/${needsContent.size})...`);
+					const result = await syncSessionContent({
+						api,
+						fence,
+						session: s,
+						plan,
+						needsSnapshotContent: needsContent.has(id),
+					});
+					if (result.status === "blocked") {
+						p.log.warn(result.message);
+					} else if (result.uploaded) {
+						contentUploaded += 1;
+						contentSpinner.message(
+							`Synced content for ${contentUploaded} session${contentUploaded === 1 ? "" : "s"}...`,
+						);
+					}
 				} catch (e) {
-					// Content upload is best-effort — the metadata row was
-					// already committed in the batch POST above. Surface the
-					// reason so misconfigured file stores don't appear to
-					// succeed silently.
-					p.log.warn(`Content upload skipped for ${s.localSessionId}: ${errMessage(e)}`);
+					p.log.warn(`Content sync failed for ${s.localSessionId}: ${errMessage(e)}`);
 				}
 			}
 			contentSpinner.stop(
-				`Uploaded ${contentUploaded} content blob${contentUploaded === 1 ? "" : "s"}`,
+				`Synced ${contentUploaded} changed content session${contentUploaded === 1 ? "" : "s"}`,
 			);
-		}
-
-		// Update the per-session lock for sessions that are genuinely in
-		// sync with the server now: either the server already had matching
-		// content (not in `needs_content`), or we just delivered the bytes
-		// (id in `uploadedIds`). Sessions whose upload failed stay un-cached
-		// so the next push retries. Server-rejected ids ALSO stay un-cached
-		// so the cross-env race loser retries on the next push.
-		for (const s of sessions) {
-			if (!s.contentHash) continue;
-			const id = s.localSessionId;
-			if (rejectedIds.has(id)) continue;
-			if (suppressedIds.has(id)) {
-				sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
-				continue;
-			}
-			if (needsContent.has(id) && !uploadedIds.has(id)) continue;
-			sessionsLock.sessions[cacheKey(agentType, id)] = { hash: s.contentHash };
 		}
 		moduleState[`sessions:${agentType}`] = { lastActivityAt: new Date().toISOString() };
 	}

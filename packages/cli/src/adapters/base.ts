@@ -1,4 +1,4 @@
-import type { AgentType } from "./registry";
+import type { AgentType } from "./agent-types";
 
 export interface SessionMessage {
 	role: "user" | "assistant";
@@ -6,6 +6,82 @@ export interface SessionMessage {
 	model?: string;
 	timestamp?: string;
 }
+
+export interface SessionEventSource {
+	adapter: AgentType;
+	session_key: string;
+	record_id: string;
+	record_seq?: number;
+	part_index?: number;
+}
+
+export interface SessionEventReaction {
+	emoji: string;
+	author: string;
+	at?: string;
+	seen?: boolean;
+}
+
+export interface SessionEventDisplayMetadata {
+	task_count?: number;
+	attempt?: number;
+	reactions?: SessionEventReaction[];
+}
+
+export interface SessionEventSemantics {
+	lifecycle: "active" | "compacted" | "inactive";
+	display: "message" | "event" | "hidden";
+	compressed_summary: boolean;
+	display_kind?: string;
+	display_metadata?: SessionEventDisplayMetadata;
+}
+
+export type SessionContentPart =
+	| { type: "text"; text: string }
+	| {
+			type: "attachment";
+			attachment_id: string;
+			availability: "external" | "metadata_only";
+			uri?: string;
+			name?: string;
+			media_type?: string;
+			size_bytes?: number;
+			sha256?: string;
+	  };
+
+interface SessionEventBase {
+	seq: number;
+	event_id: string;
+	source: SessionEventSource;
+	timestamp?: string;
+	semantics?: SessionEventSemantics;
+}
+
+export interface SessionMessageEvent extends SessionEventBase {
+	type: "message";
+	role: "user" | "assistant" | "system" | "developer";
+	parts: SessionContentPart[];
+	model?: string;
+}
+
+export interface SessionToolCallEvent extends SessionEventBase {
+	type: "tool_call";
+	call_id: string;
+	name: string;
+	arguments_json?: string;
+	model?: string;
+}
+
+export interface SessionToolResultEvent extends SessionEventBase {
+	type: "tool_result";
+	call_id: string;
+	name?: string;
+	status: "completed" | "error";
+	parts: SessionContentPart[];
+	result_json?: string;
+}
+
+export type SessionEvent = SessionMessageEvent | SessionToolCallEvent | SessionToolResultEvent;
 
 export interface RawSession {
 	localSessionId: string;
@@ -21,6 +97,8 @@ export interface RawSession {
 	durationSeconds: number | null;
 	summary: string | null;
 	messages: SessionMessage[];
+	/** Present only when the source supports strict, stable events-v1. */
+	events?: SessionEvent[];
 	rawFilePath: string;
 	// Set by `pushOneAgent` after collection — sha256 hex of the JSON
 	// the CLI is about to upload. Adapters do not populate this.
@@ -47,6 +125,14 @@ export interface SessionScanResult {
 	coverage: "complete" | "partial";
 }
 
+export interface SessionModule {
+	contentProtocol(): Promise<"events-v1" | "snapshot-v1">;
+	collect(request: SessionScanRequest): Promise<SessionScanResult>;
+	resolve(localSessionId: string): Promise<RawSession | null>;
+	/** Paths watched as one backing-store stability group. */
+	watchPaths(): string[];
+}
+
 export interface RawSkill {
 	skillKey: string;
 	name: string;
@@ -59,71 +145,43 @@ export interface RawSkill {
 	contentHash?: string;
 }
 
-export interface AgentAdapter {
-	readonly agentType: AgentType;
+export interface SkillModule {
+	collect(): Promise<RawSkill[]>;
+	listKeys(): Promise<string[]>;
+	path(key: string): string;
+	rootDir(): string;
+	sharedPath(skillKey: string, ownerHandle: string): string;
+	writeArchive(key: string, tarGzBytes: Buffer): Promise<void>;
+	writeSharedArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
+	remove(key: string): Promise<void>;
+}
 
+export interface AgentAdapterCore {
+	readonly agentType: AgentType;
 	detect(): Promise<boolean>;
 	getVersion(): Promise<string | null>;
+}
 
-	collectSessions(request: SessionScanRequest): Promise<SessionScanResult>;
-	resolveSession(localSessionId: string): Promise<RawSession | null>;
-	collectSkills(): Promise<RawSkill[]>;
-	/** Enumerate skill_keys present on disk WITHOUT reading SKILL.md
-	 * content. Used by the daemon's hot-path rescan / boot listing
-	 * to diff against `lastPushedHash` cheaply.
-	 *
-	 * Returns relative paths in the same shape `collectSkills`
-	 * would emit `skillKey` — flat for Claude Code / Codex /
-	 * OpenClaw, nested (`category/foo`) for Hermes. The daemon
-	 * uses these as path components under
-	 * `getSkillsRootDir()` for hash + watch + push, so nested
-	 * shapes only land here when the adapter actually supports
-	 * nested layouts on disk. */
-	listSkillKeys(): Promise<string[]>;
+type AtLeastOne<T> = {
+	[K in keyof T]-?: Required<Pick<T, K>> & Partial<Omit<T, K>>;
+}[keyof T];
 
-	getSkillPath(key: string): string;
-	/** Directory containing one subdirectory per skill_key.
-	 * `clawdi daemon` watches this for change events. Distinct from
-	 * `getSkillPath(key)` which points at the SKILL.md inside one
-	 * skill — empty-key callers were getting `<root>/skills//SKILL.md`
-	 * before this method existed. */
-	getSkillsRootDir(): string;
-	/** Returns the on-disk path where a SHARED-PROJECT skill should
-	 * land. The owner-handle (resolved server-side, frozen at link
-	 * create for each shared owner) is appended with `__` separator so
-	 * the same key from different owners coexists with the recipient's
-	 * own key.
-	 *
-	 * Example for Claude Code:
-	 *   getSharedSkillPath("git-tools", "alice-a3b4")
-	 *     → "~/.claude/skills/git-tools__alice-a3b4"
-	 *
-	 * Personal project skills keep using `getSkillsRootDir() + key`
-	 * with no suffix. */
-	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
-	/** Path(s) `clawdi daemon` should watch for session changes. May
-	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
-	 * files there) or database/sidecar files (Hermes uses SQLite).
-	 *
-	 * Returning paths that don't exist yet is fine — the watcher
-	 * skips missing roots and reattaches when `mkdir` lands. The
-	 * daemon does NOT throw on a missing path because the agent
-	 * may simply have never run yet. */
-	getSessionsWatchPaths(): string[];
-	writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void>;
-	/** Like `writeSkillArchive` but lands the content at the shared-
-	 * project path (`getSharedSkillPath(key, ownerHandle)`) rather than
-	 * `getSkillsRootDir() + key`. Tarball still has `<key>/...` as its
-	 * top-level layout (uploads don't know they'll be re-served as
-	 * shared); implementations extract into a temp dir and rename
-	 * the top entry to `<key>__<ownerHandle>`.
-	 *
-	 * Called by explicit pull flows so the recipient's agent sees the
-	 * shared skill folder only after content download is requested. */
-	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
-	/** Remove a Skill from the Agent's local skills directory. Callers must
-	 * prove exact local ownership before invoking this method; Project desired-
-	 * inventory reconciliation does so with its durable materialization receipt.
-	 * An already absent target is handled idempotently. */
-	removeLocalSkill(key: string): Promise<void>;
+/** An adapter is core identity plus at least one complete data module. */
+export type AgentAdapter = AgentAdapterCore &
+	AtLeastOne<{
+		sessions: SessionModule;
+		skills: SkillModule;
+	}>;
+
+export type AdapterModuleName = "sessions" | "skills";
+
+/** Derive the registration contract from complete modules actually present. */
+export function adapterModuleNames(
+	adapter: AgentAdapter,
+): [AdapterModuleName, ...AdapterModuleName[]] {
+	const modules: AdapterModuleName[] = [];
+	if (adapter.sessions) modules.push("sessions");
+	if (adapter.skills) modules.push("skills");
+	if (modules.length === 0) throw new Error(`${adapter.agentType} has no data modules`);
+	return modules as [AdapterModuleName, ...AdapterModuleName[]];
 }

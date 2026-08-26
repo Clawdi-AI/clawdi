@@ -11,10 +11,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { RawSession } from "../adapters/base";
+import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
-import { cacheKey, readSessionsLock } from "../lib/sessions-lock";
+import { sessionFence } from "../lib/session-upload";
+import { readFencedSessionEntry, readSessionsLock } from "../lib/sessions-lock";
 import {
 	computeSkillFolderHash,
 	readSkillProjectionClaimsForAgent,
@@ -48,6 +49,34 @@ import {
 	staleSkillProjectionProjectIds,
 } from "./sync-engine";
 
+function queueModules(adapter: AgentAdapter, projectId = "project-1") {
+	return {
+		sessions: adapter.sessions
+			? { module: adapter.sessions, protocol: "snapshot-v1" as const }
+			: null,
+		skills: adapter.skills ? { module: adapter.skills, getProjectId: () => projectId } : null,
+	};
+}
+
+function sessionQueueFence(
+	api: ApiClient,
+	adapter: AgentAdapter,
+	sourceSessionKey: string,
+	environmentId = "agent-1",
+) {
+	const fence = sessionFence(api, {
+		environmentId,
+		adapter: adapter.agentType,
+		sourceSessionKey,
+	});
+	return {
+		api_origin: fence.apiOrigin,
+		environment_id: fence.environmentId,
+		adapter: fence.adapter,
+		source_session_key: fence.sourceSessionKey,
+	};
+}
+
 describe("stable session enqueue abort fence", () => {
 	it("does not enqueue after collection finishes into an abort", async () => {
 		const abort = new AbortController();
@@ -77,6 +106,13 @@ describe("stable session enqueue abort fence", () => {
 			queue: { enqueue: (item: unknown) => queued.push(item) },
 			lastPushedHash: new Map(),
 			inFlightHash: inFlight,
+			protocol: "snapshot-v1",
+			fenceFor: () => ({
+				apiOrigin: "https://cloud.example.test",
+				environmentId: "agent-1",
+				adapter: "hermes",
+				sourceSessionKey: "session-1",
+			}),
 		});
 
 		expect(enqueued).toBe(0);
@@ -115,7 +151,9 @@ describe("Session deletion convergence", () => {
 				rawFilePath: "/sessions/deleted-session.jsonl",
 			};
 			const adapter = adapterRegistry.hermes.create();
-			adapter.resolveSession = async () => session;
+			const sessions = adapter.sessions;
+			if (!sessions) throw new Error("Hermes fixture requires Sessions");
+			sessions.resolve = async () => session;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
 				const path = new URL(request.url).pathname;
@@ -144,10 +182,12 @@ describe("Session deletion convergence", () => {
 			queue = retryQueue;
 			const lastPushedSessionHash = new Map<string, string>();
 			const abortController = new AbortController();
+			const api = new ApiClient({ requireAuth: false });
 			const processCurrent = async () => {
 				const hash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
 				retryQueue.enqueue({
 					kind: "session_push",
+					...sessionQueueFence(api, adapter, session.localSessionId),
 					local_session_id: session.localSessionId,
 					content_hash: hash,
 					enqueued_at: new Date().toISOString(),
@@ -162,19 +202,26 @@ describe("Session deletion convergence", () => {
 						abort: abortController.signal,
 						abortController,
 					},
-					new ApiClient({ requireAuth: false }),
+					api,
 					retryQueue,
 					item,
+					queueModules(adapter),
 					new Map(),
 					lastPushedSessionHash,
 					new Map(),
-					"project-1",
 				);
 				expect(outcome).toBe("applied");
 				expect(lastPushedSessionHash.get(session.localSessionId)).toBe(hash);
-				expect(readSessionsLock().sessions[cacheKey("hermes", session.localSessionId)]?.hash).toBe(
-					hash,
-				);
+				expect(
+					readFencedSessionEntry(
+						readSessionsLock(),
+						sessionFence(api, {
+							environmentId: "agent-1",
+							adapter: "hermes",
+							sourceSessionKey: session.localSessionId,
+						}),
+					)?.local_hash,
+				).toBe(hash);
 			};
 
 			await processCurrent();
@@ -237,8 +284,10 @@ describe("Session deletion convergence", () => {
 				.update(JSON.stringify(currentSession.messages))
 				.digest("hex");
 			const adapter = adapterRegistry.hermes.create();
+			const sessions = adapter.sessions;
+			if (!sessions) throw new Error("Hermes fixture requires Sessions");
 			let resolveCalls = 0;
-			adapter.resolveSession = async () => {
+			sessions.resolve = async () => {
 				resolveCalls += 1;
 				return currentSession;
 			};
@@ -266,16 +315,18 @@ describe("Session deletion convergence", () => {
 					const file = (await request.formData()).get("file");
 					if (!(file instanceof Blob)) return new Response("missing file", { status: 400 });
 					sentMessages = JSON.parse(await file.text());
-					return new Response(JSON.stringify({ uploaded: true }), {
+					return new Response(JSON.stringify({ status: "uploaded", content_hash: currentHash }), {
 						headers: { "content-type": "application/json" },
 					});
 				}
 				return new Response("unexpected request", { status: 404 });
 			}) as typeof fetch;
 
+			const api = new ApiClient({ requireAuth: false });
 			queue = new RetryQueue({ agentType: "hermes" });
 			queue.enqueue({
 				kind: "session_push",
+				...sessionQueueFence(api, adapter, enqueuedSession.localSessionId),
 				local_session_id: enqueuedSession.localSessionId,
 				content_hash: queuedHash,
 				enqueued_at: new Date().toISOString(),
@@ -291,13 +342,13 @@ describe("Session deletion convergence", () => {
 					abort: abortController.signal,
 					abortController,
 				},
-				new ApiClient({ requireAuth: false }),
+				api,
 				queue,
 				item,
+				queueModules(adapter),
 				new Map(),
 				new Map(),
 				new Map([[enqueuedSession.localSessionId, queuedHash]]),
-				"project-1",
 			);
 
 			expect(outcome).toBe("applied");
@@ -325,33 +376,36 @@ describe("Agent filesystem projection reconcile", () => {
 			root: string;
 			queue: RetryQueue;
 			keys: Set<string>;
+			skills: SkillModule;
 			reconcile: (claims: Map<string, string>, legacy?: ReadonlySet<string>) => Promise<void>;
 		}) => Promise<void>,
 	): Promise<void> {
 		const root = mkdtempSync(join(tmpdir(), "agent-skill-projection-"));
 		const originalHome = process.env.HOME;
 		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalHermesHome = process.env.HERMES_HOME;
 		try {
 			process.env.HOME = root;
 			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			process.env.HERMES_HOME = root;
 			const skillsRoot = join(root, "skills");
 			mkdirSync(skillsRoot, { recursive: true });
 			const keys = new Set<string>();
+			const skills = adapterRegistry.hermes.create().skills;
+			if (!skills) throw new Error("Hermes fixture requires Skills");
 			const queue = new RetryQueue({ agentType: "hermes" });
 			await run({
 				root: skillsRoot,
 				queue,
 				keys,
+				skills,
 				reconcile: (claims, trustedLegacyRemoteKeys) =>
 					reconcileAgentSkillProjection({
 						opts: {
 							environmentId: "agent-1",
-							adapter: {
-								agentType: "hermes",
-								getSkillsRootDir: () => skillsRoot,
-								listSkillKeys: async () => [...keys],
-							},
+							adapter: { agentType: "hermes" },
 						},
+						skills,
 						queue,
 						claims,
 						projectId: "project-1",
@@ -364,6 +418,8 @@ describe("Agent filesystem projection reconcile", () => {
 			else process.env.HOME = originalHome;
 			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
 			else process.env.CLAWDI_STATE_DIR = originalState;
+			if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
+			else process.env.HERMES_HOME = originalHermesHome;
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
@@ -420,7 +476,16 @@ describe("Agent filesystem projection reconcile", () => {
 				const api = new ApiClient({ requireAuth: false });
 
 				await expect(
-					processQueueItem(opts, api, queue, item, new Map(), new Map(), new Map(), "project-1"),
+					processQueueItem(
+						opts,
+						api,
+						queue,
+						item,
+						queueModules(adapter),
+						new Map(),
+						new Map(),
+						new Map(),
+					),
 				).rejects.toBeInstanceOf(AgentSkillSyncNotFoundError);
 				expect(isPermanentUploadError(new AgentSkillSyncNotFoundError("missing"))).toBe(false);
 				expect(queue.peek()?.version).toBe(item.version);
@@ -437,10 +502,10 @@ describe("Agent filesystem projection reconcile", () => {
 					api,
 					queue,
 					item,
+					queueModules(adapter),
 					new Map(),
 					new Map(),
 					new Map(),
-					"project-1",
 				);
 				expect(queue.depth).toBe(0);
 				expect(readSkillProjectionClaimsForAgent("hermes", "agent-1")).toEqual([]);
@@ -515,20 +580,21 @@ describe("Agent filesystem projection reconcile", () => {
 					return new Response(null, { status: 204 });
 				}) as typeof fetch;
 				const abortController = new AbortController();
+				const adapter = adapterRegistry.hermes.create();
 				const outcome = await processQueueItem(
 					{
 						environmentId: "agent-1",
-						adapter: adapterRegistry.hermes.create(),
+						adapter,
 						abort: abortController.signal,
 						abortController,
 					},
 					new ApiClient({ requireAuth: false }),
 					queue,
 					cleanup,
+					queueModules(adapter),
 					new Map(),
 					new Map(),
 					new Map(),
-					"project-1",
 				);
 				expect(outcome).toBe("applied");
 				expect(new URL(requests[0]?.url ?? "http://invalid").searchParams.get("project_id")).toBe(
@@ -562,20 +628,21 @@ describe("Agent filesystem projection reconcile", () => {
 					{ preconnect: originalFetch.preconnect },
 				);
 				const abortController = new AbortController();
+				const adapter = adapterRegistry.hermes.create();
 				const outcome = await processQueueItem(
 					{
 						environmentId: "agent-1",
-						adapter: adapterRegistry.hermes.create(),
+						adapter,
 						abort: abortController.signal,
 						abortController,
 					},
 					new ApiClient({ requireAuth: false }),
 					queue,
 					queued,
+					queueModules(adapter),
 					new Map(),
 					new Map(),
 					new Map(),
-					"project-1",
 				);
 				expect(outcome).toBe("absent");
 				expect(queue.depth).toBe(0);
@@ -732,7 +799,16 @@ describe("Agent filesystem projection reconcile", () => {
 				};
 				const api = new ApiClient({ requireAuth: false });
 				await expect(
-					processQueueItem(opts, api, queue, item, new Map(), new Map(), new Map(), "project-1"),
+					processQueueItem(
+						opts,
+						api,
+						queue,
+						item,
+						queueModules(adapter),
+						new Map(),
+						new Map(),
+						new Map(),
+					),
 				).rejects.toThrow(/503/);
 				expect(calls).not.toContain("upload:project-1");
 				expect(
@@ -747,10 +823,10 @@ describe("Agent filesystem projection reconcile", () => {
 					api,
 					queue,
 					retryItem,
+					queueModules(adapter),
 					new Map(),
 					new Map(),
 					new Map(),
-					"project-1",
 				);
 				expect(calls.at(-2)).toBe("delete:project-old-b");
 				expect(calls.at(-1)).toBe("upload:project-1");
@@ -814,10 +890,10 @@ describe("Agent filesystem projection reconcile", () => {
 					new ApiClient({ requireAuth: false }),
 					queue,
 					item,
+					queueModules(adapter),
 					new Map(),
 					new Map(),
 					new Map(),
-					"project-1",
 				);
 				expect(verifiedHash).not.toBeNull();
 			} finally {
@@ -829,7 +905,7 @@ describe("Agent filesystem projection reconcile", () => {
 	});
 
 	it("re-derives missed alias absence after eviction and restart at the same revision", async () => {
-		await withProjectionCase(async ({ root, keys }) => {
+		await withProjectionCase(async ({ root, keys, skills }) => {
 			const originalFetch = globalThis.fetch;
 			let queue = new RetryQueue({ agentType: "hermes", maxItems: 1 });
 			let revision = 7;
@@ -858,16 +934,13 @@ describe("Agent filesystem projection reconcile", () => {
 				const api = new ApiClient({ requireAuth: false });
 				const opts = {
 					environmentId: "agent-1",
-					adapter: {
-						agentType: "hermes" as const,
-						getSkillsRootDir: () => root,
-						listSkillKeys: async () => [...keys],
-					},
+					adapter: { agentType: "hermes" as const },
 				};
 
 				const same = await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -885,6 +958,7 @@ describe("Agent filesystem projection reconcile", () => {
 				const missedAbsent = await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -896,6 +970,7 @@ describe("Agent filesystem projection reconcile", () => {
 				await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -909,6 +984,7 @@ describe("Agent filesystem projection reconcile", () => {
 				// queue is empty while the remote revision remains unchanged.
 				const sessionVersion = queue.enqueue({
 					kind: "session_push",
+					...sessionQueueFence(api, adapterRegistry.hermes.create(), "session-1"),
 					local_session_id: "session-1",
 					content_hash: "session-hash",
 					enqueued_at: new Date().toISOString(),
@@ -928,6 +1004,7 @@ describe("Agent filesystem projection reconcile", () => {
 				const replayed = await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -951,6 +1028,7 @@ describe("Agent filesystem projection reconcile", () => {
 				await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -967,6 +1045,7 @@ describe("Agent filesystem projection reconcile", () => {
 				const unfenced = await reconcileAgentSkillProjectionListing({
 					api,
 					opts,
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -984,7 +1063,7 @@ describe("Agent filesystem projection reconcile", () => {
 	});
 
 	it("rejects mixed-ETag pagination as legacy deletion evidence", async () => {
-		await withProjectionCase(async ({ queue }) => {
+		await withProjectionCase(async ({ queue, skills }) => {
 			const originalFetch = globalThis.fetch;
 			try {
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1007,12 +1086,9 @@ describe("Agent filesystem projection reconcile", () => {
 					api: new ApiClient({ requireAuth: false }),
 					opts: {
 						environmentId: "agent-1",
-						adapter: {
-							agentType: "hermes",
-							getSkillsRootDir: () => "/unused",
-							listSkillKeys: async () => [],
-						},
+						adapter: { agentType: "hermes" },
 					},
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -1064,7 +1140,7 @@ describe("Agent filesystem projection reconcile", () => {
 			],
 		},
 	])("rejects $name as complete legacy deletion evidence", async ({ pages }) => {
-		await withProjectionCase(async ({ queue }) => {
+		await withProjectionCase(async ({ queue, skills }) => {
 			const originalFetch = globalThis.fetch;
 			try {
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1080,12 +1156,9 @@ describe("Agent filesystem projection reconcile", () => {
 					api: new ApiClient({ requireAuth: false }),
 					opts: {
 						environmentId: "agent-1",
-						adapter: {
-							agentType: "hermes",
-							getSkillsRootDir: () => "/unused",
-							listSkillKeys: async () => [],
-						},
+						adapter: { agentType: "hermes" },
 					},
+					skills,
 					queue,
 					claims: new Map(),
 					projectId: "project-1",
@@ -1141,6 +1214,101 @@ describe("daemon SSE routing", () => {
 				"project-1",
 			),
 		).toBeNull();
+	});
+});
+
+describe("Pi sessions-only daemon", () => {
+	it("uploads its real fixture without starting any Skills control plane", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-pi-engine-"));
+		const originalFetch = globalThis.fetch;
+		const originalHome = process.env.HOME;
+		const originalPiHome = process.env.PI_CODING_AGENT_DIR;
+		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalApiUrl = process.env.CLAWDI_API_URL;
+		const originalAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+		const requests: Request[] = [];
+		const abortController = new AbortController();
+		try {
+			process.env.HOME = root;
+			process.env.PI_CODING_AGENT_DIR = join(root, "pi-agent");
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			process.env.CLAWDI_API_URL = "https://cloud.example.test";
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://cloud.example.test";
+			const sessionPath = join(root, "pi-agent", "sessions", "workspace", "session.jsonl");
+			mkdirSync(dirname(sessionPath), { recursive: true });
+			writeFileSync(
+				sessionPath,
+				readFileSync(join(import.meta.dir, "../../tests/fixtures/pi/session-v3.jsonl"), "utf8"),
+			);
+
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				requests.push(request.clone());
+				const path = new URL(request.url).pathname;
+				if (path === "/v1/sessions/upload-capabilities") {
+					return new Response('{"detail":"Not found"}', { status: 404 });
+				}
+				if (path === "/v1/sessions/batch") {
+					const body = (await request.json()) as {
+						sessions: Array<{ local_session_id: string; content_protocol: string }>;
+					};
+					expect(body.sessions).toMatchObject([
+						{ local_session_id: "pi.fixture-session", content_protocol: "snapshot-v1" },
+					]);
+					return Response.json({
+						created: 1,
+						updated: 0,
+						unchanged: 0,
+						needs_content: ["pi.fixture-session"],
+						rejected: [],
+						suppressed: [],
+					});
+				}
+				if (path === "/v1/sessions/pi.fixture-session/upload") {
+					const form = await request.formData();
+					const expectedHash = form.get("expected_content_hash");
+					expect(typeof expectedHash).toBe("string");
+					queueMicrotask(() => abortController.abort());
+					return Response.json({ status: "uploaded", content_hash: expectedHash });
+				}
+				if (path === "/v1/agents/agent-pi/sync-heartbeat") {
+					return Response.json({ status: "ok" });
+				}
+				return new Response(`unexpected ${path}`, { status: 500 });
+			}) as typeof fetch;
+
+			await runSyncEngine({
+				environmentId: "agent-pi",
+				adapter: adapterRegistry.pi.create(),
+				abort: abortController.signal,
+				abortController,
+				forcePollWatcher: true,
+			});
+
+			const paths = requests.map((request) => new URL(request.url).pathname);
+			expect(paths).toContain("/v1/sessions/pi.fixture-session/upload");
+			expect(paths).not.toContain("/v1/agents/agent-pi");
+			expect(paths).not.toContain("/v1/sync/events");
+			expect(paths.some((path) => path.includes("/skills"))).toBe(false);
+		} finally {
+			abortController.abort();
+			globalThis.fetch = originalFetch;
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalPiHome === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = originalPiHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+			else process.env.CLAWDI_API_URL = originalApiUrl;
+			if (originalAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalAuthToken;
+			if (originalAuthOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = originalAuthOrigin;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

@@ -45,84 +45,321 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
-	it("returns the plain-string-model session with correct token counters", async () => {
+	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		const plain = sessions.find((s) => s.localSessionId === "s-plain");
-		expect(plain).toBeDefined();
-		expect(plain).toMatchObject({
-			localSessionId: "s-plain",
-			projectPath: null, // Hermes has no cwd concept
-			model: "claude-opus-4-7",
-			messageCount: 2,
-			inputTokens: 10,
-			outputTokens: 5,
-			cacheReadTokens: 2,
+		expect(await a.sessions.contentProtocol()).toBe("events-v1");
+		const { sessions } = await a.sessions.collect({ kind: "complete" });
+		expect(sessions).toHaveLength(1);
+		const session = sessions[0];
+		expect(session).toMatchObject({
+			localSessionId: "s-modern",
+			projectPath: null,
+			model: "gpt-5.3-codex",
+			modelsUsed: ["gpt-5.3-codex"],
+			messageCount: 12,
+			inputTokens: 120,
+			outputTokens: 45,
+			cacheReadTokens: 8,
+			summary: "Inspect this report",
 		});
-		expect(plain?.messages).toHaveLength(2);
-		expect(plain?.messages[0]?.role).toBe("user");
-		expect(plain?.messages[0]?.content).toBe("hello");
-		expect(plain?.messages[1]?.role).toBe("assistant");
-		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
-		expect((await a.resolveSession("s-plain"))?.messages).toEqual(plain?.messages);
-		expect(await a.resolveSession("missing-session")).toBeNull();
+		expect(session?.rawFilePath).toContain("state.db#s-modern");
+		expect((await a.sessions.resolve("s-modern"))?.events).toEqual(session?.events);
+		expect(await a.sessions.resolve("missing-session")).toBeNull();
+
+		const events = session?.events ?? [];
+		expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index));
+		expect(events.map((event) => event.source.record_id)).toEqual([
+			"1",
+			"2",
+			"3",
+			"3",
+			"4",
+			"5",
+			"6",
+			"7",
+			"8",
+			"9",
+			"10",
+			"10",
+			"11",
+			"12",
+		]);
+		expect(events[0]).toMatchObject({ type: "message", role: "system" });
+		expect(events[1]).toMatchObject({
+			type: "message",
+			role: "user",
+			parts: [
+				{ type: "text", text: "Inspect this report" },
+				{
+					type: "attachment",
+					availability: "external",
+					uri: "https://cdn.example.com/report.png",
+					media_type: "image/png",
+				},
+			],
+			semantics: {
+				lifecycle: "active",
+				display: "message",
+				display_metadata: {
+					reactions: [{ emoji: "thumbs-up", author: "user" }],
+				},
+			},
+		});
+		expect(events[2]).toMatchObject({
+			type: "tool_call",
+			call_id: "call-search",
+			name: "search",
+			arguments_json: '{"api_key":"sk-tool-secret","query":"Hermes"}',
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[3]).toMatchObject({
+			type: "tool_call",
+			call_id: "call-read",
+			name: "read_file",
+		});
+		expect(events[4]).toMatchObject({
+			type: "tool_result",
+			call_id: "call-search",
+			name: "search",
+			parts: [{ type: "text", text: "Found one result" }],
+			result_json: '[{"items":[{"id":1}],"ok":true,"password":"result-secret"}]',
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[7]).toMatchObject({
+			type: "message",
+			role: "user",
+			semantics: {
+				lifecycle: "inactive",
+				display: "event",
+				display_kind: "auto_continue",
+				display_metadata: { attempt: 2 },
+			},
+		});
+		expect(events[6]).toMatchObject({
+			type: "message",
+			parts: [{ type: "text", text: "Summary of earlier turns" }],
+			semantics: { compressed_summary: true },
+		});
+		expect(events[8]).toMatchObject({
+			type: "message",
+			parts: [{ type: "text", text: "Public answer" }],
+		});
+		expect(events[9]).toMatchObject({
+			semantics: {
+				display: "event",
+				display_kind: "async_delegation_complete",
+				display_metadata: { task_count: 2 },
+			},
+		});
+		// Assistant rows with visible content + tool_calls produce one message and one call.
+		expect(events.slice(10, 12).map((event) => event.type)).toEqual(["message", "tool_call"]);
+		// Raw audit rows are retained: the compaction copy remains distinct and marked compacted.
+		expect(events[5]).toMatchObject({ source: { record_id: "5" } });
+		expect(events[13]).toMatchObject({
+			source: { record_id: "12" },
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[12]).toMatchObject({
+			type: "tool_result",
+			result_json: '{"authorization":"Bearer secret","lines":42,"ok":true}',
+		});
+
+		const serialized = JSON.stringify(session);
+		for (const hidden of [
+			"sk-model-secret",
+			"sk-config-secret",
+			"hidden row reasoning",
+			"hidden inline reasoning",
+			"provider envelope secret",
+			"display-secret",
+			"metadata-secret",
+		]) {
+			expect(serialized).not.toContain(hidden);
+		}
 	});
 
-	it("parses a JSON-blob model field via parseModelField", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		const json = sessions.find((s) => s.localSessionId === "s-json");
-		expect(json).toBeDefined();
-		expect(json?.model).toBe("gpt-5.3-codex");
-		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
-	});
-
-	it("parses Python-repr model config without uploading provider secrets as the model", async () => {
+	it("keeps prior identities as an append-only prefix when a row is added", async () => {
+		const adapter = new HermesAdapter();
+		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
 		db.run(
-			"UPDATE sessions SET model = ? WHERE id = ?",
-			"{'default': 'gpt-5.3-codex', 'provider': 'openai-codex', 'headers': {'x-api-key': 'sk-redacted'}}",
-			"s-json",
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES (?, ?, ?, ?, 1, 0)",
+			"s-modern",
+			"user",
+			"Appended turn",
+			1776247261,
 		);
 		db.close();
 
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		const json = sessions.find((s) => s.localSessionId === "s-json");
-		expect(json?.model).toBe("gpt-5.3-codex");
-		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
+		const after = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
+		expect(after.slice(0, before.length).map((event) => event.event_id)).toEqual(
+			before.map((event) => event.event_id),
+		);
+		expect(after.at(-1)).toMatchObject({
+			seq: before.length,
+			type: "message",
+			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
+		});
 	});
 
-	it("skips sessions with no extractable messages", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		expect(sessions.find((s) => s.localSessionId === "s-empty")).toBeUndefined();
+	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.exec(`
+			DROP TABLE messages;
+			CREATE TABLE messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT,
+				timestamp REAL NOT NULL
+			);
+			INSERT INTO messages (session_id, role, content, timestamp) VALUES
+				('s-modern', 'developer', '<think>literal developer content', 1776247201),
+				('s-modern', 'assistant', 'Visible answer', 1776247202);
+		`);
+		db.close();
+
+		const adapter = new HermesAdapter();
+		expect(await adapter.sessions.contentProtocol()).toBe("events-v1");
+		const session = await adapter.sessions.resolve("s-modern");
+		expect(session?.events).toMatchObject([
+			{
+				type: "message",
+				role: "developer",
+				parts: [{ type: "text", text: "<think>literal developer content" }],
+				source: { record_id: "1", record_seq: 1 },
+				semantics: {
+					lifecycle: "active",
+					display: "message",
+					compressed_summary: false,
+				},
+			},
+			{
+				type: "message",
+				role: "assistant",
+				source: { record_id: "2", record_seq: 2 },
+			},
+		]);
 	});
 
-	it("orders sessions by started_at DESC", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		// s-json started later than s-plain; s-empty is filtered out
-		expect(sessions.map((s) => s.localSessionId)).toEqual(["s-json", "s-plain"]);
+	it("scrubs upstream reasoning tags only from assistant model output", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		const insert = db.prepare(
+			"INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, timestamp, active, compacted) VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
+		);
+		insert.run("s-modern", "user", "<thinking>literal user content", null, null, 1776247261);
+		insert.run("s-modern", "system", "<thought>literal system content", null, null, 1776247262);
+		insert.run(
+			"s-modern",
+			"tool",
+			"<REASONING_SCRATCHPAD>literal tool content",
+			"call-literal",
+			"literal_tool",
+			1776247263,
+		);
+		insert.run(
+			"s-modern",
+			"assistant",
+			"<think>hidden think</think><thinking>hidden thinking</thinking><reasoning>hidden reasoning</reasoning><thought>hidden thought</thought><REASONING_SCRATCHPAD>hidden scratchpad</REASONING_SCRATCHPAD>Visible assistant",
+			null,
+			null,
+			1776247264,
+		);
+		insert.run(
+			"s-modern",
+			"assistant",
+			'Use the <think> element in prose.\nconst tag = "<reasoning>";\n  <thought>hidden tail',
+			null,
+			null,
+			1776247265,
+		);
+		db.close();
+
+		const events = (await new HermesAdapter().sessions.resolve("s-modern"))?.events ?? [];
+		const added = events.filter((event) => event.source.record_seq > 12);
+		expect(added).toMatchObject([
+			{
+				type: "message",
+				role: "user",
+				parts: [{ type: "text", text: "<thinking>literal user content" }],
+			},
+			{
+				type: "message",
+				role: "system",
+				parts: [{ type: "text", text: "<thought>literal system content" }],
+			},
+			{
+				type: "tool_result",
+				parts: [{ type: "text", text: "<REASONING_SCRATCHPAD>literal tool content" }],
+			},
+			{
+				type: "message",
+				role: "assistant",
+				parts: [{ type: "text", text: "Visible assistant" }],
+			},
+			{
+				type: "message",
+				role: "assistant",
+				parts: [
+					{
+						type: "text",
+						text: 'Use the <think> element in prose.\nconst tag = "<reasoning>";\n  ',
+					},
+				],
+			},
+		]);
+		for (const hidden of [
+			"hidden think",
+			"hidden thinking",
+			"hidden reasoning",
+			"hidden thought",
+			"hidden scratchpad",
+			"hidden tail",
+		]) {
+			expect(JSON.stringify(added)).not.toContain(hidden);
+		}
 	});
 
-	it("projectPath is null for every Hermes session (by design)", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		for (const s of sessions) expect(s.projectPath).toBeNull();
-	});
+	it("falls back to snapshot-v1 for a legacy messages table without stable ids", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.exec(`
+			DROP TABLE messages;
+			CREATE TABLE messages (
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT,
+				timestamp REAL NOT NULL
+			);
+			INSERT INTO messages VALUES
+				('s-modern', 'user', 'legacy question', 1776247201),
+				('s-modern', 'assistant', 'legacy answer', 1776247202);
+		`);
+		db.close();
 
-	it("rawFilePath includes the session id anchor", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.collectSessions({ kind: "complete" });
-		expect(sessions[0]?.rawFilePath).toContain("state.db#");
+		const adapter = new HermesAdapter();
+		expect(await adapter.sessions.contentProtocol()).toBe("snapshot-v1");
+		const session = await adapter.sessions.resolve("s-modern");
+		expect(session?.events).toBeUndefined();
+		expect(session?.messages).toEqual([
+			{
+				role: "user",
+				content: "legacy question",
+				timestamp: "2026-04-15T10:00:01.000Z",
+			},
+			{
+				role: "assistant",
+				content: "legacy answer",
+				model: "gpt-5.3-codex",
+				timestamp: "2026-04-15T10:00:02.000Z",
+			},
+		]);
 	});
 });
 
 describe("HermesAdapter.collectSkills", () => {
 	it("finds a nested skill at skills/core/demo/SKILL.md and skips SKIP_DIRS at every depth", async () => {
 		const a = new HermesAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		// `core/demo` is the real nested skill. The fixture also plants
 		// `skills/node_modules/bad/SKILL.md` — Hermes' scanner recurses, so
 		// SKIP_DIRS must apply at the root level AND block the recursion.
@@ -149,18 +386,18 @@ describe("HermesAdapter.collectSkills", () => {
 		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
 
 		const a = new HermesAdapter();
-		const skills = await a.collectSkills();
+		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 
 		expect(keys).toEqual(["core/demo"]);
-		expect(await a.listSkillKeys()).toEqual(["core/demo"]);
+		expect(await a.skills.listKeys()).toEqual(["core/demo"]);
 	});
 
 	it("returns empty when skills dir is missing", async () => {
 		// Point HOME at a fresh tmpdir with no .hermes/
 		process.env.HOME = `/tmp/clawdi-empty-${Date.now()}`;
 		const a = new HermesAdapter();
-		expect(await a.collectSkills()).toEqual([]);
+		expect(await a.skills.collect()).toEqual([]);
 	});
 });
 
@@ -174,7 +411,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 		// Remove source first so we can tell it was re-extracted.
 		const a = new HermesAdapter();
-		await a.writeSkillArchive("demo", tarBytes);
+		await a.skills.writeArchive("demo", tarBytes);
 
 		const extracted = join(tmpHome, ".hermes", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
@@ -196,7 +433,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		const tarBytes = await tarSkillDir(join(skillsRoot, "core", "demo"));
 
 		const adapter = new HermesAdapter();
-		await expect(adapter.writeSharedSkillArchive("demo", "owner", tarBytes)).rejects.toThrow(
+		await expect(adapter.skills.writeSharedArchive("demo", "owner", tarBytes)).rejects.toThrow(
 			"Skill shared is reserved by a managed Skill owner",
 		);
 		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
@@ -205,7 +442,7 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {
 		const a = new HermesAdapter();
-		const p = a.getSkillPath("foo");
+		const p = a.skills.path("foo");
 		expect(p).toBe(join(tmpHome, ".hermes", "skills", "foo", "SKILL.md"));
 	});
 });
