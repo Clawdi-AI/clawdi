@@ -92,6 +92,24 @@ from app.services.vault_crypto import decrypt, encrypt
 log = logging.getLogger(__name__)
 type JsonObject = dict[str, JsonValue]
 _JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
+_channel_provider_http_client: httpx.AsyncClient | None = None
+
+
+def get_channel_provider_http_client() -> httpx.AsyncClient:
+    """Return the process-wide client for Telegram and Discord APIs."""
+    global _channel_provider_http_client
+    if _channel_provider_http_client is None:
+        _channel_provider_http_client = httpx.AsyncClient(timeout=30.0)
+    return _channel_provider_http_client
+
+
+async def close_channel_provider_http_client() -> None:
+    """Close the shared channel provider client on ASGI shutdown."""
+    global _channel_provider_http_client
+    client = _channel_provider_http_client
+    _channel_provider_http_client = None
+    if client is not None:
+        await client.aclose()
 
 
 def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
@@ -2499,19 +2517,19 @@ async def discord_bot_guild_membership_check(
         return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "GET"):
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(account_scope, "GET", path)
-                response = await client.get(
-                    f"{base_url.rstrip('/')}{path}",
-                    headers={"Authorization": f"Bot {token}"},
-                )
-                discord_rate_limiter.observe(
-                    account_scope,
-                    "GET",
-                    path,
-                    _discord_rate_limit_response_headers(response),
-                    response.status_code,
-                )
+            discord_rate_limiter.consume(account_scope, "GET", path)
+            response = await get_channel_provider_http_client().get(
+                f"{base_url.rstrip('/')}{path}",
+                headers={"Authorization": f"Bot {token}"},
+                timeout=20.0,
+            )
+            discord_rate_limiter.observe(
+                account_scope,
+                "GET",
+                path,
+                _discord_rate_limit_response_headers(response),
+                response.status_code,
+            )
     except httpx.HTTPError:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
         return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
@@ -5401,21 +5419,21 @@ async def _discord_application_request(
         )
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, method):
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(account_scope, method, path)
-                response = await client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json_payload,
-                )
-                discord_rate_limiter.observe(
-                    account_scope,
-                    method,
-                    path,
-                    _discord_rate_limit_response_headers(response),
-                    response.status_code,
-                )
+            discord_rate_limiter.consume(account_scope, method, path)
+            response = await get_channel_provider_http_client().request(
+                method,
+                url,
+                headers=headers,
+                json=json_payload,
+                timeout=20.0,
+            )
+            discord_rate_limiter.observe(
+                account_scope,
+                method,
+                path,
+                _discord_rate_limit_response_headers(response),
+                response.status_code,
+            )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method=method).inc()
         raise HTTPException(
@@ -5586,8 +5604,11 @@ async def sync_telegram_commands(
         {"commands": request_commands}, strict=True
     )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json=request_payload)
+        response = await get_channel_provider_http_client().post(
+            url,
+            json=request_payload,
+            timeout=10.0,
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -5723,20 +5744,20 @@ async def _send_discord_provider_payload(
         )
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "POST"):
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(account_scope, "POST", path)
-                response = await client.post(
-                    url,
-                    headers={"Authorization": f"Bot {token}"},
-                    json=payload,
-                )
-                discord_rate_limiter.observe(
-                    account_scope,
-                    "POST",
-                    path,
-                    response.headers,
-                    response.status_code,
-                )
+            discord_rate_limiter.consume(account_scope, "POST", path)
+            response = await get_channel_provider_http_client().post(
+                url,
+                headers={"Authorization": f"Bot {token}"},
+                json=payload,
+                timeout=20.0,
+            )
+            discord_rate_limiter.observe(
+                account_scope,
+                "POST",
+                path,
+                response.headers,
+                response.status_code,
+            )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
         raise HTTPException(
@@ -5818,100 +5839,67 @@ async def sync_discord_commands(
     ]
     synced: list[JsonObject] = []
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            if reconcile_reserved_commands:
-                # Reconcile only Clawdi's reserved namespace. Bulk overwrite
-                # would make these two commands the complete scope and delete
-                # unrelated application/runtime commands owned elsewhere.
-                # Discord POST is an upsert by command name. Validate both new
-                # commands before deleting any legacy command so a partial
-                # provider failure cannot remove the only usable pair path.
-                # DELETE then targets only IDs found by the preceding GET.
-                # https://discord.com/developers/docs/interactions/application-commands#get-global-application-commands
-                # https://discord.com/developers/docs/interactions/application-commands#delete-global-application-command
-                # https://discord.com/developers/docs/interactions/application-commands#create-global-application-command
-                headers = {
-                    "Authorization": f"Bot {token}",
-                    "Content-Type": "application/json",
-                }
-                response = await _discord_command_request(
-                    client,
-                    account_scope=str(account.id),
-                    method="GET",
-                    url=url,
-                    path=f"{path}/commands",
-                    headers=headers,
-                )
-                _raise_for_discord_command_sync_response(response)
-                existing_commands = _response_json_value(
-                    response,
+        client = get_channel_provider_http_client()
+        if reconcile_reserved_commands:
+            # Reconcile only Clawdi's reserved namespace. Bulk overwrite
+            # would make these two commands the complete scope and delete
+            # unrelated application/runtime commands owned elsewhere.
+            # Discord POST is an upsert by command name. Validate both new
+            # commands before deleting any legacy command so a partial
+            # provider failure cannot remove the only usable pair path.
+            # DELETE then targets only IDs found by the preceding GET.
+            # https://discord.com/developers/docs/interactions/application-commands#get-global-application-commands
+            # https://discord.com/developers/docs/interactions/application-commands#delete-global-application-command
+            # https://discord.com/developers/docs/interactions/application-commands#create-global-application-command
+            headers = {
+                "Authorization": f"Bot {token}",
+                "Content-Type": "application/json",
+            }
+            response = await _discord_command_request(
+                client,
+                account_scope=str(account.id),
+                method="GET",
+                url=url,
+                path=f"{path}/commands",
+                headers=headers,
+            )
+            _raise_for_discord_command_sync_response(response)
+            existing_commands = _response_json_value(
+                response,
+                detail="discord api returned invalid commands",
+            )
+            if not isinstance(existing_commands, list) or not all(
+                isinstance(command, dict) for command in existing_commands
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
                     detail="discord api returned invalid commands",
                 )
-                if not isinstance(existing_commands, list) or not all(
-                    isinstance(command, dict) for command in existing_commands
-                ):
+            legacy_command_ids: list[str] = []
+            for existing_command in existing_commands:
+                if not isinstance(existing_command, dict):
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="discord api returned invalid commands",
                     )
-                legacy_command_ids: list[str] = []
-                for existing_command in existing_commands:
-                    if not isinstance(existing_command, dict):
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="discord api returned invalid commands",
-                        )
-                    existing_name = _read_optional_str(existing_command.get("name"))
-                    if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
-                        continue
-                    existing_type = existing_command.get("type")
-                    if isinstance(existing_type, bool) or not isinstance(existing_type, int):
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="discord api returned invalid commands",
-                        )
-                    if existing_type != 1:
-                        continue
-                    command_id = _read_optional_str(existing_command.get("id"))
-                    if command_id is None or not valid_discord_application_id(command_id):
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="discord api returned invalid commands",
-                        )
-                    legacy_command_ids.append(command_id)
-                for command_payload in command_payloads:
-                    response = await _discord_command_request(
-                        client,
-                        account_scope=str(account.id),
-                        method="POST",
-                        url=url,
-                        path=f"{path}/commands",
-                        headers=headers,
-                        json_payload=command_payload,
+                existing_name = _read_optional_str(existing_command.get("name"))
+                if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
+                    continue
+                existing_type = existing_command.get("type")
+                if isinstance(existing_type, bool) or not isinstance(existing_type, int):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="discord api returned invalid commands",
                     )
-                    _raise_for_discord_command_sync_response(response)
-                    synced_command = _validated_synced_discord_command(
-                        response,
-                        expected_name=_command_name(command_payload),
+                if existing_type != 1:
+                    continue
+                command_id = _read_optional_str(existing_command.get("id"))
+                if command_id is None or not valid_discord_application_id(command_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="discord api returned invalid commands",
                     )
-                    synced.append(synced_command)
-                for command_id in legacy_command_ids:
-                    response = await _discord_command_request(
-                        client,
-                        account_scope=str(account.id),
-                        method="DELETE",
-                        url=f"{url}/{command_id}",
-                        path=f"{path}/commands/{command_id}",
-                        headers=headers,
-                    )
-                    # A concurrent reconciliation can delete the exact ID
-                    # discovered above before this request reaches Discord.
-                    # That 404 means the required absence already converged.
-                    _raise_for_discord_command_sync_response(
-                        response,
-                        allow_not_found=True,
-                    )
-                return synced
+                legacy_command_ids.append(command_id)
             for command_payload in command_payloads:
                 response = await _discord_command_request(
                     client,
@@ -5919,19 +5907,52 @@ async def sync_discord_commands(
                     method="POST",
                     url=url,
                     path=f"{path}/commands",
-                    headers={
-                        "Authorization": f"Bot {token}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                     json_payload=command_payload,
                 )
                 _raise_for_discord_command_sync_response(response)
-                synced.append(
-                    _validated_synced_discord_command(
-                        response,
-                        expected_name=_command_name(command_payload),
-                    )
+                synced_command = _validated_synced_discord_command(
+                    response,
+                    expected_name=_command_name(command_payload),
                 )
+                synced.append(synced_command)
+            for command_id in legacy_command_ids:
+                response = await _discord_command_request(
+                    client,
+                    account_scope=str(account.id),
+                    method="DELETE",
+                    url=f"{url}/{command_id}",
+                    path=f"{path}/commands/{command_id}",
+                    headers=headers,
+                )
+                # A concurrent reconciliation can delete the exact ID
+                # discovered above before this request reaches Discord.
+                # That 404 means the required absence already converged.
+                _raise_for_discord_command_sync_response(
+                    response,
+                    allow_not_found=True,
+                )
+            return synced
+        for command_payload in command_payloads:
+            response = await _discord_command_request(
+                client,
+                account_scope=str(account.id),
+                method="POST",
+                url=url,
+                path=f"{path}/commands",
+                headers={
+                    "Authorization": f"Bot {token}",
+                    "Content-Type": "application/json",
+                },
+                json_payload=command_payload,
+            )
+            _raise_for_discord_command_sync_response(response)
+            synced.append(
+                _validated_synced_discord_command(
+                    response,
+                    expected_name=_command_name(command_payload),
+                )
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -5960,9 +5981,15 @@ async def _discord_command_request(
         )
     discord_rate_limiter.consume(account_scope, method, path)
     if json_payload is None:
-        response = await client.request(method, url, headers=headers)
+        response = await client.request(method, url, headers=headers, timeout=10.0)
     else:
-        response = await client.request(method, url, headers=headers, json=json_payload)
+        response = await client.request(
+            method,
+            url,
+            headers=headers,
+            json=json_payload,
+            timeout=10.0,
+        )
     discord_rate_limiter.observe(
         account_scope,
         method,
@@ -6172,13 +6199,13 @@ async def _post_provider_json(
     )
     try:
         with track_proxy_latency(channel, method):
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                response = await client.post(
-                    url,
-                    params=params,
-                    headers=headers,
-                    json=json_payload,
-                )
+            response = await get_channel_provider_http_client().post(
+                url,
+                params=params,
+                headers=headers,
+                json=json_payload,
+                timeout=timeout_seconds,
+            )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel=channel, method=method).inc()
         raise HTTPException(

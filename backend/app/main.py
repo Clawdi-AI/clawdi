@@ -66,6 +66,7 @@ from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
+from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
@@ -145,8 +146,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             await whatsapp_sidecars.stop()
         finally:
-            await stop_postgres_listener()
-            await close_composio_client()
+            try:
+                await stop_postgres_listener()
+            finally:
+                try:
+                    await close_channel_provider_http_client()
+                finally:
+                    await close_composio_client()
 
 
 app = FastAPI(

@@ -111,6 +111,14 @@ const RUNTIME_WATCH_SELF_HEAL_MS = 300_000;
 const RUNTIME_WATCH_INITIAL_BACKOFF_MS = 60_000;
 const RUNTIME_WATCH_MAX_BACKOFF_MS = 300_000;
 
+export function runtimeWatchPollDelayMs(
+	intervalMs: number,
+	random: () => number = Math.random,
+): number {
+	const offset = (random() - 0.5) * intervalMs;
+	return Math.round(intervalMs + offset);
+}
+
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
 	| RuntimeApplyDeferredResult
@@ -1592,7 +1600,11 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			if (event?.selfReexec === true || opts.abort?.aborted) {
 				return;
 			}
-			if ((await wakeSignal.wait(intervalMs, opts.abort)) === "aborted") return;
+			// Per-cycle jitter keeps hosts started by the same rollout from
+			// synchronizing fallback polls. SSE notifications still wake immediately.
+			if ((await wakeSignal.wait(runtimeWatchPollDelayMs(intervalMs), opts.abort)) === "aborted") {
+				return;
+			}
 		}
 	} finally {
 		notificationSubscription?.abort.abort();

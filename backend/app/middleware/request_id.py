@@ -13,27 +13,37 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _INBOUND_HEADERS = ("x-request-id", "x-correlation-id")
 _OUTBOUND_HEADER = "X-Request-ID"
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request_id = _read_inbound(request) or uuid.uuid4().hex
-        request.state.request_id = request_id
+class RequestIDMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
-        response = await call_next(request)
-        response.headers[_OUTBOUND_HEADER] = request_id
-        return response
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = _read_inbound(scope) or uuid.uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)[_OUTBOUND_HEADER] = request_id
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
 
 
-def _read_inbound(request: Request) -> str | None:
+def _read_inbound(scope: Scope) -> str | None:
+    headers = Headers(scope=scope)
     for key in _INBOUND_HEADERS:
-        value = request.headers.get(key)
+        value = headers.get(key)
         if value:
             # Trim and cap length so an upstream can't inject gigabyte headers.
             trimmed = value.strip()[:128]

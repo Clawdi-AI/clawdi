@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import pytest_asyncio
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -685,6 +686,9 @@ class _FakeProviderClient:
     async def __aexit__(self, exc_type, exc, tb):
         return None
 
+    async def aclose(self):
+        return None
+
     async def post(self, url, **kwargs):
         self.calls.append({"url": url, **kwargs})
         return _FakeProviderResponse(
@@ -935,6 +939,15 @@ def _clear_fake_provider_calls() -> None:
     _FailingProviderClient.calls = []
     _SequencedProviderClient.calls = []
     _StatefulDiscordCommandClient.calls = []
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_channel_provider_http_client():
+    await channel_service.close_channel_provider_http_client()
+    try:
+        yield
+    finally:
+        await channel_service.close_channel_provider_http_client()
 
 
 class _MemoryFileStore:
@@ -8546,9 +8559,11 @@ async def test_telegram_proxy_releases_transaction_during_provider_io(
 
     class TransactionObservingProviderClient(_FakeProviderClient):
         fail = False
+        transaction_states: list[bool] = []
 
         async def request(self, method, url, **kwargs):
-            assert not db_session.in_transaction()
+            self.transaction_states.append(db_session.in_transaction())
+            assert self.transaction_states[-1] is False
             if self.fail:
                 raise httpx.ConnectError("network down")
             return await super().request(method, url, **kwargs)
@@ -8567,6 +8582,7 @@ async def test_telegram_proxy_releases_transaction_during_provider_io(
         "app.routes.channel_routers.telegram.httpx.AsyncClient",
         TransactionObservingProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
 
     sent = await client.post(
         _telegram_bot_path(created, "sendDocument"),
@@ -8575,6 +8591,7 @@ async def test_telegram_proxy_releases_transaction_during_provider_io(
     )
 
     assert sent.status_code == 200
+    assert TransactionObservingProviderClient.transaction_states == [False]
     assert not db_session.in_transaction()
     references = set(
         await db_session.scalars(
@@ -8600,6 +8617,7 @@ async def test_telegram_proxy_releases_transaction_during_provider_io(
     )
 
     assert failed.status_code == 502
+    assert TransactionObservingProviderClient.transaction_states == [False, False]
     assert not db_session.in_transaction()
 
 
@@ -11713,6 +11731,7 @@ async def test_discord_create_message_transparently_returns_provider_error_and_s
         "app.routes.channel_routers.shared.httpx.AsyncClient",
         _FakeProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
 
     rejected = await client.post(
         "/v1/channels/discord/v10/channels/discord-error-channel/messages",
@@ -11737,6 +11756,7 @@ async def test_discord_create_message_transparently_returns_provider_error_and_s
         "app.routes.channel_routers.shared.httpx.AsyncClient",
         _FailingProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
     unreachable = await client.post(
         "/v1/channels/discord/v10/channels/discord-error-channel/messages",
         headers={"Authorization": f"Bot {created['agent_token']}"},
@@ -14325,6 +14345,7 @@ async def test_delete_binding_keeps_unpair_durable_when_telegram_notification_fa
         "app.routes.channel_routers.telegram.httpx.AsyncClient",
         _FailingProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
 
     deleted = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding['id']}")
 
@@ -14376,6 +14397,7 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
     ).json()
     _FailingProviderClient.calls = []
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+    await channel_service.close_channel_provider_http_client()
 
     webhook = await client.post(
         f"/v1/channels/telegram/{created['id']}/webhook",
@@ -17566,6 +17588,7 @@ async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_an
         "app.routes.channel_routers.shared.httpx.AsyncClient",
         _FakeProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
     old_channel = await client.get(
         "/v1/channels/discord/v10/channels/link-a-channel",
         headers={"Authorization": f"Bot {link_b_body['agent_token']}"},
@@ -18253,6 +18276,7 @@ async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
         "app.routes.channel_routers.shared.httpx.AsyncClient",
         _FakeProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
     cross_guild_reply = await client.post(
         "/v1/channels/discord/v10/channels/discord-dm-a/messages",
         headers={"Authorization": f"Bot {created['agent_token']}"},
@@ -18291,6 +18315,7 @@ async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
         "app.routes.channel_routers.shared.httpx.AsyncClient",
         _FakeProviderClient,
     )
+    await channel_service.close_channel_provider_http_client()
     unpaired = await client.post(
         f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
@@ -18967,6 +18992,9 @@ async def test_telegram_provider_429_preserves_official_retry_after(
             return self
 
         async def __aexit__(self, *_args):
+            return None
+
+        async def aclose(self):
             return None
 
         async def post(self, *_args, **_kwargs):
