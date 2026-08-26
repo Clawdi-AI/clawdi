@@ -149,7 +149,7 @@ export function agentSourceKindLabel(source: AgentSourceKind): string {
 
 export function agentSourceDescription(source: AgentSourceKind): string {
 	return source === "hosted"
-		? "Deployed and managed by Clawdi Cloud"
+		? "Hosted and managed by Clawdi Cloud"
 		: "Runs from your machine or server";
 }
 

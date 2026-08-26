@@ -19,10 +19,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
-import { formatApiError } from "@/lib/api-errors";
+import { normalizeApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
 	getAcceptedProjectInvitationToastCopy,
@@ -85,9 +85,7 @@ export function NotificationCenter() {
 			toast.error(
 				e instanceof ApiError && e.status === 410
 					? "This invitation was canceled. Ask the owner to send a new one."
-					: e instanceof ApiError
-						? formatApiError(e.detail)
-						: errorMessage(e),
+					: normalizeApiError(e),
 			);
 		},
 	});
@@ -106,7 +104,7 @@ export function NotificationCenter() {
 		},
 		onError: (e) => {
 			toast.error("Couldn't decline invitation", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			});
 		},
 	});
@@ -212,7 +210,7 @@ function NotificationCenterContent({
 			<div className="space-y-3 px-4 py-4">
 				<div className="space-y-1">
 					<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
-					<p className="text-xs text-muted-foreground">{errorMessage(error)}</p>
+					<p className="text-xs text-muted-foreground">{normalizeApiError(error)}</p>
 				</div>
 				<Button size="sm" variant="outline" onClick={onRetry}>
 					Retry

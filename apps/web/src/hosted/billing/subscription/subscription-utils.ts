@@ -235,7 +235,7 @@ export function computeSubscriptionLifecycle(
 		};
 	}
 	return {
-		badgeLabel: status.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase()),
+		badgeLabel: "Status unavailable",
 		badgeTone: "neutral",
 		dateAt: null,
 		dateVerb: null,

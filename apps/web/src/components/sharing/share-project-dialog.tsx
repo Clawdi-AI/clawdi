@@ -44,11 +44,10 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { ApiError, unwrap, useApi } from "@/lib/api";
-import { formatApiError } from "@/lib/api-errors";
+import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { errorMessage } from "@/lib/utils";
 
 /**
  * Owner-side project-sharing surface.
@@ -212,9 +211,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			toast.error(
 				e instanceof ApiError && e.status === 409
 					? "Set a display name on your profile before sharing."
-					: e instanceof Error
-						? e.message
-						: "Couldn't create link",
+					: "Couldn't create link. Try again.",
 			);
 			throw e;
 		}
@@ -236,7 +233,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 		},
 		onError: (e) => {
 			toast.error("Couldn't turn off link", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			});
 		},
 	});
@@ -298,14 +295,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			{links.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : shouldBlockQueryError(links.error, links.data) ? (
-				<EmptyHint
-					variant="destructive"
-					message={
-						links.error instanceof ApiError
-							? formatApiError(links.error.detail)
-							: errorMessage(links.error)
-					}
-				/>
+				<EmptyHint variant="destructive" message={normalizeApiError(links.error)} />
 			) : visibleLinks.length === 0 ? (
 				<EmptyHint message="No share links yet. Create one when you need a lightweight invite." />
 			) : (
@@ -347,8 +337,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 					<AlertDialogHeader>
 						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Anyone who has not already joined through this link will lose access to it. Existing
-							Viewers stay connected until you remove them from People.
+							New Viewers will no longer be able to join from this link. Existing Viewers retain
+							access until removed from People.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -565,7 +555,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		},
 		onError: (e) => {
 			toast.error("Couldn't send invitation", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			});
 		},
 	});
@@ -586,7 +576,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		},
 		onError: (e) => {
 			toast.error("Couldn't cancel invitation", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			});
 		},
 	});
@@ -642,9 +632,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
 							? "Email invitations are unavailable for this Project."
-							: invites.error instanceof ApiError
-								? formatApiError(invites.error.detail)
-								: errorMessage(invites.error)
+							: normalizeApiError(invites.error)
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? (
@@ -783,7 +771,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		},
 		onError: (e) =>
 			toast.error("Couldn't remove member", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			}),
 	});
 
@@ -803,7 +791,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		},
 		onError: (e) =>
 			toast.error("Couldn't stop sharing", {
-				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
+				description: normalizeApiError(e),
 			}),
 	});
 
@@ -860,14 +848,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : shouldBlockQueryError(members.error, members.data) ? (
-				<EmptyHint
-					variant="destructive"
-					message={
-						members.error instanceof ApiError
-							? formatApiError(members.error.detail)
-							: errorMessage(members.error)
-					}
-				/>
+				<EmptyHint variant="destructive" message={normalizeApiError(members.error)} />
 			) : rows.length === 0 ? (
 				<EmptyHint message="No accepted Viewers yet. Invite someone or create a link." />
 			) : (

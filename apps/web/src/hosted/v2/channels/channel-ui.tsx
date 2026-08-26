@@ -73,14 +73,23 @@ const CHANNEL_STATUS_TONE: Record<string, StatusTone> = {
 	revoked: "destructive",
 };
 
+const CHANNEL_STATUS_LABEL: Record<string, string> = {
+	active: "Ready",
+	connected: "Ready",
+	paired: "Ready",
+	pending: "Setting up",
+	pairing: "Setting up",
+	error: "Needs attention",
+	failed: "Needs attention",
+	revoked: "Reconnect needed",
+};
+
 /** Account, agent-link, and chat-binding lifecycle status. */
 export function ChannelStatusBadge({ status, className }: { status: string; className?: string }) {
+	const normalized = status.toLowerCase();
 	return (
-		<StatusBadge
-			status={CHANNEL_STATUS_TONE[status.toLowerCase()] ?? "neutral"}
-			className={className}
-		>
-			<span className="capitalize">{status}</span>
+		<StatusBadge status={CHANNEL_STATUS_TONE[normalized] ?? "neutral"} className={className}>
+			{CHANNEL_STATUS_LABEL[normalized] ?? "Status unavailable"}
 		</StatusBadge>
 	);
 }
@@ -97,11 +106,19 @@ const DELIVERY_TONE: Record<string, StatusTone> = {
 	failed: "destructive",
 };
 
+const DELIVERY_LABEL: Record<string, string> = {
+	sent: "Sent",
+	delivered: "Delivered",
+	pending: "Waiting to send",
+	in_progress: "Sending",
+	failed: "Failed",
+};
+
 /** Delivery state chip for activity rows. */
 export function DeliveryBadge({ status }: { status: string }) {
 	return (
 		<StatusBadge status={DELIVERY_TONE[status] ?? "neutral"}>
-			{status.replace("_", " ")}
+			{DELIVERY_LABEL[status] ?? "Status unavailable"}
 		</StatusBadge>
 	);
 }

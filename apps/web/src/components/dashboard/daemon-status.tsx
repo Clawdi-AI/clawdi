@@ -175,9 +175,9 @@ export function daemonStatusVisual(
 	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
 	const tooltip = isHosted
 		? kind === "set-up"
-			? "Sync activates on the next image rollout."
+			? "Sync will start with the Agent’s next update."
 			: kind === "paused"
-				? "Pod isn't checking in. Manage it from agent settings."
+				? "Sync status is unavailable. Manage this Agent in Agent settings."
 				: STATUS_TOOLTIP[kind]
 		: STATUS_TOOLTIP[kind];
 
@@ -349,12 +349,12 @@ function SyncHelpDialog({
 			: status === "set-up"
 				? isHosted
 					? "Live sync is activating"
-					: "Turn on live sync for this agent"
+					: "Turn on live sync for this Agent"
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
-						? "Sync paused — hosted runtime isn't checking in"
-						: "Sync paused — daemon isn't checking in";
+						? "Sync paused"
+						: "Sync paused — background service isn't reporting";
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -373,20 +373,17 @@ function SyncHelpDialog({
 							// a dead-end.
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
-									This agent runs on Clawdi&apos;s infrastructure. Live sync activates automatically
-									once the hosted runtime is on the latest agent image. New deploys are already on
-									the latest image; older runtimes activate after their next restart.
+									Live sync activates automatically with this Agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
-									Nothing to install or configure on your side. The first heartbeat will flip this
-									badge to <span className="font-medium">Live sync</span> within a minute or two of
-									runtime start.
+									No action is required. This status should change to{" "}
+									<span className="font-medium">Live sync</span> within a few minutes.
 								</p>
 							</div>
 						) : (
 							<>
 								<p className="text-sm text-muted-foreground">
-									A small background service that keeps this agent in sync.
+									A background service keeps this Agent in sync.
 								</p>
 								<SyncSetupSnippet env={env} />
 							</>
@@ -395,29 +392,34 @@ function SyncHelpDialog({
 						<>
 							{status === "live" ? (
 								<p className="text-sm text-muted-foreground">
-									Syncing in about a second either way.
+									Changes sync in both directions within about a second.
 								</p>
 							) : null}
 
 							{status === "errored" && env.last_sync_error ? (
 								<div className="space-y-2">
 									<p className="text-sm font-medium text-destructive">What went wrong</p>
-									<code className="block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive/90">
-										{formatErrorForDisplay(env.last_sync_error)}
-									</code>
+									{isHosted ? (
+										<p className="text-sm text-destructive/90">
+											Clawdi couldn&apos;t sync the latest changes.
+										</p>
+									) : (
+										<code className="block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive/90">
+											{formatErrorForDisplay(env.last_sync_error)}
+										</code>
+									)}
 									{isErroredAndStale ? (
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Daemon stopped after this error. The runtime runs on Clawdi&apos;s
-													infrastructure — restart it from agent settings to recover.
+													Sync stopped after this error. Restart the Agent from Agent settings.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
 										) : (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Daemon stopped after this error. Inspect:
+													Background sync stopped after this error. Check:
 												</p>
 												<CommandLine command="clawdi daemon status" />
 												<AuthLoginHint />
@@ -431,38 +433,32 @@ function SyncHelpDialog({
 										// state and let the next file save do the rest.
 										<>
 											<p className="text-xs text-muted-foreground">
-												This won&apos;t auto-recover — the daemon dropped the change after the
-												server rejected it. Common cause: skill folder bigger than the 25 MB upload
-												cap (check for{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-2xs">node_modules</code>,{" "}
-												<code className="rounded bg-muted px-1 py-0.5 text-2xs">.git</code>, build
-												output). Fix the source and re-save to retry — the daemon is still healthy
-												and will pick up the next edit.
+												{isHosted
+													? "This change could not be synced. Confirm that each Skill is under 25 MB, then save again."
+													: "This change could not be synced. Correct the source, then save again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isRetryExhaustedError(env.last_sync_error) ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												The daemon retried for a few minutes and gave up — usually a network outage
-												or backend hiccup. The next 5-minute rescan re-queues the change
-												automatically once connectivity is back; no source edit needed.
-												{isHosted ? null : " If your network looks fine, check:"}
+												Sync will resume automatically when the connection recovers.
+												{isHosted ? null : " If the connection is working, check:"}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												The daemon will keep retrying. If the error persists, restart the hosted
-												runtime from agent settings.
+												Clawdi will continue retrying. If the error persists, restart the Agent from
+												Agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
 									) : (
 										<>
 											<p className="text-xs text-muted-foreground">
-												It will keep retrying. If this persists:
+												Sync will continue retrying. If the issue persists:
 											</p>
 											<CommandLine command="clawdi daemon status" />
 											<AuthLoginHint />
@@ -475,15 +471,16 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											The hosted runtime isn&apos;t checking in. It may be restarting, suspended, or
-											out of memory — manage it from agent settings.
+											Sync status is unavailable. The Agent may be starting, stopped, or temporarily
+											unavailable.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
 									</div>
 								) : (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											Daemon isn&apos;t checking in. From the same terminal you set it up on:
+											The background sync service is not reporting. In the terminal where it was
+											installed:
 										</p>
 										<CommandLine command="clawdi daemon status" />
 										<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
@@ -498,7 +495,8 @@ function SyncHelpDialog({
 										{dropped} change{dropped === 1 ? "" : "s"} dropped
 									</p>
 									<p className="mt-1 text-xs text-muted-foreground">
-										Usually a network blip. Next sync should catch up; otherwise restart the daemon.
+										Usually a brief network issue. The next sync should catch up; otherwise restart
+										the background sync service.
 									</p>
 								</div>
 							) : null}
@@ -509,13 +507,16 @@ function SyncHelpDialog({
 								</p>
 								<dl className="grid grid-cols-1 gap-x-8 gap-y-1 text-xs sm:grid-cols-2">
 									<TechRow label="Last heartbeat" value={lastSyncRel} />
-									<TechRow label="Queue peak (since daemon started)" value={queuePeak.toString()} />
 									<TechRow
-										label="Skills-revision the daemon last saw"
+										label="Queue peak (since sync service started)"
+										value={queuePeak.toString()}
+									/>
+									<TechRow
+										label="Latest Skills revision received"
 										value={env.last_revision_seen?.toString() ?? "—"}
 									/>
 									<TechRow
-										label="Events dropped (since daemon started)"
+										label="Events dropped (since sync service started)"
 										value={dropped.toString()}
 									/>
 								</dl>
@@ -585,10 +586,10 @@ function SyncSetupCliTab(_props: { env: Env }) {
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">In a terminal on this machine, run:</p>
 			<div className="space-y-1.5">
-				<CommandLine command={installCmd} hint="single daemon for every agent on this machine" />
+				<CommandLine command={installCmd} hint="one sync service for every Agent on this machine" />
 			</div>
 			<p className="text-xs text-muted-foreground">
-				Installs a launchd (macOS) or systemd (Linux) unit so the daemon survives reboots.
+				Installs a launchd (macOS) or systemd (Linux) unit so sync continues after a reboot.
 			</p>
 		</div>
 	);

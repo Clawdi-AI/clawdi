@@ -171,7 +171,7 @@ export function agentPluginInstallability(
 				return {
 					installable: false,
 					label: "Unavailable",
-					reason: "This plugin does not support a hosted runtime.",
+					reason: "This plugin is not available.",
 				};
 		}
 	}
@@ -179,7 +179,7 @@ export function agentPluginInstallability(
 		return {
 			installable: false,
 			label: "Unavailable",
-			reason: "This plugin is not available for this agent.",
+			reason: "This plugin is not compatible with this Agent.",
 		};
 	}
 	return { installable: true, label: "Install", reason: null };

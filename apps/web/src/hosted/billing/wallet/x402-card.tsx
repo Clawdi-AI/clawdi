@@ -55,11 +55,11 @@ type PendingAction = "binding" | "unbinding" | "offer" | "payment" | "refresh" |
 
 function canonicalBindingAddress(binding: WalletBinding): Address | null {
 	if (!binding.bound) {
-		if (binding.address) throw new Error("Invalid wallet binding response.");
+		if (binding.address) throw new Error("Clawdi couldn't connect this wallet. Try again.");
 		return null;
 	}
 	if (!binding.address || !isAddress(binding.address)) {
-		throw new Error("Invalid wallet binding response.");
+		throw new Error("Clawdi couldn't connect this wallet. Try again.");
 	}
 	return getAddress(binding.address);
 }
@@ -76,14 +76,14 @@ function validateChallenge(challenge: {
 		challenge.message.length > 16_384 ||
 		!Number.isFinite(expiresAt)
 	) {
-		throw new Error("Hosted returned an invalid wallet binding challenge.");
+		throw new Error("Clawdi couldn't verify this wallet connection. Try again.");
 	}
 }
 
 function validateTopupAttempt(attempt: X402TopupAttempt): X402TopupAttempt {
 	const expiresAt = Date.parse(attempt.expires_at);
 	if (!TOPUP_ATTEMPT_ID.test(attempt.attempt_id) || !Number.isFinite(expiresAt)) {
-		throw new Error("Hosted returned an invalid x402 payment attempt.");
+		throw new Error("Clawdi couldn't start this payment. Try again.");
 	}
 	return attempt;
 }
@@ -100,8 +100,29 @@ function attemptResolvesUnknownOutcome(
 }
 
 function paymentErrorMessage(error: unknown): string {
-	if (error instanceof X402PaymentError || error instanceof BrowserWalletError) {
-		return error.message;
+	if (error instanceof BrowserWalletError) {
+		switch (error.code) {
+			case "unavailable":
+				return "No browser wallet was found. Install or enable one and try again.";
+			case "connection_rejected":
+				return "Wallet connection was canceled or failed.";
+			case "signing_rejected":
+				return "Wallet approval was canceled or failed.";
+		}
+	}
+	if (error instanceof X402PaymentError) {
+		switch (error.code) {
+			case "challenge_unavailable":
+				return "USDC top-up unavailable. Check your connection and try again.";
+			case "payment_signing_failed":
+				return "Wallet approval was canceled or failed.";
+			case "payment_rejected":
+				return "The payment was declined. Check your wallet and try again.";
+			case "payment_outcome_unknown":
+				return "Payment status is unavailable. Refresh Wallet before trying another payment.";
+			default:
+				return "USDC top-up unavailable. Refresh Wallet and try again.";
+		}
 	}
 	return normalizeBillingError(error);
 }
@@ -114,7 +135,7 @@ function ComingSoonX402Card() {
 			title={
 				<span className="flex flex-wrap items-center gap-2">
 					<span className="inline-flex items-center gap-2">
-						<Link2 className="size-4" aria-hidden /> USDC via x402
+						<Link2 className="size-4" aria-hidden /> USDC from a browser wallet
 					</span>
 					<Badge variant="secondary">Coming soon</Badge>
 				</span>
@@ -232,7 +253,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 				signature,
 			});
 			if (canonicalBindingAddress(verified) !== signer.address) {
-				throw new Error("Hosted returned a mismatched wallet binding.");
+				throw new Error("The selected wallet changed. Select it again and retry.");
 			}
 			queryClient.setQueryData(billingKeys.walletBinding, verified);
 			setConnection(signer);
@@ -257,9 +278,11 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			});
 			setConnection(null);
 			setConfirmOpen(false);
-			toast.success("Browser wallet unbound");
+			toast.success("Verified wallet removed");
 		} catch (error) {
-			toast.error("Couldn’t unbind wallet", { description: normalizeBillingError(error) });
+			toast.error("Couldn’t remove verified wallet", {
+				description: normalizeBillingError(error),
+			});
 		} finally {
 			setPendingAction(null);
 		}
@@ -272,8 +295,8 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			const signer = await connectBrowserWallet();
 			if (signer.address !== boundAddress) {
 				setConnection(signer);
-				toast.error("Connected wallet doesn’t match", {
-					description: "Connect the verified address or change the Wallet binding.",
+				toast.error("Selected wallet doesn’t match", {
+					description: "Select the verified wallet or verify a different one.",
 				});
 				return;
 			}
@@ -330,22 +353,25 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 		if (!offer || !connection || !boundAddress || connection.address !== boundAddress) return;
 		setPendingAction("payment");
 		try {
-			const paid = await payX402Topup({
+			await payX402Topup({
 				offer,
 				signer: connection,
 				fetch: createCredentiallessX402Fetch(),
 			});
 			setConfirmOpen(false);
 			invalidateWalletData(queryClient);
-			toast.success("USDC payment verified", {
-				description: `Wallet is refreshing from transaction ${paid.settlement.transaction.slice(0, 10)}…`,
+			toast.success("USDC payment confirmed", {
+				description: "Your Wallet balance is refreshing.",
 			});
 		} catch (error) {
 			setConfirmOpen(false);
 			invalidateWalletData(queryClient);
 			if (error instanceof X402PaymentError && error.code === "payment_outcome_unknown") {
 				setUnknownAttemptId(offer.attemptId);
-				toast.warning("Payment outcome needs verification", { description: error.message });
+				toast.warning("Payment status unavailable", {
+					description:
+						"Refresh Wallet and wait for a final status before starting another payment.",
+				});
 				await refreshAfterUnknownOutcome();
 			} else {
 				toast.error("USDC top-up didn’t complete", { description: paymentErrorMessage(error) });
@@ -374,7 +400,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					<DialogHeader>
 						<DialogTitle>Confirm Base USDC top-up</DialogTitle>
 						<DialogDescription>
-							Your browser wallet will authorize this exact x402 payment.
+							Your browser wallet will approve this exact payment.
 						</DialogDescription>
 					</DialogHeader>
 					{offer && boundAddress ? (
@@ -414,12 +440,12 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 				title={
 					<span className="flex flex-wrap items-center gap-2">
 						<span className="inline-flex items-center gap-2">
-							<Link2 className="size-4" aria-hidden /> USDC via x402
+							<Link2 className="size-4" aria-hidden /> USDC from a browser wallet
 						</span>
 						<Badge variant="outline">Base</Badge>
 					</span>
 				}
-				description="Fund Wallet directly from a verified browser wallet."
+				description="Add USDC to Wallet from a verified browser wallet."
 			>
 				<div className="space-y-4">
 					{binding.isPending ? (
@@ -429,7 +455,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					) : binding.isError ? (
 						<Alert variant="destructive">
 							<AlertCircle aria-hidden />
-							<AlertTitle>Wallet binding unavailable</AlertTitle>
+							<AlertTitle>Couldn't load verified wallet</AlertTitle>
 							<AlertDescription>
 								<div className="flex flex-wrap items-center justify-between gap-3">
 									<span>{normalizeBillingError(binding.error)}</span>
@@ -443,11 +469,11 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 						<div className="grid min-w-0 gap-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)]">
 							<div className="text-muted-foreground">Verified wallet</div>
 							<div className="min-w-0 break-all font-mono text-xs">
-								{boundAddress ?? "Not bound"}
+								{boundAddress ?? "No wallet verified"}
 							</div>
-							<div className="text-muted-foreground">Connected wallet</div>
+							<div className="text-muted-foreground">Selected wallet</div>
 							<div className="min-w-0 break-all font-mono text-xs">
-								{connectedAddress ?? "Not connected"}
+								{connectedAddress ?? "No wallet selected"}
 							</div>
 						</div>
 					)}
@@ -457,7 +483,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<AlertCircle aria-hidden />
 							<AlertTitle>USDC funding unavailable</AlertTitle>
 							<AlertDescription>
-								The authenticated payment authority is invalid. Refresh Wallet before trying again.
+								Wallet authorization could not be verified. Refresh Wallet before trying again.
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -466,9 +492,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					paymentAttempt?.status !== "awaiting_payment" ? (
 						<Alert>
 							<Spinner />
-							<AlertTitle>USDC payment processing</AlertTitle>
+							<AlertTitle>USDC payment in progress</AlertTitle>
 							<AlertDescription>
-								Wallet status is refreshing. A new payment cannot be authorized yet.
+								Wait for this payment to complete before starting another.
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -486,12 +512,10 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					{outcomeUnknown ? (
 						<Alert variant="destructive">
 							<AlertCircle aria-hidden />
-							<AlertTitle>Payment outcome needs verification</AlertTitle>
+							<AlertTitle>Payment status unavailable</AlertTitle>
 							<AlertDescription>
 								<div className="flex flex-wrap items-center justify-between gap-3">
-									<span>
-										Do not create a new payment until this payment attempt reaches a final status.
-									</span>
+									<span>Wait for a final status before starting another payment.</span>
 									<Button
 										size="sm"
 										variant="outline"
@@ -509,9 +533,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					{connectedAddress && boundAddress && !connectionMatches ? (
 						<Alert variant="destructive">
 							<AlertCircle aria-hidden />
-							<AlertTitle>Connected wallet doesn’t match</AlertTitle>
+							<AlertTitle>Selected wallet doesn’t match</AlertTitle>
 							<AlertDescription>
-								Connect the verified address or change the Wallet binding before paying.
+								Select the verified wallet or verify a different one before paying.
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -532,7 +556,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 										disabled={bindingControlsDisabled}
 										onClick={() => void runAction(unbindBrowserWallet)}
 									>
-										<Unlink aria-hidden /> Unbind
+										<Unlink aria-hidden /> Remove
 									</Button>
 								</>
 							) : (
@@ -541,7 +565,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 									onClick={() => void runAction(bindBrowserWallet)}
 								>
 									{pendingAction === "binding" ? <Spinner /> : <WalletCards aria-hidden />}
-									Connect & bind
+									Connect & verify
 								</Button>
 							)}
 							{boundAddress && amountLabel ? (

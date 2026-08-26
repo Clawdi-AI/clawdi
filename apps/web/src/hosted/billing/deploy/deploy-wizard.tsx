@@ -389,7 +389,7 @@ export function DeployWizard() {
 		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({
-		onCancelCopy: "You were not charged. Your agent was not deployed.",
+		onCancelCopy: "You were not charged. Your Agent was not deployed.",
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
@@ -1171,7 +1171,7 @@ export function DeployWizard() {
 									</IconChip>
 								}
 								title={authCardLabel("unmanaged")}
-								description="Deploy first, then configure model access inside the agent."
+								description="Deploy first, then configure model access inside the Agent."
 								badge={
 									aiAccessMode === "unmanaged" ? <Badge variant="secondary">Selected</Badge> : null
 								}
@@ -1512,8 +1512,8 @@ export function DeployWizard() {
 							<AlertTitle>Agent couldn’t be opened</AlertTitle>
 							<AlertDescription>
 								{acceptedDeploymentRecovery?.target.kind === "deploy_request"
-									? "Retrying resumes this checkout’s existing deployment request and opens the agent. It won’t create or charge for another one."
-									: "Retrying only loads the accepted deployment and opens its page. It won’t create another agent."}
+									? "Retrying resumes this deployment and opens the Agent. It won’t create or charge for another one."
+									: "Retrying loads the deployed Agent without creating another one."}
 							</AlertDescription>
 						</Alert>
 					) : null}

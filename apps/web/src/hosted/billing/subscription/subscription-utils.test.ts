@@ -366,6 +366,9 @@ describe("compute subscription lifecycle presentation", () => {
 			badgeLabel: "Expired",
 			renews: false,
 		});
+		expect(
+			computeSubscriptionLifecycle({ ...subscription(), status: "future_internal_status" }),
+		).toMatchObject({ badgeLabel: "Status unavailable", renews: false });
 	});
 
 	test("describes the server-projected schedule without local renewal state", () => {

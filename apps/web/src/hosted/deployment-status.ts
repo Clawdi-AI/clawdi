@@ -143,9 +143,7 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 		case "deleted":
 			return "Deleted";
 		case "unknown":
-			return status.reason === "status_unavailable"
-				? "Status unavailable"
-				: titleCaseStatus(status.raw);
+			return "Status unavailable";
 		default:
 			return exhaustive(status);
 	}
@@ -498,16 +496,6 @@ function deploymentTransitionFallbackKey(deployment: HostedDeployment): string {
 		deployment.resource.metadata.generation,
 		deployment.resource.spec.desired_lifecycle,
 	].join(":");
-}
-
-function titleCaseStatus(raw: string): string {
-	const cleaned = raw.trim();
-	if (!cleaned) return "Unknown";
-	return cleaned
-		.split(/[\s_-]+/)
-		.filter(Boolean)
-		.map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
-		.join(" ");
 }
 
 function exhaustive(value: never): never {

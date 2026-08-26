@@ -220,7 +220,7 @@ export function useDeploymentLifecycle() {
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
-			toast.error("Couldn't update lifecycle", {
+			toast.error("Couldn't change agent status", {
 				description: deploymentMutationErrorMessage(error),
 			});
 		},
@@ -239,11 +239,11 @@ export function useResetRuntimeUiAccess() {
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
 			retireRuntimeWindows(accepted.deploymentId);
-			toast.message("Resetting Runtime UI access…");
+			toast.message("Resetting dashboard access…");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
-			toast.error("Couldn't reset Runtime UI access", {
+			toast.error("Couldn't reset dashboard access", {
 				description: deploymentMutationErrorMessage(error),
 			});
 		},
@@ -270,9 +270,7 @@ export function useDeleteDeployment(dismissDetail: () => Promise<void> | void) {
 			}
 			retireRuntimeWindows(accepted.deploymentId);
 			invalidateDeploymentDeleteSnapshots(qc);
-			toast.message("Agent removed", {
-				description: "Cleanup continues in the background.",
-			});
+			toast.message("Agent removed");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;

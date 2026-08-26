@@ -210,8 +210,8 @@ export default function SharePage({ token }: { token: string }) {
 							<p className="text-xs text-muted-foreground">
 								You'll join as a <Badge variant="secondary">Viewer</Badge> with read access to
 								skills
-								{data.vault_count > 0 ? " and Vault values through CLI runtime reads" : ""}. The
-								dashboard does not reveal key values.
+								{data.vault_count > 0 ? " and Vault values from the Clawdi CLI" : ""}. The dashboard
+								does not reveal key values.
 							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
@@ -269,8 +269,8 @@ export default function SharePage({ token }: { token: string }) {
 
 function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
 	const vaultCopy = hasVaults
-		? "Use Vault values through CLI runtime reads"
-		: "Use Vault values through CLI runtime reads if added later";
+		? "Use Vault values from the Clawdi CLI"
+		: "Use Vault values from the Clawdi CLI if added later";
 	return (
 		<div className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
 			<div className="space-y-2">
@@ -368,11 +368,7 @@ function ErrorView({ error }: { error: unknown }) {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Something went wrong</AlertTitle>
-					<AlertDescription>
-						{error instanceof Error
-							? error.message
-							: "Share link unavailable. Ask the owner for a new link."}
-					</AlertDescription>
+					<AlertDescription>Share link unavailable. Ask the owner for a new link.</AlertDescription>
 				</Alert>
 			</Shell>
 		);

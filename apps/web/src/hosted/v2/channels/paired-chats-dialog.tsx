@@ -68,7 +68,7 @@ export function PairedChatsDialog({
 	};
 	const panelId = `paired-chats-${linkId}`;
 	const label = `${bindingCount} paired ${bindingCount === 1 ? "chat" : "chats"}`;
-	const description = `${descriptionCount} ${descriptionCount === 1 ? "chat" : "chats"} connected through this channel. Unpairing affects only the selected chat.`;
+	const description = `${descriptionCount} ${descriptionCount === 1 ? "chat is" : "chats are"} paired through this channel. Unpairing affects only the selected chat.`;
 	const trigger = (
 		<button
 			type="button"

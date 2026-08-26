@@ -1,7 +1,7 @@
 import type { ChannelActivityItem, ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
 
 const DELIVERY_DELAYED_SUMMARY =
-	"Message delivery is delayed. Clawdi will keep trying while the channel is connected.";
+	"Message delivery is delayed. Clawdi will retry while the channel remains connected.";
 const DELIVERY_FAILED_SUMMARY =
 	"Message delivery failed. Check the channel connection and try again.";
 const CHANNEL_EVENT_FAILED_SUMMARY =

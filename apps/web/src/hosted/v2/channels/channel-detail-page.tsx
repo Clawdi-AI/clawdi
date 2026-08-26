@@ -283,8 +283,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			{ch.provider === "discord" && !providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Verify Discord credentials">
 					Clawdi stores Discord credentials during setup but does not verify them with Discord. Send
-					a test message and confirm activity and health before relying on this channel. To replace
-					credentials, remove the channel and reconnect it.
+					a test message and confirm its activity and status before relying on this channel. To
+					replace credentials, remove the channel and reconnect it.
 				</InfoCard>
 			) : null}
 
@@ -469,19 +469,24 @@ function HealthTab({ accountId }: { accountId: string }) {
 			<ApiErrorPanel
 				error={health.error}
 				onRetry={() => health.refetch()}
-				title="Couldn't load health"
+				title="Couldn't load channel health"
 			/>
 		);
 	}
 	const h = health.data?.items.find((x) => x.account_id === accountId);
 	if (!h)
-		return <EmptyState title="No health data" description="Health metrics aren't available yet." />;
+		return (
+			<EmptyState
+				title="Health unavailable"
+				description="Channel health data isn't available yet."
+			/>
+		);
 
 	const stats = [
-		{ label: "Pending inbox", value: h.pending_inbox },
-		{ label: "Pending deliveries", value: h.pending_deliveries },
+		{ label: "Pending inbound", value: h.pending_inbox },
+		{ label: "Pending outbound", value: h.pending_deliveries },
 		{ label: "In progress", value: h.in_progress_deliveries },
-		{ label: "Failed deliveries", value: h.failed_deliveries },
+		{ label: "Failed", value: h.failed_deliveries },
 	];
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
 	const summary = channelHealthSummary(h);
@@ -573,19 +578,19 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 			<InfoCard icon={KeyRound} title="Pairing commands">
 				{supportsCommands
 					? `Publish Clawdi’s pairing commands to ${meta.label}.`
-					: `${meta.label} doesn't support pairing commands.`}
+					: `${meta.label} does not support pairing commands.`}
 			</InfoCard>
 
 			{supportsCommands ? (
 				<>
 					<Button onClick={syncCommands} disabled={syncing}>
 						{syncing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
-						{syncing ? "Syncing…" : "Sync commands"}
+						{syncing ? "Publishing…" : "Publish commands"}
 					</Button>
 					{commands.length > 0 ? (
 						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
 							<div className="text-xs font-medium text-success-muted-foreground">
-								Synced {commands.length} command{commands.length === 1 ? "" : "s"}
+								Published {commands.length} command{commands.length === 1 ? "" : "s"}
 							</div>
 							{commands.map((c) => (
 								<div key={String(c.name)} className="flex items-baseline gap-2 text-sm">
@@ -597,7 +602,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 					) : sync.data ? (
 						<EmptyState
 							variant="inset"
-							description="Command sync completed. No pairing commands were returned."
+							description="No pairing commands are available to publish."
 						/>
 					) : null}
 				</>

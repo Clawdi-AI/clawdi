@@ -175,7 +175,7 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 		href: "/agents",
 		icon: MonitorPlay,
 		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Every agent connected to this account.",
+		description: "Every Agent in this account.",
 		tooltip: "All agents",
 		availability: "all",
 	},

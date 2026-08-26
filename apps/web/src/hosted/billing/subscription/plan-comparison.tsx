@@ -155,10 +155,8 @@ export function PlanComparison({
 										Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
 									</FeatureRow>
 								) : null}
-								<FeatureRow>
-									Managed confidential compute · one runtime (OpenClaw or Hermes)
-								</FeatureRow>
-								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+								<FeatureRow>Managed confidential compute · choose OpenClaw or Hermes</FeatureRow>
+								<FeatureRow>Bring your own API key (BYOK) · pay your provider directly</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>
@@ -192,10 +190,8 @@ export function PlanComparison({
 										{performance.disk_size} GB storage
 									</FeatureRow>
 								) : null}
-								<FeatureRow>
-									Managed confidential compute · one runtime (OpenClaw or Hermes)
-								</FeatureRow>
-								<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+								<FeatureRow>Managed confidential compute · choose OpenClaw or Hermes</FeatureRow>
+								<FeatureRow>Bring your own API key (BYOK) · pay your provider directly</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>

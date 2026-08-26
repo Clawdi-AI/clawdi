@@ -38,7 +38,7 @@ import {
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -46,6 +46,15 @@ function formatName(raw: string): string {
 		.replace(/^[_-]+/, "")
 		.replace(/[_-]/g, " ")
 		.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function connectionStatusLabel(status: string): string {
+	const normalized = status.trim().toLowerCase();
+	if (["active", "connected", "ready"].includes(normalized)) return "Connected";
+	if (["pending", "initiated", "connecting"].includes(normalized)) return "Connecting";
+	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect required";
+	if (["failed", "error"].includes(normalized)) return "Connection failed";
+	return "Status unavailable";
 }
 
 /**
@@ -91,7 +100,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
 		toast.error("Connection failed", {
-			description: oauthState.error || "OAuth did not complete. Try again from this page.",
+			description: "The account could not be connected. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
 	}, [oauthState.error, oauthState.status, setOauthState]);
@@ -155,7 +164,10 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						return next;
 					});
 				},
-				onError: (e) => toast.error("Couldn't disconnect", { description: errorMessage(e) }),
+				onError: () =>
+					toast.error("Couldn't disconnect", {
+						description: "Try again. If the problem persists, refresh the page.",
+					}),
 			},
 		);
 	};
@@ -176,7 +188,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const [credsOpen, setCredsOpen] = useState(false);
 	const authFlow = app ? getConnectorAuthFlow(app.auth_type) : null;
 	const isSetupBlocked = !!app?.connect_disabled;
-	const setupBlockedReason = app?.connect_disabled_reason || "This connector needs admin setup.";
 	const hasUnsupportedAuthType = !!app && authFlow === null;
 	const usesNoAuth = authFlow === "no_auth";
 	const usesCredentialsForm = authFlow === "credentials";
@@ -190,14 +201,14 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
 		if (isSetupBlocked) {
-			toast.error("Connector Setup Required", {
-				description: setupBlockedReason,
+			toast.error("Connector unavailable", {
+				description: "Additional configuration is required. Contact support to continue.",
 			});
 			return;
 		}
 		if (hasUnsupportedAuthType) {
-			toast.error("Connector Metadata Error", {
-				description: `${displayName} did not return a supported auth type.`,
+			toast.error("Connection unavailable", {
+				description: `${displayName} uses an authentication method Clawdi does not support.`,
 			});
 			return;
 		}
@@ -223,8 +234,8 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			// Popup blocker rejected the open. Bail before firing the
 			// mutation so we don't leak a connection request the user
 			// can't complete — and tell them why nothing happened.
-			toast.error("Popup Blocked", {
-				description: "Allow popups for this site to continue with OAuth.",
+			toast.error("Popup blocked", {
+				description: "Allow popups for this site to continue.",
 			});
 			return;
 		}
@@ -247,9 +258,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			.then((result) => {
 				if (!popup.closed) popup.location.href = result.connect_url;
 			})
-			.catch((error) => {
+			.catch(() => {
 				popup.close();
-				toast.error("Couldn't start connection", { description: errorMessage(error) });
+				toast.error("Couldn't start connection", {
+					description: "Try again. If the problem persists, contact support.",
+				});
 			})
 			.finally(() => {
 				inflightConnectRef.current = false;
@@ -281,7 +294,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<EmptyState
 						icon={Plug}
 						title="Connector unavailable"
-						description={errorMessage(appQ.error)}
+						description="This connector is no longer available."
 					/>
 				) : (
 					<ApiErrorPanel
@@ -382,18 +395,20 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (
 						<ApiErrorPanel
-							error="This connector did not return a supported auth type. Refresh the page and try again."
+							error="This connector uses an authentication method Clawdi does not support."
 							onRetry={() => {
 								void appQ.refetch();
 							}}
-							title="Connector metadata error"
+							title="Connection unavailable"
 						/>
 					) : activeConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
-								<AlertTitle>Connector setup required</AlertTitle>
-								<AlertDescription>{setupBlockedReason}</AlertDescription>
+								<AlertTitle>Connector unavailable</AlertTitle>
+								<AlertDescription>
+									Additional configuration is required. Contact support to continue.
+								</AlertDescription>
 							</Alert>
 						) : (
 							<EmptyState
@@ -421,7 +436,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 											{c.account_display || `Account ${c.id.slice(-6)}`}
 										</p>
 										<p className="mt-0.5 text-xs text-muted-foreground">
-											{c.status.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+											{connectionStatusLabel(c.status)}
 										</p>
 									</div>
 									<ConfirmAction
@@ -541,7 +556,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -562,7 +577,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -582,7 +597,7 @@ function ConnectorToolsList({
 					count="0 tools"
 					description={
 						requiresConnection
-							? "Tools this connector exposes after an account is connected."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>

@@ -46,6 +46,6 @@ describe("WhatsApp device onboarding logic", () => {
 				},
 				false,
 			),
-		).toContain("isn't compatible with this deployment");
+		).toContain("not supported by this Agent");
 	});
 });

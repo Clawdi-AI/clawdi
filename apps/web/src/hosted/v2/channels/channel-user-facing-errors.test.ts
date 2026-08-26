@@ -50,7 +50,7 @@ describe("channel user-facing error summaries", () => {
 			channelActivityErrorSummary(
 				activity({ delivery_status: "pending", delivery_last_error: "provider host 10.0.0.8" }),
 			),
-		).toBe("Message delivery is delayed. Clawdi will keep trying while the channel is connected.");
+		).toBe("Message delivery is delayed. Clawdi will retry while the channel remains connected.");
 	});
 
 	test("never returns raw health diagnostics", () => {

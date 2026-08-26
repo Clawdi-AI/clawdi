@@ -134,7 +134,7 @@ describe("normalizeBillingError", () => {
 		expect(isInsufficientBalanceError(missingCode)).toBe(false);
 	});
 
-	test("snake_case codes stay internal while real sentences pass through", () => {
+	test("backend details stay internal", () => {
 		const paymentMethodRequired = new BillingApiError(400, "payment_method_required");
 		expect(normalizeBillingError(paymentMethodRequired)).toBe(
 			"Add a payment method and try again.",
@@ -150,7 +150,7 @@ describe("normalizeBillingError", () => {
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),
-		).toBe("That code has already been used.");
+		).toBe("The billing request could not be completed. Review the details and try again.");
 	});
 
 	test("structured wallet errors never expose raw JSON or internal codes", () => {
@@ -160,7 +160,7 @@ describe("normalizeBillingError", () => {
 		const unknown = new BillingApiError(409, '{"detail":{"code":"bridge_internal_17"}}', {
 			detail: { code: "bridge_internal_17" },
 		});
-		expect(normalizeBillingError(known)).toContain("repay refund debt");
+		expect(normalizeBillingError(known)).toContain("outstanding balance");
 		expect(normalizeBillingError(unknown)).toBe(
 			"The billing request could not be completed. Refresh and try again.",
 		);
@@ -174,7 +174,7 @@ describe("normalizeBillingError", () => {
 		);
 		const message = normalizeBillingError(error);
 		expect(message).toBe(
-			"Subscription billing details need reconciliation. Contact support before changing this subscription.",
+			"Billing for this subscription needs review. Contact support before making changes.",
 		);
 		expect(message).not.toContain("Stripe");
 		expect(message).not.toContain("authority");

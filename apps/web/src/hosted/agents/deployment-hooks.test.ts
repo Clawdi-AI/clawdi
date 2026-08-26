@@ -179,7 +179,7 @@ describe("deployment failure status rendering", () => {
 		);
 
 		expect(markup).not.toContain("Temporarily unavailable");
-		expect(markup.match(/Clawdi is checking the runtime/g)).toHaveLength(1);
+		expect(markup.match(/Clawdi is checking this Agent/g)).toHaveLength(1);
 		expect(markup).not.toContain("restart failed");
 		expect(markup).not.toContain("Hermes prerequisite");
 		expect(markup).not.toContain("internal runtime");
@@ -293,7 +293,7 @@ describe("deployment transition timeout rendering", () => {
 				title: "Setting up OpenClaw",
 				activeLabel: "Installing and starting OpenClaw",
 				activeDescription:
-					"Booting the environment, installing Clawdi and the agent runtime, then checking readiness.",
+					"Provisioning a private workspace, installing the Agent, and confirming readiness.",
 				step: "Step 2 of 3",
 				currentStage: "starting",
 				states: { creating: "completed", starting: "active", running: "pending" },
@@ -617,7 +617,6 @@ describe("hosted agent customer language", () => {
 		const customerCopy = `${detailSource}\n${agentHomeSource}\n${sidebarSource}\n${wizardSource}`;
 
 		for (const staleLifecycleCopy of [
-			"Provisioning",
 			"Getting your agent ready",
 			"Setting up your agent",
 			"Your agent is ready",
@@ -670,7 +669,7 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain("resolveRuntimeUiCredentials");
 		expect(detailSource).toContain("runtimeUiLaunchTarget");
 		expect(detailSource).toContain("RuntimeUiAccessDialog");
-		expect(detailSource).toContain("Runtime UI access");
+		expect(detailSource).toContain("Agent dashboard access");
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');

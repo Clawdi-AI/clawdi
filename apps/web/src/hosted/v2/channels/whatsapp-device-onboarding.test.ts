@@ -76,7 +76,7 @@ describe("WhatsApp linked-device onboarding", () => {
 		const scanned = render(session({ state: "scanned", qr: null, qr_expires_at: null }));
 		expect(scanned).toContain("Device approved");
 		expect(scanned).toContain("Finishing the encrypted WhatsApp connection");
-		expect(scanned).not.toContain("WhatsApp account connected");
+		expect(scanned).not.toContain("WhatsApp connected");
 
 		const connected = render(
 			session({
@@ -87,10 +87,9 @@ describe("WhatsApp linked-device onboarding", () => {
 				completed_at: "2026-08-02T12:00:15Z",
 			}),
 		);
-		expect(connected).toContain("WhatsApp account connected");
-		expect(connected).toContain("is not ready on an Agent");
+		expect(connected).toContain("WhatsApp connected");
 		expect(connected).toContain("under Custom bots");
-		expect(connected).toContain("Link it to an Agent, then Pair an authorized chat");
+		expect(connected).toContain("Link it to an Agent, then pair an authorized chat");
 	});
 
 	test("renders a directly copyable manual code and terminal recovery states", () => {
