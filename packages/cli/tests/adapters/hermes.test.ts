@@ -45,77 +45,195 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
-	it("returns the plain-string-model session with correct token counters", async () => {
+	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
+		expect(await a.sessions.contentProtocol()).toBe("events-v1");
 		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		const plain = sessions.find((s) => s.localSessionId === "s-plain");
-		expect(plain).toBeDefined();
-		expect(plain).toMatchObject({
-			localSessionId: "s-plain",
-			projectPath: null, // Hermes has no cwd concept
-			model: "claude-opus-4-7",
-			messageCount: 2,
-			inputTokens: 10,
-			outputTokens: 5,
-			cacheReadTokens: 2,
+		expect(sessions).toHaveLength(1);
+		const session = sessions[0];
+		expect(session).toMatchObject({
+			localSessionId: "s-modern",
+			projectPath: null,
+			model: "gpt-5.3-codex",
+			modelsUsed: ["gpt-5.3-codex"],
+			messageCount: 12,
+			inputTokens: 120,
+			outputTokens: 45,
+			cacheReadTokens: 8,
+			summary: "Inspect this report",
 		});
-		expect(plain?.messages).toHaveLength(2);
-		expect(plain?.messages[0]?.role).toBe("user");
-		expect(plain?.messages[0]?.content).toBe("hello");
-		expect(plain?.messages[1]?.role).toBe("assistant");
-		expect(plain?.messages[1]?.model).toBe("claude-opus-4-7");
-		expect((await a.sessions.resolve("s-plain"))?.messages).toEqual(plain?.messages);
+		expect(session?.rawFilePath).toContain("state.db#s-modern");
+		expect((await a.sessions.resolve("s-modern"))?.events).toEqual(session?.events);
 		expect(await a.sessions.resolve("missing-session")).toBeNull();
+
+		const events = session?.events ?? [];
+		expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index));
+		expect(events.map((event) => event.source.record_id)).toEqual([
+			"1",
+			"2",
+			"3",
+			"3",
+			"4",
+			"5",
+			"6",
+			"7",
+			"8",
+			"9",
+			"10",
+			"10",
+			"11",
+			"12",
+		]);
+		expect(events[0]).toMatchObject({ type: "message", role: "system" });
+		expect(events[1]).toMatchObject({
+			type: "message",
+			role: "user",
+			parts: [
+				{ type: "text", text: "Inspect this report" },
+				{
+					type: "attachment",
+					availability: "external",
+					uri: "https://cdn.example.com/report.png",
+					media_type: "image/png",
+				},
+			],
+			semantics: {
+				lifecycle: "active",
+				display: "message",
+				display_metadata: {
+					reactions: [{ emoji: "thumbs-up", author: "user" }],
+				},
+			},
+		});
+		expect(events[2]).toMatchObject({
+			type: "tool_call",
+			call_id: "call-search",
+			name: "search",
+			arguments_json: '{"query":"Hermes"}',
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[3]).toMatchObject({
+			type: "tool_call",
+			call_id: "call-read",
+			name: "read_file",
+		});
+		expect(events[4]).toMatchObject({
+			type: "tool_result",
+			call_id: "call-search",
+			name: "search",
+			parts: [{ type: "text", text: "Found one result" }],
+			result_json: '[{"items":[{"id":1}],"ok":true}]',
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[7]).toMatchObject({
+			type: "message",
+			role: "user",
+			semantics: {
+				lifecycle: "inactive",
+				display: "event",
+				display_kind: "auto_continue",
+				display_metadata: { attempt: 2 },
+			},
+		});
+		expect(events[6]).toMatchObject({
+			type: "message",
+			parts: [{ type: "text", text: "Summary of earlier turns" }],
+			semantics: { compressed_summary: true },
+		});
+		expect(events[8]).toMatchObject({
+			type: "message",
+			parts: [{ type: "text", text: "Public answer" }],
+		});
+		expect(events[9]).toMatchObject({
+			semantics: {
+				display: "event",
+				display_kind: "async_delegation_complete",
+				display_metadata: { task_count: 2 },
+			},
+		});
+		// Assistant rows with visible content + tool_calls produce one message and one call.
+		expect(events.slice(10, 12).map((event) => event.type)).toEqual(["message", "tool_call"]);
+		// Raw audit rows are retained: the compaction copy remains distinct and marked compacted.
+		expect(events[5]).toMatchObject({ source: { record_id: "5" } });
+		expect(events[13]).toMatchObject({
+			source: { record_id: "12" },
+			semantics: { lifecycle: "compacted" },
+		});
+
+		const serialized = JSON.stringify(session);
+		for (const hidden of [
+			"sk-model-secret",
+			"sk-config-secret",
+			"sk-tool-secret",
+			"hidden row reasoning",
+			"hidden inline reasoning",
+			"provider envelope secret",
+			"display-secret",
+			"metadata-secret",
+			"result-secret",
+			"Bearer secret",
+		]) {
+			expect(serialized).not.toContain(hidden);
+		}
 	});
 
-	it("parses a JSON-blob model field via parseModelField", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		const json = sessions.find((s) => s.localSessionId === "s-json");
-		expect(json).toBeDefined();
-		expect(json?.model).toBe("gpt-5.3-codex");
-		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
-	});
-
-	it("parses Python-repr model config without uploading provider secrets as the model", async () => {
+	it("keeps prior identities as an append-only prefix when a row is added", async () => {
+		const adapter = new HermesAdapter();
+		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
 		db.run(
-			"UPDATE sessions SET model = ? WHERE id = ?",
-			"{'default': 'gpt-5.3-codex', 'provider': 'openai-codex', 'headers': {'x-api-key': 'sk-redacted'}}",
-			"s-json",
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES (?, ?, ?, ?, 1, 0)",
+			"s-modern",
+			"user",
+			"Appended turn",
+			1776247261,
 		);
 		db.close();
 
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		const json = sessions.find((s) => s.localSessionId === "s-json");
-		expect(json?.model).toBe("gpt-5.3-codex");
-		expect(json?.modelsUsed).toEqual(["gpt-5.3-codex"]);
+		const after = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
+		expect(after.slice(0, before.length).map((event) => event.event_id)).toEqual(
+			before.map((event) => event.event_id),
+		);
+		expect(after.at(-1)).toMatchObject({
+			seq: before.length,
+			type: "message",
+			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
+		});
 	});
 
-	it("skips sessions with no extractable messages", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		expect(sessions.find((s) => s.localSessionId === "s-empty")).toBeUndefined();
-	});
+	it("falls back to snapshot-v1 for a legacy messages table without stable ids", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.exec(`
+			DROP TABLE messages;
+			CREATE TABLE messages (
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT,
+				timestamp REAL NOT NULL
+			);
+			INSERT INTO messages VALUES
+				('s-modern', 'user', 'legacy question', 1776247201),
+				('s-modern', 'assistant', 'legacy answer', 1776247202);
+		`);
+		db.close();
 
-	it("orders sessions by started_at DESC", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		// s-json started later than s-plain; s-empty is filtered out
-		expect(sessions.map((s) => s.localSessionId)).toEqual(["s-json", "s-plain"]);
-	});
-
-	it("projectPath is null for every Hermes session (by design)", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		for (const s of sessions) expect(s.projectPath).toBeNull();
-	});
-
-	it("rawFilePath includes the session id anchor", async () => {
-		const a = new HermesAdapter();
-		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		expect(sessions[0]?.rawFilePath).toContain("state.db#");
+		const adapter = new HermesAdapter();
+		expect(await adapter.sessions.contentProtocol()).toBe("snapshot-v1");
+		const session = await adapter.sessions.resolve("s-modern");
+		expect(session?.events).toBeUndefined();
+		expect(session?.messages).toEqual([
+			{
+				role: "user",
+				content: "legacy question",
+				timestamp: "2026-04-15T10:00:01.000Z",
+			},
+			{
+				role: "assistant",
+				content: "legacy answer",
+				model: "gpt-5.3-codex",
+				timestamp: "2026-04-15T10:00:02.000Z",
+			},
+		]);
 	});
 });
 

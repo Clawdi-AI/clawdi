@@ -54,10 +54,14 @@ control-plane, or deployment type.
 
 ## Session Content Protocols
 
-`snapshot-v1` remains readable and writable for old clients and servers. Hermes
-uses it explicitly because its supported source does not expose stable event
-identity. A new CLI probes `/v1/sessions/upload-capabilities`; a 404 selects
-`snapshot-v1`, so an old server never receives an events envelope.
+`snapshot-v1` remains readable and writable for old clients and servers. A
+Sessions module resolves its local protocol from the current backing store
+before server negotiation. Hermes capability-detects `messages` with
+`PRAGMA table_info`: stores with a stable `INTEGER PRIMARY KEY id` and the
+modern semantic columns use `events-v1`; legacy stores remain on `snapshot-v1`
+rather than claiming event fidelity. A new CLI probes
+`/v1/sessions/upload-capabilities`; a 404 selects `snapshot-v1`, so an old
+server never receives an events envelope.
 
 `events-v1` is strict and private. It contains only continuous, source-identified
 `Message`, `ToolCall`, and `ToolResult` events. Message content is text or
@@ -67,6 +71,13 @@ URI. Inline bytes become hash/size metadata, local paths expose at most a
 basename, and no attachment body is stored by this version. The schema forbids
 extra fields. Hidden chain of thought, encrypted continuation state, and
 redacted thinking are excluded at the adapter boundary.
+
+Hermes events follow `messages.id` insertion order and retain every durable
+row, including compacted copies and rewound inactive rows. Normalized lifecycle,
+compressed-summary, display-kind, and safe presentation metadata let a later
+projection reproduce Hermes' active/display/audit views without discarding the
+complete store. Dedicated reasoning columns, provider API envelopes, and Codex
+reasoning/message carrier fields are never selected.
 
 Codex `AgentMessage` records are emitted only when their persisted content is
 entirely plaintext. Because events-v1 has no author/recipient fields, the

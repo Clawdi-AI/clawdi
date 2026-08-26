@@ -60,7 +60,7 @@ export async function negotiateSessionProtocol(
 	api: ApiClient,
 	module: SessionModule,
 ): Promise<SelectedSessionProtocol> {
-	if (module.contentProtocol === "snapshot-v1") return "snapshot-v1";
+	if ((await module.contentProtocol()) === "snapshot-v1") return "snapshot-v1";
 	const capabilities = await eventUploadCapabilities(api);
 	return capabilities === null ? "snapshot-v1" : "events-v1";
 }

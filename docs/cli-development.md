@@ -274,7 +274,10 @@ Shape:
 
 - `claude-code/` — JSONL with 5 entries (user/assistant messages + usage blocks); `skills/demo` + `skills/node_modules` (SKIP_DIRS sentinel)
 - `codex/` — single rollout JSONL under `sessions/YYYY/MM/DD/`: `session_meta` + `turn_context` + `response_item` messages + `event_msg` token_count; `skills/demo` + `skills/.system` (dot-prefix skip) + `skills/node_modules` (SKIP_DIRS)
-- `hermes/` — SQLite `state.db` with 3 sessions (plain-string model, JSON-blob model, empty); `skills/core/demo` (nested) + `skills/node_modules/bad` (verifies SKIP_DIRS applies during recursion, not just top-level)
+- `hermes/` — modern upstream-shaped SQLite `state.db` with stable message ids,
+  tools, structured attachments/results, compaction and display lifecycle rows;
+  `skills/core/demo` (nested) + `skills/node_modules/bad` (verifies SKIP_DIRS
+  applies during recursion, not just top-level)
 - `openclaw/` — `sessions.json` index + `<id>.jsonl` transcript (with a `model_change` event); `skills/demo` + `skills/node_modules` (SKIP_DIRS)
 - `pi/` — official JSONL v1-v4 records covering active-leaf branching,
   compaction retained tails, visible tools, attachment metadata, and

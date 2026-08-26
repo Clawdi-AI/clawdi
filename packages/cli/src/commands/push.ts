@@ -388,7 +388,7 @@ async function scanOneAgent(
 		// collapsed). That's internal housekeeping — not actionable and not
 		// perceptible to the user — so it isn't surfaced.
 		sessionProtocol = opts.dryRun
-			? sessionsModule.contentProtocol
+			? await sessionsModule.contentProtocol()
 			: await negotiateSessionProtocol(sessionApi, sessionsModule);
 		sessions = (await sessionsModule.collect({ kind: "complete", projectFilter })).sessions;
 	}

@@ -472,7 +472,7 @@ function parseSession(filePath: string, projectFilter?: string): RawSession | nu
 export class PiAdapter implements AgentAdapterCore {
 	readonly agentType = "pi" as const;
 	readonly sessions = {
-		contentProtocol: "events-v1" as const,
+		contentProtocol: async () => "events-v1" as const,
 		collect: (request: SessionScanRequest) => this.collectSessions(request),
 		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
 		watchPaths: () => [getPiSessionsDir()],

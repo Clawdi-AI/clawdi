@@ -14,7 +14,7 @@ Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 class SessionEventSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    adapter: Literal["claude_code", "codex", "openclaw", "pi"]
+    adapter: Literal["claude_code", "codex", "hermes", "openclaw", "pi"]
     session_key: str = Field(min_length=1, max_length=500)
     record_id: str = Field(min_length=1, max_length=500)
     record_seq: int | None = Field(default=None, ge=0)
@@ -83,6 +83,33 @@ SessionContentPart = Annotated[
 ]
 
 
+class SessionEventReaction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emoji: str = Field(min_length=1, max_length=64)
+    author: str = Field(min_length=1, max_length=100)
+    at: datetime | None = None
+    seen: bool | None = None
+
+
+class SessionEventDisplayMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_count: int | None = Field(default=None, ge=0)
+    attempt: int | None = Field(default=None, ge=0)
+    reactions: list[SessionEventReaction] | None = Field(default=None, max_length=100)
+
+
+class SessionEventSemantics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle: Literal["active", "compacted", "inactive"]
+    display: Literal["message", "event", "hidden"]
+    compressed_summary: bool
+    display_kind: str | None = Field(default=None, min_length=1, max_length=100)
+    display_metadata: SessionEventDisplayMetadata | None = None
+
+
 class SessionEventBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -90,6 +117,7 @@ class SessionEventBase(BaseModel):
     event_id: Sha256Hex
     source: SessionEventSource
     timestamp: datetime | None = None
+    semantics: SessionEventSemantics | None = None
 
 
 class SessionMessageEvent(SessionEventBase):

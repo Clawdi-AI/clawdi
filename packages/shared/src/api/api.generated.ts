@@ -7784,6 +7784,15 @@ export interface components {
             /** Final Head Hash */
             final_head_hash: string;
         };
+        /** SessionEventDisplayMetadata */
+        SessionEventDisplayMetadata: {
+            /** Task Count */
+            task_count?: number | null;
+            /** Attempt */
+            attempt?: number | null;
+            /** Reactions */
+            reactions?: components["schemas"]["SessionEventReaction"][] | null;
+        };
         /** SessionEventGenerationCreate */
         SessionEventGenerationCreate: {
             /**
@@ -7843,13 +7852,42 @@ export interface components {
             /** Head Hash */
             head_hash: string;
         };
+        /** SessionEventReaction */
+        SessionEventReaction: {
+            /** Emoji */
+            emoji: string;
+            /** Author */
+            author: string;
+            /** At */
+            at?: string | null;
+            /** Seen */
+            seen?: boolean | null;
+        };
+        /** SessionEventSemantics */
+        SessionEventSemantics: {
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "active" | "compacted" | "inactive";
+            /**
+             * Display
+             * @enum {string}
+             */
+            display: "message" | "event" | "hidden";
+            /** Compressed Summary */
+            compressed_summary: boolean;
+            /** Display Kind */
+            display_kind?: string | null;
+            display_metadata?: components["schemas"]["SessionEventDisplayMetadata"] | null;
+        };
         /** SessionEventSource */
         SessionEventSource: {
             /**
              * Adapter
              * @enum {string}
              */
-            adapter: "claude_code" | "codex" | "openclaw" | "pi";
+            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi";
             /** Session Key */
             session_key: string;
             /** Record Id */
@@ -7967,6 +8005,7 @@ export interface components {
             source: components["schemas"]["SessionEventSource"];
             /** Timestamp */
             timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8114,6 +8153,7 @@ export interface components {
             source: components["schemas"]["SessionEventSource"];
             /** Timestamp */
             timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -8137,6 +8177,7 @@ export interface components {
             source: components["schemas"]["SessionEventSource"];
             /** Timestamp */
             timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

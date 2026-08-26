@@ -15,6 +15,27 @@ export interface SessionEventSource {
 	part_index?: number;
 }
 
+export interface SessionEventReaction {
+	emoji: string;
+	author: string;
+	at?: string;
+	seen?: boolean;
+}
+
+export interface SessionEventDisplayMetadata {
+	task_count?: number;
+	attempt?: number;
+	reactions?: SessionEventReaction[];
+}
+
+export interface SessionEventSemantics {
+	lifecycle: "active" | "compacted" | "inactive";
+	display: "message" | "event" | "hidden";
+	compressed_summary: boolean;
+	display_kind?: string;
+	display_metadata?: SessionEventDisplayMetadata;
+}
+
 export type SessionContentPart =
 	| { type: "text"; text: string }
 	| {
@@ -33,6 +54,7 @@ interface SessionEventBase {
 	event_id: string;
 	source: SessionEventSource;
 	timestamp?: string;
+	semantics?: SessionEventSemantics;
 }
 
 export interface SessionMessageEvent extends SessionEventBase {
@@ -104,7 +126,7 @@ export interface SessionScanResult {
 }
 
 export interface SessionModule {
-	readonly contentProtocol: "events-v1" | "snapshot-v1";
+	contentProtocol(): Promise<"events-v1" | "snapshot-v1">;
 	collect(request: SessionScanRequest): Promise<SessionScanResult>;
 	resolve(localSessionId: string): Promise<RawSession | null>;
 	/** Paths watched as one backing-store stability group. */

@@ -408,7 +408,7 @@ export class CodexAdapter implements AgentAdapterCore {
 	readonly agentType = "codex" as const;
 	private sessionPaths = new Map<string, string>();
 	readonly sessions = {
-		contentProtocol: "events-v1" as const,
+		contentProtocol: async () => "events-v1" as const,
 		collect: (request: SessionScanRequest) => this.collectSessions(request),
 		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
 		watchPaths: () => this.getSessionsWatchPaths(),

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.session import Session
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
+    EVENT_ADAPTER,
     advance_event_head,
     canonical_event_json,
 )
@@ -44,6 +45,35 @@ def _event(seq: int, event_type: str, record_id: str, **fields: Any) -> dict[str
 def _chunk(events: list[dict[str, Any]]) -> tuple[bytes, str]:
     data = b"".join(canonical_event_json(event) + b"\n" for event in events)
     return data, hashlib.sha256(data).hexdigest()
+
+
+def test_hermes_event_semantics_are_strict_and_normalized() -> None:
+    event = _event(
+        0,
+        "message",
+        "42",
+        role="user",
+        parts=[{"type": "text", "text": "durable context"}],
+        semantics={
+            "lifecycle": "inactive",
+            "display": "event",
+            "compressed_summary": False,
+            "display_kind": "auto_continue",
+            "display_metadata": {"attempt": 2},
+        },
+    )
+    event["source"]["adapter"] = "hermes"
+    event["event_id"] = hashlib.sha256(
+        canonical_event_json({"source": event["source"], "type": "message"})
+    ).hexdigest()
+
+    validated = EVENT_ADAPTER.validate_python(event, strict=True)
+
+    assert validated.source.adapter == "hermes"
+    assert validated.semantics is not None
+    assert validated.semantics.lifecycle == "inactive"
+    assert validated.semantics.display_metadata is not None
+    assert validated.semantics.display_metadata.attempt == 2
 
 
 async def _register_session(

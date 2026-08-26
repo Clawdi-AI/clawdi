@@ -38,12 +38,14 @@ export function canonicalStructuredString(value: unknown): string | undefined {
 	if (value === undefined) return undefined;
 	if (typeof value === "string") {
 		try {
-			return canonicalJson(JSON.parse(value));
+			const safe = safeToolStructure(JSON.parse(value));
+			return safe === undefined ? undefined : canonicalJson(safe);
 		} catch {
 			return canonicalJson(value);
 		}
 	}
-	return canonicalJson(value);
+	const safe = safeToolStructure(value);
+	return safe === undefined ? undefined : canonicalJson(safe);
 }
 
 export function stableRecordId(value: JsonObject, recordSeq: number): string {
@@ -68,10 +70,18 @@ const CONTENT_BLOCK_TYPES = new Set([
 ]);
 
 const HIDDEN_STRUCTURE_KEYS = new Set([
+	"accesstoken",
+	"apikey",
+	"authorization",
+	"cookie",
+	"credentials",
 	"encryptedcontent",
 	"encryptedreasoning",
+	"password",
 	"redactedthinking",
+	"refreshtoken",
 	"reasoning",
+	"secret",
 	"signature",
 	"thinking",
 	"thinkingsignature",
@@ -129,10 +139,12 @@ function nonNegativeInteger(...values: unknown[]): number | null {
 
 function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: "attachment" }> {
 	const source = jsonObject(block.source);
+	const imageUrl = jsonObject(block.image_url);
 	const rawUri =
 		jsonString(block.uri) ??
 		jsonString(block.url) ??
 		jsonString(block.image_url) ??
+		jsonString(imageUrl?.url) ??
 		jsonString(source?.url);
 	const localPath = jsonString(block.path) ?? jsonString(source?.path);
 	const providerRef =
@@ -198,7 +210,8 @@ export function visibleContentParts(content: unknown): SessionContentPart[] {
 			parts.push({ type: "text", text: block.text });
 			continue;
 		}
-		if (!["image", "input_image", "file", "document"].includes(String(block.type))) continue;
+		if (!["image", "image_url", "input_image", "file", "document"].includes(String(block.type)))
+			continue;
 		parts.push(attachmentPart(block));
 	}
 	return parts;
