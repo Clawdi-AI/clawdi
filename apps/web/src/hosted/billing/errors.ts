@@ -392,16 +392,16 @@ export function normalizeBillingError(error: unknown): string {
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;
 		if (code === FUNDING_AUTHORITY_INCONSISTENT_CODE) {
-			return "This subscription's billing details need review. Contact support before making changes.";
+			return "Billing for this subscription needs review. Contact support before making changes.";
 		}
 		if (code === "open_refund_debt") {
-			return "Top up your Wallet to continue. New funds first cover the outstanding balance.";
+			return "Top up your Wallet to continue. New funds will first settle the outstanding balance.";
 		}
 		if (code === "deploy_request_funding_conflict") {
-			return "This Agent is already being set up with another payment.";
+			return "This deployment is already linked to another payment.";
 		}
 		if (code === "idempotency_key_reused") {
-			return "This request conflicts with an earlier one. Check the details and submit again.";
+			return "This request conflicts with an earlier submission. Review the details and try again.";
 		}
 		if (typeof code === "string") {
 			return "The billing request could not be completed. Refresh and try again.";
@@ -411,9 +411,9 @@ export function normalizeBillingError(error: unknown): string {
 			if (error.detail === "payment_method_required") {
 				return "Add a payment method and try again.";
 			}
-			return "The billing request could not be completed. Check your information and try again.";
+			return "The billing request could not be completed. Review the details and try again.";
 		}
-		return "The billing request could not be completed. Check your information and try again.";
+		return "The billing request could not be completed. Review the details and try again.";
 	}
 	if (error instanceof Error) {
 		return "The billing request could not be completed. Try again.";

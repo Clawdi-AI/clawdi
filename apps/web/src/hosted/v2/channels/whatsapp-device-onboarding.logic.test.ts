@@ -46,6 +46,6 @@ describe("WhatsApp device onboarding logic", () => {
 				},
 				false,
 			),
-		).toContain("doesn't support linked WhatsApp devices");
+		).toContain("not supported by this Agent");
 	});
 });

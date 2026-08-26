@@ -135,8 +135,10 @@ describe("normalizeApiError", () => {
 		expect(msg).not.toMatch(/upstream connect error/);
 	});
 
-	test("snake_case codes become readable, real sentences pass through", () => {
-		expect(normalizeApiError(new ApiError(400, "provider_not_found"))).toBe("Provider Not Found");
+	test("snake_case codes stay internal while user-facing sentences pass through", () => {
+		expect(normalizeApiError(new ApiError(400, "provider_not_found"))).toBe(
+			"The request could not be completed. Review the details and try again.",
+		);
 		expect(normalizeApiError(new ApiError(409, "That name is already in use."))).toBe(
 			"That name is already in use.",
 		);

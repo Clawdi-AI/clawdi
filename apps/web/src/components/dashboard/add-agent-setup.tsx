@@ -39,7 +39,7 @@ const CLI_STEPS = [
 		title: "Connect and enable sync",
 		code: "clawdi setup",
 		description:
-			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account, and installs the background daemon by default.",
+			"Detects Claude Code, Codex, Hermes, and OpenClaw; connects each one to your account and enables background sync.",
 	},
 ];
 

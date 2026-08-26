@@ -113,7 +113,7 @@ function paymentErrorMessage(error: unknown): string {
 	if (error instanceof X402PaymentError) {
 		switch (error.code) {
 			case "challenge_unavailable":
-				return "Couldn't load this USDC top-up. Check your connection and try again.";
+				return "USDC top-up unavailable. Check your connection and try again.";
 			case "payment_signing_failed":
 				return "Wallet approval was canceled or failed.";
 			case "payment_rejected":
@@ -121,7 +121,7 @@ function paymentErrorMessage(error: unknown): string {
 			case "payment_outcome_unknown":
 				return "Payment status is unavailable. Refresh Wallet before trying another payment.";
 			default:
-				return "This USDC top-up isn't available right now. Refresh Wallet and try again.";
+				return "USDC top-up unavailable. Refresh Wallet and try again.";
 		}
 	}
 	return normalizeBillingError(error);
@@ -368,8 +368,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			invalidateWalletData(queryClient);
 			if (error instanceof X402PaymentError && error.code === "payment_outcome_unknown") {
 				setUnknownAttemptId(offer.attemptId);
-				toast.warning("Payment needs a quick check", {
-					description: "Refresh the Wallet before trying another payment.",
+				toast.warning("Payment status unavailable", {
+					description:
+						"Refresh Wallet and wait for a final status before starting another payment.",
 				});
 				await refreshAfterUnknownOutcome();
 			} else {
@@ -481,7 +482,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 						<Alert variant="destructive">
 							<AlertCircle aria-hidden />
 							<AlertTitle>USDC funding unavailable</AlertTitle>
-							<AlertDescription>Refresh Wallet before trying again.</AlertDescription>
+							<AlertDescription>
+								Wallet authorization could not be verified. Refresh Wallet before trying again.
+							</AlertDescription>
 						</Alert>
 					) : null}
 
@@ -490,7 +493,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 						<Alert>
 							<Spinner />
 							<AlertTitle>USDC payment in progress</AlertTitle>
-							<AlertDescription>Wait for it to finish before starting another.</AlertDescription>
+							<AlertDescription>
+								Wait for this payment to complete before starting another.
+							</AlertDescription>
 						</Alert>
 					) : null}
 
@@ -510,7 +515,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<AlertTitle>Payment status unavailable</AlertTitle>
 							<AlertDescription>
 								<div className="flex flex-wrap items-center justify-between gap-3">
-									<span>Don't start another payment until this one finishes.</span>
+									<span>Wait for a final status before starting another payment.</span>
 									<Button
 										size="sm"
 										variant="outline"

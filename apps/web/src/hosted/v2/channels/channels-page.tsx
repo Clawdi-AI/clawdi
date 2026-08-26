@@ -201,7 +201,7 @@ function OwnedBotsSection({
 				<ApiErrorPanel
 					error={healthError}
 					onRetry={onRetryHealth}
-					title="Couldn't load channel status"
+					title="Couldn't load channel health"
 				/>
 			) : null}
 			{content}

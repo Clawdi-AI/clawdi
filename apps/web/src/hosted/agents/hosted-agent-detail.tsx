@@ -1030,7 +1030,7 @@ export function InitialDeploymentPage({
 				? {
 						label: `Installing and starting ${runtimeLabel}`,
 						description:
-							"Starting the private workspace and agent software, then checking readiness.",
+							"Provisioning a private workspace, installing the Agent, and confirming readiness.",
 					}
 				: {
 						label: "Ready",
@@ -1090,7 +1090,7 @@ export function InitialDeploymentPage({
 						</p>
 					</div>
 					<p className="mt-2 text-sm text-muted-foreground">{activeStage.description}</p>
-					<ol aria-label="Agent setup progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
 						{stages.map((stage, index) => {
 							const stageState =
 								status.kind === "running" || index < activeStageIndex
@@ -2145,9 +2145,9 @@ function LiveToolFrame({
 }
 
 const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
-	connecting: "Opening",
-	connected: "Ready",
-	disconnected: "Unavailable",
+	connecting: "Connecting",
+	connected: "Connected",
+	disconnected: "Disconnected",
 };
 
 const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
@@ -3117,7 +3117,7 @@ function ChannelsTab({
 							<>
 								<Alert className="border-warning/30 bg-warning-muted">
 									<AlertCircle aria-hidden />
-									<AlertTitle>Set up WhatsApp again</AlertTitle>
+									<AlertTitle>Reconnect WhatsApp</AlertTitle>
 									<AlertDescription>
 										Repair clears only the invalid linked-device login, then asks you to scan a
 										fresh QR. It does not replace this Custom bot.
@@ -3689,9 +3689,9 @@ function ComputeSettingsSections({
 					toast.dismiss(`checkout-deployment-${checkoutDeploymentId}`);
 					return true;
 				} catch {
-					toast.error("Agent created, but its details couldn’t load", {
+					toast.error("Agent deployed, but details couldn’t load", {
 						id: `checkout-deployment-${checkoutDeploymentId}`,
-						description: "Retrying only loads the new agent. It won’t repeat checkout.",
+						description: "Retrying loads the deployed Agent without repeating checkout.",
 						duration: Number.POSITIVE_INFINITY,
 						action: {
 							label: "Retry",

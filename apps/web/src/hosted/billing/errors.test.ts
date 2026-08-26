@@ -150,7 +150,7 @@ describe("normalizeBillingError", () => {
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),
-		).toBe("The billing request could not be completed. Check your information and try again.");
+		).toBe("The billing request could not be completed. Review the details and try again.");
 	});
 
 	test("structured wallet errors never expose raw JSON or internal codes", () => {
@@ -174,7 +174,7 @@ describe("normalizeBillingError", () => {
 		);
 		const message = normalizeBillingError(error);
 		expect(message).toBe(
-			"This subscription's billing details need review. Contact support before making changes.",
+			"Billing for this subscription needs review. Contact support before making changes.",
 		);
 		expect(message).not.toContain("Stripe");
 		expect(message).not.toContain("authority");

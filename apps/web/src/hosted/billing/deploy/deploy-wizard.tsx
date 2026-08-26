@@ -389,7 +389,7 @@ export function DeployWizard() {
 		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({
-		onCancelCopy: "You were not charged. Your Agent was not created.",
+		onCancelCopy: "You were not charged. Your Agent was not deployed.",
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
@@ -845,7 +845,7 @@ export function DeployWizard() {
 				const billingTermMonths = supportedBillingTerm(paidSelection.billingTermMonths);
 				if (!billingTermMonths) {
 					toast.error("Billing term unavailable", {
-						description: "Choose Monthly or Annual billing before continuing.",
+						description: "Choose Monthly or Annual billing before deploying.",
 					});
 					return;
 				}
@@ -986,14 +986,14 @@ export function DeployWizard() {
 
 	const deployLabel =
 		subscriptionSource?.mode === "existing"
-			? "Set up an Agent"
+			? "Deploy"
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
 						? "Top up Wallet"
-						: "Pay & set up"
+						: "Pay & deploy"
 					: "Continue"
-				: "Set up an Agent";
+				: "Deploy";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);
@@ -1126,7 +1126,7 @@ export function DeployWizard() {
 					if (canSubmit) void runAction(onDeploy);
 				}}
 			>
-				<PageHeader title="Set up an Agent" />
+				<PageHeader title="Deploy an Agent" />
 				<SettingsSection title="Agent software">
 					<div className={ENTITY_CHOICE_GRID_CLASS}>
 						<EntityChoiceCard
@@ -1171,7 +1171,7 @@ export function DeployWizard() {
 									</IconChip>
 								}
 								title={authCardLabel("unmanaged")}
-								description="Set up the Agent first, then configure model access inside it."
+								description="Deploy first, then configure model access inside the Agent."
 								badge={
 									aiAccessMode === "unmanaged" ? <Badge variant="secondary">Selected</Badge> : null
 								}
@@ -1512,8 +1512,8 @@ export function DeployWizard() {
 							<AlertTitle>Agent couldn’t be opened</AlertTitle>
 							<AlertDescription>
 								{acceptedDeploymentRecovery?.target.kind === "deploy_request"
-									? "Retrying continues this checkout and opens the agent. It won’t create or charge for another one."
-									: "Retrying only loads the new agent. It won’t create another one."}
+									? "Retrying resumes this deployment and opens the Agent. It won’t create or charge for another one."
+									: "Retrying loads the deployed Agent without creating another one."}
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -1594,7 +1594,7 @@ export function DeployWizard() {
 										<Rocket data-icon="inline-start" />
 									)}
 									{submitting
-										? "Setting up…"
+										? "Deploying…"
 										: acceptedDeploymentHydrationFailed
 											? "Retry"
 											: deployLabel}

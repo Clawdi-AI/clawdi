@@ -175,9 +175,9 @@ export function daemonStatusVisual(
 	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
 	const tooltip = isHosted
 		? kind === "set-up"
-			? "Sync will start after the agent’s next update."
+			? "Sync will start with the Agent’s next update."
 			: kind === "paused"
-				? "The agent isn't checking in. Manage it from Agent settings."
+				? "Sync status is unavailable. Manage this Agent in Agent settings."
 				: STATUS_TOOLTIP[kind]
 		: STATUS_TOOLTIP[kind];
 
@@ -349,12 +349,12 @@ function SyncHelpDialog({
 			: status === "set-up"
 				? isHosted
 					? "Live sync is activating"
-					: "Turn on live sync for this agent"
+					: "Turn on live sync for this Agent"
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
-						? "Sync is paused"
-						: "Sync paused — daemon isn't checking in";
+						? "Sync paused"
+						: "Sync paused — background service isn't reporting";
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -373,17 +373,17 @@ function SyncHelpDialog({
 							// a dead-end.
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
-									Live sync will turn on automatically after this Agent&apos;s next update.
+									Live sync activates automatically with this Agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
-									There&apos;s nothing to install. This status should change to{" "}
+									No action is required. This status should change to{" "}
 									<span className="font-medium">Live sync</span> within a few minutes.
 								</p>
 							</div>
 						) : (
 							<>
 								<p className="text-sm text-muted-foreground">
-									A small background service that keeps this agent in sync.
+									A background service keeps this Agent in sync.
 								</p>
 								<SyncSetupSnippet env={env} />
 							</>
@@ -392,7 +392,7 @@ function SyncHelpDialog({
 						<>
 							{status === "live" ? (
 								<p className="text-sm text-muted-foreground">
-									Syncing in about a second either way.
+									Changes sync in both directions within about a second.
 								</p>
 							) : null}
 
@@ -412,14 +412,14 @@ function SyncHelpDialog({
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													The Agent stopped checking in. Restart it from Agent settings.
+													Sync stopped after this error. Restart the Agent from Agent settings.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
 										) : (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Daemon stopped after this error. Inspect:
+													Background sync stopped after this error. Check:
 												</p>
 												<CommandLine command="clawdi daemon status" />
 												<AuthLoginHint />
@@ -434,23 +434,23 @@ function SyncHelpDialog({
 										<>
 											<p className="text-xs text-muted-foreground">
 												{isHosted
-													? "The latest change couldn't be synced. Check that each Skill is smaller than 25 MB, then save it again."
-													: "This change couldn't be synced. Fix the source, then save it again to retry."}
+													? "This change could not be synced. Confirm that each Skill is under 25 MB, then save again."
+													: "This change could not be synced. Correct the source, then save again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isRetryExhaustedError(env.last_sync_error) ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												Clawdi will try again automatically when the connection is back.
-												{isHosted ? null : " If your connection looks fine, check:"}
+												Sync will resume automatically when the connection recovers.
+												{isHosted ? null : " If the connection is working, check:"}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												Clawdi will keep trying. If the problem continues, restart the Agent from
+												Clawdi will continue retrying. If the error persists, restart the Agent from
 												Agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
@@ -458,7 +458,7 @@ function SyncHelpDialog({
 									) : (
 										<>
 											<p className="text-xs text-muted-foreground">
-												It will keep retrying. If this persists:
+												Sync will continue retrying. If the issue persists:
 											</p>
 											<CommandLine command="clawdi daemon status" />
 											<AuthLoginHint />
@@ -471,15 +471,16 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											The Agent isn&apos;t checking in. It may still be starting or may have
-											stopped.
+											Sync status is unavailable. The Agent may be starting, stopped, or temporarily
+											unavailable.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
 									</div>
 								) : (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											Daemon isn&apos;t checking in. From the same terminal you set it up on:
+											The background sync service is not reporting. In the terminal where it was
+											installed:
 										</p>
 										<CommandLine command="clawdi daemon status" />
 										<p className="text-sm text-muted-foreground">If it&apos;s down, restart:</p>
@@ -494,7 +495,8 @@ function SyncHelpDialog({
 										{dropped} change{dropped === 1 ? "" : "s"} dropped
 									</p>
 									<p className="mt-1 text-xs text-muted-foreground">
-										Usually a network blip. Next sync should catch up; otherwise restart the daemon.
+										Usually a brief network issue. The next sync should catch up; otherwise restart
+										the background sync service.
 									</p>
 								</div>
 							) : null}
@@ -505,13 +507,16 @@ function SyncHelpDialog({
 								</p>
 								<dl className="grid grid-cols-1 gap-x-8 gap-y-1 text-xs sm:grid-cols-2">
 									<TechRow label="Last heartbeat" value={lastSyncRel} />
-									<TechRow label="Queue peak (since daemon started)" value={queuePeak.toString()} />
 									<TechRow
-										label="Skills-revision the daemon last saw"
+										label="Queue peak (since sync service started)"
+										value={queuePeak.toString()}
+									/>
+									<TechRow
+										label="Latest Skills revision received"
 										value={env.last_revision_seen?.toString() ?? "—"}
 									/>
 									<TechRow
-										label="Events dropped (since daemon started)"
+										label="Events dropped (since sync service started)"
 										value={dropped.toString()}
 									/>
 								</dl>
@@ -581,10 +586,10 @@ function SyncSetupCliTab(_props: { env: Env }) {
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">In a terminal on this machine, run:</p>
 			<div className="space-y-1.5">
-				<CommandLine command={installCmd} hint="single daemon for every agent on this machine" />
+				<CommandLine command={installCmd} hint="one sync service for every Agent on this machine" />
 			</div>
 			<p className="text-xs text-muted-foreground">
-				Installs a launchd (macOS) or systemd (Linux) unit so the daemon survives reboots.
+				Installs a launchd (macOS) or systemd (Linux) unit so sync continues after a reboot.
 			</p>
 		</div>
 	);

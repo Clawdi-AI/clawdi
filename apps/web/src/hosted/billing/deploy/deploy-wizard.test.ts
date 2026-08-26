@@ -378,7 +378,7 @@ describe("deploy acceptance", () => {
 	});
 
 	test("keeps submit progress inside the action and reports failures through actionable toasts", () => {
-		expect(wizardSource).toContain('"Setting up…"');
+		expect(wizardSource).toContain('"Deploying…"');
 		expect(wizardSource).not.toContain("Loading agent details");
 		expect(wizardSource).not.toContain('"Payment is processing."');
 		expect(wizardSource).not.toContain('"Waiting for your agent."');

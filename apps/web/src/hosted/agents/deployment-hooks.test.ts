@@ -293,7 +293,7 @@ describe("deployment transition timeout rendering", () => {
 				title: "Setting up OpenClaw",
 				activeLabel: "Installing and starting OpenClaw",
 				activeDescription:
-					"Starting the private workspace and agent software, then checking readiness.",
+					"Provisioning a private workspace, installing the Agent, and confirming readiness.",
 				step: "Step 2 of 3",
 				currentStage: "starting",
 				states: { creating: "completed", starting: "active", running: "pending" },
@@ -328,7 +328,7 @@ describe("deployment transition timeout rendering", () => {
 			expect(markup).toContain(fixture.activeLabel);
 			expect(markup).toContain(fixture.activeDescription);
 			expect(markup).toContain(fixture.step);
-			expect(markup).toContain('aria-label="Agent setup progress"');
+			expect(markup).toContain('aria-label="Deployment progress"');
 			for (const [stage, state] of Object.entries(fixture.states)) {
 				expect(markup).toMatch(
 					new RegExp(
@@ -617,7 +617,6 @@ describe("hosted agent customer language", () => {
 		const customerCopy = `${detailSource}\n${agentHomeSource}\n${sidebarSource}\n${wizardSource}`;
 
 		for (const staleLifecycleCopy of [
-			"Provisioning",
 			"Getting your agent ready",
 			"Setting up your agent",
 			"Your agent is ready",

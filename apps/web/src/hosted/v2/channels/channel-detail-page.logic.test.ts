@@ -97,7 +97,7 @@ describe("nativeTransportSummary", () => {
 			}),
 		).toEqual({
 			status: "Unavailable",
-			connection: "Unavailable",
+			connection: "Not connected",
 			delivery: "Unavailable",
 		});
 	});

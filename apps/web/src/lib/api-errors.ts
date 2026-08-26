@@ -97,7 +97,7 @@ export function isApiNetworkError(error: unknown): boolean {
 /**
  * Turn a cloud-api error into a single user-facing sentence. Hides backend
  * internals (raw 5xx/gateway bodies), reads a 401 as a re-auth prompt, and
- * makes snake_case error codes readable while passing real sentences through.
+ * hides internal error codes while passing user-facing sentences through.
  */
 export function normalizeApiError(error: unknown): string {
 	if (error instanceof ApiNetworkError) {
@@ -116,9 +116,9 @@ export function normalizeApiError(error: unknown): string {
 			return "The service is having trouble right now. Please try again in a moment.";
 		}
 		const message = formatApiError(error.detail);
-		// Snake_case codes → readable text; pass through real sentences.
+		// A bare snake_case token is an internal code, not product copy.
 		if (/^[a-z0-9_]+$/.test(message)) {
-			return message.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+			return "The request could not be completed. Review the details and try again.";
 		}
 		return message;
 	}

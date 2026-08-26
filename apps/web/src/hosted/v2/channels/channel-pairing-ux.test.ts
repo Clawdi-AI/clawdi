@@ -251,7 +251,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("useChannelBindingsForAccounts");
 		expect(pairedChatsDialog).toContain("useChannelBindings(accountId, open)");
 		expect(pairedChatsDialog).toContain("selectPairedChatsForLink");
-		expect(pairedChatRow).toContain("Only this chat will be removed");
+		expect(pairedChatRow).toContain("Only this chat will be unpaired");
 		expect(pairedChatRow).toContain("<ConfirmAction");
 		expect(pairedChatRow).toContain("binding_id: binding.id");
 		expect(pairedChatRow).toContain("unpair.isPending");

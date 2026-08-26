@@ -87,7 +87,7 @@ export function PairedChatRow({
 			<div className="flex min-h-8 min-w-0 justify-end">
 				<ConfirmAction
 					title={`Unpair ${chatName}?`}
-					description="Only this chat will be removed. Other chats and the channel stay available."
+					description="Only this chat will be unpaired; other chats and this channel remain active."
 					confirmLabel="Unpair chat"
 					destructive
 					onConfirm={() =>

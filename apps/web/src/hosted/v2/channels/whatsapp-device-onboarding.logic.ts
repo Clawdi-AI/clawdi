@@ -41,10 +41,10 @@ export function whatsappReadinessMessage(
 		case "no_capacity":
 			return "All linked-device slots are currently in use.";
 		case "managed_sidecar_required":
-			return "This Agent doesn't support linked WhatsApp devices.";
+			return "Linked WhatsApp devices are not supported by this Agent.";
 		case "temporarily_unavailable":
-			return "Linked WhatsApp devices are temporarily unavailable.";
+			return "Linked-device pairing is temporarily unavailable.";
 		default:
-			return "Linked WhatsApp devices aren't available for this Agent.";
+			return "Linked-device pairing is not available for this Agent.";
 	}
 }

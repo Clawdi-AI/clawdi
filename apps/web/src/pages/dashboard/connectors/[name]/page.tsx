@@ -38,7 +38,7 @@ import {
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
 function formatName(raw: string): string {
@@ -50,10 +50,10 @@ function formatName(raw: string): string {
 
 function connectionStatusLabel(status: string): string {
 	const normalized = status.trim().toLowerCase();
-	if (["active", "connected", "ready"].includes(normalized)) return "Ready";
-	if (["pending", "initiated", "connecting"].includes(normalized)) return "Finishing setup";
-	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect needed";
-	if (["failed", "error"].includes(normalized)) return "Needs attention";
+	if (["active", "connected", "ready"].includes(normalized)) return "Connected";
+	if (["pending", "initiated", "connecting"].includes(normalized)) return "Connecting";
+	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect required";
+	if (["failed", "error"].includes(normalized)) return "Connection failed";
 	return "Status unavailable";
 }
 
@@ -100,7 +100,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
 		toast.error("Connection failed", {
-			description: oauthState.error || "OAuth did not complete. Try again from this page.",
+			description: "The account could not be connected. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
 	}, [oauthState.error, oauthState.status, setOauthState]);
@@ -164,7 +164,10 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						return next;
 					});
 				},
-				onError: (e) => toast.error("Couldn't disconnect", { description: errorMessage(e) }),
+				onError: () =>
+					toast.error("Couldn't disconnect", {
+						description: "Try again. If the problem persists, refresh the page.",
+					}),
 			},
 		);
 	};
@@ -198,14 +201,14 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const startConnect = () => {
 		if (inflightConnectRef.current) return;
 		if (isSetupBlocked) {
-			toast.error("Connector needs setup", {
-				description: "Contact your administrator before connecting this account.",
+			toast.error("Connector unavailable", {
+				description: "Additional configuration is required. Contact support to continue.",
 			});
 			return;
 		}
 		if (hasUnsupportedAuthType) {
-			toast.error("Connector setup unavailable", {
-				description: `Clawdi can't set up ${displayName} right now. Refresh and try again.`,
+			toast.error("Connection unavailable", {
+				description: `${displayName} uses an authentication method Clawdi does not support.`,
 			});
 			return;
 		}
@@ -231,8 +234,8 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			// Popup blocker rejected the open. Bail before firing the
 			// mutation so we don't leak a connection request the user
 			// can't complete — and tell them why nothing happened.
-			toast.error("Popup Blocked", {
-				description: "Allow popups for this site to continue with OAuth.",
+			toast.error("Popup blocked", {
+				description: "Allow popups for this site to continue.",
 			});
 			return;
 		}
@@ -255,9 +258,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			.then((result) => {
 				if (!popup.closed) popup.location.href = result.connect_url;
 			})
-			.catch((error) => {
+			.catch(() => {
 				popup.close();
-				toast.error("Couldn't start connection", { description: errorMessage(error) });
+				toast.error("Couldn't start connection", {
+					description: "Try again. If the problem persists, contact support.",
+				});
 			})
 			.finally(() => {
 				inflightConnectRef.current = false;
@@ -289,7 +294,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<EmptyState
 						icon={Plug}
 						title="Connector unavailable"
-						description={errorMessage(appQ.error)}
+						description="This connector is no longer available."
 					/>
 				) : (
 					<ApiErrorPanel
@@ -323,7 +328,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					isReady ? (
 						<Badge variant="secondary">
 							<Check />
-							Ready
+							{usesNoAuth ? "Ready" : "Connected"}
 						</Badge>
 					) : undefined
 				}
@@ -333,13 +338,13 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Accounts"
+					title="Connected accounts"
 					count={
 						usesNoAuth
 							? "No account required"
 							: isConnectionsLoading
 								? "Checking accounts"
-								: `${activeConnections.length} ${activeConnections.length === 1 ? "account" : "accounts"}`
+								: `${activeConnections.length} connected`
 					}
 					description={
 						usesNoAuth
@@ -390,25 +395,25 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType ? (
 						<ApiErrorPanel
-							error="Clawdi can't set up this connector right now. Refresh the page and try again."
+							error="This connector uses an authentication method Clawdi does not support."
 							onRetry={() => {
 								void appQ.refetch();
 							}}
-							title="Connector setup unavailable"
+							title="Connection unavailable"
 						/>
 					) : activeConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
-								<AlertTitle>Connector needs setup</AlertTitle>
+								<AlertTitle>Connector unavailable</AlertTitle>
 								<AlertDescription>
-									Contact your administrator before connecting this account.
+									Additional configuration is required. Contact support to continue.
 								</AlertDescription>
 							</Alert>
 						) : (
 							<EmptyState
 								variant="inset"
-								description="No accounts yet."
+								description="No connected accounts yet."
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
 										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
@@ -551,7 +556,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools available after you add an account."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -572,7 +577,7 @@ function ConnectorToolsList({
 					title="Available tools"
 					description={
 						requiresConnection
-							? "Tools available after you add an account."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
@@ -592,7 +597,7 @@ function ConnectorToolsList({
 					count="0 tools"
 					description={
 						requiresConnection
-							? "Tools available after you add an account."
+							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>

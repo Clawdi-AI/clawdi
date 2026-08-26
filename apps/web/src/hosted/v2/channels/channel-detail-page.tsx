@@ -295,8 +295,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			<Tabs defaultValue="activity" className="min-w-0">
 				<TabsList className="h-auto flex-wrap justify-start">
 					<TabsTrigger value="activity">Activity</TabsTrigger>
-					<TabsTrigger value="health">Status</TabsTrigger>
-					{providerUnavailable ? null : <TabsTrigger value="commands">Bot commands</TabsTrigger>}
+					<TabsTrigger value="health">Health</TabsTrigger>
+					{providerUnavailable ? null : <TabsTrigger value="commands">Commands</TabsTrigger>}
 				</TabsList>
 
 				<TabsContent value="activity" className={LIST_TAB_CLASS}>
@@ -469,20 +469,23 @@ function HealthTab({ accountId }: { accountId: string }) {
 			<ApiErrorPanel
 				error={health.error}
 				onRetry={() => health.refetch()}
-				title="Couldn't load status"
+				title="Couldn't load channel health"
 			/>
 		);
 	}
 	const h = health.data?.items.find((x) => x.account_id === accountId);
 	if (!h)
 		return (
-			<EmptyState title="Status unavailable" description="Channel details aren't available yet." />
+			<EmptyState
+				title="Health unavailable"
+				description="Channel health data isn't available yet."
+			/>
 		);
 
 	const stats = [
-		{ label: "Waiting to receive", value: h.pending_inbox },
-		{ label: "Waiting to send", value: h.pending_deliveries },
-		{ label: "Sending", value: h.in_progress_deliveries },
+		{ label: "Pending inbound", value: h.pending_inbox },
+		{ label: "Pending outbound", value: h.pending_deliveries },
+		{ label: "In progress", value: h.in_progress_deliveries },
 		{ label: "Failed", value: h.failed_deliveries },
 	];
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
@@ -514,16 +517,16 @@ function HealthTab({ accountId }: { accountId: string }) {
 				>
 					<div className="flex items-center gap-1.5 text-sm font-medium text-destructive">
 						<TriangleAlert className="size-4" />
-						Recent issue
+						Last error
 					</div>
 					<p className="text-sm text-destructive/90">{errorSummary}</p>
-					<p className="text-xs text-muted-foreground">Seen {relativeTime(h.last_error_at)}</p>
+					<p className="text-xs text-muted-foreground">Reported {relativeTime(h.last_error_at)}</p>
 				</div>
 			) : null}
 
 			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
-					<SectionLabel className="mb-3 px-0">Messaging</SectionLabel>
+					<SectionLabel className="mb-3 px-0">Message transport</SectionLabel>
 					<dl className="grid gap-3 text-sm sm:grid-cols-3">
 						<div>
 							<dt className="text-xs text-muted-foreground">Status</dt>
@@ -572,10 +575,10 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 
 	return (
 		<div className="flex flex-col gap-4">
-			<InfoCard icon={KeyRound} title="Bot commands">
+			<InfoCard icon={KeyRound} title="Pairing commands">
 				{supportsCommands
-					? `Publish Clawdi’s bot commands to ${meta.label}.`
-					: `${meta.label} doesn't support bot commands.`}
+					? `Publish Clawdi’s pairing commands to ${meta.label}.`
+					: `${meta.label} does not support pairing commands.`}
 			</InfoCard>
 
 			{supportsCommands ? (
@@ -597,7 +600,10 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 							))}
 						</div>
 					) : sync.data ? (
-						<EmptyState variant="inset" description="No bot commands are available to publish." />
+						<EmptyState
+							variant="inset"
+							description="No pairing commands are available to publish."
+						/>
 					) : null}
 				</>
 			) : null}

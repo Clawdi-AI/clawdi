@@ -102,7 +102,7 @@ export function ConnectorCredentialsDialog({
 			// initiated the mutation, not whatever the user is doing now.
 			if (gen !== openGenRef.current) return;
 			setValues({});
-			toast.success(`${displayName} is ready`);
+			toast.success(`${displayName} connected`);
 			onOpenChange(false);
 		} catch {
 			if (gen !== openGenRef.current) return;

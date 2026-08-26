@@ -64,8 +64,8 @@ export function NewAgentButton({
 
 	const trigger = (
 		<SidebarMenuButton
-			tooltip={compact ? undefined : "New agent"}
-			aria-label="New agent"
+			tooltip={compact ? undefined : "New Agent"}
+			aria-label="New Agent"
 			onClick={handleClick}
 			disabled={checkingDeployAccess}
 			className={cn(
@@ -75,7 +75,7 @@ export function NewAgentButton({
 			)}
 		>
 			<CirclePlus />
-			<span className={compact ? "sr-only" : undefined}>New agent</span>
+			<span className={compact ? "sr-only" : undefined}>New Agent</span>
 		</SidebarMenuButton>
 	);
 
@@ -85,7 +85,7 @@ export function NewAgentButton({
 				<Tooltip>
 					<TooltipTrigger render={trigger} />
 					<TooltipContent side="right" align="center">
-						New agent
+						New Agent
 					</TooltipContent>
 				</Tooltip>
 			) : (
@@ -95,11 +95,11 @@ export function NewAgentButton({
 			<Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
 				<DialogContent className="sm:max-w-lg">
 					<DialogHeader>
-						<DialogTitle>New agent</DialogTitle>
+						<DialogTitle>New Agent</DialogTitle>
 						<DialogDescription>
 							{canDeployOnClawdi
-								? "Set up an Agent on Clawdi, or add one from your machine."
-								: "Connect an agent on your machine."}
+								? "Deploy on Clawdi, or connect an Agent on your machine."
+								: "Connect an Agent on your machine."}
 						</DialogDescription>
 					</DialogHeader>
 					{deployAccessError ? (
@@ -108,21 +108,21 @@ export function NewAgentButton({
 							onRetry={() => {
 								void hostedAccess.refetch();
 							}}
-							title="Couldn't check if Agent setup is available"
+							title="Couldn't check Cloud deployment access"
 						/>
 					) : null}
 					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>
 						{canDeployOnClawdi ? (
 							<ChoiceCard
 								icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
-								title={checkingDeployAccess ? "Checking access" : "Set up on Clawdi"}
+								title={checkingDeployAccess ? "Checking access" : "Deploy on Clawdi"}
 								description="Clawdi runs and manages it — pick a framework and go live in minutes."
 								onClick={chooseDeploy}
 							/>
 						) : null}
 						<ChoiceCard
 							icon={<TerminalSquare />}
-							title="Connect an agent on your machine"
+							title="Connect an Agent on your machine"
 							description="Claude Code, Codex, Hermes, or OpenClaw via the CLI."
 							onClick={chooseConnect}
 						/>

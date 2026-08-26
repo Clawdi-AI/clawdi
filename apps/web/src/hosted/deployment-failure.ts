@@ -109,6 +109,8 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 			return "Dashboard access reset";
 		case "update":
 		case "migrate_runtime_context":
+		case "migrate_image":
+		case "rollback_image":
 			return "Agent update";
 		case "runtime_switch":
 			return "Agent software change";
@@ -118,9 +120,6 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 			return "Agent deletion";
 		case "plan_change":
 			return "Plan change";
-		case "migrate_image":
-		case "rollback_image":
-			return "Agent maintenance";
 		case null:
 			return "Agent action";
 	}
@@ -235,7 +234,7 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description:
-					"The change did not finish. Check the latest agent status. If the problem continues, contact support.",
+					"Clawdi could not complete this action. Check the current Agent status. Contact support if the issue persists.",
 				status: FAILED_STATUS,
 				remediation: { kind: "none", label: null },
 			};
