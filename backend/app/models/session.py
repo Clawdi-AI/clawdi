@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import JsonValue
 from sqlalchemy import (
@@ -120,7 +121,9 @@ class AgentEnvironment(Base, TimestampMixin):
     )
     # Derived from the adapter's actual complete modules. NULL is retained for
     # legacy Connected rows and all Hosted rows.
-    adapter_modules: Mapped[list[str] | None] = mapped_column(ARRAY(String(20)))
+    adapter_modules: Mapped[list[Literal["sessions", "skills"]] | None] = mapped_column(
+        ARRAY(String(20))
+    )
 
     # Default project this env's daemon writes into. Phase-1 migration
     # creates one env-local project per env and points this column at
@@ -236,7 +239,7 @@ class Session(Base, TimestampMixin):
     # by batch/list compatibility consumers to identify current content.
     content_hash: Mapped[str | None] = mapped_column(String(64))
     content_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    content_protocol: Mapped[str] = mapped_column(
+    content_protocol: Mapped[Literal["snapshot-v1", "events-v1"]] = mapped_column(
         String(20), server_default="snapshot-v1", nullable=False
     )
     event_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -286,7 +289,7 @@ class SessionEventGeneration(Base, TimestampMixin):
         index=True,
     )
     append_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[Literal["staging", "committed"]] = mapped_column(String(20), nullable=False)
     base_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     base_count: Mapped[int] = mapped_column(Integer, nullable=False)

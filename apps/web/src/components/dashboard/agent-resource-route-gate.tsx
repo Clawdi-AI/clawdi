@@ -44,7 +44,10 @@ export function AgentResourceRouteGate({
 			? agent.error
 			: null;
 
-	if (agent.isLoading || (requiredAdapterModule && ownershipKind === "unresolved")) {
+	if (
+		agent.isLoading ||
+		(requiredAdapterModule && agent.data !== undefined && ownershipKind === "unresolved")
+	) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
 				<DetailBackLink href="/agents" label="Agents" mobileOnly={false} />

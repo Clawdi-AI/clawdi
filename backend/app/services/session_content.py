@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import Session, SessionEventChunk
+from app.schemas.session_events import SessionEvent
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     project_safe_messages,
@@ -128,7 +129,7 @@ async def load_session_messages(
                 )
             ).scalars()
         )
-        raw_events: list[dict[str, object]] = []
+        events: list[SessionEvent] = []
         next_seq = 0
         head = EMPTY_EVENT_HEAD
         for chunk in chunks:
@@ -145,12 +146,12 @@ async def load_session_messages(
                 or validated.result_head_hash != chunk.result_head_hash
             ):
                 raise SessionContentInvalid("events-v1 chunk hash drift")
-            raw_events.extend(validated.raw_events)
+            events.extend(validated.events)
             next_seq = chunk.end_seq + 1
             head = chunk.result_head_hash
         if next_seq != session.event_count or head != (session.event_head_hash or EMPTY_EVENT_HEAD):
             raise SessionContentInvalid("events-v1 head does not match its chunk index")
-        projected = _SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(raw_events))
+        projected = _SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events))
         _cache_put(cache_key, projected)
         return projected
 

@@ -18,6 +18,7 @@ from app.models.session import (
     SessionEventGeneration,
 )
 from app.schemas.session_events import (
+    SessionEvent,
     SessionEventAppendResponse,
     SessionEventChunkResponse,
     SessionEventCommitRequest,
@@ -568,7 +569,7 @@ async def get_session_events(
             )
         ).scalars()
     )
-    events = []
+    events: list[SessionEvent] = []
     next_seq = 0
     head = EMPTY_EVENT_HEAD
     for chunk in chunks:
