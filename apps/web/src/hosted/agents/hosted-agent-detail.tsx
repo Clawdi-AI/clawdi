@@ -261,10 +261,7 @@ import {
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
 import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
-import {
-	type AgentChannelLink,
-	linkedChannelConnectionSummary,
-} from "@/hosted/v2/channels/channel-edit-client.logic";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import {
 	agentProviderLinkReplacementRequired,
 	agentProviderLinkStatusUnknown,
@@ -272,7 +269,6 @@ import {
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
-	ChannelRuntimeStatusBadge,
 	ChannelStatusBadge,
 	CopyInline,
 	isNormalChannelStatus,
@@ -1218,7 +1214,8 @@ function OverviewTab({
 	};
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent), true);
+	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const workspaceProjectId = agent
@@ -1386,10 +1383,10 @@ function OverviewTab({
 								<OverviewDescriptionSkeleton label="channels" />
 							) : projectionUnavailable || channelLinks.error ? (
 								"Unavailable right now"
+							) : linkedChannelCount === 0 ? (
+								"No channels linked"
 							) : (
-								linkedChannelConnectionSummary(channelLinks.data ?? [], {
-									agentStopped: deploymentStatus.kind === "stopped",
-								})
+								`${linkedChannelCount} linked ${linkedChannelCount === 1 ? "channel" : "channels"}`
 							),
 					},
 				}}
@@ -3432,7 +3429,6 @@ function LinkedChannelRow({
 	}
 	const relationshipState = [
 		pairedChatsControl,
-		<ChannelRuntimeStatusBadge key="runtime-status" status={link.runtime_status} />,
 		!isNormalChannelStatus(link.status) ? (
 			<ChannelStatusBadge key="status" status={link.status} />
 		) : null,
