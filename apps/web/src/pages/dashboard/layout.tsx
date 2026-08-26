@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocation } from "@tanstack/react-router";
 import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
@@ -20,6 +21,7 @@ import {
 	UNAVAILABLE_PRODUCT_ACCESS,
 } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
+import { cn } from "@/lib/utils";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
 // SidebarInset. Below that width the constraint is inert; above it (27"/4K
@@ -55,6 +57,7 @@ const GlobalWalletBalance = IS_HOSTED_BUILD
 	: null;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const hydrated = useHydrated();
 	const [ownership, setOwnership] = useState<AgentOwnership | null>(null);
 	const [existingCloudDeploymentCount, setExistingCloudDeploymentCount] = useState<number | null>(
@@ -79,6 +82,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 	// existing Cloud deployments remain manageable under rollback.
 	const noExternalControlPlane = !IS_HOSTED_BUILD;
 	const providedOwnership = noExternalControlPlane ? EMPTY_AGENT_OWNERSHIP : ownership;
+	const reserveHostedLauncherClearance = IS_HOSTED_BUILD && pathname !== "/deploy";
 	return (
 		<SidebarProvider
 			defaultOpen
@@ -131,7 +135,14 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 								<div className="flex flex-1 flex-col">
 									<div className="@container/main flex flex-1 flex-col gap-2">
 										<div
-											className={`mx-auto flex w-full ${CONTENT_MAX_WIDTH} flex-col gap-4 py-4 md:gap-5 md:py-5`}
+											data-testid="dashboard-page-content"
+											className={cn(
+												"mx-auto flex w-full flex-col gap-4 pt-4 md:gap-5 md:pt-5",
+												CONTENT_MAX_WIDTH,
+												reserveHostedLauncherClearance
+													? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
+													: "pb-4 md:pb-5",
+											)}
 										>
 											{children}
 										</div>

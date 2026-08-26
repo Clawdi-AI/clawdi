@@ -3026,6 +3026,30 @@ test("Help opens the hosted Mava live chat", async ({ page }) => {
 	await expect.poll(() => page.evaluate(() => window.__mavaLiveChatToggleCalls)).toBe(1);
 });
 
+test("deploy hides the Mava launcher while other dashboard pages reserve clearance", async ({
+	page,
+}) => {
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	await page.goto("/deploy");
+	await expect(page.getByTestId("deploy-action-bar")).toBeVisible();
+	await page.evaluate(() => {
+		const launcher = document.createElement("button");
+		launcher.id = "mava-webchat-launcher";
+		launcher.textContent = "Support";
+		document.body.appendChild(launcher);
+	});
+
+	const launcher = page.locator("#mava-webchat-launcher");
+	const dashboardContent = page.getByTestId("dashboard-page-content");
+	await expect(launcher).toBeHidden();
+	await expect(dashboardContent).toHaveCSS("padding-bottom", "20px");
+
+	await page.locator('a[href="/agents"]').first().click();
+	await expect(page).toHaveURL("/agents");
+	await expect(launcher).toBeVisible();
+	await expect(dashboardContent).toHaveCSS("padding-bottom", "80px");
+});
+
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];
 	const aiProviderRequests: string[] = [];
