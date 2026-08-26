@@ -716,6 +716,7 @@ exec /usr/bin/systemctl "$@"
 				),
 			);
 			expect(firstMutations.length).toBeGreaterThan(0);
+			expect(firstMutations).toContain("enable --runtime clawdi-runtime-sidecar.service");
 
 			await Bun.sleep(500);
 			writeFileSync(systemctlLog, "", { mode: 0o666 });

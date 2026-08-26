@@ -198,7 +198,7 @@ export function applySystemdRuntimeUpdate(
 	}
 	if (system.removed.length > 0) {
 		systemctl(["stop", ...system.removed]);
-		systemctl(["disable", ...system.removed]);
+		systemctl(systemUnitFileMutationArgs(paths, "disable", system.removed));
 	}
 	if (user.removed.length > 0) {
 		runtimeUserSystemctl(paths, ["stop", ...user.removed]);
@@ -237,7 +237,7 @@ export function applySystemdRuntimeUpdate(
 	// Each reconciliation makes at most one recovery attempt per failed unit.
 	// Transitional units remain untouched and fail final proof below.
 	if (enableSystemUnits.length > 0) {
-		systemctl(["enable", ...enableSystemUnits]);
+		systemctl(systemUnitFileMutationArgs(paths, "enable", enableSystemUnits));
 	}
 	if (resetFailedSystemUnits.length > 0) {
 		systemctl(["reset-failed", ...resetFailedSystemUnits]);
@@ -509,7 +509,19 @@ function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePath
 	const override = process.env.CLAWDI_SYSTEMD_APPLY?.trim().toLowerCase();
 	if (override === "1" || override === "true") return true;
 	if (override === "0" || override === "false") return false;
+	return usesRuntimeSystemUnitFiles(paths);
+}
+
+function usesRuntimeSystemUnitFiles(paths: ReturnType<typeof getRuntimePaths>): boolean {
 	return paths.systemdSystemRoot === "/run/systemd/system";
+}
+
+function systemUnitFileMutationArgs(
+	paths: ReturnType<typeof getRuntimePaths>,
+	command: "enable" | "disable",
+	units: readonly string[],
+): string[] {
+	return [command, ...(usesRuntimeSystemUnitFiles(paths) ? ["--runtime"] : []), ...units];
 }
 
 function systemctl(args: string[]): string {

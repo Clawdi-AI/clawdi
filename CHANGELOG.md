@@ -10,6 +10,12 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Unreleased
+
+### Fixed
+
+- Hosted runtimes now enable generated system services in the volatile systemd unit tree, so immutable images no longer fail by trying to write persistent links under `/etc`.
+
 ## Clawdi CLI v0.14.20
 
 Package: `clawdi@0.14.20`
