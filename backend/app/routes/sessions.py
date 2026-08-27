@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
 import json
 import logging
 import mimetypes
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast, overload
 from uuid import UUID, uuid4
@@ -148,6 +150,27 @@ _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionUploadAnalysis:
+    content_hash: str
+    related_refs: dict[str, JsonValue] | None
+    parse_error: Exception | None = None
+
+
+def _analyze_session_upload_sync(data: bytes) -> _SessionUploadAnalysis:
+    content_hash = hashlib.sha256(data).hexdigest()
+    try:
+        parsed = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+        related_refs = _related_refs_json(extract_related_refs(parsed)) or None
+    except (ValidationError, ValueError, TypeError) as exc:
+        return _SessionUploadAnalysis(content_hash, None, exc)
+    return _SessionUploadAnalysis(content_hash, related_refs)
+
+
+async def _analyze_session_upload(data: bytes) -> _SessionUploadAnalysis:
+    return await asyncio.to_thread(_analyze_session_upload_sync, data)
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
@@ -2878,12 +2901,11 @@ async def upload_session_content(
             )
         chunks.append(chunk)
     data = b"".join(chunks)
-    # Hash the bytes we're about to store so the row's `content_hash`
-    # always describes the actual stored object — not whatever the client
-    # claimed in the batch payload. This is what closes the historical
-    # DB↔file-store drift: even if a multipart proxy mangles bytes, the
-    # hash on disk matches the hash in the row.
-    content_hash = hashlib.sha256(data).hexdigest()
+    # Hash, JSON validation, and reference extraction are CPU-bound for large
+    # snapshots. Keep them together off the event loop so other requests can
+    # continue while this upload is analyzed.
+    analysis = await _analyze_session_upload(data)
+    content_hash = analysis.content_hash
 
     # New clients submit the hash announced in the preceding batch as a CAS
     # fence. Keeping this field optional preserves deployed clients' original
@@ -2913,16 +2935,15 @@ async def upload_session_content(
     # the file store and the row's content_hash is the source of truth;
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
-    try:
-        parsed = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
-        session.related_refs = _related_refs_json(extract_related_refs(parsed)) or None
-    except (ValidationError, ValueError, TypeError):
-        # log.exception (not warning) so the traceback lands in logs —
-        # without it, debugging "why did this session land NULL refs"
-        # means re-uploading and watching events live.
-        log.exception(
+    session.related_refs = analysis.related_refs
+    if analysis.parse_error is not None:
+        # Preserve the worker-thread traceback for diagnosing malformed
+        # snapshots without failing their best-effort upload.
+        error = analysis.parse_error
+        log.error(
             "refs_extract_failed local_session_id=%s — leaving field NULL",
             local_session_id,
+            exc_info=(type(error), error, error.__traceback__),
         )
 
     await db.commit()

@@ -2,6 +2,7 @@
 
 Coverage:
 - `extract_related_refs` unit behavior
+- snapshot upload analysis thread boundary
 - `/upload` route populates `related_refs` server-side
 - List + detail responses surface the field
 """
@@ -10,12 +11,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 
 from app.services.session_refs import extract_related_refs
+
+
+@pytest.mark.asyncio
+async def test_session_upload_analysis_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes import sessions
+
+    event_loop_thread = threading.get_ident()
+    analysis_thread: int | None = None
+    analyze = sessions._analyze_session_upload_sync
+
+    def capture_thread(data: bytes) -> sessions._SessionUploadAnalysis:
+        nonlocal analysis_thread
+        analysis_thread = threading.get_ident()
+        return analyze(data)
+
+    monkeypatch.setattr(sessions, "_analyze_session_upload_sync", capture_thread)
+    result = await sessions._analyze_session_upload(b'[{"role":"user","content":"hi"}]')
+
+    assert result.parse_error is None
+    assert analysis_thread is not None
+    assert analysis_thread != event_loop_thread
 
 
 def test_related_refs_extracts_prs_repos_branches():
