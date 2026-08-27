@@ -695,6 +695,7 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
 
     requests: list[tuple[str, dict | None, dict[str, str]]] = []
     client_settings: list[tuple[dict[str, str], httpx2.Timeout, bool]] = []
+    clients: list[httpx2.AsyncClient] = []
     real_async_client = httpx2.AsyncClient
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -769,11 +770,13 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
 
     def fake_async_client(*, headers, timeout, follow_redirects):
         client_settings.append((headers, timeout, follow_redirects))
-        return real_async_client(
+        client = real_async_client(
             headers=headers,
             transport=httpx2.MockTransport(handler),
             follow_redirects=follow_redirects,
         )
+        clients.append(client)
+        return client
 
     monkeypatch.setattr(composio.httpx2, "AsyncClient", fake_async_client)
     session = ComposioMcpSession(
@@ -784,7 +787,8 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
     result = await composio.list_tool_router_mcp_tools(session)
     called = await composio.call_tool_router_mcp_tool(session, "COMPOSIO_CONNECT", {"app": "x"})
 
-    assert len(client_settings) == 2
+    assert len(client_settings) == 1
+    assert not clients[0].is_closed
     for headers, timeout, follow_redirects in client_settings:
         assert headers == {"x-api-key": "session-scoped-key"}
         assert timeout.connect == 30.0
@@ -814,6 +818,8 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
         "resultType": "complete",
         "_meta": {"composio": {"request": "complete"}},
     }
+    await session.retire()
+    assert clients[0].is_closed
 
 
 @pytest.mark.asyncio
@@ -913,7 +919,7 @@ async def test_connector_tool_load_restarts_after_inflight_invalidation(
 
     request = asyncio.create_task(composio.get_tool_router_mcp_tools("invalidation"))
     await started.wait()
-    composio.invalidate_tool_router_mcp_session("invalidation")
+    await composio.invalidate_tool_router_mcp_session("invalidation")
     release.set()
     result = await request
 
