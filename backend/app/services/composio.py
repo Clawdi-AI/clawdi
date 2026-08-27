@@ -24,7 +24,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, TypedDict
 
@@ -416,11 +416,59 @@ def _bounded_scrubbed_message(
     return " ".join(safe.split())[:500]
 
 
-@dataclass(frozen=True)
+class _ComposioMcpSessionRetired(RuntimeError):
+    pass
+
+
+@dataclass(eq=False)
 class ComposioMcpSession:
+    """User-scoped MCP configuration and its reusable HTTP connection pool."""
+
     url: str
     headers: dict[str, str]
     expires_at: datetime
+    _http_client: httpx2.AsyncClient | None = field(default=None, init=False, repr=False)
+    _active_http_leases: int = field(default=0, init=False, repr=False)
+    _retired: bool = field(default=False, init=False, repr=False)
+
+    @asynccontextmanager
+    async def lease_http_client(self) -> AsyncGenerator[httpx2.AsyncClient, None]:
+        if self._retired:
+            raise _ComposioMcpSessionRetired
+        if self._http_client is None:
+            self._http_client = httpx2.AsyncClient(
+                headers=self.headers,
+                timeout=httpx2.Timeout(30.0, read=300.0),
+                follow_redirects=True,
+            )
+        self._active_http_leases += 1
+        try:
+            yield self._http_client
+        finally:
+            self._active_http_leases -= 1
+            if self._retired and self._active_http_leases == 0:
+                await self._close_http_client()
+
+    async def retire(self) -> None:
+        self._retired = True
+        if self._active_http_leases == 0:
+            await self._close_http_client()
+
+    async def _close_http_client(self) -> None:
+        client = self._http_client
+        self._http_client = None
+        if client is not None:
+            await client.aclose()
+
+
+_MCP_OPERATION_ERRORS = (
+    MCPError,
+    _ComposioMcpSessionRetired,
+    httpx2.HTTPError,
+    OSError,
+    TimeoutError,
+    ValidationError,
+)
 
 
 def get_composio_client() -> AsyncComposio:
@@ -468,8 +516,11 @@ async def close_composio_client() -> None:
         task.cancel()
     if pending_tools:
         await asyncio.gather(*pending_tools, return_exceptions=True)
+    sessions = tuple(_tool_router_session_cache.values())
     _tool_router_session_cache.clear()
     _tool_router_tools_cache.clear()
+    if sessions:
+        await asyncio.gather(*(session.retire() for session in sessions))
     if _client is not None:
         await _call_generated_sdk(_client.close())
         _client = None
@@ -522,16 +573,20 @@ async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     cached = _tool_router_session_cache.get(user_id)
     if cached and cached.expires_at > now:
         return cached
+    if cached is not None:
+        await cached.retire()
 
     session = await _create_tool_router_mcp_session(user_id, now=now)
     _tool_router_session_cache[user_id] = session
     return session
 
 
-def invalidate_tool_router_mcp_session(user_id: str) -> None:
+async def invalidate_tool_router_mcp_session(user_id: str) -> None:
     """Drop a user's cached Tool Router session and schemas after connection changes."""
-    _tool_router_session_cache.pop(user_id, None)
+    session = _tool_router_session_cache.pop(user_id, None)
     _tool_router_tools_cache.pop(user_id, None)
+    if session is not None:
+        await session.retire()
 
 
 async def get_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
@@ -583,7 +638,7 @@ async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsRe
         async with _tool_router_mcp_client(session) as client:
             response = await client.list_tools()
             return _normalize_mcp_response(response, ListToolsResult)
-    except (MCPError, httpx2.HTTPError, OSError, TimeoutError, ValidationError) as exc:
+    except _MCP_OPERATION_ERRORS as exc:
         logger.warning(
             "Composio MCP operation failed: operation=list_tools error_type=%s",
             type(exc).__name__,
@@ -599,7 +654,7 @@ async def call_tool_router_mcp_tool(
         async with _tool_router_mcp_client(session) as client:
             response = await client.call_tool(name, arguments)
             return _normalize_mcp_response(response, CallToolResult)
-    except (MCPError, httpx2.HTTPError, OSError, TimeoutError, ValidationError) as exc:
+    except _MCP_OPERATION_ERRORS as exc:
         logger.warning(
             "Composio MCP operation failed: operation=call_tool error_type=%s",
             type(exc).__name__,
@@ -625,12 +680,8 @@ async def _tool_router_mcp_client(
 ) -> AsyncGenerator[Client, None]:
     # Keep Composio credentials on this server-owned HTTP client. These are
     # the MCP SDK's documented settings for a caller-provided HTTP client.
-    http_client = httpx2.AsyncClient(
-        headers=session.headers,
-        timeout=httpx2.Timeout(30.0, read=300.0),
-        follow_redirects=True,
-    )
-    async with http_client:
+    # The SDK leaves caller-provided clients open; the session lease owns it.
+    async with session.lease_http_client() as http_client:
         transport = streamable_http_client(session.url, http_client=http_client)
         async with Client(transport) as client:
             yield client
@@ -785,7 +836,7 @@ async def create_connect_link(
             )
         )
     result = _normalize_sdk_response(raw_result, _ConnectLinkResponse)
-    invalidate_tool_router_mcp_session(entity_id)
+    await invalidate_tool_router_mcp_session(entity_id)
     return ConnectorConnectResponse(
         connect_url=result.redirect_url,
         id=result.connected_account_id,
@@ -878,7 +929,7 @@ async def _create_non_oauth_connection(
         if status in _ACTIVE_OR_PENDING_STATUSES:
             status = await _wait_for_connection_status(client, account_id, status)
     finally:
-        invalidate_tool_router_mcp_session(user_id)
+        await invalidate_tool_router_mcp_session(user_id)
     if status in _ACTIVE_OR_PENDING_STATUSES:
         raise ComposioActivationTimeoutError("Composio did not activate the connection in time")
     return ConnectorCredentialsConnectResponse(

@@ -126,7 +126,7 @@ async def list_connections(
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
     # MCP bridge call to create a fresh session.
-    invalidate_tool_router_mcp_session(clerk_id)
+    await invalidate_tool_router_mcp_session(clerk_id)
     return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
@@ -303,7 +303,7 @@ async def disconnect(
         raise _map_composio_error(exc) from exc
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
-    invalidate_tool_router_mcp_session(clerk_id)
+    await invalidate_tool_router_mcp_session(clerk_id)
     return ConnectorDisconnectResponse(status="disconnected")
 
 
