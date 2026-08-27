@@ -339,6 +339,7 @@ test.each(["hermes", "openclaw"] as const)(
 				runUserSystemctl("stop", ...allUserUnits);
 			}
 			spawnSync("systemctl", ["stop", ...systemUnits]);
+			spawnSync("systemctl", ["disable", "--runtime", ...systemUnits]);
 			for (const unit of systemUnits) rmSync(join("/run/systemd/system", unit), { force: true });
 			spawnSync("systemctl", ["daemon-reload"]);
 			spawnSync("loginctl", ["disable-linger", "clawdi"]);
@@ -753,6 +754,7 @@ exec /usr/bin/systemctl "$@"
 				runUserSystemctl("stop", ...allUserUnits);
 			}
 			spawnSync("systemctl", ["stop", ...systemUnits]);
+			spawnSync("systemctl", ["disable", "--runtime", ...systemUnits]);
 			for (const unit of systemUnits) rmSync(join("/run/systemd/system", unit), { force: true });
 			spawnSync("systemctl", ["daemon-reload"]);
 			rmSync(runtimeHome, { recursive: true, force: true });
