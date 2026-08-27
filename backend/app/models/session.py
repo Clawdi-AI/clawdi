@@ -246,6 +246,9 @@ class Session(Base, TimestampMixin):
     event_revision: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     event_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     event_head_hash: Mapped[str | None] = mapped_column(String(64))
+    # Derived, rebuildable search projection. A NULL value means the current
+    # content has not been indexed yet; it never changes content authority.
+    search_index_revision: Mapped[str | None] = mapped_column(String(80))
 
     # Extracted external entities surfaced in the session sidebar. Schema:
     #   {"prs": ["owner/repo#123"], "repos": [...], "branches": [...]}
@@ -263,6 +266,43 @@ class Session(Base, TimestampMixin):
     # Python None → SQL NULL, and the coalesce preserves the
     # server-computed value across re-pushes.
     related_refs: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+
+
+class SessionMessageSearch(Base):
+    __tablename__ = "session_message_search"
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_session_message_search_position"),
+        CheckConstraint(
+            "role IN ('user', 'assistant')",
+            name="ck_session_message_search_role",
+        ),
+        Index("ix_session_message_search_user", "user_id"),
+        Index("ix_session_message_search_generation", "generation_id"),
+        Index(
+            "ix_session_message_search_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    # Event rows follow generation retention automatically. Snapshot rows have
+    # no generation and are replaced atomically with the uploaded snapshot.
+    generation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("session_event_generations.id", ondelete="CASCADE"),
+    )
+    content_revision: Mapped[str] = mapped_column(String(80), primary_key=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
+    role: Mapped[Literal["user", "assistant"]] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class SessionEventGeneration(Base, TimestampMixin):

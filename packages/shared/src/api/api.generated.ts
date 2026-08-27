@@ -7725,6 +7725,7 @@ export interface components {
              * @default false
              */
             is_shared: boolean;
+            search_match?: components["schemas"]["SessionSearchMatchResponse"] | null;
             /** Related Refs */
             related_refs?: {
                 [key: string]: string[];
@@ -7991,6 +7992,7 @@ export interface components {
              * @default false
              */
             is_shared: boolean;
+            search_match?: components["schemas"]["SessionSearchMatchResponse"] | null;
             /** Related Refs */
             related_refs?: {
                 [key: string]: string[];
@@ -8160,6 +8162,16 @@ export interface components {
             payload_json?: string | null;
             /** Model */
             model?: string | null;
+        };
+        /** SessionSearchMatchResponse */
+        SessionSearchMatchResponse: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Excerpt */
+            excerpt: string;
         };
         /** SessionTextPart */
         SessionTextPart: {
@@ -11530,7 +11542,7 @@ export interface operations {
     list_sessions_v1_sessions_get: {
         parameters: {
             query?: {
-                /** @description Fuzzy search on summary/project/id */
+                /** @description Fuzzy search on summary/project/id and visible message text */
                 q?: string | null;
                 /** @description Filter by agent_type */
                 agent?: string | null;

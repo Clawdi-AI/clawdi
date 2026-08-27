@@ -15,6 +15,15 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.models.session import Session, SessionMessageSearch
+from app.services.session_search import (
+    SearchableSessionMessage,
+    rebuild_session_search_index,
+    replace_snapshot_search_index,
+)
 
 
 async def _register_env(client: httpx.AsyncClient) -> str:
@@ -62,7 +71,7 @@ async def _push_session(
 
     if upload and messages:
         body_bytes = json.dumps(messages).encode("utf-8")
-        await client.post(
+        uploaded = await client.post(
             f"/v1/sessions/{local_session_id}/upload",
             files={
                 "file": (
@@ -72,6 +81,7 @@ async def _push_session(
                 )
             },
         )
+        assert uploaded.status_code == 200, uploaded.text
 
     listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
@@ -115,6 +125,161 @@ async def test_relevance_sort_orders_by_similarity(client: httpx.AsyncClient):
     # rows ("UI polish") shouldn't appear at all.
     assert items[0]["summary"] == "oauth token refresh bug"
     assert all(s["summary"] != "UI polish" for s in items)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_message_search_tracks_current_content_and_escapes_wildcards(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.routes import sessions as session_routes
+
+    env_id = await _register_env(client)
+    local_id = "snapshot-body-search"
+    original = [
+        {
+            "role": "assistant",
+            "content": "Original needle %_ and slash\\needle stay literal",
+        }
+    ]
+    await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=original,
+        upload=True,
+    )
+    await _push_session(
+        client,
+        env_id,
+        local_session_id="snapshot-body-search-decoy",
+        messages=[{"role": "user", "content": "A separate ordinary message"}],
+        upload=True,
+    )
+
+    matched = (await client.get("/v1/sessions", params={"q": "Original needle"})).json()
+    assert [item["local_session_id"] for item in matched["items"]] == [local_id]
+    assert matched["items"][0]["search_match"] == {
+        "role": "assistant",
+        "excerpt": original[0]["content"],
+    }
+    fuzzy = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
+    assert [item["local_session_id"] for item in fuzzy["items"]] == [local_id]
+    literal = (await client.get("/v1/sessions", params={"q": "%_"})).json()
+    assert [item["local_session_id"] for item in literal["items"]] == [local_id]
+    backslash = (await client.get("/v1/sessions", params={"q": "slash\\needle"})).json()
+    assert [item["local_session_id"] for item in backslash["items"]] == [local_id]
+
+    replacement = [{"role": "user", "content": "Replacement body is now authoritative"}]
+    await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=replacement,
+        upload=False,
+    )
+    stale = (await client.get("/v1/sessions", params={"q": "Original needle"})).json()
+    assert all(item["search_match"] is None for item in stale["items"])
+
+    await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=replacement,
+        upload=True,
+    )
+    current = (await client.get("/v1/sessions", params={"q": "authoritative"})).json()
+    assert [item["local_session_id"] for item in current["items"]] == [local_id]
+    assert current["items"][0]["search_match"] == {
+        "role": "user",
+        "excerpt": replacement[0]["content"],
+    }
+
+    session = (
+        await db_session.execute(select(Session).where(Session.local_session_id == local_id))
+    ).scalar_one()
+    await db_session.execute(
+        delete(SessionMessageSearch).where(SessionMessageSearch.session_id == session.id)
+    )
+    session.search_index_revision = None
+    await db_session.commit()
+    await rebuild_session_search_index(db_session, session, session_routes.file_store)
+    await db_session.commit()
+    rebuilt = (await client.get("/v1/sessions", params={"q": "authoritative"})).json()
+    assert [item["local_session_id"] for item in rebuilt["items"]] == [local_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_rebuild_does_not_replace_a_newer_revision_after_object_read(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "snapshot-search-rebuild-race"
+    original = [{"role": "user", "content": "old backfill content"}]
+    await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=original,
+        upload=True,
+    )
+    session = (
+        await db_session.execute(select(Session).where(Session.local_session_id == local_id))
+    ).scalar_one()
+    session.search_index_revision = None
+    await db_session.commit()
+
+    replacement_content = "new upload remains searchable"
+    replacement = [
+        SearchableSessionMessage(position=0, role="assistant", content=replacement_content)
+    ]
+    replacement_hash = hashlib.sha256(
+        json.dumps([{"role": "assistant", "content": replacement_content}]).encode("utf-8")
+    ).hexdigest()
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    class RacingFileStore:
+        async def get(self, _key: str) -> bytes:
+            async with session_factory() as writer:
+                current = (
+                    await writer.execute(
+                        select(Session).where(Session.id == session.id).with_for_update()
+                    )
+                ).scalar_one()
+                current.content_hash = replacement_hash
+                await replace_snapshot_search_index(
+                    writer,
+                    current,
+                    replacement_hash,
+                    replacement,
+                )
+                await writer.commit()
+            return json.dumps(original).encode("utf-8")
+
+    async with session_factory() as backfill_db:
+        stale = await backfill_db.get(Session, session.id)
+        assert stale is not None
+        rebuilt = await rebuild_session_search_index(backfill_db, stale, RacingFileStore())
+        await backfill_db.commit()
+    assert rebuilt is False
+
+    async with session_factory() as verification_db:
+        current = await verification_db.get(Session, session.id)
+        documents = list(
+            (
+                await verification_db.execute(
+                    select(SessionMessageSearch.content).where(
+                        SessionMessageSearch.session_id == session.id
+                    )
+                )
+            ).scalars()
+        )
+    assert current is not None
+    assert current.search_index_revision == f"snapshot:{replacement_hash}"
+    assert documents == [replacement_content]
 
 
 @pytest.mark.asyncio

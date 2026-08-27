@@ -295,6 +295,7 @@ strict = [
     "app/services/session_events.py",
     "app/services/session_export.py",
     "app/services/session_refs.py",
+    "app/services/session_search.py",
     "app/services/sharing.py",
     "app/services/skill_installer.py",
     "app/services/sync_events.py",

@@ -34,6 +34,10 @@ from app.services.session_events import (
     SessionEventChunkInvalid,
     validate_event_chunk_async,
 )
+from app.services.session_search import (
+    activate_event_search_index,
+    stage_event_search_messages,
+)
 
 router = APIRouter(tags=["session-events"])
 file_store = get_file_store()
@@ -290,6 +294,13 @@ async def upload_session_event_generation_chunk(
             file_key=key,
         )
     )
+    stage_event_search_messages(
+        db,
+        user_id=session.user_id,
+        session_id=session.id,
+        generation_id=generation_id,
+        events=validated.events,
+    )
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -406,6 +417,7 @@ async def commit_session_event_generation(
     session.event_count = body.final_count
     session.event_head_hash = body.final_head_hash
     generation.status = "committed"
+    await activate_event_search_index(db, session, generation_id)
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation_id,
@@ -538,11 +550,19 @@ async def append_session_events(
             result_head_hash=final_head_hash,
         )
     )
+    stage_event_search_messages(
+        db,
+        user_id=session.user_id,
+        session_id=session.id,
+        generation_id=generation,
+        events=validated.events,
+    )
     session.event_revision = result_revision
     session.event_count = final_count
     session.event_head_hash = final_head_hash
     session.content_hash = final_head_hash
     session.content_uploaded_at = datetime.now(UTC)
+    await activate_event_search_index(db, session, generation)
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation,

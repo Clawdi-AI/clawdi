@@ -214,16 +214,19 @@ function printCloudSessionRows(sessions: SessionListItem[], total: number): void
 		console.log(
 			`  ${chalk.dim(session.id)}  ${chalk.white(summary)}  ${chalk.gray(project)}  ${chalk.gray(agent)}  ${chalk.gray(relativeTime(new Date(session.last_activity_at)))}`,
 		);
+		if (session.search_match) {
+			const role =
+				session.search_match.role === "user" ? chalk.cyan("user") : chalk.green("assistant");
+			console.log(`    ${role}: ${stripTerminalEscapes(session.search_match.excerpt)}`);
+		}
 	}
-	console.log(
-		chalk.gray(`\n  ${sessions.length} of ${total} metadata match${total === 1 ? "" : "es"}`),
-	);
+	console.log(chalk.gray(`\n  ${sessions.length} of ${total} match${total === 1 ? "" : "es"}`));
 }
 
 export async function sessionSearch(query: string, opts: CloudSessionOpts = {}): Promise<void> {
 	if (!requireCloudSessionAuth()) return;
 	const trimmedQuery = query.trim();
-	if (!trimmedQuery) throw new Error("Session metadata search query cannot be empty.");
+	if (!trimmedQuery) throw new Error("Session search query cannot be empty.");
 
 	const api = new ApiClient();
 	const page = unwrap(
@@ -246,7 +249,7 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 		return;
 	}
 	if (page.items.length === 0) {
-		console.log(chalk.gray(`No uploaded session metadata matching "${sanitizeMetadata(query)}".`));
+		console.log(chalk.gray(`No uploaded sessions matching "${sanitizeMetadata(query)}".`));
 		return;
 	}
 	printCloudSessionRows(page.items, page.total);

@@ -9,10 +9,10 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.session import Session
+from app.models.session import Session, SessionMessageSearch
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     EVENT_ADAPTER,
@@ -21,6 +21,7 @@ from app.services.session_events import (
     canonical_event_json,
     project_safe_messages,
 )
+from app.services.session_search import rebuild_session_search_index
 
 
 def _source(record_id: str, part_index: int | None = None) -> dict[str, Any]:
@@ -580,6 +581,26 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert "opaque" not in projected.text
     assert "secret tool output" not in projected.text
 
+    visible_search = (await client.get("/v1/sessions", params={"q": "visible answer"})).json()
+    assert [item["local_session_id"] for item in visible_search["items"]] == [local_id]
+    assert visible_search["items"][0]["search_match"] == {
+        "role": "assistant",
+        "excerpt": "visible answer",
+    }
+    for private_query in ("private chain of thought", "secret tool output"):
+        private_search = (await client.get("/v1/sessions", params={"q": private_query})).json()
+        assert all(item["search_match"] is None for item in private_search["items"])
+
+    await db_session.execute(
+        delete(SessionMessageSearch).where(SessionMessageSearch.session_id == session.id)
+    )
+    session.search_index_revision = None
+    await db_session.commit()
+    await rebuild_session_search_index(db_session, session, event_routes.file_store)
+    await db_session.commit()
+    rebuilt_search = (await client.get("/v1/sessions", params={"q": "visible answer"})).json()
+    assert [item["local_session_id"] for item in rebuilt_search["items"]] == [local_id]
+
 
 @pytest.mark.asyncio
 async def test_events_v1_rewrite_commit_is_cas_fenced(
@@ -588,7 +609,15 @@ async def test_events_v1_rewrite_commit_is_cas_fenced(
 ) -> None:
     local_id = "pi.rewrite-session"
     environment_id, _ = await _register_session(client, db_session, local_session_id=local_id)
-    original = [_event(0, "message", "user", role="user", parts=[{"type": "text", "text": "one"}])]
+    original = [
+        _event(
+            0,
+            "message",
+            "user",
+            role="user",
+            parts=[{"type": "text", "text": "orchid junction 731"}],
+        )
+    ]
     generation, original_head, _ = await _commit_generation(
         client,
         environment_id=environment_id,
@@ -597,7 +626,11 @@ async def test_events_v1_rewrite_commit_is_cas_fenced(
     )
     replacement = [
         _event(
-            0, "message", "replacement", role="user", parts=[{"type": "text", "text": "rewritten"}]
+            0,
+            "message",
+            "replacement",
+            role="user",
+            parts=[{"type": "text", "text": "velvet cosmos 942"}],
         )
     ]
     replacement_head = advance_event_head(EMPTY_EVENT_HEAD, replacement)
@@ -625,9 +658,15 @@ async def test_events_v1_rewrite_commit_is_cas_fenced(
         files={"file": ("0.ndjson", replacement_data, "application/x-ndjson")},
     )
     assert uploaded.status_code == 200, uploaded.text
+    staged_search = (await client.get("/v1/sessions", params={"q": "velvet cosmos 942"})).json()
+    assert all(item["search_match"] is None for item in staged_search["items"])
 
     concurrent = _event(
-        1, "message", "concurrent", role="assistant", parts=[{"type": "text", "text": "advanced"}]
+        1,
+        "message",
+        "concurrent",
+        role="assistant",
+        parts=[{"type": "text", "text": "cobalt river 583"}],
     )
     concurrent_data, concurrent_hash = _chunk([concurrent])
     concurrent_head = advance_event_head(original_head, [concurrent])
@@ -661,3 +700,48 @@ async def test_events_v1_rewrite_commit_is_cas_fenced(
         },
     )
     assert stale_commit.status_code == 409
+
+    fresh_generation = str(uuid.uuid4())
+    fresh_append_id = str(uuid.uuid4())
+    fresh_stage = await client.post(
+        f"/v1/sessions/{local_id}/events/generations",
+        json={
+            "environment_id": environment_id,
+            "generation": fresh_generation,
+            "append_id": fresh_append_id,
+            "base_generation": generation,
+            "base_revision": 2,
+            "base_count": 2,
+            "base_head_hash": concurrent_head,
+            "final_count": 1,
+            "final_head_hash": replacement_head,
+        },
+    )
+    assert fresh_stage.status_code == 200, fresh_stage.text
+    fresh_upload = await client.put(
+        f"/v1/sessions/{local_id}/events/generations/{fresh_generation}/chunks/0",
+        data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": replacement_hash},
+        files={"file": ("0.ndjson", replacement_data, "application/x-ndjson")},
+    )
+    assert fresh_upload.status_code == 200, fresh_upload.text
+    fresh_commit = await client.post(
+        f"/v1/sessions/{local_id}/events/generations/{fresh_generation}/commit",
+        json={
+            "append_id": fresh_append_id,
+            "base_generation": generation,
+            "base_revision": 2,
+            "base_count": 2,
+            "base_head_hash": concurrent_head,
+            "final_count": 1,
+            "final_head_hash": replacement_head,
+        },
+    )
+    assert fresh_commit.status_code == 200, fresh_commit.text
+
+    replacement_search = (
+        await client.get("/v1/sessions", params={"q": "velvet cosmos 942"})
+    ).json()
+    assert [item["local_session_id"] for item in replacement_search["items"]] == [local_id]
+    for retired_query in ("orchid junction 731", "cobalt river 583"):
+        retired_search = (await client.get("/v1/sessions", params={"q": retired_query})).json()
+        assert all(item["search_match"] is None for item in retired_search["items"])

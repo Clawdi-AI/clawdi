@@ -98,6 +98,7 @@ from app.schemas.session import (
     SessionPermissionCreate,
     SessionPermissionResponse,
     SessionPermissionsResponse,
+    SessionSearchMatchResponse,
     SessionUploadResponse,
 )
 from app.services import memory_extraction
@@ -128,6 +129,12 @@ from app.services.session_content import (
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
+from app.services.session_search import (
+    SearchableSessionMessage,
+    best_session_message_matches,
+    replace_snapshot_search_index,
+    searchable_snapshot_messages,
+)
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
 router = APIRouter(tags=["sessions"])
@@ -156,6 +163,7 @@ _MANUAL_SESSION_SUMMARY_FILTER = text(
 class _SessionUploadAnalysis:
     content_hash: str
     related_refs: dict[str, JsonValue] | None
+    search_messages: list[SearchableSessionMessage]
     parse_error: Exception | None = None
 
 
@@ -164,9 +172,10 @@ def _analyze_session_upload_sync(data: bytes) -> _SessionUploadAnalysis:
     try:
         parsed = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
         related_refs = _related_refs_json(extract_related_refs(parsed)) or None
+        search_messages = searchable_snapshot_messages(parsed)
     except (ValidationError, ValueError, TypeError) as exc:
-        return _SessionUploadAnalysis(content_hash, None, exc)
-    return _SessionUploadAnalysis(content_hash, related_refs)
+        return _SessionUploadAnalysis(content_hash, None, [], exc)
+    return _SessionUploadAnalysis(content_hash, related_refs, search_messages)
 
 
 async def _analyze_session_upload(data: bytes) -> _SessionUploadAnalysis:
@@ -2374,6 +2383,10 @@ async def batch_create_sessions(
                 (hash_changed, None),
                 else_=Session.content_uploaded_at,
             ),
+            "search_index_revision": case(
+                (hash_changed, None),
+                else_=Session.search_index_revision,
+            ),
             # Only bump `updated_at` when the content actually changed.
             # Without this, a re-push of unchanged sessions (e.g. empty
             # client cache, multi-machine sync, manual cache reset) would
@@ -2496,6 +2509,19 @@ _SESSION_SORT_COLUMNS = {
 _TRGM_THRESHOLD = 0.15
 
 
+def _message_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
+    compact = " ".join(content.split())
+    if len(compact) <= limit:
+        return compact
+    match_at = compact.casefold().find(query.casefold())
+    if match_at < 0:
+        return f"{compact[: limit - 3]}..."
+    start = max(0, match_at - limit // 3)
+    end = min(len(compact), start + limit)
+    start = max(0, end - limit)
+    return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
+
+
 @router.get("/sessions")
 async def list_sessions(
     # Deploy keys carry `sessions:write` (they upload sessions from
@@ -2505,7 +2531,11 @@ async def list_sessions(
     # summaries and project_paths it had no business reading.
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
-    q: str | None = Query(default=None, description="Fuzzy search on summary/project/id"),
+    q: str | None = Query(
+        default=None,
+        max_length=500,
+        description="Fuzzy search on summary/project/id and visible message text",
+    ),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
     # Faceted filters. Multi-valued where the dashboard wants chip
@@ -2552,6 +2582,7 @@ async def list_sessions(
     since: datetime | None = Query(default=None, description="Filter to last_activity_at >= since"),
     until: datetime | None = Query(default=None, description="Filter to last_activity_at < until"),
 ) -> Paginated[SessionListItemResponse]:
+    q = q.strip() if q else None
     # Env binding: a bound api_key (deploy key) can only see its
     # own env's sessions. Without this, a key for env A would list
     # env B's sessions because user_id alone doesn't fence them.
@@ -2581,11 +2612,17 @@ async def list_sessions(
     # drives the rank. NULL-safe via COALESCE — sessions with NULL
     # summary still match if their project_path or id does.
     relevance_expr: Any | None
+    metadata_relevance_expr: Any | None = None
+    message_match: Any | None = None
+    message_relevance_expr: Any | None = None
     if q:
         sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
         sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
         sim_local = func.similarity(Session.local_session_id, q)
-        relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
+        metadata_relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
+        message_match = best_session_message_matches(auth.user_id, q)
+        message_relevance_expr = func.coalesce(message_match.c.score, 0.0)
+        relevance_expr = func.greatest(metadata_relevance_expr, message_relevance_expr)
     else:
         relevance_expr = None
 
@@ -2597,6 +2634,15 @@ async def list_sessions(
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+    if q:
+        assert message_match is not None
+        assert message_relevance_expr is not None
+        base = base.outerjoin(message_match, message_match.c.session_id == Session.id)
+        base = base.add_columns(
+            message_relevance_expr,
+            message_match.c.content,
+            message_match.c.role,
+        )
     session_filters: list[Any] = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
     if bound_env is not None:
@@ -2659,13 +2705,20 @@ async def list_sessions(
     if q:
         # pg_trgm `similarity()` for typo / partial-word tolerance.
         # NOT index-accelerated — the function-call form doesn't trigger
-        # the `gin_trgm_ops` operator class (only `%` / `<->` / `LIKE`
+        # the `gin_trgm_ops` operator class (only `%` / `<%` / `LIKE`
         # do). Runs as a Seq Scan over the user's session set; fine
         # for the typical few-thousand-rows-per-user. If a power user
         # ever hits real latency here, swap to `WHERE summary % :q`
         # plus a GIN index. Threshold tuned for "type to filter" UX.
         assert relevance_expr is not None
-        session_filters.append(relevance_expr >= _TRGM_THRESHOLD)
+        assert metadata_relevance_expr is not None
+        assert message_match is not None
+        session_filters.append(
+            or_(
+                metadata_relevance_expr >= _TRGM_THRESHOLD,
+                message_match.c.session_id.is_not(None),
+            )
+        )
 
     base = base.where(*session_filters)
     if agent_filter is not None:
@@ -2676,6 +2729,8 @@ async def list_sessions(
     # COUNT(*). For 50k+ session users this saves a measurable
     # fraction of list-page latency.
     count_base = select(Session.id).where(*session_filters)
+    if message_match is not None:
+        count_base = count_base.outerjoin(message_match, message_match.c.session_id == Session.id)
     if agent_filter is not None:
         count_base = count_base.outerjoin(
             AgentEnvironment,
@@ -2707,8 +2762,33 @@ async def list_sessions(
 
     rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
 
-    return Paginated[SessionListItemResponse](
-        items=[
+    items: list[SessionListItemResponse] = []
+    for row in rows:
+        search_match: SessionSearchMatchResponse | None = None
+        if q:
+            (
+                s,
+                agent_type,
+                display_name,
+                default_name,
+                machine_name,
+                shared,
+                message_score,
+                message_content,
+                message_role,
+            ) = row
+            if (
+                message_score is not None
+                and isinstance(message_content, str)
+                and message_role in ("user", "assistant")
+            ):
+                search_match = SessionSearchMatchResponse(
+                    role=message_role,
+                    excerpt=_message_search_excerpt(message_content, q),
+                )
+        else:
+            s, agent_type, display_name, default_name, machine_name, shared = row
+        items.append(
             _session_to_response(
                 s,
                 agent_type=agent_type,
@@ -2716,9 +2796,12 @@ async def list_sessions(
                 agent_default_name=default_name,
                 machine_name=machine_name,
                 is_shared=bool(shared),
+                search_match=search_match,
             )
-            for s, agent_type, display_name, default_name, machine_name, shared in rows
-        ],
+        )
+
+    return Paginated[SessionListItemResponse](
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -2936,6 +3019,12 @@ async def upload_session_content(
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
     session.related_refs = analysis.related_refs
+    await replace_snapshot_search_index(
+        db,
+        session,
+        content_hash,
+        analysis.search_messages,
+    )
     if analysis.parse_error is not None:
         # Preserve the worker-thread traceback for diagnosing malformed
         # snapshots without failing their best-effort upload.
@@ -3387,6 +3476,7 @@ def _session_to_response(
     agent_default_name: str | None = None,
     machine_name: str | None = None,
     is_shared: bool = False,
+    search_match: SessionSearchMatchResponse | None = None,
 ) -> SessionListItemResponse:
     agent_name = (
         _agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
@@ -3420,6 +3510,7 @@ def _session_to_response(
         content_protocol=s.content_protocol,
         event_head_hash=s.event_head_hash,
         is_shared=is_shared,
+        search_match=search_match,
         related_refs=_related_refs_response(s.related_refs),
     )
 

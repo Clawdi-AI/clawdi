@@ -464,6 +464,11 @@ class SessionBatchResponse(BaseModel):
     suppressed: list[str] = []
 
 
+class SessionSearchMatchResponse(BaseModel):
+    role: Literal["user", "assistant"]
+    excerpt: str
+
+
 class SessionListItemResponse(BaseModel):
     id: str
     local_session_id: str
@@ -507,6 +512,9 @@ class SessionListItemResponse(BaseModel):
     # Default False so old generated clients that don't expect the field
     # still deserialize cleanly.
     is_shared: bool = False
+    # Present only when a message body contributed to a `q` search result.
+    # It is a bounded excerpt, never a second copy of the transcript.
+    search_match: SessionSearchMatchResponse | None = None
 
     # Extracted external entities (PR refs, repo names, branches),
     # surfaced as sidebar chips. NULL when nothing was found or when

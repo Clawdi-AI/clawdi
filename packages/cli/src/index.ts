@@ -1096,7 +1096,7 @@ Examples:
 
 sessionCmd
 	.command("search <query>")
-	.description("Search uploaded session metadata (summary, project, and IDs; not message text)")
+	.description("Search uploaded session summaries, messages, projects, and IDs")
 	.option("--agent <type>", "Filter by agent type")
 	.option("--since <date>", "Only sessions active after this date")
 	.option("--limit <n>", "Cap results (1-200)", "25")

@@ -222,7 +222,7 @@ function SessionsListInner() {
 										: params.sort,
 						});
 					}}
-					placeholder="Search summary, folder, or session ID…"
+					placeholder="Search summaries, messages, folders, or IDs…"
 				/>
 			}
 			filters={
