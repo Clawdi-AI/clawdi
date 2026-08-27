@@ -6,7 +6,6 @@ import hmac
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from time import monotonic
 from uuid import UUID
 
 import httpx
@@ -106,62 +105,6 @@ _clerk_jwks_client = (
 # long ago. Every authenticated CLI request used to write+commit the row,
 # which becomes write-lock contention on a hot key at scale.
 LAST_USED_THROTTLE = timedelta(minutes=1)
-# Daemons reconcile skills on a 60s cadence. The cache needs to span that
-# interval to avoid turning every conditional GET into three auth DB reads.
-# Dashboard revocation calls `invalidate_api_key_auth_cache`, so user-initiated
-# revokes still take effect immediately in the single-process deployment model.
-API_KEY_AUTH_CACHE_TTL_SECONDS = 75.0
-API_KEY_AUTH_CACHE_MAX_SIZE = 4096
-
-
-@dataclass(frozen=True)
-class _CachedApiKeyAuth:
-    api_key_id: UUID
-    user_id: UUID
-    key_hash: str
-    key_prefix: str
-    label: str
-    scopes: tuple[str, ...] | None
-    environment_id: UUID | None
-    runtime_deployment_id: str | None
-    managed: bool
-    expires_at: datetime | None
-    user_clerk_id: str | None
-    user_clerk_issuer: str | None
-    user_principal_kind: str
-    user_partner_tenant_ref: str | None
-    user_email: str | None
-    user_name: str | None
-    user_avatar_url: str | None
-    skills_revision: int
-    api_key_project_id: UUID | None
-
-    def to_auth_context(self) -> AuthContext:
-        user = User(
-            id=self.user_id,
-            clerk_id=self.user_clerk_id,
-            clerk_issuer=self.user_clerk_issuer,
-            principal_kind=self.user_principal_kind,
-            partner_tenant_ref=self.user_partner_tenant_ref,
-            email=self.user_email,
-            name=self.user_name,
-            avatar_url=self.user_avatar_url,
-            skills_revision=self.skills_revision,
-        )
-        api_key = ApiKey(
-            id=self.api_key_id,
-            user_id=self.user_id,
-            key_hash=self.key_hash,
-            key_prefix=self.key_prefix,
-            label=self.label,
-            scopes=list(self.scopes) if self.scopes is not None else None,
-            environment_id=self.environment_id,
-            runtime_deployment_id=self.runtime_deployment_id,
-            managed=self.managed,
-            expires_at=self.expires_at,
-            revoked_at=None,
-        )
-        return AuthContext(user=user, api_key=api_key, api_key_project_id=self.api_key_project_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,88 +116,12 @@ class _ApiKeyAuthority:
     disabled: bool
 
 
-_api_key_auth_cache: dict[str, tuple[float, _CachedApiKeyAuth]] = {}
-
-
-def _get_cached_api_key_auth(key_hash: str) -> AuthContext | None:
-    cached = _api_key_auth_cache.get(key_hash)
-    if cached is None:
-        return None
-    expires_at, snapshot = cached
-    if expires_at <= monotonic():
-        _api_key_auth_cache.pop(key_hash, None)
-        return None
-    return snapshot.to_auth_context()
-
-
-def _cache_api_key_auth(
-    *,
-    key_hash: str,
-    api_key: ApiKey,
-    user: User,
-    api_key_project_id: UUID | None,
-    now: datetime,
-) -> None:
-    ttl_seconds = API_KEY_AUTH_CACHE_TTL_SECONDS
-    if api_key.expires_at is not None:
-        ttl_seconds = min(ttl_seconds, max(0.0, (api_key.expires_at - now).total_seconds()))
-    if ttl_seconds <= 0:
-        return
-
-    if len(_api_key_auth_cache) >= API_KEY_AUTH_CACHE_MAX_SIZE:
-        current = monotonic()
-        expired = [k for k, (expires_at, _) in _api_key_auth_cache.items() if expires_at <= current]
-        for k in expired:
-            _api_key_auth_cache.pop(k, None)
-        while len(_api_key_auth_cache) >= API_KEY_AUTH_CACHE_MAX_SIZE:
-            _api_key_auth_cache.pop(next(iter(_api_key_auth_cache)))
-
-    _api_key_auth_cache[key_hash] = (
-        monotonic() + ttl_seconds,
-        _CachedApiKeyAuth(
-            api_key_id=api_key.id,
-            user_id=user.id,
-            key_hash=api_key.key_hash,
-            key_prefix=api_key.key_prefix,
-            label=api_key.label,
-            scopes=tuple(api_key.scopes) if api_key.scopes is not None else None,
-            environment_id=api_key.environment_id,
-            runtime_deployment_id=api_key.runtime_deployment_id,
-            managed=api_key.managed,
-            expires_at=api_key.expires_at,
-            user_clerk_id=user.clerk_id,
-            user_clerk_issuer=user.clerk_issuer,
-            user_principal_kind=user.principal_kind,
-            user_partner_tenant_ref=user.partner_tenant_ref,
-            user_email=user.email,
-            user_name=user.name,
-            user_avatar_url=user.avatar_url,
-            skills_revision=int(user.skills_revision or 0),
-            api_key_project_id=api_key_project_id,
-        ),
-    )
-
-
-def invalidate_api_key_auth_cache(api_key_id: UUID) -> None:
-    for key_hash, (_, snapshot) in list(_api_key_auth_cache.items()):
-        if snapshot.api_key_id == api_key_id:
-            _api_key_auth_cache.pop(key_hash, None)
-
-
-def invalidate_user_api_key_auth_cache(user_id: UUID) -> None:
-    for key_hash, (_, snapshot) in list(_api_key_auth_cache.items()):
-        if snapshot.user_id == user_id:
-            _api_key_auth_cache.pop(key_hash, None)
-
-
 async def _assert_active_user_or_401(db: AsyncSession, user_id: UUID) -> None:
     try:
         await assert_user_authority_active(db, user_id)
     except PrincipalSuspendedError:
-        invalidate_user_api_key_auth_cache(user_id)
         raise AccountSuspendedHTTPException() from None
     except PrincipalTerminatedError:
-        invalidate_user_api_key_auth_cache(user_id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
 
 
@@ -295,32 +162,6 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         return None
 
     key_hash = hashlib.sha256(token.encode()).hexdigest()
-    cached = _get_cached_api_key_auth(key_hash)
-    if cached is not None:
-        await _assert_active_user_or_401(db, cached.user_id)
-        # Bound Agent keys are an operational authority boundary. Revalidate
-        # their durable key + Agent lifecycle on every cache hit so a request
-        # racing archive commit cannot re-cache authority after the caller's
-        # post-commit invalidation, and so other worker-local caches fail
-        # closed immediately after they observe the committed archive.
-        if cached.api_key is not None and cached.api_key.environment_id is not None:
-            active_key_id = await db.scalar(
-                select(ApiKey.id)
-                .join(
-                    AgentEnvironment,
-                    AgentEnvironment.id == ApiKey.environment_id,
-                )
-                .where(
-                    ApiKey.id == cached.api_key.id,
-                    ApiKey.revoked_at.is_(None),
-                    AgentEnvironment.archived_at.is_(None),
-                )
-            )
-            if active_key_id is None:
-                _api_key_auth_cache.pop(key_hash, None)
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
-        return cached
-
     # A separate statement after the advisory lock is intentional: under
     # READ COMMITTED a statement snapshot is fixed before a lock wait, so the
     # joined authority read must start only after any committed lifecycle
@@ -349,18 +190,6 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         now = datetime.now(UTC)
         context = _validated_api_key_auth_context(authority, now=now)
 
-    # Agent-bound keys are lifecycle authority and must never be installed in
-    # a process-local cache. A cache fill racing archive commit could otherwise
-    # happen after the archive caller's post-commit invalidation. Unbound keys
-    # retain the existing cache behavior.
-    if authority.api_key.environment_id is None:
-        _cache_api_key_auth(
-            key_hash=key_hash,
-            api_key=authority.api_key,
-            user=context.user,
-            api_key_project_id=authority.api_key_project_id,
-            now=now,
-        )
     return context
 
 
@@ -417,10 +246,8 @@ def _validated_api_key_auth_context(
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
     if authority.suspended:
-        invalidate_user_api_key_auth_cache(user.id)
         raise AccountSuspendedHTTPException()
     if authority.disabled:
-        invalidate_user_api_key_auth_cache(user.id)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated")
     if api_key.environment_id is not None and authority.api_key_project_id is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Agent is archived")

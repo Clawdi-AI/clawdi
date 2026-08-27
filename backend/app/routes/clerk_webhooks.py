@@ -25,11 +25,9 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import invalidate_api_key_auth_cache, invalidate_user_api_key_auth_cache
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.principal_lifecycle import PrincipalLifecycle
-from app.models.user import User
 from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
 from app.services.principal_lifecycle import (
     PrincipalLifecycleConfigurationError,
@@ -228,7 +226,7 @@ async def clerk_user_lifecycle_webhook(
             return ClerkWebhookResponse()
         banned, authority_updated_at = await _fetch_clerk_authority(subject)
         try:
-            changed = await project_clerk_user_authority(
+            await project_clerk_user_authority(
                 db,
                 issuer=issuer,
                 subject=subject,
@@ -243,15 +241,6 @@ async def clerk_user_lifecycle_webhook(
                 "Clerk lifecycle receiver is not configured",
             ) from None
         await db.commit()
-        if changed:
-            user_id = await db.scalar(
-                select(User.id).where(
-                    User.clerk_issuer == issuer,
-                    User.clerk_id == subject,
-                )
-            )
-            if user_id is not None:
-                invalidate_user_api_key_auth_cache(user_id)
         return ClerkWebhookResponse()
 
     try:
@@ -279,7 +268,7 @@ async def clerk_user_lifecycle_webhook(
     # remains recoverable by the existing lifecycle worker.
     await db.commit()
     try:
-        cleanup = await complete_principal_cleanup(db, lifecycle_id=receipt.lifecycle_id)
+        await complete_principal_cleanup(db, lifecycle_id=receipt.lifecycle_id)
         await db.commit()
     except Exception:
         await db.rollback()
@@ -293,10 +282,6 @@ async def clerk_user_lifecycle_webhook(
             "Clerk deletion cleanup is pending retry",
         ) from None
 
-    if receipt.user_id is not None:
-        invalidate_user_api_key_auth_cache(receipt.user_id)
-    for key_id in cleanup.revoked_api_key_ids:
-        invalidate_api_key_auth_cache(key_id)
     return ClerkWebhookResponse()
 
 

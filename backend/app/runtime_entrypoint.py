@@ -3,9 +3,11 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 API_ROLE = "api"
 CHANNELS_WORKER_ROLE = "channels-worker"
+PROMETHEUS_MULTIPROC_DIR_NAME = "clawdi-prometheus-multiproc"
 
 # How long the API keeps serving after SIGTERM. Some container proxies only
 # stop routing on the container's die event, so the listener must stay open
@@ -27,15 +29,33 @@ _API_SERVER_ARGS = [
 ]
 
 
+def _prepare_prometheus_multiprocess_dir() -> None:
+    raw_path = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "").strip()
+    if not raw_path:
+        return
+    directory = Path(raw_path).resolve()
+    if directory.name != PROMETHEUS_MULTIPROC_DIR_NAME:
+        raise RuntimeError(
+            f"PROMETHEUS_MULTIPROC_DIR must end with {PROMETHEUS_MULTIPROC_DIR_NAME!r}"
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    for entry in directory.iterdir():
+        if not entry.is_file():
+            raise RuntimeError(f"Prometheus multiprocess directory contains {entry.name!r}")
+        entry.unlink()
+
+
 def _exec(args: list[str]) -> None:
     os.execvp(args[0], args)
 
 
 def _run_api_with_drain() -> int:
+    _prepare_prometheus_multiprocess_dir()
     migrate = subprocess.run(_API_MIGRATE_ARGS)
     if migrate.returncode != 0:
         return migrate.returncode
 
+    _prepare_prometheus_multiprocess_dir()
     server = subprocess.Popen(_API_SERVER_ARGS)
 
     def _drain_then_forward(_signum: int, _frame: object) -> None:

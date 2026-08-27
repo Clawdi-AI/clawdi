@@ -39,11 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.auth import (
-    invalidate_api_key_auth_cache,
-    invalidate_user_api_key_auth_cache,
-    require_admin_api_key,
-)
+from app.core.auth import require_admin_api_key
 from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
@@ -329,8 +325,6 @@ async def admin_set_principal_suspension(
     except Exception:
         await db.rollback()
         raise
-    if result.user_id is not None:
-        invalidate_user_api_key_auth_cache(result.user_id)
     return AdminPrincipalSuspensionResponse(
         target_clerk_id=body.target_clerk_id,
         suspended=result.suspended,
@@ -1002,7 +996,6 @@ async def admin_revoke_api_key(
         },
     )
     await db.commit()
-    invalidate_api_key_auth_cache(api_key.id)
     logger.info(
         "admin_api_key_revoked target_user_id=%s key_id=%s",
         api_key.user_id,
@@ -2365,7 +2358,7 @@ async def _admin_delete_environment(
     )
     await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     try:
-        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+        await archive_agent_and_project(db, agent=env)
     except AgentLifecycleBoundaryError:
         await db.rollback()
         raise HTTPException(
@@ -2373,8 +2366,6 @@ async def _admin_delete_environment(
             "Agent Project ownership could not be proven; no resources were archived.",
         ) from None
     await db.commit()
-    for key_id in revoked_key_ids:
-        invalidate_api_key_auth_cache(key_id)
     logger.info(
         "admin_environment_deleted target_clerk_id=%s env_id=%s",
         target_clerk_id,
