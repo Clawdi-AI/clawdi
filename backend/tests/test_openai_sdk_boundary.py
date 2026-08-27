@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from collections.abc import Iterator
@@ -218,6 +219,39 @@ async def test_local_embedding_maps_sdk_errors(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(EmbeddingUpstreamError, match="request failed") as exc_info:
         await LocalEmbedder().embed("hello")
     assert "provider-internal-detail" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_local_embedding_initialization_is_singleflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialized = threading.Event()
+    release = threading.Event()
+    constructor_threads: list[int] = []
+
+    class FakeTextEmbedding:
+        def __init__(self, model_name: str) -> None:
+            assert model_name == "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+            constructor_threads.append(threading.get_ident())
+            initialized.set()
+            release.wait(timeout=2)
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", FakeTextEmbedding)
+    embedder = LocalEmbedder()
+    first = asyncio.create_task(embedder.initialize())
+    second: asyncio.Task[object] | None = None
+    try:
+        assert await asyncio.to_thread(initialized.wait, 1)
+        second = asyncio.create_task(embedder.initialize())
+        await asyncio.sleep(0)
+        assert len(constructor_threads) == 1
+        assert constructor_threads[0] != threading.get_ident()
+    finally:
+        release.set()
+
+    assert second is not None
+    first_model, second_model = await asyncio.gather(first, second)
+    assert first_model is second_model
 
 
 @pytest.mark.asyncio

@@ -25,7 +25,10 @@ import logging
 import math
 from collections.abc import Iterable
 from numbers import Real
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from fastembed import TextEmbedding
 
 from app.core.config import settings
 
@@ -53,10 +56,14 @@ class LocalEmbedder:
     _instance: LocalEmbedder | None = None
 
     def __init__(self) -> None:
+        self._model: TextEmbedding | None = None
+        self._initialization_task: asyncio.Task[TextEmbedding] | None = None
+
+    @staticmethod
+    def _load_model() -> TextEmbedding:
         from fastembed import TextEmbedding
 
-        # Lazy-load the model. Blocks on first call while downloading (~1GB).
-        self.model = TextEmbedding(LOCAL_MODEL_NAME)
+        return TextEmbedding(LOCAL_MODEL_NAME)
 
     @classmethod
     def get(cls) -> LocalEmbedder:
@@ -64,10 +71,45 @@ class LocalEmbedder:
             cls._instance = cls()
         return cls._instance
 
+    async def initialize(self) -> TextEmbedding:
+        """Load the model once without blocking the event loop."""
+        if self._model is not None:
+            return self._model
+
+        task = self._initialization_task
+        if task is None:
+            task = asyncio.create_task(
+                asyncio.to_thread(self._load_model),
+                name="local-embedder-initialize",
+            )
+            self._initialization_task = task
+
+        try:
+            model = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled() and self._initialization_task is task:
+                self._initialization_task = None
+            # A cancelled waiter does not cancel the shared load.
+            raise
+        except Exception:
+            if self._initialization_task is task:
+                self._initialization_task = None
+            raise
+
+        self._model = model
+        if self._initialization_task is task:
+            self._initialization_task = None
+        return model
+
     async def embed(self, text: str) -> list[float]:
+        try:
+            model = await self.initialize()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise EmbeddingUpstreamError("Local embedding provider request failed") from exc
+
         def _embed_sync() -> list[float]:
             try:
-                values = next(iter(self.model.embed([text])))
+                values = next(iter(model.embed([text])))
             except (OSError, RuntimeError) as exc:
                 raise EmbeddingUpstreamError("Local embedding provider request failed") from exc
             except (StopIteration, TypeError, ValueError) as exc:
@@ -132,22 +174,14 @@ def _validate_embedding(values: Iterable[object], *, provider: str) -> list[floa
 def resolve_embedder() -> Embedder | None:
     """Pick the Embedder based on deployment settings (env vars).
 
-    Returns None only when the configured mode fails to initialize
-    (e.g. api mode without a key). Callers should treat None as
-    "fall back to FTS + trigram only".
+    Local model loading remains lazy and happens through
+    `LocalEmbedder.initialize`, off the event loop. Returns None for an
+    invalid deployment configuration; callers then fall back to FTS + trigram.
     """
     mode = (settings.memory_embedding_mode or "local").lower()
 
     if mode == "local":
-        try:
-            return LocalEmbedder.get()
-        except (OSError, RuntimeError, ValueError) as exc:
-            # fastembed 0.8.0 delegates downloads to requests/Hugging Face
-            # (their HTTP failures derive from OSError) and model loading to
-            # ONNX Runtime (RuntimeError); malformed model metadata is a
-            # ValueError. Unexpected programming errors must still surface.
-            log.warning("LocalEmbedder failed to initialize: %s", exc)
-            return None
+        return LocalEmbedder.get()
 
     if mode == "api":
         if not settings.memory_embedding_api_key:

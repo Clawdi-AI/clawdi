@@ -127,7 +127,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
         async def _warm() -> None:
             try:
-                await asyncio.to_thread(LocalEmbedder.get)
+                await LocalEmbedder.get().initialize()
                 log.info("Local embedder warmed.")
             except (OSError, RuntimeError, ValueError) as exc:
                 log.warning("Local embedder warmup failed: %s", exc)
