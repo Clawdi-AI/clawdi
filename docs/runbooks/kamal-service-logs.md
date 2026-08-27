@@ -1,10 +1,11 @@
 # Kamal Service Logs
 
 Use this runbook for host-local operational logs from the production Kamal
-deployment. It covers the `web` and `channels-worker` app roles, the
-`whatsapp-baileys`, `postgres`, and `postgres-backup` accessories, and the
-shared `kamal-proxy`. It does not change self-hosted Compose deployments, tenant
-runtimes, or any guest journal configuration.
+deployment. It covers the `web` and `channels-worker` app roles and the
+`whatsapp-baileys`, `postgres`, and `postgres-backup` accessories. The shared
+`kamal-proxy` deliberately does not persist container logs. This does not change
+self-hosted Compose deployments, tenant runtimes, or any guest journal
+configuration.
 
 ## Design
 
@@ -14,16 +15,25 @@ available after Kamal removes the container. `docker logs` remains available
 for a current container, and `journalctl` can select current or removed
 containers by `CONTAINER_NAME`.
 
-Kamal 2.12 applies root [`logging`](https://github.com/basecamp/kamal/blob/bdefb8945ad61751b36d53f789df8c69cf3d0fbb/lib/kamal/configuration/docs/logging.yml)
+Kamal 2.12 applies root [`logging`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/configuration/docs/logging.yml)
 to app roles and uses the same root arguments when it starts
-[`accessories`](https://github.com/basecamp/kamal/blob/bdefb8945ad61751b36d53f789df8c69cf3d0fbb/lib/kamal/commands/accessory.rb#L13-L30).
+[`accessories`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/commands/accessory.rb#L13-L30).
 The proxy has a separate
-[`run`](https://github.com/basecamp/kamal/blob/bdefb8945ad61751b36d53f789df8c69cf3d0fbb/lib/kamal/configuration/proxy/run.rb#L48-L102)
-configuration, so its legacy file-size option is disabled and its Docker log
-driver is set explicitly.
+[`run`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/configuration/proxy/run.rb#L48-L102)
+configuration. Kamal-proxy v0.9.2's
+[`LoggingMiddleware`](https://github.com/basecamp/kamal-proxy/blob/v0.9.2/internal/server/logging_middleware.go)
+unconditionally logs the raw request path and query at INFO, while its
+[`run` command](https://github.com/basecamp/kamal-proxy/blob/v0.9.2/internal/cmd/run.go)
+has no access-log disable or path-redaction option. Telegram-compatible routes
+carry the provider credential in the path, so `config/deploy.yml` uses Docker's
+official [`none` logging driver](https://docs.docker.com/engine/logging/configure/#supported-logging-drivers)
+for the proxy. This discards its stdout and stderr before persistence instead of
+trying to scrub credentials after they have reached the journal.
 
-The host journal is the only log store. Do not add a second application log
-database or mount log files into service data volumes.
+The host journal is the only log store for apps and accessories. Proxy
+request/operational logs are unavailable; use application timing/error logs and
+external health metrics for service diagnosis. Do not add a second application
+log database or mount log files into service data volumes.
 
 ## Host prerequisite
 
@@ -77,7 +87,7 @@ After the host prerequisite is verified:
 3. Reboot `postgres` only in an approved maintenance window; its data volume is
    unchanged, but the database is unavailable while the container restarts.
 4. Reboot the shared proxy once, after every Kamal deployment that can manage it
-   has the same journald configuration.
+   has the same `none` logging-driver configuration.
 
 Do not use this rollout to enable PostgreSQL statement logging, application
 debug logging, or provider protocol dumps. No data or auth volume needs to be
@@ -85,26 +95,33 @@ removed or recreated.
 
 ## Verification and access
 
-Confirm every current container reports `journald`:
+Confirm app and accessory containers report `journald`:
 
 ```bash
 docker ps --format '{{.Names}}' \
-  | grep -E '^clawdi-(web|channels-worker)-|^clawdi-(whatsapp-baileys|postgres|postgres-backup)$|^kamal-proxy$' \
+  | grep -E '^clawdi-(web|channels-worker)-|^clawdi-(whatsapp-baileys|postgres|postgres-backup)$' \
   | while read -r container; do
       docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}}' "$container"
     done
 ```
 
-Expected: both app roles, all three accessories, and `kamal-proxy` print
-`journald`. Use an exact container name to retrieve a bounded window:
+Expected: both app roles and all three accessories print `journald`. Confirm the
+proxy reports `none`:
+
+```bash
+docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}}' kamal-proxy
+```
+
+Use an exact app or accessory container name to retrieve a bounded window:
 
 ```bash
 sudo journalctl --since '1 hour ago' --lines 200 CONTAINER_NAME='<container-name>'
 ```
 
-After a later deploy removes an old app container, repeat the query with its
-old exact name. Seeing its pre-removal entries proves that retention is outside
-the Docker container lifecycle.
+After a later deploy removes an old app container, repeat the query with its old
+exact name. Seeing its pre-removal entries proves that retention is outside the
+Docker container lifecycle. `docker logs kamal-proxy` is intentionally
+unavailable while its logging driver is `none`.
 
 Journal access stays restricted to approved operators. Never paste or export
 raw logs without review. Logs must not contain secrets, QR or pairing values,
@@ -112,6 +129,11 @@ phone numbers or JIDs, message bodies, auth/Signal state, request bodies, or
 provider protocol objects. If any appear, treat that as a logging defect and a
 possible credential/privacy incident; fix the emitting service and rotate
 affected credentials before sharing evidence.
+
+After first applying the proxy logging change, treat any previously retained
+Telegram credential paths as an incident: rotate affected bot tokens and use the
+approved host-log remediation process. Do not inspect, copy, or export raw proxy
+history merely to enumerate credentials.
 
 Docker's official [`journald` driver](https://docs.docker.com/engine/logging/drivers/journald/)
 reference documents the `CONTAINER_NAME` field and continued `docker logs`

@@ -89,12 +89,13 @@ proxy:
     interval: 5
     timeout: 5
 
-  # Kamal's proxy log_max_size controls the json-file driver and is separate
-  # from top-level logging. Disable it before selecting journald explicitly.
+  # kamal-proxy v0.9.2 always logs raw request paths, including credentials in
+  # provider-compatible Telegram URLs. Discard proxy stdout/stderr at Docker's
+  # logging boundary; app and accessory logs remain in journald.
   run:
     log_max_size: ""
     options:
-      log-driver: journald
+      log-driver: none
 
 deploy_timeout: 120 # api entrypoint runs alembic before listening
 

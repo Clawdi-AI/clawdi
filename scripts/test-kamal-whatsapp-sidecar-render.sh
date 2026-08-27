@@ -187,8 +187,9 @@ unless whatsapp_command.include?(
 end
 
 proxy_args = config.proxy_run(config.primary_host).docker_options_args
-unless proxy_args.each_cons(2).include?(expected_logging_args)
-  raise "kamal-proxy logging did not render journald"
+expected_proxy_logging_args = [ "--log-driver", '"none"' ]
+unless proxy_args.each_cons(2).include?(expected_proxy_logging_args)
+  raise "kamal-proxy request logs were not disabled"
 end
 raise "kamal-proxy retained a json-file log option" if proxy_args.include?("--log-opt")
 RUBY

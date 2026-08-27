@@ -16,7 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 _PROCESS_TIME_HEADER = b"x-process-time-ms"
-_SYNC_EVENTS_PATH = "/api/sync/events"
+_SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
 _TELEGRAM_BOT_API_PATH_RE = re.compile(
     r"^(?P<prefix>/(?:api|v1)/channels/telegram/(?:file/)?bot/?)[^/]+(?P<suffix>/.*)?$",
     re.IGNORECASE,
@@ -105,7 +105,7 @@ def _log_safe_path(path: str) -> str:
 
 
 def _is_expected_long_request(path: str) -> bool:
-    if path == _SYNC_EVENTS_PATH:
+    if path in _SYNC_EVENTS_PATHS:
         return True
     match = _TELEGRAM_BOT_API_PATH_RE.match(path)
     if match is None or "/file/" in match.group("prefix").lower():
