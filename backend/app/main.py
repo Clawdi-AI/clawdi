@@ -71,6 +71,7 @@ from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
+from app.services.metrics import observe_event_loop_lag
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarClientPool
 
@@ -118,6 +119,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         raise
 
     await warm_clerk_jwks()
+    lag_monitor = asyncio.create_task(observe_event_loop_lag(), name="event-loop-lag")
+    background.add(lag_monitor)
+    lag_monitor.add_done_callback(background.discard)
 
     if settings.memory_embedding_mode.lower() == "local":
 
