@@ -35,7 +35,8 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext
+from app.core.auth import AuthContext, is_runtime_deployment_principal
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment
 
@@ -241,8 +242,8 @@ async def validate_project_read_for_caller(
 
     Rules:
       * project_id must appear in `project_ids_visible_to(auth)`.
-      * Agent API keys still only see their Agent Project
-        (enforced inside project_ids_visible_to itself).
+      * Environment keys remain inside their Agent boundary; strict-v2
+        runtime keys also see Projects explicitly linked to that Agent.
 
     404 if not in the visible set — same "don't leak existence"
     posture as the owner-only validator.
@@ -326,11 +327,9 @@ async def project_ids_visible_to(
         would query Personal but most data lives in env-local
         projects after backfill, producing a day-1 empty-list
         regression.
-      * api_key bound to an Agent environment → only that Agent Project
-        (daemons get their own Project's data,
-        nothing else). This is the deploy-key blast radius
-        boundary — a leaked key from env A must not gain
-        visibility into env B's data ever.
+      * legacy api_key bound to an Agent environment → only that Agent Project.
+      * strict-v2 runtime deployment key → that Agent Project plus Projects
+        explicitly linked to the Agent and still readable by its owner.
       * api_key WITHOUT env binding (the device-flow CLI key from
         `clawdi auth login`) → ALL the user's projects, same as
         Clerk JWT. The user authenticated as themselves; multi-
@@ -341,15 +340,31 @@ async def project_ids_visible_to(
         when its project wasn't the default, since the daemon's
         explicit `?project_id=...` listing intersected to empty.
     """
-    # Bound api_keys are ALWAYS restricted to their bound project.
-    #
-    # Agent API keys ALSO never see shared Projects via membership:
-    # the Agent boundary is the blast-radius boundary (PR #77). A leaked
-    # hosted-pod key must not gain visibility into projects the user
-    # later joined as a recipient.
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         env_project = await resolve_default_write_project(db, auth)
-        return [env_project]
+        if not is_runtime_deployment_principal(auth):
+            return [env_project]
+
+        readable_project_ids = await project_ids_readable_by_user(db, auth.user_id)
+        linked_project_ids = list(
+            (
+                await db.execute(
+                    select(AgentProjectBinding.project_id)
+                    .where(
+                        AgentProjectBinding.agent_id == auth.api_key.environment_id,
+                        AgentProjectBinding.binding_type == "context",
+                        AgentProjectBinding.project_id.in_(readable_project_ids),
+                    )
+                    .order_by(
+                        AgentProjectBinding.priority.asc(),
+                        AgentProjectBinding.created_at.asc(),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [env_project, *linked_project_ids]
 
     # Clerk JWT and unbound CLI key: owned projects UNION projects the
     # user joined as a member.
