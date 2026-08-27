@@ -29,7 +29,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import (
     AuthContext,
     get_auth,
-    invalidate_api_key_auth_cache,
     is_connected_agent_principal,
     require_any_scope,
     require_scope,
@@ -1771,7 +1770,7 @@ async def _delete_agent_identity(
         )
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     try:
-        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+        await archive_agent_and_project(db, agent=env)
     except AgentLifecycleBoundaryError:
         await db.rollback()
         raise HTTPException(
@@ -1779,8 +1778,6 @@ async def _delete_agent_identity(
             "Agent Project ownership could not be proven; no resources were archived.",
         ) from None
     await db.commit()
-    for key_id in revoked_key_ids:
-        invalidate_api_key_auth_cache(key_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

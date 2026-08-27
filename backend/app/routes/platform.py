@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import invalidate_api_key_auth_cache
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -770,7 +769,7 @@ async def platform_delete_agent(
     }
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
     try:
-        revoked_key_ids = await archive_agent_and_project(db, agent=agent)
+        await archive_agent_and_project(db, agent=agent)
     except AgentLifecycleBoundaryError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -797,8 +796,6 @@ async def platform_delete_agent(
         environment_id=agent_id,
         audit_details=audit_details,
     )
-    for key_id in revoked_key_ids:
-        invalidate_api_key_auth_cache(key_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1330,8 +1327,6 @@ async def platform_revoke_api_key(
         environment_id=api_key.environment_id,
         audit_details={"already_revoked": already_revoked},
     )
-    if not already_revoked:
-        invalidate_api_key_auth_cache(api_key.id)
     return response
 
 

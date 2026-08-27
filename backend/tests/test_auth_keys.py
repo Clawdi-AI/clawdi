@@ -113,16 +113,14 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
-    client: httpx.AsyncClient, db_session, engine, seed_user
+async def test_agent_key_disconnect_revokes_after_commit(
+    client: httpx.AsyncClient, db_session, seed_user
 ):
-    import hashlib
     import uuid
 
     from fastapi import HTTPException
-    from sqlalchemy import event
 
-    from app.core.auth import _api_key_auth_cache, _auth_via_api_key
+    from app.core.auth import _auth_via_api_key
     from app.services.agent_environments import (
         local_machine_registration_key,
         register_agent_environment,
@@ -148,6 +146,44 @@ async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
         environment_id=registered.env.id,
     )
     assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    disconnected = await client.delete(f"/v1/agents/{registered.env.id}")
+    assert disconnected.status_code == 204, disconnected.text
+    with pytest.raises(HTTPException) as exc_info:
+        await _auth_via_api_key(minted.raw_key, db_session)
+    assert exc_info.value.status_code == 401
+    assert "revoked" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_unbound_api_key_auth_reloads_committed_scope_and_revocation(
+    db_session,
+    engine,
+    seed_user,
+):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import event, update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.core.auth import _auth_via_api_key
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="durable authority key",
+        scopes=["vault:read", "vault:write"],
+    )
+    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    await db_session.commit()
+
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as mutation_session:
+        await mutation_session.execute(
+            update(ApiKey).where(ApiKey.id == minted.api_key.id).values(scopes=["vault:read"])
+        )
+        await mutation_session.commit()
 
     statements: list[str] = []
 
@@ -156,19 +192,26 @@ async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
 
     event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
     try:
-        assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+        refreshed = await _auth_via_api_key(minted.raw_key, db_session)
     finally:
         event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
 
+    assert refreshed is not None
+    assert refreshed.api_key is not None
+    assert refreshed.api_key.scopes == ["vault:read"]
     assert len(statements) == 2
     assert "pg_advisory_xact_lock_shared" in statements[0]
     assert "LEFT OUTER JOIN users" in statements[1]
-    assert "LEFT OUTER JOIN agent_environments" in statements[1]
-    key_hash = hashlib.sha256(minted.raw_key.encode()).hexdigest()
-    assert key_hash not in _api_key_auth_cache
+    await db_session.commit()
 
-    disconnected = await client.delete(f"/v1/agents/{registered.env.id}")
-    assert disconnected.status_code == 204, disconnected.text
+    async with sessionmaker() as mutation_session:
+        await mutation_session.execute(
+            update(ApiKey)
+            .where(ApiKey.id == minted.api_key.id)
+            .values(revoked_at=datetime.now(UTC))
+        )
+        await mutation_session.commit()
+
     with pytest.raises(HTTPException) as exc_info:
         await _auth_via_api_key(minted.raw_key, db_session)
     assert exc_info.value.status_code == 401

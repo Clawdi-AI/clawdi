@@ -1202,7 +1202,7 @@ async def test_bound_api_key_skills_etag_reads_current_db_revision(
     seed_user,
     project_id: str,
 ):
-    """A bound key must not 304 from its TTL-cached auth revision snapshot."""
+    """A bound key must not 304 from a stale request auth revision snapshot."""
     from sqlalchemy import update
 
     from app.core.auth import AuthContext, get_auth_short_session
@@ -1273,7 +1273,7 @@ async def test_bound_api_key_skills_etag_reads_current_db_revision(
     assert inline_replay.status_code == 200, inline_replay.text
     assert inline_replay.headers.get("etag") is None
 
-    # Simulate the API-key auth cache retaining its old user snapshot while a
+    # Simulate a request auth context retaining its old user snapshot while a
     # Skill mutation commits a newer revision in PostgreSQL.
     await db_session.execute(
         update(User)

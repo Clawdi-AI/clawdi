@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    multiprocess,
+)
 from prometheus_client.exposition import generate_latest
 
 registry = CollectorRegistry()
@@ -61,6 +69,7 @@ active_polls = Gauge(
     "msg_router_active_polls",
     "Number of active ingress poll loops",
     ["channel"],
+    multiprocess_mode="sum",
     registry=registry,
 )
 webhook_deliveries = Counter(
@@ -119,6 +128,10 @@ channel_retention_budget_exhaustions = Counter(
 
 
 def render_metrics() -> bytes:
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        multiprocess_registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(multiprocess_registry)
+        return generate_latest(multiprocess_registry)
     return generate_latest(registry)
 
 

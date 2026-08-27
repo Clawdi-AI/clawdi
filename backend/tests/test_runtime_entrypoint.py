@@ -71,6 +71,18 @@ def test_api_server_exit_code_propagates(monkeypatch):
     assert runtime_entrypoint._run_api_with_drain() == 7
 
 
+def test_api_startup_wipes_prometheus_multiprocess_dir(monkeypatch, tmp_path):
+    metrics_dir = tmp_path / runtime_entrypoint.PROMETHEUS_MULTIPROC_DIR_NAME
+    metrics_dir.mkdir()
+    (metrics_dir / "counter_123.db").write_bytes(b"stale")
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(metrics_dir))
+    monkeypatch.setattr(runtime_entrypoint, "_API_MIGRATE_ARGS", ["true"])
+    monkeypatch.setattr(runtime_entrypoint, "_API_SERVER_ARGS", ["true"])
+
+    assert runtime_entrypoint._run_api_with_drain() == 0
+    assert list(metrics_dir.iterdir()) == []
+
+
 def test_api_sigterm_drains_before_forwarding(monkeypatch):
     """The listener must outlive the routing: on SIGTERM the entrypoint keeps
     the server running for the drain window, then forwards the signal. Uses a

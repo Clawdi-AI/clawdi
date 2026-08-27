@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
+import subprocess
+import sys
 import uuid
+from pathlib import Path
 
 import httpx
 
@@ -89,6 +93,33 @@ def test_metrics_tracks_gauge_up_and_down() -> None:
 
     text = _metrics_text()
     assert f'msg_router_active_polls{{channel="{channel}"}} 1.0' in text
+
+
+def test_metrics_aggregate_counters_across_processes(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PROMETHEUS_MULTIPROC_DIR"] = str(tmp_path)
+    backend_root = Path(__file__).parents[1]
+    increment = (
+        "from app.services.metrics import inbound_messages; "
+        'inbound_messages.labels(channel="multiprocess-test").inc()'
+    )
+    for _ in range(2):
+        subprocess.run([sys.executable, "-c", increment], cwd=backend_root, env=env, check=True)
+    rendered = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from app.services.metrics import render_metrics; "
+            "print(render_metrics().decode(), end='')",
+        ],
+        cwd=backend_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert 'msg_router_inbound_total{channel="multiprocess-test"} 2.0' in rendered
 
 
 async def test_metrics_route_allows_when_no_auth_is_configured(

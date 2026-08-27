@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, invalidate_api_key_auth_cache, require_web_auth
+from app.core.auth import AuthContext, get_auth, require_web_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.schemas.api_key import (
@@ -139,7 +139,6 @@ async def revoke_api_key(
     api_key.revoked_at = datetime.now(UTC)
     await notify_sync_subscriptions_changed(db, [api_key.user_id])
     await db.commit()
-    invalidate_api_key_auth_cache(api_key.id)
     return ApiKeyRevokeResponse(status="revoked")
 
 
