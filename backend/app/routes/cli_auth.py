@@ -20,10 +20,7 @@ login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
 """
 
 import secrets
-import time
-from collections import deque
 from datetime import UTC, datetime, timedelta
-from threading import Lock
 from urllib.parse import quote
 
 import httpx
@@ -54,6 +51,7 @@ from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_backend import clerk_backend_headers, clerk_backend_url
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
+from app.services.distributed_state import SharedRateLimitExceeded, consume_shared_rate_limit
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
 
@@ -73,12 +71,11 @@ _POLL_INTERVAL_SEC = 2
 # retry in ≤ 10 min once expired rows clear.
 _MAX_ACTIVE_DEVICES = 10_000
 
-# Per-IP rolling-window throttle for the unauthenticated legacy bootstrap
+# Shared rolling-window throttle for the unauthenticated legacy bootstrap
 # endpoints. Protects against a single client hammering /device or
 # /poll faster than legitimate user-driven retries — without it, a
 # bot loop fits inside the global table cap but still chews DB
-# round-trips. In-process state, resets on restart; matches the
-# pattern used in routes/internal.py.
+# round-trips. PostgreSQL keeps the limit authoritative across API workers.
 _DEVICE_RATE_WINDOW_S = 60.0
 # 90/min: a normal legacy browser-approved bootstrap is 1× POST /device + N× POST /poll
 # (poll cadence is ~2s). A user who takes the full 60s before approving
@@ -92,15 +89,14 @@ _DEVICE_PER_IP_MAX = 90
 # Hard cap on distinct buckets the limiter tracks at once. The
 # /poll route buckets on `body.device_code`, which an
 # unauthenticated client controls — without this cap an attacker
-# could spam unique random codes and inflate
-# `_device_per_ip_attempts` until OOM. Cap × per-bucket cost
+# could spam unique random codes and inflate shared state indefinitely.
+# Cap × per-bucket cost
 # (~90 timestamps each) keeps the limiter bounded regardless of
-# request rate. Legitimate concurrency: ~the number of in-flight
-# legacy browser approvals = ≤ `_MAX_ACTIVE_DEVICES` (10 000), so 12 000 is
-# headroom for /device IP buckets + poll buckets together.
-_DEVICE_RATE_MAX_BUCKETS = 12_000
-_device_per_ip_attempts: dict[str, deque[float]] = {}
-_device_rate_lock = Lock()
+# request rate. Each active flow can occupy three buckets: the
+# /device IP, /poll IP, and device code. The 32 000 cap covers all
+# `_MAX_ACTIVE_DEVICES` (10 000) flows plus modest headroom.
+_DEVICE_RATE_MAX_BUCKETS = 32_000
+_DEVICE_RATE_NAMESPACE = "cli-device-flow"
 
 
 async def _oauth_setting_or_503(db: AsyncSession) -> ClerkCliOAuthSetting:
@@ -214,96 +210,29 @@ def _real_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _check_device_rate_limit(bucket_key: str) -> None:
+async def _check_device_rate_limit(bucket_key: str) -> None:
     """Raise 429 if `bucket_key` has hit the legacy bootstrap cap on
     endpoints inside the rolling window. The key is the real
     client IP for `/device` (no device_code yet) and the
-    device_code itself for `/poll` (each in-flight authorization
-    gets its own bucket — one user's polling can't 429-out
-    another). Lock-protected because the in-process deque is not
-    async-safe.
-
-    Bucket eviction:
-      - **Lazy**: once a bucket's deque empties (either by
-        passing the rolling window or never being filled), drop
-        its dict entry. Without this an attacker spamming
-        `/poll` with unique random `device_code`s every request
-        would inflate the dict indefinitely — round-53 P1.
-      - **Hard cap**: refuse to allocate a new bucket once the
-        dict is at `_DEVICE_RATE_MAX_BUCKETS` entries. Hitting
-        the cap returns 429; legitimate flows hit the lazy
-        eviction path long before the cap, so this only fires
-        under deliberate flooding.
+    device_code itself for `/poll` (each in-flight authorization gets its own
+    bucket, so one user's polling cannot 429 another). The shared service uses
+    an exact sliding window, hashes untrusted keys before persistence, expires
+    idle buckets, and enforces the namespace-wide bucket bound atomically.
     """
-    now = time.monotonic()
-    cutoff = now - _DEVICE_RATE_WINDOW_S
-    with _device_rate_lock:
-        attempts = _device_per_ip_attempts.get(bucket_key)
-        if attempts is None:
-            # New bucket — guard against unbounded dict growth
-            # before allocating. The cap is generous (≥ legit
-            # concurrency) so this only trips under flood.
-            #
-            # Scrub expired buckets BEFORE the cap check.
-            # Without this, a flood that fills the dict to MAX
-            # could leave every entry expired (60s window
-            # passed) yet still in the dict — every legitimate
-            # new flow then 429s permanently because lazy
-            # eviction only runs AFTER successful allocation,
-            # which the cap check refuses to allow.
-            if len(_device_per_ip_attempts) >= _DEVICE_RATE_MAX_BUCKETS:
-                _scrub_empty_buckets(cutoff)
-            if len(_device_per_ip_attempts) >= _DEVICE_RATE_MAX_BUCKETS:
-                raise HTTPException(
-                    status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="device flow rate limit exceeded",
-                    headers={"Retry-After": str(int(_DEVICE_RATE_WINDOW_S))},
-                )
-            attempts = deque[float]()
-            _device_per_ip_attempts[bucket_key] = attempts
-        while attempts and attempts[0] < cutoff:
-            attempts.popleft()
-        if len(attempts) >= _DEVICE_PER_IP_MAX:
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="device flow rate limit exceeded",
-                headers={"Retry-After": str(int(_DEVICE_RATE_WINDOW_S))},
-            )
-        attempts.append(now)
-        # Lazy eviction lookahead: if THIS append left an empty
-        # deque (impossible — we just appended) skip; else if
-        # ANOTHER bucket's deque is now empty by virtue of us
-        # observing time advance, scrub a small batch. Costs are
-        # bounded — we only sweep when the dict has grown past
-        # half the hard cap, so quiet accounts aren't paying for
-        # cleanup that isn't needed.
-        if len(_device_per_ip_attempts) > _DEVICE_RATE_MAX_BUCKETS // 2:
-            _scrub_empty_buckets(cutoff)
-
-
-def _scrub_empty_buckets(cutoff: float) -> None:
-    """Drop dict entries whose deque is empty after pruning
-    expired timestamps. Called under `_device_rate_lock`. Bounded
-    work per call — capped at 256 entries scanned so a single
-    /poll under flood doesn't pay O(N) on every hit."""
-    SCAN_BUDGET = 256
-    seen = 0
-    keys_to_drop: list[str] = []
-    for k, dq in _device_per_ip_attempts.items():
-        while dq and dq[0] < cutoff:
-            dq.popleft()
-        if not dq:
-            keys_to_drop.append(k)
-        seen += 1
-        if seen >= SCAN_BUDGET:
-            break
-    for k in keys_to_drop:
-        # Re-check under lock — the deque could've grown between
-        # the loop above and the delete. dict.pop with default
-        # avoids KeyError on a concurrent writer.
-        dq = _device_per_ip_attempts.get(k)
-        if dq is not None and not dq:
-            _device_per_ip_attempts.pop(k, None)
+    try:
+        await consume_shared_rate_limit(
+            namespace=_DEVICE_RATE_NAMESPACE,
+            key=bucket_key,
+            limit=_DEVICE_PER_IP_MAX,
+            window=timedelta(seconds=_DEVICE_RATE_WINDOW_S),
+            max_buckets=_DEVICE_RATE_MAX_BUCKETS,
+        )
+    except SharedRateLimitExceeded as error:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="device flow rate limit exceeded",
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
 
 
 def _generate_user_code() -> str:
@@ -333,7 +262,7 @@ async def start_device_flow(
     # Bucket on the real client IP (proxy-aware) so concurrent
     # CLI logins behind the same reverse proxy don't share a single
     # 90/min bucket.
-    _check_device_rate_limit(_real_client_ip(request))
+    await _check_device_rate_limit(_real_client_ip(request))
     # Bound the (unauthenticated) write surface: prune anything past TTL and
     # refuse new inserts above a hard ceiling. Cheap — both queries hit the
     # same indexed column. Worst-case growth between calls is bounded by
@@ -402,8 +331,8 @@ async def poll_device_flow(
     #    its own 90/min budget so a legitimate user polling at
     #    2s cadence (~30 polls per 60s window) never collides
     #    with another flow that shares the same client IP.
-    _check_device_rate_limit(f"poll-ip:{_real_client_ip(request)}")
-    _check_device_rate_limit(f"poll:{body.device_code}")
+    await _check_device_rate_limit(f"poll-ip:{_real_client_ip(request)}")
+    await _check_device_rate_limit(f"poll:{body.device_code}")
     # `with_for_update()` is what makes one-shot delivery actually one-shot.
     # Two CLIs accidentally polling the same device_code would otherwise both
     # read `approved` + `api_key_raw` under READ COMMITTED isolation and both

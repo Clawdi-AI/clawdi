@@ -233,8 +233,20 @@ async def test_oauth_cli_sse_without_protocol_header_subscribes_then_closes_at_e
     async def visible_projects(_db, _auth):
         return []
 
+    async def acquire_lease(**_kwargs):
+        return uuid.uuid4()
+
+    async def refresh_lease(_lease_id, **_kwargs):
+        return True
+
+    async def release_lease(_lease_id):
+        return None
+
     monkeypatch.setattr(sync_route, "async_session_factory", ShortSession)
     monkeypatch.setattr(sync_route, "project_ids_visible_to", visible_projects)
+    monkeypatch.setattr(sync_route, "acquire_sync_subscription_lease", acquire_lease)
+    monkeypatch.setattr(sync_route, "refresh_sync_subscription_lease", refresh_lease)
+    monkeypatch.setattr(sync_route, "release_sync_subscription_lease", release_lease)
     monkeypatch.setattr(sync_route, "OAUTH_ACCESS_EXPIRY_SKEW", timedelta(0))
 
     request = _connected_request()

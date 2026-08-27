@@ -226,25 +226,19 @@ async def test_poll_rate_limit_keyed_per_device_code(client: httpx.AsyncClient, 
       - confirming flow B's first poll from a DIFFERENT real
         IP still returns 200 `pending`.
     """
-    from app.routes.cli_auth import (
-        _DEVICE_PER_IP_MAX,
-        _device_per_ip_attempts,
-        _device_rate_lock,
-    )
+    from app.routes import cli_auth
 
     monkeypatch.setattr(settings, "trust_forwarded_for", True)
-    # Reset shared state so other tests' attempts don't bleed in.
-    with _device_rate_lock:
-        _device_per_ip_attempts.clear()
 
     flow_a = await _start(client, label="cli a")
     flow_b = await _start(client, label="cli b")
+    monkeypatch.setattr(cli_auth, "_DEVICE_PER_IP_MAX", 3)
 
     # Hammer flow A's poll buckets (IP + device_code) up to
     # the cap. The post needs an XFF header so the real-IP
     # bucket keys on `1.1.1.1` not the test client's
     # connection host.
-    for _ in range(_DEVICE_PER_IP_MAX):
+    for _ in range(3):
         r = await client.post(
             "/v1/cli/auth/poll",
             json={"device_code": flow_a["device_code"]},
@@ -274,38 +268,30 @@ async def test_poll_rate_limit_keyed_per_device_code(client: httpx.AsyncClient, 
 
 
 @pytest.mark.asyncio
-async def test_poll_rate_limiter_evicts_unbounded_random_device_codes(
+async def test_poll_rate_limiter_bounds_random_device_codes_by_ip(
     client: httpx.AsyncClient,
+    monkeypatch,
 ):
     """Round-53 P1: /poll buckets on the unvalidated body
-    `device_code`. Pre-fix an attacker could send a stream of
-    unique random codes and each one allocated a fresh deque in
-    `_device_per_ip_attempts` that was never evicted —
-    backend memory grew without bound. Now:
-      - lazy eviction drops empty deques on every check, AND
-      - the IP-keyed `poll-ip:` bucket caps the per-IP burst
-        at 90/min regardless of how many random codes the
-        attacker cycles through.
+    `device_code`. The IP-keyed bucket must cap a stream of unique codes before
+    per-code buckets can grow without bound.
 
     Pinned by sending many unique random device_codes; the
     real-IP bucket exhausts after 90, subsequent polls 429."""
     import secrets as _secrets
 
-    from app.routes.cli_auth import (
-        _DEVICE_PER_IP_MAX,
-        _device_per_ip_attempts,
-        _device_rate_lock,
-    )
+    from app.routes import cli_auth
 
-    with _device_rate_lock:
-        _device_per_ip_attempts.clear()
+    monkeypatch.setattr(settings, "trust_forwarded_for", True)
+    monkeypatch.setattr(cli_auth, "_DEVICE_PER_IP_MAX", 3)
 
     successes = 0
     saw_429 = False
-    for i in range(200):
+    for i in range(5):
         r = await client.post(
             "/v1/cli/auth/poll",
             json={"device_code": f"forged-{i}-{_secrets.token_urlsafe(8)}"},
+            headers={"X-Forwarded-For": "192.0.2.92"},
         )
         if r.status_code == 200:
             successes += 1
@@ -313,9 +299,7 @@ async def test_poll_rate_limiter_evicts_unbounded_random_device_codes(
             saw_429 = True
             break
 
-    # IP bucket caps the per-IP burst at 90/min — at most
-    # that many successes go through before 429.
-    assert successes <= _DEVICE_PER_IP_MAX
+    assert successes == 3
     # 429 must fire — otherwise the limiter is broken.
     assert saw_429
 
@@ -329,102 +313,10 @@ async def test_poll_rejects_oversized_device_code(client: httpx.AsyncClient):
     Schema-level max_length=128 rejects oversize codes at
     request validation (422) before the limiter or DB sees them.
 
-    Pinned by sending a 200KB device_code: the request must
-    422-reject and the limiter dict must remain unchanged."""
-    from app.routes.cli_auth import (
-        _device_per_ip_attempts,
-        _device_rate_lock,
-    )
-
-    with _device_rate_lock:
-        _device_per_ip_attempts.clear()
-        before_keys = set(_device_per_ip_attempts.keys())
+    Pinned by sending a 200KB device_code: request validation must reject it
+    before the route or shared limiter runs."""
 
     huge = "x" * 200_000
     r = await client.post("/v1/cli/auth/poll", json={"device_code": huge})
 
-    # Pydantic constraint violation surfaces as 422.
     assert r.status_code == 422, r.text
-
-    with _device_rate_lock:
-        # The huge code must NEVER have entered the limiter dict.
-        after_keys = set(_device_per_ip_attempts.keys())
-        # Allow the IP-only key the limiter populates lazily
-        # for any caller (it stays bounded), but no per-code
-        # entry derived from the rejected payload.
-        for k in after_keys - before_keys:
-            assert "x" * 100 not in k, f"oversize code leaked into limiter: {k[:80]}..."
-
-
-@pytest.mark.asyncio
-async def test_poll_rate_limit_hard_cap_429s_when_buckets_full_in_window(
-    client: httpx.AsyncClient,
-):
-    """Round-r5 P1: the hard `_DEVICE_RATE_MAX_BUCKETS` cap MUST
-    refuse a new bucket allocation when the dict is full of
-    in-window timestamps that the scrub pass can't free. Pre-fix
-    a regression that drops the second `len(...) >=
-    MAX` re-check after `_scrub_empty_buckets` would let
-    allocation proceed past the cap and OOM under flood;
-    symmetric, a regression that flips the cutoff sign would
-    refuse legitimate flows after the dict aged into the in-
-    window range.
-
-    Pinned by:
-      1. fill `_device_per_ip_attempts` to MAX with deques
-         carrying fresh (in-window) timestamps;
-      2. assert the next /poll returns 429 with Retry-After;
-      3. expire all timestamps (advance the in-process
-         monotonic-clock proxy by re-stamping cutoff), assert a
-         fresh /poll succeeds.
-    """
-    import time as _time
-    from collections import deque as _deque
-
-    from app.routes.cli_auth import (
-        _DEVICE_RATE_MAX_BUCKETS,
-        _device_per_ip_attempts,
-        _device_rate_lock,
-    )
-
-    now = _time.monotonic()
-
-    with _device_rate_lock:
-        _device_per_ip_attempts.clear()
-        # Fill to the cap with deques each holding an in-window
-        # timestamp so scrub can't free them.
-        for i in range(_DEVICE_RATE_MAX_BUCKETS):
-            dq: _deque = _deque()
-            dq.append(now)
-            _device_per_ip_attempts[f"forged-bucket-{i}"] = dq
-
-    # 1) full + in-window → next /poll must 429.
-    r = await client.post(
-        "/v1/cli/auth/poll",
-        json={"device_code": "fresh-attacker-code"},
-    )
-    assert r.status_code == 429, r.text
-    assert "Retry-After" in r.headers
-    assert int(r.headers["Retry-After"]) > 0
-
-    # 2) age every bucket past the rolling window (replace each
-    # timestamp with one well outside the cutoff). Now the
-    # scrub pass can free them and a legitimate flow must
-    # succeed.
-    with _device_rate_lock:
-        old = now - 9999.0
-        for k, dq in _device_per_ip_attempts.items():
-            dq.clear()
-            dq.append(old)
-
-    # /poll for an unknown device_code returns 200 with status
-    # "expired" by design (don't leak existence); the relevant
-    # assertion is "no longer 429".
-    r2 = await client.post(
-        "/v1/cli/auth/poll",
-        json={"device_code": "post-aged-flow"},
-    )
-    assert r2.status_code != 429, (r2.status_code, r2.text)
-
-    with _device_rate_lock:
-        _device_per_ip_attempts.clear()
