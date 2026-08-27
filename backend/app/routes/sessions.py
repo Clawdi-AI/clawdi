@@ -98,6 +98,7 @@ from app.schemas.session import (
     SessionPermissionCreate,
     SessionPermissionResponse,
     SessionPermissionsResponse,
+    SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
     SessionUploadResponse,
 )
@@ -126,6 +127,7 @@ from app.services.session_content import (
     SessionContentMissing,
     load_session_messages,
     session_has_uploaded_content,
+    slice_session_messages,
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
@@ -2642,6 +2644,8 @@ async def list_sessions(
             message_relevance_expr,
             message_match.c.content,
             message_match.c.role,
+            message_match.c.position,
+            message_match.c.content_revision,
         )
     session_filters: list[Any] = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
@@ -2776,15 +2780,27 @@ async def list_sessions(
                 message_score,
                 message_content,
                 message_role,
+                message_position,
+                message_revision,
             ) = row
             if (
                 message_score is not None
                 and isinstance(message_content, str)
                 and message_role in ("user", "assistant")
+                and isinstance(message_position, int)
+                and isinstance(message_revision, str)
             ):
+                anchor_kind: Literal["snapshot_offset", "event_seq"] = (
+                    "event_seq" if s.content_protocol == "events-v1" else "snapshot_offset"
+                )
                 search_match = SessionSearchMatchResponse(
                     role=message_role,
                     excerpt=_message_search_excerpt(message_content, q),
+                    anchor=SessionSearchAnchorResponse(
+                        kind=anchor_kind,
+                        position=message_position,
+                        revision=message_revision,
+                    ),
                 )
         else:
             s, agent_type, display_name, default_name, machine_name, shared = row
@@ -3081,6 +3097,7 @@ async def get_session_messages(
     session_id: UUID,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
+    direction: Literal["asc", "desc"] = Query(default="asc"),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionMessagesPage:
@@ -3090,14 +3107,11 @@ async def get_session_messages(
     this endpoint slices the same blob server-side so the
     dashboard doesn't ship 10+ MB of messages on a long session.
 
-    Pagination is offset-based, NOT cursor-based: the underlying
-    file-store blob is immutable per upload (each push replaces
-    the entire JSON array), so `array[offset:offset+limit]` is
-    stable for a given `content_hash`. Clients pin to a snapshot
-    by reading `content_hash` from the parent
-    `/v1/sessions/{id}` response and refusing to mix pages
-    from different hashes — a daemon append in between would
-    show up as a hash change and trigger a refetch.
+    Pagination is offset-based within the requested direction. `offset=0`
+    starts at the oldest visible message for ascending reads and at the newest
+    visible message for descending reads. Clients pin pages to the parent
+    session's `content_hash`, which changes after snapshot replacement or event
+    append.
     """
     bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
@@ -3129,7 +3143,7 @@ async def get_session_messages(
         ) from None
 
     total = len(raw)
-    sliced = raw[offset : offset + limit]
+    sliced = slice_session_messages(raw, offset=offset, limit=limit, direction=direction)
     return SessionMessagesPage(
         items=[SessionMessageResponse.model_validate(m) for m in sliced],
         total=total,

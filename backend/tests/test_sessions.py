@@ -1042,6 +1042,23 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     assert len(page3["items"]) == 50
     assert page3["items"][-1]["content"] == "msg 249"
 
+    # Descending offsets are relative to the newest end. The server computes
+    # this from the actual content rather than trusting batch metadata (which
+    # intentionally says 5 above while the blob contains 250 messages).
+    newest = await client.get(
+        f"/v1/sessions/{session_id}/messages?direction=desc&offset=0&limit=100"
+    )
+    newest_page = newest.json()
+    assert newest_page["total"] == 250
+    assert newest_page["offset"] == 0
+    assert newest_page["items"][0]["content"] == "msg 249"
+    assert newest_page["items"][-1]["content"] == "msg 150"
+    older = await client.get(
+        f"/v1/sessions/{session_id}/messages?direction=desc&offset=100&limit=100"
+    )
+    assert older.json()["items"][0]["content"] == "msg 149"
+    assert older.json()["items"][-1]["content"] == "msg 50"
+
     # Offset past the end → empty items, NOT 4xx (the blob may
     # have shrunk between paginated reads).
     r4 = await client.get(f"/v1/sessions/{session_id}/messages?offset=500&limit=100")

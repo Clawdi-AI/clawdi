@@ -1353,14 +1353,11 @@ export interface paths {
          *     this endpoint slices the same blob server-side so the
          *     dashboard doesn't ship 10+ MB of messages on a long session.
          *
-         *     Pagination is offset-based, NOT cursor-based: the underlying
-         *     file-store blob is immutable per upload (each push replaces
-         *     the entire JSON array), so `array[offset:offset+limit]` is
-         *     stable for a given `content_hash`. Clients pin to a snapshot
-         *     by reading `content_hash` from the parent
-         *     `/v1/sessions/{id}` response and refusing to mix pages
-         *     from different hashes — a daemon append in between would
-         *     show up as a hash change and trigger a refetch.
+         *     Pagination is offset-based within the requested direction. `offset=0`
+         *     starts at the oldest visible message for ascending reads and at the newest
+         *     visible message for descending reads. Clients pin pages to the parent
+         *     session's `content_hash`, which changes after snapshot replacement or event
+         *     append.
          */
         get: operations["get_session_messages_v1_sessions__session_id__messages_get"];
         put?: never;
@@ -8052,9 +8049,11 @@ export interface components {
          *     (`GET /v1/sessions/{id}/content`) stays unchanged so the CLI's
          *     `clawdi pull` mirror still gets a single full JSON array.
          *
-         *     `total` is the count of messages in the underlying content file
+         *     `total` is the count of visible messages in the current content revision
          *     (not the count returned in `items`) so the client can render a
-         *     "loaded N/M" hint and decide whether to fetch more pages.
+         *     "loaded N/M" hint and decide whether to fetch more pages. `offset` is
+         *     relative to the requested order: zero means the oldest message for
+         *     ascending reads and the newest message for descending reads.
          */
         SessionMessagesPage: {
             /** Items */
@@ -8163,6 +8162,18 @@ export interface components {
             /** Model */
             model?: string | null;
         };
+        /** SessionSearchAnchorResponse */
+        SessionSearchAnchorResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "snapshot_offset" | "event_seq";
+            /** Position */
+            position: number;
+            /** Revision */
+            revision: string;
+        };
         /** SessionSearchMatchResponse */
         SessionSearchMatchResponse: {
             /**
@@ -8172,6 +8183,7 @@ export interface components {
             role: "user" | "assistant";
             /** Excerpt */
             excerpt: string;
+            anchor: components["schemas"]["SessionSearchAnchorResponse"];
         };
         /** SessionTextPart */
         SessionTextPart: {
@@ -11726,6 +11738,7 @@ export interface operations {
             query?: {
                 offset?: number;
                 limit?: number;
+                direction?: "asc" | "desc";
             };
             header?: never;
             path: {
@@ -11952,6 +11965,7 @@ export interface operations {
             query?: {
                 offset?: number;
                 limit?: number;
+                direction?: "asc" | "desc";
             };
             header?: never;
             path: {

@@ -464,9 +464,16 @@ class SessionBatchResponse(BaseModel):
     suppressed: list[str] = []
 
 
+class SessionSearchAnchorResponse(BaseModel):
+    kind: Literal["snapshot_offset", "event_seq"]
+    position: int = Field(ge=0)
+    revision: str
+
+
 class SessionSearchMatchResponse(BaseModel):
     role: Literal["user", "assistant"]
     excerpt: str
+    anchor: SessionSearchAnchorResponse
 
 
 class SessionListItemResponse(BaseModel):
@@ -641,9 +648,11 @@ class SessionMessagesPage(BaseModel):
     (`GET /v1/sessions/{id}/content`) stays unchanged so the CLI's
     `clawdi pull` mirror still gets a single full JSON array.
 
-    `total` is the count of messages in the underlying content file
+    `total` is the count of visible messages in the current content revision
     (not the count returned in `items`) so the client can render a
-    "loaded N/M" hint and decide whether to fetch more pages.
+    "loaded N/M" hint and decide whether to fetch more pages. `offset` is
+    relative to the requested order: zero means the oldest message for
+    ascending reads and the newest message for descending reads.
     """
 
     items: list[SessionMessageResponse]

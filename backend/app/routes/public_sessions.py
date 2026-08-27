@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
@@ -45,6 +46,7 @@ from app.services.session_content import (
     SessionContentMissing,
     load_session_messages,
     session_has_uploaded_content,
+    slice_session_messages,
 )
 from app.services.session_export import (
     public_session_base_fields,
@@ -152,6 +154,7 @@ async def get_shared_session_messages(
     session_id: UUID = Path(...),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
+    direction: Literal["asc", "desc"] = Query(default="asc"),
     db: AsyncSession = Depends(get_session),
     visitor: AuthContext | None = Depends(optional_web_auth),
 ) -> SessionMessagesPage:
@@ -175,7 +178,7 @@ async def get_shared_session_messages(
         ) from None
 
     total = len(raw)
-    sliced = raw[offset : offset + limit]
+    sliced = slice_session_messages(raw, offset=offset, limit=limit, direction=direction)
     return SessionMessagesPage(
         items=[SessionMessageResponse.model_validate(m) for m in sliced],
         total=total,

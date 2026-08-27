@@ -162,6 +162,13 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     assert matched["items"][0]["search_match"] == {
         "role": "assistant",
         "excerpt": original[0]["content"],
+        "anchor": {
+            "kind": "snapshot_offset",
+            "position": 0,
+            "revision": (
+                "snapshot:" + hashlib.sha256(json.dumps(original).encode("utf-8")).hexdigest()
+            ),
+        },
     }
     fuzzy = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
     assert [item["local_session_id"] for item in fuzzy["items"]] == [local_id]
@@ -193,6 +200,13 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     assert current["items"][0]["search_match"] == {
         "role": "user",
         "excerpt": replacement[0]["content"],
+        "anchor": {
+            "kind": "snapshot_offset",
+            "position": 0,
+            "revision": (
+                "snapshot:" + hashlib.sha256(json.dumps(replacement).encode("utf-8")).hexdigest()
+            ),
+        },
     }
 
     session = (

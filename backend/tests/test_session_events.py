@@ -374,6 +374,25 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         local_session_id=local_id,
         events=events,
     )
+    initial_messages = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"direction": "desc", "limit": 2},
+    )
+    assert initial_messages.status_code == 200, initial_messages.text
+    assert initial_messages.json() == {
+        "items": [
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "model": "claude-sonnet",
+                "timestamp": None,
+            },
+            {"role": "user", "content": "inspect this", "model": None, "timestamp": None},
+        ],
+        "total": 2,
+        "offset": 0,
+        "limit": 2,
+    }
     generation_commit = {
         "append_id": generation_append_id,
         "base_generation": None,
@@ -581,11 +600,39 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert "opaque" not in projected.text
     assert "secret tool output" not in projected.text
 
+    # The committed generation now spans three immutable chunks. The read path
+    # must use the new event head after both appends instead of serving the
+    # two-message projection cached before them.
+    latest_messages = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"direction": "desc", "limit": 2},
+    )
+    assert latest_messages.status_code == 200, latest_messages.text
+    assert latest_messages.json() == {
+        "items": [
+            {"role": "assistant", "content": "appended answer", "model": None, "timestamp": None},
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "model": "claude-sonnet",
+                "timestamp": None,
+            },
+        ],
+        "total": 3,
+        "offset": 0,
+        "limit": 2,
+    }
+
     visible_search = (await client.get("/v1/sessions", params={"q": "visible answer"})).json()
     assert [item["local_session_id"] for item in visible_search["items"]] == [local_id]
     assert visible_search["items"][0]["search_match"] == {
         "role": "assistant",
         "excerpt": "visible answer",
+        "anchor": {
+            "kind": "event_seq",
+            "position": 4,
+            "revision": f"events:{generation}",
+        },
     }
     for private_query in ("private chain of thought", "secret tool output"):
         private_search = (await client.get("/v1/sessions", params={"q": private_query})).json()

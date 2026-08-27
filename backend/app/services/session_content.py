@@ -16,7 +16,8 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Literal, Protocol
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -46,6 +47,7 @@ class _FileStoreLike(Protocol):
 _MESSAGES_CACHE_MAX = 16
 _MESSAGES_CACHE_TTL_S = 300.0
 type SessionMessageValue = dict[str, JsonValue]
+type SessionMessageDirection = Literal["asc", "desc"]
 
 _SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
     list[SessionMessageValue]
@@ -93,6 +95,22 @@ def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
         _messages_cache.move_to_end(key)
         while len(_messages_cache) > _MESSAGES_CACHE_MAX:
             _messages_cache.popitem(last=False)
+
+
+def slice_session_messages(
+    messages: Sequence[SessionMessageValue],
+    *,
+    offset: int,
+    limit: int,
+    direction: SessionMessageDirection,
+) -> list[SessionMessageValue]:
+    """Slice messages in the requested order using an order-relative offset."""
+    if direction == "asc":
+        return list(messages[offset : offset + limit])
+
+    end = max(0, len(messages) - offset)
+    start = max(0, end - limit)
+    return list(reversed(messages[start:end]))
 
 
 async def load_session_messages(

@@ -98,6 +98,8 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             candidates.c.content,
             candidates.c.role,
             candidates.c.score,
+            candidates.c.position,
+            candidates.c.content_revision,
         )
         .join(Session, Session.id == candidates.c.session_id)
         .where(
