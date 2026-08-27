@@ -55,6 +55,11 @@ from app.core.skill_sync_protocol import (
 )
 from app.models.api_key import ApiKey
 from app.services import sync_events
+from app.services.distributed_state import (
+    acquire_sync_subscription_lease,
+    refresh_sync_subscription_lease,
+    release_sync_subscription_lease,
+)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 log = logging.getLogger(__name__)
@@ -68,6 +73,7 @@ log = logging.getLogger(__name__)
 # 429 until another stream closes. This bounds account-level
 # memory and connection use.
 PER_USER_CONNECTION_CAP = 10
+PER_BOUND_KEY_CONNECTION_CAP = 3
 
 # Heartbeat cadence. SSE comments (`: ping\n\n`) are ignored by
 # clients but keep intermediary proxies (k8s ingress, Cloudflare)
@@ -75,6 +81,7 @@ PER_USER_CONNECTION_CAP = 10
 # typical 60s default. Daemon treats 60s of silence as "stale,
 # reconnect."
 HEARTBEAT_INTERVAL_S = 25.0
+SUBSCRIPTION_LEASE_TTL = timedelta(seconds=90)
 OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
 
 
@@ -126,6 +133,36 @@ async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
         failure = task.exception()
         if failure is not None:
             raise failure
+
+
+async def _refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Event) -> None:
+    """Renew the shared SSE slot and fail closed if its authority is lost."""
+    while not close_stream.is_set():
+        try:
+            await asyncio.wait_for(close_stream.wait(), timeout=HEARTBEAT_INTERVAL_S)
+            return
+        except TimeoutError:
+            pass
+        try:
+            refreshed = await refresh_sync_subscription_lease(
+                lease_id,
+                ttl=SUBSCRIPTION_LEASE_TTL,
+            )
+        except Exception as error:  # noqa: BLE001 - a stale uncounted stream is unsafe
+            log.warning("sync events: subscription lease refresh failed: %s", error)
+            close_stream.set()
+            return
+        if not refreshed:
+            log.warning("sync events: subscription lease expired")
+            close_stream.set()
+            return
+
+
+async def _release_subscription_lease_safely(lease_id: UUID) -> None:
+    try:
+        await release_sync_subscription_lease(lease_id)
+    except Exception as error:  # noqa: BLE001 - expiry is the crash-safe fallback
+        log.warning("sync events: subscription lease release failed: %s", error)
 
 
 async def _stream(
@@ -231,6 +268,7 @@ async def events(
 
     refresh_key = str(user_id)
     refresh_requested = sync_events.sync_subscriptions_changed.subscribe(refresh_key)
+    lease_id: UUID | None = None
     try:
         # Subscribe to mutation wakeups before the initial reads. A commit that
         # crosses the handshake either appears in these reads or leaves the
@@ -241,6 +279,24 @@ async def events(
                 if inactive_reason is not None:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key is revoked")
             initial_visible = frozenset(await project_ids_visible_to(initial_db, auth))
+        bound_api_key_id = (
+            auth.api_key.id
+            if auth.api_key is not None and auth.api_key.environment_id is not None
+            else None
+        )
+        lease_id = await acquire_sync_subscription_lease(
+            user_id=user_id,
+            bound_api_key_id=bound_api_key_id,
+            max_per_user=PER_USER_CONNECTION_CAP,
+            max_per_key=PER_BOUND_KEY_CONNECTION_CAP,
+            ttl=SUBSCRIPTION_LEASE_TTL,
+        )
+        if lease_id is None:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="too many concurrent sync subscriptions for this user",
+                headers={"Retry-After": "30"},
+            )
         subscription = await sync_events.try_subscribe(
             user_id,
             initial_visible,
@@ -254,6 +310,7 @@ async def events(
             # authority of 3: skill sync + runtime watch + one diagnostic.
             is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),
             environment_id=(auth.api_key.environment_id if auth.api_key is not None else None),
+            max_per_key=PER_BOUND_KEY_CONNECTION_CAP,
         )
         if subscription is None:
             raise HTTPException(
@@ -262,9 +319,12 @@ async def events(
                 headers={"Retry-After": "30"},
             )
     except BaseException:
+        if lease_id is not None:
+            await _release_subscription_lease_safely(lease_id)
         sync_events.sync_subscriptions_changed.unsubscribe(refresh_key, refresh_requested)
         raise
     queue, subscriber = subscription
+    assert lease_id is not None
 
     log.info(
         "sync events: subscribed user=%s visible_projects=%d connection_count=%s",
@@ -350,12 +410,13 @@ async def events(
     async def gen() -> AsyncIterator[bytes]:
         refresh_task = asyncio.create_task(refresh_visibility())
         expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
+        lease_task = asyncio.create_task(_refresh_subscription_lease(lease_id, revoked))
         try:
             async for chunk in _stream(queue, request, revoked):
                 yield chunk
         finally:
             try:
-                await _cancel_and_wait(refresh_task, expiry_task)
+                await _cancel_and_wait(refresh_task, expiry_task, lease_task)
             finally:
                 try:
                     sync_events.sync_subscriptions_changed.unsubscribe(
@@ -363,12 +424,15 @@ async def events(
                         refresh_requested,
                     )
                 finally:
-                    sync_events.unsubscribe(user_id, queue)
-                    log.info(
-                        "sync events: unsubscribed user=%s remaining=%s",
-                        user_id,
-                        sync_events.connection_count(user_id),
-                    )
+                    try:
+                        sync_events.unsubscribe(user_id, queue)
+                        log.info(
+                            "sync events: unsubscribed user=%s remaining=%s",
+                            user_id,
+                            sync_events.connection_count(user_id),
+                        )
+                    finally:
+                        await _release_subscription_lease_safely(lease_id)
 
     # `text/event-stream` is the SSE content type. `X-Accel-Buffering:
     # no` disables nginx response buffering on the off chance an

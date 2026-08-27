@@ -90,16 +90,21 @@ async def test_preview_unknown_token_404(client_unauth):
 async def test_preview_rate_limit_blocks_token_probe_flood(client_unauth, monkeypatch):
     from app.routes import share_redeem as share_redeem_routes
 
-    share_redeem_routes._PREVIEW_RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "trust_forwarded_for", True)
     monkeypatch.setattr(share_redeem_routes, "_PREVIEW_RATE_LIMIT", 2)
-    try:
-        assert (await client_unauth.get("/v1/share/bogus-one/preview")).status_code == 404
-        assert (await client_unauth.get("/v1/share/bogus-two/preview")).status_code == 404
-        blocked = await client_unauth.get("/v1/share/bogus-three/preview")
-        assert blocked.status_code == 429, blocked.text
-        assert blocked.headers["retry-after"]
-    finally:
-        share_redeem_routes._PREVIEW_RATE_BUCKETS.clear()
+    headers = {"CF-Connecting-IP": "192.0.2.91"}
+    assert (
+        await client_unauth.get("/v1/share/bogus-one/preview", headers=headers)
+    ).status_code == 404
+    assert (
+        await client_unauth.get("/v1/share/bogus-two/preview", headers=headers)
+    ).status_code == 404
+    blocked = await client_unauth.get(
+        "/v1/share/bogus-three/preview",
+        headers=headers,
+    )
+    assert blocked.status_code == 429, blocked.text
+    assert blocked.headers["retry-after"]
 
 
 @pytest.mark.asyncio
