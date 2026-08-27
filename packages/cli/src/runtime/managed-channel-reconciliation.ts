@@ -78,7 +78,19 @@ export function buildHermesManagedChannelsPatch(
 						base_file_url: "https://api.telegram.org/file/bot",
 					},
 				}
-			: { enabled: false },
+			: {
+					enabled: false,
+					dm_policy: null,
+					group_policy: null,
+					allow_from: null,
+					group_allow_from: null,
+					group_allowed_chats: null,
+					require_mention: null,
+					extra: {
+						base_url: null,
+						base_file_url: null,
+					},
+				},
 		discord: discordEnabled
 			? {
 					enabled: true,
@@ -88,7 +100,14 @@ export function buildHermesManagedChannelsPatch(
 					thread_require_mention: false,
 					bots_require_inline_mention: false,
 				}
-			: { enabled: false },
+			: {
+					enabled: false,
+					dm_policy: null,
+					group_policy: null,
+					require_mention: null,
+					thread_require_mention: null,
+					bots_require_inline_mention: null,
+				},
 		whatsapp,
 		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
