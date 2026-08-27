@@ -1715,7 +1715,6 @@ async def _replay_discord_commands_on_pair(
             account=account,
             bot_agent_link_id=link.id,
             application_id=application_id,
-            commands=[command for command in commands if isinstance(command, dict)],
             guild_ids={guild_id},
             force=True,
         )
