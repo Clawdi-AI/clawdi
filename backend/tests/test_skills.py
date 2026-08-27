@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import tarfile
+import threading
 import uuid
 
 import httpx
@@ -48,6 +49,28 @@ def _archive_with_files(skill_key: str, files: dict[str, bytes]) -> bytes:
             info.mode = 0o644
             archive.addfile(info, io.BytesIO(content))
     return output.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_analysis_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_loop_thread = threading.get_ident()
+    analysis_thread: int | None = None
+    analyze = skill_routes._analyze_skill_upload_sync
+
+    def capture_thread(data: bytes, skill_key: str) -> skill_routes._SkillUploadAnalysis:
+        nonlocal analysis_thread
+        analysis_thread = threading.get_ident()
+        return analyze(data, skill_key)
+
+    monkeypatch.setattr(skill_routes, "_analyze_skill_upload_sync", capture_thread)
+    archive, _ = tar_from_content("threaded", "# Threaded\n")
+    result = await skill_routes._analyze_skill_upload(archive, "threaded")
+
+    assert result.file_count == 1
+    assert analysis_thread is not None
+    assert analysis_thread != event_loop_thread
 
 
 @pytest.mark.asyncio

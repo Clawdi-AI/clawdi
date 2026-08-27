@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import io
 import tarfile
@@ -71,6 +72,32 @@ _PROJECT_SKILL_SUPPORT_DIRS = {"references", "templates", "scripts", "assets", "
 _MAX_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 _MAX_PROJECT_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024
 file_store = get_file_store()
+
+
+def _prepare_project_skill_archive_sync(
+    stored: bytes,
+    file_key: str,
+    source_skill_key: str,
+    local_skill_key: str,
+) -> bytes:
+    if file_key.endswith(".md"):
+        return tar_from_content(local_skill_key, stored.decode("utf-8"))[0]
+    return reroot_skill_archive(stored, source_skill_key, local_skill_key)
+
+
+async def _prepare_project_skill_archive(
+    stored: bytes,
+    file_key: str,
+    source_skill_key: str,
+    local_skill_key: str,
+) -> bytes:
+    return await asyncio.to_thread(
+        _prepare_project_skill_archive_sync,
+        stored,
+        file_key,
+        source_skill_key,
+        local_skill_key,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,10 +511,12 @@ async def get_project_skill_archive(
     ).local_skill_key
     try:
         stored = await file_store.get(skill.file_key)
-        if skill.file_key.endswith(".md"):
-            stored, _file_count = tar_from_content(local_skill_key, stored.decode("utf-8"))
-        else:
-            stored = reroot_skill_archive(stored, skill.skill_key, local_skill_key)
+        stored = await _prepare_project_skill_archive(
+            stored,
+            skill.file_key,
+            skill.skill_key,
+            local_skill_key,
+        )
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill archive not found") from None
     if len(stored) > _MAX_PROJECT_SKILL_ARCHIVE_BYTES:

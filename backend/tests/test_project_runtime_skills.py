@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -23,6 +24,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
+from app.routes import runtime as runtime_routes
 from app.routes import skills as skill_routes
 from app.routes.skills import _compute_file_tree_hash
 from app.services import project_runtime_skills
@@ -51,6 +53,38 @@ def _skill_archive(
     )
     archive, _ = tar_from_content(skill_key, content)
     return archive
+
+
+@pytest.mark.asyncio
+async def test_project_skill_archive_preparation_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_loop_thread = threading.get_ident()
+    preparation_thread: int | None = None
+    prepare = runtime_routes._prepare_project_skill_archive_sync
+
+    def capture_thread(
+        stored: bytes,
+        file_key: str,
+        source_skill_key: str,
+        local_skill_key: str,
+    ) -> bytes:
+        nonlocal preparation_thread
+        preparation_thread = threading.get_ident()
+        return prepare(stored, file_key, source_skill_key, local_skill_key)
+
+    monkeypatch.setattr(runtime_routes, "_prepare_project_skill_archive_sync", capture_thread)
+    archive = _skill_archive("source", local_skill_key="local")
+    result = await runtime_routes._prepare_project_skill_archive(
+        archive,
+        "skill.tar.gz",
+        "source",
+        "local",
+    )
+
+    assert result
+    assert preparation_thread is not None
+    assert preparation_thread != event_loop_thread
 
 
 async def _upload_project_skill(

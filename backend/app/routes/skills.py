@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import io
 import json
 import logging
 import re
 import tarfile
+from dataclasses import dataclass
 from typing import TypedDict
 from uuid import UUID
 
@@ -277,6 +279,48 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
         h.update(path.encode("utf-8"))
         h.update(content)
     return h.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _SkillUploadAnalysis:
+    file_count: int
+    name: str
+    description: str
+    content_hash: str
+
+
+class _SkillArchiveRootMismatch(ValueError):
+    def __init__(self, member_name: str) -> None:
+        self.member_name = member_name
+        super().__init__(member_name)
+
+
+class _SkillDocumentMissing(ValueError):
+    pass
+
+
+def _analyze_skill_upload_sync(data: bytes, skill_key: str) -> _SkillUploadAnalysis:
+    file_count = validate_tar(data)
+    expected_prefix = f"{skill_key}/"
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        for member in tf.getmembers():
+            if member.name != skill_key and not member.name.startswith(expected_prefix):
+                raise _SkillArchiveRootMismatch(member.name)
+
+    skill_md = extract_skill_md(data)
+    if not skill_md:
+        raise _SkillDocumentMissing
+    frontmatter = parse_frontmatter(skill_md)
+    return _SkillUploadAnalysis(
+        file_count=file_count,
+        name=frontmatter.get("name", skill_key),
+        description=frontmatter.get("description", ""),
+        content_hash=_compute_file_tree_hash(data, skill_key),
+    )
+
+
+async def _analyze_skill_upload(data: bytes, skill_key: str) -> _SkillUploadAnalysis:
+    return await asyncio.to_thread(_analyze_skill_upload_sync, data, skill_key)
 
 
 # ---------------------------------------------------------------------------
@@ -1607,7 +1651,7 @@ async def _do_upload_skill(
             f"({', '.join(sorted(RESERVED_SKILL_KEY_SUFFIXES))})",
         )
     try:
-        file_count = validate_tar(data)
+        analysis = await _analyze_skill_upload(data, skill_key)
     except TarValidationError as e:
         # `str(e)` echoes raw tar member names (attacker-controlled)
         # back to the client. Log internally, return a fixed message.
@@ -1618,42 +1662,22 @@ async def _do_upload_skill(
             _sanitize_log(e),
         )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "archive validation failed") from None
-
-    # The archive's directory layout MUST be rooted at the
-    # declared skill_key. For a nested key `category/foo` we
-    # require every tar entry to start with `category/foo/`. Pre-
-    # fix the upload silently accepted an archive rooted at
-    # `foo/...` for `skill_key=category/foo`: the hash stripped 2
-    # leading components leaving an empty / wrong tree, the bytes
-    # were stored as-is, and a later download/extract on another
-    # machine plopped `foo/` at the skills root instead of
-    # `category/foo/` — breaking restore.
-    expected_prefix = f"{skill_key}/"
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-        for member in tf.getmembers():
-            # Pure directory entries (no slash, member.name == skill_key)
-            # are also accepted — the actual files always carry the
-            # full prefix.
-            if member.name == skill_key:
-                continue
-            if not member.name.startswith(expected_prefix):
-                log.warning(
-                    "skill_upload_root_mismatch user=%s skill_key=%s offending=%s",
-                    auth.user_id,
-                    skill_key,
-                    _sanitize_log(member.name),
-                )
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    "archive root does not match skill_key",
-                )
-
-    skill_md = extract_skill_md(data)
-    if not skill_md:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive must contain a SKILL.md")
-
-    try:
-        fm = parse_frontmatter(skill_md)
+    except _SkillArchiveRootMismatch as e:
+        log.warning(
+            "skill_upload_root_mismatch user=%s skill_key=%s offending=%s",
+            auth.user_id,
+            skill_key,
+            _sanitize_log(e.member_name),
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "archive root does not match skill_key",
+        ) from None
+    except _SkillDocumentMissing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Archive must contain a SKILL.md",
+        ) from None
     except SkillTextValidationError:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -1662,14 +1686,15 @@ async def _do_upload_skill(
                 "message": "SKILL.md must not contain NUL characters.",
             },
         ) from None
-    name = fm.get("name", skill_key)
-    description = fm.get("description", "")
+    file_count = analysis.file_count
+    name = analysis.name
+    description = analysis.description
 
     # The server is the integrity boundary. A caller-supplied hash is useful
     # for catching client bugs but never becomes evidence by itself: an Agent
     # claim must prove that the validated archive bytes equal the claimed
     # content or a forged existing hash could claim without storing new bytes.
-    computed_content_hash = _compute_file_tree_hash(data, skill_key)
+    computed_content_hash = analysis.content_hash
     if content_hash is not None and content_hash != computed_content_hash:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
