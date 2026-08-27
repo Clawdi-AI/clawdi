@@ -32,7 +32,7 @@ from app.services.file_store import get_file_store
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     SessionEventChunkInvalid,
-    validate_event_chunk,
+    validate_event_chunk_async,
 )
 
 router = APIRouter(tags=["session-events"])
@@ -217,7 +217,9 @@ async def upload_session_event_generation_chunk(
 ) -> SessionEventChunkResponse:
     data = await _read_upload(file)
     try:
-        validated = validate_event_chunk(data, start_seq=start_seq, base_head_hash=base_head_hash)
+        validated = await validate_event_chunk_async(
+            data, start_seq=start_seq, base_head_hash=base_head_hash
+        )
     except SessionEventChunkInvalid as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     if validated.content_hash != content_hash:
@@ -431,7 +433,9 @@ async def append_session_events(
 ) -> SessionEventAppendResponse:
     data = await _read_upload(file)
     try:
-        validated = validate_event_chunk(data, start_seq=base_count, base_head_hash=base_head_hash)
+        validated = await validate_event_chunk_async(
+            data, start_seq=base_count, base_head_hash=base_head_hash
+        )
     except SessionEventChunkInvalid as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     if (
@@ -579,7 +583,9 @@ async def get_session_events(
             )
         data = await file_store.get(chunk.file_key)
         try:
-            validated = validate_event_chunk(data, start_seq=next_seq, base_head_hash=head)
+            validated = await validate_event_chunk_async(
+                data, start_seq=next_seq, base_head_hash=head
+            )
         except SessionEventChunkInvalid as exc:
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR, "Stored session event chunk is invalid"

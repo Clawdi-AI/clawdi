@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Sequence
@@ -84,6 +85,17 @@ def validate_event_chunk(
         raw_events=raw_events,
         content_hash=hashlib.sha256(data).hexdigest(),
         result_head_hash=advance_event_head(base_head_hash, raw_events),
+    )
+
+
+async def validate_event_chunk_async(
+    data: bytes, *, start_seq: int, base_head_hash: str
+) -> ValidatedEventChunk:
+    return await asyncio.to_thread(
+        validate_event_chunk,
+        data,
+        start_seq=start_seq,
+        base_head_hash=base_head_hash,
     )
 
 

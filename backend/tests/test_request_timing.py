@@ -117,6 +117,7 @@ async def test_request_timing_redacts_telegram_routing_credentials(
 @pytest.mark.parametrize(
     "path",
     [
+        "/v1/sync/events",
         "/api/sync/events",
         "/v1/channels/telegram/bot123456:secret/getUpdates",
     ],

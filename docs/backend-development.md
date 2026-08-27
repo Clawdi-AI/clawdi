@@ -462,7 +462,9 @@ uses Python `logging` with `logging.basicConfig(level=logging.INFO)` in
 
 `RequestTimingMiddleware` adds `X-Process-Time-Ms` to HTTP responses. Requests
 at or above `SLOW_REQUEST_LOG_MS` log as `request_slow`; 5xx responses log as
-`request_error`, and uncaught exceptions log as `request_failed`.
+`request_error`, and uncaught exceptions log as `request_failed`. Successful
+canonical `/v1/sync/events` and compatibility `/api/sync/events` SSE streams are
+excluded from slow-request warnings because their duration is connection lifetime.
 
 ## Channel queue retention
 

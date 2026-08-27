@@ -27,7 +27,7 @@ from app.schemas.session_events import SessionEvent
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     project_safe_messages,
-    validate_event_chunk,
+    validate_event_chunk_async,
 )
 
 log = logging.getLogger(__name__)
@@ -137,7 +137,9 @@ async def load_session_messages(
                 raise SessionContentInvalid("events-v1 chunk index is not continuous")
             try:
                 data = await file_store.get(chunk.file_key)
-                validated = validate_event_chunk(data, start_seq=next_seq, base_head_hash=head)
+                validated = await validate_event_chunk_async(
+                    data, start_seq=next_seq, base_head_hash=head
+                )
             except Exception as exc:
                 log.exception("session_event_chunk_fetch_failed file_key=%s", chunk.file_key)
                 raise SessionContentInvalid("events-v1 chunk is unavailable or invalid") from exc

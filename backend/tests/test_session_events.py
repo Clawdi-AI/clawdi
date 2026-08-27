@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +15,7 @@ from app.models.session import Session
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     EVENT_ADAPTER,
+    ValidatedEventChunk,
     advance_event_head,
     canonical_event_json,
 )
@@ -45,6 +47,40 @@ def _event(seq: int, event_type: str, record_id: str, **fields: Any) -> dict[str
 def _chunk(events: list[dict[str, Any]]) -> tuple[bytes, str]:
     data = b"".join(canonical_event_json(event) + b"\n" for event in events)
     return data, hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_event_chunk_validation_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import session_events
+
+    event_loop_thread = threading.get_ident()
+    validation_thread: int | None = None
+    expected = ValidatedEventChunk(
+        events=[],
+        raw_events=[],
+        content_hash="a" * 64,
+        result_head_hash="b" * 64,
+    )
+
+    def validate(data: bytes, *, start_seq: int, base_head_hash: str) -> ValidatedEventChunk:
+        nonlocal validation_thread
+        assert data == b"chunk"
+        assert start_seq == 7
+        assert base_head_hash == EMPTY_EVENT_HEAD
+        validation_thread = threading.get_ident()
+        return expected
+
+    monkeypatch.setattr(session_events, "validate_event_chunk", validate)
+
+    actual = await session_events.validate_event_chunk_async(
+        b"chunk", start_seq=7, base_head_hash=EMPTY_EVENT_HEAD
+    )
+
+    assert actual is expected
+    assert validation_thread is not None
+    assert validation_thread != event_loop_thread
 
 
 def test_hermes_event_semantics_are_strict_and_normalized() -> None:
