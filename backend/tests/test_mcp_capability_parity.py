@@ -16,9 +16,13 @@ from sqlalchemy import select
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
 from app.main import app
+from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.memory import Memory
+from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.session import Session
+from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
@@ -165,12 +169,43 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
 
     vault_a = Vault(user_id=seed_user.id, slug="runtime-a", name="Runtime A")
     vault_b = Vault(user_id=seed_user.id, slug="runtime-b", name="Runtime B")
-    db_session.add_all([vault_a, vault_b])
+    linked_owner = User(
+        clerk_id="mcp_parity_linked_owner",
+        email="mcp_parity_linked_owner@test.dev",
+        name="MCP Parity Linked Owner",
+    )
+    db_session.add(linked_owner)
+    await db_session.flush()
+    linked_project = Project(
+        user_id=linked_owner.id,
+        slug="mcp-parity-linked",
+        name="MCP Parity Linked",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    linked_vault = Vault(user_id=linked_owner.id, slug="runtime-linked", name="Runtime Linked")
+    db_session.add_all([vault_a, vault_b, linked_project, linked_vault])
     await db_session.flush()
     db_session.add_all(
         [
+            ProjectMembership(
+                project_id=linked_project.id,
+                member_user_id=seed_user.id,
+                role="viewer",
+                joined_via="link",
+                joined_at=now,
+                resolved_owner_handle="mcp-parity-linked-owner",
+            ),
+            AgentProjectBinding(
+                agent_id=env_a.id,
+                project_id=linked_project.id,
+                binding_type="context",
+                priority=1,
+                default_write_enabled=False,
+                created_by_user_id=seed_user.id,
+            ),
             VaultProjectAttachment(vault_id=vault_a.id, project_id=env_a.default_project_id),
             VaultProjectAttachment(vault_id=vault_b.id, project_id=env_b.default_project_id),
+            VaultProjectAttachment(vault_id=linked_vault.id, project_id=linked_project.id),
             VaultItem(
                 vault_id=vault_a.id,
                 section="",
@@ -191,6 +226,13 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 item_name="OTHER_TOKEN",
                 encrypted_value=b"runtime-b-secret",
                 nonce=b"c" * 12,
+            ),
+            VaultItem(
+                vault_id=linked_vault.id,
+                section="",
+                item_name="LINKED_TOKEN",
+                encrypted_value=b"runtime-linked-secret",
+                nonce=b"d" * 12,
             ),
         ]
     )
@@ -263,10 +305,16 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             current = _tool_json(await _tool_call(client, 5, "project_current"))
             projects = _tool_json(await _tool_call(client, 6, "project_list"))["projects"]
             assert current["id"] == str(env_a.default_project_id)
-            assert [project["id"] for project in projects] == [str(env_a.default_project_id)]
+            assert {project["id"] for project in projects} == {
+                str(env_a.default_project_id),
+                str(linked_project.id),
+            }
 
             vaults = _tool_json(await _tool_call(client, 7, "vault_list"))["vaults"]
-            assert [entry["vault"]["id"] for entry in vaults] == [str(vault_a.id)]
+            assert {entry["vault"]["id"] for entry in vaults} == {
+                str(vault_a.id),
+                str(linked_vault.id),
+            }
             vault_result = _tool_json(
                 await _tool_call(
                     client,
@@ -314,6 +362,33 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "reference": default_reference,
                 "value": "runtime-a-default-secret",
             }
+            linked_reference = (
+                f"clawdi://project/{linked_project.id}/vault/runtime-linked/field/LINKED_TOKEN"
+            )
+            linked_result = _tool_json(
+                await _tool_call(
+                    client,
+                    82,
+                    "vault_resolve",
+                    {"reference": linked_reference},
+                )
+            )
+            assert linked_result == {
+                "reference": linked_reference,
+                "value": "runtime-linked-secret",
+            }
+
+            active_auth["value"] = AuthContext(
+                user=seed_user,
+                api_key=ApiKey(
+                    user_id=seed_user.id,
+                    environment_id=env_a.id,
+                    scopes=None,
+                ),
+            )
+            legacy_projects = _tool_json(await _tool_call(client, 84, "project_list"))["projects"]
+            assert [project["id"] for project in legacy_projects] == [str(env_a.default_project_id)]
+
             active_auth["value"] = _runtime_auth(seed_user, env_b.id)
             other_search = await _tool_call(
                 client,
