@@ -14,7 +14,7 @@ Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 class SessionEventSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    adapter: Literal["claude_code", "codex", "hermes", "openclaw", "pi"]
+    adapter: Literal["claude_code", "codex", "hermes", "openclaw", "pi", "opencode"]
     session_key: str = Field(min_length=1, max_length=500)
     record_id: str = Field(min_length=1, max_length=500)
     record_seq: int | None = Field(default=None, ge=0)

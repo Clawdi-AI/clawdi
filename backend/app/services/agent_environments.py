@@ -29,6 +29,7 @@ _AGENT_TYPE_LABELS = {
     "claude-code": "Claude Code",
     "codex": "Codex",
     "pi": "Pi",
+    "opencode": "OpenCode",
 }
 
 

@@ -59,6 +59,7 @@ export function projectEventsToMessages(events: readonly SessionEvent[]): Sessio
 	const messages: SessionMessage[] = [];
 	for (const event of events) {
 		if (event.type !== "message" || (event.role !== "user" && event.role !== "assistant")) continue;
+		if (event.semantics?.display === "hidden") continue;
 		const content = event.parts
 			.filter(
 				(part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>

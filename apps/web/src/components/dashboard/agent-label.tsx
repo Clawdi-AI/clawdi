@@ -88,6 +88,8 @@ const TYPE_LABEL: Record<string, string> = {
 	codex: "Codex",
 	hermes: "Hermes",
 	openclaw: "OpenClaw",
+	opencode: "OpenCode",
+	pi: "Pi",
 };
 
 export function agentTypeLabel(type: string | null | undefined): string {

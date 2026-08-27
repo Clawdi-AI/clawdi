@@ -8,11 +8,11 @@ For contributor commands, start in [`AGENTS.md`](../AGENTS.md).
 
 ```text
 Self-managed machine
-  Claude Code / Codex / Hermes / OpenClaw / Pi
+  Claude Code / Codex / Hermes / OpenClaw / Pi / OpenCode
         | local files + stdio MCP
         v
   clawdi CLI
-    adapters: claude_code, codex, hermes, openclaw, pi
+    adapters: claude_code, codex, hermes, openclaw, pi, opencode
     commands: setup, push, pull, run, daemon, mcp
         |
         | HTTPS /v1, bearer API key
@@ -31,7 +31,7 @@ First-party hosted control planes
 
 cloud-api stores:
   PostgreSQL: metadata, pgvector memories, pg_trgm/FTS indexes
-  object store: session JSONL bodies, skill tarballs, asset blobs
+  object store: session snapshots/event chunks, skill tarballs, asset blobs
 ```
 
 The hosted box is intentionally opaque. This repo defines API contracts,
@@ -136,11 +136,13 @@ Adapter roots are verified in `packages/cli/src/adapters/*`:
 | Hermes | `$HERMES_HOME/state.db` or `~/.hermes/state.db` | `$HERMES_HOME/skills/<category>/<key>/SKILL.md` | `hermes --version` |
 | OpenClaw | `$OPENCLAW_STATE_DIR/agents/<id>/sessions/` or `~/.openclaw/agents/<id>/sessions/` | `agents/<id>/skills/<key>/SKILL.md` | `openclaw --version` |
 | Pi | `$PI_CODING_AGENT_DIR/sessions/**/*.jsonl` or `~/.pi/agent/sessions/**/*.jsonl` | — | `pi --version` |
+| OpenCode | `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode/opencode.db` | — | `opencode --version` |
 
 `AgentAdapter` is core identity plus at least one complete `sessions` or
 `skills` module. Methods inside a present module are mandatory. MCP lifecycle
 belongs to the registry, not either data module. Pi is the first sessions-only
-consumer; the other four adapters expose both modules.
+consumer; OpenCode is also sessions-only, while the other four adapters expose
+both modules.
 
 ## Sync Engine
 

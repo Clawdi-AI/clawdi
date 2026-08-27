@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
 	agentIdentity,
+	agentTypeLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
@@ -18,6 +19,11 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
+	test("uses canonical labels for session-only adapters", () => {
+		expect(agentTypeLabel("pi")).toBe("Pi");
+		expect(agentTypeLabel("opencode")).toBe("OpenCode");
+	});
+
 	test("uses a direct canonical name without appending the runtime", () => {
 		expect(agentIdentity({ name: "e2e-2", agent_type: "hermes" })).toEqual({
 			primaryLabel: "e2e-2",

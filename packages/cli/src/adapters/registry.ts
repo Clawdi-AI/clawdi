@@ -13,7 +13,15 @@ import {
 } from "./mcp-lifecycle";
 import { OpenClawAdapter } from "./openclaw";
 import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
-import { getClaudeHome, getCodexHome, getHermesHome, getOpenClawHome, getPiHome } from "./paths";
+import { OpenCodeAdapter } from "./opencode";
+import {
+	getClaudeHome,
+	getCodexHome,
+	getHermesHome,
+	getOpenClawHome,
+	getOpenCodeDataDir,
+	getPiHome,
+} from "./paths";
 import { PiAdapter } from "./pi";
 
 export { AGENT_TYPES, type AgentType } from "./agent-types";
@@ -66,6 +74,12 @@ export const adapterRegistry: Record<AgentType, AdapterRegistryEntry> = {
 		envFileName: "pi.json",
 		home: getPiHome,
 		create: () => new PiAdapter(),
+	},
+	opencode: {
+		displayName: "OpenCode",
+		envFileName: "opencode.json",
+		home: getOpenCodeDataDir,
+		create: () => new OpenCodeAdapter(),
 	},
 };
 

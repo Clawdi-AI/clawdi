@@ -7,7 +7,7 @@
 | Owner | CLI and Session sync |
 
 > HISTORICAL - this document replaces the former mandatory-Session PR-A plan.
-> Pi is now the first real session-only adapter, so the deferred module split is complete.
+> Pi and OpenCode are real session-only adapters, so the deferred module split is complete.
 
 ## Adapter Contract
 
@@ -26,11 +26,11 @@ capability flags, no no-op implementations, and no string capability table.
 MCP registration is an optional registry lifecycle with both `register` and
 `unregister`; it is not a data module.
 
-Claude Code, Codex, Hermes, and OpenClaw expose Sessions and Skills. Pi exposes
-Sessions only. The sync engine narrows modules once, starts only their producers,
-and shares one API client, heartbeat, health state, supervisor, persisted queue,
-and queue drain. A queue item for a missing module or an old unfenced Session
-item is dropped fail-closed at that single drain boundary.
+Claude Code, Codex, Hermes, and OpenClaw expose Sessions and Skills. Pi and
+OpenCode expose Sessions only. The sync engine narrows modules once, starts only
+their producers, and shares one API client, heartbeat, health state, supervisor,
+persisted queue, and queue drain. A queue item for a missing module or an old
+unfenced Session item is dropped fail-closed at that single drain boundary.
 
 Foreground commands, setup/teardown, doctor, inbox, help, Skill SSE and
 reconciliation, and Connected dashboard routes gate on real modules. Cloud
@@ -51,6 +51,23 @@ calls/results, attachment metadata/references, visible custom messages,
 compaction/branch summaries, and owner-private reasoning/signatures. Default
 message projections omit the private reasoning events. Pi is Connected-only: it
 is not a Hosted runtime, plugin, channel, control-plane, or deployment type.
+
+## OpenCode Driver
+
+OpenCode reads the official SQLite store at `$OPENCODE_DB` or
+`$XDG_DATA_HOME/opencode/opencode.db`. It follows the upstream ordering contract
+(`message.time_created, message.id`, then `part.id`) and uses stable message,
+part, and call IDs for incremental event identity. The database, WAL, and
+rollback journal form one watch group; a change triggers a complete inventory
+scan, while queue drain resolves one Session by exact SQL identity.
+
+OpenCode uploads namespaced identities (`opencode.<session-id>`), visible and
+hidden text, owner-private reasoning/provider metadata, tool calls/results,
+safe structured results, attachment metadata, and normalized lifecycle markers.
+Provider request envelopes, snapshot bodies, patch paths, and local attachment
+paths are not copied. OpenCode is Connected-only and exposes no fake Skills or
+MCP lifecycle. Clawdi can only preserve rows still present in OpenCode's current
+database; it cannot reconstruct history OpenCode has physically deleted.
 
 ## Session Content Protocols
 
@@ -119,7 +136,7 @@ limit enter durable blocked health instead of retrying every five minutes.
 ## Verification
 
 ```bash
-bun run --cwd packages/cli test -- src/adapters/pi.test.ts src/lib/session-upload.test.ts src/serve/sync-engine.test.ts
+bun run --cwd packages/cli test -- src/adapters/pi.test.ts src/adapters/opencode.test.ts src/lib/session-upload.test.ts src/serve/sync-engine.test.ts
 cd backend && uv run pytest -q tests/test_session_events.py tests/test_session_deletion.py tests/test_sessions.py
 ```
 

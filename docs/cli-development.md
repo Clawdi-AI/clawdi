@@ -284,6 +284,11 @@ Shape:
   owner-private thinking with visible-only message projection; Pi has no Skills
   fixture because it is sessions-only
 
+OpenCode's adapter test creates the consumed subset of the pinned upstream
+SQLite schema in a temporary directory. That fixture is intentionally generated
+per test so the same test can mutate the database and verify queue-time
+backing-store re-reads without committing a binary database copy.
+
 Fixtures are committed (not regenerated on every test run). Regenerate only
 when an upstream agent's on-disk format changes and a test breaks.
 

@@ -17,6 +17,7 @@ from app.services.session_events import (
     EVENT_ADAPTER,
     advance_event_head,
     canonical_event_json,
+    project_safe_messages,
 )
 
 
@@ -82,6 +83,42 @@ def test_reasoning_event_requires_private_content() -> None:
         EVENT_ADAPTER.validate_python(
             _event(0, "reasoning", "empty", kind="thinking", parts=[]), strict=True
         )
+
+
+def test_safe_projection_keeps_hidden_opencode_content_private() -> None:
+    visible = EVENT_ADAPTER.validate_python(
+        _event(
+            0,
+            "message",
+            "visible",
+            role="assistant",
+            parts=[{"type": "text", "text": "visible answer"}],
+        ),
+        strict=True,
+    )
+    hidden_payload = _event(
+        1,
+        "message",
+        "ignored",
+        role="assistant",
+        parts=[{"type": "text", "text": "private ignored text"}],
+        semantics={
+            "lifecycle": "active",
+            "display": "hidden",
+            "compressed_summary": False,
+            "display_kind": "ignored_text",
+        },
+    )
+    hidden_payload["source"]["adapter"] = "opencode"
+    hidden_payload["event_id"] = hashlib.sha256(
+        canonical_event_json({"source": hidden_payload["source"], "type": "message"})
+    ).hexdigest()
+    hidden = EVENT_ADAPTER.validate_python(hidden_payload, strict=True)
+
+    assert hidden.source.adapter == "opencode"
+    assert project_safe_messages([visible, hidden]) == [
+        {"role": "assistant", "content": "visible answer"}
+    ]
 
 
 async def _register_session(

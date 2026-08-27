@@ -7887,7 +7887,7 @@ export interface components {
              * Adapter
              * @enum {string}
              */
-            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi";
+            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi" | "opencode";
             /** Session Key */
             session_key: string;
             /** Record Id */

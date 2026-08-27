@@ -10,6 +10,13 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Unreleased
+
+### Added
+
+- OpenCode is available as a Connected sessions-only adapter. It reads the official SQLite store and incrementally syncs messages, hidden text, private reasoning, tool calls/results, safe attachment metadata, and lifecycle markers.
+- Rich Session events now preserve owner-private reasoning and continuation state while ordinary content, sharing, search, and memory projections remain limited to useful visible messages.
+
 ## Clawdi CLI v0.14.21
 
 Package: `clawdi@0.14.21`
