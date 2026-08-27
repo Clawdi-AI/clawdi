@@ -9,8 +9,10 @@ import uuid
 from pathlib import Path
 
 import httpx
+from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.database import engine
 from app.services.metrics import (
     active_polls,
     inbound_messages,
@@ -39,6 +41,11 @@ def _metric_value(name: str, labels: dict[str, str]) -> float:
     return float(match.group(1)) if match else 0.0
 
 
+def _unlabeled_metric_value(name: str) -> float:
+    match = re.search(rf"^{re.escape(name)} ([-+0-9.eE]+)$", _metrics_text(), re.MULTILINE)
+    return float(match.group(1)) if match else 0.0
+
+
 def test_metrics_exports_all_expected_metrics() -> None:
     text = _metrics_text()
     assert "msg_router_inbound_total" in text
@@ -57,6 +64,10 @@ def test_metrics_exports_all_expected_metrics() -> None:
     assert "msg_router_channel_retention_deletions_total" in text
     assert "msg_router_channel_retention_secret_scrubs_total" in text
     assert "msg_router_channel_retention_budget_exhaustions_total" in text
+    assert "clawdi_backend_event_loop_lag_seconds" in text
+    assert "clawdi_backend_db_query_duration_seconds" in text
+    assert "clawdi_backend_db_connection_hold_duration_seconds" in text
+    assert "clawdi_backend_db_pool_checked_out" in text
 
 
 def test_metrics_increment_counters() -> None:
@@ -93,6 +104,30 @@ def test_metrics_tracks_gauge_up_and_down() -> None:
 
     text = _metrics_text()
     assert f'msg_router_active_polls{{channel="{channel}"}} 1.0' in text
+
+
+async def test_database_metrics_follow_connection_lifecycle() -> None:
+    query_count_before = _unlabeled_metric_value("clawdi_backend_db_query_duration_seconds_count")
+    hold_count_before = _unlabeled_metric_value(
+        "clawdi_backend_db_connection_hold_duration_seconds_count"
+    )
+    checked_out_before = _unlabeled_metric_value("clawdi_backend_db_pool_checked_out")
+
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+        assert _unlabeled_metric_value("clawdi_backend_db_pool_checked_out") == (
+            checked_out_before + 1
+        )
+
+    assert (
+        _unlabeled_metric_value("clawdi_backend_db_query_duration_seconds_count")
+        == query_count_before + 1
+    )
+    assert (
+        _unlabeled_metric_value("clawdi_backend_db_connection_hold_duration_seconds_count")
+        == hold_count_before + 1
+    )
+    assert _unlabeled_metric_value("clawdi_backend_db_pool_checked_out") == checked_out_before
 
 
 def test_metrics_aggregate_counters_across_processes(tmp_path: Path) -> None:

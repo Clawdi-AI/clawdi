@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -125,6 +126,30 @@ channel_retention_budget_exhaustions = Counter(
     ["record_kind"],
     registry=registry,
 )
+event_loop_lag = Histogram(
+    "clawdi_backend_event_loop_lag_seconds",
+    "Delay beyond the backend event loop's one-second sampling interval",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5),
+    registry=registry,
+)
+db_query_duration = Histogram(
+    "clawdi_backend_db_query_duration_seconds",
+    "Time spent executing backend database statements",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+    registry=registry,
+)
+db_connection_hold_duration = Histogram(
+    "clawdi_backend_db_connection_hold_duration_seconds",
+    "Time backend database connections remain checked out",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 15, 60),
+    registry=registry,
+)
+db_pool_checked_out = Gauge(
+    "clawdi_backend_db_pool_checked_out",
+    "Number of backend database connections currently checked out",
+    multiprocess_mode="sum",
+    registry=registry,
+)
 
 
 def render_metrics() -> bytes:
@@ -137,6 +162,14 @@ def render_metrics() -> bytes:
 
 def metrics_content_type() -> str:
     return CONTENT_TYPE_LATEST
+
+
+async def observe_event_loop_lag(interval_seconds: float = 1.0) -> None:
+    loop = asyncio.get_running_loop()
+    while True:
+        started = loop.time()
+        await asyncio.sleep(interval_seconds)
+        event_loop_lag.observe(max(0.0, loop.time() - started - interval_seconds))
 
 
 @contextmanager
