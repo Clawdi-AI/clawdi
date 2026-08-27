@@ -39,7 +39,7 @@ function copyFixture(root: string, fixture: string, name: string): string {
 }
 
 describe("Pi session adapter", () => {
-	test("projects the active compaction tail without hidden thinking", async () => {
+	test("uploads private reasoning while projecting only the active visible tail", async () => {
 		const { adapter, file, root } = fixtureSession();
 		writeFileSync(file, readFileSync(file, "utf-8").replace(/\n$/, ""));
 		expect(await adapter.detect()).toBe(true);
@@ -54,7 +54,9 @@ describe("Pi session adapter", () => {
 			"message",
 			"message",
 			"message",
+			"reasoning",
 			"tool_call",
+			"reasoning",
 			"tool_result",
 			"message",
 		]);
@@ -62,7 +64,8 @@ describe("Pi session adapter", () => {
 		expect(serialized).not.toContain("old prompt");
 		expect(serialized).not.toContain("old answer");
 		expect(serialized).not.toContain("abandoned branch");
-		expect(serialized).not.toContain("hidden chain of thought");
+		expect(serialized).toContain("hidden chain of thought");
+		expect(serialized).toContain("opaque-tool-thought");
 		expect(serialized).not.toContain("thinkingSignature");
 		expect(serialized).not.toContain("hidden extension state");
 		expect(serialized).toContain("Visible compaction summary");
@@ -72,6 +75,7 @@ describe("Pi session adapter", () => {
 		expect(serialized).toContain('"availability":"metadata_only"');
 		expect(serialized).toContain('"sha256":');
 		expect(serialized).not.toContain("inline:sha256:");
+		expect(JSON.stringify(session?.messages)).not.toContain("hidden chain of thought");
 
 		const pathScan = await adapter.sessions.collect({ kind: "paths", paths: [file] });
 		expect(pathScan.coverage).toBe("partial");
@@ -130,5 +134,12 @@ describe("Pi session adapter", () => {
 		expect(serialized).not.toContain("abandoned answer");
 		expect(serialized).not.toContain("abandoned private reasoning");
 		expect(serialized).not.toContain("thinkingSignature");
+		expect(session?.events).toContainEqual(
+			expect.objectContaining({
+				type: "reasoning",
+				kind: "redacted",
+				payload_json: '{"signature":"private"}',
+			}),
+		);
 	});
 });

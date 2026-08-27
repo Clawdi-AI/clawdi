@@ -17,6 +17,7 @@ import {
 	type JsonObject,
 	jsonObject,
 	jsonString,
+	reasoningContent,
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
@@ -320,7 +321,18 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 		}
 		for (let index = 0; index < content.length; index++) {
 			const part = jsonObject(content[index]);
-			if (part?.type !== "toolCall") continue;
+			if (!part) continue;
+			const reasoning = reasoningContent(part);
+			if (reasoning) {
+				drafts.push({
+					type: "reasoning",
+					...reasoning,
+					source: source(sessionKey, entry, index + 1),
+					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
+					...(model ? { model } : {}),
+				});
+			}
+			if (part.type !== "toolCall") continue;
 			const callId = jsonString(part.id);
 			const name = jsonString(part.name);
 			if (!callId || !name) continue;
@@ -333,6 +345,19 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
 				...(model ? { model } : {}),
 			});
+			const toolThought = reasoningContent({
+				type: "redacted_thinking",
+				signature: part.thoughtSignature,
+			});
+			if (toolThought) {
+				drafts.push({
+					type: "reasoning",
+					...toolThought,
+					source: source(sessionKey, entry, index + 1),
+					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
+					...(model ? { model } : {}),
+				});
+			}
 		}
 		return drafts;
 	}
@@ -341,7 +366,7 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 		if (!callId) return [];
 		const result = toolResultContent(message.content, message.details);
 		const toolName = jsonString(message.toolName);
-		return [
+		const drafts: SessionEventDraft[] = [
 			{
 				type: "tool_result",
 				call_id: callId,
@@ -352,6 +377,20 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
 			},
 		];
+		const details = jsonObject(message.details);
+		const privateState = reasoningContent({
+			type: "redacted_thinking",
+			signature: details?.thinkingSignature ?? details?.thoughtSignature,
+		});
+		if (privateState) {
+			drafts.push({
+				type: "reasoning",
+				...privateState,
+				source: source(sessionKey, entry, 1),
+				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
+			});
+		}
+		return drafts;
 	}
 	if (role === "bashExecution") {
 		const command = jsonString(message.command);
@@ -445,7 +484,9 @@ function parseSession(filePath: string, projectFilter?: string): RawSession | nu
 	const endedAt = timestamps.at(-1) ?? stat.mtime;
 	const models = events
 		.map((event) =>
-			event.type === "message" || event.type === "tool_call" ? event.model : undefined,
+			event.type === "message" || event.type === "tool_call" || event.type === "reasoning"
+				? event.model
+				: undefined,
 		)
 		.filter((value): value is string => Boolean(value));
 	const modelsUsed = [...new Set(models)];

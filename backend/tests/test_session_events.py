@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,7 @@ from app.services.session_events import (
     ValidatedEventChunk,
     advance_event_head,
     canonical_event_json,
+    project_safe_messages,
 )
 
 
@@ -110,6 +112,49 @@ def test_hermes_event_semantics_are_strict_and_normalized() -> None:
     assert validated.semantics.lifecycle == "inactive"
     assert validated.semantics.display_metadata is not None
     assert validated.semantics.display_metadata.attempt == 2
+
+
+def test_reasoning_event_requires_private_content() -> None:
+    with pytest.raises(ValidationError):
+        EVENT_ADAPTER.validate_python(
+            _event(0, "reasoning", "empty", kind="thinking", parts=[]), strict=True
+        )
+
+
+def test_safe_projection_keeps_hidden_opencode_content_private() -> None:
+    visible = EVENT_ADAPTER.validate_python(
+        _event(
+            0,
+            "message",
+            "visible",
+            role="assistant",
+            parts=[{"type": "text", "text": "visible answer"}],
+        ),
+        strict=True,
+    )
+    hidden_payload = _event(
+        1,
+        "message",
+        "ignored",
+        role="assistant",
+        parts=[{"type": "text", "text": "private ignored text"}],
+        semantics={
+            "lifecycle": "active",
+            "display": "hidden",
+            "compressed_summary": False,
+            "display_kind": "ignored_text",
+        },
+    )
+    hidden_payload["source"]["adapter"] = "opencode"
+    hidden_payload["event_id"] = hashlib.sha256(
+        canonical_event_json({"source": hidden_payload["source"], "type": "message"})
+    ).hexdigest()
+    hidden = EVENT_ADAPTER.validate_python(hidden_payload, strict=True)
+
+    assert hidden.source.adapter == "opencode"
+    assert project_safe_messages([visible, hidden]) == [
+        {"role": "assistant", "content": "visible answer"}
+    ]
 
 
 async def _register_session(
@@ -384,10 +429,11 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     monkeypatch.setattr(event_routes, "file_store", no_read)
     appended_event = _event(
         5,
-        "message",
+        "reasoning",
         "assistant-2",
-        role="assistant",
-        parts=[{"type": "text", "text": "appended answer"}],
+        kind="thinking",
+        parts=[{"type": "text", "text": "private chain of thought"}],
+        payload_json='{"signature":"opaque"}',
     )
     appended_data, appended_hash = _chunk([appended_event])
     final_head = advance_event_head(base_head, [appended_event])
@@ -435,9 +481,9 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     second_event = _event(
         6,
         "message",
-        "system-2",
-        role="system",
-        parts=[{"type": "text", "text": "advanced system context"}],
+        "assistant-3",
+        role="assistant",
+        parts=[{"type": "text", "text": "appended answer"}],
     )
     second_data, second_hash = _chunk([second_event])
     second_head = advance_event_head(final_head, [second_event])
@@ -510,9 +556,13 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "tool_call",
         "tool_result",
         "message",
-        "message",
+        "reasoning",
         "message",
     ]
+    private_reasoning = private.json()["events"][5]
+    assert private_reasoning["kind"] == "thinking"
+    assert private_reasoning["parts"] == [{"type": "text", "text": "private chain of thought"}]
+    assert private_reasoning["payload_json"] == '{"signature":"opaque"}'
     projected = await client.get(f"/v1/sessions/{session.id}/content")
     assert projected.status_code == 200, projected.text
     assert projected.json() == [
@@ -526,6 +576,8 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         {"role": "assistant", "content": "appended answer", "model": None, "timestamp": None},
     ]
     assert "private context" not in projected.text
+    assert "private chain of thought" not in projected.text
+    assert "opaque" not in projected.text
     assert "secret tool output" not in projected.text
 
 

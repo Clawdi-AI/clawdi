@@ -8,11 +8,11 @@ For contributor commands, start in [`AGENTS.md`](../AGENTS.md).
 
 ```text
 Self-managed machine
-  Claude Code / Codex / Hermes / OpenClaw / Pi
+  Claude Code / Codex / Hermes / OpenClaw / Pi / OpenCode
         | local files + stdio MCP
         v
   clawdi CLI
-    adapters: claude_code, codex, hermes, openclaw, pi
+    adapters: claude_code, codex, hermes, openclaw, pi, opencode
     commands: setup, push, pull, run, daemon, mcp
         |
         | HTTPS /v1, bearer API key
@@ -31,7 +31,7 @@ First-party hosted control planes
 
 cloud-api stores:
   PostgreSQL: metadata, pgvector memories, pg_trgm/FTS indexes
-  object store: session JSONL bodies, skill tarballs, asset blobs
+  object store: session snapshots/event chunks, skill tarballs, asset blobs
 ```
 
 The hosted box is intentionally opaque. This repo defines API contracts,
@@ -136,11 +136,13 @@ Adapter roots are verified in `packages/cli/src/adapters/*`:
 | Hermes | `$HERMES_HOME/state.db` or `~/.hermes/state.db` | `$HERMES_HOME/skills/<category>/<key>/SKILL.md` | `hermes --version` |
 | OpenClaw | `$OPENCLAW_STATE_DIR/agents/<id>/sessions/` or `~/.openclaw/agents/<id>/sessions/` | `agents/<id>/skills/<key>/SKILL.md` | `openclaw --version` |
 | Pi | `$PI_CODING_AGENT_DIR/sessions/**/*.jsonl` or `~/.pi/agent/sessions/**/*.jsonl` | — | `pi --version` |
+| OpenCode | `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode/opencode.db` | — | `opencode --version` |
 
 `AgentAdapter` is core identity plus at least one complete `sessions` or
 `skills` module. Methods inside a present module are mandatory. MCP lifecycle
 belongs to the registry, not either data module. Pi is the first sessions-only
-consumer; the other four adapters expose both modules.
+consumer; OpenCode is also sessions-only, while the other four adapters expose
+both modules.
 
 ## Sync Engine
 
@@ -188,18 +190,20 @@ Uniqueness and object keys include the immutable origin, so equal local IDs from
 different Agents cannot collide.
 
 Legacy `snapshot-v1` message arrays remain readable. `events-v1` stores strict
-Message/ToolCall/ToolResult NDJSON in immutable generation chunks with a DB
-chunk index, revision, count, and canonical chained head. Append writes only new
-objects; truncation stages a generation and CAS-commits it. Private `/events`
-reads rich content, while `/content`, public sharing, exports, and memory inputs
-project only user/assistant text. Attachment parts identify either a safe
-external reference or an explicit metadata-only record; this protocol does not
-store attachment bodies or local paths. Hidden reasoning and encrypted provider
-state are excluded before upload. A worker removes abandoned staging generations
-after one day and superseded committed generations after a seven-day read grace
-period; the current generation is never eligible. Deleting an Agent nulls `environment_id`
-without deleting history; deletion suppression remains fenced to immutable
-origin, with legacy origin-less suppressions read as wildcards.
+Message/ToolCall/ToolResult/Reasoning NDJSON in immutable generation chunks with
+a DB chunk index, revision, count, and canonical chained head. Append writes only
+new objects; truncation stages a generation and CAS-commits it. Owner-only
+`/events` reads the complete rich stream, including model reasoning and the
+reasoning-specific continuation state needed to preserve it. `/content`, public
+sharing, exports, search, and memory inputs continue to project only useful
+user/assistant text. Attachment parts identify either a safe external reference
+or an explicit metadata-only record; this protocol does not store attachment
+bodies, local paths, or duplicate provider message envelopes. A worker removes
+abandoned staging generations after one day and superseded committed generations
+after a seven-day read grace period; the current generation is never eligible.
+Deleting an Agent nulls `environment_id` without deleting history; deletion
+suppression remains fenced to immutable origin, with legacy origin-less
+suppressions read as wildcards.
 
 ## Projects And Agent Use
 

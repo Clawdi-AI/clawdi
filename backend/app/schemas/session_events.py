@@ -14,7 +14,7 @@ Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 class SessionEventSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    adapter: Literal["claude_code", "codex", "hermes", "openclaw", "pi"]
+    adapter: Literal["claude_code", "codex", "hermes", "openclaw", "pi", "opencode"]
     session_key: str = Field(min_length=1, max_length=500)
     record_id: str = Field(min_length=1, max_length=500)
     record_seq: int | None = Field(default=None, ge=0)
@@ -144,8 +144,22 @@ class SessionToolResultEvent(SessionEventBase):
     result_json: str | None = None
 
 
+class SessionReasoningEvent(SessionEventBase):
+    type: Literal["reasoning"]
+    kind: Literal["thinking", "reasoning", "redacted"]
+    parts: list[SessionTextPart] = Field(max_length=1000)
+    payload_json: str | None = None
+    model: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_content(self) -> SessionReasoningEvent:
+        if not self.parts and self.payload_json is None:
+            raise ValueError("reasoning events require text or private provider state")
+        return self
+
+
 SessionEvent = Annotated[
-    SessionMessageEvent | SessionToolCallEvent | SessionToolResultEvent,
+    SessionMessageEvent | SessionToolCallEvent | SessionToolResultEvent | SessionReasoningEvent,
     Field(discriminator="type"),
 ]
 

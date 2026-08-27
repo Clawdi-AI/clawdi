@@ -63,6 +63,21 @@ export function getPiSessionsDir(): string {
 	return join(getPiHome(), "sessions");
 }
 
+/** OpenCode data root, matching the official xdg-basedir default. */
+export function getOpenCodeDataDir(): string {
+	const xdgData = process.env.XDG_DATA_HOME?.trim() || join(home(), ".local", "share");
+	return join(xdgData, "opencode");
+}
+
+/** OpenCode SQLite path; relative `$OPENCODE_DB` values live under its data root. */
+export function getOpenCodeDbPath(): string {
+	const override = process.env.OPENCODE_DB?.trim();
+	if (!override) return join(getOpenCodeDataDir(), "opencode.db");
+	return override === ":memory:" || isAbsolute(override)
+		? override
+		: join(getOpenCodeDataDir(), override);
+}
+
 /**
  * OpenClaw: honors `$OPENCLAW_STATE_DIR`, else probes home-relative names
  * (`.openclaw` → `.clawdbot` → `.moltbot` — same multi-name fallback

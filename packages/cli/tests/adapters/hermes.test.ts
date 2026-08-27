@@ -73,10 +73,12 @@ describe("HermesAdapter.collectSessions", () => {
 			"2",
 			"3",
 			"3",
+			"3",
 			"4",
 			"5",
 			"6",
 			"7",
+			"8",
 			"8",
 			"9",
 			"10",
@@ -106,18 +108,24 @@ describe("HermesAdapter.collectSessions", () => {
 			},
 		});
 		expect(events[2]).toMatchObject({
+			type: "reasoning",
+			parts: [{ type: "text", text: "hidden row reasoning" }],
+			payload_json: '{"items":[{"text":"hidden codex reasoning","type":"reasoning"}]}',
+			semantics: { lifecycle: "compacted" },
+		});
+		expect(events[3]).toMatchObject({
 			type: "tool_call",
 			call_id: "call-search",
 			name: "search",
 			arguments_json: '{"api_key":"sk-tool-secret","query":"Hermes"}',
 			semantics: { lifecycle: "compacted" },
 		});
-		expect(events[3]).toMatchObject({
+		expect(events[4]).toMatchObject({
 			type: "tool_call",
 			call_id: "call-read",
 			name: "read_file",
 		});
-		expect(events[4]).toMatchObject({
+		expect(events[5]).toMatchObject({
 			type: "tool_result",
 			call_id: "call-search",
 			name: "search",
@@ -125,7 +133,7 @@ describe("HermesAdapter.collectSessions", () => {
 			result_json: '[{"items":[{"id":1}],"ok":true,"password":"result-secret"}]',
 			semantics: { lifecycle: "compacted" },
 		});
-		expect(events[7]).toMatchObject({
+		expect(events[8]).toMatchObject({
 			type: "message",
 			role: "user",
 			semantics: {
@@ -135,16 +143,25 @@ describe("HermesAdapter.collectSessions", () => {
 				display_metadata: { attempt: 2 },
 			},
 		});
-		expect(events[6]).toMatchObject({
+		expect(events[7]).toMatchObject({
 			type: "message",
 			parts: [{ type: "text", text: "Summary of earlier turns" }],
 			semantics: { compressed_summary: true },
 		});
-		expect(events[8]).toMatchObject({
+		expect(events[9]).toMatchObject({
+			type: "reasoning",
+			parts: [
+				{ type: "text", text: "hidden reasoning" },
+				{ type: "text", text: "hidden reasoning content" },
+				{ type: "text", text: "hidden inline reasoning" },
+			],
+			payload_json: '{"details":{"encrypted_content":"opaque reasoning"}}',
+		});
+		expect(events[10]).toMatchObject({
 			type: "message",
 			parts: [{ type: "text", text: "Public answer" }],
 		});
-		expect(events[9]).toMatchObject({
+		expect(events[11]).toMatchObject({
 			semantics: {
 				display: "event",
 				display_kind: "async_delegation_complete",
@@ -152,24 +169,31 @@ describe("HermesAdapter.collectSessions", () => {
 			},
 		});
 		// Assistant rows with visible content + tool_calls produce one message and one call.
-		expect(events.slice(10, 12).map((event) => event.type)).toEqual(["message", "tool_call"]);
+		expect(events.slice(12, 14).map((event) => event.type)).toEqual(["message", "tool_call"]);
 		// Raw audit rows are retained: the compaction copy remains distinct and marked compacted.
-		expect(events[5]).toMatchObject({ source: { record_id: "5" } });
-		expect(events[13]).toMatchObject({
+		expect(events[6]).toMatchObject({ source: { record_id: "5" } });
+		expect(events[15]).toMatchObject({
 			source: { record_id: "12" },
 			semantics: { lifecycle: "compacted" },
 		});
-		expect(events[12]).toMatchObject({
+		expect(events[14]).toMatchObject({
 			type: "tool_result",
 			result_json: '{"authorization":"Bearer secret","lines":42,"ok":true}',
 		});
 
 		const serialized = JSON.stringify(session);
+		for (const reasoning of [
+			"hidden row reasoning",
+			"hidden codex reasoning",
+			"hidden inline reasoning",
+			"hidden reasoning content",
+			"opaque reasoning",
+		]) {
+			expect(serialized).toContain(reasoning);
+		}
 		for (const hidden of [
 			"sk-model-secret",
 			"sk-config-secret",
-			"hidden row reasoning",
-			"hidden inline reasoning",
 			"provider envelope secret",
 			"display-secret",
 			"metadata-secret",
@@ -275,7 +299,8 @@ describe("HermesAdapter.collectSessions", () => {
 		);
 		db.close();
 
-		const events = (await new HermesAdapter().sessions.resolve("s-modern"))?.events ?? [];
+		const session = await new HermesAdapter().sessions.resolve("s-modern");
+		const events = session?.events ?? [];
 		const added = events.filter((event) => event.source.record_seq > 12);
 		expect(added).toMatchObject([
 			{
@@ -293,9 +318,25 @@ describe("HermesAdapter.collectSessions", () => {
 				parts: [{ type: "text", text: "<REASONING_SCRATCHPAD>literal tool content" }],
 			},
 			{
+				type: "reasoning",
+				kind: "reasoning",
+				parts: [
+					{ type: "text", text: "hidden think" },
+					{ type: "text", text: "hidden thinking" },
+					{ type: "text", text: "hidden reasoning" },
+					{ type: "text", text: "hidden thought" },
+					{ type: "text", text: "hidden scratchpad" },
+				],
+			},
+			{
 				type: "message",
 				role: "assistant",
 				parts: [{ type: "text", text: "Visible assistant" }],
+			},
+			{
+				type: "reasoning",
+				kind: "reasoning",
+				parts: [{ type: "text", text: "hidden tail" }],
 			},
 			{
 				type: "message",
@@ -316,7 +357,8 @@ describe("HermesAdapter.collectSessions", () => {
 			"hidden scratchpad",
 			"hidden tail",
 		]) {
-			expect(JSON.stringify(added)).not.toContain(hidden);
+			expect(JSON.stringify(added)).toContain(hidden);
+			expect(JSON.stringify(session?.messages)).not.toContain(hidden);
 		}
 	});
 

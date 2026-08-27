@@ -27,7 +27,7 @@
   <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
 </p>
 
-> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Agent Skill files remain authoritative on their own filesystems.
+> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Pi and OpenCode sessions join the same private history. Agent Skill files remain authoritative on their own filesystems.
 
 The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
@@ -53,9 +53,9 @@ npm i -g clawdi
 That gets you:
 
 - Browser-based login to Clawdi Cloud
-- Agent auto-detection for Claude Code, Codex, Hermes, and OpenClaw
-- MCP registration so your agent can call Clawdi tools
-- The bundled `clawdi` skill installed into each detected agent
+- Agent auto-detection for Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode
+- MCP registration for adapters that expose an MCP lifecycle
+- The bundled `clawdi` skill installed into adapters that support Skills
 - Background sync daemons installed and started for every registered agent
 - A health check that verifies auth, agent paths, vault access, and MCP config
 
@@ -207,7 +207,7 @@ The second is deepening multi-player workflows beyond read-only Project sharing.
 - An agent-to-agent channel for handoff and ask-for-help.
 - Task tracking that every connected agent can use.
 
-We'll also keep adding adapters. Cursor, OpenCode, Amp, Pi, and others. The same memory, skills, and connections follow you everywhere.
+We'll also keep adding adapters. Cursor, Amp, and others are next candidates. Each integration exposes only the modules the underlying agent actually supports.
 
 Want any of this sooner? [Open an issue](https://github.com/Clawdi-AI/clawdi/issues). What's loud is what we build first.
 
@@ -284,8 +284,10 @@ For the deeper map, read [`docs/architecture.md`](docs/architecture.md).
 | Codex | Yes | Yes | Automatic |
 | Hermes | Yes | Yes | Automatic |
 | OpenClaw | Yes | Yes | Manual MCP hint where required |
+| Pi | Yes | No | No |
+| OpenCode | Yes | No | No |
 
-Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli/src/adapters). Adding another agent means implementing the same adapter shape: detect it, read sessions, read/write skills, and define how commands run with injected env.
+Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli/src/adapters). An adapter exposes at least one complete module, Sessions or Skills; it never fills unsupported modules with no-op methods.
 
 ## CLI Reference
 
@@ -457,7 +459,7 @@ clawdi doctor
 Common issues:
 
 - **`clawdi auth login` fails** - Re-run login; over SSH use `clawdi auth login --no-open` and paste the complete failed loopback callback URL. `--manual` is legacy API-key compatibility and does not authorize Hosted deploys.
-- **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, or `--agent openclaw`.
+- **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, `--agent openclaw`, `--agent pi`, or `--agent opencode`.
 - **Memory search is empty** - Add a memory first with `clawdi memory add "..."`, then verify with `clawdi memory search "..."`.
 - **Local backend cannot start because `vector` is missing** - Install `pgvector` for your PostgreSQL 16 instance, or use the included Docker Compose database.
 - **Agent MCP tools look stale** - Run `clawdi setup --agent <type>` again, then `clawdi daemon restart`.

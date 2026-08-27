@@ -81,7 +81,21 @@ export interface SessionToolResultEvent extends SessionEventBase {
 	result_json?: string;
 }
 
-export type SessionEvent = SessionMessageEvent | SessionToolCallEvent | SessionToolResultEvent;
+/** Owner-private model reasoning. Display/search projections never consume this event. */
+export interface SessionReasoningEvent extends SessionEventBase {
+	type: "reasoning";
+	kind: "thinking" | "reasoning" | "redacted";
+	parts: Array<{ type: "text"; text: string }>;
+	/** Canonical JSON containing only non-display provider state such as signatures. */
+	payload_json?: string;
+	model?: string;
+}
+
+export type SessionEvent =
+	| SessionMessageEvent
+	| SessionToolCallEvent
+	| SessionToolResultEvent
+	| SessionReasoningEvent;
 
 export interface RawSession {
 	localSessionId: string;

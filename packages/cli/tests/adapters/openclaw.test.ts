@@ -157,6 +157,45 @@ describe("OpenClawAdapter.collectSessions", () => {
 		});
 	});
 
+	it("uploads thinking while keeping the message projection visible-only", async () => {
+		const sessionPath = join(
+			tmpHome,
+			".openclaw",
+			"agents",
+			"main",
+			"sessions",
+			"oc-session-001.jsonl",
+		);
+		const record = {
+			type: "message",
+			timestamp: "2026-04-20T10:00:03.000Z",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "private OpenClaw thought", signature: "signed" },
+					{ type: "text", text: "visible OpenClaw answer" },
+				],
+			},
+		};
+		writeFileSync(
+			sessionPath,
+			`${readFileSync(sessionPath, "utf-8").trimEnd()}\n${JSON.stringify(record)}\n`,
+		);
+
+		const session = (await new OpenClawAdapter().sessions.collect({ kind: "complete" }))
+			.sessions[0];
+		expect(session?.events).toContainEqual(
+			expect.objectContaining({
+				type: "reasoning",
+				kind: "thinking",
+				parts: [{ type: "text", text: "private OpenClaw thought" }],
+				payload_json: '{"signature":"signed"}',
+			}),
+		);
+		expect(session?.messages.at(-1)?.content).toBe("visible OpenClaw answer");
+		expect(JSON.stringify(session?.messages)).not.toContain("private OpenClaw thought");
+	});
+
 	it("uses displayName as summary", async () => {
 		const a = new OpenClawAdapter();
 		const s = (await a.sessions.collect({ kind: "complete" })).sessions[0]!;

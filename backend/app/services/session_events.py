@@ -104,6 +104,8 @@ def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, obje
     for event in events:
         if not isinstance(event, SessionMessageEvent) or event.role not in ("user", "assistant"):
             continue
+        if event.semantics is not None and event.semantics.display == "hidden":
+            continue
         text = "\n".join(
             part.text for part in event.parts if isinstance(part, SessionTextPart) and part.text
         )

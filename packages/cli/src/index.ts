@@ -67,6 +67,7 @@ Environment:
   OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)
   OPENCLAW_AGENT_ID        OpenClaw agent id (else "main")
   PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)
+  OPENCODE_DB              Custom OpenCode SQLite path (else XDG data/opencode/opencode.db)
   CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI
 
 Docs: https://github.com/Clawdi-AI/clawdi`,

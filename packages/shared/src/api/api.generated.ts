@@ -7887,7 +7887,7 @@ export interface components {
              * Adapter
              * @enum {string}
              */
-            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi";
+            adapter: "claude_code" | "codex" | "hermes" | "openclaw" | "pi" | "opencode";
             /** Session Key */
             session_key: string;
             /** Record Id */
@@ -7911,7 +7911,7 @@ export interface components {
             /** Head Hash */
             head_hash: string;
             /** Events */
-            events: (components["schemas"]["SessionMessageEvent"] | components["schemas"]["SessionToolCallEvent"] | components["schemas"]["SessionToolResultEvent"])[];
+            events: (components["schemas"]["SessionMessageEvent"] | components["schemas"]["SessionToolCallEvent"] | components["schemas"]["SessionToolResultEvent"] | components["schemas"]["SessionReasoningEvent"])[];
         };
         /**
          * SessionExtractResponse
@@ -8133,6 +8133,33 @@ export interface components {
         SessionPermissionsResponse: {
             /** Permissions */
             permissions: components["schemas"]["SessionPermissionResponse"][];
+        };
+        /** SessionReasoningEvent */
+        SessionReasoningEvent: {
+            /** Seq */
+            seq: number;
+            /** Event Id */
+            event_id: string;
+            source: components["schemas"]["SessionEventSource"];
+            /** Timestamp */
+            timestamp?: string | null;
+            semantics?: components["schemas"]["SessionEventSemantics"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "reasoning";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "thinking" | "reasoning" | "redacted";
+            /** Parts */
+            parts: components["schemas"]["SessionTextPart"][];
+            /** Payload Json */
+            payload_json?: string | null;
+            /** Model */
+            model?: string | null;
         };
         /** SessionTextPart */
         SessionTextPart: {

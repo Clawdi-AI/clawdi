@@ -29,7 +29,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { AgentType } from "../adapters/agent-types";
+import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import { isValidSkillKey } from "../lib/skill-key";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
@@ -575,13 +575,7 @@ export function hasSessionFence(
 }
 
 function isAgentType(value: unknown): value is AgentType {
-	return (
-		value === "claude_code" ||
-		value === "codex" ||
-		value === "openclaw" ||
-		value === "hermes" ||
-		value === "pi"
-	);
+	return typeof value === "string" && (AGENT_TYPES as readonly string[]).includes(value);
 }
 
 function isSkillOperation(

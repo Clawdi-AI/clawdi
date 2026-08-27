@@ -31,6 +31,7 @@ import {
 	canonicalStructuredString,
 	jsonObject,
 	jsonString,
+	reasoningContent,
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
@@ -66,6 +67,10 @@ interface ModernMessageRow extends MessageRow {
 	compacted: number;
 	display_kind: string | null;
 	display_metadata: string | null;
+	reasoning: string | null;
+	reasoning_content: string | null;
+	reasoning_details: string | null;
+	codex_reasoning_items: string | null;
 }
 
 interface TableInfoRow {
@@ -85,6 +90,10 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 	["compacted", "0"],
 	["display_kind", "NULL"],
 	["display_metadata", "NULL"],
+	["reasoning", "NULL"],
+	["reasoning_content", "NULL"],
+	["reasoning_details", "NULL"],
+	["codex_reasoning_items", "NULL"],
 ] as const;
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
@@ -143,6 +152,32 @@ function stripHiddenReasoning(text: string): string {
 	return visible.replace(ORPHAN_REASONING_CLOSE, "");
 }
 
+function hiddenReasoningTexts(text: string): string[] {
+	const texts: string[] = [];
+	for (const match of text.matchAll(CLOSED_REASONING_BLOCK)) {
+		const value = match[0].replace(/^<[^>]+>/, "").replace(/<\/[^>]+>$/, "");
+		if (value) texts.push(value);
+	}
+	for (const match of text.matchAll(OPEN_REASONING_TAG)) {
+		const index = match.index;
+		const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+		if (text.slice(lineStart, index).trim().length > 0) continue;
+		const tail = text.slice(index + match[0].length);
+		if (!tail.includes("</") && tail) texts.push(tail);
+		break;
+	}
+	return texts;
+}
+
+function decodeOptionalJson(value: string | null): unknown {
+	if (value === null) return undefined;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
 function safeHermesContent(content: string | null, scrubReasoning: boolean): unknown {
 	const decoded = decodeHermesContent(content);
 	if (!scrubReasoning) return decoded;
@@ -159,6 +194,30 @@ function hermesContentParts(content: string | null, scrubReasoning: boolean): Se
 	return visibleContentParts(safeHermesContent(content, scrubReasoning)).filter(
 		(part) => part.type !== "text" || part.text.length > 0,
 	);
+}
+
+function hermesReasoning(row: ModernMessageRow) {
+	if (row.role !== "assistant") return null;
+	const decoded = decodeHermesContent(row.content);
+	const texts: string[] = [];
+	if (row.reasoning) texts.push(row.reasoning);
+	if (row.reasoning_content) texts.push(row.reasoning_content);
+	const collect = (value: unknown) => {
+		if (typeof value === "string") texts.push(...hiddenReasoningTexts(value));
+		else {
+			const block = jsonObject(value);
+			if (typeof block?.text === "string") texts.push(...hiddenReasoningTexts(block.text));
+		}
+	};
+	if (Array.isArray(decoded)) decoded.forEach(collect);
+	else collect(decoded);
+	const uniqueTexts = [...new Set(texts.filter(Boolean))];
+	return reasoningContent({
+		type: "reasoning",
+		summary: uniqueTexts.map((text) => ({ type: "summary_text", text })),
+		reasoning_details: decodeOptionalJson(row.reasoning_details),
+		codex_reasoning_items: decodeOptionalJson(row.codex_reasoning_items),
+	});
 }
 
 function timestampIso(value: number): string | undefined {
@@ -247,6 +306,17 @@ function hermesEventDrafts(
 	});
 	const drafts: SessionEventDraft[] = [];
 	const calls = parseToolCalls(row.tool_calls);
+	const reasoning = hermesReasoning(row);
+	if (reasoning) {
+		drafts.push({
+			type: "reasoning",
+			...reasoning,
+			source: source(0),
+			semantics,
+			...(timestamp ? { timestamp } : {}),
+			...(model ? { model } : {}),
+		});
+	}
 	if (
 		row.role === "user" ||
 		row.role === "assistant" ||

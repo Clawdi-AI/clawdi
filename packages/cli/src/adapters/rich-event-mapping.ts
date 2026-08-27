@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { basename } from "node:path";
 import { canonicalJson } from "../lib/session-events";
-import type { SessionContentPart } from "./base";
+import type { SessionContentPart, SessionReasoningEvent } from "./base";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -207,6 +207,72 @@ export function visibleContentParts(content: unknown): SessionContentPart[] {
 		parts.push(attachmentPart(block));
 	}
 	return parts;
+}
+
+type ReasoningContent = Pick<SessionReasoningEvent, "kind" | "parts" | "payload_json">;
+
+function reasoningTexts(value: unknown): Array<{ type: "text"; text: string }> {
+	const direct = jsonObject(value);
+	const texts: string[] = [];
+	for (const candidate of [direct?.thinking, direct?.reasoning, direct?.text]) {
+		if (typeof candidate === "string" && candidate) texts.push(candidate);
+	}
+	for (const collection of [direct?.summary, direct?.content]) {
+		if (!Array.isArray(collection)) continue;
+		for (const item of collection) {
+			const block = jsonObject(item);
+			const text = jsonString(block?.text);
+			if (text) texts.push(text);
+		}
+	}
+	return texts.map((text) => ({ type: "text", text }));
+}
+
+/** Map only reasoning-specific fields; never seal the whole source record. */
+export function reasoningContent(value: unknown): ReasoningContent | null {
+	const block = jsonObject(value);
+	if (!block) return null;
+	const type = jsonString(block.type);
+	if (
+		type !== "thinking" &&
+		type !== "reasoning" &&
+		type !== "redacted_thinking" &&
+		type !== "encrypted_content"
+	)
+		return null;
+	const parts =
+		type === "encrypted_content" || type === "redacted_thinking" ? [] : reasoningTexts(block);
+	const signature =
+		jsonString(block.signature) ??
+		jsonString(block.thinkingSignature) ??
+		jsonString(block.thoughtSignature);
+	const encryptedContent =
+		jsonString(block.encrypted_content) ??
+		jsonString(block.encryptedContent) ??
+		(type === "encrypted_content" ? (jsonString(block.data) ?? jsonString(block.text)) : null);
+	const redactedData = type === "redacted_thinking" ? jsonString(block.data) : null;
+	const details = block.reasoning_details ?? block.reasoningDetails;
+	const items = block.codex_reasoning_items ?? block.codexReasoningItems;
+	const privateState: JsonObject = {
+		...(signature ? { signature } : {}),
+		...(encryptedContent ? { encrypted_content: encryptedContent } : {}),
+		...(redactedData ? { redacted_data: redactedData } : {}),
+		...(details === undefined ? {} : { details }),
+		...(items === undefined ? {} : { items }),
+	};
+	const payloadJson =
+		Object.keys(privateState).length > 0 ? canonicalJson(privateState) : undefined;
+	if (parts.length === 0 && payloadJson === undefined) return null;
+	return {
+		kind:
+			type === "redacted_thinking" || type === "encrypted_content"
+				? "redacted"
+				: type === "reasoning"
+					? "reasoning"
+					: "thinking",
+		parts,
+		...(payloadJson ? { payload_json: payloadJson } : {}),
+	};
 }
 
 function safeToolStructure(value: unknown): unknown | undefined {
