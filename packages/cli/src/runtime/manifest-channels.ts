@@ -370,11 +370,7 @@ function applyHermesChannelConfig(
 	for (const [key, value] of Object.entries(patch).sort(([left], [right]) =>
 		left.localeCompare(right),
 	)) {
-		if (key === "telegram" || key === "discord") {
-			changed = reconcileHermesConfigValue(context, key, value) || changed;
-			continue;
-		}
-		if (key === "whatsapp" || key === "display") {
+		if (key === "telegram" || key === "discord" || key === "whatsapp" || key === "display") {
 			if (!isPlainRecord(value))
 				throw new Error(`Hermes channel patch field ${key} must be an object`);
 			changed = applyHermesNestedConfigPatch(context, key, value) || changed;

@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.23
+
+Package: `clawdi@0.14.23`
+
+### Fixed
+
+- Hosted Hermes channel reconciliation now preserves user-authored channel
+  preferences, including Discord free-response channels.
+
 ## Clawdi CLI v0.14.22
 
 Package: `clawdi@0.14.22`

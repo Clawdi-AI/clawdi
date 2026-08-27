@@ -9068,6 +9068,7 @@ exit 64
 				"discord:",
 				'  allow_from: ["*"]',
 				'  group_allow_from: ["*"]',
+				'  free_response_channels: "123456789"',
 				"display:",
 				"  theme: user-theme",
 				"  platforms:",
@@ -9181,8 +9182,11 @@ exit 64
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(parsedHermesConfig.group_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
-		expect(parsedHermesConfig).not.toHaveProperty("discord.allow_from");
-		expect(parsedHermesConfig).not.toHaveProperty("discord.group_allow_from");
+		expect(parsedHermesConfig.discord).toMatchObject({
+			allow_from: ["*"],
+			group_allow_from: ["*"],
+			free_response_channels: "123456789",
+		});
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",
@@ -9256,6 +9260,11 @@ exit 64
 		expect(removed.installErrors).toEqual([]);
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(clearedHermesConfig.discord).toMatchObject({
+			allow_from: ["*"],
+			group_allow_from: ["*"],
+			free_response_channels: "123456789",
+		});
 		expect(clearedHermesConfig).not.toHaveProperty("group_sessions_per_user");
 		expect(clearedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
 		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
