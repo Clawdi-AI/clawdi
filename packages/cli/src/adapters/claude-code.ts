@@ -28,6 +28,7 @@ import {
 	type JsonObject,
 	jsonObject,
 	jsonString,
+	reasoningContent,
 	stableRecordId,
 	toolResultContent,
 	visibleContentParts,
@@ -96,6 +97,16 @@ function claudeEventDrafts(
 	for (let index = 0; index < blocks.length; index++) {
 		const block = jsonObject(blocks[index]);
 		if (!block) continue;
+		const reasoning = role === "assistant" ? reasoningContent(block) : null;
+		if (reasoning) {
+			drafts.push({
+				type: "reasoning",
+				...reasoning,
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+				...(model ? { model } : {}),
+			});
+		}
 		if (role === "assistant" && block.type === "tool_use") {
 			const callId = jsonString(block.id);
 			const name = jsonString(block.name);
@@ -123,7 +134,6 @@ function claudeEventDrafts(
 				...(timestamp ? { timestamp } : {}),
 			});
 		}
-		// `thinking` and `redacted_thinking` blocks never produce events.
 	}
 	return drafts;
 }

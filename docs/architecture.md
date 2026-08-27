@@ -188,18 +188,20 @@ Uniqueness and object keys include the immutable origin, so equal local IDs from
 different Agents cannot collide.
 
 Legacy `snapshot-v1` message arrays remain readable. `events-v1` stores strict
-Message/ToolCall/ToolResult NDJSON in immutable generation chunks with a DB
-chunk index, revision, count, and canonical chained head. Append writes only new
-objects; truncation stages a generation and CAS-commits it. Private `/events`
-reads rich content, while `/content`, public sharing, exports, and memory inputs
-project only user/assistant text. Attachment parts identify either a safe
-external reference or an explicit metadata-only record; this protocol does not
-store attachment bodies or local paths. Hidden reasoning and encrypted provider
-state are excluded before upload. A worker removes abandoned staging generations
-after one day and superseded committed generations after a seven-day read grace
-period; the current generation is never eligible. Deleting an Agent nulls `environment_id`
-without deleting history; deletion suppression remains fenced to immutable
-origin, with legacy origin-less suppressions read as wildcards.
+Message/ToolCall/ToolResult/Reasoning NDJSON in immutable generation chunks with
+a DB chunk index, revision, count, and canonical chained head. Append writes only
+new objects; truncation stages a generation and CAS-commits it. Owner-only
+`/events` reads the complete rich stream, including model reasoning and the
+reasoning-specific continuation state needed to preserve it. `/content`, public
+sharing, exports, search, and memory inputs continue to project only useful
+user/assistant text. Attachment parts identify either a safe external reference
+or an explicit metadata-only record; this protocol does not store attachment
+bodies, local paths, or duplicate provider message envelopes. A worker removes
+abandoned staging generations after one day and superseded committed generations
+after a seven-day read grace period; the current generation is never eligible.
+Deleting an Agent nulls `environment_id` without deleting history; deletion
+suppression remains fenced to immutable origin, with legacy origin-less
+suppressions read as wildcards.
 
 ## Projects And Agent Use
 

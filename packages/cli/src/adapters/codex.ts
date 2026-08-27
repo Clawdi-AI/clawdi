@@ -28,6 +28,7 @@ import {
 	type JsonObject,
 	jsonObject,
 	jsonString,
+	reasoningContent,
 	stableRecordId,
 	toolResultContent,
 	visibleContentParts,
@@ -102,6 +103,19 @@ function codexEventDrafts(
 						type: "message",
 						role,
 						parts,
+						source: eventSource(),
+						...(timestamp ? { timestamp } : {}),
+					},
+				]
+			: [];
+	}
+	if (payloadType === "reasoning") {
+		const reasoning = reasoningContent(payload);
+		return reasoning
+			? [
+					{
+						type: "reasoning",
+						...reasoning,
 						source: eventSource(),
 						...(timestamp ? { timestamp } : {}),
 					},
@@ -207,7 +221,6 @@ function codexEventDrafts(
 	}
 	if (payloadType === "agent_message") {
 		const content = Array.isArray(payload.content) ? payload.content : [];
-		if (content.some((item) => jsonObject(item)?.type === "encrypted_content")) return [];
 		const text = content
 			.map((item) => jsonObject(item))
 			.filter((item): item is JsonObject => item?.type === "input_text")
@@ -216,16 +229,27 @@ function codexEventDrafts(
 			.join("\n");
 		const author = jsonString(payload.author);
 		const recipient = jsonString(payload.recipient);
-		if (!text || !author || !recipient) return [];
-		return [
-			{
+		const drafts: SessionEventDraft[] = [];
+		if (text && author && recipient) {
+			drafts.push({
 				type: "message",
 				role: "developer",
 				parts: [{ type: "text", text: `[Agent message from ${author} to ${recipient}]\n${text}` }],
 				source: eventSource(),
 				...(timestamp ? { timestamp } : {}),
-			},
-		];
+			});
+		}
+		for (let index = 0; index < content.length; index++) {
+			const reasoning = reasoningContent(content[index]);
+			if (!reasoning) continue;
+			drafts.push({
+				type: "reasoning",
+				...reasoning,
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+			});
+		}
+		return drafts;
 	}
 	if (payloadType === "local_shell_call") {
 		const callId = jsonString(payload.call_id) ?? jsonString(payload.id);
@@ -255,8 +279,6 @@ function codexEventDrafts(
 			},
 		];
 	}
-	// `reasoning`, including `encrypted_content`, is provider continuation
-	// state and is never part of events-v1.
 	return [];
 }
 

@@ -40,6 +40,7 @@ import {
 	type JsonObject,
 	jsonObject,
 	jsonString,
+	reasoningContent,
 	stableRecordId,
 	toolResultContent,
 	visibleContentParts,
@@ -196,6 +197,16 @@ function openClawEventDrafts(
 	for (let index = 0; index < blocks.length; index++) {
 		const block = jsonObject(blocks[index]);
 		if (!block) continue;
+		const reasoning = role === "assistant" ? reasoningContent(block) : null;
+		if (reasoning) {
+			drafts.push({
+				type: "reasoning",
+				...reasoning,
+				source: eventSource(index + 1),
+				...(timestamp ? { timestamp } : {}),
+				...(model ? { model } : {}),
+			});
+		}
 		if (role === "assistant" && (block.type === "toolCall" || block.type === "tool_use")) {
 			const callId = jsonString(block.id);
 			const name = jsonString(block.name);
@@ -236,7 +247,6 @@ function openClawEventDrafts(
 				...(timestamp ? { timestamp } : {}),
 			});
 	}
-	// OpenClaw `thinking` blocks are intentionally ignored.
 	return drafts;
 }
 

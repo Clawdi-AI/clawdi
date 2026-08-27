@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { completeJsonlRecords, toolResultContent, visibleContentParts } from "./rich-event-mapping";
+import {
+	completeJsonlRecords,
+	reasoningContent,
+	toolResultContent,
+	visibleContentParts,
+} from "./rich-event-mapping";
 
 describe("rich event mapping", () => {
 	test("keeps complete JSONL records without a trailing newline and ignores a partial tail", () => {
@@ -73,5 +78,22 @@ describe("rich event mapping", () => {
 		);
 		expect(JSON.stringify(mapped)).not.toContain("hidden reasoning");
 		expect(JSON.stringify(mapped)).not.toContain("opaque continuation");
+	});
+
+	test("maps reasoning text and provider continuation without retaining its source envelope", () => {
+		const mapped = reasoningContent({
+			type: "reasoning",
+			summary: [{ type: "summary_text", text: "private reasoning" }],
+			signature: "signed-state",
+			encrypted_content: "opaque continuation",
+			provider_envelope: { duplicate_visible_message: "do not retain" },
+		});
+
+		expect(mapped).toEqual({
+			kind: "reasoning",
+			parts: [{ type: "text", text: "private reasoning" }],
+			payload_json: '{"encrypted_content":"opaque continuation","signature":"signed-state"}',
+		});
+		expect(JSON.stringify(mapped)).not.toContain("duplicate_visible_message");
 	});
 });

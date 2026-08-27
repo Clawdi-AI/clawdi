@@ -281,8 +281,8 @@ Shape:
 - `openclaw/` — `sessions.json` index + `<id>.jsonl` transcript (with a `model_change` event); `skills/demo` + `skills/node_modules` (SKIP_DIRS)
 - `pi/` — official JSONL v1-v4 records covering active-leaf branching,
   compaction retained tails, visible tools, attachment metadata, and
-  hidden-thinking exclusion; Pi has no Skills fixture because it is
-  sessions-only
+  owner-private thinking with visible-only message projection; Pi has no Skills
+  fixture because it is sessions-only
 
 Fixtures are committed (not regenerated on every test run). Regenerate only
 when an upstream agent's on-disk format changes and a test breaks.

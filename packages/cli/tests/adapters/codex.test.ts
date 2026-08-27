@@ -219,7 +219,7 @@ describe("CodexAdapter.collectSessions", () => {
 		});
 	});
 
-	it("maps persisted visible ResponseItem variants without raw or encrypted payloads", async () => {
+	it("maps visible ResponseItems and their private reasoning without raw envelopes", async () => {
 		const sessionPath = join(
 			tmpHome,
 			".codex",
@@ -267,11 +267,24 @@ describe("CodexAdapter.collectSessions", () => {
 				timestamp: "2026-04-20T10:00:09Z",
 				type: "response_item",
 				payload: {
+					type: "reasoning",
+					id: "rs_1",
+					summary: [{ type: "summary_text", text: "private Codex reasoning" }],
+					encrypted_content: "opaque Codex continuation",
+				},
+			},
+			{
+				timestamp: "2026-04-20T10:00:10Z",
+				type: "response_item",
+				payload: {
 					type: "agent_message",
 					id: "amsg_123",
 					author: "planner",
 					recipient: "worker",
-					content: [{ type: "input_text", text: "visible handoff" }],
+					content: [
+						{ type: "input_text", text: "visible handoff" },
+						{ type: "encrypted_content", data: "opaque handoff continuation" },
+					],
 				},
 			},
 		];
@@ -308,6 +321,22 @@ describe("CodexAdapter.collectSessions", () => {
 				type: "message",
 				role: "developer",
 				parts: [{ type: "text", text: "[Agent message from planner to worker]\nvisible handoff" }],
+			}),
+		);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "reasoning",
+				kind: "reasoning",
+				parts: [{ type: "text", text: "private Codex reasoning" }],
+				payload_json: '{"encrypted_content":"opaque Codex continuation"}',
+			}),
+		);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "reasoning",
+				kind: "redacted",
+				parts: [],
+				payload_json: '{"encrypted_content":"opaque handoff continuation"}',
 			}),
 		);
 		expect(JSON.stringify(events)).not.toContain(imageData);

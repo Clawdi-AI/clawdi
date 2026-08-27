@@ -102,6 +102,52 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		expect(texts).toEqual(["hello", "world", "one more", "done"]);
 	});
 
+	it("uploads thinking and redacted continuation without adding it to messages", async () => {
+		const sessionPath = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"11111111-2222-3333-4444-555555555555.jsonl",
+		);
+		const record = {
+			type: "assistant",
+			uuid: "reasoning-record",
+			timestamp: "2026-04-20T10:00:06.000Z",
+			message: {
+				role: "assistant",
+				model: "claude-opus-4-7",
+				content: [
+					{ type: "thinking", thinking: "private Claude thought", signature: "signed" },
+					{ type: "redacted_thinking", data: "opaque-redacted" },
+					{ type: "text", text: "visible answer after thinking" },
+				],
+			},
+		};
+		writeFileSync(
+			sessionPath,
+			`${readFileSync(sessionPath, "utf-8").trimEnd()}\n${JSON.stringify(record)}\n`,
+		);
+
+		const session = (await new ClaudeCodeAdapter().sessions.collect({ kind: "complete" }))
+			.sessions[0];
+		const reasoning = session?.events?.filter((event) => event.type === "reasoning") ?? [];
+		expect(reasoning).toMatchObject([
+			{
+				kind: "thinking",
+				parts: [{ type: "text", text: "private Claude thought" }],
+				payload_json: '{"signature":"signed"}',
+			},
+			{
+				kind: "redacted",
+				parts: [],
+				payload_json: '{"redacted_data":"opaque-redacted"}',
+			},
+		]);
+		expect(session?.messages.at(-1)?.content).toBe("visible answer after thinking");
+		expect(JSON.stringify(session?.messages)).not.toContain("private Claude thought");
+	});
+
 	it("filters by projectFilter (matching cwd → encoded dir)", async () => {
 		const a = new ClaudeCodeAdapter();
 		const matched = await a.sessions.collect({

@@ -46,11 +46,11 @@ leaf, applies compaction retained-tail semantics, ignores a partial final line,
 and re-reads the current backing store when a queued item drains. Path scans
 fall back to a complete scan when their containment cannot be proven.
 
-Pi uploads namespaced identities (`pi.<session-id>`), visible messages, tool
-calls/results, attachment metadata/references, visible custom messages, and
-compaction/branch summaries. Provider thinking content and signatures are never
-uploaded. Pi is Connected-only: it is not a Hosted runtime, plugin, channel,
-control-plane, or deployment type.
+Pi uploads namespaced identities (`pi.<session-id>`), messages, tool
+calls/results, attachment metadata/references, visible custom messages,
+compaction/branch summaries, and owner-private reasoning/signatures. Default
+message projections omit the private reasoning events. Pi is Connected-only: it
+is not a Hosted runtime, plugin, channel, control-plane, or deployment type.
 
 ## Session Content Protocols
 
@@ -63,26 +63,28 @@ rather than claiming event fidelity. A new CLI probes
 `/v1/sessions/upload-capabilities`; a 404 selects `snapshot-v1`, so an old
 server never receives an events envelope.
 
-`events-v1` is strict and private. It contains only continuous, source-identified
-`Message`, `ToolCall`, and `ToolResult` events. Message content is text or
-an `AttachmentRef` with stable identity and `external` or `metadata_only`
-availability. Only safe HTTPS references and opaque provider references carry a
-URI. Inline bytes become hash/size metadata, local paths expose at most a
-basename, and no attachment body is stored by this version. The schema forbids
-extra fields. Hidden chain of thought, encrypted continuation state, and
-redacted thinking are excluded at the adapter boundary.
+`events-v1` is strict and private. It contains continuous, source-identified
+`Message`, `ToolCall`, `ToolResult`, and owner-private `Reasoning` events. Message
+content is text or an `AttachmentRef` with stable identity and `external` or
+`metadata_only` availability. Reasoning stores its own text plus only explicit
+continuation fields such as signatures, encrypted state, redacted data, and
+reasoning details/items; it never wraps a complete source record. Only safe
+HTTPS references and opaque provider references carry a URI. Inline bytes become
+hash/size metadata, local paths expose at most a basename, and no attachment body
+is stored by this version. The schema forbids extra fields. Default content,
+share, export, search, and memory projections ignore Reasoning events.
 
 Hermes events follow `messages.id` insertion order and retain every durable
 row, including compacted copies and rewound inactive rows. Normalized lifecycle,
 compressed-summary, display-kind, and safe presentation metadata let a later
 projection reproduce Hermes' active/display/audit views without discarding the
-complete store. Dedicated reasoning columns, provider API envelopes, and Codex
-reasoning/message carrier fields are never selected.
+complete store. Dedicated reasoning columns and Codex reasoning items become
+Reasoning events. Provider API envelopes and Codex message carrier fields remain
+unselected because they duplicate visible message semantics.
 
-Codex `AgentMessage` records are emitted only when their persisted content is
-entirely plaintext. Because events-v1 has no author/recipient fields, the
-visible author-to-recipient context is downgraded into an explicit developer
-message prefix; any record containing encrypted content is omitted. Tool-search
+Codex `AgentMessage` records preserve plaintext author-to-recipient content as an
+explicit developer message prefix. Encrypted continuation blocks become separate
+Reasoning events instead of suppressing the visible handoff. Tool-search
 calls/results and image-generation results map to the strict tool events, with
 generated image bytes reduced to attachment metadata.
 
