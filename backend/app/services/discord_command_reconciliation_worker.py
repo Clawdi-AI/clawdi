@@ -79,7 +79,6 @@ async def reconcile_discord_guild_commands(
                         account=account,
                         bot_agent_link_id=link.id,
                         application_id=_discord_application_id(account),
-                        commands=[],
                         guild_ids={guild_id},
                         automatic=False,
                         force=True,
@@ -245,7 +244,6 @@ class DiscordCommandReconciliationWorker:
                         account=account,
                         bot_agent_link_id=link.id,
                         application_id=application_id,
-                        commands=[],
                         automatic=True,
                     )
                     await db.refresh(link)

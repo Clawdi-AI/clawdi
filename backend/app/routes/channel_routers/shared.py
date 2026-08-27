@@ -79,7 +79,11 @@ _DISCORD_RESPONSE_HEADER_ALLOWLIST = (
 )
 _DISCORD_AGENT_COMMANDS_CONFIG_KEY = "discord_agent_commands"
 _DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY = "discord_command_materializations"
+_DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY = "discord_command_projection_settle_at"
 _DISCORD_COMMAND_RETRIES_CONFIG_KEY = "discord_command_retries"
+# Diff-based clients send one mutation at a time. Give their durable shadow a
+# short quiet window so one final Guild bulk overwrite replaces the whole burst.
+_DISCORD_COMMAND_PROJECTION_SETTLE_SECONDS = 10.0
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 type RequestParam = JsonValue | UploadFile
@@ -394,7 +398,6 @@ async def handle_discord_application_commands(
             link=link,
             application_id=application_id,
             guild_id=guild_id,
-            commands=[],
         )
         return {}
     if request.method == "DELETE" and command_id is not None:
@@ -405,14 +408,11 @@ async def handle_discord_application_commands(
         if len(filtered) == len(command_list):
             return _discord_command_error("Unknown application command", 10063, 404)
         commands[scope_key] = filtered
-        await _store_discord_command_shadow(db, link=link, commands=commands)
-        await _materialize_discord_command_scope(
+        await _store_discord_command_shadow(
             db,
-            account=account,
             link=link,
-            application_id=application_id,
-            guild_id=guild_id,
-            commands=filtered,
+            commands=commands,
+            coalesce_projection=True,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     if request.method not in {"POST", "PUT", "PATCH"}:
@@ -442,7 +442,6 @@ async def handle_discord_application_commands(
             link=link,
             application_id=application_id,
             guild_id=guild_id,
-            commands=command_list,
         )
         return command_list
 
@@ -458,14 +457,11 @@ async def handle_discord_application_commands(
             if _discord_command_key_conflicts(command_list, command, ignored_id=command_id):
                 return _discord_command_error("Application command already exists", 30032, 400)
             command_list[index] = command
-            await _store_discord_command_shadow(db, link=link, commands=commands)
-            await _materialize_discord_command_scope(
+            await _store_discord_command_shadow(
                 db,
-                account=account,
                 link=link,
-                application_id=application_id,
-                guild_id=guild_id,
-                commands=command_list,
+                commands=commands,
+                coalesce_projection=True,
             )
             return command
         return _discord_command_error("Unknown application command", 10063, 404)
@@ -476,14 +472,11 @@ async def handle_discord_application_commands(
     command = _discord_command_shape(params, application_id=application_id)
     command_list = commands.setdefault(scope_key, [])
     _discord_upsert_command(command_list, command)
-    await _store_discord_command_shadow(db, link=link, commands=commands)
-    await _materialize_discord_command_scope(
+    await _store_discord_command_shadow(
         db,
-        account=account,
         link=link,
-        application_id=application_id,
-        guild_id=guild_id,
-        commands=command_list,
+        commands=commands,
+        coalesce_projection=True,
     )
     return command
 
@@ -689,13 +682,38 @@ async def _store_discord_command_shadow(
     *,
     link: ChannelBotAgentLink,
     commands: DiscordCommandScopes,
+    coalesce_projection: bool = False,
 ) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
     config[_DISCORD_AGENT_COMMANDS_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
         commands, strict=True
     )
+    if coalesce_projection:
+        config[_DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY] = (
+            datetime.now(UTC) + timedelta(seconds=_DISCORD_COMMAND_PROJECTION_SETTLE_SECONDS)
+        ).isoformat()
     link.config = config
     await db.commit()
+
+
+def _discord_command_projection_is_settled(link: ChannelBotAgentLink) -> bool:
+    config = link.config if isinstance(link.config, dict) else {}
+    raw = config.get(_DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY)
+    if not isinstance(raw, str):
+        return True
+    try:
+        settle_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return settle_at.tzinfo is None or settle_at <= datetime.now(UTC)
+
+
+def _clear_discord_command_projection_settle_at(link: ChannelBotAgentLink) -> None:
+    config = dict(link.config) if isinstance(link.config, dict) else {}
+    if _DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY not in config:
+        return
+    config.pop(_DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY)
+    link.config = config
 
 
 def _discord_command_list_shape(
@@ -1000,7 +1018,6 @@ async def fan_out_discord_global_commands(
     account: ChannelAccount,
     bot_agent_link_id: UUID,
     application_id: str,
-    commands: list[DiscordCommand],
     guild_ids: set[str] | None = None,
     automatic: bool = False,
     force: bool = False,
@@ -1066,6 +1083,9 @@ async def fan_out_discord_global_commands(
         if materializations.get(guild_id) == fingerprint:
             await db.commit()
             continue
+        if automatic and not force and not _discord_command_projection_is_settled(link):
+            await db.commit()
+            continue
         retry = retries.get(guild_id)
         if not force and not _discord_retry_is_due(retry, fingerprint=fingerprint):
             await db.commit()
@@ -1126,6 +1146,12 @@ async def fan_out_discord_global_commands(
         link.config = config
         await db.commit()
         reconciled += 1
+    config = link.config if isinstance(link.config, dict) else {}
+    if automatic and _DISCORD_COMMAND_PROJECTION_SETTLE_AT_CONFIG_KEY in config:
+        await db.refresh(link, with_for_update=True)
+        if _discord_command_projection_is_settled(link):
+            _clear_discord_command_projection_settle_at(link)
+        await db.commit()
     if first_error is not None:
         raise first_error
     return reconciled
@@ -1253,7 +1279,6 @@ async def _materialize_discord_command_scope(
     link: ChannelBotAgentLink,
     application_id: str,
     guild_id: str | None,
-    commands: list[DiscordCommand],
 ) -> None:
     # Agent-defined commands are Link shadows. Never write them to the shared
     # physical global command set or DMs; only materialize them into this
@@ -1291,7 +1316,6 @@ async def _materialize_discord_command_scope(
         account=account,
         bot_agent_link_id=link.id,
         application_id=application_id,
-        commands=commands,
         guild_ids=set(selected_guild_ids),
     )
 

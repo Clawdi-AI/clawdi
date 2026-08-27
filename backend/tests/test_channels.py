@@ -16963,7 +16963,6 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
         account: ChannelAccount,
         bot_agent_link_id: UUID,
         application_id: str,
-        commands: list[dict[str, Any]],
         guild_ids: set[str] | None = None,
         automatic: bool = False,
         force: bool = False,
@@ -16973,7 +16972,6 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
                 "account_id": account.id,
                 "bot_agent_link_id": bot_agent_link_id,
                 "application_id": application_id,
-                "commands": commands,
                 "guild_ids": guild_ids,
                 "automatic": automatic,
                 "force": force,
@@ -17044,7 +17042,6 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
             "account_id": UUID(created["id"]),
             "bot_agent_link_id": UUID(created["agent_link_id"]),
             "application_id": DISCORD_TEST_APPLICATION_ID,
-            "commands": [shadowed_command],
             "guild_ids": {"interaction-replay-guild"},
             "automatic": False,
             "force": True,
@@ -22509,6 +22506,106 @@ async def _make_discord_retry_due(
     await db_session.commit()
 
 
+async def _make_discord_projection_due(
+    db_session: AsyncSession,
+    *,
+    link_id: UUID,
+) -> None:
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, link_id)
+    assert link is not None
+    await db_session.refresh(link, with_for_update=True)
+    config = dict(link.config) if isinstance(link.config, dict) else {}
+    config["discord_command_projection_settle_at"] = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    ).isoformat()
+    link.config = config
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_discord_individual_command_mutations_coalesce_once_per_guild(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_ids = {"coalesced-command-guild-a", "coalesced-command-guild-b"}
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-coalesced-command-mutations",
+        channel_id="coalesced-command-channel",
+        guild_id="coalesced-command-guild-a",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    db_session.add(
+        ChannelBinding(
+            account_id=account.id,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            user_id=account.user_id,
+            external_chat_id="coalesced-command-guild-b",
+            external_chat_type="guild_text",
+            external_chat_name="coalesced-command-guild-b",
+            paired_external_user_id="discord-pair-user",
+        )
+    )
+    await db_session.commit()
+    provider_calls: list[dict[str, Any]] = []
+
+    async def provider_success(**kwargs: Any) -> shared_router.DiscordProviderResult:
+        provider_calls.append(kwargs)
+        return _discord_provider_result(200, [])
+
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_success)
+    command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
+    headers = {"Authorization": f"Bot {created['agent_token']}"}
+
+    first = await client.post(
+        command_url,
+        headers=headers,
+        json={"name": "first", "description": "First command"},
+    )
+    second = await client.post(
+        command_url,
+        headers=headers,
+        json={"name": "second", "description": "Second command"},
+    )
+    updated = await client.patch(
+        f"{command_url}/{second.json()['id']}",
+        headers=headers,
+        json={"description": "Updated second command"},
+    )
+    deleted = await client.delete(
+        f"{command_url}/{first.json()['id']}",
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert updated.status_code == 200
+    assert deleted.status_code == 204
+    assert provider_calls == []
+
+    link_id = UUID(created["agent_link_id"])
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = DiscordCommandReconciliationWorker(sessionmaker, poll_interval_seconds=0.01)
+    assert await worker.run_once() == 0
+    assert provider_calls == []
+
+    await _make_discord_projection_due(db_session, link_id=link_id)
+    assert await worker.run_once() == 2
+    assert {
+        call["path"].split("/guilds/", 1)[1].split("/", 1)[0] for call in provider_calls
+    } == guild_ids
+    assert all(
+        json.loads(call["body"])
+        == [{"name": "second", "description": "Updated second command", "type": 1}]
+        for call in provider_calls
+    )
+    listed = await client.get(command_url, headers=headers)
+    assert [command["name"] for command in listed.json()] == ["second"]
+
+
 @pytest.mark.asyncio
 async def test_discord_prod_timeline_reconciles_shadow_after_guild_create(
     client: httpx.AsyncClient,
@@ -22609,7 +22706,7 @@ async def test_discord_prod_timeline_reconciles_shadow_after_guild_create(
 
 
 @pytest.mark.asyncio
-async def test_discord_delete_tombstone_recovers_after_provider_failure(
+async def test_discord_individual_delete_tombstone_coalesces_and_recovers(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -22637,30 +22734,40 @@ async def test_discord_delete_tombstone_recovers_after_provider_failure(
     stored = await client.put(
         command_url,
         headers={"Authorization": f"Bot {created['agent_token']}"},
-        json=[{"name": "ephemeral", "description": "Ephemeral command"}],
+        json=[
+            {"name": "ephemeral", "description": "Ephemeral command"},
+            {"name": "temporary", "description": "Temporary command"},
+        ],
     )
-    command_id = stored.json()[0]["id"]
+    assert stored.status_code == 200
+    stored_commands = stored.json()
 
-    failed_delete = await client.delete(
-        f"{command_url}/{command_id}",
-        headers={"Authorization": f"Bot {created['agent_token']}"},
-    )
+    for command in stored_commands:
+        deleted = await client.delete(
+            f"{command_url}/{command['id']}",
+            headers={"Authorization": f"Bot {created['agent_token']}"},
+        )
+        assert deleted.status_code == 204
     retry_delete = await client.delete(
-        f"{command_url}/{command_id}",
+        f"{command_url}/{stored_commands[0]['id']}",
         headers={"Authorization": f"Bot {created['agent_token']}"},
     )
 
-    assert failed_delete.status_code == 502
     assert retry_delete.status_code == 404
-    assert len(provider_calls) == 2
+    assert len(provider_calls) == 1
     link_id = UUID(created["agent_link_id"])
+    await _make_discord_projection_due(db_session, link_id=link_id)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = DiscordCommandReconciliationWorker(sessionmaker, poll_interval_seconds=0.01)
+
+    assert await worker.run_once() == 0
+    assert len(provider_calls) == 2
+    assert provider_calls[1]["body"] == b"[]"
     await _make_discord_retry_due(
         db_session,
         link_id=link_id,
         guild_id=guild_id,
     )
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    worker = DiscordCommandReconciliationWorker(sessionmaker, poll_interval_seconds=0.01)
 
     assert await worker.run_once() == 1
     assert len(provider_calls) == 3
@@ -23074,7 +23181,6 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
                 account=account,
                 bot_agent_link_id=link_id,
                 application_id=DISCORD_TEST_APPLICATION_ID,
-                commands=[],
                 force=True,
             )
 
