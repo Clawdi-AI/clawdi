@@ -21,6 +21,10 @@ database migration, CI, and implementation details.
 
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 
+### Fixed
+
+- Session detail search now preserves spaces while typing multi-word queries.
+
 ## Clawdi CLI v0.14.27
 
 Package: `clawdi@0.14.27`
