@@ -26,13 +26,14 @@ describe("hosted agent detail header", () => {
 		);
 
 		// The Files iframe is only rendered after the deployment-scoped grant is
-		// primed; the new-tab launch bootstraps then navigates (no direct anchor).
+		// primed; the new-window launch bootstraps then navigates (no direct anchor).
 		expect(source).toContain("function FilesFrame(");
 		expect(source).toContain("useFilesGrantBootstrap(url)");
-		expect(source).toContain("useOpenFilesInNewTab(url)");
+		expect(source).toContain("useOpenFilesInNewWindow(url, deploymentId)");
 		expect(source).toContain("src={url}");
 		expect(source).toContain('title="Files"');
-		expect(source).toContain("Open in new tab");
+		expect(source).toContain("Open in new window");
+		expect(source.match(/<OpenInNewWindowButton/g)).toHaveLength(3);
 		expect(source).toContain("Opening Files…");
 		expect(source).not.toContain('target="_blank"');
 		expect(source).toContain("hostedAgentVisibleSectionIds(");

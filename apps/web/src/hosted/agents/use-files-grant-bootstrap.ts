@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { openSecureRuntimeWindow } from "@/hosted/agents/runtime-ui-credentials";
+import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useAuthToken } from "@/lib/auth-client";
 import { toastError } from "@/lib/toast";
 
@@ -50,36 +51,37 @@ export function useFilesGrantBootstrap(url: string): FilesGrantBootstrapState {
 }
 
 /**
- * Open the Files origin in a new tab. The blank tab is opened synchronously so
- * the browser does not block it, the grant is primed, then the tab navigates —
- * the token still only travels in the `Authorization` header.
+ * Open the Files origin in a new window. The blank window is opened synchronously
+ * so the browser does not block it, the grant is primed, then it navigates. The
+ * token still only travels in the `Authorization` header.
  */
-export function useOpenFilesInNewTab(url: string): () => Promise<void> {
+export function useOpenFilesInNewWindow(url: string, deploymentId: string): () => Promise<void> {
 	const { getToken } = useAuthToken();
 	return useCallback(async () => {
-		const tab = openSecureRuntimeWindow(window.open.bind(window));
-		if (!tab) {
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
+		if (!popup) {
 			toastError("Couldn't open Files", {
-				id: "files-new-tab",
+				id: "files-window-launch",
 				description: "Allow pop-ups for Clawdi, then try again.",
 			});
 			return;
 		}
+		trackRuntimeWindow(deploymentId, popup);
 		try {
 			const token = await getToken();
 			if (!token) throw new Error("No Clerk session token");
 			await primeFilesGrant(url, token);
-			tab.location.replace(url);
+			popup.location.replace(url);
 		} catch {
 			try {
-				tab.close();
+				popup.close();
 			} catch {
 				// Browser isolation may have severed the WindowProxy.
 			}
 			toastError("Couldn't open Files", {
-				id: "files-new-tab",
+				id: "files-window-launch",
 				description: "Files access couldn't be authenticated. Refresh the page and try again.",
 			});
 		}
-	}, [url, getToken]);
+	}, [deploymentId, url, getToken]);
 }
