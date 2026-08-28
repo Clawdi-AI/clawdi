@@ -18,6 +18,10 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column(
+        "session_event_chunks",
+        sa.Column("search_indexed_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
         "sessions",
         sa.Column("search_index_revision", sa.String(length=80), nullable=True),
     )
@@ -70,3 +74,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("session_message_search")
     op.drop_column("sessions", "search_index_revision")
+    op.drop_column("session_event_chunks", "search_indexed_at")

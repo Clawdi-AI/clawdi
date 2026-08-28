@@ -6,11 +6,11 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import case, delete, func, literal, or_, select
+from sqlalchemy import case, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
-from app.models.session import Session, SessionMessageSearch
+from app.models.session import Session, SessionEventChunk, SessionMessageSearch
 from app.schemas.session_events import SessionEvent
 from app.services.session_content import load_session_events, load_session_messages
 from app.services.session_events import project_visible_messages
@@ -30,8 +30,12 @@ class SearchableSessionMessage:
     content: str
 
 
-def event_search_revision(generation_id: UUID) -> str:
+def event_document_revision(generation_id: UUID) -> str:
     return f"events:{generation_id}"
+
+
+def event_search_revision(head_hash: str) -> str:
+    return f"events:{head_hash}"
 
 
 def snapshot_search_revision(content_hash: str) -> str:
@@ -39,11 +43,36 @@ def snapshot_search_revision(content_hash: str) -> str:
 
 
 def current_search_revision(session: Session) -> str | None:
-    if session.content_protocol == "events-v1" and session.event_generation_id is not None:
-        return event_search_revision(session.event_generation_id)
+    if session.content_protocol == "events-v1" and session.event_head_hash is not None:
+        return event_search_revision(session.event_head_hash)
     if session.content_protocol == "snapshot-v1" and session.content_hash is not None:
         return snapshot_search_revision(session.content_hash)
     return None
+
+
+def current_document_revision(session: Session) -> str | None:
+    if session.content_protocol == "events-v1" and session.event_generation_id is not None:
+        return event_document_revision(session.event_generation_id)
+    if session.content_protocol == "snapshot-v1" and session.content_hash is not None:
+        return snapshot_search_revision(session.content_hash)
+    return None
+
+
+async def event_search_projection_complete(
+    db: AsyncSession,
+    generation_id: UUID,
+) -> bool:
+    missing = (
+        await db.execute(
+            select(SessionEventChunk.id)
+            .where(
+                SessionEventChunk.generation_id == generation_id,
+                SessionEventChunk.search_indexed_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return missing is None
 
 
 def _escaped_contains_pattern(value: str) -> str:
@@ -53,10 +82,17 @@ def _escaped_contains_pattern(value: str) -> str:
 
 def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     """Return the strongest index-backed visible-message match per Session."""
-    active_revision = case(
+    active_document_revision = case(
         (
             Session.content_protocol == "events-v1",
             func.concat("events:", Session.event_generation_id),
+        ),
+        else_=func.concat("snapshot:", Session.content_hash),
+    )
+    active_search_revision = case(
+        (
+            Session.content_protocol == "events-v1",
+            func.concat("events:", Session.event_head_hash),
         ),
         else_=func.concat("snapshot:", Session.content_hash),
     )
@@ -99,13 +135,13 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             candidates.c.role,
             candidates.c.score,
             candidates.c.position,
-            candidates.c.content_revision,
+            Session.search_index_revision.label("content_revision"),
         )
         .join(Session, Session.id == candidates.c.session_id)
         .where(
             Session.user_id == user_id,
-            candidates.c.content_revision == Session.search_index_revision,
-            Session.search_index_revision == active_revision,
+            candidates.c.content_revision == active_document_revision,
+            Session.search_index_revision == active_search_revision,
         )
         .distinct(candidates.c.session_id)
         .order_by(
@@ -180,23 +216,31 @@ def stage_event_search_messages(
         user_id=user_id,
         session_id=session_id,
         generation_id=generation_id,
-        content_revision=event_search_revision(generation_id),
+        content_revision=event_document_revision(generation_id),
         messages=searchable_event_messages(events),
     )
 
 
-async def activate_event_search_index(
+async def finalize_event_search_index(
     db: AsyncSession,
     session: Session,
     generation_id: UUID,
+    *,
+    projection_complete: bool,
 ) -> None:
-    revision = event_search_revision(generation_id)
+    document_revision = event_document_revision(generation_id)
     await db.execute(
         delete(SessionMessageSearch).where(
             SessionMessageSearch.session_id == session.id,
-            SessionMessageSearch.content_revision != revision,
+            SessionMessageSearch.content_revision != document_revision,
         )
     )
+    if not projection_complete:
+        session.search_index_revision = None
+        return
+    revision = current_search_revision(session)
+    if revision is None:
+        raise ValueError("events-v1 search activation requires a committed event head")
     session.search_index_revision = revision
 
 
@@ -227,17 +271,21 @@ async def rebuild_session_search_index(
     file_store: SessionSearchFileStore,
 ) -> bool:
     """Rebuild one revision without letting stale object reads replace newer data."""
-    revision = current_search_revision(session)
-    if revision is None:
+    search_revision = current_search_revision(session)
+    if search_revision is None:
         return False
     if session.content_protocol == "events-v1":
+        generation_id = session.event_generation_id
+        if generation_id is None:
+            return False
         events = await load_session_events(session, file_store, db)
         messages = searchable_event_messages(events)
-        generation_id = session.event_generation_id
+        document_revision = event_document_revision(generation_id)
     else:
         snapshot = await load_session_messages(session, file_store, db)
         messages = searchable_snapshot_messages(snapshot)
         generation_id = None
+        document_revision = search_revision
 
     current = (
         await db.execute(
@@ -247,7 +295,11 @@ async def rebuild_session_search_index(
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
-    if current is None or current_search_revision(current) != revision:
+    if (
+        current is None
+        or current_search_revision(current) != search_revision
+        or current_document_revision(current) != document_revision
+    ):
         return False
 
     await db.execute(
@@ -258,8 +310,19 @@ async def rebuild_session_search_index(
         user_id=current.user_id,
         session_id=current.id,
         generation_id=generation_id,
-        content_revision=revision,
+        content_revision=document_revision,
         messages=messages,
     )
-    current.search_index_revision = revision
+    if generation_id is not None:
+        await db.execute(
+            update(SessionEventChunk)
+            .where(SessionEventChunk.generation_id == generation_id)
+            .values(
+                search_indexed_at=func.coalesce(
+                    SessionEventChunk.search_indexed_at,
+                    func.now(),
+                )
+            )
+        )
+    current.search_index_revision = search_revision
     return True

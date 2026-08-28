@@ -210,6 +210,10 @@ async def _commit_generation(
     environment_id: str,
     local_session_id: str,
     events: list[dict[str, Any]],
+    base_generation: str | None = None,
+    base_revision: int = 0,
+    base_count: int = 0,
+    base_head_hash: str = EMPTY_EVENT_HEAD,
 ) -> tuple[str, str, str]:
     generation = str(uuid.uuid4())
     append_id = str(uuid.uuid4())
@@ -220,10 +224,10 @@ async def _commit_generation(
             "environment_id": environment_id,
             "generation": generation,
             "append_id": append_id,
-            "base_generation": None,
-            "base_revision": 0,
-            "base_count": 0,
-            "base_head_hash": EMPTY_EVENT_HEAD,
+            "base_generation": base_generation,
+            "base_revision": base_revision,
+            "base_count": base_count,
+            "base_head_hash": base_head_hash,
             "final_count": len(events),
             "final_head_hash": final_head,
         },
@@ -240,10 +244,10 @@ async def _commit_generation(
         f"/v1/sessions/{local_session_id}/events/generations/{generation}/commit",
         json={
             "append_id": append_id,
-            "base_generation": None,
-            "base_revision": 0,
-            "base_count": 0,
-            "base_head_hash": EMPTY_EVENT_HEAD,
+            "base_generation": base_generation,
+            "base_revision": base_revision,
+            "base_count": base_count,
+            "base_head_hash": base_head_hash,
             "final_count": len(events),
             "final_head_hash": final_head,
         },
@@ -631,7 +635,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "anchor": {
             "kind": "event_seq",
             "position": 4,
-            "revision": f"events:{generation}",
+            "revision": f"events:{second_head}",
         },
     }
     for private_query in ("private chain of thought", "secret tool output"):
@@ -647,6 +651,247 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     await db_session.commit()
     rebuilt_search = (await client.get("/v1/sessions", params={"q": "visible answer"})).json()
     assert [item["local_session_id"] for item in rebuilt_search["items"]] == [local_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_event_search_rebuild_does_not_replace_a_concurrent_append(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.routes import session_events as event_routes
+
+    local_id = "pi.search-rebuild-race"
+    environment_id, session = await _register_session(client, db_session, local_session_id=local_id)
+    original = [
+        _event(
+            0,
+            "message",
+            "original",
+            role="user",
+            parts=[{"type": "text", "text": "original searchable event"}],
+        )
+    ]
+    generation, original_head, _ = await _commit_generation(
+        client,
+        environment_id=environment_id,
+        local_session_id=local_id,
+        events=original,
+    )
+    appended = _event(
+        1,
+        "message",
+        "appended",
+        role="assistant",
+        parts=[{"type": "text", "text": "concurrent appended search event"}],
+    )
+    appended_data, appended_hash = _chunk([appended])
+    appended_head = advance_event_head(original_head, [appended])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    class RacingFileStore:
+        triggered = False
+
+        async def get(self, key: str) -> bytes:
+            if not self.triggered:
+                self.triggered = True
+                response = await client.post(
+                    f"/v1/sessions/{local_id}/events/append",
+                    data={
+                        "environment_id": environment_id,
+                        "append_id": str(uuid.uuid4()),
+                        "generation": generation,
+                        "base_revision": 1,
+                        "base_count": 1,
+                        "base_head_hash": original_head,
+                        "final_count": 2,
+                        "final_head_hash": appended_head,
+                        "content_hash": appended_hash,
+                    },
+                    files={
+                        "file": (
+                            "1.ndjson",
+                            appended_data,
+                            "application/x-ndjson",
+                        )
+                    },
+                )
+                assert response.status_code == 200, response.text
+            return await event_routes.file_store.get(key)
+
+    async with session_factory() as backfill_db:
+        stale = await backfill_db.get(Session, session.id)
+        assert stale is not None
+        rebuilt = await rebuild_session_search_index(backfill_db, stale, RacingFileStore())
+        await backfill_db.commit()
+    assert rebuilt is False
+
+    search = (
+        await client.get("/v1/sessions", params={"q": "concurrent appended search event"})
+    ).json()
+    assert [item["local_session_id"] for item in search["items"]] == [local_id]
+    assert search["items"][0]["search_match"]["anchor"]["revision"] == (f"events:{appended_head}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_event_search_rebuild_fences_same_head_generation_replacement(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.routes import session_events as event_routes
+
+    local_id = "pi.search-rebuild-generation-race"
+    environment_id, session = await _register_session(client, db_session, local_session_id=local_id)
+    events = [
+        _event(
+            0,
+            "message",
+            "stable",
+            role="assistant",
+            parts=[{"type": "text", "text": "same head replacement remains searchable"}],
+        )
+    ]
+    generation, head, _ = await _commit_generation(
+        client,
+        environment_id=environment_id,
+        local_session_id=local_id,
+        events=events,
+    )
+    await db_session.refresh(session)
+    session.search_index_revision = None
+    await db_session.commit()
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    class RacingFileStore:
+        triggered = False
+
+        async def get(self, key: str) -> bytes:
+            if not self.triggered:
+                self.triggered = True
+                replacement_generation, replacement_head, _ = await _commit_generation(
+                    client,
+                    environment_id=environment_id,
+                    local_session_id=local_id,
+                    events=events,
+                    base_generation=generation,
+                    base_revision=1,
+                    base_count=1,
+                    base_head_hash=head,
+                )
+                assert replacement_generation != generation
+                assert replacement_head == head
+            return await event_routes.file_store.get(key)
+
+    async with session_factory() as backfill_db:
+        stale = await backfill_db.get(Session, session.id)
+        assert stale is not None
+        rebuilt = await rebuild_session_search_index(backfill_db, stale, RacingFileStore())
+        await backfill_db.commit()
+    assert rebuilt is False
+
+    search = (await client.get("/v1/sessions", params={"q": "same head replacement"})).json()
+    assert [item["local_session_id"] for item in search["items"]] == [local_id]
+    assert search["items"][0]["search_match"]["anchor"]["revision"] == f"events:{head}"
+
+
+@pytest.mark.asyncio
+async def test_generation_commit_does_not_publish_an_incomplete_search_projection(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    from app.models.session import SessionEventChunk
+    from app.routes import session_events as event_routes
+
+    local_id = "pi.incomplete-search-projection"
+    environment_id, session = await _register_session(client, db_session, local_session_id=local_id)
+    events = [
+        _event(
+            0,
+            "message",
+            "visible",
+            role="assistant",
+            parts=[{"type": "text", "text": "cross version searchable event"}],
+        )
+    ]
+    generation = str(uuid.uuid4())
+    append_id = str(uuid.uuid4())
+    final_head = advance_event_head(EMPTY_EVENT_HEAD, events)
+    staged = await client.post(
+        f"/v1/sessions/{local_id}/events/generations",
+        json={
+            "environment_id": environment_id,
+            "generation": generation,
+            "append_id": append_id,
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": final_head,
+        },
+    )
+    assert staged.status_code == 200, staged.text
+    data, content_hash = _chunk(events)
+    uploaded = await client.put(
+        f"/v1/sessions/{local_id}/events/generations/{generation}/chunks/0",
+        data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+        files={"file": ("0.ndjson", data, "application/x-ndjson")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    generation_id = uuid.UUID(generation)
+    chunk = (
+        await db_session.execute(
+            select(SessionEventChunk).where(SessionEventChunk.generation_id == generation_id)
+        )
+    ).scalar_one()
+    await db_session.execute(
+        delete(SessionMessageSearch).where(SessionMessageSearch.generation_id == generation_id)
+    )
+    chunk.search_indexed_at = None
+    await db_session.commit()
+
+    committed = await client.post(
+        f"/v1/sessions/{local_id}/events/generations/{generation}/commit",
+        json={
+            "append_id": append_id,
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": final_head,
+        },
+    )
+    assert committed.status_code == 200, committed.text
+    await db_session.refresh(session)
+    assert session.search_index_revision is None
+    before_rebuild = (
+        await client.get("/v1/sessions", params={"q": "cross version searchable event"})
+    ).json()
+    assert all(item["search_match"] is None for item in before_rebuild["items"])
+
+    rebuilt = await rebuild_session_search_index(
+        db_session,
+        session,
+        event_routes.file_store,
+    )
+    await db_session.commit()
+    assert rebuilt is True
+    after_rebuild = (
+        await client.get("/v1/sessions", params={"q": "cross version searchable event"})
+    ).json()
+    assert [item["local_session_id"] for item in after_rebuild["items"]] == [local_id]
+    assert after_rebuild["items"][0]["search_match"]["anchor"]["revision"] == (
+        f"events:{final_head}"
+    )
 
 
 @pytest.mark.asyncio

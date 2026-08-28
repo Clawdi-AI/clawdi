@@ -20,7 +20,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.database import engine
 from app.models.session import Session
 from app.services.file_store import get_file_store
-from app.services.session_search import current_search_revision, rebuild_session_search_index
+from app.services.session_search import (
+    current_search_revision,
+    event_search_projection_complete,
+    rebuild_session_search_index,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("backfill-session-search")
@@ -69,7 +73,17 @@ async def backfill_user(user_id: uuid.UUID, *, force: bool, dry_run: bool) -> in
                     skipped += 1
                     continue
                 revision = current_search_revision(session)
-                if revision is None or (not force and session.search_index_revision == revision):
+                projection_current = session.search_index_revision == revision
+                if (
+                    projection_current
+                    and session.content_protocol == "events-v1"
+                    and session.event_generation_id is not None
+                ):
+                    projection_current = await event_search_projection_complete(
+                        db,
+                        session.event_generation_id,
+                    )
+                if revision is None or (not force and projection_current):
                     skipped += 1
                     continue
                 try:

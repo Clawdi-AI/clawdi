@@ -35,7 +35,8 @@ from app.services.session_events import (
     validate_event_chunk_async,
 )
 from app.services.session_search import (
-    activate_event_search_index,
+    event_search_projection_complete,
+    finalize_event_search_index,
     stage_event_search_messages,
 )
 
@@ -90,6 +91,25 @@ async def _read_upload(file: UploadFile) -> bytes:
     if len(data) > _EVENT_CHUNK_MAX_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Event chunk exceeds 8 MiB")
     return data
+
+
+def _stage_missing_chunk_search_projection(
+    db: AsyncSession,
+    session: Session,
+    chunk: SessionEventChunk,
+    events: list[SessionEvent],
+) -> bool:
+    if chunk.search_indexed_at is not None:
+        return False
+    stage_event_search_messages(
+        db,
+        user_id=session.user_id,
+        session_id=session.id,
+        generation_id=chunk.generation_id,
+        events=events,
+    )
+    chunk.search_indexed_at = datetime.now(UTC)
+    return True
 
 
 def _cas_matches(
@@ -266,6 +286,19 @@ async def upload_session_event_generation_chunk(
             or existing.result_head_hash != validated.result_head_hash
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk identity conflict")
+        if _stage_missing_chunk_search_projection(
+            db,
+            session,
+            existing,
+            validated.events,
+        ):
+            try:
+                await db.commit()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+                ) from exc
         return SessionEventChunkResponse(
             generation=generation_id,
             start_seq=existing.start_seq,
@@ -292,6 +325,7 @@ async def upload_session_event_generation_chunk(
             result_head_hash=validated.result_head_hash,
             content_hash=content_hash,
             file_key=key,
+            search_indexed_at=datetime.now(UTC),
         )
     )
     stage_event_search_messages(
@@ -417,7 +451,12 @@ async def commit_session_event_generation(
     session.event_count = body.final_count
     session.event_head_hash = body.final_head_hash
     generation.status = "committed"
-    await activate_event_search_index(db, session, generation_id)
+    await finalize_event_search_index(
+        db,
+        session,
+        generation_id,
+        projection_complete=all(chunk.search_indexed_at is not None for chunk in chunks),
+    )
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation_id,
@@ -486,6 +525,36 @@ async def append_session_events(
             head_hash=receipt.result_head_hash,
         ):
             raise _cas_conflict()
+        existing_chunk = (
+            await db.execute(
+                select(SessionEventChunk).where(
+                    SessionEventChunk.generation_id == generation,
+                    SessionEventChunk.start_seq == base_count,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_chunk is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Event append chunk is missing")
+        if _stage_missing_chunk_search_projection(
+            db,
+            session,
+            existing_chunk,
+            validated.events,
+        ):
+            try:
+                await db.flush()
+                await finalize_event_search_index(
+                    db,
+                    session,
+                    generation,
+                    projection_complete=await event_search_projection_complete(db, generation),
+                )
+                await db.commit()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+                ) from exc
         return SessionEventAppendResponse(
             generation=generation,
             revision=receipt.result_revision,
@@ -514,6 +583,7 @@ async def append_session_events(
     committed_generation = await db.get(SessionEventGeneration, generation)
     if committed_generation is None or committed_generation.status != "committed":
         raise HTTPException(status.HTTP_409_CONFLICT, "Event generation is not committed")
+    projection_complete = await event_search_projection_complete(db, generation)
     end_seq = final_count - 1
     key = (
         f"session-events/v1/{auth.user_id}/{session.id}/{generation}/chunks/"
@@ -533,6 +603,7 @@ async def append_session_events(
             result_head_hash=final_head_hash,
             content_hash=content_hash,
             file_key=key,
+            search_indexed_at=datetime.now(UTC),
         )
     )
     db.add(
@@ -562,7 +633,12 @@ async def append_session_events(
     session.event_head_hash = final_head_hash
     session.content_hash = final_head_hash
     session.content_uploaded_at = datetime.now(UTC)
-    await activate_event_search_index(db, session, generation)
+    await finalize_event_search_index(
+        db,
+        session,
+        generation,
+        projection_complete=projection_complete,
+    )
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation,

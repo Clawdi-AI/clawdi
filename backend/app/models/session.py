@@ -364,6 +364,10 @@ class SessionEventChunk(Base, TimestampMixin):
     result_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL means this chunk predates, or has not completed, the rebuildable
+    # visible-message search projection. Content remains authoritative in the
+    # object store regardless of this derived-state checkpoint.
+    search_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SessionEventAppendReceipt(Base, TimestampMixin):
