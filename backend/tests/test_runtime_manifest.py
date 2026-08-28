@@ -755,7 +755,12 @@ async def test_runtime_only_bundle_is_explicitly_unmanaged(
         },
         {
             **next(iter(_runtime_state().values())),
-            "provider_ids": ["primary", "secondary"],
+            "provider_ids": ["primary", "secondary", "tertiary"],
+            "primary_model": {"provider_id": "primary", "model": "gpt-5.5"},
+        },
+        {
+            **next(iter(_runtime_state().values())),
+            "provider_ids": ["primary", "primary"],
             "primary_model": {"provider_id": "primary", "model": "gpt-5.5"},
         },
         {
@@ -770,6 +775,20 @@ def test_runtime_provider_mode_rejects_mixed_contracts(runtime):
         AdminRuntimeStateUpsert.model_validate(
             _runtime_state_body(str(uuid4()), runtimes={"openclaw": runtime})
         )
+
+
+def test_configured_runtime_accepts_primary_and_capability_providers():
+    runtime = {
+        **next(iter(_runtime_state().values())),
+        "provider_ids": ["primary", "capability"],
+        "primary_model": {"provider_id": "primary", "model": "gpt-5.5"},
+    }
+
+    state = AdminRuntimeStateUpsert.model_validate(
+        _runtime_state_body(str(uuid4()), runtimes={"openclaw": runtime})
+    )
+
+    assert state.runtimes["openclaw"].provider_ids == ["primary", "capability"]
 
 
 def test_unmanaged_runtime_allows_explicit_user_vault_backed_service_secret_ref():

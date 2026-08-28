@@ -1036,12 +1036,14 @@ def _validate_runtime_provider_ids(value: list[str]) -> list[str]:
         raise ValueError(
             "provider_ids must contain canonical non-empty strings up to 80 characters"
         )
+    if len(value) != len(set(value)):
+        raise ValueError("provider_ids must not contain duplicates")
     return value
 
 
 class HostedRuntimeConfiguredDesiredState(_HostedRuntimeDesiredStateBase):
     providerMode: Literal["configured"]
-    provider_ids: list[str] = Field(min_length=1, max_length=1)
+    provider_ids: list[str] = Field(min_length=1, max_length=2)
     primary_model: HostedRuntimePrimaryModel
 
     @field_validator("provider_ids")

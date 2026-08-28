@@ -5,10 +5,11 @@ convergence. It does not describe a local Provider activation workflow.
 
 ## Scope
 
-Core stores a multi-record Provider Catalog, while each configured Hosted
-Hermes or OpenClaw runtime binds exactly one provider. The controller emits the
+Core stores a multi-record Provider Catalog. Each configured Hosted runtime has
+one primary provider; OpenClaw may additionally receive one capability provider
+for manifest-declared features such as embeddings. The controller emits the
 stable bootstrap and Hosted desired-state bundle; the CLI runtime reconciler
-projects that single selection into the target-native configuration and
+projects those selected projections into the target-native configuration and
 credential store.
 
 Provider requests continue to flow directly from the runtime to the selected

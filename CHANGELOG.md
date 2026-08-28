@@ -25,6 +25,15 @@ database migration, CI, and implementation details.
 
 - Session detail search now preserves spaces while typing multi-word queries.
 
+## Clawdi CLI v0.14.28
+
+Package: `clawdi@0.14.28`
+
+### Added
+
+- Hosted OpenClaw can receive a separate manifest-declared embedding provider
+  without changing its primary chat provider.
+
 ## Clawdi CLI v0.14.27
 
 Package: `clawdi@0.14.27`

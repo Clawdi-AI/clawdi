@@ -160,7 +160,7 @@ The Hosted controller is the activation authority:
 provider catalog / auth payload
           |
           v
-Hosted controller admission (provider_ids length 0..1)
+Hosted controller admission (provider_ids length 0..2)
           |
           v
 stable runtime bootstrap bundle + scoped secretValues
@@ -174,12 +174,12 @@ CLI manifest validation before secret rendering/decryption
 
 The wire field remains `provider_ids: string[]`. Its Core Hosted semantics are:
 
-- configured mode contains exactly one provider ID;
+- configured mode contains one primary provider and may contain one additional
+  capability provider;
 - unmanaged mode contains an empty list;
-- `primary_model.provider_id` must equal the configured provider ID;
-- the manifest `providers` projection must exactly match the selected ID;
-- changing selection replaces the binding; there is no fallback, secondary,
-  toggle, or provider-pool ordering behavior.
+- `primary_model.provider_id` must belong to the configured provider IDs;
+- the manifest `providers` projection must exactly match the selected IDs;
+- the capability provider does not participate in chat fallback or ordering.
 
 The public REST provider arrays and their existing limits are separate API
 debt and are not the Hosted binding contract. Provider Catalog CRUD likewise
@@ -189,7 +189,8 @@ The bootstrap response is the only Hosted wire used for convergence. Provider
 selection does not alter that stable contract.
 
 Done: `bun test packages/cli/src/runtime/manifest-reconciliation.test.ts`
-exits 0 and includes rejection of multiple configured `provider_ids`.
+exits 0 and covers the optional capability provider plus duplicate and size
+limits.
 
 ## Hosted Hermes And OpenClaw Delivery
 

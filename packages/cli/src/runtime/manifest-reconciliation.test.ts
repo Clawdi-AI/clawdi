@@ -1406,19 +1406,31 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
-	test("copies canonical runtime provider bindings without backfill", () => {
+	test("accepts a primary provider with an additional capability provider", () => {
 		const canonical = hostedRuntimeBundleV2ManifestSchema.parse(
 			hostedManifestFixture({
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found", message: "fixture provider unavailable" },
+					},
+					capability: {
+						kind: "openai-compatible",
+						status: "error",
+						error: { code: "provider_not_found", message: "fixture provider unavailable" },
+					},
+				},
 				runtimes: {
 					openclaw: hostedRuntimeFixture({
-						provider_ids: ["default"],
+						provider_ids: ["default", "capability"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
 					}),
 				},
 			}),
 		);
 		expect(canonical.runtimes.openclaw).toMatchObject({
-			provider_ids: ["default"],
+			provider_ids: ["default", "capability"],
 			primary_model: { provider_id: "default", model: "gpt-test" },
 		});
 	});
@@ -1567,7 +1579,8 @@ describe("runtime manifest reconciliation invariants", () => {
 	test.each([
 		["missing provider_ids", { provider_ids: undefined }],
 		["empty provider_ids", { provider_ids: [] }],
-		["multiple provider_ids", { provider_ids: ["default", "secondary"] }],
+		["duplicate provider_ids", { provider_ids: ["default", "default"] }],
+		["more than two provider_ids", { provider_ids: ["default", "secondary", "tertiary"] }],
 		["missing primary_model", { primary_model: undefined }],
 		[
 			"primary model provider outside provider_ids",
