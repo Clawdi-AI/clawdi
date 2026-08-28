@@ -347,16 +347,18 @@ function buildOpenClawProjection(
 				model: {
 					primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
 				},
-				memorySearch: embeddingModel
-					? {
-							provider: embeddingModel.provider_id,
-							model: embeddingModel.model,
-						}
-					: hasClawdiManagedProvider
-						? { provider: null, model: null }
-						: undefined,
 			},
 		},
+		memory: embeddingModel
+			? {
+					search: {
+						provider: embeddingModel.provider_id,
+						model: embeddingModel.model,
+					},
+				}
+			: hasClawdiManagedProvider
+				? { search: { provider: null, model: null } }
+				: undefined,
 		models:
 			Object.keys(projectedProviders).length > 0
 				? {

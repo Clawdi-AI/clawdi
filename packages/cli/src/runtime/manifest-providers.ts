@@ -756,11 +756,12 @@ function mergeProviderDeletes(
 	if (runtime === "openclaw") {
 		patch.models = container;
 		if (deletedProviderIds.some(isClawdiManagedV2ProviderId)) {
-			const agents = { ...(recordValue(patch.agents) ?? {}) };
-			const defaults = { ...(recordValue(agents.defaults) ?? {}) };
-			defaults.memorySearch = { provider: null, model: null };
-			agents.defaults = defaults;
-			patch.agents = agents;
+			const memory = { ...(recordValue(patch.memory) ?? {}) };
+			const search = { ...(recordValue(memory.search) ?? {}) };
+			if (!Object.hasOwn(search, "provider")) search.provider = null;
+			if (!Object.hasOwn(search, "model")) search.model = null;
+			memory.search = search;
+			patch.memory = memory;
 		}
 	}
 	return runtime === "openclaw"
