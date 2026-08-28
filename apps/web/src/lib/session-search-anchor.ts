@@ -18,6 +18,11 @@ function validPosition(value: unknown): number | undefined {
 
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
 	const returnTo = normalizeSessionListReturnTo(search.returnTo);
+	const matchQuery = normalizeSessionMatchQuery(search.matchQuery);
+	const standalone = {
+		...(matchQuery ? { matchQuery } : {}),
+		...(returnTo ? { returnTo } : {}),
+	};
 	const kind =
 		search.matchKind === "snapshot_offset" || search.matchKind === "event_seq"
 			? search.matchKind
@@ -29,14 +34,30 @@ export function validateSessionDetailSearch(search: Record<string, unknown>): Se
 		search.matchRevision.length <= 80
 			? search.matchRevision
 			: undefined;
-	if (!kind || position === undefined || !revision) return returnTo ? { returnTo } : {};
-	const matchQuery = normalizeSessionMatchQuery(search.matchQuery);
+	if (!kind || position === undefined || !revision) return standalone;
 	return {
 		matchKind: kind,
 		matchPosition: position,
 		matchRevision: revision,
 		...(matchQuery ? { matchQuery } : {}),
 		...(returnTo ? { returnTo } : {}),
+	};
+}
+
+export function sessionDetailSearchLink(
+	sessionId: string,
+	query: string,
+	options: { returnTo?: string } = {},
+) {
+	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	const matchQuery = normalizeSessionMatchQuery(query);
+	return {
+		to: "/sessions/$id" as const,
+		params: { id: sessionId },
+		search: {
+			...(matchQuery ? { matchQuery } : {}),
+			...(returnTo ? { returnTo } : {}),
+		},
 	};
 }
 

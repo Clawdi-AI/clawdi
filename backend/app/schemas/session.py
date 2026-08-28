@@ -479,6 +479,7 @@ class SessionSearchMatchResponse(BaseModel):
 class SessionSearchNavigationResponse(BaseModel):
     index: int = Field(ge=1)
     total: int = Field(ge=1)
+    current: SessionSearchAnchorResponse
     previous: SessionSearchAnchorResponse | None = None
     next: SessionSearchAnchorResponse | None = None
 

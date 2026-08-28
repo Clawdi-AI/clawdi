@@ -1,10 +1,15 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
-import { ChevronDown, ChevronUp, Search } from "lucide-react";
+import { Link, useRouter } from "@tanstack/react-router";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SearchInput } from "@/components/ui/search-input";
 import type { SessionMessagesPage } from "@/lib/api-schemas";
-import { type SessionSearchAnchor, sessionSearchMatchLink } from "@/lib/session-search-anchor";
+import {
+	type SessionSearchAnchor,
+	sessionDetailSearchLink,
+	sessionSearchMatchLink,
+} from "@/lib/session-search-anchor";
 
 type SearchNavigation = NonNullable<SessionMessagesPage["search_navigation"]>;
 
@@ -55,42 +60,69 @@ export function SessionSearchNavigation({
 	query,
 	navigation,
 	returnTo,
+	isSearching = false,
+	hasSearchError = false,
 }: {
 	sessionId: string;
 	query: string;
-	navigation: SearchNavigation;
+	navigation?: SearchNavigation | null;
 	returnTo?: string;
+	isSearching?: boolean;
+	hasSearchError?: boolean;
 }) {
+	const router = useRouter();
+	const activeNavigation = isSearching || hasSearchError ? null : navigation;
+	const updateQuery = (next: string) => {
+		void router.navigate({
+			...sessionDetailSearchLink(sessionId, next, { returnTo }),
+			replace: true,
+			resetScroll: false,
+		});
+	};
+
 	return (
 		<nav
-			aria-label="Search matches"
-			className="flex min-w-0 items-center gap-2 border-y py-2 text-xs text-muted-foreground"
+			aria-label="Search this session"
+			className="flex min-w-0 flex-col gap-2 border-y py-2 text-xs text-muted-foreground sm:flex-row sm:items-center"
 		>
-			<Search className="size-3.5 shrink-0" />
-			<span className="min-w-0 flex-1 truncate" title={query}>
-				Matches for <span className="font-medium text-foreground">{query}</span>
-			</span>
-			<span className="shrink-0 tabular-nums text-foreground">
-				{navigation.index} of {navigation.total}
-			</span>
-			<div className="flex shrink-0 items-center">
-				<MatchButton
-					label="Previous match"
-					anchor={navigation.previous}
-					sessionId={sessionId}
-					query={query}
-					returnTo={returnTo}
-					icon={<ChevronUp />}
-				/>
-				<MatchButton
-					label="Next match"
-					anchor={navigation.next}
-					sessionId={sessionId}
-					query={query}
-					returnTo={returnTo}
-					icon={<ChevronDown />}
-				/>
-			</div>
+			<SearchInput
+				value={query}
+				onChange={updateQuery}
+				placeholder="Search this session…"
+				ariaLabel="Search this session"
+				className="min-w-0 flex-1"
+			/>
+			{query ? (
+				<div className="flex min-h-8 shrink-0 items-center justify-end gap-2">
+					<span className="shrink-0 tabular-nums text-foreground" aria-live="polite">
+						{hasSearchError
+							? "Unavailable"
+							: isSearching
+								? "Searching…"
+								: activeNavigation
+									? `${activeNavigation.index} of ${activeNavigation.total}`
+									: "No matches"}
+					</span>
+					<div className="flex shrink-0 items-center">
+						<MatchButton
+							label="Previous match"
+							anchor={activeNavigation?.previous}
+							sessionId={sessionId}
+							query={query}
+							returnTo={returnTo}
+							icon={<ChevronUp />}
+						/>
+						<MatchButton
+							label="Next match"
+							anchor={activeNavigation?.next}
+							sessionId={sessionId}
+							query={query}
+							returnTo={returnTo}
+							icon={<ChevronDown />}
+						/>
+					</div>
+				</div>
+			) : null}
 		</nav>
 	);
 }

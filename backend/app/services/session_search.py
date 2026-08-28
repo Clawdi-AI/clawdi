@@ -32,6 +32,7 @@ class SearchableSessionMessage:
 
 @dataclass(frozen=True, slots=True)
 class SessionSearchNavigation:
+    current_position: int
     index: int
     total: int
     previous_position: int | None
@@ -175,9 +176,9 @@ async def session_message_search_navigation(
     session: Session,
     *,
     query: str,
-    position: int,
+    position: int | None = None,
 ) -> SessionSearchNavigation | None:
-    """Resolve transcript-order neighbours for one active search match."""
+    """Resolve one active match and its transcript-order neighbours."""
     document_revision = current_document_revision(session)
     if document_revision is None or session.search_index_revision != current_search_revision(
         session
@@ -205,20 +206,23 @@ async def session_message_search_navigation(
         )
         .subquery("ordered_session_message_matches")
     )
-    row = (
-        await db.execute(
-            select(
-                ordered_matches.c.match_index,
-                ordered_matches.c.match_total,
-                ordered_matches.c.previous_position,
-                ordered_matches.c.next_position,
-            ).where(ordered_matches.c.position == position)
-        )
-    ).one_or_none()
+    navigation_query = select(
+        ordered_matches.c.position,
+        ordered_matches.c.match_index,
+        ordered_matches.c.match_total,
+        ordered_matches.c.previous_position,
+        ordered_matches.c.next_position,
+    )
+    if position is None:
+        navigation_query = navigation_query.order_by(ordered_matches.c.position).limit(1)
+    else:
+        navigation_query = navigation_query.where(ordered_matches.c.position == position)
+    row = (await db.execute(navigation_query)).one_or_none()
     if row is None:
         return None
-    match_index, match_total, previous_position, next_position = row
+    current_position, match_index, match_total, previous_position, next_position = row
     return SessionSearchNavigation(
+        current_position=current_position,
         index=match_index,
         total=match_total,
         previous_position=previous_position,

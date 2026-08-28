@@ -681,6 +681,11 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert event_navigation.json()["search_navigation"] == {
         "index": 1,
         "total": 2,
+        "current": {
+            "kind": "event_seq",
+            "position": 4,
+            "revision": f"events:{second_head}",
+        },
         "previous": None,
         "next": {
             "kind": "event_seq",

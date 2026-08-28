@@ -3119,8 +3119,9 @@ async def get_session_messages(
     starts at the oldest visible message for ascending reads and at the newest
     visible message for descending reads. Clients pin pages to the parent
     session's `content_hash`, which changes after snapshot replacement or event
-    append. A complete search anchor recenters the first page around its match;
-    stale anchors degrade to ordinary offset pagination.
+    append. A search query without an anchor opens its first transcript match;
+    a complete anchor opens that exact match. Stale anchors degrade to ordinary
+    offset pagination.
     """
     search_query = search_query.strip() if search_query else None
     anchor_values = (anchor_kind, anchor_position, anchor_revision)
@@ -3168,15 +3169,40 @@ async def get_session_messages(
     expected_anchor_kind: Literal["snapshot_offset", "event_seq"] = (
         "event_seq" if session.content_protocol == "events-v1" else "snapshot_offset"
     )
-    if (
-        anchor_kind is not None
+    active_search_revision = current_search_revision(session)
+    resolved_anchor_kind = anchor_kind
+    resolved_anchor_position = anchor_position
+    resolved_anchor_revision = anchor_revision
+    navigation = None
+    if anchor_kind is None and search_query:
+        navigation = await session_message_search_navigation(
+            db,
+            session,
+            query=search_query,
+        )
+        if navigation is not None:
+            resolved_anchor_kind = expected_anchor_kind
+            resolved_anchor_position = navigation.current_position
+            resolved_anchor_revision = active_search_revision
+    elif (
+        anchor_kind == expected_anchor_kind
         and anchor_position is not None
-        and anchor_revision is not None
-        and anchor_kind == expected_anchor_kind
-        and anchor_revision == current_search_revision(session)
+        and anchor_revision == active_search_revision
+        and search_query
+    ):
+        navigation = await session_message_search_navigation(
+            db,
+            session,
+            query=search_query,
+            position=anchor_position,
+        )
+    if (
+        resolved_anchor_kind == expected_anchor_kind
+        and resolved_anchor_position is not None
+        and resolved_anchor_revision == active_search_revision
     ):
         try:
-            source_index = projection.source_positions.index(anchor_position)
+            source_index = projection.source_positions.index(resolved_anchor_position)
         except ValueError:
             pass
         else:
@@ -3185,32 +3211,31 @@ async def get_session_messages(
                 max(0, anchor_offset - limit // 2),
                 max(0, total - limit),
             )
-            if search_query:
-                navigation = await session_message_search_navigation(
-                    db,
-                    session,
-                    query=search_query,
-                    position=anchor_position,
-                )
-                if navigation is not None:
+            if navigation is not None:
+                assert resolved_anchor_revision is not None
 
-                    def navigation_anchor(
-                        position: int | None,
-                    ) -> SessionSearchAnchorResponse | None:
-                        if position is None:
-                            return None
-                        return SessionSearchAnchorResponse(
-                            kind=expected_anchor_kind,
-                            position=position,
-                            revision=anchor_revision,
-                        )
-
-                    search_navigation = SessionSearchNavigationResponse(
-                        index=navigation.index,
-                        total=navigation.total,
-                        previous=navigation_anchor(navigation.previous_position),
-                        next=navigation_anchor(navigation.next_position),
+                def navigation_anchor(position: int) -> SessionSearchAnchorResponse:
+                    return SessionSearchAnchorResponse(
+                        kind=expected_anchor_kind,
+                        position=position,
+                        revision=resolved_anchor_revision,
                     )
+
+                search_navigation = SessionSearchNavigationResponse(
+                    index=navigation.index,
+                    total=navigation.total,
+                    current=navigation_anchor(navigation.current_position),
+                    previous=(
+                        navigation_anchor(navigation.previous_position)
+                        if navigation.previous_position is not None
+                        else None
+                    ),
+                    next=(
+                        navigation_anchor(navigation.next_position)
+                        if navigation.next_position is not None
+                        else None
+                    ),
+                )
 
     sliced = slice_session_messages(
         projection.messages,
