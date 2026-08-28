@@ -99,8 +99,9 @@ function SessionsListInner() {
 
 	const debouncedSearch = useDebouncedValue(params.q, 250);
 	const getSessionLink = useCallback(
-		(session: SessionListItem) => sessionDetailLink(session, { returnTo }),
-		[returnTo],
+		(session: SessionListItem) =>
+			sessionDetailLink(session, { returnTo, searchQuery: debouncedSearch }),
+		[returnTo, debouncedSearch],
 	);
 	const columns = useMemo(
 		() => sessionColumns({ sessionLink: getSessionLink, searchQuery: debouncedSearch }),

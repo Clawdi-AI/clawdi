@@ -228,6 +228,75 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
 
 
 @pytest.mark.asyncio
+async def test_snapshot_message_search_navigates_matches_in_transcript_order(
+    client: httpx.AsyncClient,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "snapshot-search-navigation"
+    messages = [
+        {"role": "user", "content": "needle first"},
+        {"role": "assistant", "content": "not a match"},
+        {"role": "assistant", "content": "needle second"},
+        {"role": "user", "content": "needle third"},
+    ]
+    session_id = await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=messages,
+        upload=True,
+    )
+    search = (await client.get("/v1/sessions", params={"q": "needle"})).json()
+    first_anchor = search["items"][0]["search_match"]["anchor"]
+
+    first = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={
+            "anchor_kind": first_anchor["kind"],
+            "anchor_position": first_anchor["position"],
+            "anchor_revision": first_anchor["revision"],
+            "search_query": "needle",
+        },
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["search_navigation"] == {
+        "index": 1,
+        "total": 3,
+        "previous": None,
+        "next": {
+            "kind": "snapshot_offset",
+            "position": 2,
+            "revision": first_anchor["revision"],
+        },
+    }
+
+    second = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={
+            "anchor_kind": "snapshot_offset",
+            "anchor_position": 2,
+            "anchor_revision": first_anchor["revision"],
+            "search_query": "needle",
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["search_navigation"] == {
+        "index": 2,
+        "total": 3,
+        "previous": {
+            "kind": "snapshot_offset",
+            "position": 0,
+            "revision": first_anchor["revision"],
+        },
+        "next": {
+            "kind": "snapshot_offset",
+            "position": 3,
+            "revision": first_anchor["revision"],
+        },
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.committed_db
 async def test_rebuild_does_not_replace_a_newer_revision_after_object_read(
     client: httpx.AsyncClient,

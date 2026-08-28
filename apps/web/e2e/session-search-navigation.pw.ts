@@ -4,6 +4,7 @@ const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const now = "2026-08-28T10:00:00.000Z";
 const anchor = { kind: "event_seq", position: 7, revision: "events:head-hash" };
+const nextAnchor = { kind: "event_seq", position: 11, revision: "events:head-hash" };
 
 const session = {
 	id: SESSION_ID,
@@ -81,19 +82,36 @@ test("opens a message search result and returns to the same filtered list", asyn
 			return fulfillJson(route, session);
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			const searchQuery = url.searchParams.get("search_query");
+			const selectedPosition = Number(url.searchParams.get("anchor_position"));
+			const isSecond = selectedPosition === nextAnchor.position;
+			if (searchQuery === null) {
+				return fulfillJson(route, {
+					items: [],
+					total: 0,
+					offset: 0,
+					limit: 100,
+				});
+			}
+			expect(searchQuery).toBe("authentication timeout");
 			return fulfillJson(route, {
 				items: [
 					{
 						role: "assistant",
-						content: "Fixed the authentication timeout without retrying every request",
+						content: isSecond
+							? "Verified the authentication timeout no longer recurs"
+							: "Fixed the authentication timeout without retrying every request",
 						model: "gpt-5",
 						timestamp: now,
 					},
 				],
-				total: 1,
+				total: 2,
 				offset: 0,
 				limit: 100,
 				anchor_offset: 0,
+				search_navigation: isSecond
+					? { index: 2, total: 2, previous: anchor, next: null }
+					: { index: 1, total: 2, previous: null, next: nextAnchor },
 			});
 		}
 		return fulfillJson(route, {});
@@ -107,6 +125,15 @@ test("opens a message search result and returns to the same filtered list", asyn
 		.getByRole("link", { name: "Open session Fix authentication timeout" })
 		.click();
 	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
+	await expect(page.getByText("1 of 2")).toBeVisible();
+	await page.getByRole("button", { name: "Next match" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "11");
+	await expect(page.locator('[data-search-match="true"]')).toContainText(
+		"Verified the authentication timeout no longer recurs",
+	);
+	await expect(page.getByText("2 of 2")).toBeVisible();
+	await page.getByRole("button", { name: "Previous match" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
 
 	await page.getByText("Back to Sessions", { exact: true }).click();
 	await expect(page).toHaveURL((url) => {

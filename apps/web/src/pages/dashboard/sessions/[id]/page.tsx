@@ -26,6 +26,7 @@ import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { MessageList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
+import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
 import { TimeTooltip } from "@/components/time-tooltip";
@@ -55,14 +56,21 @@ import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/util
 export default function SessionDetailPage({
 	sessionId,
 	searchAnchor,
+	searchQuery,
 	returnTo,
 }: {
 	sessionId: string;
 	searchAnchor?: SessionSearchAnchor;
+	searchQuery?: string;
 	returnTo?: string;
 }) {
 	return (
-		<SessionDetailContent sessionId={sessionId} searchAnchor={searchAnchor} returnTo={returnTo} />
+		<SessionDetailContent
+			sessionId={sessionId}
+			searchAnchor={searchAnchor}
+			searchQuery={searchQuery}
+			returnTo={returnTo}
+		/>
 	);
 }
 
@@ -70,11 +78,13 @@ export function SessionDetailContent({
 	sessionId,
 	agentId,
 	searchAnchor,
+	searchQuery,
 	returnTo,
 }: {
 	sessionId: string;
 	agentId?: string | null;
 	searchAnchor?: SessionSearchAnchor;
+	searchQuery?: string;
 	returnTo?: string;
 }) {
 	const api = useApi();
@@ -209,6 +219,7 @@ export function SessionDetailContent({
 			searchAnchor?.kind ?? null,
 			searchAnchor?.position ?? null,
 			searchAnchor?.revision ?? null,
+			searchQuery ?? null,
 		],
 		initialPageParam: 0,
 		queryFn: async ({ pageParam }) => {
@@ -225,6 +236,7 @@ export function SessionDetailContent({
 										anchor_kind: searchAnchor.kind,
 										anchor_position: searchAnchor.position,
 										anchor_revision: searchAnchor.revision,
+										...(searchQuery ? { search_query: searchQuery } : {}),
 									}
 								: {}),
 						},
@@ -273,6 +285,7 @@ export function SessionDetailContent({
 	const anchorIdentity = searchAnchor
 		? `${searchAnchor.kind}:${searchAnchor.position}:${searchAnchor.revision}`
 		: null;
+	const searchNavigation = pagesData?.pages[0]?.search_navigation;
 
 	useEffect(() => {
 		if (!anchorIdentity || !pagesData) return;
@@ -439,6 +452,15 @@ export function SessionDetailContent({
 					title={session.local_session_id}
 				/>
 			</DetailStats>
+
+			{searchQuery && searchNavigation ? (
+				<SessionSearchNavigation
+					sessionId={sessionId}
+					query={searchQuery}
+					navigation={searchNavigation}
+					returnTo={returnTo}
+				/>
+			) : null}
 
 			{/* Direction toggle. Gated on `has_content` (not on
 			    `messages.length`) so it stays visible while pages

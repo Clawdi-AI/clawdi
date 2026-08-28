@@ -6,6 +6,7 @@ export interface SessionDetailSearch {
 	matchKind?: SessionSearchAnchor["kind"];
 	matchPosition?: number;
 	matchRevision?: string;
+	matchQuery?: string;
 	returnTo?: string;
 }
 
@@ -29,12 +30,20 @@ export function validateSessionDetailSearch(search: Record<string, unknown>): Se
 			? search.matchRevision
 			: undefined;
 	if (!kind || position === undefined || !revision) return returnTo ? { returnTo } : {};
+	const matchQuery = normalizeSessionMatchQuery(search.matchQuery);
 	return {
 		matchKind: kind,
 		matchPosition: position,
 		matchRevision: revision,
+		...(matchQuery ? { matchQuery } : {}),
 		...(returnTo ? { returnTo } : {}),
 	};
+}
+
+function normalizeSessionMatchQuery(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim();
+	return normalized.length > 0 && normalized.length <= 500 ? normalized : undefined;
 }
 
 export function normalizeSessionListReturnTo(value: unknown): string | undefined {
@@ -66,21 +75,37 @@ export function sessionSearchAnchorFromSearch(
 
 export function sessionDetailLink(
 	session: Pick<SessionListItem, "id" | "search_match">,
-	options: { returnTo?: string } = {},
+	options: { returnTo?: string; searchQuery?: string } = {},
 ) {
 	const anchor = session.search_match?.anchor;
+	if (anchor) {
+		return sessionSearchMatchLink(session.id, anchor, options);
+	}
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: session.id },
 		search: {
-			...(anchor
-				? {
-						matchKind: anchor.kind,
-						matchPosition: anchor.position,
-						matchRevision: anchor.revision,
-					}
-				: {}),
+			...(returnTo ? { returnTo } : {}),
+		},
+	};
+}
+
+export function sessionSearchMatchLink(
+	sessionId: string,
+	anchor: SessionSearchAnchor,
+	options: { returnTo?: string; searchQuery?: string } = {},
+) {
+	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	const matchQuery = normalizeSessionMatchQuery(options.searchQuery);
+	return {
+		to: "/sessions/$id" as const,
+		params: { id: sessionId },
+		search: {
+			matchKind: anchor.kind,
+			matchPosition: anchor.position,
+			matchRevision: anchor.revision,
+			...(matchQuery ? { matchQuery } : {}),
 			...(returnTo ? { returnTo } : {}),
 		},
 	};
