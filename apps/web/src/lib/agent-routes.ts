@@ -243,6 +243,10 @@ export function agentSectionHref(
 	return queryString ? `${path}?${queryString}` : path;
 }
 
+export function agentTerminalWindowHref(agentId: string): string {
+	return `/terminal/${encodeURIComponent(agentId)}`;
+}
+
 /** Typed TanStack Router options for canonical agent section navigation. */
 export function agentSectionLink(
 	agentId: string,
