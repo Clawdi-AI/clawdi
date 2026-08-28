@@ -1357,7 +1357,8 @@ export interface paths {
          *     starts at the oldest visible message for ascending reads and at the newest
          *     visible message for descending reads. Clients pin pages to the parent
          *     session's `content_hash`, which changes after snapshot replacement or event
-         *     append.
+         *     append. A complete search anchor recenters the first page around its match;
+         *     stale anchors degrade to ordinary offset pagination.
          */
         get: operations["get_session_messages_v1_sessions__session_id__messages_get"];
         put?: never;
@@ -8064,6 +8065,8 @@ export interface components {
             offset: number;
             /** Limit */
             limit: number;
+            /** Anchor Offset */
+            anchor_offset?: number | null;
         };
         /**
          * SessionPermissionCreate
@@ -11739,6 +11742,9 @@ export interface operations {
                 offset?: number;
                 limit?: number;
                 direction?: "asc" | "desc";
+                anchor_kind?: ("snapshot_offset" | "event_seq") | null;
+                anchor_position?: number | null;
+                anchor_revision?: string | null;
             };
             header?: never;
             path: {

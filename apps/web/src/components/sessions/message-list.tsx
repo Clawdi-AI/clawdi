@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight, Terminal } from "lucide-react";
-import { useState } from "react";
+import { type Ref, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Markdown } from "@/components/markdown";
@@ -79,6 +79,8 @@ function MessageBlock({
 	userName,
 	agentType,
 	isGroupStart,
+	isHighlighted,
+	highlightedRef,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
@@ -92,6 +94,8 @@ function MessageBlock({
 	 * one agent fires 6 tool-uses in the same minute.
 	 */
 	isGroupStart: boolean;
+	isHighlighted?: boolean;
+	highlightedRef?: Ref<HTMLDivElement>;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
@@ -99,7 +103,16 @@ function MessageBlock({
 	return (
 		// `group` lives on the whole row so the continuation-row hover
 		// timestamp reveals from a hover anywhere on the message.
-		<div className={cn("group flex gap-3", isGroupStart ? "pt-4" : "")}>
+		<div
+			ref={isHighlighted ? highlightedRef : undefined}
+			data-search-match={isHighlighted ? "true" : undefined}
+			aria-current={isHighlighted ? "location" : undefined}
+			className={cn(
+				"group flex scroll-mt-24 gap-3 rounded-md",
+				isGroupStart ? "pt-4" : "",
+				isHighlighted && "bg-primary/5 ring-1 ring-primary/30",
+			)}
+		>
 			{/* Avatar column. Group-start: avatar (user image / agent icon).
 			    Continuation: faint HH:MM that reveals on row hover. */}
 			<div className="w-8 shrink-0 pt-0.5">
@@ -284,12 +297,16 @@ export function MessageList({
 	agentType,
 	userAvatar,
 	userName,
+	highlightedMessageKey,
+	highlightedMessageRef,
 }: {
 	messages: SessionMessage[];
 	messageKeys?: string[] | null;
 	agentType: string | null | undefined;
 	userAvatar?: string;
 	userName: string;
+	highlightedMessageKey?: string | null;
+	highlightedMessageRef?: Ref<HTMLDivElement>;
 }) {
 	const GROUP_GAP_MS = 5 * 60_000;
 	const out: React.ReactNode[] = [];
@@ -312,14 +329,18 @@ export function MessageList({
 		// across the divider shouldn't merge.
 		const dividerJustEmitted = i > 0 && dKey != null && dayKey(prev?.timestamp) !== dKey;
 		const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
+		const messageKey = messageKeys?.[i] ?? i;
+		const isHighlighted = messageKey === highlightedMessageKey;
 		out.push(
 			<MessageBlock
-				key={messageKeys?.[i] ?? i}
+				key={messageKey}
 				message={msg}
 				userAvatar={userAvatar}
 				userName={userName}
 				agentType={agentType}
 				isGroupStart={isGroupStart}
+				isHighlighted={isHighlighted}
+				highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
 			/>,
 		);
 	}
