@@ -123,24 +123,32 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 async function expectLiveToolFillsDashboard(page: Page, surface: Locator) {
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	const header = scrollContainer.locator(":scope > header");
-	const [surfaceBox, scrollBox, headerBox, scrollMetrics] = await Promise.all([
-		surface.boundingBox(),
-		scrollContainer.boundingBox(),
-		header.boundingBox(),
+	const [surfaceBox, scrollBox, headerBox, scrollMetrics, pageMetrics] = await Promise.all([
+		surface.evaluate((element) => element.getBoundingClientRect().toJSON()),
+		scrollContainer.evaluate((element) => element.getBoundingClientRect().toJSON()),
+		header.evaluate((element) => element.getBoundingClientRect().toJSON()),
 		scrollContainer.evaluate((element) => ({
 			clientHeight: element.clientHeight,
+			overflowY: getComputedStyle(element).overflowY,
 			scrollHeight: element.scrollHeight,
 		})),
+		page.evaluate(() => ({
+			bodyClientHeight: document.body.clientHeight,
+			bodyScrollHeight: document.body.scrollHeight,
+			documentClientHeight: document.documentElement.clientHeight,
+			documentScrollHeight: document.documentElement.scrollHeight,
+		})),
 	]);
-	if (!surfaceBox || !scrollBox || !headerBox) {
-		throw new Error("Live-tool dashboard geometry should be measurable.");
-	}
-
 	expect(Math.abs(surfaceBox.y - (headerBox.y + headerBox.height))).toBeLessThanOrEqual(1);
 	expect(
 		Math.abs(surfaceBox.y + surfaceBox.height - (scrollBox.y + scrollBox.height)),
 	).toBeLessThanOrEqual(1);
+	expect(scrollMetrics.overflowY).toBe("hidden");
 	expect(scrollMetrics.scrollHeight).toBeLessThanOrEqual(scrollMetrics.clientHeight + 1);
+	expect(pageMetrics.bodyScrollHeight).toBeLessThanOrEqual(pageMetrics.bodyClientHeight + 1);
+	expect(pageMetrics.documentScrollHeight).toBeLessThanOrEqual(
+		pageMetrics.documentClientHeight + 1,
+	);
 }
 
 async function _expectOverviewSessionSlot({
@@ -3596,14 +3604,19 @@ test("agent provider creation stays in context and updates only after Save chang
 	});
 });
 
-test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ page }) => {
+test("hosted live-tool routes keep scrolling inside their viewport", async ({ page }) => {
 	let releaseDeploymentList: (() => void) | undefined;
 	const deploymentListGate = new Promise<void>((resolve) => {
 		releaseDeploymentList = resolve;
 	});
+	const liveToolDeployment = {
+		...mutationDeploymentReadFixture(railHostedDeployment),
+		files_endpoint: { url: "https://files.example.test/" },
+	};
 	await stubHostedApi(page, {
 		cloudAgents: [railHostedCloudAgent],
-		deploymentListResponses: [[railHostedDeployment]],
+		deployments: [liveToolDeployment],
+		deploymentListResponses: [[liveToolDeployment]],
 		deploymentListResponseGates: [deploymentListGate],
 	});
 
@@ -3639,6 +3652,13 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 		await page.setViewportSize({ width: 390, height: 844 });
 		await expect(dashboardContent).toHaveCSS("padding-bottom", "16px");
 		await expectLiveToolFillsDashboard(page, liveSurface);
+
+		for (const section of ["files", "terminal"] as const) {
+			await page.goto(`/agents/${railHostedEnvironmentId}/${section}`);
+			const routeSurface = page.getByTestId("hosted-agent-live-surface");
+			await expect(routeSurface).toBeVisible();
+			await expectLiveToolFillsDashboard(page, routeSurface);
+		}
 	} finally {
 		releaseDeploymentList?.();
 	}

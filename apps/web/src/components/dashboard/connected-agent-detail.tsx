@@ -380,7 +380,7 @@ export function ConnectedAgentDetailSkeleton({
 				data-testid="agent-live-tool-loading-shell"
 				role="status"
 				aria-label={`${agentSectionLabel(section)} loading`}
-				className="-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+				className="-my-4 flex h-[calc(100svh-var(--header-height))] min-h-0 w-full flex-col md:-my-5 md:h-[calc(100svh-var(--header-height)-1rem)]"
 			>
 				<div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
 					<div className="flex h-12 shrink-0 items-center justify-between gap-3 px-4 lg:px-6">

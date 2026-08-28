@@ -120,7 +120,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 							<SidebarInset
 								id="dashboard-scroll-container"
 								data-scroll-restoration-id="dashboard-scroll-container"
-								className="md:h-[calc(100svh-1rem)] md:overflow-y-auto"
+								data-live-tool-route={isAgentLiveToolRoute ? "true" : undefined}
+								className={cn(
+									"md:h-[calc(100svh-1rem)]",
+									isAgentLiveToolRoute
+										? "h-svh overflow-hidden md:overflow-hidden"
+										: "md:overflow-y-auto",
+								)}
 							>
 								<SiteHeader
 									actions={
@@ -137,13 +143,24 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 										) : null
 									}
 								/>
-								<div className="flex flex-1 flex-col">
-									<div className="@container/main flex flex-1 flex-col gap-2">
+								<div
+									className={cn(
+										"flex flex-1 flex-col",
+										isAgentLiveToolRoute && "min-h-0 overflow-hidden",
+									)}
+								>
+									<div
+										className={cn(
+											"@container/main flex flex-1 flex-col gap-2",
+											isAgentLiveToolRoute && "min-h-0 overflow-hidden",
+										)}
+									>
 										<div
 											data-testid="dashboard-page-content"
 											data-mava-launcher={hideHostedLauncher ? "hidden" : undefined}
 											className={cn(
 												"mx-auto flex w-full flex-col gap-4 pt-4 md:gap-5 md:pt-5",
+												isAgentLiveToolRoute && "min-h-0 flex-1 overflow-hidden",
 												CONTENT_MAX_WIDTH,
 												reserveHostedLauncherClearance
 													? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"

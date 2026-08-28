@@ -191,12 +191,13 @@ describe("hosted agent security and copy", () => {
 		expect(agentDetailSource).not.toContain("This runtime is bound to");
 	});
 
-	test("uses product language for terminal startup and failures", () => {
-		expect(agentDetailSource).toContain("Opening secure terminal");
-		expect(agentDetailSource).toContain("Starting a secure shell for your agent.");
+	test("uses product language for terminal connection states and failures", () => {
+		expect(agentDetailSource).toContain('reconnecting: "Reconnecting"');
+		expect(agentDetailSource).toContain('disconnected: "Disconnected"');
 		expect(agentDetailSource).not.toContain("terminal websocket URL");
 		expect(agentDetailSource).not.toContain("Opening deployment terminal");
-		expect(terminalPanelSource).toContain("secure terminal could not be opened");
+		expect(terminalPanelSource).toContain("Secure terminal could not be opened");
+		expect(terminalPanelSource).toContain("Fresh terminal access could not be requested");
 		expect(terminalPanelSource).not.toContain("terminal websocket could not be opened");
 	});
 });
