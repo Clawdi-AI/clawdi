@@ -659,3 +659,10 @@ class SessionMessagesPage(BaseModel):
     total: int
     offset: int
     limit: int
+    # Absolute offset in the requested direction for a resolved search match.
+    # Omitted for ordinary pagination and stale or invalidated search anchors.
+    anchor_offset: int | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )

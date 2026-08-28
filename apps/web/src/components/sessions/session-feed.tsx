@@ -10,6 +10,7 @@ import { SectionLabel } from "@/components/section-label";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { sessionDetailLink } from "@/lib/session-search-anchor";
 import {
 	cn,
 	formatAbsoluteTooltip,
@@ -124,7 +125,7 @@ export function SessionFeed({
 	groupBy = "last_activity_at",
 	showAgent = true,
 	quietAutomated = true,
-	sessionLink = (session) => ({ to: "/sessions/$id", params: { id: session.id } }),
+	sessionLink = sessionDetailLink,
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;

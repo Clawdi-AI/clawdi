@@ -17,6 +17,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -28,6 +29,7 @@ from app.schemas.session_events import SessionEvent
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     project_safe_messages,
+    project_visible_messages,
     validate_event_chunk_async,
 )
 
@@ -49,10 +51,17 @@ _MESSAGES_CACHE_TTL_S = 300.0
 type SessionMessageValue = dict[str, JsonValue]
 type SessionMessageDirection = Literal["asc", "desc"]
 
+
+@dataclass(frozen=True, slots=True)
+class SessionMessageProjection:
+    messages: list[SessionMessageValue]
+    source_positions: tuple[int, ...]
+
+
 _SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
     list[SessionMessageValue]
 )
-_messages_cache: OrderedDict[tuple[str, str], tuple[float, list[SessionMessageValue]]] = (
+_messages_cache: OrderedDict[tuple[str, str], tuple[float, SessionMessageProjection]] = (
     OrderedDict()
 )
 _messages_cache_lock = threading.Lock()
@@ -73,7 +82,7 @@ def session_has_uploaded_content(session: Session) -> bool:
     )
 
 
-def _cache_get(key: tuple[str, str]) -> list[SessionMessageValue] | None:
+def _cache_get(key: tuple[str, str]) -> SessionMessageProjection | None:
     now = time.monotonic()
     with _messages_cache_lock:
         entry = _messages_cache.get(key)
@@ -88,10 +97,10 @@ def _cache_get(key: tuple[str, str]) -> list[SessionMessageValue] | None:
         return parsed
 
 
-def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
+def _cache_put(key: tuple[str, str], projection: SessionMessageProjection) -> None:
     now = time.monotonic()
     with _messages_cache_lock:
-        _messages_cache[key] = (now, parsed)
+        _messages_cache[key] = (now, projection)
         _messages_cache.move_to_end(key)
         while len(_messages_cache) > _MESSAGES_CACHE_MAX:
             _messages_cache.popitem(last=False)
@@ -128,6 +137,16 @@ async def load_session_messages(
     - `SessionContentInvalid`: JSON decode failure or non-list payload.
       Indicates an upload corruption; route layer returns 500.
     """
+    projection = await load_session_message_projection(session, file_store, db)
+    return projection.messages
+
+
+async def load_session_message_projection(
+    session: Session,
+    file_store: _FileStoreLike,
+    db: AsyncSession | None = None,
+) -> SessionMessageProjection:
+    """Load visible messages with their canonical source positions."""
     if session.content_protocol == "events-v1" and session.event_generation_id is not None:
         if db is None:
             raise SessionContentInvalid("events-v1 content requires a database session")
@@ -139,9 +158,13 @@ async def load_session_messages(
         if cached is not None:
             return cached
         events = await load_session_events(session, file_store, db)
-        projected = _SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events))
-        _cache_put(cache_key, projected)
-        return projected
+        visible = project_visible_messages(events)
+        projection = SessionMessageProjection(
+            messages=_SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events)),
+            source_positions=tuple(message.position for message in visible),
+        )
+        _cache_put(cache_key, projection)
+        return projection
 
     if not session.file_key:
         raise SessionContentMissing(f"session {session.id} has no uploaded content")
@@ -170,8 +193,12 @@ async def load_session_messages(
             f"session {session.id} content is not a valid JSON message array"
         ) from exc
 
-    _cache_put(cache_key, parsed)
-    return parsed
+    projection = SessionMessageProjection(
+        messages=parsed,
+        source_positions=tuple(range(len(parsed))),
+    )
+    _cache_put(cache_key, projection)
+    return projection
 
 
 async def load_session_events(

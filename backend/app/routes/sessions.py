@@ -125,6 +125,7 @@ from app.services.runtime_source_revision import (
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
+    load_session_message_projection,
     load_session_messages,
     session_has_uploaded_content,
     slice_session_messages,
@@ -134,6 +135,7 @@ from app.services.session_refs import extract_related_refs
 from app.services.session_search import (
     SearchableSessionMessage,
     best_session_message_matches,
+    current_search_revision,
     replace_snapshot_search_index,
     searchable_snapshot_messages,
 )
@@ -3098,6 +3100,9 @@ async def get_session_messages(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     direction: Literal["asc", "desc"] = Query(default="asc"),
+    anchor_kind: Literal["snapshot_offset", "event_seq"] | None = Query(default=None),
+    anchor_position: int | None = Query(default=None, ge=0),
+    anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionMessagesPage:
@@ -3111,8 +3116,18 @@ async def get_session_messages(
     starts at the oldest visible message for ascending reads and at the newest
     visible message for descending reads. Clients pin pages to the parent
     session's `content_hash`, which changes after snapshot replacement or event
-    append.
+    append. A complete search anchor recenters the first page around its match;
+    stale anchors degrade to ordinary offset pagination.
     """
+    anchor_values = (anchor_kind, anchor_position, anchor_revision)
+    if any(value is not None for value in anchor_values) and not all(
+        value is not None for value in anchor_values
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Search anchor requires kind, position, and revision",
+        )
+
     bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
@@ -3134,7 +3149,7 @@ async def get_session_messages(
     # share the same cache — a popular shared link must not re-parse
     # a 10 MB JSON blob per visitor.
     try:
-        raw = await load_session_messages(session, file_store, db)
+        projection = await load_session_message_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -3142,13 +3157,42 @@ async def get_session_messages(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
 
-    total = len(raw)
-    sliced = slice_session_messages(raw, offset=offset, limit=limit, direction=direction)
+    total = len(projection.messages)
+    page_offset = offset
+    anchor_offset: int | None = None
+    expected_anchor_kind: Literal["snapshot_offset", "event_seq"] = (
+        "event_seq" if session.content_protocol == "events-v1" else "snapshot_offset"
+    )
+    if (
+        anchor_kind is not None
+        and anchor_position is not None
+        and anchor_revision is not None
+        and anchor_kind == expected_anchor_kind
+        and anchor_revision == current_search_revision(session)
+    ):
+        try:
+            source_index = projection.source_positions.index(anchor_position)
+        except ValueError:
+            pass
+        else:
+            anchor_offset = source_index if direction == "asc" else total - source_index - 1
+            page_offset = min(
+                max(0, anchor_offset - limit // 2),
+                max(0, total - limit),
+            )
+
+    sliced = slice_session_messages(
+        projection.messages,
+        offset=page_offset,
+        limit=limit,
+        direction=direction,
+    )
     return SessionMessagesPage(
         items=[SessionMessageResponse.model_validate(m) for m in sliced],
         total=total,
-        offset=offset,
+        offset=page_offset,
         limit=limit,
+        anchor_offset=anchor_offset,
     )
 
 

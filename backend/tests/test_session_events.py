@@ -640,6 +640,23 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "limit": 2,
     }
 
+    anchored_messages = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={
+            "direction": "desc",
+            "limit": 2,
+            "anchor_kind": "event_seq",
+            "anchor_position": 4,
+            "anchor_revision": f"events:{second_head}",
+        },
+    )
+    assert anchored_messages.status_code == 200, anchored_messages.text
+    assert anchored_messages.json()["anchor_offset"] == 1
+    assert [item["content"] for item in anchored_messages.json()["items"]] == [
+        "appended left\x00right answer",
+        "visible answer",
+    ]
+
     visible_search = (await client.get("/v1/sessions", params={"q": "visible answer"})).json()
     assert [item["local_session_id"] for item in visible_search["items"]] == [local_id]
     assert visible_search["items"][0]["search_match"] == {

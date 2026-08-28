@@ -1042,6 +1042,38 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     assert len(page3["items"]) == 50
     assert page3["items"][-1]["content"] == "msg 249"
 
+    revision = f"snapshot:{hashlib.sha256(body_bytes).hexdigest()}"
+    anchored = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={
+            "limit": 100,
+            "anchor_kind": "snapshot_offset",
+            "anchor_position": 125,
+            "anchor_revision": revision,
+        },
+    )
+    anchored_page = anchored.json()
+    assert anchored_page["offset"] == 75
+    assert anchored_page["anchor_offset"] == 125
+    assert anchored_page["items"][50]["content"] == "msg 125"
+
+    stale_anchor = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={
+            "anchor_kind": "snapshot_offset",
+            "anchor_position": 125,
+            "anchor_revision": "snapshot:" + "0" * 64,
+        },
+    )
+    assert stale_anchor.json()["offset"] == 0
+    assert "anchor_offset" not in stale_anchor.json()
+
+    partial_anchor = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"anchor_kind": "snapshot_offset"},
+    )
+    assert partial_anchor.status_code == 422
+
     # Descending offsets are relative to the newest end. The server computes
     # this from the actual content rather than trusting batch metadata (which
     # intentionally says 5 above while the blob contains 250 messages).

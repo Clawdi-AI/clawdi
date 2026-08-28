@@ -24,6 +24,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
+import { sessionDetailLink } from "@/lib/session-search-anchor";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
@@ -348,7 +349,7 @@ function SessionsListInner() {
 								data={data?.items ?? []}
 								isLoading={isLoading}
 								emptyMessage={emptyMessage}
-								getRowLink={(s) => ({ to: "/sessions/$id", params: { id: s.id } })}
+								getRowLink={sessionDetailLink}
 								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 								sorting={sorting}
 								onSortingChange={(updater) => {

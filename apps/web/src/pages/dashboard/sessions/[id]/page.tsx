@@ -48,19 +48,28 @@ import {
 	SESSION_MESSAGES_STALE_MS,
 	sessionDetailQueryKey,
 } from "@/lib/session-queries";
+import type { SessionSearchAnchor } from "@/lib/session-search-anchor";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
-export default function SessionDetailPage({ sessionId }: { sessionId: string }) {
-	return <SessionDetailContent sessionId={sessionId} />;
+export default function SessionDetailPage({
+	sessionId,
+	searchAnchor,
+}: {
+	sessionId: string;
+	searchAnchor?: SessionSearchAnchor;
+}) {
+	return <SessionDetailContent sessionId={sessionId} searchAnchor={searchAnchor} />;
 }
 
 export function SessionDetailContent({
 	sessionId,
 	agentId,
+	searchAnchor,
 }: {
 	sessionId: string;
 	agentId?: string | null;
+	searchAnchor?: SessionSearchAnchor;
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -186,14 +195,33 @@ export function SessionDetailContent({
 		// end (rather than reordering already-loaded pages, which
 		// would only show the OLDEST 100 in newest-first mode —
 		// confusing).
-		queryKey: ["session-messages", sessionId, session?.content_hash ?? null, direction],
+		queryKey: [
+			"session-messages",
+			sessionId,
+			session?.content_hash ?? null,
+			direction,
+			searchAnchor?.kind ?? null,
+			searchAnchor?.position ?? null,
+			searchAnchor?.revision ?? null,
+		],
 		initialPageParam: 0,
 		queryFn: async ({ pageParam }) => {
 			return unwrap(
 				await api.GET("/v1/sessions/{session_id}/messages", {
 					params: {
 						path: { session_id: sessionId },
-						query: { offset: pageParam, limit: PAGE_SIZE, direction },
+						query: {
+							offset: pageParam,
+							limit: PAGE_SIZE,
+							direction,
+							...(pageParam === 0 && searchAnchor
+								? {
+										anchor_kind: searchAnchor.kind,
+										anchor_position: searchAnchor.position,
+										anchor_revision: searchAnchor.revision,
+									}
+								: {}),
+						},
 					},
 				}),
 			);
@@ -231,6 +259,34 @@ export function SessionDetailContent({
 	}, [pagesData, direction]);
 	const totalMessages = pagesData?.pages[0]?.total ?? 0;
 	const loadedCount = messages?.length ?? 0;
+	const anchorOffset = pagesData?.pages[0]?.anchor_offset;
+	const highlightedMessageKey =
+		typeof anchorOffset === "number" ? `${direction}:${anchorOffset}` : null;
+	const highlightedMessageRef = useRef<HTMLDivElement | null>(null);
+	const handledAnchorRef = useRef<string | null>(null);
+	const anchorIdentity = searchAnchor
+		? `${searchAnchor.kind}:${searchAnchor.position}:${searchAnchor.revision}`
+		: null;
+
+	useEffect(() => {
+		if (!anchorIdentity || !pagesData) return;
+		if (highlightedMessageKey && highlightedMessageRef.current) {
+			const handled = `resolved:${highlightedMessageKey}:${anchorIdentity}`;
+			if (handledAnchorRef.current === handled) return;
+			handledAnchorRef.current = handled;
+			const frame = requestAnimationFrame(() => {
+				highlightedMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+			});
+			return () => cancelAnimationFrame(frame);
+		}
+		const handled = `stale:${anchorIdentity}`;
+		if (handledAnchorRef.current !== handled) {
+			handledAnchorRef.current = handled;
+			toast.info("Search result changed", {
+				description: "This Session has newer content, so the conversation opened normally.",
+			});
+		}
+	}, [anchorIdentity, highlightedMessageKey, pagesData]);
 
 	// Hooks must run on every render in the same order — this includes the
 	// breadcrumb title hook. Compute the title (nullable while loading) and
@@ -432,6 +488,8 @@ export function SessionDetailContent({
 							agentType={session.agent_type}
 							userAvatar={user?.imageUrl}
 							userName={user?.fullName || "You"}
+							highlightedMessageKey={highlightedMessageKey}
+							highlightedMessageRef={highlightedMessageRef}
 						/>
 						{hasNextPage ? (
 							<LoadMoreSentinel
