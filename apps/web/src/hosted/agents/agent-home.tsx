@@ -46,10 +46,12 @@ export function AgentHome({
 	environmentId,
 	section,
 	routeSearch,
+	standalone = false,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
+	standalone?: boolean;
 }) {
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
@@ -171,6 +173,7 @@ export function AgentHome({
 				isCheckingDeployment={manualChecking}
 				onCheckDeploymentAgain={() => void handleCheckAgain()}
 				eventStreamActive={eventStreamActive}
+				standalone={standalone}
 			/>
 		);
 	}

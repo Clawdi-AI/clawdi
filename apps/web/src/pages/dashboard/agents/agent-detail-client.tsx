@@ -21,15 +21,22 @@ export function AgentDetailClient({
 	environmentId,
 	section,
 	routeSearch,
+	standalone = false,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
+	standalone?: boolean;
 }) {
 	if (AgentHome) {
 		return (
 			<Suspense fallback={<ConnectedAgentDetailSkeleton hosted section={section} />}>
-				<AgentHome environmentId={environmentId} section={section} routeSearch={routeSearch} />
+				<AgentHome
+					environmentId={environmentId}
+					section={section}
+					routeSearch={routeSearch}
+					standalone={standalone}
+				/>
 			</Suspense>
 		);
 	}

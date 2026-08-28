@@ -151,6 +151,39 @@ async function expectLiveToolFillsDashboard(page: Page, surface: Locator) {
 	);
 }
 
+async function expectTerminalFitsHost(terminal: Locator) {
+	const geometry = await terminal.evaluate((host) => {
+		const requiredElement = (selector: string) => {
+			const element = host.querySelector<HTMLElement>(selector);
+			if (!element) throw new Error(`Expected terminal element ${selector}`);
+			return element;
+		};
+		const xterm = requiredElement(".xterm");
+		const viewport = requiredElement(".xterm-viewport");
+		const screen = requiredElement(".xterm-screen");
+		const lastRow = requiredElement(".xterm-rows > div:last-child");
+		return {
+			host: {
+				bottom: host.getBoundingClientRect().bottom,
+				clientHeight: host.clientHeight,
+				scrollHeight: host.scrollHeight,
+			},
+			xterm: {
+				clientHeight: xterm.clientHeight,
+				scrollHeight: xterm.scrollHeight,
+			},
+			viewport: viewport.getBoundingClientRect().toJSON(),
+			screen: screen.getBoundingClientRect().toJSON(),
+			lastRow: lastRow.getBoundingClientRect().toJSON(),
+		};
+	});
+	expect(geometry.host.scrollHeight).toBeLessThanOrEqual(geometry.host.clientHeight + 1);
+	expect(geometry.xterm.scrollHeight).toBeLessThanOrEqual(geometry.xterm.clientHeight + 1);
+	expect(geometry.viewport.bottom).toBeLessThanOrEqual(geometry.host.bottom + 1);
+	expect(geometry.screen.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
+	expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
+}
+
 async function _expectOverviewSessionSlot({
 	region,
 	statusCard,
@@ -3664,7 +3697,7 @@ test("hosted live-tool routes keep scrolling inside their viewport", async ({ pa
 	}
 });
 
-test("hosted terminal keeps its fitted bottom row visible", async ({ page }) => {
+test("hosted terminal opens a standalone fitted window", async ({ page, context }) => {
 	const liveToolDeployment = mutationDeploymentReadFixture(railHostedDeployment);
 	await stubHostedApi(page, {
 		cloudAgents: [railHostedCloudAgent],
@@ -3672,6 +3705,16 @@ test("hosted terminal keeps its fitted bottom row visible", async ({ page }) => 
 		deploymentListResponses: [[liveToolDeployment]],
 	});
 	const terminalPath = `/agents/${railHostedEnvironmentId}/terminal`;
+	const terminalWindowPath = `/terminal/${railHostedEnvironmentId}`;
+
+	await page.goto(terminalPath);
+	const openButton = page.getByRole("button", { name: "Open Terminal in new window" });
+	await expect(openButton).toContainText("Open in new window");
+	const popupPromise = context.waitForEvent("page");
+	await openButton.click();
+	const popup = await popupPromise;
+	await expect(popup).toHaveURL(terminalWindowPath);
+	await popup.close();
 
 	for (const viewportSize of [
 		{ width: 1440, height: 900 },
@@ -3680,44 +3723,42 @@ test("hosted terminal keeps its fitted bottom row visible", async ({ page }) => 
 		await page.setViewportSize(viewportSize);
 		await page.goto(terminalPath);
 		const terminal = page.locator(".hosted-terminal");
-		const openInNewTab = page.locator('a[aria-label="Open terminal in new tab"]');
 		await expect(terminal.locator(".xterm-screen")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Retry terminal" })).toBeEnabled();
-		await expect(openInNewTab).toHaveAttribute("href", terminalPath);
-		await expect(openInNewTab).toHaveAttribute("target", "_blank");
-		await expect(openInNewTab).toHaveAttribute("rel", "noopener noreferrer");
-		await expect(openInNewTab).toHaveAttribute("title", "Open terminal in new tab");
+		await expectTerminalFitsHost(terminal);
 
-		const geometry = await terminal.evaluate((host) => {
-			const requiredElement = (selector: string) => {
-				const element = host.querySelector<HTMLElement>(selector);
-				if (!element) throw new Error(`Expected terminal element ${selector}`);
-				return element;
-			};
-			const xterm = requiredElement(".xterm");
-			const viewport = requiredElement(".xterm-viewport");
-			const screen = requiredElement(".xterm-screen");
-			const lastRow = requiredElement(".xterm-rows > div:last-child");
-			return {
-				host: {
-					bottom: host.getBoundingClientRect().bottom,
-					clientHeight: host.clientHeight,
-					scrollHeight: host.scrollHeight,
-				},
-				xterm: {
-					clientHeight: xterm.clientHeight,
-					scrollHeight: xterm.scrollHeight,
-				},
-				viewport: viewport.getBoundingClientRect().toJSON(),
-				screen: screen.getBoundingClientRect().toJSON(),
-				lastRow: lastRow.getBoundingClientRect().toJSON(),
-			};
-		});
-		expect(geometry.host.scrollHeight).toBeLessThanOrEqual(geometry.host.clientHeight + 1);
-		expect(geometry.xterm.scrollHeight).toBeLessThanOrEqual(geometry.xterm.clientHeight + 1);
-		expect(geometry.viewport.bottom).toBeLessThanOrEqual(geometry.host.bottom + 1);
-		expect(geometry.screen.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
-		expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
+		await page.goto(terminalWindowPath);
+		const standaloneSurface = page.getByTestId("hosted-agent-live-surface");
+		const standaloneTerminal = standaloneSurface.locator(".hosted-terminal");
+		await expect(standaloneTerminal.locator(".xterm-screen")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Open Terminal in new window" })).toHaveCount(0);
+		await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
+		await expect(page.getByTestId("dashboard-page-content")).toHaveCount(0);
+		await expect(page.locator('main[data-mava-launcher="hidden"]')).toBeVisible();
+		const standaloneGeometry = await standaloneSurface.evaluate((surface) => ({
+			surface: surface.getBoundingClientRect().toJSON(),
+			viewport: { width: window.innerWidth, height: window.innerHeight },
+			body: { clientHeight: document.body.clientHeight, scrollHeight: document.body.scrollHeight },
+			document: {
+				clientHeight: document.documentElement.clientHeight,
+				scrollHeight: document.documentElement.scrollHeight,
+			},
+		}));
+		expect(Math.abs(standaloneGeometry.surface.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(standaloneGeometry.surface.y)).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(standaloneGeometry.surface.width - standaloneGeometry.viewport.width),
+		).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(standaloneGeometry.surface.height - standaloneGeometry.viewport.height),
+		).toBeLessThanOrEqual(1);
+		expect(standaloneGeometry.body.scrollHeight).toBeLessThanOrEqual(
+			standaloneGeometry.body.clientHeight + 1,
+		);
+		expect(standaloneGeometry.document.scrollHeight).toBeLessThanOrEqual(
+			standaloneGeometry.document.clientHeight + 1,
+		);
+		await expectTerminalFitsHost(standaloneTerminal);
 	}
 });
 

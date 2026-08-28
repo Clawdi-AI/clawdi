@@ -294,6 +294,7 @@ import {
 	agentSectionLabel,
 	agentSectionLink,
 	agentSessionDetailLink,
+	agentTerminalWindowHref,
 	HOSTED_AGENT_SECTION_IDS,
 	isAgentRouteId,
 } from "@/lib/agent-routes";
@@ -443,6 +444,7 @@ export function HostedAgentDetail({
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 	eventStreamActive = false,
+	standalone = false,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
@@ -455,6 +457,7 @@ export function HostedAgentDetail({
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 	eventStreamActive?: boolean;
+	standalone?: boolean;
 }) {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -507,6 +510,7 @@ export function HostedAgentDetail({
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal");
+	const terminalWindowHref = agentTerminalWindowHref(environmentId);
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(environmentId, sessionId),
 	});
@@ -635,7 +639,8 @@ export function HostedAgentDetail({
 							key={deployment.resource.id}
 							deployment={deployment}
 							agentName={availableAgentTitle}
-							terminalHref={terminalHref}
+							terminalWindowHref={terminalWindowHref}
+							standalone={standalone}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
@@ -2159,6 +2164,8 @@ const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
 	disconnected: "destructive",
 };
 
+const TERMINAL_WINDOW_LAUNCH_TOAST_ID = "terminal-window-launch";
+
 function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	return (
 		<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -2171,11 +2178,13 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 function TerminalTab({
 	deployment,
 	agentName,
-	terminalHref,
+	terminalWindowHref,
+	standalone,
 }: {
 	deployment: HostedDeployment;
 	agentName: string;
-	terminalHref: string;
+	terminalWindowHref: string;
+	standalone: boolean;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
@@ -2186,6 +2195,17 @@ function TerminalTab({
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("connecting");
 	const [reconnectRequest, setReconnectRequest] = useState(0);
+	const openTerminalWindow = useCallback(() => {
+		const popup = openSecureRuntimeWindow(window.open.bind(window), terminalWindowHref);
+		if (!popup) {
+			toast.error("Couldn't open Terminal", {
+				id: TERMINAL_WINDOW_LAUNCH_TOAST_ID,
+				description: "Allow pop-ups, then try again.",
+			});
+			return;
+		}
+		trackRuntimeWindow(deployment.resource.id, popup);
+	}, [deployment.resource.id, terminalWindowHref]);
 	const requestWebsocketUrl = useCallback(async () => {
 		const session = await createTerminalSession({ id: deployment.resource.id });
 		return session.websocket_url ?? "";
@@ -2213,16 +2233,18 @@ function TerminalTab({
 	const terminalAction = (
 		<>
 			<TerminalStatusIndicator status={terminalStatus} />
-			<Button
-				render={<a href={terminalHref} target="_blank" rel="noopener noreferrer" />}
-				nativeButton={false}
-				variant="outline"
-				size="icon-sm"
-				aria-label="Open terminal in new tab"
-				title="Open terminal in new tab"
-			>
-				<ExternalLink />
-			</Button>
+			{standalone ? null : (
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={openTerminalWindow}
+					aria-label="Open Terminal in new window"
+				>
+					<ExternalLink className="size-3.5" />
+					<span className="hidden sm:inline">Open in new window</span>
+				</Button>
+			)}
 			<Button
 				type="button"
 				variant="outline"
