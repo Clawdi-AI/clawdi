@@ -726,6 +726,9 @@ case "$*" in
 	"config path"|"config get "*|"config set "*|"config unset "*)
 		HOME='${home}' exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
+	"config schema")
+		printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
+		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
@@ -2557,7 +2560,13 @@ describe("runtime manifest reconciliation invariants", () => {
 						type: "custom_openai_compatible",
 						managed_by: "clawdi",
 						baseUrl: "https://api.example.test/v1",
-						models: [{ id: "gpt-test" }],
+						models: [
+							{ id: "gpt-test" },
+							{
+								id: "test-embedding-model",
+								capabilities: { embeddings: true, chat: false },
+							},
+						],
 						apiMode: "openai_responses",
 						runtimeEnvName: "CLAWDI_AI_API_KEY",
 						apiKeySecretRef: "secret://providers/default/api-key",
@@ -2585,6 +2594,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		const config = JSON.parse(readFileSync(configPath, "utf8"));
 		expect(config.agents.defaults).not.toHaveProperty("memorySearch");
 		expect(config).toMatchObject({
+			memory: {
+				search: {
+					provider: "clawdi-managed",
+					model: "test-embedding-model",
+				},
+			},
 			models: {
 				providers: {
 					"clawdi-managed": {
