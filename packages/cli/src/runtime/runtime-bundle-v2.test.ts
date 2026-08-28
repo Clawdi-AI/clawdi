@@ -759,6 +759,7 @@ describe("hosted runtime bundle v2", () => {
 				"#!/usr/bin/env bash",
 				"set -euo pipefail",
 				`if [[ "$1" == "--version" ]]; then printf '%s\\n' 'OpenClaw test-version'; exit 0; fi`,
+				`if [[ "$1 $2" == "config schema" ]]; then printf '%s\\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'; exit 0; fi`,
 				'if [[ "$1 $2 $3" == "agents list --json" ]]; then',
 				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
 				'elif [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
@@ -1602,6 +1603,10 @@ describe("hosted runtime bundle v2", () => {
 			`#!/usr/bin/env sh
 if [ "$*" = "--version" ]; then
   printf '%s\\n' 'OpenClaw test-version'
+  exit 0
+fi
+if [ "$*" = "config schema" ]; then
+  printf '%s\\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
