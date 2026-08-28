@@ -212,6 +212,7 @@ describe("AI provider projection", () => {
 			agents?: {
 				defaults?: {
 					model?: { primary?: string };
+					memorySearch?: null;
 				};
 			};
 			memory?: { search?: { model?: string; provider?: string } };
@@ -223,7 +224,7 @@ describe("AI provider projection", () => {
 			};
 		};
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
-		expect(openclawPatch.agents?.defaults).not.toHaveProperty("memorySearch");
+		expect(openclawPatch.agents?.defaults?.memorySearch).toBeNull();
 		expect(openclawPatch.memory?.search).toEqual({
 			provider: CLAWDI_MANAGED_PROVIDER_ID,
 			model: "manifest-embedding-model",
@@ -312,11 +313,11 @@ describe("AI provider projection", () => {
 				[CLAWDI_MANAGED_PROVIDER_ID],
 			).content,
 		) as {
-			agents?: { defaults?: Record<string, unknown> };
+			agents?: { defaults?: { memorySearch?: null } };
 			memory?: { search?: { model?: null; provider?: null } };
 			models?: { providers?: Record<string, unknown> };
 		};
-		expect(managedToByokPatch.agents?.defaults).not.toHaveProperty("memorySearch");
+		expect(managedToByokPatch.agents?.defaults?.memorySearch).toBeNull();
 		expect(managedToByokPatch.memory?.search).toEqual({
 			provider: null,
 			model: null,

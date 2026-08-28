@@ -26,8 +26,8 @@ Package: `clawdi@0.14.26`
 
 ### Fixed
 
-- Managed OpenClaw embedding settings now use the compatible top-level
-  `memory.search` configuration and are cleared when the managed provider is removed.
+- Managed OpenClaw embedding settings now use top-level `memory.search`, repair
+  the legacy invalid config path, and clear when the managed provider is removed.
 
 ## Clawdi CLI v0.14.25
 

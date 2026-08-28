@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isClawdiManagedV2ProviderId, MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
+import { isClawdiManagedProviderId, MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -524,12 +524,26 @@ const applyMergePatch = (target, source, path = []) => {
 };
 const configRead = await sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
 const snapshot = configRead?.snapshot;
-if (!snapshot || snapshot.valid !== true || !isRecord(snapshot.sourceConfig)) {
+const sourceConfig = snapshot?.sourceConfig;
+const sourceAgents = isRecord(sourceConfig) ? sourceConfig.agents : undefined;
+const sourceDefaults = isRecord(sourceAgents) ? sourceAgents.defaults : undefined;
+const patchAgents = patch.agents;
+const patchDefaults = isRecord(patchAgents) ? patchAgents.defaults : undefined;
+const repairsLegacyMemorySearch =
+  isRecord(sourceDefaults) &&
+  Object.hasOwn(sourceDefaults, "memorySearch") &&
+  isRecord(patchDefaults) &&
+  patchDefaults.memorySearch === null;
+if (
+  !snapshot ||
+  !isRecord(sourceConfig) ||
+  (snapshot.valid !== true && !repairsLegacyMemorySearch)
+) {
   throw new Error("OpenClaw config snapshot is unavailable for provider projection");
 }
-const projected = structuredClone(snapshot.sourceConfig);
+const projected = structuredClone(sourceConfig);
 applyMergePatch(projected, patch);
-if (isDeepStrictEqual(projected, snapshot.sourceConfig)) process.exit(0);
+if (isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
 explicitSetPaths.length = 0;
 unsetPaths.length = 0;
 await sdk.mutateConfigFile({
@@ -755,7 +769,12 @@ function mergeProviderDeletes(
 	container.providers = providers;
 	if (runtime === "openclaw") {
 		patch.models = container;
-		if (deletedProviderIds.some(isClawdiManagedV2ProviderId)) {
+		if (deletedProviderIds.some(isClawdiManagedProviderId)) {
+			const agents = { ...(recordValue(patch.agents) ?? {}) };
+			const defaults = { ...(recordValue(agents.defaults) ?? {}) };
+			defaults.memorySearch = null;
+			agents.defaults = defaults;
+			patch.agents = agents;
 			const memory = { ...(recordValue(patch.memory) ?? {}) };
 			const search = { ...(recordValue(memory.search) ?? {}) };
 			if (!Object.hasOwn(search, "provider")) search.provider = null;
