@@ -100,6 +100,7 @@ from app.schemas.session import (
     SessionPermissionsResponse,
     SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
+    SessionSearchNavigationResponse,
     SessionUploadResponse,
 )
 from app.services import memory_extraction
@@ -138,6 +139,7 @@ from app.services.session_search import (
     current_search_revision,
     replace_snapshot_search_index,
     searchable_snapshot_messages,
+    session_message_search_navigation,
 )
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
@@ -3103,6 +3105,7 @@ async def get_session_messages(
     anchor_kind: Literal["snapshot_offset", "event_seq"] | None = Query(default=None),
     anchor_position: int | None = Query(default=None, ge=0),
     anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
+    search_query: str | None = Query(default=None, max_length=500),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionMessagesPage:
@@ -3119,6 +3122,7 @@ async def get_session_messages(
     append. A complete search anchor recenters the first page around its match;
     stale anchors degrade to ordinary offset pagination.
     """
+    search_query = search_query.strip() if search_query else None
     anchor_values = (anchor_kind, anchor_position, anchor_revision)
     if any(value is not None for value in anchor_values) and not all(
         value is not None for value in anchor_values
@@ -3160,6 +3164,7 @@ async def get_session_messages(
     total = len(projection.messages)
     page_offset = offset
     anchor_offset: int | None = None
+    search_navigation: SessionSearchNavigationResponse | None = None
     expected_anchor_kind: Literal["snapshot_offset", "event_seq"] = (
         "event_seq" if session.content_protocol == "events-v1" else "snapshot_offset"
     )
@@ -3180,6 +3185,32 @@ async def get_session_messages(
                 max(0, anchor_offset - limit // 2),
                 max(0, total - limit),
             )
+            if search_query:
+                navigation = await session_message_search_navigation(
+                    db,
+                    session,
+                    query=search_query,
+                    position=anchor_position,
+                )
+                if navigation is not None:
+
+                    def navigation_anchor(
+                        position: int | None,
+                    ) -> SessionSearchAnchorResponse | None:
+                        if position is None:
+                            return None
+                        return SessionSearchAnchorResponse(
+                            kind=expected_anchor_kind,
+                            position=position,
+                            revision=anchor_revision,
+                        )
+
+                    search_navigation = SessionSearchNavigationResponse(
+                        index=navigation.index,
+                        total=navigation.total,
+                        previous=navigation_anchor(navigation.previous_position),
+                        next=navigation_anchor(navigation.next_position),
+                    )
 
     sliced = slice_session_messages(
         projection.messages,
@@ -3193,6 +3224,7 @@ async def get_session_messages(
         offset=page_offset,
         limit=limit,
         anchor_offset=anchor_offset,
+        search_navigation=search_navigation,
     )
 
 

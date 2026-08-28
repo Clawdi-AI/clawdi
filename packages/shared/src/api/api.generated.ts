@@ -8067,6 +8067,7 @@ export interface components {
             limit: number;
             /** Anchor Offset */
             anchor_offset?: number | null;
+            search_navigation?: components["schemas"]["SessionSearchNavigationResponse"] | null;
         };
         /**
          * SessionPermissionCreate
@@ -8187,6 +8188,15 @@ export interface components {
             /** Excerpt */
             excerpt: string;
             anchor: components["schemas"]["SessionSearchAnchorResponse"];
+        };
+        /** SessionSearchNavigationResponse */
+        SessionSearchNavigationResponse: {
+            /** Index */
+            index: number;
+            /** Total */
+            total: number;
+            previous?: components["schemas"]["SessionSearchAnchorResponse"] | null;
+            next?: components["schemas"]["SessionSearchAnchorResponse"] | null;
         };
         /** SessionTextPart */
         SessionTextPart: {
@@ -11745,6 +11755,7 @@ export interface operations {
                 anchor_kind?: ("snapshot_offset" | "event_seq") | null;
                 anchor_position?: number | null;
                 anchor_revision?: string | null;
+                search_query?: string | null;
             };
             header?: never;
             path: {

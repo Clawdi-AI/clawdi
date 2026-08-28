@@ -20,14 +20,22 @@ database migration, CI, and implementation details.
 
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 
+## Clawdi CLI v0.14.27
+
+Package: `clawdi@0.14.27`
+
+### Fixed
+
+- Managed OpenClaw embedding settings now follow the installed config schema,
+  repair the incompatible legacy path, and clear when the managed provider is removed.
+
 ## Clawdi CLI v0.14.26
 
 Package: `clawdi@0.14.26`
 
 ### Fixed
 
-- Managed OpenClaw embedding settings now follow the installed config schema,
-  repair the incompatible legacy path, and clear when the managed provider is removed.
+- Hosted Hermes WhatsApp gateways now keep the explicit allow-all safety opt-in required by their managed open access policy after CLI upgrades.
 
 ## Clawdi CLI v0.14.25
 

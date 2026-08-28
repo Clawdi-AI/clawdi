@@ -16,7 +16,7 @@ describe("Session search anchors", () => {
 					anchor: { kind: "event_seq", position: 42, revision: "events:revision" },
 				},
 			},
-			{ returnTo: "/sessions?q=matching&page=2" },
+			{ returnTo: "/sessions?q=matching&page=2", searchQuery: " matching " },
 		);
 		expect(link).toEqual({
 			to: "/sessions/$id",
@@ -25,6 +25,7 @@ describe("Session search anchors", () => {
 				matchKind: "event_seq",
 				matchPosition: 42,
 				matchRevision: "events:revision",
+				matchQuery: "matching",
 				returnTo: "/sessions?q=matching&page=2",
 			},
 		});

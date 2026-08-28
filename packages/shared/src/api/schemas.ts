@@ -30,6 +30,7 @@ export type ContributionDay = Schemas["ContributionDayResponse"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionMessageResponse"];
+export type SessionMessagesPage = Schemas["SessionMessagesPage"];
 export type SessionUploadResult = Schemas["SessionUploadResponse"];
 export type Environment = Schemas["EnvironmentResponse"];
 
