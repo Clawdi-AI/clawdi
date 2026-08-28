@@ -87,8 +87,6 @@ const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	google_generate_content: "google-generative-ai",
 };
 
-const CLAWDI_MANAGED_MEMORY_EMBEDDING_MODEL = "text-embedding-3-small";
-
 const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "chat_completions",
 	// Hermes' current target-native label for the OpenAI Responses API.
@@ -112,9 +110,10 @@ export function buildAgentTargetProjection(
 	const primaryProvider = selection.primaryProvider;
 	const selectedPrimaryModel = selection.primaryModel;
 	const warnings = [...validation.warnings, ...selection.warnings];
+	const embeddingModel = selectCatalogEmbeddingModel(catalog, providers);
 	const projection =
 		target === "openclaw"
-			? buildOpenClawProjection(providers, primaryProvider, selectedPrimaryModel)
+			? buildOpenClawProjection(providers, primaryProvider, selectedPrimaryModel, embeddingModel)
 			: target === "hermes"
 				? buildHermesProjection(
 						providers,
@@ -266,6 +265,21 @@ function agentFacingProviderId(providerId: string): string {
 	return isClawdiManagedV2ProviderId(providerId) ? CLAWDI_MANAGED_PROVIDER_ID : providerId;
 }
 
+function selectCatalogEmbeddingModel(
+	catalog: AiProviderCatalog,
+	providers: ProjectionProvider[],
+): AgentPrimaryModel | undefined {
+	const configuredProviderId = catalog.defaults?.embedding_provider_id;
+	if (!configuredProviderId) return undefined;
+	const providerId = agentFacingProviderId(configuredProviderId);
+	if (!providers.some((provider) => provider.id === providerId)) return undefined;
+	const sourceProvider = catalog.providers.find((provider) => provider.id === configuredProviderId);
+	const model = sourceProvider?.models?.find(
+		(candidate) => candidate.capabilities?.embeddings === true,
+	);
+	return model ? { provider_id: providerId, model: model.id } : undefined;
+}
+
 function legacyProviderDefaultModel(provider: AiProvider): string | undefined {
 	const value = (provider as AiProvider & { default_model?: string }).default_model;
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -287,10 +301,10 @@ function buildOpenClawProjection(
 	providers: ProjectionProvider[],
 	primaryProvider: ProjectionProvider,
 	primaryModel: AgentPrimaryModel,
+	embeddingModel: AgentPrimaryModel | undefined,
 ): string {
 	const hasClawdiManagedProvider = providers.some(
-		(provider) =>
-			provider.id === CLAWDI_MANAGED_PROVIDER_ID && provider.managed_by === "clawdi",
+		(provider) => provider.id === CLAWDI_MANAGED_PROVIDER_ID && provider.managed_by === "clawdi",
 	);
 	const projectedProviders = Object.fromEntries(
 		providers
@@ -333,12 +347,14 @@ function buildOpenClawProjection(
 				model: {
 					primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
 				},
-				memorySearch: hasClawdiManagedProvider
+				memorySearch: embeddingModel
 					? {
-							provider: CLAWDI_MANAGED_PROVIDER_ID,
-							model: CLAWDI_MANAGED_MEMORY_EMBEDDING_MODEL,
+							provider: embeddingModel.provider_id,
+							model: embeddingModel.model,
 						}
-					: undefined,
+					: hasClawdiManagedProvider
+						? { provider: null, model: null }
+						: undefined,
 			},
 		},
 		models:
@@ -357,6 +373,7 @@ function openClawModels(
 	primaryModel?: string,
 ): Array<Record<string, unknown>> {
 	const models = (provider.models ?? [])
+		.filter((model) => model.capabilities?.chat !== false)
 		.map((model) => {
 			return compactObject({
 				id: model.id,
@@ -553,6 +570,7 @@ function hermesModels(provider: ProjectionProvider): HermesProjectedModel[] {
 	const seen = new Set<string>();
 	const entries: HermesProjectedModel[] = [];
 	for (const model of provider.models ?? []) {
+		if (model.capabilities?.chat === false) continue;
 		if (!model.id || seen.has(model.id)) continue;
 		seen.add(model.id);
 		const entry: HermesProjectedModel = { id: model.id };

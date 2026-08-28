@@ -185,10 +185,20 @@ describe("AI provider projection", () => {
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
-					models: [{ id: "k3", api_mode: "openai_chat" }, { id: "grok-4.6" }],
+					models: [
+						{ id: "k3", api_mode: "openai_chat" },
+						{ id: "grok-4.6" },
+						{
+							id: "manifest-embedding-model",
+							capabilities: { embeddings: true, chat: false },
+						},
+					],
 				},
 			],
-			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
+			defaults: {
+				chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+				embedding_provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			},
 		};
 		const primaryModel = {
 			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
@@ -215,7 +225,7 @@ describe("AI provider projection", () => {
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
 		expect(openclawPatch.agents?.defaults?.memorySearch).toEqual({
 			provider: CLAWDI_MANAGED_PROVIDER_ID,
-			model: "text-embedding-3-small",
+			model: "manifest-embedding-model",
 		});
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
@@ -247,6 +257,7 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_AI_API_KEY"');
 		expect(hermes.files[0]?.content).toContain('"k3": {}');
 		expect(hermes.files[0]?.content).toContain('"grok-4.6": {}');
+		expect(hermes.files[0]?.content).not.toContain("manifest-embedding-model");
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
 
