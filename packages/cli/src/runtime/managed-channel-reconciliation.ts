@@ -25,107 +25,29 @@ export function buildHermesManagedChannelsPatch(
 	const whatsapp = whatsappEnabled
 		? {
 				enabled: true,
-				dm_policy: "allowlist",
-				group_policy: "open",
-				allow_from: ["*"],
-				group_allow_from: ["*"],
 			}
 		: {
 				enabled: false,
-				dm_policy: null,
-				group_policy: null,
-				allow_from: null,
-				group_allow_from: null,
 			};
 	const whatsappPlatform = whatsappEnabled
 		? {
 				enabled: true,
 				extra: {
 					session_path: whatsappAuthDir,
-					dm_policy: "allowlist",
-					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
-					group_sessions_per_user: false,
-					thread_sessions_per_user: false,
 				},
 			}
 		: {
 				enabled: false,
 				extra: {
 					session_path: null,
-					dm_policy: null,
-					group_policy: null,
-					allow_from: null,
-					group_allow_from: null,
-					group_sessions_per_user: null,
-					thread_sessions_per_user: null,
 				},
 			};
-	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
 	return {
-		telegram: telegramEnabled
-			? {
-					enabled: true,
-					dm_policy: "open",
-					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
-					group_allowed_chats: ["*"],
-					require_mention: false,
-					extra: {
-						base_url: "https://api.telegram.org/bot",
-						base_file_url: "https://api.telegram.org/file/bot",
-					},
-				}
-			: {
-					enabled: false,
-					dm_policy: null,
-					group_policy: null,
-					allow_from: null,
-					group_allow_from: null,
-					group_allowed_chats: null,
-					require_mention: null,
-					extra: {
-						base_url: null,
-						base_file_url: null,
-					},
-				},
-		discord: discordEnabled
-			? {
-					enabled: true,
-					dm_policy: "open",
-					group_policy: "open",
-					require_mention: false,
-					thread_require_mention: false,
-					bots_require_inline_mention: false,
-				}
-			: {
-					enabled: false,
-					dm_policy: null,
-					group_policy: null,
-					require_mention: null,
-					thread_require_mention: null,
-					bots_require_inline_mention: null,
-				},
+		telegram: { enabled: telegramEnabled },
+		discord: { enabled: discordEnabled },
 		whatsapp,
-		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
-		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		platforms: {
-			telegram: {
-				extra: {
-					group_sessions_per_user: telegramEnabled ? false : null,
-					thread_sessions_per_user: telegramEnabled ? false : null,
-				},
-			},
 			whatsapp: whatsappPlatform,
-		},
-		display: {
-			platforms: {
-				telegram: {
-					streaming: telegramEnabled ? true : null,
-				},
-			},
 		},
 	};
 }

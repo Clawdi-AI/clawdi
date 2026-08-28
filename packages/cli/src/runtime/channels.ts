@@ -28,7 +28,8 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"WHATSAPP_ENABLED",
 	"WHATSAPP_MODE",
 	"WHATSAPP_ALLOWED_USERS",
-	"WHATSAPP_ALLOW_ALL_USERS",
+	"WHATSAPP_DM_POLICY",
+	"WHATSAPP_GROUP_POLICY",
 ] as const;
 const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
@@ -363,7 +364,8 @@ function applyHermesRuntimeChannelSettings(
 	if (whatsapp) {
 		env.WHATSAPP_MODE = "bot";
 		env.WHATSAPP_ALLOWED_USERS = "*";
-		env.WHATSAPP_ALLOW_ALL_USERS = "true";
+		env.WHATSAPP_DM_POLICY = "open";
+		env.WHATSAPP_GROUP_POLICY = "open";
 	}
 	return {
 		...manifest,

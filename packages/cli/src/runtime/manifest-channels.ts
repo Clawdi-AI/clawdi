@@ -25,7 +25,7 @@ import {
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
-import { isPlainRecord, recordValue } from "./manifest-shared";
+import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
 	runRuntimeUserCommand,
@@ -423,8 +423,14 @@ export function applyHostedChannelProjection(
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
 		);
 	}
-	const patch = openClawManagedChannelsPatch(channels);
-	if (openClawConfigPatchIsApplied(openClawContext, patch)) return false;
+	const currentConfig = readOpenClawConfig(openClawContext.configPath);
+	const patch = openClawManagedChannelsPatch(channels, currentConfig);
+	if (
+		openClawConfigPatchIsApplied(openClawContext, patch) &&
+		openClawManagedAccountMapsAreApplied(currentConfig, patch, channels)
+	) {
+		return false;
+	}
 	runRuntimeUserCommand(
 		observation.commandPath,
 		["config", "patch", "--stdin", ...openClawManagedAccountReplaceArgs(channels)],
@@ -461,6 +467,7 @@ function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknow
 }
 export function openClawManagedChannelsPatch(
 	channels: Record<string, unknown>,
+	currentConfig: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
 	const deleteEntries = openClawManagedChannelDeletes();
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(channels);
@@ -468,10 +475,11 @@ export function openClawManagedChannelsPatch(
 		managedChannelHasAccounts(channels.telegram) ||
 		managedChannelHasAccounts(channels.discord) ||
 		managedChannelHasAccounts(channels.whatsapp);
+	const effectiveChannels = mergeOpenClawManagedAccountPreferences(channels, currentConfig);
 	return {
 		channels: {
 			...deleteEntries,
-			...channels,
+			...effectiveChannels,
 		},
 		plugins: {
 			entries: {
@@ -493,6 +501,71 @@ export function openClawManagedChannelsPatch(
 			dmScope: isolatesManagedDms ? "per-account-channel-peer" : null,
 		},
 	};
+}
+
+function readOpenClawConfig(path: string): Record<string, unknown> | null {
+	try {
+		return recordValue(JSON.parse(readFileSync(path, "utf-8")) as unknown);
+	} catch {
+		return null;
+	}
+}
+
+function mergeOpenClawManagedAccountPreferences(
+	channels: Record<string, unknown>,
+	currentConfig: Record<string, unknown> | null,
+): Record<string, unknown> {
+	const currentChannels = recordValue(currentConfig?.channels);
+	if (!currentChannels) return channels;
+	const mergedChannels = { ...channels };
+	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
+		const desiredChannel = recordValue(channels[provider]);
+		const desiredAccounts = recordValue(desiredChannel?.accounts);
+		if (!desiredChannel || !desiredAccounts) continue;
+		const currentAccounts = recordValue(recordValue(currentChannels[provider])?.accounts);
+		const mergedAccounts: Record<string, unknown> = {};
+		for (const [accountId, desiredValue] of Object.entries(desiredAccounts)) {
+			const desiredAccount = recordValue(desiredValue);
+			if (!desiredAccount) {
+				mergedAccounts[accountId] = desiredValue;
+				continue;
+			}
+			const currentAccount = recordValue(currentAccounts?.[accountId]);
+			const mergedAccount = { ...desiredAccount, ...(currentAccount ?? {}) };
+			for (const key of openClawManagedAccountFields(provider)) {
+				if (Object.hasOwn(desiredAccount, key)) mergedAccount[key] = desiredAccount[key];
+			}
+			mergedAccounts[accountId] = mergedAccount;
+		}
+		mergedChannels[provider] = { ...desiredChannel, accounts: mergedAccounts };
+	}
+	return mergedChannels;
+}
+
+function openClawManagedAccountFields(
+	provider: (typeof OPENCLAW_MANAGED_CHANNELS)[number],
+): readonly string[] {
+	if (provider === "telegram") return ["enabled", "botToken"];
+	if (provider === "discord") return ["enabled", "token"];
+	return ["enabled", "authDir"];
+}
+
+function openClawManagedAccountMapsAreApplied(
+	currentConfig: Record<string, unknown> | null,
+	patch: Record<string, unknown>,
+	channels: Record<string, unknown>,
+): boolean {
+	const currentChannels = recordValue(currentConfig?.channels);
+	const patchedChannels = recordValue(patch.channels);
+	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
+		const desiredAccounts = recordValue(recordValue(channels[provider])?.accounts);
+		if (!desiredAccounts) continue;
+		if (!currentChannels || !patchedChannels) return false;
+		const currentAccounts = recordValue(recordValue(currentChannels[provider])?.accounts);
+		const patchedAccounts = recordValue(recordValue(patchedChannels[provider])?.accounts);
+		if (!canonicalJsonEqual(currentAccounts, patchedAccounts)) return false;
+	}
+	return true;
 }
 function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): string[] {
 	const args: string[] = [];

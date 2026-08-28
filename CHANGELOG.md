@@ -10,6 +10,15 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.14.24
+
+Package: `clawdi@0.14.24`
+
+### Fixed
+
+- Hosted OpenClaw and Hermes channel reconciliation now preserves user-authored
+  access policies, allowlists, and channel experience preferences.
+
 ## Clawdi CLI v0.14.23
 
 Package: `clawdi@0.14.23`
