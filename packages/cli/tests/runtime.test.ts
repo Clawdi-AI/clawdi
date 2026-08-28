@@ -1088,8 +1088,16 @@ fi
 `;
 }
 
+function fakeOpenClawConfigSchemaCommand(): string {
+	return `if [ "$*" = "config schema" ]; then
+  printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
+  exit 0
+fi`;
+}
+
 function fakeOpenClawConfigPatchCommand(configPath: string): string {
-	return `if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+	return `${fakeOpenClawConfigSchemaCommand()}
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   patch="$(cat)"
   CLAWDI_TEST_OPENCLAW_PATCH="$patch" '${process.execPath}' - <<'NODE'
 const fs = require("node:fs");
@@ -1184,6 +1192,7 @@ if [ "\${1:-}" = "plugins" ] && grep -q 'legacyInvalidConfig' '${configPath}' 2>
   exit 1
 fi
 ${fakeManagedOpenClawProviderPluginCommands()}
+${fakeOpenClawConfigSchemaCommand()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then cat >/dev/null; fi
 exit 0
 `,
@@ -6966,6 +6975,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+${fakeOpenClawConfigSchemaCommand()}
 ${fakeManagedOpenClawProviderPluginCommands()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >/dev/null
@@ -8130,6 +8140,8 @@ set -euo pipefail
 printf '%s\n' "$*" >> '${installerLog}'
 if [ "$*" = "--version" ]; then
   printf '%s\n' '${runtime}-test-version'
+elif [ "${runtime}" = "openclaw" ] && [ "$*" = "config schema" ]; then
+  printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
 elif [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\n'
 elif [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ]; then

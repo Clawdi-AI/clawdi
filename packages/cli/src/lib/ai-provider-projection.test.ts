@@ -212,9 +212,10 @@ describe("AI provider projection", () => {
 			agents?: {
 				defaults?: {
 					model?: { primary?: string };
-					memorySearch?: { model?: string; provider?: string };
+					memorySearch?: null;
 				};
 			};
+			memory?: { search?: { model?: string; provider?: string } };
 			models?: {
 				providers?: Record<
 					string,
@@ -223,7 +224,8 @@ describe("AI provider projection", () => {
 			};
 		};
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
-		expect(openclawPatch.agents?.defaults?.memorySearch).toEqual({
+		expect(openclawPatch.agents?.defaults?.memorySearch).toBeNull();
+		expect(openclawPatch.memory?.search).toEqual({
 			provider: CLAWDI_MANAGED_PROVIDER_ID,
 			model: "manifest-embedding-model",
 		});
@@ -301,7 +303,7 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
 		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
-		expect(openclaw.files[0]?.content).not.toContain('"memorySearch"');
+		expect(openclaw.files[0]?.content).not.toContain('"memory"');
 		const managedToByokPatch = JSON.parse(
 			buildOpenClawHostedProviderPatch(
 				{
@@ -311,10 +313,12 @@ describe("AI provider projection", () => {
 				[CLAWDI_MANAGED_PROVIDER_ID],
 			).content,
 		) as {
-			agents?: { defaults?: { memorySearch?: { model?: null; provider?: null } } };
+			agents?: { defaults?: { memorySearch?: null } };
+			memory?: { search?: { model?: null; provider?: null } };
 			models?: { providers?: Record<string, unknown> };
 		};
-		expect(managedToByokPatch.agents?.defaults?.memorySearch).toEqual({
+		expect(managedToByokPatch.agents?.defaults?.memorySearch).toBeNull();
+		expect(managedToByokPatch.memory?.search).toEqual({
 			provider: null,
 			model: null,
 		});
@@ -344,13 +348,24 @@ describe("AI provider projection", () => {
 					api_mode: "google_generate_content",
 					auth: { type: "api_key", source: "managed" },
 					runtime_env_name: "GEMINI_API_KEY",
-					models: [{ id: "gemini-2.5-pro" }],
+					models: [
+						{ id: "gemini-2.5-pro" },
+						{
+							id: "gemini-embedding-001",
+							capabilities: { embeddings: true, chat: false },
+						},
+					],
 				},
 			],
-			defaults: { chat_provider_id: "gemini-main" },
+			defaults: {
+				chat_provider_id: "gemini-main",
+				embedding_provider_id: "gemini-main",
+			},
 		};
 
-		expect(buildAgentTargetProjection("openclaw", catalog).provider_ids).toEqual(["gemini-main"]);
+		const openclaw = buildAgentTargetProjection("openclaw", catalog);
+		expect(openclaw.provider_ids).toEqual(["gemini-main"]);
+		expect(JSON.parse(openclaw.files[0]?.content ?? "{}").agents.defaults.memorySearch).toBeNull();
 		expect(() => buildAgentTargetProjection("hermes", catalog)).toThrow(
 			"does not map to a verified Hermes custom-provider transport",
 		);

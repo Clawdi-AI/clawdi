@@ -726,6 +726,9 @@ case "$*" in
 	"config path"|"config get "*|"config set "*|"config unset "*)
 		HOME='${home}' exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
+	"config schema")
+		printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
+		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
@@ -779,12 +782,16 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
-function writeFakeOpenClawConfigMutationSdk(home: string, importLog?: string): string {
+function writeFakeOpenClawConfigMutationSdk(
+	home: string,
+	options: { importLog?: string; initialConfig?: Record<string, unknown> } = {},
+): string {
+	const { importLog, initialConfig = {} } = options;
 	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
 	mkdirSync(packageRoot, { recursive: true });
 	mkdirSync(dirname(configPath), { recursive: true });
-	writeFileSync(configPath, "{}\n");
+	writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`);
 	writeFileSync(
 		join(packageRoot, "package.json"),
 		JSON.stringify({
@@ -806,13 +813,20 @@ function writeFakeOpenClawConfigMutationSdk(home: string, importLog?: string): s
 		join(packageRoot, "config-mutation.mjs"),
 		`${logImport("config-mutation")}import { readFileSync, writeFileSync } from "node:fs";
 const configPath = ${JSON.stringify(configPath)};
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const hasLegacyMemorySearch = (config) => {
+  const agents = isRecord(config) ? config.agents : undefined;
+  const defaults = isRecord(agents) ? agents.defaults : undefined;
+  return isRecord(defaults) && Object.hasOwn(defaults, "memorySearch");
+};
 export async function readConfigFileSnapshotForWrite() {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
-  return { snapshot: { valid: true, config, sourceConfig: structuredClone(config) } };
+  return { snapshot: { valid: !hasLegacyMemorySearch(config), config, sourceConfig: structuredClone(config) } };
 }
 export async function mutateConfigFile(options) {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
+  if (hasLegacyMemorySearch(config)) throw new Error("OpenClaw config validation failed");
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
 }
 `,
@@ -2522,9 +2536,17 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 	});
 
-	test("keeps hosted managed provider key out of the agent env", () => {
+	test("repairs legacy managed memory config and keeps the provider key out of agent env", () => {
 		const paths = tempRuntimePaths();
-		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: {
+				agents: {
+					defaults: {
+						memorySearch: { provider: "clawdi", model: "legacy-embedding-model" },
+					},
+				},
+			},
+		});
 		writeFakeGatewayCli({
 			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",
@@ -2538,7 +2560,13 @@ describe("runtime manifest reconciliation invariants", () => {
 						type: "custom_openai_compatible",
 						managed_by: "clawdi",
 						baseUrl: "https://api.example.test/v1",
-						models: [{ id: "gpt-test" }],
+						models: [
+							{ id: "gpt-test" },
+							{
+								id: "test-embedding-model",
+								capabilities: { embeddings: true, chat: false },
+							},
+						],
 						apiMode: "openai_responses",
 						runtimeEnvName: "CLAWDI_AI_API_KEY",
 						apiKeySecretRef: "secret://providers/default/api-key",
@@ -2563,7 +2591,15 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
-		expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+		const config = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(config.agents.defaults).not.toHaveProperty("memorySearch");
+		expect(config).toMatchObject({
+			memory: {
+				search: {
+					provider: "clawdi-managed",
+					model: "test-embedding-model",
+				},
+			},
 			models: {
 				providers: {
 					"clawdi-managed": {
@@ -2594,7 +2630,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const paths = tempRuntimePaths();
 		const commandLog = join(paths.serviceStateRoot, "openclaw-probe-commands.log");
 		const sdkLog = join(paths.serviceStateRoot, "openclaw-probe-sdk.log");
-		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, sdkLog);
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, { importLog: sdkLog });
 		writeFakeGatewayCli({
 			path: join(paths.userHome, ".local", "bin", "openclaw"),
 			runtime: "openclaw",

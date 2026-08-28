@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isClawdiManagedV2ProviderId, MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
+import { isClawdiManagedProviderId, MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -38,7 +38,15 @@ import {
 import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
+const OPENCLAW_SCHEMA_PROBE_TIMEOUT_MS = 15_000;
+const OPENCLAW_SCHEMA_PROBE_MAX_BYTES = 16 * 1024 * 1024;
 const openClawProviderPatchRevisions = new Map<string, string>();
+const openClawMemorySearchLayouts = new Map<
+	string,
+	{ revision: string; layout: OpenClawMemorySearchLayout }
+>();
+
+type OpenClawMemorySearchLayout = "agents-defaults" | "top-level";
 
 export function providerHealthReasons(
 	provider: Record<string, unknown>,
@@ -162,6 +170,7 @@ export function applyHostedAiProviderProjection(
 		if (providerPatch.apply) {
 			applyOpenClawHostedProviderPatch(
 				providerPatch,
+				observation.commandPath,
 				openClawContext,
 				workspaceRoot,
 				providerRevision,
@@ -524,12 +533,33 @@ const applyMergePatch = (target, source, path = []) => {
 };
 const configRead = await sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
 const snapshot = configRead?.snapshot;
-if (!snapshot || snapshot.valid !== true || !isRecord(snapshot.sourceConfig)) {
+const sourceConfig = snapshot?.sourceConfig;
+const sourceAgents = isRecord(sourceConfig) ? sourceConfig.agents : undefined;
+const sourceDefaults = isRecord(sourceAgents) ? sourceAgents.defaults : undefined;
+const sourceMemory = isRecord(sourceConfig) ? sourceConfig.memory : undefined;
+const patchAgents = patch.agents;
+const patchDefaults = isRecord(patchAgents) ? patchAgents.defaults : undefined;
+const patchMemory = patch.memory;
+const repairsUnsupportedMemorySearch =
+  (isRecord(sourceDefaults) &&
+    Object.hasOwn(sourceDefaults, "memorySearch") &&
+    isRecord(patchDefaults) &&
+    patchDefaults.memorySearch === null) ||
+  (isRecord(sourceMemory) &&
+    Object.hasOwn(sourceMemory, "search") &&
+    isRecord(patchMemory) &&
+    patchMemory.search === null &&
+    isRecord(patchDefaults?.memorySearch));
+if (
+  !snapshot ||
+  !isRecord(sourceConfig) ||
+  (snapshot.valid !== true && !repairsUnsupportedMemorySearch)
+) {
   throw new Error("OpenClaw config snapshot is unavailable for provider projection");
 }
-const projected = structuredClone(snapshot.sourceConfig);
+const projected = structuredClone(sourceConfig);
 applyMergePatch(projected, patch);
-if (isDeepStrictEqual(projected, snapshot.sourceConfig)) process.exit(0);
+if (isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
 explicitSetPaths.length = 0;
 unsetPaths.length = 0;
 await sdk.mutateConfigFile({
@@ -541,29 +571,109 @@ await sdk.mutateConfigFile({
 `;
 function applyOpenClawHostedProviderPatch(
 	patch: OpenClawHostedProviderPatch,
+	commandPath: string,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	providerRevision: string,
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
+	const content = adaptOpenClawMemorySearchPatch(
+		patch.content,
+		commandPath,
+		context.home,
+		workspaceRoot,
+		sdkPath,
+	);
 	const patchRevision = runtimeImpactRevision({
 		providerRevision,
-		content: patch.content,
+		content,
 		sdk: runtimeFileCurrentRevision(sdkPath),
 	});
 	if (openClawProviderPatchRevisions.get(context.configPath) === patchRevision) {
-		const expected = recordValue(JSON.parse(patch.content) as unknown);
+		const expected = recordValue(JSON.parse(content) as unknown);
 		if (!expected) throw new Error("OpenClaw provider projection patch must be an object");
 		if (openClawConfigPatchIsApplied(context, expected)) return;
 	}
 	runRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
-		patch.content,
+		content,
 		context.home,
 		workspaceRoot,
 	);
 	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
+}
+
+function adaptOpenClawMemorySearchPatch(
+	content: string,
+	commandPath: string,
+	home: string,
+	workspaceRoot: string,
+	sdkPath: string,
+): string {
+	const root = recordValue(JSON.parse(content) as unknown);
+	if (!root) throw new Error("OpenClaw provider projection patch must be an object");
+	const memory = recordValue(root.memory);
+	if (!memory || !Object.hasOwn(memory, "search")) return content;
+	const search = memory.search;
+	if (openClawMemorySearchLayout(commandPath, home, workspaceRoot, sdkPath) === "top-level") {
+		return content;
+	}
+
+	const patch = { ...root };
+	const agents = { ...(recordValue(patch.agents) ?? {}) };
+	const defaults = { ...(recordValue(agents.defaults) ?? {}) };
+	defaults.memorySearch = search;
+	agents.defaults = defaults;
+	patch.agents = agents;
+	patch.memory = { ...memory, search: null };
+	return `${JSON.stringify(patch, null, 2)}\n`;
+}
+
+function openClawMemorySearchLayout(
+	commandPath: string,
+	home: string,
+	workspaceRoot: string,
+	sdkPath: string,
+): OpenClawMemorySearchLayout {
+	const revision = [
+		runtimeFileCurrentRevision(commandPath),
+		runtimeFileCurrentRevision(sdkPath),
+	].join("\0");
+	const cached = openClawMemorySearchLayouts.get(commandPath);
+	if (cached?.revision === revision) return cached.layout;
+
+	const result = spawnRuntimeUserCommand(commandPath, ["config", "schema"], home, workspaceRoot, {
+		timeoutMs: OPENCLAW_SCHEMA_PROBE_TIMEOUT_MS,
+		maxBufferBytes: OPENCLAW_SCHEMA_PROBE_MAX_BYTES,
+	});
+	if (result.status !== 0) {
+		throw new Error("installed OpenClaw config schema is unavailable");
+	}
+	let schema: unknown;
+	try {
+		schema = JSON.parse(String(result.stdout));
+	} catch {
+		throw new Error("installed OpenClaw config schema is malformed");
+	}
+	const topLevel = jsonSchemaHasPropertyPath(schema, ["memory", "search"]);
+	const agentsDefaults = jsonSchemaHasPropertyPath(schema, ["agents", "defaults", "memorySearch"]);
+	if (topLevel === agentsDefaults) {
+		throw new Error("installed OpenClaw memory search schema is unsupported");
+	}
+	const layout: OpenClawMemorySearchLayout = topLevel ? "top-level" : "agents-defaults";
+	openClawMemorySearchLayouts.set(commandPath, { revision, layout });
+	return layout;
+}
+
+function jsonSchemaHasPropertyPath(schema: unknown, path: readonly string[]): boolean {
+	let current = recordValue(schema);
+	for (const segment of path) {
+		const properties = current ? recordValue(current.properties) : null;
+		current = properties ? recordValue(properties[segment]) : null;
+		if (!current) return false;
+	}
+	return true;
 }
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
@@ -755,12 +865,18 @@ function mergeProviderDeletes(
 	container.providers = providers;
 	if (runtime === "openclaw") {
 		patch.models = container;
-		if (deletedProviderIds.some(isClawdiManagedV2ProviderId)) {
+		if (deletedProviderIds.some(isClawdiManagedProviderId)) {
 			const agents = { ...(recordValue(patch.agents) ?? {}) };
 			const defaults = { ...(recordValue(agents.defaults) ?? {}) };
-			defaults.memorySearch = { provider: null, model: null };
+			defaults.memorySearch = null;
 			agents.defaults = defaults;
 			patch.agents = agents;
+			const memory = { ...(recordValue(patch.memory) ?? {}) };
+			const search = { ...(recordValue(memory.search) ?? {}) };
+			if (!Object.hasOwn(search, "provider")) search.provider = null;
+			if (!Object.hasOwn(search, "model")) search.model = null;
+			memory.search = search;
+			patch.memory = memory;
 		}
 	}
 	return runtime === "openclaw"
