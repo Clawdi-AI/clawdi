@@ -20,6 +20,15 @@ database migration, CI, and implementation details.
 
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 
+## Clawdi CLI v0.14.25
+
+Package: `clawdi@0.14.25`
+
+### Added
+
+- Hosted OpenClaw can use the embedding model declared by its runtime provider
+  for managed memory search without exposing that model as a chat option.
+
 ## Clawdi CLI v0.14.24
 
 Package: `clawdi@0.14.24`
