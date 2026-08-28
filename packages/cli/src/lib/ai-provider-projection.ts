@@ -345,7 +345,7 @@ function buildOpenClawProjection(
 				model: {
 					primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
 				},
-				memorySearch: hasClawdiManagedProvider ? null : undefined,
+				memorySearch: embeddingModel || hasClawdiManagedProvider ? null : undefined,
 			},
 		},
 		memory: embeddingModel

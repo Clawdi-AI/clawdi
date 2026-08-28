@@ -348,13 +348,24 @@ describe("AI provider projection", () => {
 					api_mode: "google_generate_content",
 					auth: { type: "api_key", source: "managed" },
 					runtime_env_name: "GEMINI_API_KEY",
-					models: [{ id: "gemini-2.5-pro" }],
+					models: [
+						{ id: "gemini-2.5-pro" },
+						{
+							id: "gemini-embedding-001",
+							capabilities: { embeddings: true, chat: false },
+						},
+					],
 				},
 			],
-			defaults: { chat_provider_id: "gemini-main" },
+			defaults: {
+				chat_provider_id: "gemini-main",
+				embedding_provider_id: "gemini-main",
+			},
 		};
 
-		expect(buildAgentTargetProjection("openclaw", catalog).provider_ids).toEqual(["gemini-main"]);
+		const openclaw = buildAgentTargetProjection("openclaw", catalog);
+		expect(openclaw.provider_ids).toEqual(["gemini-main"]);
+		expect(JSON.parse(openclaw.files[0]?.content ?? "{}").agents.defaults.memorySearch).toBeNull();
 		expect(() => buildAgentTargetProjection("hermes", catalog)).toThrow(
 			"does not map to a verified Hermes custom-provider transport",
 		);
