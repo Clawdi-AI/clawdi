@@ -120,6 +120,29 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	for (const metric of shellMetrics) expect(metric.verticalInsetDelta).toBeLessThanOrEqual(1);
 }
 
+async function expectLiveToolFillsDashboard(page: Page, surface: Locator) {
+	const scrollContainer = page.locator("#dashboard-scroll-container");
+	const header = scrollContainer.locator(":scope > header");
+	const [surfaceBox, scrollBox, headerBox, scrollMetrics] = await Promise.all([
+		surface.boundingBox(),
+		scrollContainer.boundingBox(),
+		header.boundingBox(),
+		scrollContainer.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			scrollHeight: element.scrollHeight,
+		})),
+	]);
+	if (!surfaceBox || !scrollBox || !headerBox) {
+		throw new Error("Live-tool dashboard geometry should be measurable.");
+	}
+
+	expect(Math.abs(surfaceBox.y - (headerBox.y + headerBox.height))).toBeLessThanOrEqual(1);
+	expect(
+		Math.abs(surfaceBox.y + surfaceBox.height - (scrollBox.y + scrollBox.height)),
+	).toBeLessThanOrEqual(1);
+	expect(scrollMetrics.scrollHeight).toBeLessThanOrEqual(scrollMetrics.clientHeight + 1);
+}
+
 async function _expectOverviewSessionSlot({
 	region,
 	statusCard,
@@ -3589,6 +3612,17 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
 		await expect(loadingShell).toBeVisible();
 		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
+		const dashboardContent = page.getByTestId("dashboard-page-content");
+		await expect(dashboardContent).toHaveAttribute("data-mava-launcher", "hidden");
+		await expect(dashboardContent).toHaveCSS("padding-bottom", "20px");
+		await page.evaluate(() => {
+			const launcher = document.createElement("button");
+			launcher.id = "mava-webchat-launcher";
+			launcher.textContent = "Support";
+			document.body.appendChild(launcher);
+		});
+		await expect(page.locator("#mava-webchat-launcher")).toBeHidden();
+		await expectLiveToolFillsDashboard(page, loadingShell);
 		const loadingBox = await loadingShell.boundingBox();
 		if (!loadingBox) throw new Error("Live-tool loading shell should have stable geometry.");
 
@@ -3600,6 +3634,11 @@ test("cold hosted live-tool routes keep full-bleed loading geometry", async ({ p
 		expect(Math.abs(liveBox.x - loadingBox.x)).toBeLessThanOrEqual(1);
 		expect(Math.abs(liveBox.width - loadingBox.width)).toBeLessThanOrEqual(1);
 		expect(Math.abs(liveBox.height - loadingBox.height)).toBeLessThanOrEqual(1);
+		await expectLiveToolFillsDashboard(page, liveSurface);
+
+		await page.setViewportSize({ width: 390, height: 844 });
+		await expect(dashboardContent).toHaveCSS("padding-bottom", "16px");
+		await expectLiveToolFillsDashboard(page, liveSurface);
 	} finally {
 		releaseDeploymentList?.();
 	}

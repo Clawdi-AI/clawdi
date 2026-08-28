@@ -11,6 +11,7 @@ import {
 	type MavaIdentityController,
 	startMavaIdentitySync,
 } from "@/hosted/mava";
+import "@/hosted/mava.css";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");

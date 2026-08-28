@@ -1,8 +1,59 @@
 import { describe, expect, test } from "bun:test";
 import {
+	createTtydOutputWriter,
+	TTYD_OUTPUT_FLOW_CONTROL,
 	terminalConnectionClosedMessage,
 	terminalWebSocketTarget,
 } from "@/hosted/agents/hosted-terminal-panel";
+
+describe("terminal output flow control", () => {
+	test("bounds pending xterm writes with ttyd pause and resume commands", () => {
+		expect(TTYD_OUTPUT_FLOW_CONTROL).toEqual({
+			writeLimit: 100_000,
+			highWater: 10,
+			lowWater: 4,
+		});
+		const callbacks: Array<() => void> = [];
+		const commands: string[] = [];
+		const writeOutput = createTtydOutputWriter({
+			write: (_data, callback) => {
+				if (callback) callbacks.push(callback);
+			},
+			send: (command) => {
+				commands.push(command);
+			},
+		});
+		const checkpoint = "x".repeat(TTYD_OUTPUT_FLOW_CONTROL.writeLimit + 1);
+
+		for (let index = 0; index <= TTYD_OUTPUT_FLOW_CONTROL.highWater; index += 1) {
+			writeOutput(checkpoint);
+		}
+		expect(callbacks).toHaveLength(11);
+		expect(commands).toEqual(["2"]);
+
+		writeOutput(checkpoint);
+		expect(commands).toEqual(["2", "2"]);
+		while (callbacks.length > TTYD_OUTPUT_FLOW_CONTROL.lowWater) callbacks.shift()?.();
+		expect(commands).toEqual(["2", "2"]);
+		callbacks.shift()?.();
+		expect(commands).toEqual(["2", "2", "3"]);
+	});
+
+	test("keeps ordinary output on the callback-free fast path", () => {
+		const callbacks: Array<(() => void) | undefined> = [];
+		const commands: string[] = [];
+		const writeOutput = createTtydOutputWriter({
+			write: (_data, callback) => callbacks.push(callback),
+			send: (command) => {
+				commands.push(command);
+			},
+		});
+
+		writeOutput("normal output");
+		expect(callbacks).toEqual([undefined]);
+		expect(commands).toEqual([]);
+	});
+});
 
 describe("terminalWebSocketTarget", () => {
 	test("moves a fragment token into a websocket subprotocol by default", () => {
