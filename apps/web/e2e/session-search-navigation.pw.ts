@@ -137,7 +137,9 @@ test("opens a message search result and returns to the same filtered list", asyn
 	await expect(page.getByText("2 of 2")).toBeVisible();
 	await page.getByRole("button", { name: "Previous match" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
-	await page.getByRole("textbox", { name: "Search this session" }).fill("no longer");
+	const detailSearch = page.getByRole("textbox", { name: "Search this session" });
+	await detailSearch.fill("");
+	await detailSearch.pressSequentially("no longer", { delay: 20 });
 	await expect(page.getByRole("button", { name: "Next match" })).toBeDisabled();
 	await expect(page).toHaveURL((url) => {
 		return (

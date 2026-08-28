@@ -2,6 +2,7 @@
 
 import { Link, useRouter } from "@tanstack/react-router";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import type { SessionMessagesPage } from "@/lib/api-schemas";
@@ -71,8 +72,14 @@ export function SessionSearchNavigation({
 	hasSearchError?: boolean;
 }) {
 	const router = useRouter();
+	const [draftQuery, setDraftQuery] = useState(query);
+	useEffect(() => {
+		// Keep transient trailing whitespace while the URL stores the normalized query.
+		setDraftQuery((current) => (query && current.trim() === query ? current : query));
+	}, [query]);
 	const activeNavigation = isSearching || hasSearchError ? null : navigation;
 	const updateQuery = (next: string) => {
+		setDraftQuery(next);
 		void router.navigate({
 			...sessionDetailSearchLink(sessionId, next, { returnTo }),
 			replace: true,
@@ -86,7 +93,7 @@ export function SessionSearchNavigation({
 			className="flex min-w-0 flex-col gap-2 border-y py-2 text-xs text-muted-foreground sm:flex-row sm:items-center"
 		>
 			<SearchInput
-				value={query}
+				value={draftQuery}
 				onChange={updateQuery}
 				placeholder="Search this session…"
 				ariaLabel="Search this session"
