@@ -476,6 +476,13 @@ class SessionSearchMatchResponse(BaseModel):
     anchor: SessionSearchAnchorResponse
 
 
+class SessionSearchNavigationResponse(BaseModel):
+    index: int = Field(ge=1)
+    total: int = Field(ge=1)
+    previous: SessionSearchAnchorResponse | None = None
+    next: SessionSearchAnchorResponse | None = None
+
+
 class SessionListItemResponse(BaseModel):
     id: str
     local_session_id: str
@@ -664,5 +671,9 @@ class SessionMessagesPage(BaseModel):
     anchor_offset: int | None = Field(
         default=None,
         ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    search_navigation: SessionSearchNavigationResponse | None = Field(
+        default=None,
         exclude_if=lambda value: value is None,
     )

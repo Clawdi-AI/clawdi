@@ -30,6 +30,14 @@ class SearchableSessionMessage:
     content: str
 
 
+@dataclass(frozen=True, slots=True)
+class SessionSearchNavigation:
+    index: int
+    total: int
+    previous_position: int | None
+    next_position: int | None
+
+
 def event_document_revision(generation_id: UUID) -> str:
     return f"events:{generation_id}"
 
@@ -84,6 +92,24 @@ def _searchable_text(content: str) -> str:
     return content.replace("\x00", "\ufffd")
 
 
+def _message_match_expressions(query: str):
+    exact_match = SessionMessageSearch.content.ilike(
+        _escaped_contains_pattern(query),
+        escape="\\",
+    )
+    candidate_filter = exact_match
+    if len(query) >= _MIN_TRGM_QUERY_LENGTH:
+        candidate_filter = or_(
+            exact_match,
+            literal(query).op("<%")(SessionMessageSearch.content),
+        )
+    score = case(
+        (exact_match, 1.0),
+        else_=func.word_similarity(query, SessionMessageSearch.content),
+    )
+    return candidate_filter, score
+
+
 def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     """Return the strongest index-backed visible-message match per Session."""
     active_document_revision = case(
@@ -100,22 +126,9 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
         ),
         else_=func.concat("snapshot:", Session.content_hash),
     )
-    exact_match = SessionMessageSearch.content.ilike(
-        _escaped_contains_pattern(query),
-        escape="\\",
-    )
-    candidate_filter = exact_match
-    if len(query) >= _MIN_TRGM_QUERY_LENGTH:
-        # Official pg_trgm word-search shape: use the GIN-backed operator for
-        # candidates, then word_similarity() only to rank that bounded set.
-        candidate_filter = or_(
-            exact_match,
-            literal(query).op("<%")(SessionMessageSearch.content),
-        )
-    score = case(
-        (exact_match, 1.0),
-        else_=func.word_similarity(query, SessionMessageSearch.content),
-    ).label("score")
+    # Official pg_trgm word-search shape: use the GIN-backed operator for
+    # candidates, then word_similarity() only to rank that bounded set.
+    candidate_filter, score = _message_match_expressions(query)
     candidates = (
         select(
             SessionMessageSearch.session_id.label("session_id"),
@@ -123,7 +136,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             SessionMessageSearch.position.label("position"),
             SessionMessageSearch.content.label("content"),
             SessionMessageSearch.role.label("role"),
-            score,
+            score.label("score"),
         )
         .where(
             SessionMessageSearch.user_id == user_id,
@@ -154,6 +167,62 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             candidates.c.position.asc(),
         )
         .subquery("best_session_message_match")
+    )
+
+
+async def session_message_search_navigation(
+    db: AsyncSession,
+    session: Session,
+    *,
+    query: str,
+    position: int,
+) -> SessionSearchNavigation | None:
+    """Resolve transcript-order neighbours for one active search match."""
+    document_revision = current_document_revision(session)
+    if document_revision is None or session.search_index_revision != current_search_revision(
+        session
+    ):
+        return None
+
+    candidate_filter, _ = _message_match_expressions(query)
+    ordered_matches = (
+        select(
+            SessionMessageSearch.position.label("position"),
+            func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
+            func.count().over().label("match_total"),
+            func.lag(SessionMessageSearch.position)
+            .over(order_by=SessionMessageSearch.position)
+            .label("previous_position"),
+            func.lead(SessionMessageSearch.position)
+            .over(order_by=SessionMessageSearch.position)
+            .label("next_position"),
+        )
+        .where(
+            SessionMessageSearch.user_id == session.user_id,
+            SessionMessageSearch.session_id == session.id,
+            SessionMessageSearch.content_revision == document_revision,
+            candidate_filter,
+        )
+        .subquery("ordered_session_message_matches")
+    )
+    row = (
+        await db.execute(
+            select(
+                ordered_matches.c.match_index,
+                ordered_matches.c.match_total,
+                ordered_matches.c.previous_position,
+                ordered_matches.c.next_position,
+            ).where(ordered_matches.c.position == position)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    match_index, match_total, previous_position, next_position = row
+    return SessionSearchNavigation(
+        index=match_index,
+        total=match_total,
+        previous_position=previous_position,
+        next_position=next_position,
     )
 
 

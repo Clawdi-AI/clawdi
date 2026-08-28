@@ -668,6 +668,26 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
             "revision": f"events:{second_head}",
         },
     }
+    event_navigation = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={
+            "anchor_kind": "event_seq",
+            "anchor_position": 4,
+            "anchor_revision": f"events:{second_head}",
+            "search_query": "answer",
+        },
+    )
+    assert event_navigation.status_code == 200, event_navigation.text
+    assert event_navigation.json()["search_navigation"] == {
+        "index": 1,
+        "total": 2,
+        "previous": None,
+        "next": {
+            "kind": "event_seq",
+            "position": 6,
+            "revision": f"events:{second_head}",
+        },
+    }
     appended_search = (await client.get("/v1/sessions", params={"q": "right answer"})).json()
     assert [item["local_session_id"] for item in appended_search["items"]] == [local_id]
     assert appended_search["items"][0]["search_match"] == {

@@ -17,6 +17,11 @@ function SessionDetailRoute() {
 	const search = Route.useSearch();
 	const searchAnchor = sessionSearchAnchorFromSearch(search);
 	return (
-		<SessionDetailPage sessionId={id} searchAnchor={searchAnchor} returnTo={search.returnTo} />
+		<SessionDetailPage
+			sessionId={id}
+			searchAnchor={searchAnchor}
+			searchQuery={search.matchQuery}
+			returnTo={search.returnTo}
+		/>
 	);
 }
