@@ -16,7 +16,8 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Literal, Protocol
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -46,6 +47,7 @@ class _FileStoreLike(Protocol):
 _MESSAGES_CACHE_MAX = 16
 _MESSAGES_CACHE_TTL_S = 300.0
 type SessionMessageValue = dict[str, JsonValue]
+type SessionMessageDirection = Literal["asc", "desc"]
 
 _SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
     list[SessionMessageValue]
@@ -95,6 +97,22 @@ def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
             _messages_cache.popitem(last=False)
 
 
+def slice_session_messages(
+    messages: Sequence[SessionMessageValue],
+    *,
+    offset: int,
+    limit: int,
+    direction: SessionMessageDirection,
+) -> list[SessionMessageValue]:
+    """Slice messages in the requested order using an order-relative offset."""
+    if direction == "asc":
+        return list(messages[offset : offset + limit])
+
+    end = max(0, len(messages) - offset)
+    start = max(0, end - limit)
+    return list(reversed(messages[start:end]))
+
+
 async def load_session_messages(
     session: Session,
     file_store: _FileStoreLike,
@@ -120,39 +138,7 @@ async def load_session_messages(
         cached = _cache_get(cache_key)
         if cached is not None:
             return cached
-        chunks = list(
-            (
-                await db.execute(
-                    select(SessionEventChunk)
-                    .where(SessionEventChunk.generation_id == session.event_generation_id)
-                    .order_by(SessionEventChunk.start_seq)
-                )
-            ).scalars()
-        )
-        events: list[SessionEvent] = []
-        next_seq = 0
-        head = EMPTY_EVENT_HEAD
-        for chunk in chunks:
-            if chunk.start_seq != next_seq or chunk.base_head_hash != head:
-                raise SessionContentInvalid("events-v1 chunk index is not continuous")
-            try:
-                data = await file_store.get(chunk.file_key)
-                validated = await validate_event_chunk_async(
-                    data, start_seq=next_seq, base_head_hash=head
-                )
-            except Exception as exc:
-                log.exception("session_event_chunk_fetch_failed file_key=%s", chunk.file_key)
-                raise SessionContentInvalid("events-v1 chunk is unavailable or invalid") from exc
-            if (
-                validated.content_hash != chunk.content_hash
-                or validated.result_head_hash != chunk.result_head_hash
-            ):
-                raise SessionContentInvalid("events-v1 chunk hash drift")
-            events.extend(validated.events)
-            next_seq = chunk.end_seq + 1
-            head = chunk.result_head_hash
-        if next_seq != session.event_count or head != (session.event_head_hash or EMPTY_EVENT_HEAD):
-            raise SessionContentInvalid("events-v1 head does not match its chunk index")
+        events = await load_session_events(session, file_store, db)
         projected = _SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events))
         _cache_put(cache_key, projected)
         return projected
@@ -186,3 +172,46 @@ async def load_session_messages(
 
     _cache_put(cache_key, parsed)
     return parsed
+
+
+async def load_session_events(
+    session: Session,
+    file_store: _FileStoreLike,
+    db: AsyncSession,
+) -> list[SessionEvent]:
+    if session.content_protocol != "events-v1" or session.event_generation_id is None:
+        raise SessionContentInvalid("session does not have events-v1 content")
+    chunks = list(
+        (
+            await db.execute(
+                select(SessionEventChunk)
+                .where(SessionEventChunk.generation_id == session.event_generation_id)
+                .order_by(SessionEventChunk.start_seq)
+            )
+        ).scalars()
+    )
+    events: list[SessionEvent] = []
+    next_seq = 0
+    head = EMPTY_EVENT_HEAD
+    for chunk in chunks:
+        if chunk.start_seq != next_seq or chunk.base_head_hash != head:
+            raise SessionContentInvalid("events-v1 chunk index is not continuous")
+        try:
+            data = await file_store.get(chunk.file_key)
+            validated = await validate_event_chunk_async(
+                data, start_seq=next_seq, base_head_hash=head
+            )
+        except Exception as exc:
+            log.exception("session_event_chunk_fetch_failed file_key=%s", chunk.file_key)
+            raise SessionContentInvalid("events-v1 chunk is unavailable or invalid") from exc
+        if (
+            validated.content_hash != chunk.content_hash
+            or validated.result_head_hash != chunk.result_head_hash
+        ):
+            raise SessionContentInvalid("events-v1 chunk hash drift")
+        events.extend(validated.events)
+        next_seq = chunk.end_seq + 1
+        head = chunk.result_head_hash
+    if next_seq != session.event_count or head != (session.event_head_hash or EMPTY_EVENT_HEAD):
+        raise SessionContentInvalid("events-v1 head does not match its chunk index")
+    return events

@@ -167,28 +167,11 @@ export function SessionDetailContent({
 	// and the IntersectionObserver in `LoadMoreSentinel` requests
 	// the next page when the user scrolls near the bottom.
 	//
-	// Direction-aware pagination:
-	//   - asc: classic "load older first, append newer". pageParam
-	//     is the offset to fetch starting from 0.
-	//   - desc: load NEWEST page first, append progressively-older
-	//     pages as the user scrolls down. pageParam is the offset
-	//     of the slice to fetch (counted from 0 in canonical order
-	//     — the server endpoint is direction-agnostic). We compute
-	//     it from `session.message_count` so we don't need a
-	//     separate "total" round-trip.
+	// The backend applies the direction before offset pagination, so offset=0
+	// always means "start from the selected end". This keeps the newest-first
+	// page correct even while metadata and an incremental event append briefly
+	// describe different revisions.
 	const PAGE_SIZE = 100;
-	const totalForPaging = session?.message_count ?? 0;
-	// Page param carries both offset AND limit so the final desc
-	// page can shrink limit to fill exactly the items below the
-	// previous offset. A flat limit=PAGE_SIZE on the last page would
-	// re-fetch the tail of page-2 whenever total isn't a multiple
-	// of PAGE_SIZE (e.g. total=250: p2 covers 50..149, p3 with
-	// offset=0 limit=100 would re-cover 50..99).
-	type PageParam = { offset: number; limit: number };
-	const initialDescOffset = Math.max(0, totalForPaging - PAGE_SIZE);
-	// Backend rejects limit=0 (Query(ge=1)), so clamp ≥ 1 for the
-	// has_content=true + message_count=0 case (uploaded empty array).
-	const initialDescLimit = Math.max(1, totalForPaging - initialDescOffset);
 	const {
 		data: pagesData,
 		isLoading: isContentLoading,
@@ -204,35 +187,20 @@ export function SessionDetailContent({
 		// would only show the OLDEST 100 in newest-first mode —
 		// confusing).
 		queryKey: ["session-messages", sessionId, session?.content_hash ?? null, direction],
-		initialPageParam:
-			direction === "desc"
-				? ({ offset: initialDescOffset, limit: initialDescLimit } as PageParam)
-				: ({ offset: 0, limit: PAGE_SIZE } as PageParam),
+		initialPageParam: 0,
 		queryFn: async ({ pageParam }) => {
-			const { offset, limit } = pageParam as PageParam;
 			return unwrap(
 				await api.GET("/v1/sessions/{session_id}/messages", {
 					params: {
 						path: { session_id: sessionId },
-						query: { offset, limit },
+						query: { offset: pageParam, limit: PAGE_SIZE, direction },
 					},
 				}),
 			);
 		},
-		getNextPageParam: (last): PageParam | undefined => {
-			if (direction === "asc") {
-				const nextOffset = last.offset + last.items.length;
-				if (nextOffset >= last.total) return undefined;
-				return { offset: nextOffset, limit: PAGE_SIZE };
-			}
-			// desc: previous page covered [last.offset, last.offset +
-			// items.length). Next-older page ends EXACTLY at
-			// last.offset, so limit = (last.offset - nextOffset) — no
-			// overlap, no truncation.
-			if (last.offset === 0) return undefined;
-			const nextOffset = Math.max(0, last.offset - PAGE_SIZE);
-			const nextLimit = last.offset - nextOffset;
-			return { offset: nextOffset, limit: nextLimit };
+		getNextPageParam: (last): number | undefined => {
+			const nextOffset = last.offset + last.items.length;
+			return nextOffset < last.total ? nextOffset : undefined;
 		},
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
@@ -254,16 +222,9 @@ export function SessionDetailContent({
 		const msgs: SessionMessage[] = [];
 		const keys: string[] = [];
 		for (const page of pagesData.pages) {
-			if (direction === "asc") {
-				for (let k = 0; k < page.items.length; k++) {
-					msgs.push(page.items[k]);
-					keys.push(String(page.offset + k));
-				}
-			} else {
-				for (let k = page.items.length - 1; k >= 0; k--) {
-					msgs.push(page.items[k]);
-					keys.push(String(page.offset + k));
-				}
+			for (let k = 0; k < page.items.length; k++) {
+				msgs.push(page.items[k]);
+				keys.push(`${direction}:${page.offset + k}`);
 			}
 		}
 		return { messages: msgs, messageKeys: keys };

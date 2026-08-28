@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("cloud session commands", () => {
-	it("searches only through the existing session metadata query contract", async () => {
+	it("searches through the cloud session query contract", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -53,6 +53,50 @@ describe("cloud session commands", () => {
 			page_size: "7",
 			sort: "relevance",
 		});
+	});
+
+	it("prints the best matching message excerpt in terminal output", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/sessions",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "00000000-0000-0000-0000-000000000123",
+								local_session_id: "local-123",
+								summary: "Fixture",
+								project_path: "/workspace",
+								agent_type: "codex",
+								last_activity_at: "2026-08-27T12:00:00Z",
+								search_match: {
+									role: "assistant",
+									excerpt: "The matching implementation detail",
+								},
+							},
+						],
+						total: 1,
+						page: 1,
+						page_size: 25,
+					}),
+			},
+		]);
+		const output: string[] = [];
+		const originalLog = console.log;
+		const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+		console.log = (value?: unknown) => output.push(String(value));
+		Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+		try {
+			await sessionSearch("implementation");
+		} finally {
+			console.log = originalLog;
+			if (ttyDescriptor) Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
+			else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+			restore();
+		}
+
+		expect(output.join("\n")).toContain("assistant: The matching implementation detail");
 	});
 
 	it("reads metadata and message content by cloud session id", async () => {

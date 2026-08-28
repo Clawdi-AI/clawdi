@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Unreleased
+
+### Added
+
+- Session search now matches visible user and assistant message text in addition to summaries, folders, and IDs. CLI and Web results show the best matching message excerpt; private reasoning, tool payloads, system messages, and hidden events remain excluded.
+
+### Changed
+
+- Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
+
 ## Clawdi CLI v0.14.24
 
 Package: `clawdi@0.14.24`

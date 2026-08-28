@@ -5,6 +5,8 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -26,6 +28,15 @@ class ValidatedEventChunk:
     raw_events: list[RawSessionEvent]
     content_hash: str
     result_head_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedSessionMessage:
+    position: int
+    role: Literal["user", "assistant"]
+    content: str
+    model: str | None
+    timestamp: datetime | None
 
 
 def canonical_event_json(value: object) -> bytes:
@@ -99,8 +110,8 @@ async def validate_event_chunk_async(
     )
 
 
-def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, object]]:
-    messages: list[dict[str, object]] = []
+def project_visible_messages(events: Sequence[SessionEvent]) -> list[ProjectedSessionMessage]:
+    messages: list[ProjectedSessionMessage] = []
     for event in events:
         if not isinstance(event, SessionMessageEvent) or event.role not in ("user", "assistant"):
             continue
@@ -111,10 +122,28 @@ def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, obje
         )
         if not text:
             continue
-        message: dict[str, object] = {"role": event.role, "content": text}
-        if event.model is not None:
-            message["model"] = event.model
-        if event.timestamp is not None:
-            message["timestamp"] = event.timestamp.isoformat()
+        messages.append(
+            ProjectedSessionMessage(
+                position=event.seq,
+                role=event.role,
+                content=text,
+                model=event.model,
+                timestamp=event.timestamp,
+            )
+        )
+    return messages
+
+
+def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, object]]:
+    messages: list[dict[str, object]] = []
+    for projected in project_visible_messages(events):
+        message: dict[str, object] = {
+            "role": projected.role,
+            "content": projected.content,
+        }
+        if projected.model is not None:
+            message["model"] = projected.model
+        if projected.timestamp is not None:
+            message["timestamp"] = projected.timestamp.isoformat()
         messages.append(message)
     return messages

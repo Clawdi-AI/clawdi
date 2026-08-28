@@ -265,6 +265,12 @@ export function SessionCard({
 					>
 						{title}
 					</span>
+					{session.search_match ? (
+						<span className="mt-0.5 block truncate text-xs leading-4 text-foreground/75">
+							<span className="font-medium capitalize">{session.search_match.role}</span>
+							{`: ${session.search_match.excerpt}`}
+						</span>
+					) : null}
 					<span
 						data-testid="session-card-meta"
 						className="mt-0.5 flex min-w-0 flex-wrap items-center gap-y-0 text-xs leading-4 text-muted-foreground"

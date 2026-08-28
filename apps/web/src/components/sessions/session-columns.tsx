@@ -35,6 +35,12 @@ const summaryColumn: DataTableColumnDef<SessionListItem> = {
 						{projectFolder}
 					</div>
 				) : null}
+				{s.search_match ? (
+					<div className="truncate text-xs text-foreground/70">
+						<span className="font-medium capitalize">{s.search_match.role}</span>
+						{`: ${s.search_match.excerpt}`}
+					</div>
+				) : null}
 			</div>
 		);
 	},
