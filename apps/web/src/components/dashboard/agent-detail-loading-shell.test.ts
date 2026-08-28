@@ -25,7 +25,8 @@ describe("agent detail loading shells", () => {
 		for (const section of ["console", "files", "terminal"] as const) {
 			const markup = render(section);
 			expect(markup).toContain('data-testid="agent-live-tool-loading-shell"');
-			expect(markup).toContain("min-h-[calc(100svh-var(--header-height))]");
+			expect(markup).toContain("h-[calc(100svh-var(--header-height))]");
+			expect(markup).not.toContain("min-h-[calc(100svh-var(--header-height))]");
 			expect(markup).not.toContain("data-agent-detail-skeleton");
 			expect(markup).not.toContain("overview-status-card-skeleton");
 		}

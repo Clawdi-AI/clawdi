@@ -154,11 +154,7 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import {
-	billingErrorNormalizer,
-	billingQueryRetry,
-	normalizeBillingError,
-} from "@/hosted/billing/errors";
+import { billingErrorNormalizer, billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys, useManagedModelCatalog, usePlans } from "@/hosted/billing/hooks";
 import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/compute-subscription-action-list";
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
@@ -537,7 +533,7 @@ export function HostedAgentDetail({
 			data-testid={isLiveToolTab ? "hosted-agent-live-surface" : undefined}
 			className={cn(
 				isLiveToolTab
-					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+					? "-my-4 flex h-[calc(100svh-var(--header-height))] min-h-0 w-full flex-col md:-my-5 md:h-[calc(100svh-var(--header-height)-1rem)]"
 					: cn(
 							activeTab === "settings" ? "w-full" : CENTERED_PAGE_WIDTH_CLASS.page,
 							"flex flex-col gap-6 px-4 lg:px-6",
@@ -635,7 +631,11 @@ export function HostedAgentDetail({
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "terminal" ? (
-						<TerminalTab deployment={deployment} agentName={availableAgentTitle} />
+						<TerminalTab
+							key={deployment.resource.id}
+							deployment={deployment}
+							agentName={availableAgentTitle}
+						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
 						<FilesTab deployment={deployment} url={filesUrl} />
@@ -2147,12 +2147,14 @@ function LiveToolFrame({
 const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
 	connecting: "Connecting",
 	connected: "Connected",
+	reconnecting: "Reconnecting",
 	disconnected: "Disconnected",
 };
 
 const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
 	connecting: "warning",
 	connected: "success",
+	reconnecting: "warning",
 	disconnected: "destructive",
 };
 
@@ -2179,78 +2181,12 @@ function TerminalTab({
 	const client = useBillingClient();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
-	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
-	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
-	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
-	const autoStartedDeploymentRef = useRef<string | null>(null);
-	const currentDeploymentIdRef = useRef(deployment.resource.id);
-	const terminalRequestRef = useRef(0);
-
-	const startTerminal = useCallback(async () => {
-		if (!isRunning || isOpeningTerminal) return;
-		const requestId = terminalRequestRef.current + 1;
-		terminalRequestRef.current = requestId;
-		setWebsocketUrl(null);
-		setTerminalFailure(null);
-		setTerminalStatus("connecting");
-		try {
-			const session = await createTerminalSession({ id: deployment.resource.id });
-			if (terminalRequestRef.current !== requestId) return;
-			if (!session.websocket_url) {
-				setTerminalStatus("disconnected");
-				setTerminalFailure("The secure terminal could not be opened. Try again.");
-				toast.error("Terminal unavailable", {
-					description: "The secure terminal could not be opened. Try again.",
-				});
-				return;
-			}
-			setWebsocketUrl(session.websocket_url);
-		} catch (error) {
-			if (terminalRequestRef.current !== requestId) return;
-			setTerminalStatus("disconnected");
-			setTerminalFailure("Couldn't open terminal. Try again.");
-			toast.error("Couldn't open terminal", { description: normalizeBillingError(error) });
-		}
-	}, [createTerminalSession, deployment.resource.id, isOpeningTerminal, isRunning]);
-
-	useEffect(() => {
-		if (currentDeploymentIdRef.current === deployment.resource.id) return;
-		currentDeploymentIdRef.current = deployment.resource.id;
-		autoStartedDeploymentRef.current = null;
-		setWebsocketUrl(null);
-		setTerminalFailure(null);
-		setTerminalStatus("disconnected");
-	}, [deployment.resource.id]);
-
-	useEffect(() => {
-		if (isRunning) return;
-		autoStartedDeploymentRef.current = null;
-		setWebsocketUrl(null);
-		setTerminalFailure(null);
-		setTerminalStatus("disconnected");
-	}, [isRunning]);
-
-	useEffect(() => {
-		if (!isRunning || websocketUrl || isOpeningTerminal || terminalFailure) return;
-		if (autoStartedDeploymentRef.current === deployment.resource.id) return;
-		autoStartedDeploymentRef.current = deployment.resource.id;
-		void startTerminal();
-	}, [
-		deployment.resource.id,
-		isOpeningTerminal,
-		isRunning,
-		startTerminal,
-		terminalFailure,
-		websocketUrl,
-	]);
-
-	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
-		setTerminalStatus(status);
-		if (status === "disconnected") {
-			setWebsocketUrl(null);
-			setTerminalFailure("Terminal connection closed. Reconnect to start a new session.");
-		}
-	}, []);
+	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("connecting");
+	const [reconnectRequest, setReconnectRequest] = useState(0);
+	const requestWebsocketUrl = useCallback(async () => {
+		const session = await createTerminalSession({ id: deployment.resource.id });
+		return session.websocket_url ?? "";
+	}, [createTerminalSession, deployment.resource.id]);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -2271,70 +2207,33 @@ function TerminalTab({
 		);
 	}
 
-	const displayStatus = websocketUrl
-		? terminalStatus
-		: terminalFailure
-			? "disconnected"
-			: "connecting";
 	const terminalAction = (
 		<>
-			<TerminalStatusIndicator status={displayStatus} />
+			<TerminalStatusIndicator status={terminalStatus} />
 			<Button
 				type="button"
 				variant="outline"
 				size="sm"
-				className="hidden sm:inline-flex"
-				disabled={isOpeningTerminal}
-				onClick={() => void startTerminal()}
+				aria-label={terminalStatus === "disconnected" ? "Retry terminal" : "Reconnect terminal"}
+				disabled={
+					isOpeningTerminal || terminalStatus === "connecting" || terminalStatus === "reconnecting"
+				}
+				onClick={() => setReconnectRequest((request) => request + 1)}
 			>
 				{isOpeningTerminal ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
-				Reconnect
+				<span className="hidden sm:inline">
+					{terminalStatus === "disconnected" ? "Retry" : "Reconnect"}
+				</span>
 			</Button>
 		</>
 	);
 
-	if (!websocketUrl) {
-		return (
-			<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
-				<div className="flex min-h-0 flex-1 items-center justify-center bg-background px-4 py-10">
-					<div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-						<div className="flex size-11 items-center justify-center rounded-lg border bg-muted/30">
-							{terminalFailure ? (
-								<TerminalSquare className="size-5 text-muted-foreground" />
-							) : (
-								<Spinner className="size-5 text-muted-foreground" />
-							)}
-						</div>
-						<div>
-							<h2 className="text-base font-semibold">
-								{terminalFailure ? "Terminal unavailable" : "Opening secure terminal"}
-							</h2>
-							<p className="mt-1 text-sm text-muted-foreground">
-								{terminalFailure ?? "Starting a secure shell for your agent."}
-							</p>
-						</div>
-						{terminalFailure ? (
-							<Button onClick={() => void startTerminal()} disabled={isOpeningTerminal}>
-								{isOpeningTerminal ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<RefreshCw className="size-3.5" />
-								)}
-								Retry
-							</Button>
-						) : null}
-					</div>
-				</div>
-			</LiveToolFrame>
-		);
-	}
-
 	return (
 		<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
 			<HostedTerminalPanel
-				key={websocketUrl}
-				websocketUrl={websocketUrl}
-				onStatusChange={handleTerminalStatusChange}
+				requestWebsocketUrl={requestWebsocketUrl}
+				reconnectRequest={reconnectRequest}
+				onStatusChange={setTerminalStatus}
 			/>
 		</LiveToolFrame>
 	);
