@@ -159,12 +159,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 											data-testid="dashboard-page-content"
 											data-mava-launcher={hideHostedLauncher ? "hidden" : undefined}
 											className={cn(
-												"mx-auto flex w-full flex-col gap-4 pt-4 md:gap-5 md:pt-5",
-												isAgentLiveToolRoute && "min-h-0 flex-1 overflow-hidden",
+												"mx-auto flex w-full flex-col",
+												isAgentLiveToolRoute
+													? "min-h-0 flex-1 overflow-hidden"
+													: "gap-4 pt-4 md:gap-5 md:pt-5",
 												CONTENT_MAX_WIDTH,
-												reserveHostedLauncherClearance
-													? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
-													: "pb-4 md:pb-5",
+												!isAgentLiveToolRoute &&
+													(reserveHostedLauncherClearance
+														? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
+														: "pb-4 md:pb-5"),
 											)}
 										>
 											{children}

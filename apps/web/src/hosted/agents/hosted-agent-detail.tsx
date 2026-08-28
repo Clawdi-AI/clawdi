@@ -533,7 +533,7 @@ export function HostedAgentDetail({
 			data-testid={isLiveToolTab ? "hosted-agent-live-surface" : undefined}
 			className={cn(
 				isLiveToolTab
-					? "-my-4 flex h-[calc(100svh-var(--header-height))] min-h-0 w-full flex-col md:-my-5 md:h-[calc(100svh-var(--header-height)-1rem)]"
+					? "flex min-h-0 w-full flex-1 flex-col overflow-hidden"
 					: cn(
 							activeTab === "settings" ? "w-full" : CENTERED_PAGE_WIDTH_CLASS.page,
 							"flex flex-col gap-6 px-4 lg:px-6",
@@ -1690,7 +1690,7 @@ function ConsoleTab({
 						}
 					/>
 				) : (
-					<div role="status" className="flex min-h-[420px] flex-1">
+					<div role="status" className="flex min-h-0 flex-1">
 						<EmptyState
 							icon={<Spinner className="size-5" />}
 							title={`Opening ${browserUiLabel}…`}
@@ -1703,7 +1703,7 @@ function ConsoleTab({
 					key={`${runtime}:${iframeUrl}`}
 					src={iframeUrl}
 					title={browserUiLabel}
-					className="min-h-[420px] flex-1 border-0 bg-background"
+					className="min-h-0 flex-1 border-0 bg-background"
 					allow="clipboard-read; clipboard-write"
 					onLoad={
 						runtime === "openclaw"
@@ -1786,7 +1786,7 @@ function FilesFrame({ url }: { url: string }) {
 				<iframe
 					src={url}
 					title="Files"
-					className="min-h-[420px] flex-1 border-0 bg-background"
+					className="min-h-0 flex-1 border-0 bg-background"
 					allow="clipboard-read; clipboard-write"
 				/>
 			)}
