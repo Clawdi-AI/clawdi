@@ -3627,7 +3627,7 @@ test("hosted live-tool routes keep scrolling inside their viewport", async ({ pa
 		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
 		const dashboardContent = page.getByTestId("dashboard-page-content");
 		await expect(dashboardContent).toHaveAttribute("data-mava-launcher", "hidden");
-		await expect(dashboardContent).toHaveCSS("padding-bottom", "20px");
+		await expect(dashboardContent).toHaveCSS("padding-bottom", "0px");
 		await page.evaluate(() => {
 			const launcher = document.createElement("button");
 			launcher.id = "mava-webchat-launcher";
@@ -3650,7 +3650,7 @@ test("hosted live-tool routes keep scrolling inside their viewport", async ({ pa
 		await expectLiveToolFillsDashboard(page, liveSurface);
 
 		await page.setViewportSize({ width: 390, height: 844 });
-		await expect(dashboardContent).toHaveCSS("padding-bottom", "16px");
+		await expect(dashboardContent).toHaveCSS("padding-bottom", "0px");
 		await expectLiveToolFillsDashboard(page, liveSurface);
 
 		for (const section of ["files", "terminal"] as const) {
@@ -3661,6 +3661,57 @@ test("hosted live-tool routes keep scrolling inside their viewport", async ({ pa
 		}
 	} finally {
 		releaseDeploymentList?.();
+	}
+});
+
+test("hosted terminal keeps its fitted bottom row visible", async ({ page }) => {
+	const liveToolDeployment = mutationDeploymentReadFixture(railHostedDeployment);
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent],
+		deployments: [liveToolDeployment],
+		deploymentListResponses: [[liveToolDeployment]],
+	});
+
+	for (const viewportSize of [
+		{ width: 1440, height: 900 },
+		{ width: 390, height: 844 },
+	] as const) {
+		await page.setViewportSize(viewportSize);
+		await page.goto(`/agents/${railHostedEnvironmentId}/terminal`);
+		const terminal = page.locator(".hosted-terminal");
+		await expect(terminal.locator(".xterm-screen")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Retry terminal" })).toBeEnabled();
+
+		const geometry = await terminal.evaluate((host) => {
+			const requiredElement = (selector: string) => {
+				const element = host.querySelector<HTMLElement>(selector);
+				if (!element) throw new Error(`Expected terminal element ${selector}`);
+				return element;
+			};
+			const xterm = requiredElement(".xterm");
+			const viewport = requiredElement(".xterm-viewport");
+			const screen = requiredElement(".xterm-screen");
+			const lastRow = requiredElement(".xterm-rows > div:last-child");
+			return {
+				host: {
+					bottom: host.getBoundingClientRect().bottom,
+					clientHeight: host.clientHeight,
+					scrollHeight: host.scrollHeight,
+				},
+				xterm: {
+					clientHeight: xterm.clientHeight,
+					scrollHeight: xterm.scrollHeight,
+				},
+				viewport: viewport.getBoundingClientRect().toJSON(),
+				screen: screen.getBoundingClientRect().toJSON(),
+				lastRow: lastRow.getBoundingClientRect().toJSON(),
+			};
+		});
+		expect(geometry.host.scrollHeight).toBeLessThanOrEqual(geometry.host.clientHeight + 1);
+		expect(geometry.xterm.scrollHeight).toBeLessThanOrEqual(geometry.xterm.clientHeight + 1);
+		expect(geometry.viewport.bottom).toBeLessThanOrEqual(geometry.host.bottom + 1);
+		expect(geometry.screen.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
+		expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
 	}
 });
 

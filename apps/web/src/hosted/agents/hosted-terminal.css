@@ -2,6 +2,7 @@
 
 .hosted-terminal .xterm {
 	height: 100%;
+	padding: 0.5rem;
 }
 
 .hosted-terminal[data-terminal-theme="dark"],

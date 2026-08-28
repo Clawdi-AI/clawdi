@@ -570,7 +570,7 @@ export function HostedTerminalPanel({
 			<div
 				ref={containerRef}
 				data-terminal-theme={terminalThemeMode}
-				className="hosted-terminal min-h-0 flex-1 overflow-hidden p-2 transition-colors"
+				className="hosted-terminal min-h-0 flex-1 overflow-hidden transition-colors"
 			/>
 		</div>
 	);
