@@ -28,6 +28,7 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"WHATSAPP_ENABLED",
 	"WHATSAPP_MODE",
 	"WHATSAPP_ALLOWED_USERS",
+	"WHATSAPP_ALLOW_ALL_USERS",
 	"WHATSAPP_DM_POLICY",
 	"WHATSAPP_GROUP_POLICY",
 ] as const;
@@ -364,6 +365,7 @@ function applyHermesRuntimeChannelSettings(
 	if (whatsapp) {
 		env.WHATSAPP_MODE = "bot";
 		env.WHATSAPP_ALLOWED_USERS = "*";
+		env.WHATSAPP_ALLOW_ALL_USERS = "true";
 		env.WHATSAPP_DM_POLICY = "open";
 		env.WHATSAPP_GROUP_POLICY = "open";
 	}
