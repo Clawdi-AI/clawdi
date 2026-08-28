@@ -7,14 +7,17 @@ import {
 
 describe("Session search anchors", () => {
 	test("builds a detail link and round-trips a complete anchor", () => {
-		const link = sessionDetailLink({
-			id: "session-id",
-			search_match: {
-				role: "assistant",
-				excerpt: "matching text",
-				anchor: { kind: "event_seq", position: 42, revision: "events:revision" },
+		const link = sessionDetailLink(
+			{
+				id: "session-id",
+				search_match: {
+					role: "assistant",
+					excerpt: "matching text",
+					anchor: { kind: "event_seq", position: 42, revision: "events:revision" },
+				},
 			},
-		});
+			{ returnTo: "/sessions?q=matching&page=2" },
+		);
 		expect(link).toEqual({
 			to: "/sessions/$id",
 			params: { id: "session-id" },
@@ -22,6 +25,7 @@ describe("Session search anchors", () => {
 				matchKind: "event_seq",
 				matchPosition: 42,
 				matchRevision: "events:revision",
+				returnTo: "/sessions?q=matching&page=2",
 			},
 		});
 		expect(sessionSearchAnchorFromSearch(validateSessionDetailSearch(link.search))).toEqual({
@@ -40,5 +44,13 @@ describe("Session search anchors", () => {
 				matchRevision: "revision",
 			}),
 		).toEqual({});
+	});
+
+	test("keeps only a local Sessions collection return target", () => {
+		expect(validateSessionDetailSearch({ returnTo: "/sessions?q=auth&page=3" })).toEqual({
+			returnTo: "/sessions?q=auth&page=3",
+		});
+		expect(validateSessionDetailSearch({ returnTo: "https://example.com/sessions" })).toEqual({});
+		expect(validateSessionDetailSearch({ returnTo: "/sessions/unrelated" })).toEqual({});
 	});
 });

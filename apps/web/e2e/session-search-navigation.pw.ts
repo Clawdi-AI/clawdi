@@ -1,0 +1,121 @@
+import { expect, type Route, test } from "@playwright/test";
+
+const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const AGENT_ID = "22222222-2222-4222-8222-222222222222";
+const now = "2026-08-28T10:00:00.000Z";
+const anchor = { kind: "event_seq", position: 7, revision: "events:head-hash" };
+
+const session = {
+	id: SESSION_ID,
+	local_session_id: "local-session-search",
+	project_path: "/workspace/clawdi",
+	agent_name: "Search Codex",
+	agent_display_name: "Search Codex",
+	agent_default_name: "Codex",
+	agent_type: "codex",
+	machine_name: "search-machine",
+	started_at: now,
+	ended_at: null,
+	updated_at: now,
+	last_activity_at: now,
+	duration_seconds: 120,
+	message_count: 2,
+	input_tokens: 120,
+	output_tokens: 80,
+	cache_read_tokens: 0,
+	model: "gpt-5",
+	models_used: ["gpt-5"],
+	summary: "Fix authentication timeout",
+	tags: [],
+	status: "completed",
+	content_hash: null,
+	content_protocol: "events-v1",
+	event_head_hash: "head-hash",
+	is_shared: false,
+	related_refs: null,
+	has_content: true,
+};
+
+async function fulfillJson(route: Route, body: unknown) {
+	await route.fulfill({
+		status: 200,
+		contentType: "application/json",
+		body: JSON.stringify(body),
+	});
+}
+
+test("opens a message search result and returns to the same filtered list", async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") {
+			return fulfillJson(route, [
+				{
+					id: AGENT_ID,
+					name: "Search Codex",
+					display_name: "Search Codex",
+					default_name: "Codex",
+					machine_name: "search-machine",
+					agent_type: "codex",
+				},
+			]);
+		}
+		if (url.pathname === "/v1/sessions") {
+			return fulfillJson(route, {
+				items: [
+					{
+						...session,
+						search_match: {
+							role: "assistant",
+							excerpt: "Fixed the authentication timeout without retrying every request",
+							anchor,
+						},
+					},
+				],
+				total: 26,
+				page: 2,
+				page_size: 25,
+			});
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}`) {
+			return fulfillJson(route, session);
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			return fulfillJson(route, {
+				items: [
+					{
+						role: "assistant",
+						content: "Fixed the authentication timeout without retrying every request",
+						model: "gpt-5",
+						timestamp: now,
+					},
+				],
+				total: 1,
+				offset: 0,
+				limit: 100,
+				anchor_offset: 0,
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto("/sessions?q=authentication%20timeout&agent=codex&page=2&view=table");
+	const visibleResult = page.locator('[data-testid="session-card"]:visible');
+	await expect(visibleResult.locator("mark")).toHaveText("authentication timeout");
+
+	await visibleResult
+		.getByRole("link", { name: "Open session Fix authentication timeout" })
+		.click();
+	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
+
+	await page.getByText("Back to Sessions", { exact: true }).click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === "/sessions" &&
+			url.searchParams.get("q") === "authentication timeout" &&
+			url.searchParams.get("agent") === "codex" &&
+			url.searchParams.get("page") === "2" &&
+			url.searchParams.get("view") === "table"
+		);
+	});
+});

@@ -1,10 +1,11 @@
 "use client";
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { LayoutList, Table2 } from "lucide-react";
 import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
@@ -67,6 +68,9 @@ export default function SessionsPage() {
 function SessionsListInner() {
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
+	const returnTo = useLocation({
+		select: (location) => `${location.pathname}${location.searchStr}`,
+	});
 
 	// All filter / sort / pagination state lives in the URL via
 	// nuqs. `clearOnDefault: true` keeps `/sessions` clean when
@@ -94,6 +98,14 @@ function SessionsListInner() {
 	);
 
 	const debouncedSearch = useDebouncedValue(params.q, 250);
+	const getSessionLink = useCallback(
+		(session: SessionListItem) => sessionDetailLink(session, { returnTo }),
+		[returnTo],
+	);
+	const columns = useMemo(
+		() => sessionColumns({ sessionLink: getSessionLink, searchQuery: debouncedSearch }),
+		[getSessionLink, debouncedSearch],
+	);
 
 	// Tanstack-react-table owns sorting state internally; mirror it
 	// onto our nuqs-backed sort/order params via the table's
@@ -345,11 +357,11 @@ function SessionsListInner() {
 					{params.view === "table" ? (
 						<div className="hidden md:block">
 							<DataTable
-								columns={sessionColumns}
+								columns={columns}
 								data={data?.items ?? []}
 								isLoading={isLoading}
 								emptyMessage={emptyMessage}
-								getRowLink={sessionDetailLink}
+								getRowLink={getSessionLink}
 								rowAriaLabel={(s) => `Open session ${s.local_session_id}`}
 								sorting={sorting}
 								onSortingChange={(updater) => {
@@ -390,6 +402,8 @@ function SessionsListInner() {
 							grouped={groupable}
 							groupBy={params.sort === "started_at" ? "started_at" : "last_activity_at"}
 							quietAutomated={debouncedSearch === ""}
+							searchQuery={debouncedSearch}
+							sessionLink={getSessionLink}
 						/>
 					</div>
 					{sessionFooter}

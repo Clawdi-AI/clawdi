@@ -6,6 +6,7 @@ export interface SessionDetailSearch {
 	matchKind?: SessionSearchAnchor["kind"];
 	matchPosition?: number;
 	matchRevision?: string;
+	returnTo?: string;
 }
 
 function validPosition(value: unknown): number | undefined {
@@ -15,6 +16,7 @@ function validPosition(value: unknown): number | undefined {
 }
 
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
+	const returnTo = normalizeSessionListReturnTo(search.returnTo);
 	const kind =
 		search.matchKind === "snapshot_offset" || search.matchKind === "event_seq"
 			? search.matchKind
@@ -26,8 +28,27 @@ export function validateSessionDetailSearch(search: Record<string, unknown>): Se
 		search.matchRevision.length <= 80
 			? search.matchRevision
 			: undefined;
-	if (!kind || position === undefined || !revision) return {};
-	return { matchKind: kind, matchPosition: position, matchRevision: revision };
+	if (!kind || position === undefined || !revision) return returnTo ? { returnTo } : {};
+	return {
+		matchKind: kind,
+		matchPosition: position,
+		matchRevision: revision,
+		...(returnTo ? { returnTo } : {}),
+	};
+}
+
+export function normalizeSessionListReturnTo(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length === 0 || value.length > 2048) return undefined;
+	try {
+		const base = new URL("https://clawdi.invalid");
+		const parsed = new URL(value, base);
+		if (parsed.origin !== base.origin || parsed.pathname !== "/sessions" || parsed.hash) {
+			return undefined;
+		}
+		return `${parsed.pathname}${parsed.search}`;
+	} catch {
+		return undefined;
+	}
 }
 
 export function sessionSearchAnchorFromSearch(
@@ -43,17 +64,24 @@ export function sessionSearchAnchorFromSearch(
 	};
 }
 
-export function sessionDetailLink(session: Pick<SessionListItem, "id" | "search_match">) {
+export function sessionDetailLink(
+	session: Pick<SessionListItem, "id" | "search_match">,
+	options: { returnTo?: string } = {},
+) {
 	const anchor = session.search_match?.anchor;
+	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: session.id },
-		search: anchor
-			? {
-					matchKind: anchor.kind,
-					matchPosition: anchor.position,
-					matchRevision: anchor.revision,
-				}
-			: {},
+		search: {
+			...(anchor
+				? {
+						matchKind: anchor.kind,
+						matchPosition: anchor.position,
+						matchRevision: anchor.revision,
+					}
+				: {}),
+			...(returnTo ? { returnTo } : {}),
+		},
 	};
 }
