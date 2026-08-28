@@ -7,6 +7,7 @@ import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { SectionLabel } from "@/components/section-label";
+import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
@@ -126,6 +127,7 @@ export function SessionFeed({
 	showAgent = true,
 	quietAutomated = true,
 	sessionLink = sessionDetailLink,
+	searchQuery = "",
 }: {
 	sessions: SessionListItem[];
 	isLoading: boolean;
@@ -141,6 +143,7 @@ export function SessionFeed({
 	quietAutomated?: boolean;
 	/** Build the detail link for the current navigation scope. */
 	sessionLink?: (session: SessionListItem) => SessionLinkOptions;
+	searchQuery?: string;
 }) {
 	if (isLoading) {
 		return (
@@ -166,6 +169,7 @@ export function SessionFeed({
 						showAgent={showAgent}
 						quietAutomated={quietAutomated}
 						link={sessionLink(session)}
+						searchQuery={searchQuery}
 					/>
 				))}
 			</div>
@@ -195,6 +199,7 @@ export function SessionFeed({
 								showAgent={showAgent}
 								quietAutomated={quietAutomated}
 								link={sessionLink(session)}
+								searchQuery={searchQuery}
 							/>
 						))}
 					</div>
@@ -209,11 +214,13 @@ export function SessionCard({
 	showAgent = true,
 	quietAutomated = true,
 	link,
+	searchQuery = "",
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
 	quietAutomated?: boolean;
 	link: SessionLinkOptions;
+	searchQuery?: string;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
@@ -267,10 +274,11 @@ export function SessionCard({
 						{title}
 					</span>
 					{session.search_match ? (
-						<span className="mt-0.5 block truncate text-xs leading-4 text-foreground/75">
-							<span className="font-medium capitalize">{session.search_match.role}</span>
-							{`: ${session.search_match.excerpt}`}
-						</span>
+						<SessionSearchMatchExcerpt
+							match={session.search_match}
+							query={searchQuery}
+							className="mt-0.5 block text-xs leading-4 text-foreground/75"
+						/>
 					) : null}
 					<span
 						data-testid="session-card-meta"

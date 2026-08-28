@@ -14,6 +14,9 @@ export const Route = createFileRoute("/_protected/_dashboard/sessions/$id")({
 
 function SessionDetailRoute() {
 	const { id } = Route.useParams();
-	const searchAnchor = sessionSearchAnchorFromSearch(Route.useSearch());
-	return <SessionDetailPage sessionId={id} searchAnchor={searchAnchor} />;
+	const search = Route.useSearch();
+	const searchAnchor = sessionSearchAnchorFromSearch(search);
+	return (
+		<SessionDetailPage sessionId={id} searchAnchor={searchAnchor} returnTo={search.returnTo} />
+	);
 }

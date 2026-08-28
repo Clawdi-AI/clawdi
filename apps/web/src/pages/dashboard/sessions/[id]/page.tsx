@@ -55,28 +55,34 @@ import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/util
 export default function SessionDetailPage({
 	sessionId,
 	searchAnchor,
+	returnTo,
 }: {
 	sessionId: string;
 	searchAnchor?: SessionSearchAnchor;
+	returnTo?: string;
 }) {
-	return <SessionDetailContent sessionId={sessionId} searchAnchor={searchAnchor} />;
+	return (
+		<SessionDetailContent sessionId={sessionId} searchAnchor={searchAnchor} returnTo={returnTo} />
+	);
 }
 
 export function SessionDetailContent({
 	sessionId,
 	agentId,
 	searchAnchor,
+	returnTo,
 }: {
 	sessionId: string;
 	agentId?: string | null;
 	searchAnchor?: SessionSearchAnchor;
+	returnTo?: string;
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 	const router = useRouter();
 	const { user } = useCurrentUser();
-	const sessionsHref = agentId ? agentSectionHref(agentId, "sessions") : "/sessions";
+	const sessionsHref = agentId ? agentSectionHref(agentId, "sessions") : (returnTo ?? "/sessions");
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
 			toast.success("Cloud Session permanently deleted", {

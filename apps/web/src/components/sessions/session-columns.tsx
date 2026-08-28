@@ -1,51 +1,61 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
+import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
 import type { DataTableColumnDef } from "@/components/ui/data-table";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { sessionDetailLink } from "@/lib/session-search-anchor";
+import type { sessionDetailLink } from "@/lib/session-search-anchor";
 import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
-const summaryColumn: DataTableColumnDef<SessionListItem> = {
-	id: "summary",
-	accessorKey: "summary",
-	header: "Summary",
-	cell: ({ row }) => {
-		const s = row.original;
-		const title = formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8);
-		const projectFolder = s.project_path?.split("/").pop();
-		return (
-			<div className="min-w-0">
-				<div className="truncate" title={title}>
-					<Link
-						{...sessionDetailLink(s)}
-						onClick={(e) => e.stopPropagation()}
-						className="font-medium hover:underline"
-					>
-						{title}
-					</Link>
+function summaryColumn({
+	sessionLink,
+	searchQuery,
+}: {
+	sessionLink: (session: SessionListItem) => ReturnType<typeof sessionDetailLink>;
+	searchQuery: string;
+}): DataTableColumnDef<SessionListItem> {
+	return {
+		id: "summary",
+		accessorKey: "summary",
+		header: "Summary",
+		cell: ({ row }) => {
+			const s = row.original;
+			const title = formatSessionSummary(s.summary) || s.local_session_id.slice(0, 8);
+			const projectFolder = s.project_path?.split("/").pop();
+			return (
+				<div className="min-w-0">
+					<div className="truncate" title={title}>
+						<Link
+							{...sessionLink(s)}
+							onClick={(e) => e.stopPropagation()}
+							className="font-medium hover:underline"
+						>
+							{title}
+						</Link>
+					</div>
+					{projectFolder ? (
+						<div
+							className="truncate text-xs text-muted-foreground"
+							title={s.project_path ?? undefined}
+						>
+							{projectFolder}
+						</div>
+					) : null}
+					{s.search_match ? (
+						<SessionSearchMatchExcerpt
+							match={s.search_match}
+							query={searchQuery}
+							className="block text-xs text-foreground/70"
+						/>
+					) : null}
 				</div>
-				{projectFolder ? (
-					<div
-						className="truncate text-xs text-muted-foreground"
-						title={s.project_path ?? undefined}
-					>
-						{projectFolder}
-					</div>
-				) : null}
-				{s.search_match ? (
-					<div className="truncate text-xs text-foreground/70">
-						<span className="font-medium capitalize">{s.search_match.role}</span>
-						{`: ${s.search_match.excerpt}`}
-					</div>
-				) : null}
-			</div>
-		);
-	},
-	size: 420,
-};
+			);
+		},
+		size: 420,
+	};
+}
 
 const agentColumn: DataTableColumnDef<SessionListItem> = {
 	id: "agent",
@@ -127,23 +137,19 @@ const tokensColumn: DataTableColumnDef<SessionListItem> = {
 	size: 90,
 };
 
-export const sessionColumns: DataTableColumnDef<SessionListItem>[] = [
-	summaryColumn,
-	agentColumn,
-	messagesColumn,
-	tokensColumn,
-	startedColumn,
-	lastActivityColumn,
-];
-
-const lastActivityColumnPlain: DataTableColumnDef<SessionListItem> = {
-	...lastActivityColumn,
-	enableSorting: false,
-	header: "Last activity",
-};
-
-export const sessionColumnsCompact: DataTableColumnDef<SessionListItem>[] = [
-	summaryColumn,
-	agentColumn,
-	lastActivityColumnPlain,
-];
+export function sessionColumns({
+	sessionLink,
+	searchQuery,
+}: {
+	sessionLink: (session: SessionListItem) => ReturnType<typeof sessionDetailLink>;
+	searchQuery: string;
+}): DataTableColumnDef<SessionListItem>[] {
+	return [
+		summaryColumn({ sessionLink, searchQuery }),
+		agentColumn,
+		messagesColumn,
+		tokensColumn,
+		startedColumn,
+		lastActivityColumn,
+	];
+}
