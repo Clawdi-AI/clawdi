@@ -139,10 +139,10 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     original = [
         {
             "role": "assistant",
-            "content": "Original needle %_ and slash\\needle stay literal",
+            "content": "Original needle\x00%_ and slash\\needle stay literal",
         }
     ]
-    await _push_session(
+    session_id = await _push_session(
         client,
         env_id,
         local_session_id=local_id,
@@ -161,7 +161,7 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     assert [item["local_session_id"] for item in matched["items"]] == [local_id]
     assert matched["items"][0]["search_match"] == {
         "role": "assistant",
-        "excerpt": original[0]["content"],
+        "excerpt": original[0]["content"].replace("\x00", "\ufffd"),
         "anchor": {
             "kind": "snapshot_offset",
             "position": 0,
@@ -176,6 +176,9 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     assert [item["local_session_id"] for item in literal["items"]] == [local_id]
     backslash = (await client.get("/v1/sessions", params={"q": "slash\\needle"})).json()
     assert [item["local_session_id"] for item in backslash["items"]] == [local_id]
+    stored = await client.get(f"/v1/sessions/{session_id}/messages")
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["items"][0]["content"] == original[0]["content"]
 
     replacement = [{"role": "user", "content": "Replacement body is now authoritative"}]
     await _push_session(

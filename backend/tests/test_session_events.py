@@ -507,7 +507,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "message",
         "assistant-3",
         role="assistant",
-        parts=[{"type": "text", "text": "appended answer"}],
+        parts=[{"type": "text", "text": "appended left\x00right answer"}],
     )
     second_data, second_hash = _chunk([second_event])
     second_head = advance_event_head(final_head, [second_event])
@@ -587,6 +587,9 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert private_reasoning["kind"] == "thinking"
     assert private_reasoning["parts"] == [{"type": "text", "text": "private chain of thought"}]
     assert private_reasoning["payload_json"] == '{"signature":"opaque"}'
+    assert private.json()["events"][6]["parts"] == [
+        {"type": "text", "text": "appended left\x00right answer"}
+    ]
     projected = await client.get(f"/v1/sessions/{session.id}/content")
     assert projected.status_code == 200, projected.text
     assert projected.json() == [
@@ -597,7 +600,12 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
             "model": "claude-sonnet",
             "timestamp": None,
         },
-        {"role": "assistant", "content": "appended answer", "model": None, "timestamp": None},
+        {
+            "role": "assistant",
+            "content": "appended left\x00right answer",
+            "model": None,
+            "timestamp": None,
+        },
     ]
     assert "private context" not in projected.text
     assert "private chain of thought" not in projected.text
@@ -614,7 +622,12 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert latest_messages.status_code == 200, latest_messages.text
     assert latest_messages.json() == {
         "items": [
-            {"role": "assistant", "content": "appended answer", "model": None, "timestamp": None},
+            {
+                "role": "assistant",
+                "content": "appended left\x00right answer",
+                "model": None,
+                "timestamp": None,
+            },
             {
                 "role": "assistant",
                 "content": "visible answer",
@@ -635,6 +648,17 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "anchor": {
             "kind": "event_seq",
             "position": 4,
+            "revision": f"events:{second_head}",
+        },
+    }
+    appended_search = (await client.get("/v1/sessions", params={"q": "right answer"})).json()
+    assert [item["local_session_id"] for item in appended_search["items"]] == [local_id]
+    assert appended_search["items"][0]["search_match"] == {
+        "role": "assistant",
+        "excerpt": "appended left\ufffdright answer",
+        "anchor": {
+            "kind": "event_seq",
+            "position": 6,
             "revision": f"events:{second_head}",
         },
     }

@@ -80,6 +80,10 @@ def _escaped_contains_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+def _searchable_text(content: str) -> str:
+    return content.replace("\x00", "\ufffd")
+
+
 def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     """Return the strongest index-backed visible-message match per Session."""
     active_document_revision = case(
@@ -158,7 +162,7 @@ def searchable_event_messages(events: Sequence[SessionEvent]) -> list[Searchable
         SearchableSessionMessage(
             position=message.position,
             role=message.role,
-            content=message.content,
+            content=_searchable_text(message.content),
         )
         for message in project_visible_messages(events)
         if message.role in ("user", "assistant")
@@ -174,7 +178,13 @@ def searchable_snapshot_messages(
         content = message.get("content")
         if role not in ("user", "assistant") or not isinstance(content, str) or not content:
             continue
-        projected.append(SearchableSessionMessage(position=position, role=role, content=content))
+        projected.append(
+            SearchableSessionMessage(
+                position=position,
+                role=role,
+                content=_searchable_text(content),
+            )
+        )
     return projected
 
 
