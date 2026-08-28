@@ -366,7 +366,13 @@ const hostedPrimaryModelSchema = z
 	})
 	.strict();
 
-const hostedProviderIdsSchema = z.array(z.string().min(1)).min(1).max(1);
+const hostedProviderIdsSchema = z
+	.array(z.string().min(1))
+	.min(1)
+	.max(2)
+	.refine((providerIds) => new Set(providerIds).size === providerIds.length, {
+		message: "provider_ids must not contain duplicates",
+	});
 
 const hostedRuntimeEntryBaseShape = {
 	enabled: z.boolean(),
