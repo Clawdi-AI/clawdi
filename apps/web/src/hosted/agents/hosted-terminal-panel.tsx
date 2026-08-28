@@ -1,18 +1,26 @@
 "use client";
 
-import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import "@/hosted/agents/hosted-terminal.css";
 
 const TTYD_OUTPUT = "0";
+const TTYD_OUTPUT_CODE = TTYD_OUTPUT.charCodeAt(0);
 const TTYD_INPUT = "0";
 const TTYD_RESIZE = "1";
+const TTYD_PAUSE = "2";
+const TTYD_RESUME = "3";
 const TERMINAL_TOKEN_PROTOCOL_PREFIX = "clawdi-terminal.";
 const TERMINAL_NOTICE_STYLE = "\u001b[90m";
 const TERMINAL_RESET_STYLE = "\u001b[0m";
 const TERMINAL_CLOSE_REASON_MAX_LENGTH = 120;
+
+export const TTYD_OUTPUT_FLOW_CONTROL = {
+	writeLimit: 100_000,
+	highWater: 10,
+	lowWater: 4,
+} as const;
 
 export type HostedTerminalStatus = "connecting" | "connected" | "disconnected";
 type TerminalAuthMode = "subprotocol" | "query";
@@ -29,6 +37,34 @@ type HostedTerminalPanelProps = {
 	websocketUrl: string;
 	onStatusChange?: (status: HostedTerminalStatus) => void;
 };
+
+type TtydFlowControlCommand = typeof TTYD_PAUSE | typeof TTYD_RESUME;
+
+export function createTtydOutputWriter({
+	write,
+	send,
+}: {
+	write: (data: string | Uint8Array, callback?: () => void) => void;
+	send: (command: TtydFlowControlCommand) => void;
+}): (data: string | Uint8Array) => void {
+	let written = 0;
+	let pending = 0;
+
+	return (data) => {
+		written += data.length;
+		if (written > TTYD_OUTPUT_FLOW_CONTROL.writeLimit) {
+			write(data, () => {
+				pending = Math.max(pending - 1, 0);
+				if (pending < TTYD_OUTPUT_FLOW_CONTROL.lowWater) send(TTYD_RESUME);
+			});
+			pending += 1;
+			written = 0;
+			if (pending > TTYD_OUTPUT_FLOW_CONTROL.highWater) send(TTYD_PAUSE);
+		} else {
+			write(data);
+		}
+	};
+}
 
 const TERMINAL_THEMES = {
 	dark: {
@@ -132,7 +168,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 	const { resolvedTheme } = useTheme();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const termRef = useRef<XTerm | null>(null);
-	const fitRef = useRef<FitAddonType | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
 	const cleanupRef = useRef<(() => void) | null>(null);
 	const terminalThemeMode: TerminalThemeMode = resolvedTheme === "dark" ? "dark" : "light";
@@ -169,7 +204,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 			fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
 			theme: themeRef.current,
 			cursorBlink: true,
-			allowProposedApi: true,
 		});
 
 		const fitAddon = new FitAddon();
@@ -179,7 +213,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 		term.focus();
 
 		termRef.current = term;
-		fitRef.current = fitAddon;
 		setStatus("connecting");
 
 		let disposed = false;
@@ -199,6 +232,18 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 			});
 		};
 		fitNow();
+		const writeOutput = createTtydOutputWriter({
+			write: (data, callback) => term.write(data, callback),
+			send: (command) => {
+				const ws = wsRef.current;
+				if (ws?.readyState !== WebSocket.OPEN) return;
+				try {
+					ws.send(command);
+				} catch {
+					// The socket can close between readyState and send; cleanup owns reconnection.
+				}
+			},
+		});
 
 		const openWebSocket = (target: TerminalWebSocketTarget) => {
 			let ws: WebSocket;
@@ -227,11 +272,13 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 
 			ws.onmessage = (ev) => {
 				if (disposed) return;
-				const data =
-					ev.data instanceof ArrayBuffer ? new TextDecoder().decode(ev.data) : (ev.data as string);
-				if (data.length === 0) return;
-				if (data[0] === TTYD_OUTPUT) {
-					term.write(data.slice(1));
+				if (ev.data instanceof ArrayBuffer) {
+					const data = new Uint8Array(ev.data);
+					if (data[0] === TTYD_OUTPUT_CODE) writeOutput(data.subarray(1));
+					return;
+				}
+				if (typeof ev.data === "string" && ev.data[0] === TTYD_OUTPUT) {
+					writeOutput(ev.data.slice(1));
 				}
 			};
 
@@ -285,7 +332,6 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 			wsRef.current?.close();
 			term.dispose();
 			termRef.current = null;
-			fitRef.current = null;
 			wsRef.current = null;
 		};
 		cleanupRef.current = cleanup;
