@@ -9,6 +9,7 @@ Covers the upgraded `/api/sessions` list endpoint:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -297,6 +298,91 @@ async def test_rebuild_does_not_replace_a_newer_revision_after_object_read(
     assert current is not None
     assert current.search_index_revision == f"snapshot:{replacement_hash}"
     assert documents == [replacement_content]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_search_backfill_bounds_parallel_session_rebuilds(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes import sessions as session_routes
+    from scripts import backfill_session_search
+
+    env_id = await _register_env(client)
+    local_ids = [f"parallel-search-backfill-{index}" for index in range(4)]
+    for index, local_id in enumerate(local_ids):
+        await _push_session(
+            client,
+            env_id,
+            local_session_id=local_id,
+            messages=[{"role": "user", "content": f"parallel body {index}"}],
+            upload=True,
+        )
+
+    sessions = list(
+        (
+            await db_session.execute(select(Session).where(Session.local_session_id.in_(local_ids)))
+        ).scalars()
+    )
+    assert len(sessions) == len(local_ids)
+    user_id = sessions[0].user_id
+    await db_session.execute(
+        delete(SessionMessageSearch).where(
+            SessionMessageSearch.session_id.in_([session.id for session in sessions])
+        )
+    )
+    for session in sessions:
+        session.search_index_revision = None
+    await db_session.commit()
+
+    real_rebuild = backfill_session_search.rebuild_session_search_index
+    pair_ready = asyncio.Event()
+    active = 0
+    max_active = 0
+
+    async def tracked_rebuild(db, session, file_store) -> bool:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if active == 2:
+            pair_ready.set()
+        try:
+            await asyncio.wait_for(pair_ready.wait(), timeout=2)
+            return await real_rebuild(db, session, file_store)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(backfill_session_search, "engine", engine)
+    monkeypatch.setattr(
+        backfill_session_search,
+        "get_file_store",
+        lambda: session_routes.file_store,
+    )
+    monkeypatch.setattr(
+        backfill_session_search,
+        "rebuild_session_search_index",
+        tracked_rebuild,
+    )
+
+    failed = await backfill_session_search.backfill_user(
+        user_id,
+        force=False,
+        dry_run=False,
+        workers=2,
+    )
+    assert failed == 0
+    assert max_active == 2
+
+    db_session.expire_all()
+    current = list(
+        (
+            await db_session.execute(select(Session).where(Session.local_session_id.in_(local_ids)))
+        ).scalars()
+    )
+    assert all(session.search_index_revision is not None for session in current)
 
 
 @pytest.mark.asyncio
