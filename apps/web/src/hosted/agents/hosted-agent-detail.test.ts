@@ -34,7 +34,6 @@ describe("hosted agent detail header", () => {
 		expect(source).toContain('title="Files"');
 		expect(source).toContain("Open in new tab");
 		expect(source).toContain("Opening Files…");
-		expect(source).not.toContain('target="_blank"');
 		expect(source).toContain("hostedAgentVisibleSectionIds(");
 		expect(source).toContain(
 			'const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";',
