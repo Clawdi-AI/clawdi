@@ -9,6 +9,7 @@ import {
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
+import { buildOpenClawHostedProviderPatch } from "../runtime/manifest-providers";
 import { buildAgentTargetProjection } from "./ai-provider-projection";
 
 const byokOpenAiCatalog: AiProviderCatalog = {
@@ -184,10 +185,20 @@ describe("AI provider projection", () => {
 					auth: { type: "api_key", source: "managed" },
 					managed_by: "clawdi",
 					runtime_env_name: "CLAWDI_AI_API_KEY",
-					models: [{ id: "k3", api_mode: "openai_chat" }, { id: "grok-4.6" }],
+					models: [
+						{ id: "k3", api_mode: "openai_chat" },
+						{ id: "grok-4.6" },
+						{
+							id: "manifest-embedding-model",
+							capabilities: { embeddings: true, chat: false },
+						},
+					],
 				},
 			],
-			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
+			defaults: {
+				chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+				embedding_provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			},
 		};
 		const primaryModel = {
 			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
@@ -198,7 +209,12 @@ describe("AI provider projection", () => {
 		expect(openclaw.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
 		expect(openclaw.primary_model).toEqual(primaryModel);
 		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
-			agents?: { defaults?: { model?: { primary?: string } } };
+			agents?: {
+				defaults?: {
+					model?: { primary?: string };
+					memorySearch?: { model?: string; provider?: string };
+				};
+			};
 			models?: {
 				providers?: Record<
 					string,
@@ -207,6 +223,10 @@ describe("AI provider projection", () => {
 			};
 		};
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
+		expect(openclawPatch.agents?.defaults?.memorySearch).toEqual({
+			provider: CLAWDI_MANAGED_PROVIDER_ID,
+			model: "manifest-embedding-model",
+		});
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
 			auth: "api-key",
@@ -237,6 +257,7 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_AI_API_KEY"');
 		expect(hermes.files[0]?.content).toContain('"k3": {}');
 		expect(hermes.files[0]?.content).toContain('"grok-4.6": {}');
+		expect(hermes.files[0]?.content).not.toContain("manifest-embedding-model");
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
 
@@ -280,6 +301,24 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
 		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
+		expect(openclaw.files[0]?.content).not.toContain('"memorySearch"');
+		const managedToByokPatch = JSON.parse(
+			buildOpenClawHostedProviderPatch(
+				{
+					catalog: byokOpenAiCatalog,
+					primaryModel: openclaw.primary_model,
+				},
+				[CLAWDI_MANAGED_PROVIDER_ID],
+			).content,
+		) as {
+			agents?: { defaults?: { memorySearch?: { model?: null; provider?: null } } };
+			models?: { providers?: Record<string, unknown> };
+		};
+		expect(managedToByokPatch.agents?.defaults?.memorySearch).toEqual({
+			provider: null,
+			model: null,
+		});
+		expect(managedToByokPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toBeNull();
 
 		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog);
 		expect(hermes.files[0]?.content).toContain('provider: "custom:openai-main"');

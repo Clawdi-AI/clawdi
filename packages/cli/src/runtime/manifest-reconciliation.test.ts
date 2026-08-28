@@ -2979,6 +2979,10 @@ describe("runtime manifest reconciliation invariants", () => {
 								},
 								{ id: "kimi-for-coding" },
 								{ id: "kimi-for-coding-highspeed", context_window: 262_144 },
+								{
+									id: "manifest-embedding-model",
+									capabilities: { embeddings: true, chat: false },
+								},
 							],
 							apiMode: "openai_responses",
 							runtimeEnvName: "CLAWDI_AI_API_KEY",
@@ -2991,6 +2995,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		const projection = hostedAiProviderCatalog(manifest, "openclaw");
 		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "k3" });
+		expect(projection?.catalog.defaults?.embedding_provider_id).toBe("default");
 		expect(projection?.catalog.providers[0]?.models).toEqual([
 			{
 				id: "k3",
@@ -3003,6 +3008,10 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			{ id: "kimi-for-coding" },
 			{ id: "kimi-for-coding-highspeed", context_window: 262_144 },
+			{
+				id: "manifest-embedding-model",
+				capabilities: { embeddings: true, chat: false },
+			},
 		]);
 	});
 

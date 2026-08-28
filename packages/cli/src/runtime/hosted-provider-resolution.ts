@@ -41,11 +41,20 @@ export function agentTargetProjectionInput(
 	});
 	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);
 	if (!primaryProviderId) return input;
+	const embeddingProviderId = input.catalog.defaults?.embedding_provider_id;
 	return {
 		catalog: {
 			...input.catalog,
 			providers,
-			defaults: { ...input.catalog.defaults, chat_provider_id: primaryProviderId },
+			defaults: {
+				...input.catalog.defaults,
+				chat_provider_id: primaryProviderId,
+				...(embeddingProviderId
+					? {
+							embedding_provider_id: providerIdMap.get(embeddingProviderId) ?? embeddingProviderId,
+						}
+					: {}),
+			},
 		},
 		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
 	};
@@ -87,11 +96,17 @@ export function hostedAiProviderCatalog(
 		})
 		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 	if (entries.length === 0) return null;
+	const embeddingProvider = entries.find((provider) =>
+		provider.models.some((model) => model.capabilities?.embeddings === true),
+	);
 	return {
 		catalog: {
 			schema_version: 1,
 			providers: entries,
-			defaults: { chat_provider_id: primaryModel.provider_id },
+			defaults: {
+				chat_provider_id: primaryModel.provider_id,
+				...(embeddingProvider ? { embedding_provider_id: embeddingProvider.id } : {}),
+			},
 		},
 		primaryModel,
 	};
