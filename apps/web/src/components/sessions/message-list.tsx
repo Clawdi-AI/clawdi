@@ -8,6 +8,7 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
 import type { SessionMessage } from "@/lib/api-schemas";
+import { splitSearchHighlight } from "@/lib/search-highlight";
 import { cn, formatAbsoluteTooltip } from "@/lib/utils";
 
 /**
@@ -81,6 +82,7 @@ function MessageBlock({
 	isGroupStart,
 	isHighlighted,
 	highlightedRef,
+	highlightQuery,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
@@ -96,6 +98,7 @@ function MessageBlock({
 	isGroupStart: boolean;
 	isHighlighted?: boolean;
 	highlightedRef?: Ref<HTMLDivElement>;
+	highlightQuery?: string;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
@@ -184,9 +187,9 @@ function MessageBlock({
 					)}
 				>
 					{isUser ? (
-						<UserMessageBody content={message.content} />
+						<UserMessageBody content={message.content} highlightQuery={highlightQuery} />
 					) : (
-						<Markdown content={message.content} />
+						<Markdown content={message.content} highlightQuery={highlightQuery} />
 					)}
 				</div>
 			</div>
@@ -222,20 +225,32 @@ function isSkillExpansion(content: string): boolean {
 	return /^Base directory for this skill:/i.test(content.trimStart());
 }
 
-function UserMessageBody({ content }: { content: string }) {
+function UserMessageBody({
+	content,
+	highlightQuery,
+}: {
+	content: string;
+	highlightQuery?: string;
+}) {
 	const cmd = parseSlashCommand(content);
 	if (cmd) {
 		return (
 			<div className="space-y-2">
 				<SlashCommandPill name={cmd.name} args={cmd.args} />
-				{cmd.remaining && <Markdown content={cmd.remaining} />}
+				{cmd.remaining && <Markdown content={cmd.remaining} highlightQuery={highlightQuery} />}
 			</div>
 		);
 	}
 	if (isSkillExpansion(content)) {
-		return <CollapsibleBlock label="Skill Setup Text" content={content} />;
+		return (
+			<CollapsibleBlock
+				label="Skill Setup Text"
+				content={content}
+				highlightQuery={highlightQuery}
+			/>
+		);
 	}
-	return <Markdown content={content} />;
+	return <Markdown content={content} highlightQuery={highlightQuery} />;
 }
 
 function SlashCommandPill({ name, args }: { name: string; args?: string }) {
@@ -248,8 +263,20 @@ function SlashCommandPill({ name, args }: { name: string; args?: string }) {
 	);
 }
 
-function CollapsibleBlock({ label, content }: { label: string; content: string }) {
+function CollapsibleBlock({
+	label,
+	content,
+	highlightQuery,
+}: {
+	label: string;
+	content: string;
+	highlightQuery?: string;
+}) {
 	const [open, setOpen] = useState(false);
+	const containsMatch = highlightQuery
+		? splitSearchHighlight(content, highlightQuery).some((part) => part.highlighted)
+		: false;
+	const visible = open || containsMatch;
 	return (
 		<div className="rounded-md border border-dashed border-border/70 bg-muted/30">
 			<Button
@@ -258,17 +285,17 @@ function CollapsibleBlock({ label, content }: { label: string; content: string }
 				onClick={() => setOpen((v) => !v)}
 				className="h-auto w-full justify-start rounded-md px-2.5 py-1.5 text-xs font-normal text-muted-foreground hover:text-foreground"
 			>
-				<ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+				<ChevronRight className={cn("size-3.5 transition-transform", visible && "rotate-90")} />
 				<span>{label}</span>
-				{!open && (
+				{!visible && (
 					<span className="text-xs text-muted-foreground">
 						({content.length.toLocaleString()} chars)
 					</span>
 				)}
 			</Button>
-			{open && (
+			{visible && (
 				<div className="border-t border-border/50 px-3 py-2">
-					<Markdown content={content} />
+					<Markdown content={content} highlightQuery={highlightQuery} />
 				</div>
 			)}
 		</div>
@@ -299,6 +326,7 @@ export function MessageList({
 	userName,
 	highlightedMessageKey,
 	highlightedMessageRef,
+	highlightQuery,
 }: {
 	messages: SessionMessage[];
 	messageKeys?: string[] | null;
@@ -307,6 +335,7 @@ export function MessageList({
 	userName: string;
 	highlightedMessageKey?: string | null;
 	highlightedMessageRef?: Ref<HTMLDivElement>;
+	highlightQuery?: string;
 }) {
 	const GROUP_GAP_MS = 5 * 60_000;
 	const out: React.ReactNode[] = [];
@@ -341,6 +370,7 @@ export function MessageList({
 				isGroupStart={isGroupStart}
 				isHighlighted={isHighlighted}
 				highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
+				highlightQuery={isHighlighted ? highlightQuery : undefined}
 			/>,
 		);
 	}

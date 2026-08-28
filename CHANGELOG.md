@@ -15,6 +15,7 @@ database migration, CI, and implementation details.
 ### Added
 
 - Session search now matches visible user and assistant message text in addition to summaries, folders, and IDs. CLI and Web results show the best matching message excerpt; private reasoning, tool payloads, system messages, and hidden events remain excluded.
+- Session detail pages can search the current transcript directly, move between matches, and highlight matching text without loading the whole conversation.
 
 ### Changed
 

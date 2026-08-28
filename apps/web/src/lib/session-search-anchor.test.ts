@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	sessionDetailLink,
+	sessionDetailSearchLink,
 	sessionSearchAnchorFromSearch,
 	validateSessionDetailSearch,
 } from "@/lib/session-search-anchor";
@@ -33,6 +34,24 @@ describe("Session search anchors", () => {
 			kind: "event_seq",
 			position: 42,
 			revision: "events:revision",
+		});
+	});
+
+	test("keeps a standalone query and builds a query-only detail link", () => {
+		expect(
+			sessionDetailSearchLink("session-id", " authentication ", {
+				returnTo: "/sessions?q=authentication&page=2",
+			}),
+		).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: {
+				matchQuery: "authentication",
+				returnTo: "/sessions?q=authentication&page=2",
+			},
+		});
+		expect(validateSessionDetailSearch({ matchQuery: " authentication " })).toEqual({
+			matchQuery: "authentication",
 		});
 	});
 

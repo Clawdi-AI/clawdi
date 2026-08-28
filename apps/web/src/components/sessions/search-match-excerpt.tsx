@@ -1,42 +1,17 @@
 import type { SessionListItem } from "@/lib/api-schemas";
+import { splitSearchHighlight } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 type SessionSearchMatch = NonNullable<SessionListItem["search_match"]>;
 
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function searchTerms(query: string): string[] {
-	const normalized = query.trim();
-	if (!normalized) return [];
-
-	const candidates = [normalized, ...(normalized.match(/[\p{L}\p{N}_]+/gu) ?? [])];
-	const seen = new Set<string>();
-	return candidates
-		.filter((term) => term.length > 1 || normalized.length === 1)
-		.filter((term) => {
-			const key = term.toLocaleLowerCase();
-			if (seen.has(key)) return false;
-			seen.add(key);
-			return true;
-		})
-		.sort((a, b) => b.length - a.length)
-		.slice(0, 24);
-}
-
 function HighlightedExcerpt({ excerpt, query }: { excerpt: string; query: string }) {
-	const terms = searchTerms(query);
-	if (terms.length === 0) return excerpt;
-
-	const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "giu");
-	return excerpt.split(pattern).map((part, index) =>
-		terms.some((term) => term.toLocaleLowerCase() === part.toLocaleLowerCase()) ? (
-			<mark key={`${index}:${part}`} className="rounded-sm bg-primary/15 px-0.5 text-inherit">
-				{part}
+	return splitSearchHighlight(excerpt, query).map((part, index) =>
+		part.highlighted ? (
+			<mark key={`${index}:${part.text}`} className="rounded-sm bg-primary/15 px-0.5 text-inherit">
+				{part.text}
 			</mark>
 		) : (
-			part
+			part.text
 		),
 	);
 }

@@ -249,6 +249,24 @@ async def test_snapshot_message_search_navigates_matches_in_transcript_order(
     search = (await client.get("/v1/sessions", params={"q": "needle"})).json()
     first_anchor = search["items"][0]["search_match"]["anchor"]
 
+    direct = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": "needle"},
+    )
+    assert direct.status_code == 200, direct.text
+    assert direct.json()["anchor_offset"] == 0
+    assert direct.json()["search_navigation"] == {
+        "index": 1,
+        "total": 3,
+        "current": first_anchor,
+        "previous": None,
+        "next": {
+            "kind": "snapshot_offset",
+            "position": 2,
+            "revision": first_anchor["revision"],
+        },
+    }
+
     first = await client.get(
         f"/v1/sessions/{session_id}/messages",
         params={
@@ -262,6 +280,7 @@ async def test_snapshot_message_search_navigates_matches_in_transcript_order(
     assert first.json()["search_navigation"] == {
         "index": 1,
         "total": 3,
+        "current": first_anchor,
         "previous": None,
         "next": {
             "kind": "snapshot_offset",
@@ -283,6 +302,11 @@ async def test_snapshot_message_search_navigates_matches_in_transcript_order(
     assert second.json()["search_navigation"] == {
         "index": 2,
         "total": 3,
+        "current": {
+            "kind": "snapshot_offset",
+            "position": 2,
+            "revision": first_anchor["revision"],
+        },
         "previous": {
             "kind": "snapshot_offset",
             "position": 0,

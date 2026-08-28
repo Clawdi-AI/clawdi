@@ -15,6 +15,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { createSearchHighlighter } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,6 +26,51 @@ import { cn } from "@/lib/utils";
  *   - rehype plugins that decorate inline code with a non-language className
  */
 const InsidePreContext = createContext(false);
+
+interface MarkdownAstNode {
+	type: string;
+	value?: string;
+	children?: MarkdownAstNode[];
+	data?: {
+		hName?: string;
+		hProperties?: Record<string, string>;
+	};
+}
+
+function searchHighlightPlugin(query: string) {
+	const highlight = createSearchHighlighter(query);
+	return () => (tree: MarkdownAstNode) => {
+		const visit = (node: MarkdownAstNode) => {
+			if (!node.children) return;
+			for (let index = 0; index < node.children.length; index++) {
+				const child = node.children[index];
+				if (child.type !== "text" || child.value === undefined) {
+					visit(child);
+					continue;
+				}
+				const parts = highlight(child.value);
+				if (!parts.some((part) => part.highlighted)) continue;
+				const replacement: MarkdownAstNode[] = parts.map((part) =>
+					part.highlighted
+						? {
+								type: "searchHighlight",
+								data: {
+									hName: "mark",
+									hProperties: {
+										className: "rounded-sm bg-primary/20 px-0.5 text-inherit",
+									},
+								},
+								children: [{ type: "text", value: part.text }],
+							}
+						: { type: "text", value: part.text },
+				);
+				node.children.splice(index, 1, ...replacement);
+				index += replacement.length - 1;
+			}
+		};
+		visit(tree);
+	};
+}
 
 function useCopyToClipboard(duration = 2000) {
 	const [copied, setCopied] = useState(false);
@@ -112,10 +158,14 @@ function InlineCode({ className, children, ...props }: ComponentPropsWithoutRef<
 	);
 }
 
-function MarkdownImpl({ content }: { content: string }) {
+function MarkdownImpl({ content, highlightQuery }: { content: string; highlightQuery?: string }) {
 	return (
 		<ReactMarkdown
-			remarkPlugins={[remarkGfm, remarkBreaks]}
+			remarkPlugins={[
+				remarkGfm,
+				remarkBreaks,
+				...(highlightQuery ? [searchHighlightPlugin(highlightQuery)] : []),
+			]}
 			components={{
 				h1: ({ className, ...props }) => (
 					<h1 className={cn("mb-2 font-semibold text-base first:mt-0", className)} {...props} />

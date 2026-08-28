@@ -1357,8 +1357,9 @@ export interface paths {
          *     starts at the oldest visible message for ascending reads and at the newest
          *     visible message for descending reads. Clients pin pages to the parent
          *     session's `content_hash`, which changes after snapshot replacement or event
-         *     append. A complete search anchor recenters the first page around its match;
-         *     stale anchors degrade to ordinary offset pagination.
+         *     append. A search query without an anchor opens its first transcript match;
+         *     a complete anchor opens that exact match. Stale anchors degrade to ordinary
+         *     offset pagination.
          */
         get: operations["get_session_messages_v1_sessions__session_id__messages_get"];
         put?: never;
@@ -8195,6 +8196,7 @@ export interface components {
             index: number;
             /** Total */
             total: number;
+            current: components["schemas"]["SessionSearchAnchorResponse"];
             previous?: components["schemas"]["SessionSearchAnchorResponse"] | null;
             next?: components["schemas"]["SessionSearchAnchorResponse"] | null;
         };

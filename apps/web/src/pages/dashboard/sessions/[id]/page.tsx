@@ -50,6 +50,7 @@ import {
 	sessionDetailQueryKey,
 } from "@/lib/session-queries";
 import type { SessionSearchAnchor } from "@/lib/session-search-anchor";
+import { useDebouncedValue } from "@/lib/use-debounced";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
@@ -172,6 +173,8 @@ export function SessionDetailContent({
 	// Layout effects run before the messages query subscribes, so a stored
 	// "asc" swaps the query key without a wasted "desc" fetch.
 	const [direction, setDirection] = useState<Direction>("desc");
+	const normalizedSearchQuery = searchQuery?.trim() ?? "";
+	const debouncedSearchQuery = useDebouncedValue(normalizedSearchQuery, 250) || undefined;
 	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
 		if (stored === "asc") setDirection("asc");
@@ -219,7 +222,7 @@ export function SessionDetailContent({
 			searchAnchor?.kind ?? null,
 			searchAnchor?.position ?? null,
 			searchAnchor?.revision ?? null,
-			searchQuery ?? null,
+			debouncedSearchQuery ?? null,
 		],
 		initialPageParam: 0,
 		queryFn: async ({ pageParam }) => {
@@ -236,8 +239,10 @@ export function SessionDetailContent({
 										anchor_kind: searchAnchor.kind,
 										anchor_position: searchAnchor.position,
 										anchor_revision: searchAnchor.revision,
-										...(searchQuery ? { search_query: searchQuery } : {}),
 									}
+								: {}),
+							...(pageParam === 0 && debouncedSearchQuery
+								? { search_query: debouncedSearchQuery }
 								: {}),
 						},
 					},
@@ -282,10 +287,11 @@ export function SessionDetailContent({
 		typeof anchorOffset === "number" ? `${direction}:${anchorOffset}` : null;
 	const highlightedMessageRef = useRef<HTMLDivElement | null>(null);
 	const handledAnchorRef = useRef<string | null>(null);
-	const anchorIdentity = searchAnchor
-		? `${searchAnchor.kind}:${searchAnchor.position}:${searchAnchor.revision}`
-		: null;
 	const searchNavigation = pagesData?.pages[0]?.search_navigation;
+	const resolvedSearchAnchor = searchNavigation?.current ?? searchAnchor;
+	const anchorIdentity = resolvedSearchAnchor
+		? `${resolvedSearchAnchor.kind}:${resolvedSearchAnchor.position}:${resolvedSearchAnchor.revision}`
+		: null;
 
 	useEffect(() => {
 		if (!anchorIdentity || !pagesData) return;
@@ -453,12 +459,17 @@ export function SessionDetailContent({
 				/>
 			</DetailStats>
 
-			{searchQuery && searchNavigation ? (
+			{session.has_content ? (
 				<SessionSearchNavigation
 					sessionId={sessionId}
-					query={searchQuery}
+					query={normalizedSearchQuery}
 					navigation={searchNavigation}
 					returnTo={returnTo}
+					isSearching={
+						Boolean(normalizedSearchQuery) &&
+						(normalizedSearchQuery !== debouncedSearchQuery || isContentLoading)
+					}
+					hasSearchError={Boolean(normalizedSearchQuery) && isContentError}
 				/>
 			) : null}
 
@@ -518,6 +529,7 @@ export function SessionDetailContent({
 							userName={user?.fullName || "You"}
 							highlightedMessageKey={highlightedMessageKey}
 							highlightedMessageRef={highlightedMessageRef}
+							highlightQuery={debouncedSearchQuery}
 						/>
 						{hasNextPage ? (
 							<LoadMoreSentinel

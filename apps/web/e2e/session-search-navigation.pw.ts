@@ -84,7 +84,8 @@ test("opens a message search result and returns to the same filtered list", asyn
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
 			const searchQuery = url.searchParams.get("search_query");
 			const selectedPosition = Number(url.searchParams.get("anchor_position"));
-			const isSecond = selectedPosition === nextAnchor.position;
+			const isDirectDetailSearch = searchQuery === "no longer";
+			const isSecond = isDirectDetailSearch || selectedPosition === nextAnchor.position;
 			if (searchQuery === null) {
 				return fulfillJson(route, {
 					items: [],
@@ -93,7 +94,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 					limit: 100,
 				});
 			}
-			expect(searchQuery).toBe("authentication timeout");
+			expect(["authentication timeout", "no longer"]).toContain(searchQuery);
 			return fulfillJson(route, {
 				items: [
 					{
@@ -109,9 +110,11 @@ test("opens a message search result and returns to the same filtered list", asyn
 				offset: 0,
 				limit: 100,
 				anchor_offset: 0,
-				search_navigation: isSecond
-					? { index: 2, total: 2, previous: anchor, next: null }
-					: { index: 1, total: 2, previous: null, next: nextAnchor },
+				search_navigation: isDirectDetailSearch
+					? { index: 1, total: 1, current: nextAnchor, previous: null, next: null }
+					: isSecond
+						? { index: 2, total: 2, current: nextAnchor, previous: anchor, next: null }
+						: { index: 1, total: 2, current: anchor, previous: null, next: nextAnchor },
 			});
 		}
 		return fulfillJson(route, {});
@@ -134,6 +137,18 @@ test("opens a message search result and returns to the same filtered list", asyn
 	await expect(page.getByText("2 of 2")).toBeVisible();
 	await page.getByRole("button", { name: "Previous match" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
+	await page.getByRole("textbox", { name: "Search this session" }).fill("no longer");
+	await expect(page.getByRole("button", { name: "Next match" })).toBeDisabled();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.searchParams.get("matchQuery") === "no longer" && !url.searchParams.has("matchPosition")
+		);
+	});
+	await expect(page.locator('[data-search-match="true"]')).toContainText(
+		"Verified the authentication timeout no longer recurs",
+	);
+	await expect(page.locator('[data-search-match="true"] mark')).toHaveText("no longer");
+	await expect(page.getByText("1 of 1")).toBeVisible();
 
 	await page.getByText("Back to Sessions", { exact: true }).click();
 	await expect(page).toHaveURL((url) => {
