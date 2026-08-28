@@ -80,6 +80,7 @@ import {
 	officialInstallArgs,
 	validateUnmanagedProviderSecretValues,
 } from "../src/runtime/manifest-contract";
+import { recordValue } from "../src/runtime/manifest-shared";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest as loadRemoteRuntimeManifestWithContext,
@@ -8706,7 +8707,31 @@ exit 64
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(join(home, ".local", "bin"), { recursive: true });
+		mkdirSync(join(home, ".openclaw"), { recursive: true });
 		mkdirSync(join(root, "etc", "clawdi"), { recursive: true });
+		writeFileSync(
+			join(home, ".openclaw", "openclaw.json"),
+			`${JSON.stringify(
+				{
+					channels: {
+						discord: {
+							accounts: {
+								clawdi_acctdiscord1: {
+									enabled: false,
+									token: "user-token",
+									dmPolicy: "allowlist",
+									allowFrom: ["discord-user"],
+									guilds: { "discord-guild": { requireMention: true } },
+								},
+								stale: { enabled: true, token: "stale-token" },
+							},
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env bash
@@ -8869,6 +8894,34 @@ exit 64
 			if (!isolationPatch) throw new Error("OpenClaw session isolation patch was not rendered");
 			const sessionPatch = expectRecord(isolationPatch.session, "OpenClaw session patch");
 			expect(sessionPatch).toEqual({ dmScope: "per-account-channel-peer" });
+			const channelPatch = patchText
+				.split("\n---\n")
+				.filter((entry) => entry.trim().length > 0)
+				.map((entry): unknown => JSON.parse(entry))
+				.map((entry) => expectRecord(entry, "OpenClaw config patch"))
+				.find((entry) => recordValue(entry.channels)?.telegram !== undefined);
+			if (!channelPatch) throw new Error("OpenClaw channel patch was not rendered");
+			const patchedChannels = expectRecord(channelPatch.channels, "OpenClaw channel patch");
+			const discordAccounts = expectRecord(
+				expectRecord(patchedChannels.discord, "OpenClaw Discord patch").accounts,
+				"OpenClaw Discord accounts",
+			);
+			const discordAccount = expectRecord(
+				discordAccounts.clawdi_acctdiscord1,
+				"OpenClaw Discord account",
+			);
+			expect(discordAccount).toMatchObject({
+				enabled: true,
+				token: {
+					source: "env",
+					provider: "default",
+					id: "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN",
+				},
+				dmPolicy: "allowlist",
+				allowFrom: ["discord-user"],
+				guilds: { "discord-guild": { requireMention: true } },
+			});
+			expect(Object.keys(discordAccounts)).toEqual(["clawdi_acctdiscord1"]);
 			for (const current of ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"]) {
 				expect({ dmScope: current, resetTriggers: ["/new"], ...sessionPatch }).toEqual({
 					dmScope: "per-account-channel-peer",
@@ -9063,12 +9116,30 @@ exit 64
 			join(home, ".hermes", "config.yaml"),
 			[
 				"custom_root: keep",
+				"group_sessions_per_user: false",
+				"thread_sessions_per_user: true",
 				"streaming:",
 				"  enabled: false",
+				"telegram:",
+				"  dm_policy: allowlist",
+				"  group_policy: allowlist",
+				'  allow_from: ["telegram-user"]',
+				'  group_allow_from: ["telegram-group-user"]',
+				'  group_allowed_chats: ["telegram-chat"]',
+				"  require_mention: true",
+				"  extra:",
+				"    base_url: https://telegram.example.test/bot",
+				"    base_file_url: https://telegram.example.test/file/bot",
 				"discord:",
-				'  allow_from: ["*"]',
-				'  group_allow_from: ["*"]',
+				"  dm_policy: pairing",
+				"  group_policy: allowlist",
+				'  allow_from: ["discord-user"]',
+				'  group_allow_from: ["discord-group-user"]',
+				"  require_mention: true",
+				"  thread_require_mention: true",
+				"  bots_require_inline_mention: true",
 				'  free_response_channels: "123456789"',
+				"  auto_thread: true",
 				"display:",
 				"  theme: user-theme",
 				"  platforms:",
@@ -9076,11 +9147,14 @@ exit 64
 				"      streaming: false",
 				"    telegram:",
 				"      compact: true",
+				"      streaming: false",
 				"platforms:",
 				"  telegram:",
 				"    custom: keep-telegram",
 				"    extra:",
 				"      custom_extra: keep-extra",
+				"      group_sessions_per_user: true",
+				"      thread_sessions_per_user: true",
 				"  discord:",
 				"    custom: keep-discord",
 				"",
@@ -9172,20 +9246,37 @@ exit 64
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("telegram:");
 		expect(hermesConfig).toContain("enabled: true");
-		expect(hermesConfig).toContain("base_url: https://api.telegram.org/bot");
-		expect(hermesConfig).toContain("base_file_url: https://api.telegram.org/file/bot");
 		expect(hermesConfig).toContain("discord:");
-		expect(hermesConfig).toContain("thread_require_mention: false");
+		expect(hermesConfig).toContain("thread_require_mention: true");
 		expect(hermesConfig).not.toContain("telegram-agent-token");
 		expect(hermesConfig).not.toContain("discord-agent-token");
 		const parsedHermesConfig = readHermesConfigYaml(home);
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(parsedHermesConfig.group_sessions_per_user).toBe(false);
-		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
+		expect(parsedHermesConfig.thread_sessions_per_user).toBe(true);
+		expect(parsedHermesConfig.telegram).toMatchObject({
+			enabled: true,
+			dm_policy: "allowlist",
+			group_policy: "allowlist",
+			allow_from: ["telegram-user"],
+			group_allow_from: ["telegram-group-user"],
+			group_allowed_chats: ["telegram-chat"],
+			require_mention: true,
+			extra: {
+				base_url: "https://telegram.example.test/bot",
+				base_file_url: "https://telegram.example.test/file/bot",
+			},
+		});
 		expect(parsedHermesConfig.discord).toMatchObject({
-			allow_from: ["*"],
-			group_allow_from: ["*"],
+			dm_policy: "pairing",
+			group_policy: "allowlist",
+			allow_from: ["discord-user"],
+			group_allow_from: ["discord-group-user"],
+			require_mention: true,
+			thread_require_mention: true,
+			bots_require_inline_mention: true,
 			free_response_channels: "123456789",
+			auto_thread: true,
 		});
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(parsedHermesConfig).toMatchObject({
@@ -9194,7 +9285,7 @@ exit 64
 				theme: "user-theme",
 				platforms: {
 					discord: { streaming: false },
-					telegram: { compact: true, streaming: true },
+					telegram: { compact: true, streaming: false },
 				},
 			},
 			platforms: {
@@ -9202,8 +9293,8 @@ exit 64
 					custom: "keep-telegram",
 					extra: {
 						custom_extra: "keep-extra",
-						group_sessions_per_user: false,
-						thread_sessions_per_user: false,
+						group_sessions_per_user: true,
+						thread_sessions_per_user: true,
 					},
 				},
 				discord: { custom: "keep-discord" },
@@ -9245,12 +9336,23 @@ exit 64
 		expect(discordOnly.installErrors).toEqual([]);
 		const discordOnlyHermesConfig = readHermesConfigYaml(home);
 		expect(discordOnlyHermesConfig.group_sessions_per_user).toBe(false);
-		expect(discordOnlyHermesConfig.thread_sessions_per_user).toBe(false);
-		expect(discordOnlyHermesConfig).not.toHaveProperty(
+		expect(discordOnlyHermesConfig.thread_sessions_per_user).toBe(true);
+		expect(discordOnlyHermesConfig.telegram).toMatchObject({
+			enabled: false,
+			dm_policy: "allowlist",
+			group_policy: "allowlist",
+			allow_from: ["telegram-user"],
+			group_allow_from: ["telegram-group-user"],
+			group_allowed_chats: ["telegram-chat"],
+			require_mention: true,
+		});
+		expect(discordOnlyHermesConfig).toHaveProperty(
 			"platforms.telegram.extra.group_sessions_per_user",
+			true,
 		);
-		expect(discordOnlyHermesConfig).not.toHaveProperty(
+		expect(discordOnlyHermesConfig).toHaveProperty(
 			"platforms.telegram.extra.thread_sessions_per_user",
+			true,
 		);
 
 		const removed = convergeRuntimeManifest(
@@ -9261,37 +9363,40 @@ exit 64
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(clearedHermesConfig.discord).toMatchObject({
-			allow_from: ["*"],
-			group_allow_from: ["*"],
+			dm_policy: "pairing",
+			group_policy: "allowlist",
+			allow_from: ["discord-user"],
+			group_allow_from: ["discord-group-user"],
+			require_mention: true,
+			thread_require_mention: true,
+			bots_require_inline_mention: true,
 			free_response_channels: "123456789",
+			auto_thread: true,
 		});
-		expect(clearedHermesConfig).not.toHaveProperty("group_sessions_per_user");
-		expect(clearedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
+		expect(clearedHermesConfig.group_sessions_per_user).toBe(false);
+		expect(clearedHermesConfig.thread_sessions_per_user).toBe(true);
 		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
-		expect(clearedHermesConfig).not.toHaveProperty(
-			"platforms.telegram.extra.thread_sessions_per_user",
-		);
 		expect(clearedHermesConfig).toMatchObject({
 			custom_root: "keep",
 			display: {
 				theme: "user-theme",
 				platforms: {
 					discord: { streaming: false },
-					telegram: { compact: true },
+					telegram: { compact: true, streaming: false },
 				},
 			},
 			platforms: {
 				telegram: {
 					custom: "keep-telegram",
-					extra: { custom_extra: "keep-extra" },
+					extra: {
+						custom_extra: "keep-extra",
+						group_sessions_per_user: true,
+						thread_sessions_per_user: true,
+					},
 				},
 				discord: { custom: "keep-discord" },
 			},
 		});
-		expect(clearedHermesConfig).not.toHaveProperty(
-			"platforms.telegram.extra.group_sessions_per_user",
-		);
-		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
 	}, 30_000);
 
 	it("projects and removes Hermes native WhatsApp through the stock adapter config", () => {
@@ -9329,6 +9434,10 @@ exit 64
 				"custom_root: keep",
 				"whatsapp:",
 				"  user_owned: keep-whatsapp",
+				"  dm_policy: allowlist",
+				'  allow_from: ["15550000001"]',
+				"  group_policy: allowlist",
+				'  group_allow_from: ["120363000000000000@g.us"]',
 				"platforms:",
 				"  matrix:",
 				"    custom: keep-matrix",
@@ -9336,6 +9445,12 @@ exit 64
 				"    custom: keep-platform",
 				"    extra:",
 				"      custom_extra: keep-extra",
+				"      dm_policy: allowlist",
+				'      allow_from: ["15550000001"]',
+				"      group_policy: allowlist",
+				'      group_allow_from: ["120363000000000000@g.us"]',
+				"      group_sessions_per_user: true",
+				"      thread_sessions_per_user: true",
 				"",
 			].join("\n"),
 		);
@@ -9462,7 +9577,8 @@ exit 64
 			HERMES_EXISTING_ENV: "kept",
 			WHATSAPP_MODE: "bot",
 			WHATSAPP_ALLOWED_USERS: "*",
-			WHATSAPP_ALLOW_ALL_USERS: "true",
+			WHATSAPP_DM_POLICY: "open",
+			WHATSAPP_GROUP_POLICY: "open",
 		});
 		const convergence = convergeRuntimeManifest(projected, paths);
 		expect(convergence.installErrors).toEqual([]);
@@ -9474,10 +9590,27 @@ exit 64
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		expect(existsSync(sessionDir)).toBe(true);
 		expect(readFileSync(legacySentinel, "utf-8")).toBe("preserved\n");
-		expect(readHermesConfigYaml(home)).toHaveProperty(
-			"platforms.whatsapp.extra.session_path",
-			sessionDir,
-		);
+		expect(readHermesConfigYaml(home)).toMatchObject({
+			whatsapp: {
+				dm_policy: "allowlist",
+				allow_from: ["15550000001"],
+				group_policy: "allowlist",
+				group_allow_from: ["120363000000000000@g.us"],
+			},
+			platforms: {
+				whatsapp: {
+					extra: {
+						session_path: sessionDir,
+						dm_policy: "allowlist",
+						allow_from: ["15550000001"],
+						group_policy: "allowlist",
+						group_allow_from: ["120363000000000000@g.us"],
+						group_sessions_per_user: true,
+						thread_sessions_per_user: true,
+					},
+				},
+			},
+		});
 		const initialHermesRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 		const hermesDropIn = join(
 			paths.systemdUserRoot,
@@ -9576,12 +9709,24 @@ exit 64
 		const removedHermesConfig = readHermesConfigYaml(home);
 		expect(removedHermesConfig).toHaveProperty("whatsapp", {
 			user_owned: "keep-whatsapp",
+			dm_policy: "allowlist",
+			allow_from: ["15550000001"],
+			group_policy: "allowlist",
+			group_allow_from: ["120363000000000000@g.us"],
 			enabled: false,
 		});
 		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp", {
 			custom: "keep-platform",
 			enabled: false,
-			extra: { custom_extra: "keep-extra" },
+			extra: {
+				custom_extra: "keep-extra",
+				dm_policy: "allowlist",
+				allow_from: ["15550000001"],
+				group_policy: "allowlist",
+				group_allow_from: ["120363000000000000@g.us"],
+				group_sessions_per_user: true,
+				thread_sessions_per_user: true,
+			},
 		});
 		expect(removedHermesConfig).toMatchObject({
 			custom_root: "keep",
@@ -9590,7 +9735,8 @@ exit 64
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ENABLED).toBeUndefined();
 		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
-		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOW_ALL_USERS).toBeUndefined();
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_DM_POLICY).toBeUndefined();
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_GROUP_POLICY).toBeUndefined();
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("WHATSAPP_ENABLED");
 		const removedHermesRevision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
 

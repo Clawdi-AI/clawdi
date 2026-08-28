@@ -26,9 +26,11 @@ async def main() -> None:
     for key, value in projection["run"]["env"].items():
         os.environ[key] = value
     if os.environ.get("WHATSAPP_ALLOWED_USERS") != "*":
-        raise RuntimeError("managed Hermes projection must use the stock wildcard allowlist")
-    if os.environ.get("WHATSAPP_ALLOW_ALL_USERS") != "true":
-        raise RuntimeError("managed Hermes projection must explicitly opt in to allow all users")
+        raise RuntimeError("managed Hermes projection must use the stock bridge wildcard")
+    if os.environ.get("WHATSAPP_DM_POLICY") != "open":
+        raise RuntimeError("managed Hermes projection must use the stock open DM policy")
+    if os.environ.get("WHATSAPP_GROUP_POLICY") != "open":
+        raise RuntimeError("managed Hermes projection must use the stock open group policy")
     discover_plugins()
 
     received: list[dict[str, Any]] = []
