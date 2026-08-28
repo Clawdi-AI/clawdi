@@ -3671,16 +3671,22 @@ test("hosted terminal keeps its fitted bottom row visible", async ({ page }) => 
 		deployments: [liveToolDeployment],
 		deploymentListResponses: [[liveToolDeployment]],
 	});
+	const terminalPath = `/agents/${railHostedEnvironmentId}/terminal`;
 
 	for (const viewportSize of [
 		{ width: 1440, height: 900 },
 		{ width: 390, height: 844 },
 	] as const) {
 		await page.setViewportSize(viewportSize);
-		await page.goto(`/agents/${railHostedEnvironmentId}/terminal`);
+		await page.goto(terminalPath);
 		const terminal = page.locator(".hosted-terminal");
+		const openInNewTab = page.locator('a[aria-label="Open terminal in new tab"]');
 		await expect(terminal.locator(".xterm-screen")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Retry terminal" })).toBeEnabled();
+		await expect(openInNewTab).toHaveAttribute("href", terminalPath);
+		await expect(openInNewTab).toHaveAttribute("target", "_blank");
+		await expect(openInNewTab).toHaveAttribute("rel", "noopener noreferrer");
+		await expect(openInNewTab).toHaveAttribute("title", "Open terminal in new tab");
 
 		const geometry = await terminal.evaluate((host) => {
 			const requiredElement = (selector: string) => {

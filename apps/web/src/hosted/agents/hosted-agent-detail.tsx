@@ -635,6 +635,7 @@ export function HostedAgentDetail({
 							key={deployment.resource.id}
 							deployment={deployment}
 							agentName={availableAgentTitle}
+							terminalHref={terminalHref}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
@@ -2170,9 +2171,11 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 function TerminalTab({
 	deployment,
 	agentName,
+	terminalHref,
 }: {
 	deployment: HostedDeployment;
 	agentName: string;
+	terminalHref: string;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
@@ -2210,6 +2213,16 @@ function TerminalTab({
 	const terminalAction = (
 		<>
 			<TerminalStatusIndicator status={terminalStatus} />
+			<Button
+				render={<a href={terminalHref} target="_blank" rel="noopener noreferrer" />}
+				nativeButton={false}
+				variant="outline"
+				size="icon-sm"
+				aria-label="Open terminal in new tab"
+				title="Open terminal in new tab"
+			>
+				<ExternalLink />
+			</Button>
 			<Button
 				type="button"
 				variant="outline"
