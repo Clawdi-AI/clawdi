@@ -87,6 +87,8 @@ const OPENCLAW_API_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	google_generate_content: "google-generative-ai",
 };
 
+const CLAWDI_MANAGED_MEMORY_EMBEDDING_MODEL = "text-embedding-3-small";
+
 const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 	openai_chat: "chat_completions",
 	// Hermes' current target-native label for the OpenAI Responses API.
@@ -286,6 +288,10 @@ function buildOpenClawProjection(
 	primaryProvider: ProjectionProvider,
 	primaryModel: AgentPrimaryModel,
 ): string {
+	const hasClawdiManagedProvider = providers.some(
+		(provider) =>
+			provider.id === CLAWDI_MANAGED_PROVIDER_ID && provider.managed_by === "clawdi",
+	);
 	const projectedProviders = Object.fromEntries(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
@@ -327,6 +333,12 @@ function buildOpenClawProjection(
 				model: {
 					primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
 				},
+				memorySearch: hasClawdiManagedProvider
+					? {
+							provider: CLAWDI_MANAGED_PROVIDER_ID,
+							model: CLAWDI_MANAGED_MEMORY_EMBEDDING_MODEL,
+						}
+					: undefined,
 			},
 		},
 		models:

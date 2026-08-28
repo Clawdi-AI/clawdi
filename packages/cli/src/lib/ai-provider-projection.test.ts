@@ -9,6 +9,7 @@ import {
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
+import { buildOpenClawHostedProviderPatch } from "../runtime/manifest-providers";
 import { buildAgentTargetProjection } from "./ai-provider-projection";
 
 const byokOpenAiCatalog: AiProviderCatalog = {
@@ -198,7 +199,12 @@ describe("AI provider projection", () => {
 		expect(openclaw.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
 		expect(openclaw.primary_model).toEqual(primaryModel);
 		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
-			agents?: { defaults?: { model?: { primary?: string } } };
+			agents?: {
+				defaults?: {
+					model?: { primary?: string };
+					memorySearch?: { model?: string; provider?: string };
+				};
+			};
 			models?: {
 				providers?: Record<
 					string,
@@ -207,6 +213,10 @@ describe("AI provider projection", () => {
 			};
 		};
 		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/grok-4.6");
+		expect(openclawPatch.agents?.defaults?.memorySearch).toEqual({
+			provider: CLAWDI_MANAGED_PROVIDER_ID,
+			model: "text-embedding-3-small",
+		});
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
 			baseUrl: "https://managed.example.test/v1",
 			auth: "api-key",
@@ -280,6 +290,24 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
 		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
+		expect(openclaw.files[0]?.content).not.toContain('"memorySearch"');
+		const managedToByokPatch = JSON.parse(
+			buildOpenClawHostedProviderPatch(
+				{
+					catalog: byokOpenAiCatalog,
+					primaryModel: openclaw.primary_model,
+				},
+				[CLAWDI_MANAGED_PROVIDER_ID],
+			).content,
+		) as {
+			agents?: { defaults?: { memorySearch?: { model?: null; provider?: null } } };
+			models?: { providers?: Record<string, unknown> };
+		};
+		expect(managedToByokPatch.agents?.defaults?.memorySearch).toEqual({
+			provider: null,
+			model: null,
+		});
+		expect(managedToByokPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toBeNull();
 
 		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog);
 		expect(hermes.files[0]?.content).toContain('provider: "custom:openai-main"');

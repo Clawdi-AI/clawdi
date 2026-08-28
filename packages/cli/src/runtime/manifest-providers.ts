@@ -1,6 +1,9 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
+import {
+	isClawdiManagedV2ProviderId,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+} from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -571,9 +574,10 @@ export function buildOpenClawHostedProviderPatch(
 ): OpenClawHostedProviderPatch {
 	if (!projectionInput) {
 		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
+		const deletePatch = `${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`;
 		return {
 			apply: deletedProviderIds.length > 0,
-			content: `${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
+			content: withOpenClawManagedMemoryCleanup(deletePatch, deletedProviderIds),
 			providerIds: [],
 		};
 	}
@@ -588,9 +592,14 @@ export function buildOpenClawHostedProviderPatch(
 	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
 	const providerPatchContent =
 		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
+	const patchWithDeletes = mergeProviderDeletes(
+		"openclaw",
+		providerPatchContent,
+		deletedProviderIds,
+	);
 	return {
 		apply: true,
-		content: mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
+		content: withOpenClawManagedMemoryCleanup(patchWithDeletes, deletedProviderIds),
 		providerIds,
 	};
 }
@@ -626,6 +635,26 @@ function withOpenClawProviderMode(patchContent: string, mode: "merge" | "replace
 	const patch = { ...root };
 	const models = { ...(recordValue(patch.models) ?? {}), mode };
 	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
+}
+
+function withOpenClawManagedMemoryCleanup(
+	patchContent: string,
+	deletedProviderIds: readonly string[],
+): string {
+	if (!deletedProviderIds.some(isClawdiManagedV2ProviderId)) return patchContent;
+	const root = providerPatchRoot("openclaw", patchContent);
+	if (!root) return patchContent;
+	const patch = { ...root };
+	const agents = { ...(recordValue(patch.agents) ?? {}) };
+	const defaults = { ...(recordValue(agents.defaults) ?? {}) };
+	defaults.memorySearch = {
+		...(recordValue(defaults.memorySearch) ?? {}),
+		provider: null,
+		model: null,
+	};
+	agents.defaults = defaults;
+	patch.agents = agents;
 	return `${JSON.stringify(patch, null, 2)}\n`;
 }
 function openClawProviderDeletePatch(
