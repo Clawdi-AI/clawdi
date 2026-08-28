@@ -3710,6 +3710,9 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 	await page.goto(terminalPath);
 	const openButton = page.getByRole("button", { name: "Open Terminal in new window" });
 	await expect(openButton).toContainText("Open in new window");
+	expect(
+		await openButton.evaluate((button) => button === button.parentElement?.lastElementChild),
+	).toBe(true);
 	const popupPromise = context.waitForEvent("page");
 	await openButton.click();
 	const popup = await popupPromise;

@@ -134,7 +134,7 @@ import {
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import {
 	useFilesGrantBootstrap,
-	useOpenFilesInNewTab,
+	useOpenFilesInNewWindow,
 } from "@/hosted/agents/use-files-grant-bootstrap";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
@@ -1758,23 +1758,18 @@ function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: stri
 		);
 	}
 
-	return <FilesFrame url={url} />;
+	return <FilesFrame deploymentId={deployment.resource.id} url={url} />;
 }
 
-function FilesFrame({ url }: { url: string }) {
+function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }) {
 	const bootstrap = useFilesGrantBootstrap(url);
-	const openInNewTab = useOpenFilesInNewTab(url);
+	const openInNewWindow = useOpenFilesInNewWindow(url, deploymentId);
 
 	return (
 		<LiveToolFrame
 			icon={FolderOpen}
 			title="Files"
-			action={
-				<Button nativeButton variant="outline" size="sm" onClick={() => void openInNewTab()}>
-					Open in new tab
-					<ExternalLink className="size-3.5" />
-				</Button>
-			}
+			action={<OpenInNewWindowButton label="Files" onClick={() => void openInNewWindow()} />}
 		>
 			{bootstrap === "error" ? (
 				<EmptyState
@@ -1851,6 +1846,30 @@ function RuntimeUiCredentialRow({
 				</Button>
 			</div>
 		</div>
+	);
+}
+
+function OpenInNewWindowButton({
+	label,
+	onClick,
+	disabled = false,
+}: {
+	label: string;
+	onClick: () => void;
+	disabled?: boolean;
+}) {
+	return (
+		<Button
+			type="button"
+			variant="outline"
+			size="sm"
+			disabled={disabled}
+			onClick={onClick}
+			aria-label={`Open ${label} in new window`}
+		>
+			<ExternalLink className="size-3.5" />
+			<span className="hidden sm:inline">Open in new window</span>
+		</Button>
 	);
 }
 
@@ -2020,17 +2039,7 @@ function RuntimeUiAccessDialog({
 						Reconnect
 					</Button>
 				)}
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					disabled={!windowTarget}
-					onClick={openRuntime}
-					aria-label={`Open ${label} in new window`}
-				>
-					<ExternalLink className="size-3.5" />
-					<span className="hidden sm:inline">Open in new window</span>
-				</Button>
+				<OpenInNewWindowButton label={label} disabled={!windowTarget} onClick={openRuntime} />
 			</div>
 			{runtime === "hermes" ? (
 				<DialogContent
@@ -2233,18 +2242,6 @@ function TerminalTab({
 	const terminalAction = (
 		<>
 			<TerminalStatusIndicator status={terminalStatus} />
-			{standalone ? null : (
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					onClick={openTerminalWindow}
-					aria-label="Open Terminal in new window"
-				>
-					<ExternalLink className="size-3.5" />
-					<span className="hidden sm:inline">Open in new window</span>
-				</Button>
-			)}
 			<Button
 				type="button"
 				variant="outline"
@@ -2260,6 +2257,7 @@ function TerminalTab({
 					{terminalStatus === "disconnected" ? "Retry" : "Reconnect"}
 				</span>
 			</Button>
+			{standalone ? null : <OpenInNewWindowButton label="Terminal" onClick={openTerminalWindow} />}
 		</>
 	);
 
