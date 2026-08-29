@@ -20,6 +20,7 @@ database migration, CI, and implementation details.
 ### Changed
 
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
+- Session search keeps its controls visible in long conversations, supports keyboard match navigation, shows clearer loading feedback, and gives message matches more context in result cards.
 
 ### Fixed
 

@@ -26,7 +26,7 @@ export function SessionSearchMatchExcerpt({
 	className?: string;
 }) {
 	return (
-		<span className={cn("truncate", className)} title={match.excerpt}>
+		<span className={cn(className)} title={match.excerpt}>
 			<span className="font-medium capitalize">{match.role}</span>
 			{": "}
 			<HighlightedExcerpt excerpt={match.excerpt} query={query} />

@@ -129,15 +129,15 @@ test("opens a message search result and returns to the same filtered list", asyn
 		.click();
 	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
 	await expect(page.getByText("1 of 2")).toBeVisible();
-	await page.getByRole("button", { name: "Next match" }).click();
+	const detailSearch = page.getByRole("textbox", { name: "Search this session" });
+	await detailSearch.press("Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "11");
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
 		"Verified the authentication timeout no longer recurs",
 	);
 	await expect(page.getByText("2 of 2")).toBeVisible();
-	await page.getByRole("button", { name: "Previous match" }).click();
+	await detailSearch.press("Shift+Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
-	const detailSearch = page.getByRole("textbox", { name: "Search this session" });
 	await detailSearch.fill("");
 	await detailSearch.pressSequentially("no longer", { delay: 20 });
 	await expect(page.getByRole("button", { name: "Next match" })).toBeDisabled();
