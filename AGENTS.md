@@ -1,7 +1,7 @@
 # Clawdi
 
-iCloud for AI Agents: CLI, FastAPI backend, TanStack dashboard, shared types,
-agent adapters, memory, vault, skills, channels, and sync.
+The best home for all your AI agents: CLI, FastAPI backend, TanStack dashboard,
+shared types, agent adapters, memory, vault, skills, channels, and sync.
 
 Maintain agent-facing repository docs with
 [`docs/agent-docs-guide.md`](docs/agent-docs-guide.md).

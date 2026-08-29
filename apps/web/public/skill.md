@@ -6,7 +6,7 @@ homepage: https://cloud.clawdi.ai
 
 # Clawdi Cloud Setup
 
-You're helping the user connect this machine to Clawdi Cloud — a centralized dashboard for AI agent sessions, skills, memory, and secrets across machines.
+You're helping the user connect this machine to Clawdi Cloud — the best home for all their AI agents, environments, sessions, memory, skills, cron jobs, and app connections.
 
 This walkthrough takes 2-3 minutes. The end state: the user's existing session history shows up at their Clawdi Cloud dashboard. If you stop earlier, the dashboard stays empty and they assume the product is broken.
 
