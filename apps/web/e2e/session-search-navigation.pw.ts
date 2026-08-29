@@ -129,7 +129,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 		.click();
 	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
 	await expect(page.getByText("1 / 2")).toBeVisible();
-	const detailSearch = page.getByRole("textbox", { name: "Search this session" });
+	const detailSearch = page.getByRole("textbox", { name: "Search messages" });
 	await detailSearch.press("Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "11");
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
@@ -282,6 +282,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	});
 
 	await page.goto(`/sessions/${SESSION_ID}?timelineView=tools`);
+	await expect(page.getByRole("textbox", { name: "Search messages" })).not.toBeVisible();
 	const toolActivity = page.getByRole("button", { name: /read.*Done/ });
 	await expect(toolActivity).toBeVisible();
 	await expect(page.getByRole("button", { name: /search.*Error/ })).toBeVisible();
@@ -295,24 +296,24 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).not.toBeVisible();
+	await page.getByRole("textbox", { name: "Search messages" }).fill("Read the repository");
+	await expect(page).toHaveURL(
+		(url) => url.searchParams.get("matchQuery") === "Read the repository",
+	);
 
 	await page.getByRole("button", { name: "Tool activity" }).click();
-	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "tools");
-	await page.getByRole("textbox", { name: "Search this session" }).fill("Final answer");
+	await expect(page).toHaveURL((url) => {
+		return url.searchParams.get("timelineView") === "tools" && !url.searchParams.has("matchQuery");
+	});
+	await expect(page.getByRole("textbox", { name: "Search messages" })).not.toBeVisible();
 	await expect(page.getByRole("button", { name: "Tool activity" })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
 	await expect(toolActivity).toBeVisible();
-	await expect(page).toHaveURL((url) => {
-		return (
-			url.searchParams.get("matchQuery") === "Final answer" &&
-			url.searchParams.get("timelineView") === "tools"
-		);
-	});
-	await expect(page.getByText("0 / 0")).toBeVisible();
 
 	await page.getByRole("button", { name: "Agent messages" }).click();
+	await page.getByRole("textbox", { name: "Search messages" }).fill("Final answer");
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.searchParams.get("matchQuery") === "Final answer" &&

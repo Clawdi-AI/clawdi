@@ -58,14 +58,22 @@ describe("Session search anchors", () => {
 		});
 	});
 
-	test("canonicalizes timeline filters independently from transcript search", () => {
+	test("keeps message search out of the tools-only timeline", () => {
 		expect(validateSessionDetailSearch({ timelineView: "tools" })).toEqual({
 			timelineView: "tools",
 		});
 		expect(validateSessionDetailSearch({ timelineView: "tools", matchQuery: " answer " })).toEqual({
-			matchQuery: "answer",
 			timelineView: "tools",
 		});
+		expect(
+			validateSessionDetailSearch({
+				timelineView: "tools",
+				matchQuery: "answer",
+				matchKind: "event_seq",
+				matchPosition: 42,
+				matchRevision: "events:revision",
+			}),
+		).toEqual({ timelineView: "tools" });
 		expect(validateSessionDetailSearch({ timelineView: "unknown" })).toEqual({});
 		expect(sessionTimelineViewLink("session-id", "all")).toEqual({
 			to: "/sessions/$id",
@@ -81,6 +89,16 @@ describe("Session search anchors", () => {
 			to: "/sessions/$id",
 			params: { id: "session-id" },
 			search: { matchQuery: "answer", timelineView: "user" },
+		});
+		expect(sessionTimelineViewLink("session-id", "tools", { searchQuery: " answer " })).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: { timelineView: "tools" },
+		});
+		expect(sessionDetailSearchLink("session-id", "answer", { timelineView: "tools" })).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: { timelineView: "tools" },
 		});
 	});
 

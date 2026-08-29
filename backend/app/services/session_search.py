@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -16,6 +17,8 @@ from app.services.session_content import load_session_events, load_session_messa
 from app.services.session_events import project_visible_messages
 
 type SearchRole = Literal["user", "assistant"]
+
+_UUID_PREFIX_RE = re.compile(r"^[0-9a-f]{8,32}$", re.IGNORECASE)
 
 
 class SessionSearchFileStore(Protocol):
@@ -86,6 +89,13 @@ async def event_search_projection_complete(
 def escaped_contains_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def _uuid_prefix_pattern(value: str) -> str | None:
+    compact = value.strip().replace("-", "")
+    if not _UUID_PREFIX_RE.fullmatch(compact):
+        return None
+    return f"{compact}%"
 
 
 def session_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
@@ -176,18 +186,23 @@ def session_search_matches(user_id: UUID, query: str) -> Subquery:
     """Return every exact phrase match with one ranked body hit per Session."""
     pattern = escaped_contains_pattern(query)
     message_match = best_session_message_matches(user_id, query)
-    metadata_match = or_(
+    metadata_matches = [
         func.coalesce(Session.summary, "").ilike(pattern, escape="\\"),
         func.coalesce(Session.project_path, "").ilike(pattern, escape="\\"),
         Session.local_session_id.ilike(pattern, escape="\\"),
-        cast(Session.id, String).ilike(pattern, escape="\\"),
-    )
-    metadata_score = func.greatest(
+    ]
+    metadata_scores = [
         func.similarity(func.coalesce(Session.summary, ""), query),
         func.similarity(func.coalesce(Session.project_path, ""), query),
         func.similarity(Session.local_session_id, query),
-        func.similarity(cast(Session.id, String), query),
-    )
+    ]
+    uuid_prefix = _uuid_prefix_pattern(query)
+    if uuid_prefix is not None:
+        compact_session_id = func.replace(cast(Session.id, String), "-", "")
+        metadata_matches.append(compact_session_id.ilike(uuid_prefix))
+        metadata_scores.append(func.similarity(compact_session_id, uuid_prefix[:-1]))
+    metadata_match = or_(*metadata_matches)
+    metadata_score = func.greatest(*metadata_scores)
     message_score = func.coalesce(message_match.c.score, 0.0)
     return (
         select(

@@ -60,6 +60,49 @@ describe("SessionTimelineList", () => {
 		expect(markup.match(/Error/g)).toHaveLength(1);
 	});
 
+	test("preserves repeated tool calls that reuse a call ID", () => {
+		const markup = render([
+			{
+				kind: "tool_call",
+				position: 1,
+				call_id: "reused-call",
+				name: "first-attempt",
+				arguments_json: '{"attempt":1}',
+				timestamp,
+			},
+			{
+				kind: "tool_call",
+				position: 2,
+				call_id: "reused-call",
+				name: "second-attempt",
+				arguments_json: '{"attempt":2}',
+				timestamp,
+			},
+			{
+				kind: "tool_result",
+				position: 3,
+				call_id: "reused-call",
+				name: "first-attempt",
+				status: "completed",
+				content: "first result",
+				timestamp,
+			},
+			{
+				kind: "tool_result",
+				position: 4,
+				call_id: "reused-call",
+				name: "second-attempt",
+				status: "completed",
+				content: "second result",
+				timestamp,
+			},
+		]);
+
+		expect(markup.match(/<button/g)).toHaveLength(2);
+		expect(markup).toContain("first-attempt");
+		expect(markup).toContain("second-attempt");
+	});
+
 	test("starts a new assistant group when the model changes", () => {
 		const markup = render([
 			{

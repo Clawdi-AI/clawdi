@@ -2521,7 +2521,10 @@ async def list_sessions(
     q: str | None = Query(
         default=None,
         max_length=500,
-        description="Case-insensitive phrase search on summary/project/id and visible message text",
+        description=(
+            "Case-insensitive phrase search on summary/project/local ID and visible message text; "
+            "cloud session IDs match by UUID prefix"
+        ),
     ),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
@@ -2699,15 +2702,19 @@ async def list_sessions(
             sort_col = search_matches.c.score
     else:
         sort_col = _SESSION_SORT_COLUMNS[sort]
+    # Relevance ties are common because visible-message matches receive a
+    # constant score. Prefer recent Sessions before the stable UUID tiebreaker,
+    # matching the MCP search contract.
+    order_columns = [sort_col.asc() if order == "asc" else sort_col.desc()]
+    if sort == "relevance" and search_matches is not None:
+        order_columns.append(Session.last_activity_at.desc())
     # Tiebreaker on `id` for deterministic offset-pagination order.
     # Without this, two rows with identical `last_activity_at`
     # values (same `func.greatest()` clamp output, same
     # `func.now()` from a backfill) can swap positions across
     # page boundaries — UUIDs are unique so this tiebreaker is total.
-    ordered = base.order_by(
-        sort_col.asc() if order == "asc" else sort_col.desc(),
-        Session.id.asc(),
-    )
+    order_columns.append(Session.id.asc())
+    ordered = base.order_by(*order_columns)
 
     rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
 

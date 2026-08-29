@@ -370,27 +370,33 @@ interface PairedToolActivity {
 
 // Parallel tool use is commonly serialized as call A, call B, result A,
 // result B. Pair a contiguous tool run by its stable call ID while preserving
-// the first-seen order of each activity.
+// the first-seen order and every row when a broken producer reuses an ID.
 function collectToolActivities(items: TimelineEntry[], startIndex: number) {
-	const activities = new Map<string, PairedToolActivity>();
+	const activities: PairedToolActivity[] = [];
+	const activitiesByCallId = new Map<string, PairedToolActivity[]>();
 	let nextIndex = startIndex;
 	while (nextIndex < items.length) {
 		const item = items[nextIndex];
 		if (!isToolEntry(item)) break;
 
-		let activity = activities.get(item.call_id);
+		const matching = activitiesByCallId.get(item.call_id) ?? [];
+		let activity = matching.find((candidate) =>
+			item.kind === "tool_call" ? candidate.call === undefined : candidate.result === undefined,
+		);
 		if (!activity) {
 			activity = {
 				firstItem: item,
 				firstIndex: nextIndex,
 			};
-			activities.set(item.call_id, activity);
+			matching.push(activity);
+			activitiesByCallId.set(item.call_id, matching);
+			activities.push(activity);
 		}
-		if (item.kind === "tool_call") activity.call ??= item;
-		else activity.result ??= item;
+		if (item.kind === "tool_call") activity.call = item;
+		else activity.result = item;
 		nextIndex++;
 	}
-	return { activities: [...activities.values()], nextIndex };
+	return { activities, nextIndex };
 }
 
 function ToolActivity({

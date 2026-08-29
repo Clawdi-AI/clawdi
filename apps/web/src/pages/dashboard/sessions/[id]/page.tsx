@@ -411,9 +411,10 @@ export function SessionDetailContent({
 		searchActive &&
 		(normalizedSearchQuery !== debouncedSearchQuery || isContentFetching || isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
+		const retainedSearchQuery = selected === "tools" ? undefined : normalizedSearchQuery;
 		if (agentId) {
 			const search = {
-				...(normalizedSearchQuery ? { matchQuery: normalizedSearchQuery } : {}),
+				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
 				...(selected === "all" ? {} : { timelineView: selected }),
 			};
 			void router.navigate({
@@ -426,7 +427,7 @@ export function SessionDetailContent({
 		void router.navigate({
 			...sessionTimelineViewLink(sessionId, selected, {
 				returnTo,
-				searchQuery: normalizedSearchQuery,
+				searchQuery: retainedSearchQuery,
 			}),
 			replace: true,
 			resetScroll: false,
@@ -531,19 +532,31 @@ export function SessionDetailContent({
 
 			{session.has_content ? (
 				<div className="sticky top-(--header-height) z-10 -mx-4 border-y bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
-					<div className="grid min-w-0 gap-2 md:grid-cols-[minmax(16rem,1fr)_auto] md:items-center">
-						<SessionSearchNavigation
-							sessionId={sessionId}
-							agentId={agentId}
-							query={normalizedSearchQuery}
-							timelineView={timelineView}
-							navigation={searchNavigation}
-							returnTo={returnTo}
-							isSearching={isSearchUpdating}
-							hasSearchError={searchActive && isContentError}
-							className="md:max-w-xl"
-						/>
-						<div className="flex min-w-0 items-center justify-between gap-2 md:justify-end">
+					<div
+						className={cn(
+							"grid min-w-0 gap-2 md:items-center",
+							timelineView === "tools" ? "md:grid-cols-1" : "md:grid-cols-[minmax(16rem,1fr)_auto]",
+						)}
+					>
+						{timelineView === "tools" ? null : (
+							<SessionSearchNavigation
+								sessionId={sessionId}
+								agentId={agentId}
+								query={normalizedSearchQuery}
+								timelineView={timelineView}
+								navigation={searchNavigation}
+								returnTo={returnTo}
+								isSearching={isSearchUpdating}
+								hasSearchError={searchActive && isContentError}
+								className="md:max-w-xl"
+							/>
+						)}
+						<div
+							className={cn(
+								"flex min-w-0 items-center justify-between gap-2 md:justify-end",
+								timelineView === "tools" && "md:justify-self-end",
+							)}
+						>
 							<ToggleGroup
 								value={[timelineView]}
 								onValueChange={(values) => {

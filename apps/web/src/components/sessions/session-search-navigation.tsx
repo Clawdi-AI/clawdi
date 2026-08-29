@@ -118,7 +118,7 @@ export function SessionSearchNavigation({
 
 	return (
 		<nav
-			aria-label="Search this session"
+			aria-label="Search messages"
 			className={cn(
 				"flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground",
 				className,
@@ -127,8 +127,8 @@ export function SessionSearchNavigation({
 			<SearchInput
 				value={draftQuery}
 				onChange={updateQuery}
-				placeholder="Search this session…"
-				ariaLabel="Search this session"
+				placeholder="Search messages…"
+				ariaLabel="Search messages"
 				className="min-w-36 flex-1"
 				ariaKeyShortcuts="Enter Shift+Enter Escape"
 				onKeyDown={(event) => {
@@ -150,7 +150,6 @@ export function SessionSearchNavigation({
 					<span
 						className="inline-flex min-w-10 shrink-0 items-center justify-center gap-1 tabular-nums text-foreground"
 						aria-live="polite"
-						title={!isSearching && !hasSearchError && !activeNavigation ? "No matches" : undefined}
 					>
 						{isSearching ? (
 							<>
@@ -158,13 +157,16 @@ export function SessionSearchNavigation({
 								<span className="sr-only">Searching</span>
 							</>
 						) : null}
-						{hasSearchError
-							? "Unavailable"
-							: isSearching
-								? null
-								: activeNavigation
-									? `${activeNavigation.index} / ${activeNavigation.total}`
-									: "0 / 0"}
+						{hasSearchError ? (
+							"Unavailable"
+						) : isSearching ? null : activeNavigation ? (
+							`${activeNavigation.index} / ${activeNavigation.total}`
+						) : (
+							<>
+								<span aria-hidden="true">0 / 0</span>
+								<span className="sr-only">No matches</span>
+							</>
+						)}
 					</span>
 					<MatchButton
 						label="Previous match"
