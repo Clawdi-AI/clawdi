@@ -1,9 +1,8 @@
-import asyncio
-import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import anyio
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, ExceptionContext
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
@@ -16,8 +15,6 @@ from app.services.metrics import (
     db_pool_checked_out,
     db_query_duration,
 )
-
-log = logging.getLogger(__name__)
 
 _QUERY_STARTED_AT = "clawdi_query_started_at"
 _CONNECTION_CHECKED_OUT_AT = "clawdi_connection_checked_out_at"
@@ -106,31 +103,23 @@ event.listen(engine.sync_engine, "handle_error", _handle_error)
 event.listen(engine.sync_engine.pool, "checkout", _connection_checkout)
 event.listen(engine.sync_engine.pool, "checkin", _connection_checkin)
 
-async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
 
 async def _close_session(session: AsyncSession) -> None:
-    """Return the connection before propagating request cancellation."""
-    close_task = asyncio.create_task(session.close())
-    cancellation: asyncio.CancelledError | None = None
-    while not close_task.done():
-        try:
-            await asyncio.shield(close_task)
-        except asyncio.CancelledError as exc:
-            cancellation = exc
-        except Exception:
-            if cancellation is None:
-                raise
-            log.exception("Database session cleanup failed during request cancellation")
-            raise cancellation from None
+    """Return the connection before leaving a cancelled request scope."""
+    with anyio.CancelScope(shield=True):
+        await session.close()
 
-    if cancellation is not None:
-        try:
-            close_task.result()
-        except Exception:
-            log.exception("Database session cleanup failed during request cancellation")
-        raise cancellation
-    close_task.result()
+
+class _CancellationSafeAsyncSession(AsyncSession):
+    async def __aexit__(self, type_: object, value: object, traceback: object) -> None:
+        await _close_session(self)
+
+
+async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    engine,
+    class_=_CancellationSafeAsyncSession,
+    expire_on_commit=False,
+)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
