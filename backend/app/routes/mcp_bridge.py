@@ -35,6 +35,7 @@ from app.core.auth import (
 )
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to, resolve_default_write_project
+from app.core.query_utils import search_excerpt
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
@@ -51,6 +52,11 @@ from app.services.composio import (
 )
 from app.services.file_store import get_file_store
 from app.services.memory_provider import get_memory_provider
+from app.services.memory_recall import (
+    bump_recall_counts,
+    recall_counting_enabled,
+    recall_ids_from_hits,
+)
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
 from app.services.session_content import (
     SessionContentInvalid,
@@ -59,7 +65,7 @@ from app.services.session_content import (
     session_has_uploaded_content,
 )
 from app.services.session_export import session_to_markdown
-from app.services.session_search import session_search_excerpt, session_search_matches
+from app.services.session_search import session_search_matches
 from app.services.vault_crypto import decrypt
 
 logger = logging.getLogger(__name__)
@@ -714,6 +720,8 @@ async def _tool_memory_search(
         limit=parsed.limit,
     )
     await attach_source_machines(db, auth, hits)
+    if hits and recall_counting_enabled():
+        await bump_recall_counts(auth.user_id, recall_ids_from_hits(hits))
     text = (
         "\n\n".join(f"[{item.get('category', 'fact')}] {item.get('content', '')}" for item in hits)
         if hits
@@ -790,7 +798,7 @@ async def _tool_session_search(
         model = f" · {session.model}" if session.model else ""
         message_match = ""
         if isinstance(message_content, str) and message_role in ("user", "assistant"):
-            excerpt = session_search_excerpt(message_content, parsed.query)
+            excerpt = search_excerpt(message_content, parsed.query)
             message_match = f"\n  - matched {message_role}: {excerpt}"
         lines.append(
             f"- **{summary}**{project}{model}\n"

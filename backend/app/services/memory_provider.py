@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 
 from pydantic import BaseModel, JsonValue
 from sqlalchemy import select, text
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.query_utils import like_needle
 from app.models.memory import Memory
 from app.services.embedding import Embedder, EmbeddingUpstreamError, resolve_embedder
 from app.services.memory_provider_mem0 import Mem0Provider
@@ -32,15 +32,14 @@ class _RawMemorySearchRow(BaseModel):
     created_at: datetime
     source_session_id: uuid.UUID | None = None
     source_environment_id: uuid.UUID | None = None
-    combined_score: float | None = None
 
 
 class BuiltinProvider:
     """Memory provider backed by PostgreSQL.
 
-    Adaptive: FTS (tsvector + ts_rank) + pg_trgm fuzzy is always on.
-    When an `Embedder` is supplied, also does pgvector similarity search
-    and merges results with temporal decay and MMR-style diversity rerank.
+    FTS and pg_trgm provide lexical recall. When an `Embedder` is supplied,
+    pgvector results are merged with the lexical ranking using reciprocal
+    rank fusion.
     """
 
     def __init__(self, db: AsyncSession, embedder: Embedder | None = None):
@@ -89,18 +88,20 @@ class BuiltinProvider:
         limit: int = 50,
         category: str | None = None,
     ) -> list[MemoryItem]:
+        query = query.strip()
+        if not query:
+            return []
         fts_rows = await self._search_fts(user_id, query, limit, category)
         if self.embedder is None:
-            return [_strip_scores(r) for r in fts_rows]
+            return fts_rows
 
         try:
             vec_rows = await self._search_vector(user_id, query, limit, category)
         except Exception as e:
             log.warning("vector search failed, using FTS-only: %s", e)
-            return [_strip_scores(r) for r in fts_rows]
+            return fts_rows
 
-        merged = _merge_hybrid(vec_rows, fts_rows, limit)
-        return [_strip_scores(r) for r in merged]
+        return _reciprocal_rank_fusion((fts_rows, vec_rows), limit)
 
     async def _search_fts(
         self,
@@ -109,43 +110,45 @@ class BuiltinProvider:
         limit: int,
         category: str | None,
     ) -> list[MemoryItem]:
-        """FTS + trigram hybrid with strict/relaxed score floor.
-
-        Internal rows keep `combined_score` for downstream merge.
-        """
+        """Rank literal phrases first, then FTS and indexed trigram matches."""
         params = {
             "uid": uuid.UUID(user_id),
             "q": query,
-            "pattern": f"%{query}%",
+            "pattern": like_needle(query),
             "cat": category,
             "lim": limit,
         }
         sql = text("""
-            WITH candidates AS (
-              SELECT m.*,
-                     ts_rank_cd(content_tsv, websearch_to_tsquery('simple', :q)) AS fts_score,
-                     similarity(content, :q) AS trg_score
+            WITH search_query AS (
+              SELECT websearch_to_tsquery('simple', :q) AS value
+            ), candidates AS (
+              SELECT
+                m.*,
+                m.content ILIKE :pattern ESCAPE '\\' AS literal_match,
+                ts_rank_cd(m.content_tsv, search_query.value) AS fts_score,
+                word_similarity(:q, m.content) AS trgm_score
               FROM memories m
+              CROSS JOIN search_query
               WHERE user_id = :uid
                 AND (CAST(:cat AS text) IS NULL OR category = :cat)
                 AND (
-                  content_tsv @@ websearch_to_tsquery('simple', :q)
-                  OR similarity(content, :q) > 0.1
-                  OR content ILIKE :pattern
+                  m.content ILIKE :pattern ESCAPE '\\'
+                  OR m.content_tsv @@ search_query.value
+                  OR :q <% m.content
                 )
             )
-            SELECT *,
-                   (COALESCE(fts_score, 0) * 1.0
-                    + COALESCE(trg_score, 0) * 0.5) AS combined_score
+            SELECT *
             FROM candidates
-            WHERE (COALESCE(fts_score, 0) * 1.0 + COALESCE(trg_score, 0) * 0.5) >= :min_score
-            ORDER BY combined_score DESC, created_at DESC
+            ORDER BY
+              literal_match DESC,
+              fts_score DESC,
+              trgm_score DESC,
+              created_at DESC,
+              id ASC
             LIMIT :lim
         """)
-        rows = (await self.db.execute(sql, {**params, "min_score": 0.05})).mappings().all()
-        if not rows:
-            rows = (await self.db.execute(sql, {**params, "min_score": 0.0})).mappings().all()
-        return [_row_to_search_dict(row) for row in rows]
+        rows = (await self.db.execute(sql, params)).mappings().all()
+        return [_row_to_dict(row) for row in rows]
 
     # Cosine-distance thresholds for vector search. Empirically on
     # `paraphrase-multilingual-mpnet-base-v2`, the legitimate-match band
@@ -153,12 +156,8 @@ class BuiltinProvider:
     # short abstract queries paired with narrowly-phrased memories —
     # there is no single threshold that cleanly separates them.
     #
-    # Mirroring the FTS strict/relaxed pattern: try the strict floor
-    # first; if that returns nothing, fall back to a permissive floor
-    # so the user sees "kinda related" rather than nothing. MMR +
-    # temporal-decay ranking in _merge_hybrid put noise at the bottom
-    # when legitimate matches also exist, so the relaxed pass doesn't
-    # pollute common cases.
+    # Try the strict floor first; only use the relaxed floor when strict
+    # semantic recall returns nothing.
     VECTOR_DISTANCE_STRICT = 0.70  # sim ≥ 0.30 — high-confidence matches
     VECTOR_DISTANCE_RELAXED = 0.80  # sim ≥ 0.20 — fallback when strict empty
 
@@ -195,12 +194,8 @@ class BuiltinProvider:
                 self.VECTOR_DISTANCE_RELAXED,
             )
         out: list[MemoryItem] = []
-        for mem, dist in rows:
-            d = memory_to_dict(mem)
-            # cosine distance ∈ [0, 2]; convert to similarity ∈ [0, 1].
-            sim = max(0.0, 1.0 - float(dist))
-            d["vector_score"] = sim
-            out.append(d)
+        for mem, _dist in rows:
+            out.append(memory_to_dict(mem))
         return out
 
     async def _run_vector_search(
@@ -211,6 +206,10 @@ class BuiltinProvider:
         category: str | None,
         max_distance: float,
     ) -> Sequence[Row[tuple[Memory, float]]]:
+        # pgvector applies ordinary WHERE filters after an approximate HNSW
+        # scan. Iterative scans keep expanding until the tenant/category
+        # predicate has enough rows, while preserving exact distance order.
+        await self.db.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
         distance = Memory.embedding.cosine_distance(q_vec)
         stmt = (
             select(Memory, distance.label("distance"))
@@ -313,137 +312,29 @@ def _row_to_dict(raw: object) -> MemoryItem:
     }
 
 
-def _row_to_search_dict(raw: object) -> MemoryItem:
-    """Like `_row_to_dict` but preserves an internal score field for merging."""
-    row = _RawMemorySearchRow.model_validate(raw)
-    item = _row_to_dict(row.model_dump())
-    if row.combined_score is not None:
-        item["combined_score"] = row.combined_score
-    return item
-
-
-def _strip_scores(item: MemoryItem) -> MemoryItem:
-    """Remove internal score fields before returning to the client."""
-    return {
-        key: value for key, value in item.items() if key not in ("combined_score", "vector_score")
-    }
-
-
-# --- hybrid merge: vector + FTS, with temporal decay and MMR rerank ---
-
-
-def _tokenize(s: str) -> set[str]:
-    return {t for t in re.split(r"\W+", (s or "").lower()) if len(t) > 2}
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-def _parse_iso_ts(v: object) -> datetime | None:
-    """Parse the ISO-formatted `created_at` string produced by the _*_to_dict
-    helpers. Returns None if the value isn't an ISO string we can parse."""
-    if not isinstance(v, str):
-        return None
-    try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def _apply_temporal_decay(
-    scores: dict[str, float],
-    rows_by_id: dict[str, MemoryItem],
-    half_life_days: float = 30.0,
-) -> None:
-    """Halve each score every `half_life_days`. In-place mutation.
-
-    OpenClaw's `temporal-decay.ts` formula: e^(-ln(2)/halflife * age).
-    """
-    now = datetime.now(UTC)
-    for rid, r in rows_by_id.items():
-        created_at = _parse_iso_ts(r.get("created_at"))
-        if created_at is None:
-            continue
-        age_days = max(0.0, (now - created_at).total_seconds() / 86400.0)
-        scores[rid] *= 0.5 ** (age_days / half_life_days)
-
-
-def _mmr_rerank(
-    candidates: list[MemoryItem],
-    scores: dict[str, float],
+def _reciprocal_rank_fusion(
+    rankings: Sequence[Sequence[MemoryItem]],
     limit: int,
-    lam: float = 0.7,
+    *,
+    rank_constant: int = 60,
 ) -> list[MemoryItem]:
-    """Greedy MMR (Carbonell & Goldstein, 1998) on Jaccard token similarity.
-
-    λ=0.7 relevance / 0.3 diversity. Uses content tokens so no extra
-    embedding calls are needed to compute diversity.
-    """
-    picked: list[MemoryItem] = []
-    picked_tokens: list[set[str]] = []
-    rest = [(candidate, _tokenize(_memory_content(candidate))) for candidate in candidates]
-    while rest and len(picked) < limit:
-        best_idx, best_mmr = 0, -1e9
-        for i, (c, toks) in enumerate(rest):
-            max_sim = max(
-                (_jaccard(toks, pt) for pt in picked_tokens),
-                default=0.0,
-            )
-            mmr = lam * scores.get(_memory_id(c), 0.0) - (1 - lam) * max_sim
-            if mmr > best_mmr:
-                best_mmr, best_idx = mmr, i
-        c, toks = rest.pop(best_idx)
-        picked.append(c)
-        picked_tokens.append(toks)
-    return picked
-
-
-def _merge_hybrid(
-    vec_rows: list[MemoryItem],
-    fts_rows: list[MemoryItem],
-    limit: int,
-    vector_weight: float = 0.7,
-    text_weight: float = 0.3,
-) -> list[MemoryItem]:
-    """Merge vector + FTS results by weighted score, decay, then MMR rerank."""
-    vec_max = (
-        max(
-            (_memory_score(row, "vector_score") for row in vec_rows),
-            default=0.0,
-        )
-        or 1.0
-    )
-    fts_max = (
-        max(
-            (_memory_score(row, "combined_score") for row in fts_rows),
-            default=0.0,
-        )
-        or 1.0
-    )
-
+    """Fuse independently ranked result sets without comparing score scales."""
     by_id: dict[str, MemoryItem] = {}
-    vec_norm: dict[str, float] = {}
-    fts_norm: dict[str, float] = {}
-    for row in vec_rows:
-        memory_id = _memory_id(row)
-        by_id[memory_id] = row
-        vec_norm[memory_id] = _memory_score(row, "vector_score") / vec_max
-    for row in fts_rows:
-        memory_id = _memory_id(row)
-        by_id.setdefault(memory_id, row)
-        fts_norm[memory_id] = _memory_score(row, "combined_score") / fts_max
-
     scores: dict[str, float] = {}
-    for rid in by_id:
-        scores[rid] = vector_weight * vec_norm.get(rid, 0.0) + text_weight * fts_norm.get(rid, 0.0)
+    first_seen: dict[str, int] = {}
+    for ranking in rankings:
+        seen_in_ranking: set[str] = set()
+        for rank, row in enumerate(ranking, start=1):
+            memory_id = _memory_id(row)
+            if memory_id in seen_in_ranking:
+                continue
+            seen_in_ranking.add(memory_id)
+            by_id.setdefault(memory_id, row)
+            first_seen.setdefault(memory_id, len(first_seen))
+            scores[memory_id] = scores.get(memory_id, 0.0) + 1.0 / (rank_constant + rank)
 
-    _apply_temporal_decay(scores, by_id)
-
-    ranked = sorted(by_id.values(), key=lambda row: -scores[_memory_id(row)])
-    return _mmr_rerank(ranked, scores, limit, lam=0.7)
+    ranked_ids = sorted(by_id, key=lambda item_id: (-scores[item_id], first_seen[item_id]))
+    return [by_id[item_id] for item_id in ranked_ids[:limit]]
 
 
 def _memory_id(item: MemoryItem) -> str:
@@ -451,18 +342,6 @@ def _memory_id(item: MemoryItem) -> str:
     if not isinstance(memory_id, str) or not memory_id:
         raise ValueError("memory result is missing an id")
     return memory_id
-
-
-def _memory_content(item: MemoryItem) -> str:
-    content = item.get("content")
-    return content if isinstance(content, str) else ""
-
-
-def _memory_score(item: MemoryItem, key: str) -> float:
-    value = item.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
-    return float(value)
 
 
 # ---------- provider selection ----------

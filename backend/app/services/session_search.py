@@ -11,6 +11,7 @@ from sqlalchemy import String, case, cast, delete, func, literal, or_, select, u
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
+from app.core.query_utils import like_needle, search_excerpt
 from app.models.session import Session, SessionEventChunk, SessionMessageSearch
 from app.schemas.session import (
     SessionSearchAnchorResponse,
@@ -90,29 +91,11 @@ async def event_search_projection_complete(
     return missing is None
 
 
-def escaped_contains_pattern(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
-
-
 def _uuid_prefix_pattern(value: str) -> str | None:
     compact = value.strip().replace("-", "")
     if not _UUID_PREFIX_RE.fullmatch(compact):
         return None
     return f"{compact}%"
-
-
-def session_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
-    compact = " ".join(content.split())
-    if len(compact) <= limit:
-        return compact
-    match_at = compact.casefold().find(query.casefold())
-    if match_at < 0:
-        return f"{compact[: limit - 3]}..."
-    start = max(0, match_at - limit // 3)
-    end = min(len(compact), start + limit)
-    start = max(0, end - limit)
-    return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
 
 
 def session_search_match_response(
@@ -134,7 +117,7 @@ def session_search_match_response(
         return None
     return SessionSearchMatchResponse(
         role=role,
-        excerpt=session_search_excerpt(content, query),
+        excerpt=search_excerpt(content, query),
         anchor=SessionSearchAnchorResponse(
             kind="event_seq" if session.content_protocol == "events-v1" else "snapshot_offset",
             position=position,
@@ -149,7 +132,7 @@ def _searchable_text(content: str) -> str:
 
 def _message_match_expression(query: str):
     return SessionMessageSearch.content.ilike(
-        escaped_contains_pattern(query),
+        like_needle(query),
         escape="\\",
     )
 
@@ -216,7 +199,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
 
 def session_search_matches(user_id: UUID, query: str) -> Subquery:
     """Return every exact phrase match with one ranked body hit per Session."""
-    pattern = escaped_contains_pattern(query)
+    pattern = like_needle(query)
     message_match = best_session_message_matches(user_id, query)
     metadata_matches = [
         func.coalesce(Session.summary, "").ilike(pattern, escape="\\"),

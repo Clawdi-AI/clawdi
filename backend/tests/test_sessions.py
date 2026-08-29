@@ -1314,6 +1314,8 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
     # Session summary matched, vault slug matched.
     assert "session" in types
     assert "vault" in types
+    vault_hit = next(hit for hit in body["results"] if hit["type"] == "vault")
+    assert vault_hit["href"].startswith("/vaults/alpha-keys?vault=")
     # Every hit has the fields the UI depends on to render.
     for hit in body["results"]:
         assert hit["title"]

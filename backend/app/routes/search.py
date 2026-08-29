@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
-from app.core.query_utils import like_needle
+from app.core.query_utils import like_needle, search_excerpt
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
@@ -132,12 +132,12 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
     )
     hits: list[SearchHit] = []
     for item in rows:
-        if hit := _memory_search_hit(item):
+        if hit := _memory_search_hit(item, query):
             hits.append(hit)
     return hits
 
 
-def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
+def _memory_search_hit(item: MemoryItem, query: str) -> SearchHit | None:
     memory_id = item.get("id")
     content = item.get("content")
     category = item.get("category")
@@ -146,7 +146,7 @@ def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
     return SearchHit(
         type="memory",
         id=memory_id,
-        title=content[:80] + ("…" if len(content) > 80 else ""),
+        title=search_excerpt(content, query, limit=160),
         subtitle=category if isinstance(category, str) else None,
         href=f"/memories/{memory_id}",
     )
@@ -251,7 +251,7 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
             id=str(v.id),
             title=v.name or v.slug,
             subtitle="encrypted secrets",
-            href="/vault",
+            href=f"/vaults/{quote(v.slug, safe='')}?vault={v.id}",
         )
         for v in rows
     ]
@@ -266,7 +266,7 @@ async def global_search(
     """Run each entity searcher and concat results.
 
     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
-    4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+    5*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
 
     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
     the hybrid provider (FTS + trgm + optional pgvector) for quality.

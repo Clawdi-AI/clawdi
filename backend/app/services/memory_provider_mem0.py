@@ -7,6 +7,7 @@ standard-mode adapter, then validate responses into first-party domain records.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Callable
 from typing import TypeGuard
@@ -164,7 +165,7 @@ class Mem0Provider:
         if source_environment_id is not None:
             metadata["source_environment_id"] = str(source_environment_id)
         messages: list[dict[str, str]] = [{"role": "user", "content": content}]
-        result = self._invoke(
+        result = await self._invoke(
             lambda: self._add(
                 messages,
                 filters={"user_id": user_id},
@@ -181,7 +182,10 @@ class Mem0Provider:
         limit: int = 50,
         category: str | None = None,
     ) -> list[MemoryItem]:
-        result = self._invoke(
+        query = query.strip()
+        if not query:
+            return []
+        result = await self._invoke(
             lambda: self._search(
                 query,
                 filters=_mem0_filters(user_id, category=category),
@@ -204,7 +208,7 @@ class Mem0Provider:
         order: str = "desc",
     ) -> list[MemoryItem]:
         del order
-        result = self._invoke(
+        result = await self._invoke(
             lambda: self._get_all(
                 filters=_mem0_filters(user_id, category=category),
                 page=(offset // limit) + 1,
@@ -219,7 +223,7 @@ class Mem0Provider:
         user_id: str,
         category: str | None = None,
     ) -> int:
-        result = self._invoke(
+        result = await self._invoke(
             lambda: self._get_all(
                 filters=_mem0_filters(user_id, category=category),
                 page=1,
@@ -231,19 +235,19 @@ class Mem0Provider:
     async def delete(self, user_id: str, memory_id: str) -> bool:
         memory = _validate_response(
             _Mem0GetResponse,
-            self._invoke(lambda: self._get(memory_id)),
+            await self._invoke(lambda: self._get(memory_id)),
         )
         if memory.user_id != user_id:
             return False
         _validate_response(
             _Mem0DeleteResponse,
-            self._invoke(lambda: self._delete(memory_id)),
+            await self._invoke(lambda: self._delete(memory_id)),
         )
         return True
 
-    def _invoke(self, operation: Callable[[], object]) -> object:
+    async def _invoke(self, operation: Callable[[], object]) -> object:
         try:
-            return operation()
+            return await asyncio.to_thread(operation)
         except self._transient_error_types as exc:
             raise MemoryProviderUnavailableError("Mem0 request is unavailable") from exc
         except self._error_type as exc:

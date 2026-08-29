@@ -17,6 +17,7 @@ import {
 } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { memorySettingsForCache } from "@/components/memories/memory-settings-cache";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -58,6 +59,7 @@ import {
 	memoryDetailLink,
 	type ResourceNavigationScope,
 } from "@/lib/resource-navigation";
+import { searchExcerpt } from "@/lib/search-highlight";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -241,6 +243,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 						emptyMessage={emptyMessage}
 						onDelete={requestDeleteMemory}
 						scope={scope}
+						searchQuery={debouncedSearch}
 					/>
 					{paginationFooter}
 				</div>
@@ -316,12 +319,14 @@ function MemoryNotesGrid({
 	emptyMessage,
 	onDelete,
 	scope,
+	searchQuery,
 }: {
 	memories: Memory[];
 	isLoading: boolean;
 	emptyMessage: ReactNode;
 	onDelete: (id: string) => Promise<unknown>;
 	scope: ResourceNavigationScope;
+	searchQuery: string;
 }) {
 	if (isLoading) {
 		const cardLineCounts = [4, 7, 3, 5, 6, 4, 8, 3, 5];
@@ -341,7 +346,13 @@ function MemoryNotesGrid({
 	return (
 		<div className={ENTITY_CARD_MASONRY_CLASS}>
 			{memories.map((memory) => (
-				<MemoryCard key={memory.id} memory={memory} onDelete={onDelete} scope={scope} />
+				<MemoryCard
+					key={memory.id}
+					memory={memory}
+					onDelete={onDelete}
+					scope={scope}
+					searchQuery={searchQuery}
+				/>
 			))}
 		</div>
 	);
@@ -351,11 +362,16 @@ export function MemoryCard({
 	memory,
 	onDelete,
 	scope,
+	searchQuery = "",
 }: {
 	memory: Memory;
 	onDelete: (id: string) => Promise<unknown>;
 	scope: ResourceNavigationScope;
+	searchQuery?: string;
 }) {
+	const visibleContent = searchQuery
+		? searchExcerpt(memory.content, searchQuery, 320)
+		: memory.content;
 	return (
 		<EntityCardChassis as="article" variant="resource" interactive>
 			<EntityCardLink
@@ -363,7 +379,9 @@ export function MemoryCard({
 				{...memoryDetailLink(scope, memory.id)}
 				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
 			/>
-			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">{memory.content}</p>
+			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">
+				<SearchHighlightedText text={visibleContent} query={searchQuery} />
+			</p>
 			<EntityMeta
 				className="mt-3 text-xs"
 				items={[
