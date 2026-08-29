@@ -1,7 +1,7 @@
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
-  <strong>The best home for all your AI agents — Projects, sessions, memory, skills, vault, model providers, and app connections.</strong>
+  <strong>The best home for all your AI agents. Keep every environment, session, memory, skill, cron job, and app connection in one place.</strong>
 </p>
 
 <p align="center">
@@ -14,24 +14,30 @@
 <p align="center">
   <a href="https://clawdi.ai">Website</a> ·
   <a href="https://github.com/Clawdi-AI/clawdi">GitHub</a> ·
-  <a href="https://deepwiki.com/Clawdi-AI/clawdi">Docs</a> ·
+  <a href="https://docs.clawdi.ai">Docs</a> ·
+  <a href="docs/clawdi-cloud-product-tour.md">Product tour</a> ·
   <a href="https://www.npmjs.com/package/clawdi">npm</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/ai-providers.md">AI Providers</a> ·
-  <a href="#quickstart">Quickstart</a> ·
+  <a href="#connected-agent-quickstart">Connected Agent quickstart</a> ·
   <a href="#cli-reference">CLI Reference</a> ·
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
+  <img src="docs/images/dashboard-activity.png" alt="Clawdi overview with a populated 12-month Agent activity heatmap" width="900">
 </p>
 
-> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Pi and OpenCode sessions join the same private history. Agent Skill files remain authoritative on their own filesystems.
+<p align="center">
+  <em>Two running demo Agents with long-term Session activity and shared Library resources. All visible content comes from a synthetic demo workspace.</em><br>
+  <a href="docs/clawdi-cloud-product-tour.md">Open the current Clawdi Cloud product tour →</a>
+</p>
 
-The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
+> Clawdi is the best home for all your AI agents. It keeps every environment, session, memory, skill, cron job, and app connection in one place. Install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Pi and OpenCode sessions join the same private history. Agent Skill files remain authoritative on their own filesystems.
 
-## Quickstart
+The fastest way to try it is a hosted [Cloud Agent](https://docs.clawdi.ai/cloud-agents/deploy). Choose a [Connected Agent](https://docs.clawdi.ai/getting-started/quickstart) to sync an Agent already running on your computer, or [self-host the Clawdi service](https://docs.clawdi.ai/self-hosting) from this repository. The public stack includes the MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs.
+
+## Connected Agent quickstart
 
 Recommended on macOS and Linux (no Node.js required):
 

@@ -1395,7 +1395,7 @@ function HelpMenuItems() {
 			<DropdownMenuItem
 				render={
 					<a
-						href="https://deepwiki.com/Clawdi-AI/clawdi"
+						href="https://docs.clawdi.ai"
 						target="_blank"
 						rel="noopener noreferrer"
 						aria-label="Open Docs"

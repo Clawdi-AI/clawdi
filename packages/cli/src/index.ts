@@ -34,7 +34,9 @@ function collectValues(value: string, prev: string[] = []): string[] {
 
 program
 	.name("clawdi")
-	.description("iCloud for AI Agents — share sessions, skills, vault across agents")
+	.description(
+		"The best home for all your AI agents. Keep every environment, session, memory, skill, cron job, and app connection in one place.",
+	)
 	.version(getCliVersion())
 	.addHelpText(
 		"after",

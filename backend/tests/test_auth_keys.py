@@ -388,8 +388,8 @@ async def test_deploy_key_minted_with_full_access_by_default(
     pod must be able to do everything the user can.
 
     Without this property the daemon ends up narrowed to a 3-token API permission list
-    and silently can't touch vault / memories / settings, which makes
-    the "iCloud for AI agents" promise a lie."""
+    and silently can't touch vault / memories / settings, which breaks
+    the "best home for all your AI agents" promise."""
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
