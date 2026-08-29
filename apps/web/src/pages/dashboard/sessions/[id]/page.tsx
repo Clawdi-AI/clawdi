@@ -24,7 +24,7 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { MessageList } from "@/components/sessions/message-list";
+import { SessionTimelineList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
@@ -34,11 +34,16 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref, agentSessionDetailLink } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
-import type { SessionMessage } from "@/lib/api-schemas";
+import type {
+	SessionMessagesPage,
+	SessionTimelineItem,
+	SessionTimelinePage,
+} from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -49,20 +54,42 @@ import {
 	SESSION_MESSAGES_STALE_MS,
 	sessionDetailQueryKey,
 } from "@/lib/session-queries";
-import type { SessionSearchAnchor } from "@/lib/session-search-anchor";
+import {
+	type SessionSearchAnchor,
+	type SessionTimelineView,
+	sessionTimelineViewLink,
+} from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+
+function normalizeTimelinePage(
+	page: SessionMessagesPage | SessionTimelinePage,
+): SessionTimelinePage {
+	return {
+		...page,
+		items: page.items.map((item, index): SessionTimelineItem => {
+			if ("kind" in item) return item;
+			return {
+				...item,
+				kind: "message",
+				position: page.offset + index,
+			};
+		}),
+	};
+}
 
 export default function SessionDetailPage({
 	sessionId,
 	searchAnchor,
 	searchQuery,
+	timelineView,
 	returnTo,
 }: {
 	sessionId: string;
 	searchAnchor?: SessionSearchAnchor;
 	searchQuery?: string;
+	timelineView: SessionTimelineView;
 	returnTo?: string;
 }) {
 	return (
@@ -70,6 +97,7 @@ export default function SessionDetailPage({
 			sessionId={sessionId}
 			searchAnchor={searchAnchor}
 			searchQuery={searchQuery}
+			timelineView={timelineView}
 			returnTo={returnTo}
 		/>
 	);
@@ -80,12 +108,14 @@ export function SessionDetailContent({
 	agentId,
 	searchAnchor,
 	searchQuery,
+	timelineView = "all",
 	returnTo,
 }: {
 	sessionId: string;
 	agentId?: string | null;
 	searchAnchor?: SessionSearchAnchor;
 	searchQuery?: string;
+	timelineView?: SessionTimelineView;
 	returnTo?: string;
 }) {
 	const api = useApi();
@@ -218,7 +248,9 @@ export function SessionDetailContent({
 			"session-messages",
 			sessionId,
 			session?.content_hash ?? null,
+			session?.event_head_hash ?? null,
 			direction,
+			timelineView,
 			searchAnchor?.kind ?? null,
 			searchAnchor?.position ?? null,
 			searchAnchor?.revision ?? null,
@@ -226,7 +258,7 @@ export function SessionDetailContent({
 		],
 		initialPageParam: 0,
 		queryFn: async ({ pageParam }) => {
-			return unwrap(
+			const page = unwrap(
 				await api.GET("/v1/sessions/{session_id}/messages", {
 					params: {
 						path: { session_id: sessionId },
@@ -234,6 +266,7 @@ export function SessionDetailContent({
 							offset: pageParam,
 							limit: PAGE_SIZE,
 							direction,
+							view: timelineView,
 							...(pageParam === 0 && searchAnchor
 								? {
 										anchor_kind: searchAnchor.kind,
@@ -248,6 +281,7 @@ export function SessionDetailContent({
 					},
 				}),
 			);
+			return normalizeTimelinePage(page);
 		},
 		getNextPageParam: (last): number | undefined => {
 			const nextOffset = last.offset + last.items.length;
@@ -268,20 +302,20 @@ export function SessionDetailContent({
 	// (`page.offset + k`) so it stays put across pagination, direction
 	// toggles, and refetches — array-index keys would break grouping
 	// memo when prepended pages shift positions.
-	const { messages, messageKeys } = useMemo(() => {
-		if (!pagesData) return { messages: null, messageKeys: null };
-		const msgs: SessionMessage[] = [];
+	const { timelineItems, timelineKeys } = useMemo(() => {
+		if (!pagesData) return { timelineItems: null, timelineKeys: null };
+		const items: SessionTimelineItem[] = [];
 		const keys: string[] = [];
 		for (const page of pagesData.pages) {
 			for (let k = 0; k < page.items.length; k++) {
-				msgs.push(page.items[k]);
+				items.push(page.items[k]);
 				keys.push(`${direction}:${page.offset + k}`);
 			}
 		}
-		return { messages: msgs, messageKeys: keys };
+		return { timelineItems: items, timelineKeys: keys };
 	}, [pagesData, direction]);
-	const totalMessages = pagesData?.pages[0]?.total ?? 0;
-	const loadedCount = messages?.length ?? 0;
+	const totalItems = pagesData?.pages[0]?.total ?? 0;
+	const loadedCount = timelineItems?.length ?? 0;
 	const anchorOffset = pagesData?.pages[0]?.anchor_offset;
 	const highlightedMessageKey =
 		typeof anchorOffset === "number" ? `${direction}:${anchorOffset}` : null;
@@ -473,38 +507,75 @@ export function SessionDetailContent({
 				/>
 			) : null}
 
-			{/* Direction toggle. Gated on `has_content` (not on
-			    `messages.length`) so it stays visible while pages
-			    are still loading. Status + flip control collapsed
-			    onto one muted line — the date-divider below provides
-			    the visual break between metadata and conversation,
-			    so no separator above is needed. */}
+			{/* Timeline filters and direction stay visible while pages load. */}
 			{session.has_content ? (
-				<div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-					{loadedCount > 0 ? (
-						<span className="tabular-nums">
-							{loadedCount}/{totalMessages}
-						</span>
-					) : null}
-					<button
-						type="button"
-						onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
-						aria-label={
-							direction === "desc" ? "Show oldest messages first" : "Show newest messages first"
-						}
-						className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-accent hover:text-accent-foreground transition-colors"
+				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+					<ToggleGroup
+						value={[timelineView]}
+						onValueChange={(values) => {
+							const selected = values[0];
+							if (
+								selected !== "all" &&
+								selected !== "user" &&
+								selected !== "assistant" &&
+								selected !== "tools"
+							) {
+								return;
+							}
+							if (agentId) {
+								void router.navigate({
+									...agentSessionDetailLink(
+										agentId,
+										sessionId,
+										selected === "all" ? undefined : { timelineView: selected },
+									),
+									replace: true,
+									resetScroll: false,
+								});
+								return;
+							}
+							void router.navigate({
+								...sessionTimelineViewLink(sessionId, selected, { returnTo }),
+								replace: true,
+								resetScroll: false,
+							});
+						}}
+						variant="outline"
+						size="sm"
+						spacing={0}
+						aria-label="Timeline view"
 					>
-						{direction === "desc" ? (
-							<ArrowDownNarrowWide className="size-3.5" />
-						) : (
-							<ArrowUpNarrowWide className="size-3.5" />
-						)}
-						{direction === "desc" ? "Newest first" : "Oldest first"}
-					</button>
+						<ToggleGroupItem value="all">All</ToggleGroupItem>
+						<ToggleGroupItem value="user">You</ToggleGroupItem>
+						<ToggleGroupItem value="assistant">Agent</ToggleGroupItem>
+						<ToggleGroupItem value="tools">Tools</ToggleGroupItem>
+					</ToggleGroup>
+					<div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+						{loadedCount > 0 ? (
+							<span className="tabular-nums">
+								{loadedCount}/{totalItems}
+							</span>
+						) : null}
+						<button
+							type="button"
+							onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
+							aria-label={
+								direction === "desc" ? "Show oldest activity first" : "Show newest activity first"
+							}
+							className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
+						>
+							{direction === "desc" ? (
+								<ArrowDownNarrowWide className="size-3.5" />
+							) : (
+								<ArrowUpNarrowWide className="size-3.5" />
+							)}
+							{direction === "desc" ? "Newest first" : "Oldest first"}
+						</button>
+					</div>
 				</div>
 			) : null}
 
-			{/* Messages */}
+			{/* Timeline */}
 			{session.has_content ? (
 				isContentLoading ? (
 					<MessagesSkeleton />
@@ -514,16 +585,16 @@ export function SessionDetailContent({
 						onRetry={() => {
 							void refetchContent();
 						}}
-						title="Couldn't load messages"
+						title="Couldn't load activity"
 					/>
-				) : messages?.length ? (
+				) : timelineItems?.length ? (
 					// Spacing comes from MessageBlock's `pt-4` on
 					// group-start rows; continuation rows render flush
 					// so a thread looks tight, not gapped.
 					<div>
-						<MessageList
-							messages={messages}
-							messageKeys={messageKeys}
+						<SessionTimelineList
+							items={timelineItems}
+							itemKeys={timelineKeys}
 							agentType={session.agent_type}
 							userAvatar={user?.imageUrl}
 							userName={user?.fullName || "You"}
@@ -534,14 +605,14 @@ export function SessionDetailContent({
 						{hasNextPage ? (
 							<LoadMoreSentinel
 								loadedCount={loadedCount}
-								totalCount={totalMessages}
+								totalCount={totalItems}
 								isFetching={isFetchingNextPage}
 								onLoad={() => fetchNextPage()}
 							/>
 						) : null}
 					</div>
 				) : (
-					<EmptyContent />
+					<EmptyContent view={timelineView} />
 				)
 			) : (
 				<DetailPanel className="space-y-4">
@@ -565,7 +636,9 @@ export function SessionDetailContent({
 			    where the newest message is at the bottom of a long
 			    list. In desc mode the newest is already at the top,
 			    so there's nothing to jump to. */}
-			{direction === "asc" && messages && messages.length > 20 ? <JumpToBottomButton /> : null}
+			{direction === "asc" && timelineItems && timelineItems.length > 20 ? (
+				<JumpToBottomButton />
+			) : null}
 		</div>
 	);
 }
@@ -739,6 +812,14 @@ function MessagesSkeleton() {
 	);
 }
 
-function EmptyContent() {
-	return <EmptyState variant="inset" description="No messages in this session." />;
+function EmptyContent({ view }: { view: SessionTimelineView }) {
+	const description =
+		view === "tools"
+			? "No tool activity in this session."
+			: view === "user"
+				? "No user messages in this session."
+				: view === "assistant"
+					? "No agent messages in this session."
+					: "No visible activity in this session.";
+	return <EmptyState variant="inset" description={description} />;
 }

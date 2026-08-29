@@ -1029,6 +1029,37 @@ async def test_session_messages_endpoint_paginates_long_conversations(
     assert page["items"][0]["content"] == "msg 0"
     assert page["items"][99]["content"] == "msg 99"
 
+    snapshot_timeline = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"view": "all", "limit": 2},
+    )
+    assert snapshot_timeline.status_code == 200, snapshot_timeline.text
+    assert snapshot_timeline.json()["items"] == [
+        {
+            "kind": "message",
+            "position": 0,
+            "role": "user",
+            "content": "msg 0",
+            "model": None,
+            "timestamp": None,
+        },
+        {
+            "kind": "message",
+            "position": 1,
+            "role": "assistant",
+            "content": "msg 1",
+            "model": None,
+            "timestamp": None,
+        },
+    ]
+    snapshot_tools = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"view": "tools"},
+    )
+    assert snapshot_tools.status_code == 200, snapshot_tools.text
+    assert snapshot_tools.json()["items"] == []
+    assert snapshot_tools.json()["total"] == 0
+
     # Second page picks up at offset=100.
     r2 = await client.get(f"/v1/sessions/{session_id}/messages?offset=100&limit=100")
     page2 = r2.json()
@@ -1153,7 +1184,7 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     # without a real file_store.get hit. The cache moved to
     # services/session_content.py (shared with the public share
     # routes); the route handler is now a thin wrapper.
-    session_content._messages_cache.clear()
+    session_content._content_cache.clear()
 
     counting_store = _CountingGetFileStore(sessions_route.file_store)
     monkeypatch.setattr(sessions_route, "file_store", counting_store)

@@ -101,6 +101,7 @@ from app.schemas.session import (
     SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
     SessionSearchNavigationResponse,
+    SessionTimelinePage,
     SessionUploadResponse,
 )
 from app.services import memory_extraction
@@ -126,10 +127,10 @@ from app.services.runtime_source_revision import (
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
-    load_session_message_projection,
+    load_session_content_projection,
     load_session_messages,
     session_has_uploaded_content,
-    slice_session_messages,
+    slice_session_items,
 )
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
@@ -3102,18 +3103,21 @@ async def get_session_messages(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     direction: Literal["asc", "desc"] = Query(default="asc"),
+    view: Literal["messages", "all", "user", "assistant", "tools"] = Query(default="messages"),
     anchor_kind: Literal["snapshot_offset", "event_seq"] | None = Query(default=None),
     anchor_position: int | None = Query(default=None, ge=0),
     anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
     search_query: str | None = Query(default=None, max_length=500),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
-) -> SessionMessagesPage:
-    """Paginated read of a session's messages, for the dashboard.
+) -> SessionMessagesPage | SessionTimelinePage:
+    """Paginated read of a session's owner-visible timeline.
     The CLI's `clawdi pull` mirror still uses
     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
     this endpoint slices the same blob server-side so the
-    dashboard doesn't ship 10+ MB of messages on a long session.
+    dashboard doesn't ship 10+ MB of messages on a long session. The default
+    `view=messages` preserves the historical response exactly. Other views add
+    a typed message/tool timeline without exposing reasoning or hidden events.
 
     Pagination is offset-based within the requested direction. `offset=0`
     starts at the oldest visible message for ascending reads and at the newest
@@ -3154,7 +3158,7 @@ async def get_session_messages(
     # share the same cache — a popular shared link must not re-parse
     # a 10 MB JSON blob per visitor.
     try:
-        projection = await load_session_message_projection(session, file_store, db)
+        projection = await load_session_content_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentInvalid:
@@ -3162,7 +3166,27 @@ async def get_session_messages(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
 
-    total = len(projection.messages)
+    if view == "messages":
+        projected_items = projection.messages
+        source_positions = projection.source_positions
+    else:
+        filtered_timeline = [
+            (item, position)
+            for item, position in zip(
+                projection.timeline,
+                projection.timeline_source_positions,
+                strict=True,
+            )
+            if (
+                view == "all"
+                or (view == "tools" and item.get("kind") in ("tool_call", "tool_result"))
+                or (view in ("user", "assistant") and item.get("role") == view)
+            )
+        ]
+        projected_items = [item for item, _ in filtered_timeline]
+        source_positions = tuple(position for _, position in filtered_timeline)
+
+    total = len(projected_items)
     page_offset = offset
     anchor_offset: int | None = None
     search_navigation: SessionSearchNavigationResponse | None = None
@@ -3202,7 +3226,7 @@ async def get_session_messages(
         and resolved_anchor_revision == active_search_revision
     ):
         try:
-            source_index = projection.source_positions.index(resolved_anchor_position)
+            source_index = source_positions.index(resolved_anchor_position)
         except ValueError:
             pass
         else:
@@ -3237,20 +3261,23 @@ async def get_session_messages(
                     ),
                 )
 
-    sliced = slice_session_messages(
-        projection.messages,
+    sliced = slice_session_items(
+        projected_items,
         offset=page_offset,
         limit=limit,
         direction=direction,
     )
-    return SessionMessagesPage(
-        items=[SessionMessageResponse.model_validate(m) for m in sliced],
-        total=total,
-        offset=page_offset,
-        limit=limit,
-        anchor_offset=anchor_offset,
-        search_navigation=search_navigation,
-    )
+    page_values = {
+        "items": sliced,
+        "total": total,
+        "offset": page_offset,
+        "limit": limit,
+        "anchor_offset": anchor_offset,
+        "search_navigation": search_navigation,
+    }
+    if view == "messages":
+        return SessionMessagesPage.model_validate(page_values)
+    return SessionTimelinePage.model_validate(page_values)
 
 
 @router.post("/sessions/{local_session_id}/extract")

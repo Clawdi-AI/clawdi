@@ -10,7 +10,13 @@ from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from app.schemas.session_events import SessionEvent, SessionMessageEvent, SessionTextPart
+from app.schemas.session_events import (
+    SessionEvent,
+    SessionMessageEvent,
+    SessionTextPart,
+    SessionToolCallEvent,
+    SessionToolResultEvent,
+)
 
 EMPTY_EVENT_HEAD = hashlib.sha256(b"clawdi-events-v1\n").hexdigest()
 EVENT_ADAPTER: TypeAdapter[SessionEvent] = TypeAdapter(SessionEvent)
@@ -37,6 +43,13 @@ class ProjectedSessionMessage:
     content: str
     model: str | None
     timestamp: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedSessionTimelineItem:
+    position: int
+    kind: Literal["message", "tool_call", "tool_result"]
+    value: dict[str, JsonValue]
 
 
 def canonical_event_json(value: object) -> bytes:
@@ -134,16 +147,87 @@ def project_visible_messages(events: Sequence[SessionEvent]) -> list[ProjectedSe
     return messages
 
 
-def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, object]]:
-    messages: list[dict[str, object]] = []
-    for projected in project_visible_messages(events):
-        message: dict[str, object] = {
-            "role": projected.role,
-            "content": projected.content,
-        }
-        if projected.model is not None:
-            message["model"] = projected.model
-        if projected.timestamp is not None:
-            message["timestamp"] = projected.timestamp.isoformat()
-        messages.append(message)
-    return messages
+def _safe_message_value(message: ProjectedSessionMessage) -> dict[str, JsonValue]:
+    value: dict[str, JsonValue] = {
+        "role": message.role,
+        "content": message.content,
+    }
+    if message.model is not None:
+        value["model"] = message.model
+    if message.timestamp is not None:
+        value["timestamp"] = message.timestamp.isoformat()
+    return value
+
+
+def project_safe_messages(events: Sequence[SessionEvent]) -> list[dict[str, JsonValue]]:
+    return [_safe_message_value(message) for message in project_visible_messages(events)]
+
+
+def project_safe_timeline(events: Sequence[SessionEvent]) -> list[ProjectedSessionTimelineItem]:
+    """Project owner-visible messages and tool activity from canonical events.
+
+    Reasoning, system/developer messages, hidden events, raw provider envelopes,
+    and attachment bodies are deliberately absent. Public session routes do not
+    consume this projection.
+    """
+    items: list[ProjectedSessionTimelineItem] = []
+    for event in events:
+        if event.semantics is not None and event.semantics.display == "hidden":
+            continue
+        if isinstance(event, SessionMessageEvent):
+            if event.role not in ("user", "assistant"):
+                continue
+            text = "\n".join(
+                part.text for part in event.parts if isinstance(part, SessionTextPart) and part.text
+            )
+            if not text:
+                continue
+            message = ProjectedSessionMessage(
+                position=event.seq,
+                role=event.role,
+                content=text,
+                model=event.model,
+                timestamp=event.timestamp,
+            )
+            message_value: dict[str, JsonValue] = {
+                "kind": "message",
+                "position": event.seq,
+                **_safe_message_value(message),
+            }
+            items.append(ProjectedSessionTimelineItem(event.seq, "message", message_value))
+            continue
+        if isinstance(event, SessionToolCallEvent):
+            tool_call_value: dict[str, JsonValue] = {
+                "kind": "tool_call",
+                "position": event.seq,
+                "call_id": event.call_id,
+                "name": event.name,
+            }
+            if event.arguments_json is not None:
+                tool_call_value["arguments_json"] = event.arguments_json
+            if event.model is not None:
+                tool_call_value["model"] = event.model
+            if event.timestamp is not None:
+                tool_call_value["timestamp"] = event.timestamp.isoformat()
+            items.append(ProjectedSessionTimelineItem(event.seq, "tool_call", tool_call_value))
+            continue
+        if isinstance(event, SessionToolResultEvent):
+            text = "\n".join(
+                part.text for part in event.parts if isinstance(part, SessionTextPart) and part.text
+            )
+            tool_result_value: dict[str, JsonValue] = {
+                "kind": "tool_result",
+                "position": event.seq,
+                "call_id": event.call_id,
+                "status": event.status,
+            }
+            if event.name is not None:
+                tool_result_value["name"] = event.name
+            if text:
+                tool_result_value["content"] = text
+            if event.result_json is not None:
+                tool_result_value["result_json"] = event.result_json
+            if event.timestamp is not None:
+                tool_result_value["timestamp"] = event.timestamp.isoformat()
+            items.append(ProjectedSessionTimelineItem(event.seq, "tool_result", tool_result_value))
+    return items

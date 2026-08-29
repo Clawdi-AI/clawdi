@@ -1,15 +1,22 @@
 "use client";
 
-import { ChevronRight, Terminal } from "lucide-react";
+import { CheckCircle2, ChevronRight, CircleX, Terminal, Wrench } from "lucide-react";
 import { type Ref, useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
-import type { SessionMessage } from "@/lib/api-schemas";
+import type {
+	SessionMessage,
+	SessionTimelineItem,
+	SessionToolCall,
+	SessionToolResult,
+} from "@/lib/api-schemas";
 import { splitSearchHighlight } from "@/lib/search-highlight";
 import { cn, formatAbsoluteTooltip } from "@/lib/utils";
+
+const OFFSCREEN_RENDERING_CLASS = "[content-visibility:auto] [contain-intrinsic-size:auto_160px]";
 
 /**
  * Message-thread rendering primitives, shared between the owner-dashboard
@@ -112,6 +119,7 @@ function MessageBlock({
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
 				"group flex scroll-mt-24 gap-3 rounded-md",
+				OFFSCREEN_RENDERING_CLASS,
 				isGroupStart ? "pt-4" : "",
 				isHighlighted && "bg-primary/5 ring-1 ring-primary/30",
 			)}
@@ -302,25 +310,115 @@ function CollapsibleBlock({
 	);
 }
 
+type TimelineMessage = SessionMessage | Extract<SessionTimelineItem, { kind: "message" }>;
+type TimelineEntry = SessionMessage | SessionTimelineItem;
+
+function isToolEntry(entry: TimelineEntry): entry is SessionToolCall | SessionToolResult {
+	return "kind" in entry && (entry.kind === "tool_call" || entry.kind === "tool_result");
+}
+
+function formatToolPayload(value: string): string {
+	try {
+		return JSON.stringify(JSON.parse(value), null, 2);
+	} catch {
+		return value;
+	}
+}
+
+function ToolPayload({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="space-y-1">
+			<div className="text-3xs font-medium uppercase text-muted-foreground">{label}</div>
+			<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-2 font-mono text-xs text-foreground">
+				{formatToolPayload(value)}
+			</pre>
+		</div>
+	);
+}
+
+function ToolActivity({ call, result }: { call?: SessionToolCall; result?: SessionToolResult }) {
+	const [open, setOpen] = useState(false);
+	const name = call?.name ?? result?.name ?? "Tool";
+	const hasDetails = Boolean(call?.arguments_json || result?.content || result?.result_json);
+	const isError = result?.status === "error";
+	const timestamp = call?.timestamp ?? result?.timestamp;
+
+	return (
+		<div className={cn("flex gap-3 py-1.5", OFFSCREEN_RENDERING_CLASS)}>
+			<div className="flex w-8 shrink-0 justify-end pt-1 text-muted-foreground">
+				<Wrench className="size-3.5" />
+			</div>
+			<div className="min-w-0 flex-1 border-l pl-3">
+				<button
+					type="button"
+					disabled={!hasDetails}
+					onClick={() => setOpen((value) => !value)}
+					aria-expanded={hasDetails ? open : undefined}
+					className="flex min-h-7 w-full min-w-0 items-center gap-2 text-left text-xs text-muted-foreground disabled:cursor-default"
+				>
+					<ChevronRight
+						className={cn(
+							"size-3.5 shrink-0 transition-transform",
+							open && "rotate-90",
+							!hasDetails && "invisible",
+						)}
+					/>
+					<code className="truncate font-medium text-foreground">{name}</code>
+					{isError ? (
+						<span className="inline-flex shrink-0 items-center gap-1 text-destructive">
+							<CircleX className="size-3.5" /> Error
+						</span>
+					) : result ? (
+						<span className="inline-flex shrink-0 items-center gap-1">
+							<CheckCircle2 className="size-3.5" /> Completed
+						</span>
+					) : (
+						<span className="shrink-0">Called</span>
+					)}
+					{timestamp ? (
+						<span
+							className="ml-auto shrink-0 tabular-nums"
+							title={formatAbsoluteTooltip(timestamp)}
+						>
+							{new Date(timestamp).toLocaleTimeString([], {
+								hour: "2-digit",
+								minute: "2-digit",
+							})}
+						</span>
+					) : null}
+				</button>
+				{open ? (
+					<div className="space-y-3 pb-2 pt-1">
+						{call?.arguments_json ? (
+							<ToolPayload label="Arguments" value={call.arguments_json} />
+						) : null}
+						{result?.content ? <ToolPayload label="Output" value={result.content} /> : null}
+						{result?.result_json ? <ToolPayload label="Result" value={result.result_json} /> : null}
+					</div>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
 /**
- * Renders an ordered message list with date dividers and group-start
- * grouping. The 5-minute GAP_MS threshold matches Slack / Discord —
- * same-author messages within 5 minutes collapse into a single visual
- * thread.
+ * Renders an ordered session timeline. Adjacent call/result events with the
+ * same call ID collapse into one tool activity row; tools break message author
+ * grouping. The 5-minute threshold matches Slack / Discord message threads.
  *
- * `messageKeys` is an optional caller-provided per-row stable key
+ * `itemKeys` is an optional caller-provided per-row stable key
  * (e.g. the message's canonical position when the caller is paginating).
  * Falls back to the array index, which is fine for SSR / single-page
  * renders where order is stable.
  *
  * Exported as a Component (not a plain function) so server components
- * can render it as `<MessageList .../>` — React 19 rejects calls to
+ * can render it as `<SessionTimelineList .../>` — React 19 rejects calls to
  * client-module functions from the server tree, but client components
  * rendered as JSX cross the boundary fine.
  */
-export function MessageList({
-	messages,
-	messageKeys,
+export function SessionTimelineList({
+	items,
+	itemKeys,
 	agentType,
 	userAvatar,
 	userName,
@@ -328,8 +426,8 @@ export function MessageList({
 	highlightedMessageRef,
 	highlightQuery,
 }: {
-	messages: SessionMessage[];
-	messageKeys?: string[] | null;
+	items: TimelineEntry[];
+	itemKeys?: string[] | null;
 	agentType: string | null | undefined;
 	userAvatar?: string;
 	userName: string;
@@ -340,30 +438,47 @@ export function MessageList({
 	const GROUP_GAP_MS = 5 * 60_000;
 	const out: React.ReactNode[] = [];
 	let prevDayKey: string | null = null;
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		const dKey = dayKey(msg.timestamp);
+	let previousMessage: TimelineMessage | null = null;
+	for (let i = 0; i < items.length; i++) {
+		const item = items[i];
+		const dKey = dayKey(item.timestamp);
+		const dividerJustEmitted = Boolean(dKey && dKey !== prevDayKey);
 		if (dKey && dKey !== prevDayKey) {
-			out.push(<DateDivider key={`d-${dKey}`} timestamp={msg.timestamp ?? ""} />);
+			out.push(<DateDivider key={`d-${dKey}`} timestamp={item.timestamp ?? ""} />);
 			prevDayKey = dKey;
 		}
-		const prev = i > 0 ? messages[i - 1] : null;
-		const sameAuthor = prev?.role === msg.role;
+
+		if (isToolEntry(item)) {
+			const next = items[i + 1];
+			const paired =
+				next && isToolEntry(next) && next.kind !== item.kind && next.call_id === item.call_id
+					? next
+					: null;
+			const call =
+				item.kind === "tool_call" ? item : paired?.kind === "tool_call" ? paired : undefined;
+			const result =
+				item.kind === "tool_result" ? item : paired?.kind === "tool_result" ? paired : undefined;
+			const toolKey = itemKeys?.[i] ?? `${item.kind}:${item.position}`;
+			out.push(<ToolActivity key={toolKey} call={call} result={result} />);
+			if (paired) i++;
+			previousMessage = null;
+			continue;
+		}
+
+		const sameAuthor = previousMessage?.role === item.role;
 		const closeInTime =
-			prev?.timestamp && msg.timestamp
-				? Math.abs(new Date(msg.timestamp).getTime() - new Date(prev.timestamp).getTime()) <
-					GROUP_GAP_MS
+			previousMessage?.timestamp && item.timestamp
+				? Math.abs(
+						new Date(item.timestamp).getTime() - new Date(previousMessage.timestamp).getTime(),
+					) < GROUP_GAP_MS
 				: false;
-		// A new day always starts a fresh group — even same-author messages
-		// across the divider shouldn't merge.
-		const dividerJustEmitted = i > 0 && dKey != null && dayKey(prev?.timestamp) !== dKey;
 		const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
-		const messageKey = messageKeys?.[i] ?? i;
+		const messageKey = itemKeys?.[i] ?? i;
 		const isHighlighted = messageKey === highlightedMessageKey;
 		out.push(
 			<MessageBlock
 				key={messageKey}
-				message={msg}
+				message={item}
 				userAvatar={userAvatar}
 				userName={userName}
 				agentType={agentType}
@@ -373,6 +488,7 @@ export function MessageList({
 				highlightQuery={isHighlighted ? highlightQuery : undefined}
 			/>,
 		);
+		previousMessage = item;
 	}
 	return <>{out}</>;
 }

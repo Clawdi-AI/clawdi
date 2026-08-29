@@ -1,6 +1,7 @@
 import { defaultStringifySearch, linkOptions } from "@tanstack/react-router";
 import type { AgentSectionId } from "@/lib/navigation-model";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { parseSessionTimelineView, type SessionTimelineView } from "@/lib/session-search-anchor";
 
 export type { AgentSectionId } from "@/lib/navigation-model";
 export { CONNECTED_AGENT_SECTION_IDS, HOSTED_AGENT_SECTION_IDS } from "@/lib/navigation-model";
@@ -9,6 +10,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	tab?: string;
 	project?: string;
 	vault?: string;
+	timelineView?: Exclude<SessionTimelineView, "all">;
 	subscription_action?: "start_new";
 };
 
@@ -184,6 +186,9 @@ export function validateAgentRouteSearch(search: Record<string, unknown>): Agent
 		if (value === undefined) delete validated[key];
 		else validated[key] = value;
 	}
+	const timelineView = parseSessionTimelineView(search.timelineView);
+	if (timelineView === undefined) delete validated.timelineView;
+	else validated.timelineView = timelineView;
 	const action = subscriptionAction(search.subscription_action);
 	if (action === undefined) delete validated.subscription_action;
 	else validated.subscription_action = action;
@@ -276,10 +281,15 @@ export function agentSessionDetailHref(agentId: string, sessionId: string): stri
 }
 
 /** Typed TanStack Router options for an agent-scoped session detail link. */
-export function agentSessionDetailLink(agentId: string, sessionId: string) {
+export function agentSessionDetailLink(
+	agentId: string,
+	sessionId: string,
+	search?: AgentRouteSearch,
+) {
 	return linkOptions({
 		to: "/agents/$id/sessions/$sessionId",
 		params: { id: agentId, sessionId },
+		...(search ? { search } : {}),
 	});
 }
 

@@ -397,6 +397,78 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "offset": 0,
         "limit": 2,
     }
+    initial_timeline = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"view": "all", "direction": "desc"},
+    )
+    assert initial_timeline.status_code == 200, initial_timeline.text
+    assert initial_timeline.json() == {
+        "items": [
+            {
+                "kind": "message",
+                "position": 4,
+                "role": "assistant",
+                "content": "visible answer",
+                "model": "claude-sonnet",
+                "timestamp": None,
+            },
+            {
+                "kind": "tool_result",
+                "position": 3,
+                "call_id": "call-1",
+                "name": "read",
+                "status": "completed",
+                "content": "secret tool output",
+                "result_json": None,
+                "timestamp": None,
+            },
+            {
+                "kind": "tool_call",
+                "position": 2,
+                "call_id": "call-1",
+                "name": "read",
+                "arguments_json": '{"path":"README.md"}',
+                "model": None,
+                "timestamp": None,
+            },
+            {
+                "kind": "message",
+                "position": 1,
+                "role": "user",
+                "content": "inspect this",
+                "model": None,
+                "timestamp": None,
+            },
+        ],
+        "total": 4,
+        "offset": 0,
+        "limit": 100,
+    }
+    tools_only = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"view": "tools"},
+    )
+    assert tools_only.status_code == 200, tools_only.text
+    assert tools_only.json()["total"] == 2
+    assert [item["kind"] for item in tools_only.json()["items"]] == [
+        "tool_call",
+        "tool_result",
+    ]
+    user_only = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"view": "user"},
+    )
+    assert user_only.status_code == 200, user_only.text
+    assert user_only.json()["items"] == [
+        {
+            "kind": "message",
+            "position": 1,
+            "role": "user",
+            "content": "inspect this",
+            "model": None,
+            "timestamp": None,
+        }
+    ]
     generation_commit = {
         "append_id": generation_append_id,
         "base_generation": None,
@@ -611,6 +683,17 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert "private chain of thought" not in projected.text
     assert "opaque" not in projected.text
     assert "secret tool output" not in projected.text
+
+    latest_timeline = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"view": "all"},
+    )
+    assert latest_timeline.status_code == 200, latest_timeline.text
+    assert latest_timeline.json()["total"] == 5
+    assert [item["position"] for item in latest_timeline.json()["items"]] == [1, 2, 3, 4, 6]
+    assert "private context" not in latest_timeline.text
+    assert "private chain of thought" not in latest_timeline.text
+    assert "opaque" not in latest_timeline.text
 
     # The committed generation now spans three immutable chunks. The read path
     # must use the new event head after both appends instead of serving the

@@ -29,6 +29,7 @@ from app.schemas.session_events import SessionEvent
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     project_safe_messages,
+    project_safe_timeline,
     project_visible_messages,
     validate_event_chunk_async,
 )
@@ -46,25 +47,26 @@ class _FileStoreLike(Protocol):
 # TTL exists for hygiene only: the (file_key, content_hash) key already
 # invalidates a stale snapshot, so a long-quiet entry is safe; the TTL just
 # stops it from pinning memory forever.
-_MESSAGES_CACHE_MAX = 16
-_MESSAGES_CACHE_TTL_S = 300.0
+_CONTENT_CACHE_MAX = 16
+_CONTENT_CACHE_TTL_S = 300.0
 type SessionMessageValue = dict[str, JsonValue]
+type SessionTimelineValue = dict[str, JsonValue]
 type SessionMessageDirection = Literal["asc", "desc"]
 
 
 @dataclass(frozen=True, slots=True)
-class SessionMessageProjection:
+class SessionContentProjection:
     messages: list[SessionMessageValue]
     source_positions: tuple[int, ...]
+    timeline: list[SessionTimelineValue]
+    timeline_source_positions: tuple[int, ...]
 
 
 _SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
     list[SessionMessageValue]
 )
-_messages_cache: OrderedDict[tuple[str, str], tuple[float, SessionMessageProjection]] = (
-    OrderedDict()
-)
-_messages_cache_lock = threading.Lock()
+_content_cache: OrderedDict[tuple[str, str], tuple[float, SessionContentProjection]] = OrderedDict()
+_content_cache_lock = threading.Lock()
 
 
 class SessionContentMissing(Exception):
@@ -82,44 +84,44 @@ def session_has_uploaded_content(session: Session) -> bool:
     )
 
 
-def _cache_get(key: tuple[str, str]) -> SessionMessageProjection | None:
+def _cache_get(key: tuple[str, str]) -> SessionContentProjection | None:
     now = time.monotonic()
-    with _messages_cache_lock:
-        entry = _messages_cache.get(key)
+    with _content_cache_lock:
+        entry = _content_cache.get(key)
         if entry is None:
             return None
         ts, parsed = entry
-        if now - ts > _MESSAGES_CACHE_TTL_S:
-            _messages_cache.pop(key, None)
+        if now - ts > _CONTENT_CACHE_TTL_S:
+            _content_cache.pop(key, None)
             return None
         # Touch — bump to end for LRU.
-        _messages_cache.move_to_end(key)
+        _content_cache.move_to_end(key)
         return parsed
 
 
-def _cache_put(key: tuple[str, str], projection: SessionMessageProjection) -> None:
+def _cache_put(key: tuple[str, str], projection: SessionContentProjection) -> None:
     now = time.monotonic()
-    with _messages_cache_lock:
-        _messages_cache[key] = (now, projection)
-        _messages_cache.move_to_end(key)
-        while len(_messages_cache) > _MESSAGES_CACHE_MAX:
-            _messages_cache.popitem(last=False)
+    with _content_cache_lock:
+        _content_cache[key] = (now, projection)
+        _content_cache.move_to_end(key)
+        while len(_content_cache) > _CONTENT_CACHE_MAX:
+            _content_cache.popitem(last=False)
 
 
-def slice_session_messages(
-    messages: Sequence[SessionMessageValue],
+def slice_session_items(
+    items: Sequence[SessionMessageValue],
     *,
     offset: int,
     limit: int,
     direction: SessionMessageDirection,
 ) -> list[SessionMessageValue]:
-    """Slice messages in the requested order using an order-relative offset."""
+    """Slice session projection items using an order-relative offset."""
     if direction == "asc":
-        return list(messages[offset : offset + limit])
+        return list(items[offset : offset + limit])
 
-    end = max(0, len(messages) - offset)
+    end = max(0, len(items) - offset)
     start = max(0, end - limit)
-    return list(reversed(messages[start:end]))
+    return list(reversed(items[start:end]))
 
 
 async def load_session_messages(
@@ -137,16 +139,16 @@ async def load_session_messages(
     - `SessionContentInvalid`: JSON decode failure or non-list payload.
       Indicates an upload corruption; route layer returns 500.
     """
-    projection = await load_session_message_projection(session, file_store, db)
+    projection = await load_session_content_projection(session, file_store, db)
     return projection.messages
 
 
-async def load_session_message_projection(
+async def load_session_content_projection(
     session: Session,
     file_store: _FileStoreLike,
     db: AsyncSession | None = None,
-) -> SessionMessageProjection:
-    """Load visible messages with their canonical source positions."""
+) -> SessionContentProjection:
+    """Load cached message and owner-only timeline projections."""
     if session.content_protocol == "events-v1" and session.event_generation_id is not None:
         if db is None:
             raise SessionContentInvalid("events-v1 content requires a database session")
@@ -159,9 +161,12 @@ async def load_session_message_projection(
             return cached
         events = await load_session_events(session, file_store, db)
         visible = project_visible_messages(events)
-        projection = SessionMessageProjection(
+        timeline = project_safe_timeline(events)
+        projection = SessionContentProjection(
             messages=_SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events)),
             source_positions=tuple(message.position for message in visible),
+            timeline=[item.value for item in timeline],
+            timeline_source_positions=tuple(item.position for item in timeline),
         )
         _cache_put(cache_key, projection)
         return projection
@@ -193,9 +198,14 @@ async def load_session_message_projection(
             f"session {session.id} content is not a valid JSON message array"
         ) from exc
 
-    projection = SessionMessageProjection(
+    projection = SessionContentProjection(
         messages=parsed,
         source_positions=tuple(range(len(parsed))),
+        timeline=[
+            {"kind": "message", "position": position, **message}
+            for position, message in enumerate(parsed)
+        ],
+        timeline_source_positions=tuple(range(len(parsed))),
     )
     _cache_put(cache_key, projection)
     return projection
