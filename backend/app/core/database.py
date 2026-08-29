@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -14,6 +16,8 @@ from app.services.metrics import (
     db_pool_checked_out,
     db_query_duration,
 )
+
+log = logging.getLogger(__name__)
 
 _QUERY_STARTED_AT = "clawdi_query_started_at"
 _CONNECTION_CHECKED_OUT_AT = "clawdi_connection_checked_out_at"
@@ -105,9 +109,36 @@ event.listen(engine.sync_engine.pool, "checkin", _connection_checkin)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
+async def _close_session(session: AsyncSession) -> None:
+    """Return the connection before propagating request cancellation."""
+    close_task = asyncio.create_task(session.close())
+    cancellation: asyncio.CancelledError | None = None
+    while not close_task.done():
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+        except Exception:
+            if cancellation is None:
+                raise
+            log.exception("Database session cleanup failed during request cancellation")
+            raise cancellation from None
+
+    if cancellation is not None:
+        try:
+            close_task.result()
+        except Exception:
+            log.exception("Database session cleanup failed during request cancellation")
+        raise cancellation
+    close_task.result()
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session_factory() as session:
+    session = async_session_factory()
+    try:
         yield session
+    finally:
+        await _close_session(session)
 
 
 async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None]:
@@ -119,17 +150,23 @@ async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None
     cannot be PostgreSQL read-only.
     """
 
-    async with async_session_factory() as session:
+    session = async_session_factory()
+    try:
         await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         yield session
+    finally:
+        await _close_session(session)
 
 
 @asynccontextmanager
 async def runtime_snapshot_session() -> AsyncGenerator[AsyncSession, None]:
     """Open the consistent read-only snapshot shared by runtime renderers."""
-    async with async_session_factory() as session:
+    session = async_session_factory()
+    try:
         await _configure_runtime_snapshot(session)
         yield session
+    finally:
+        await _close_session(session)
 
 
 async def _configure_runtime_snapshot(session: AsyncSession) -> None:
