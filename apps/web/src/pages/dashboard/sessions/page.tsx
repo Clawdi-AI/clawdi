@@ -30,7 +30,7 @@ import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
 
-// `relevance` (trgm similarity) joins the legacy date/count sorts.
+// `relevance` ranks deterministic phrase matches across metadata and messages.
 // Relevance is special-cased server-side: it's only meaningful when q
 // is non-empty, and the route silently falls back to last_activity_at
 // otherwise. We mirror that in the UI by only surfacing the "Relevance"

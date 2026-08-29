@@ -7,31 +7,13 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function searchTerms(query: string): string[] {
-	const normalized = query.trim();
-	if (!normalized) return [];
-
-	const candidates = [normalized, ...(normalized.match(/[\p{L}\p{N}_]+/gu) ?? [])];
-	const seen = new Set<string>();
-	return candidates
-		.filter((term) => term.length > 1 || normalized.length === 1)
-		.filter((term) => {
-			const key = term.toLocaleLowerCase();
-			if (seen.has(key)) return false;
-			seen.add(key);
-			return true;
-		})
-		.sort((a, b) => b.length - a.length)
-		.slice(0, 24);
-}
-
 export function createSearchHighlighter(query: string) {
-	const terms = searchTerms(query);
-	if (terms.length === 0) {
+	const phrase = query.trim();
+	if (!phrase) {
 		return (text: string): SearchHighlightPart[] => [{ text, highlighted: false }];
 	}
 
-	const pattern = new RegExp(terms.map(escapeRegExp).join("|"), "giu");
+	const pattern = new RegExp(escapeRegExp(phrase), "giu");
 	return (text: string): SearchHighlightPart[] => {
 		pattern.lastIndex = 0;
 		const parts: SearchHighlightPart[] = [];

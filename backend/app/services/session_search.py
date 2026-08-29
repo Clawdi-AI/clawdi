@@ -6,7 +6,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import case, delete, func, literal, or_, select, update
+from sqlalchemy import case, delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
@@ -16,7 +16,6 @@ from app.services.session_content import load_session_events, load_session_messa
 from app.services.session_events import project_visible_messages
 
 type SearchRole = Literal["user", "assistant"]
-_MIN_TRGM_QUERY_LENGTH = 3
 
 
 class SessionSearchFileStore(Protocol):
@@ -84,7 +83,7 @@ async def event_search_projection_complete(
     return missing is None
 
 
-def _escaped_contains_pattern(value: str) -> str:
+def escaped_contains_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
@@ -93,22 +92,11 @@ def _searchable_text(content: str) -> str:
     return content.replace("\x00", "\ufffd")
 
 
-def _message_match_expressions(query: str):
-    exact_match = SessionMessageSearch.content.ilike(
-        _escaped_contains_pattern(query),
+def _message_match_expression(query: str):
+    return SessionMessageSearch.content.ilike(
+        escaped_contains_pattern(query),
         escape="\\",
     )
-    candidate_filter = exact_match
-    if len(query) >= _MIN_TRGM_QUERY_LENGTH:
-        candidate_filter = or_(
-            exact_match,
-            literal(query).op("<%")(SessionMessageSearch.content),
-        )
-    score = case(
-        (exact_match, 1.0),
-        else_=func.word_similarity(query, SessionMessageSearch.content),
-    )
-    return candidate_filter, score
 
 
 def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
@@ -127,9 +115,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
         ),
         else_=func.concat("snapshot:", Session.content_hash),
     )
-    # Official pg_trgm word-search shape: use the GIN-backed operator for
-    # candidates, then word_similarity() only to rank that bounded set.
-    candidate_filter, score = _message_match_expressions(query)
+    message_match = _message_match_expression(query)
     candidates = (
         select(
             SessionMessageSearch.session_id.label("session_id"),
@@ -137,11 +123,13 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             SessionMessageSearch.position.label("position"),
             SessionMessageSearch.content.label("content"),
             SessionMessageSearch.role.label("role"),
-            score.label("score"),
+            # Body search is deterministic phrase containment. The constant
+            # only participates in cross-field ranking on the Session list.
+            literal(1.0).label("score"),
         )
         .where(
             SessionMessageSearch.user_id == user_id,
-            candidate_filter,
+            message_match,
         )
         .cte("session_message_candidates")
         .prefix_with("MATERIALIZED")
@@ -185,7 +173,7 @@ async def session_message_search_navigation(
     ):
         return None
 
-    candidate_filter, _ = _message_match_expressions(query)
+    message_match = _message_match_expression(query)
     ordered_matches = (
         select(
             SessionMessageSearch.position.label("position"),
@@ -202,7 +190,7 @@ async def session_message_search_navigation(
             SessionMessageSearch.user_id == session.user_id,
             SessionMessageSearch.session_id == session.id,
             SessionMessageSearch.content_revision == document_revision,
-            candidate_filter,
+            message_match,
         )
         .subquery("ordered_session_message_matches")
     )

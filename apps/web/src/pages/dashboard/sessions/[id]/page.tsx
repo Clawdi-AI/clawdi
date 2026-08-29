@@ -1,15 +1,23 @@
 "use client";
 
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
 	ArrowUpNarrowWide,
+	Bot,
 	Clock,
 	Hash,
 	MessageSquare,
 	Trash2,
+	UserRound,
+	Wrench,
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -239,6 +247,7 @@ export function SessionDetailContent({
 		fetchNextPage,
 		hasNextPage,
 		isFetchingNextPage,
+		isFetching: isContentFetching,
 	} = useInfiniteQuery({
 		// Direction in queryKey so toggling refetches from the new
 		// end (rather than reordering already-loaded pages, which
@@ -295,6 +304,7 @@ export function SessionDetailContent({
 		},
 		staleTime: SESSION_MESSAGES_STALE_MS,
 		gcTime: SESSION_MESSAGES_GC_MS,
+		placeholderData: keepPreviousData,
 	});
 
 	// Flatten pages → ordered message list, paired with a stable
@@ -396,6 +406,29 @@ export function SessionDetailContent({
 	}
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
+	const searchActive = Boolean(normalizedSearchQuery);
+	const isSearchUpdating =
+		searchActive &&
+		(normalizedSearchQuery !== debouncedSearchQuery || isContentFetching || isContentLoading);
+	const updateTimelineView = (selected: SessionTimelineView) => {
+		if (agentId) {
+			void router.navigate({
+				...agentSessionDetailLink(
+					agentId,
+					sessionId,
+					selected === "all" ? undefined : { timelineView: selected },
+				),
+				replace: true,
+				resetScroll: false,
+			});
+			return;
+		}
+		void router.navigate({
+			...sessionTimelineViewLink(sessionId, selected, { returnTo }),
+			replace: true,
+			resetScroll: false,
+		});
+	};
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -494,83 +527,84 @@ export function SessionDetailContent({
 			</DetailStats>
 
 			{session.has_content ? (
-				<SessionSearchNavigation
-					sessionId={sessionId}
-					query={normalizedSearchQuery}
-					navigation={searchNavigation}
-					returnTo={returnTo}
-					isSearching={
-						Boolean(normalizedSearchQuery) &&
-						(normalizedSearchQuery !== debouncedSearchQuery || isContentLoading)
-					}
-					hasSearchError={Boolean(normalizedSearchQuery) && isContentError}
-				/>
-			) : null}
-
-			{/* Timeline filters and direction stay visible while pages load. */}
-			{session.has_content ? (
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-					<ToggleGroup
-						value={[timelineView]}
-						onValueChange={(values) => {
-							const selected = values[0];
-							if (
-								selected !== "all" &&
-								selected !== "user" &&
-								selected !== "assistant" &&
-								selected !== "tools"
-							) {
-								return;
-							}
-							if (agentId) {
-								void router.navigate({
-									...agentSessionDetailLink(
-										agentId,
-										sessionId,
-										selected === "all" ? undefined : { timelineView: selected },
-									),
-									replace: true,
-									resetScroll: false,
-								});
-								return;
-							}
-							void router.navigate({
-								...sessionTimelineViewLink(sessionId, selected, { returnTo }),
-								replace: true,
-								resetScroll: false,
-							});
-						}}
-						variant="outline"
-						size="sm"
-						spacing={0}
-						aria-label="Timeline view"
-					>
-						<ToggleGroupItem value="all">All</ToggleGroupItem>
-						<ToggleGroupItem value="user">You</ToggleGroupItem>
-						<ToggleGroupItem value="assistant">Agent</ToggleGroupItem>
-						<ToggleGroupItem value="tools">Tools</ToggleGroupItem>
-					</ToggleGroup>
-					<div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-						{loadedCount > 0 ? (
-							<span className="tabular-nums">
-								{loadedCount}/{totalItems}
-							</span>
-						) : null}
-						<button
-							type="button"
-							onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
-							aria-label={
-								direction === "desc" ? "Show oldest activity first" : "Show newest activity first"
-							}
-							className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-accent-foreground"
-						>
-							{direction === "desc" ? (
-								<ArrowDownNarrowWide className="size-3.5" />
-							) : (
-								<ArrowUpNarrowWide className="size-3.5" />
-							)}
-							{direction === "desc" ? "Newest first" : "Oldest first"}
-						</button>
+				<div className="sticky top-(--header-height) z-10 -mx-4 border-y bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
+					<div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
+						<SessionSearchNavigation
+							sessionId={sessionId}
+							query={normalizedSearchQuery}
+							navigation={searchNavigation}
+							returnTo={returnTo}
+							isSearching={isSearchUpdating}
+							hasSearchError={searchActive && isContentError}
+							className="lg:max-w-2xl"
+						/>
+						{searchActive ? null : (
+							<div className="flex min-w-0 items-center justify-between gap-2 lg:ml-auto lg:justify-end">
+								<ToggleGroup
+									value={[timelineView]}
+									onValueChange={(values) => {
+										const selected = values[0];
+										if (
+											selected === "all" ||
+											selected === "user" ||
+											selected === "assistant" ||
+											selected === "tools"
+										) {
+											updateTimelineView(selected);
+										}
+									}}
+									size="sm"
+									spacing={1}
+									aria-label="Timeline view"
+									className="min-w-0 bg-muted p-0.5"
+								>
+									<ToggleGroupItem
+										value="all"
+										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
+									>
+										<MessageSquare /> All
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="user"
+										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
+									>
+										<UserRound /> You
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="assistant"
+										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
+									>
+										<Bot /> Agent
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="tools"
+										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
+									>
+										<Wrench /> Tools
+									</ToggleGroupItem>
+								</ToggleGroup>
+								<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+									{loadedCount > 0 ? (
+										<span className="hidden tabular-nums sm:inline">
+											{loadedCount} of {totalItems}
+										</span>
+									) : null}
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
+										aria-label={
+											direction === "desc"
+												? "Show oldest activity first"
+												: "Show newest activity first"
+										}
+										title={direction === "desc" ? "Newest first" : "Oldest first"}
+									>
+										{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
+									</Button>
+								</div>
+							</div>
+						)}
 					</div>
 				</div>
 			) : null}

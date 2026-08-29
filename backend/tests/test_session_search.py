@@ -1,7 +1,7 @@
 """Session list/search endpoint tests.
 
 Covers the upgraded `/api/sessions` list endpoint:
-  - pg_trgm similarity search replacing ILIKE — typo tolerance + ranking
+  - case-insensitive phrase search across metadata and visible messages
   - Filters: model, tag, min_messages, min_duration, has_pr
   - `sort=relevance` ordering
   - Default behavior unchanged (no q, no filters → date-sorted list)
@@ -89,29 +89,26 @@ async def _push_session(
 
 
 @pytest.mark.asyncio
-async def test_trgm_search_handles_typos(client: httpx.AsyncClient):
-    """`?q=athentication` should still surface a session whose summary
-    contains 'authentication'. ILIKE wouldn't match the typo; pg_trgm
-    similarity catches it because most trigrams overlap."""
+async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     await _push_session(
         client, env_id, local_session_id="auth-1", summary="user authentication migration"
     )
     await _push_session(client, env_id, local_session_id="dns-1", summary="DNS cache poisoning")
 
-    # Typo: drop the 'u' in "authentication".
-    r = await client.get("/v1/sessions?q=athentication")
-    assert r.status_code == 200
-    items = r.json()["items"]
-    summaries = [s["summary"] for s in items]
-    assert "user authentication migration" in summaries
-    assert "DNS cache poisoning" not in summaries
+    matched = await client.get("/v1/sessions", params={"q": "AUTHENTICATION"})
+    assert matched.status_code == 200
+    assert [item["summary"] for item in matched.json()["items"]] == [
+        "user authentication migration"
+    ]
+
+    typo = await client.get("/v1/sessions", params={"q": "athentication"})
+    assert typo.status_code == 200
+    assert typo.json()["items"] == []
 
 
 @pytest.mark.asyncio
-async def test_relevance_sort_orders_by_similarity(client: httpx.AsyncClient):
-    """`sort=relevance` orders by trigram similarity — the closest
-    match comes first, irrelevant rows don't appear."""
+async def test_relevance_sort_only_ranks_phrase_matches(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     # Exact-match summary, partial-match summary, no-match summary.
     await _push_session(client, env_id, local_session_id="exact", summary="oauth token refresh bug")
@@ -122,8 +119,7 @@ async def test_relevance_sort_orders_by_similarity(client: httpx.AsyncClient):
 
     r = await client.get("/v1/sessions?q=oauth+token+refresh&sort=relevance")
     items = r.json()["items"]
-    # The exact-match summary must appear first; below-threshold
-    # rows ("UI polish") shouldn't appear at all.
+    # Only the summary containing the complete phrase is eligible.
     assert items[0]["summary"] == "oauth token refresh bug"
     assert all(s["summary"] != "UI polish" for s in items)
 
@@ -171,8 +167,10 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
             ),
         },
     }
-    fuzzy = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
-    assert [item["local_session_id"] for item in fuzzy["items"]] == [local_id]
+    typo = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
+    assert typo["items"] == []
+    case_insensitive = (await client.get("/v1/sessions", params={"q": "original NEEDLE"})).json()
+    assert [item["local_session_id"] for item in case_insensitive["items"]] == [local_id]
     literal = (await client.get("/v1/sessions", params={"q": "%_"})).json()
     assert [item["local_session_id"] for item in literal["items"]] == [local_id]
     backslash = (await client.get("/v1/sessions", params={"q": "slash\\needle"})).json()

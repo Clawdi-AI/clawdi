@@ -11663,7 +11663,7 @@ export interface operations {
     list_sessions_v1_sessions_get: {
         parameters: {
             query?: {
-                /** @description Fuzzy search on summary/project/id and visible message text */
+                /** @description Case-insensitive phrase search on summary/project/id and visible message text */
                 q?: string | null;
                 /** @description Filter by agent_type */
                 agent?: string | null;

@@ -1,7 +1,7 @@
 "use client";
 
 import { Link, useRouter } from "@tanstack/react-router";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -11,6 +11,7 @@ import {
 	sessionDetailSearchLink,
 	sessionSearchMatchLink,
 } from "@/lib/session-search-anchor";
+import { cn } from "@/lib/utils";
 
 type SearchNavigation = NonNullable<SessionMessagesPage["search_navigation"]>;
 
@@ -63,6 +64,7 @@ export function SessionSearchNavigation({
 	returnTo,
 	isSearching = false,
 	hasSearchError = false,
+	className,
 }: {
 	sessionId: string;
 	query: string;
@@ -70,6 +72,7 @@ export function SessionSearchNavigation({
 	returnTo?: string;
 	isSearching?: boolean;
 	hasSearchError?: boolean;
+	className?: string;
 }) {
 	const router = useRouter();
 	const [draftQuery, setDraftQuery] = useState(query);
@@ -98,7 +101,10 @@ export function SessionSearchNavigation({
 	return (
 		<nav
 			aria-label="Search this session"
-			className="sticky top-(--header-height) z-10 -mx-1 flex min-w-0 flex-col gap-2 border-y bg-background/95 px-1 py-2 text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:flex-row sm:items-center"
+			className={cn(
+				"flex min-w-0 flex-1 flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center",
+				className,
+			)}
 		>
 			<SearchInput
 				value={draftQuery}
@@ -123,11 +129,15 @@ export function SessionSearchNavigation({
 			/>
 			{query ? (
 				<div className="flex min-h-8 shrink-0 items-center justify-end gap-2">
-					<span className="shrink-0 tabular-nums text-foreground" aria-live="polite">
+					<span
+						className="inline-flex shrink-0 items-center gap-1.5 tabular-nums text-foreground"
+						aria-live="polite"
+					>
+						{isSearching ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
 						{hasSearchError
 							? "Unavailable"
 							: isSearching
-								? "Searching…"
+								? "Searching"
 								: activeNavigation
 									? `${activeNavigation.index} of ${activeNavigation.total}`
 									: "No matches"}

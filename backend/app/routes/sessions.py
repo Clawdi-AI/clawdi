@@ -138,6 +138,7 @@ from app.services.session_search import (
     SearchableSessionMessage,
     best_session_message_matches,
     current_search_revision,
+    escaped_contains_pattern,
     replace_snapshot_search_index,
     searchable_snapshot_messages,
     session_message_search_navigation,
@@ -2507,15 +2508,6 @@ _SESSION_SORT_COLUMNS = {
 }
 
 
-# pg_trgm similarity threshold. Default `pg_trgm.similarity_threshold`
-# is 0.3 which is fairly strict — close to "all the trigrams match".
-# For typo tolerance ("athentication" still surfacing "authentication")
-# we want something lower. 0.15 is the sweet spot from the memories
-# search benchmark — captures typos and partial-word matches without
-# drowning the results in distant relatives.
-_TRGM_THRESHOLD = 0.15
-
-
 def _message_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
     compact = " ".join(content.split())
     if len(compact) <= limit:
@@ -2541,7 +2533,7 @@ async def list_sessions(
     q: str | None = Query(
         default=None,
         max_length=500,
-        description="Fuzzy search on summary/project/id and visible message text",
+        description="Case-insensitive phrase search on summary/project/id and visible message text",
     ),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
@@ -2612,17 +2604,23 @@ async def list_sessions(
     # IS NULL` makes this lookup index-only.
     is_shared_subq = _link_is_shared_subq()
 
-    # Build the trigram relevance expression once — used both for
-    # filtering (similarity > threshold) and for `sort=relevance`
-    # (ORDER BY similarity DESC). Greatest-of-three so a match in
-    # ANY of summary / project / id wins, and the strongest match
-    # drives the rank. NULL-safe via COALESCE — sessions with NULL
-    # summary still match if their project_path or id does.
+    # Search selection is deterministic phrase containment across metadata and
+    # visible messages. `similarity()` only ranks rows already known to contain
+    # the query; it never introduces typo-tolerant or unexplained candidates.
     relevance_expr: Any | None
     metadata_relevance_expr: Any | None = None
+    metadata_match_expr: Any | None = None
     message_match: Any | None = None
     message_relevance_expr: Any | None = None
     if q:
+        contains_pattern = escaped_contains_pattern(q)
+        summary_match = func.coalesce(Session.summary, "").ilike(contains_pattern, escape="\\")
+        project_match = func.coalesce(Session.project_path, "").ilike(
+            contains_pattern,
+            escape="\\",
+        )
+        local_match = Session.local_session_id.ilike(contains_pattern, escape="\\")
+        metadata_match_expr = or_(summary_match, project_match, local_match)
         sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
         sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
         sim_local = func.similarity(Session.local_session_id, q)
@@ -2712,19 +2710,13 @@ async def list_sessions(
             session_filters.append(_MANUAL_SESSION_SUMMARY_FILTER)
 
     if q:
-        # pg_trgm `similarity()` for typo / partial-word tolerance.
-        # NOT index-accelerated — the function-call form doesn't trigger
-        # the `gin_trgm_ops` operator class (only `%` / `<%` / `LIKE`
-        # do). Runs as a Seq Scan over the user's session set; fine
-        # for the typical few-thousand-rows-per-user. If a power user
-        # ever hits real latency here, swap to `WHERE summary % :q`
-        # plus a GIN index. Threshold tuned for "type to filter" UX.
         assert relevance_expr is not None
         assert metadata_relevance_expr is not None
+        assert metadata_match_expr is not None
         assert message_match is not None
         session_filters.append(
             or_(
-                metadata_relevance_expr >= _TRGM_THRESHOLD,
+                metadata_match_expr,
                 message_match.c.session_id.is_not(None),
             )
         )
@@ -2749,7 +2741,7 @@ async def list_sessions(
 
     # Resolve sort column. `relevance` is special — only valid when
     # `q` is present (else fall back to the date default so the empty-
-    # search experience doesn't break). The trgm-relevance expression
+    # search experience doesn't break). The relevance expression
     # was built up above; reuse it here so the sort matches the
     # similarity used for filtering.
     if sort == "relevance":
