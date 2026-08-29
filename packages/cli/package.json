@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.14.29",
+	"version": "0.14.30",
 	"description": "The best home for all your AI agents, environments, sessions, memory, skills, cron jobs, and app connections.",
 	"license": "MIT",
 	"type": "module",
