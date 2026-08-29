@@ -450,11 +450,14 @@ function ToolActivity({
 							})}
 						</span>
 					) : null}
-					{hasDetails ? (
-						<ChevronRight
-							className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-						/>
-					) : null}
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3.5 shrink-0 transition-transform",
+							open && "rotate-90",
+							!hasDetails && "invisible",
+						)}
+					/>
 				</button>
 				{open ? (
 					<div className="px-2 pb-2 pt-1">

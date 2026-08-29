@@ -212,6 +212,7 @@ export function SessionDetailContent({
 	// "asc" swaps the query key without a wasted "desc" fetch.
 	const [direction, setDirection] = useState<Direction>("desc");
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
+	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
 	const debouncedSearchQuery = useDebouncedValue(normalizedSearchQuery, 250) || undefined;
 	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
@@ -409,9 +410,17 @@ export function SessionDetailContent({
 	const searchActive = Boolean(normalizedSearchQuery);
 	const isSearchUpdating =
 		searchActive &&
-		(normalizedSearchQuery !== debouncedSearchQuery || isContentFetching || isContentLoading);
+		(normalizedSearchQuery !== debouncedSearchQuery ||
+			(isContentFetching && !isFetchingNextPage) ||
+			isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
-		const retainedSearchQuery = selected === "tools" ? undefined : normalizedSearchQuery;
+		if (timelineView !== "tools") {
+			rememberedSearchQueryRef.current = normalizedSearchQuery;
+		}
+		const retainedSearchQuery =
+			selected === "tools"
+				? undefined
+				: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
 		if (agentId) {
 			const search = {
 				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
@@ -553,7 +562,7 @@ export function SessionDetailContent({
 						)}
 						<div
 							className={cn(
-								"flex min-w-0 items-center justify-between gap-2 md:justify-end",
+								"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
 								timelineView === "tools" && "md:justify-self-end",
 							)}
 						>
@@ -589,7 +598,7 @@ export function SessionDetailContent({
 								>
 									<Bot /> <span className="hidden sm:inline">Agent</span>
 								</ToggleGroupItem>
-								<ToggleGroupItem value="tools" aria-label="Tool activity" title="Tool activity">
+								<ToggleGroupItem value="tools" aria-label="Tools activity" title="Tool activity">
 									<Wrench /> <span className="hidden sm:inline">Tools</span>
 								</ToggleGroupItem>
 							</ToggleGroup>

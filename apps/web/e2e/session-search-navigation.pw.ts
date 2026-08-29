@@ -301,19 +301,27 @@ test("filters session activity and expands paired tool details", async ({ page }
 		(url) => url.searchParams.get("matchQuery") === "Read the repository",
 	);
 
-	await page.getByRole("button", { name: "Tool activity" }).click();
+	await page.getByRole("button", { name: "Tools activity" }).click();
 	await expect(page).toHaveURL((url) => {
 		return url.searchParams.get("timelineView") === "tools" && !url.searchParams.has("matchQuery");
 	});
 	await expect(page.getByRole("textbox", { name: "Search messages" })).not.toBeVisible();
-	await expect(page.getByRole("button", { name: "Tool activity" })).toHaveAttribute(
+	await expect(page.getByRole("button", { name: "Tools activity" })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
 	await expect(toolActivity).toBeVisible();
 
 	await page.getByRole("button", { name: "Agent messages" }).click();
-	await page.getByRole("textbox", { name: "Search messages" }).fill("Final answer");
+	const restoredSearch = page.getByRole("textbox", { name: "Search messages" });
+	await expect(restoredSearch).toHaveValue("Read the repository");
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.searchParams.get("matchQuery") === "Read the repository" &&
+			url.searchParams.get("timelineView") === "assistant"
+		);
+	});
+	await restoredSearch.fill("Final answer");
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.searchParams.get("matchQuery") === "Final answer" &&
