@@ -14,8 +14,13 @@ import { dirname, join } from "node:path";
 import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
-import { sessionFence } from "../lib/session-upload";
-import { readFencedSessionEntry, readSessionsLock } from "../lib/sessions-lock";
+import { planSessionUpload, sessionFence } from "../lib/session-upload";
+import {
+	persistFencedSessionEntry,
+	persistFencedSessionSourceRevisions,
+	readFencedSessionEntry,
+	readSessionsLock,
+} from "../lib/sessions-lock";
 import {
 	computeSkillFolderHash,
 	readSkillProjectionClaimsForAgent,
@@ -83,7 +88,7 @@ describe("stable session enqueue abort fence", () => {
 		const queued: unknown[] = [];
 		const inFlight = new Map<string, string>();
 		abort.abort();
-		const enqueued = await enqueueChangedSessionsAfterStability({
+		const result = await enqueueChangedSessionsAfterStability({
 			abort: abort.signal,
 			sessions: [
 				{
@@ -103,7 +108,12 @@ describe("stable session enqueue abort fence", () => {
 					rawFilePath: "/sessions/1.jsonl",
 				},
 			],
-			queue: { enqueue: (item: unknown) => queued.push(item) },
+			queue: {
+				enqueueWhenAvailable: async (item: unknown) => {
+					queued.push(item);
+					return 1;
+				},
+			},
 			lastPushedHash: new Map(),
 			inFlightHash: inFlight,
 			protocol: "snapshot-v1",
@@ -115,9 +125,71 @@ describe("stable session enqueue abort fence", () => {
 			}),
 		});
 
-		expect(enqueued).toBe(0);
+		expect(result.enqueued).toBe(0);
 		expect(queued).toEqual([]);
 		expect(inFlight.size).toBe(0);
+	});
+
+	it("backfills the source revision when the confirmed content hash still matches", async () => {
+		const root = mkdtempSync(join(tmpdir(), "session-revision-backfill-"));
+		const originalHome = process.env.HOME;
+		try {
+			process.env.HOME = root;
+			const session: RawSession = {
+				localSessionId: "session-1",
+				projectPath: null,
+				startedAt: new Date(0),
+				endedAt: null,
+				messageCount: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: null,
+				summary: null,
+				messages: [{ role: "user", content: "already synced" }],
+				rawFilePath: "/sessions/1.jsonl",
+				sourceRevision: "source-r2",
+			};
+			const plan = planSessionUpload(session, "snapshot-v1");
+			const fence = {
+				apiOrigin: "https://cloud.example.test",
+				environmentId: "agent-1",
+				adapter: "hermes" as const,
+				sourceSessionKey: session.localSessionId,
+			};
+			persistFencedSessionEntry(fence, {
+				protocol: plan.protocol,
+				local_hash: plan.localHash,
+				snapshot_hash: plan.localHash,
+			});
+			const queued: unknown[] = [];
+			const result = await enqueueChangedSessionsAfterStability({
+				abort: new AbortController().signal,
+				sessions: [session],
+				queue: {
+					enqueueWhenAvailable: async (item: unknown) => {
+						queued.push(item);
+						return 1;
+					},
+				},
+				lastPushedHash: new Map([[session.localSessionId, plan.localHash]]),
+				inFlightHash: new Map(),
+				protocol: plan.protocol,
+				fenceFor: () => fence,
+			});
+
+			persistFencedSessionSourceRevisions(result.confirmedSourceRevisions);
+
+			expect(result.enqueued).toBe(0);
+			expect(queued).toEqual([]);
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.source_revision).toBe("source-r2");
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

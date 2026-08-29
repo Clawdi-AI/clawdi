@@ -669,7 +669,7 @@ async function uploadOneAgent(
 					sourceSessionKey: id,
 				});
 				if (suppressedIds.has(id)) {
-					persistSuppressedSession(fence, plan);
+					persistSuppressedSession(fence, s, plan);
 					continue;
 				}
 				try {

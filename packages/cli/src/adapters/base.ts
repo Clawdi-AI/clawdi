@@ -114,6 +114,8 @@ export interface RawSession {
 	/** Present only when the source supports strict, stable events-v1. */
 	events?: SessionEvent[];
 	rawFilePath: string;
+	/** Opaque adapter revision used to avoid materializing unchanged backing content. */
+	sourceRevision?: string;
 	// Set by `pushOneAgent` after collection — sha256 hex of the JSON
 	// the CLI is about to upload. Adapters do not populate this.
 	contentHash?: string;
@@ -139,12 +141,51 @@ export interface SessionScanResult {
 	coverage: "complete" | "partial";
 }
 
+export interface SessionScanBatch {
+	sessions: RawSession[];
+	/** Every local session observed in this batch, including revision-matched sessions. */
+	observedLocalSessionIds: readonly string[];
+	dedupedCount: number;
+}
+
+export interface SessionBatchScan {
+	coverage: SessionScanResult["coverage"];
+	batches: AsyncIterable<SessionScanBatch>;
+}
+
 export interface SessionModule {
 	contentProtocol(): Promise<"events-v1" | "snapshot-v1">;
 	collect(request: SessionScanRequest): Promise<SessionScanResult>;
+	/**
+	 * Bounded scan for large or monolithic stores. Implementations may omit it;
+	 * callers then treat `collect` as one batch.
+	 */
+	scan?(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+	): Promise<SessionBatchScan>;
 	resolve(localSessionId: string): Promise<RawSession | null>;
 	/** Paths watched as one backing-store stability group. */
 	watchPaths(): string[];
+}
+
+export async function scanSessionModule(
+	module: SessionModule,
+	request: SessionScanRequest,
+	knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
+): Promise<SessionBatchScan> {
+	if (module.scan) return module.scan(request, knownSourceRevisions);
+	const result = await module.collect(request);
+	return {
+		coverage: result.coverage,
+		batches: (async function* () {
+			yield {
+				sessions: result.sessions,
+				observedLocalSessionIds: result.sessions.map((session) => session.localSessionId),
+				dedupedCount: result.dedupedCount,
+			};
+		})(),
+	};
 }
 
 export interface RawSkill {

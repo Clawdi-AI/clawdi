@@ -203,6 +203,7 @@ export class RetryQueue {
 	private writeChain: Promise<void> = Promise.resolve();
 	private flushActive = false;
 	private readonly itemWaiters = new Set<() => void>();
+	private readonly capacityWaiters = new Set<() => void>();
 	// Latest snapshot waiting to be written. Multiple `persist()`
 	// calls within one tick coalesce into a single write because
 	// the flush loop reads this until it's null. Last-write-wins,
@@ -394,6 +395,21 @@ export class RetryQueue {
 		return stamped.version;
 	}
 
+	/**
+	 * Enqueue derived reconciliation work without evicting older work. Direct
+	 * producers may still use `enqueue`'s bounded latest-state policy; an
+	 * inventory scan can wait because it remains reproducible until queued.
+	 */
+	async enqueueWhenAvailable(item: QueueItemInput, abort: AbortSignal): Promise<number | null> {
+		while (!abort.aborted) {
+			const candidate = stampVersion(item, this.nextVersion);
+			const replacesExisting = this.items.some((existing) => sameKey(existing, candidate));
+			if (replacesExisting || this.items.length < this.maxItems) return this.enqueue(item);
+			await this.waitForCapacityChange(abort);
+		}
+		return null;
+	}
+
 	/** Wait until an item is available, the timeout expires, or abort fires.
 	 * Used by the daemon drain loop so an idle queue can sleep until
 	 * enqueue() provides real work. */
@@ -421,6 +437,30 @@ export class RetryQueue {
 		if (this.itemWaiters.size === 0) return;
 		const waiters = [...this.itemWaiters];
 		this.itemWaiters.clear();
+		for (const finish of waiters) finish();
+	}
+
+	private waitForCapacityChange(abort: AbortSignal): Promise<void> {
+		if (this.items.length < this.maxItems || abort.aborted) return Promise.resolve();
+		return new Promise((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				this.capacityWaiters.delete(finish);
+				abort.removeEventListener("abort", finish);
+				resolve();
+			};
+			this.capacityWaiters.add(finish);
+			abort.addEventListener("abort", finish, { once: true });
+			if (this.items.length < this.maxItems) finish();
+		});
+	}
+
+	private notifyCapacityWaiters(): void {
+		if (this.capacityWaiters.size === 0) return;
+		const waiters = [...this.capacityWaiters];
+		this.capacityWaiters.clear();
 		for (const finish of waiters) finish();
 	}
 
@@ -488,6 +528,7 @@ export class RetryQueue {
 		if (this.items[idx].version !== item.version) return false;
 		this.items.splice(idx, 1);
 		this.persist();
+		this.notifyCapacityWaiters();
 		return true;
 	}
 

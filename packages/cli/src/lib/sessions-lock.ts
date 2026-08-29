@@ -39,6 +39,7 @@ export interface FencedSessionLockEntry {
 	source_session_key: string;
 	protocol: "snapshot-v1" | "events-v1";
 	local_hash: string;
+	source_revision?: string;
 	snapshot_hash?: string;
 	event_generation?: string;
 	event_revision?: number;
@@ -46,6 +47,13 @@ export interface FencedSessionLockEntry {
 	event_head_hash?: string;
 	pending?: PendingEventUpload;
 	blocked?: SessionUploadBlock;
+}
+
+export interface FencedSessionSourceRevisionUpdate {
+	fence: SessionFence;
+	protocol: FencedSessionLockEntry["protocol"];
+	localHash: string;
+	sourceRevision: string;
 }
 
 export interface LegacySessionLockEntry {
@@ -130,6 +138,29 @@ export function clearFencedSessionEntry(fence: SessionFence): void {
 	writeSessionsLock(removeFencedSessionEntry(readSessionsLock(), fence));
 }
 
+export function persistFencedSessionSourceRevisions(
+	updates: readonly FencedSessionSourceRevisionUpdate[],
+): void {
+	if (updates.length === 0) return;
+	const lock = readSessionsLock();
+	let changed = false;
+	for (const update of updates) {
+		const entry = readFencedSessionEntry(lock, update.fence);
+		if (
+			!entry ||
+			entry.pending !== undefined ||
+			entry.protocol !== update.protocol ||
+			entry.local_hash !== update.localHash ||
+			entry.source_revision === update.sourceRevision
+		) {
+			continue;
+		}
+		entry.source_revision = update.sourceRevision;
+		changed = true;
+	}
+	if (changed) writeSessionsLock(lock);
+}
+
 /** Read the current lock while accepting v1 without trusting its unfenced hash. */
 export function readSessionsLock(): SessionsLock {
 	const path = join(getClawdiDir(), LOCK_FILE);
@@ -202,6 +233,7 @@ export function isFencedSessionLockEntry(value: unknown): value is FencedSession
 		typeof value.environment_id === "string" &&
 		typeof value.adapter === "string" &&
 		typeof value.source_session_key === "string" &&
-		(value.protocol === "snapshot-v1" || value.protocol === "events-v1")
+		(value.protocol === "snapshot-v1" || value.protocol === "events-v1") &&
+		(value.source_revision === undefined || typeof value.source_revision === "string")
 	);
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
@@ -19,6 +20,7 @@ import type {
 	AgentAdapterCore,
 	RawSession,
 	RawSkill,
+	SessionBatchScan,
 	SessionContentPart,
 	SessionEventDisplayMetadata,
 	SessionEventSemantics,
@@ -79,6 +81,10 @@ interface TableInfoRow {
 	pk: number;
 }
 
+interface MessageRevisionRow {
+	presentation_state: string;
+}
+
 const MODERN_MESSAGE_CORE_COLUMNS = ["session_id", "role", "content", "timestamp"] as const;
 
 const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
@@ -97,6 +103,9 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 ] as const;
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
+const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
+// Bump when persisted Hermes rows map to different Session/Event bytes.
+const HERMES_SESSION_PROJECTION_REVISION = 2;
 
 function messageTableInfo(db: ReadonlySqliteDatabase): TableInfoRow[] {
 	return db.prepare("PRAGMA table_info(messages)").all() as TableInfoRow[];
@@ -122,6 +131,55 @@ function modernMessageSelectColumns(columns: readonly TableInfoRow[]): string {
 		),
 		"timestamp",
 	].join(", ");
+}
+
+function messageRevisionQuery(columns: readonly TableInfoRow[]): string {
+	const names = new Set(columns.map((column) => column.name));
+	const columnOr = (name: string, fallback: string) =>
+		names.has(name) ? name : `${fallback} AS ${name}`;
+	// Hermes appends and replaces rows with stable IDs, toggles lifecycle flags,
+	// updates presentation metadata in place, and may clear stale content. Keep
+	// that state exact while reducing large immutable payloads to byte lengths.
+	// SQLite can answer octet_length from the record header without reading the
+	// content payload from overflow pages.
+	return `
+		SELECT json_group_array(
+		         json_array(
+		           id, timestamp, active, compacted, display_kind, display_metadata,
+		           octet_length(content)
+		         ) ORDER BY id
+		       ) AS presentation_state
+		FROM (
+			SELECT id, timestamp, content,
+			       ${columnOr("active", "1")},
+			       ${columnOr("compacted", "0")},
+			       ${columnOr("display_kind", "NULL")},
+			       ${columnOr("display_metadata", "NULL")}
+			FROM messages
+			WHERE session_id = ?
+		)
+	`;
+}
+
+function sessionSourceRevision(row: SessionRow, messages: MessageRevisionRow): string {
+	return createHash("sha256")
+		.update(
+			JSON.stringify([
+				HERMES_SESSION_PROJECTION_REVISION,
+				row.id,
+				row.source,
+				row.model,
+				row.title,
+				row.started_at,
+				row.ended_at,
+				row.message_count,
+				row.input_tokens,
+				row.output_tokens,
+				row.cache_read_tokens,
+				messages.presentation_state,
+			]),
+		)
+		.digest("hex");
 }
 
 function decodeHermesContent(content: string | null): unknown {
@@ -414,6 +472,8 @@ export class HermesAdapter implements AgentAdapterCore {
 	readonly sessions = {
 		contentProtocol: () => this.getContentProtocol(),
 		collect: (request: SessionScanRequest) => this.collectSessions(request),
+		scan: (request: SessionScanRequest, knownSourceRevisions: ReadonlyMap<string, string>) =>
+			this.scanSessions(request, knownSourceRevisions),
 		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
@@ -450,35 +510,117 @@ export class HermesAdapter implements AgentAdapterCore {
 		}
 	}
 
-	private async collectSessions(_request: SessionScanRequest): Promise<SessionScanResult> {
-		// Hermes' SQLite is a single file with no per-row stat info, so we
-		// always scan the whole `sessions` table. Cost is negligible
-		// (dozens to hundreds of rows). `projectFilter` has no analogue
-		// in Hermes' data model and is silently ignored.
-		return { sessions: await this.collectCurrentSessions(), dedupedCount: 0, coverage: "complete" };
+	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+		const scan = await this.scanSessions(request, new Map());
+		const sessions: RawSession[] = [];
+		let dedupedCount = 0;
+		for await (const batch of scan.batches) {
+			sessions.push(...batch.sessions);
+			dedupedCount += batch.dedupedCount;
+		}
+		return { sessions, dedupedCount, coverage: scan.coverage };
+	}
+
+	private async scanSessions(
+		_request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+	): Promise<SessionBatchScan> {
+		if (!existsSync(stateDbPath())) {
+			return { coverage: "complete", batches: (async function* () {})() };
+		}
+		const db = await openReadonlySqlite(stateDbPath());
+		return {
+			coverage: "complete",
+			batches: this.readSessionBatches(db, knownSourceRevisions),
+		};
+	}
+
+	private async *readSessionBatches(
+		db: ReadonlySqliteDatabase,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+	): AsyncGenerator<{
+		sessions: RawSession[];
+		observedLocalSessionIds: readonly string[];
+		dedupedCount: number;
+	}> {
+		try {
+			const readers = this.sessionReaders(db);
+			let cursor: Pick<SessionRow, "started_at" | "id"> | null = null;
+			while (true) {
+				const rows = db
+					.prepare(`
+						SELECT id, source, model, title, started_at, ended_at,
+						       message_count, input_tokens, output_tokens, cache_read_tokens
+						FROM sessions
+						${cursor ? "WHERE started_at < ? OR (started_at = ? AND id < ?)" : ""}
+						ORDER BY started_at DESC, id DESC
+						LIMIT ?
+					`)
+					.all(
+						...(cursor ? [cursor.started_at, cursor.started_at, cursor.id] : []),
+						HERMES_SESSION_SCAN_BATCH_SIZE,
+					) as SessionRow[];
+				if (rows.length === 0) return;
+
+				const observedLocalSessionIds = rows.map((row) => row.id);
+				const sessions: RawSession[] = [];
+				for (const row of rows) {
+					const sourceRevision = readers.revision
+						? sessionSourceRevision(row, readers.revision.get(row.id) as MessageRevisionRow)
+						: undefined;
+					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
+					const session = this.materializeSession(
+						row,
+						sourceRevision,
+						readers.modern,
+						readers.messages,
+					);
+					if (session) sessions.push(session);
+				}
+				yield { sessions, observedLocalSessionIds, dedupedCount: 0 };
+				const last = rows.at(-1);
+				if (!last || rows.length < HERMES_SESSION_SCAN_BATCH_SIZE) return;
+				cursor = last;
+			}
+		} finally {
+			db.close();
+		}
 	}
 
 	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
-		return (await this.collectCurrentSessions(localSessionId))[0] ?? null;
-	}
-
-	private async collectCurrentSessions(localSessionId?: string): Promise<RawSession[]> {
-		if (!existsSync(stateDbPath())) return [];
+		if (!existsSync(stateDbPath())) return null;
 		const db = await openReadonlySqlite(stateDbPath());
 		try {
-			const messageColumns = messageTableInfo(db);
-			const modern = hasStableModernMessageIds(messageColumns);
-			const selectSessions = `
-				SELECT id, source, model, title, started_at, ended_at,
-				       message_count, input_tokens, output_tokens, cache_read_tokens
-				FROM sessions
-				${localSessionId === undefined ? "" : "WHERE id = ?"}
-				ORDER BY started_at DESC
-			`;
-			const rows = db
-				.prepare(selectSessions)
-				.all(...(localSessionId === undefined ? [] : [localSessionId])) as SessionRow[];
-			const msgStmt = db.prepare(
+			const row = db
+				.prepare(`
+					SELECT id, source, model, title, started_at, ended_at,
+					       message_count, input_tokens, output_tokens, cache_read_tokens
+					FROM sessions
+					WHERE id = ?
+				`)
+				.get(localSessionId) as SessionRow | undefined;
+			if (!row) return null;
+			const readers = this.sessionReaders(db);
+			return this.materializeSession(
+				row,
+				readers.revision
+					? sessionSourceRevision(row, readers.revision.get(row.id) as MessageRevisionRow)
+					: undefined,
+				readers.modern,
+				readers.messages,
+			);
+		} finally {
+			db.close();
+		}
+	}
+
+	private sessionReaders(db: ReadonlySqliteDatabase) {
+		const messageColumns = messageTableInfo(db);
+		const modern = hasStableModernMessageIds(messageColumns);
+		return {
+			modern,
+			revision: modern ? db.prepare(messageRevisionQuery(messageColumns)) : null,
+			messages: db.prepare(
 				modern
 					? `
 						SELECT ${modernMessageSelectColumns(messageColumns)}
@@ -492,72 +634,63 @@ export class HermesAdapter implements AgentAdapterCore {
 						WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL
 						ORDER BY timestamp ASC
 					`,
-			);
+			),
+		};
+	}
 
-			const sessions: RawSession[] = [];
+	private materializeSession(
+		row: SessionRow,
+		sourceRevision: string | undefined,
+		modern: boolean,
+		messagesStatement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
+	): RawSession | null {
+		const model = parseModelField(row.model);
+		const startedAt = new Date(row.started_at * 1000);
+		const endedAt = row.ended_at ? new Date(row.ended_at * 1000) : null;
+		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
+		const messageRows = messagesStatement.all(row.id) as Array<MessageRow | ModernMessageRow>;
+		const events = modern
+			? sequenceSessionEvents(
+					(messageRows as ModernMessageRow[]).flatMap((message) =>
+						hermesEventDrafts(message, row.id, model),
+					),
+				)
+			: undefined;
+		const messages: SessionMessage[] = events
+			? projectEventsToMessages(events)
+			: (messageRows as MessageRow[]).map((message) => ({
+					role: message.role as "user" | "assistant",
+					content: message.content ?? "",
+					model: message.role === "assistant" ? (model ?? undefined) : undefined,
+					...(timestampIso(message.timestamp)
+						? { timestamp: timestampIso(message.timestamp) }
+						: {}),
+				}));
+		if (modern ? events?.length === 0 : messages.length === 0) return null;
 
-			for (const row of rows) {
-				const model = parseModelField(row.model);
-				const startedAt = new Date(row.started_at * 1000);
-				const endedAt = row.ended_at ? new Date(row.ended_at * 1000) : null;
-				const durationSeconds = durationSecondsBetween(startedAt, endedAt);
-
-				const msgRows = msgStmt.all(row.id) as Array<MessageRow | ModernMessageRow>;
-				const events = modern
-					? sequenceSessionEvents(
-							(msgRows as ModernMessageRow[]).flatMap((message) =>
-								hermesEventDrafts(message, row.id, model),
-							),
-						)
-					: undefined;
-				const messages: SessionMessage[] = events
-					? projectEventsToMessages(events)
-					: (msgRows as MessageRow[]).map((message) => ({
-							role: message.role as "user" | "assistant",
-							content: message.content ?? "",
-							model: message.role === "assistant" ? (model ?? undefined) : undefined,
-							...(timestampIso(message.timestamp)
-								? { timestamp: timestampIso(message.timestamp) }
-								: {}),
-						}));
-
-				// Summary: use title or first user message
-				let summary = row.title;
-				if (!summary || summary === "New Chat" || summary.startsWith("New Chat #")) {
-					const firstUser = messages.find((m) => m.role === "user");
-					summary = firstUser ? safeTruncate(firstUser.content, 200) : null;
-				}
-
-				if (modern ? events?.length === 0 : messages.length === 0) continue;
-
-				sessions.push({
-					localSessionId: row.id,
-					// Hermes sessions have no filesystem cwd — `row.source` is a channel/origin
-					// tag (e.g. "telegram"), not a path. Leave null so the dashboard doesn't
-					// render a fake "hermes/..." project.
-					projectPath: null,
-					startedAt,
-					endedAt,
-					messageCount: row.message_count ?? messages.length,
-					inputTokens: row.input_tokens ?? 0,
-					outputTokens: row.output_tokens ?? 0,
-					cacheReadTokens: row.cache_read_tokens ?? 0,
-					model,
-					modelsUsed: model ? [model] : [],
-					durationSeconds,
-					summary,
-					messages,
-					...(events ? { events } : {}),
-					// The DB is shared across sessions — anchor to the row id so the pointer
-					// identifies the specific session rather than the whole store.
-					rawFilePath: `${stateDbPath()}#${row.id}`,
-				});
-			}
-
-			return sessions;
-		} finally {
-			db.close();
+		let summary = row.title;
+		if (!summary || summary === "New Chat" || summary.startsWith("New Chat #")) {
+			const firstUser = messages.find((message) => message.role === "user");
+			summary = firstUser ? safeTruncate(firstUser.content, 200) : null;
 		}
+		return {
+			localSessionId: row.id,
+			projectPath: null,
+			startedAt,
+			endedAt,
+			messageCount: row.message_count ?? messages.length,
+			inputTokens: row.input_tokens ?? 0,
+			outputTokens: row.output_tokens ?? 0,
+			cacheReadTokens: row.cache_read_tokens ?? 0,
+			model,
+			modelsUsed: model ? [model] : [],
+			durationSeconds,
+			summary,
+			messages,
+			...(events ? { events } : {}),
+			rawFilePath: `${stateDbPath()}#${row.id}`,
+			...(sourceRevision ? { sourceRevision } : {}),
+		};
 	}
 
 	private async collectSkills(): Promise<RawSkill[]> {

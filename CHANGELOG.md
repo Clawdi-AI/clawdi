@@ -26,6 +26,16 @@ database migration, CI, and implementation details.
 
 - Session detail search now preserves spaces while typing multi-word queries.
 
+## Clawdi CLI v0.14.29
+
+Package: `clawdi@0.14.29`
+
+### Fixed
+
+- Hosted Hermes session sync now scans large history stores in bounded batches
+  and avoids reloading unchanged transcripts, preventing daemon restart loops
+  on large state databases without dropping queued sessions.
+
 ## Clawdi CLI v0.14.28
 
 Package: `clawdi@0.14.28`

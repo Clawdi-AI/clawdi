@@ -85,6 +85,7 @@ function rawSession(content: readonly SessionEvent[]): RawSession {
 		messages: projectEventsToMessages(content),
 		events: [...content],
 		rawFilePath: "/sessions/fixture.jsonl",
+		sourceRevision: "source-r1",
 	};
 }
 
@@ -218,6 +219,7 @@ describe("events-v1 incremental upload", () => {
 		expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
 			event_count: 2,
 			event_head_hash: finalHead,
+			source_revision: "source-r1",
 		});
 	});
 
