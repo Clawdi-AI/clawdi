@@ -53,7 +53,7 @@ Do NOT save plaintext tokens, API keys, bearer credentials, or private keys in m
 Two tools for reading and finding past agent conversations stored in Clawdi Cloud:
 
 - `session_read` — Fetch a single session by reference and return its full conversation as Markdown. Accepts a Clawdi share URL (`https://cloud.clawdi.ai/s/{uuid}`) OR a session UUID for one of the user's own sessions. Handles owned and shared sessions transparently — you don't need to know which one.
-- `session_search` — Find sessions in the user's history by a case-insensitive phrase in metadata or visible messages. Returns matching sessions with summary, project, timestamps, and **session UUIDs you can pass back to `session_read`**.
+- `session_search` — Find sessions in the user's history by keyword. Trigram-ranked substring search with typo tolerance. Returns matching sessions with summary, project, timestamps, and **session UUIDs you can pass back to `session_read`**.
 
 ### When to read — call `session_read` whenever the user references a specific session
 
