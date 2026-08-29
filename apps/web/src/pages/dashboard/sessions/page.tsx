@@ -241,7 +241,7 @@ function SessionsListInner() {
 										: params.sort,
 						});
 					}}
-					placeholder="Search summaries, messages, folders, or IDs…"
+					placeholder="Search sessions…"
 				/>
 			}
 			filters={

@@ -128,18 +128,17 @@ test("opens a message search result and returns to the same filtered list", asyn
 		.getByRole("link", { name: "Open session Fix authentication timeout" })
 		.click();
 	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
-	await expect(page.getByText("1 of 2")).toBeVisible();
+	await expect(page.getByText("1 / 2")).toBeVisible();
 	const detailSearch = page.getByRole("textbox", { name: "Search this session" });
 	await detailSearch.press("Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "11");
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
 		"Verified the authentication timeout no longer recurs",
 	);
-	await expect(page.getByText("2 of 2")).toBeVisible();
+	await expect(page.getByText("2 / 2")).toBeVisible();
 	await detailSearch.press("Shift+Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
-	await detailSearch.fill("");
-	await detailSearch.pressSequentially("no longer", { delay: 20 });
+	await detailSearch.fill("no longer");
 	await expect(page.getByRole("button", { name: "Next match" })).toBeDisabled();
 	await expect(page).toHaveURL((url) => {
 		return (
@@ -150,7 +149,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 		"Verified the authentication timeout no longer recurs",
 	);
 	await expect(page.locator('[data-search-match="true"] mark')).toHaveText("no longer");
-	await expect(page.getByText("1 of 1")).toBeVisible();
+	await expect(page.getByText("1 / 1")).toBeVisible();
 
 	await page.getByText("Back to Sessions", { exact: true }).click();
 	await expect(page).toHaveURL((url) => {
@@ -225,8 +224,17 @@ test("filters session activity and expands paired tool details", async ({ page }
 			const view = url.searchParams.get("view");
 			const query = url.searchParams.get("search_query");
 			if (query) {
-				expect(view).toBe("all");
 				await new Promise((resolve) => setTimeout(resolve, 450));
+				if (view !== "assistant" && view !== "all") {
+					const items = view === "tools" ? timeline.slice(1, 3) : [timeline[3]];
+					return fulfillJson(route, {
+						items,
+						total: items.length,
+						offset: 0,
+						limit: 100,
+						search_navigation: null,
+					});
+				}
 				return fulfillJson(route, {
 					items: [timeline[0]],
 					total: 1,
@@ -255,7 +263,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	});
 
 	await page.goto(`/sessions/${SESSION_ID}?timelineView=tools`);
-	const toolActivity = page.getByRole("button", { name: /read.*Completed/ });
+	const toolActivity = page.getByRole("button", { name: /read.*Done/ });
 	await expect(toolActivity).toBeVisible();
 	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
 	await toolActivity.click();
@@ -263,21 +271,37 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await page.getByRole("tab", { name: "Output" }).click();
 	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
 
-	await page.getByRole("button", { name: "You" }).click();
+	await page.getByRole("button", { name: "Your messages" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).not.toBeVisible();
 
-	await page.getByRole("button", { name: "Tools" }).click();
+	await page.getByRole("button", { name: "Tool activity" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "tools");
 	await page.getByRole("textbox", { name: "Search this session" }).fill("Final answer");
-	await expect(page.getByText("Searching", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Tool activity" })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
 	await expect(toolActivity).toBeVisible();
 	await expect(page).toHaveURL((url) => {
 		return (
-			url.searchParams.get("matchQuery") === "Final answer" && !url.searchParams.has("timelineView")
+			url.searchParams.get("matchQuery") === "Final answer" &&
+			url.searchParams.get("timelineView") === "tools"
+		);
+	});
+	await expect(page.getByText("0 / 0")).toBeVisible();
+
+	await page.getByRole("button", { name: "Agent messages" }).click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.searchParams.get("matchQuery") === "Final answer" &&
+			url.searchParams.get("timelineView") === "assistant" &&
+			!url.searchParams.has("matchPosition")
 		);
 	});
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
 		"Final answer after reading the file",
 	);
+	await expect(page.getByText("1 / 1")).toBeVisible();
 });

@@ -27,7 +27,7 @@ export function parseSessionTimelineView(
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
 	const returnTo = normalizeSessionListReturnTo(search.returnTo);
 	const matchQuery = normalizeSessionMatchQuery(search.matchQuery);
-	const timelineView = matchQuery ? undefined : parseSessionTimelineView(search.timelineView);
+	const timelineView = parseSessionTimelineView(search.timelineView);
 	const standalone = {
 		...(matchQuery ? { matchQuery } : {}),
 		...(timelineView ? { timelineView } : {}),
@@ -58,13 +58,15 @@ export function validateSessionDetailSearch(search: Record<string, unknown>): Se
 export function sessionTimelineViewLink(
 	sessionId: string,
 	view: SessionTimelineView,
-	options: { returnTo?: string } = {},
+	options: { returnTo?: string; searchQuery?: string } = {},
 ) {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	const matchQuery = normalizeSessionMatchQuery(options.searchQuery);
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
 		search: {
+			...(matchQuery ? { matchQuery } : {}),
 			...(view === "all" ? {} : { timelineView: view }),
 			...(returnTo ? { returnTo } : {}),
 		},
@@ -74,15 +76,18 @@ export function sessionTimelineViewLink(
 export function sessionDetailSearchLink(
 	sessionId: string,
 	query: string,
-	options: { returnTo?: string } = {},
+	options: { returnTo?: string; timelineView?: SessionTimelineView } = {},
 ) {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	const matchQuery = normalizeSessionMatchQuery(query);
+	const timelineView =
+		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
 		search: {
 			...(matchQuery ? { matchQuery } : {}),
+			...(timelineView ? { timelineView } : {}),
 			...(returnTo ? { returnTo } : {}),
 		},
 	};
@@ -142,10 +147,16 @@ export function sessionDetailLink(
 export function sessionSearchMatchLink(
 	sessionId: string,
 	anchor: SessionSearchAnchor,
-	options: { returnTo?: string; searchQuery?: string } = {},
+	options: {
+		returnTo?: string;
+		searchQuery?: string;
+		timelineView?: SessionTimelineView;
+	} = {},
 ) {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	const matchQuery = normalizeSessionMatchQuery(options.searchQuery);
+	const timelineView =
+		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
@@ -154,6 +165,7 @@ export function sessionSearchMatchLink(
 			matchPosition: anchor.position,
 			matchRevision: anchor.revision,
 			...(matchQuery ? { matchQuery } : {}),
+			...(timelineView ? { timelineView } : {}),
 			...(returnTo ? { returnTo } : {}),
 		},
 	};

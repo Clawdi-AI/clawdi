@@ -91,7 +91,7 @@ async def _push_session(
 @pytest.mark.asyncio
 async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClient):
     env_id = await _register_env(client)
-    await _push_session(
+    session_id = await _push_session(
         client, env_id, local_session_id="auth-1", summary="user authentication migration"
     )
     await _push_session(client, env_id, local_session_id="dns-1", summary="DNS cache poisoning")
@@ -105,6 +105,10 @@ async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClie
     typo = await client.get("/v1/sessions", params={"q": "athentication"})
     assert typo.status_code == 200
     assert typo.json()["items"] == []
+
+    by_id = await client.get("/v1/sessions", params={"q": session_id.upper()})
+    assert by_id.status_code == 200
+    assert [item["id"] for item in by_id.json()["items"]] == [session_id]
 
 
 @pytest.mark.asyncio
@@ -264,6 +268,30 @@ async def test_snapshot_message_search_navigates_matches_in_transcript_order(
             "revision": first_anchor["revision"],
         },
     }
+
+    assistant_only = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": "needle", "view": "assistant"},
+    )
+    assert assistant_only.status_code == 200, assistant_only.text
+    assert assistant_only.json()["search_navigation"] == {
+        "index": 1,
+        "total": 1,
+        "current": {
+            "kind": "snapshot_offset",
+            "position": 2,
+            "revision": first_anchor["revision"],
+        },
+        "previous": None,
+        "next": None,
+    }
+
+    tools_only = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": "needle", "view": "tools"},
+    )
+    assert tools_only.status_code == 200, tools_only.text
+    assert tools_only.json().get("search_navigation") is None
 
     first = await client.get(
         f"/v1/sessions/{session_id}/messages",

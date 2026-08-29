@@ -369,11 +369,9 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 	const timestamp = call?.timestamp ?? result?.timestamp;
 
 	return (
-		<div className={cn("flex gap-3 py-2", OFFSCREEN_RENDERING_CLASS)}>
-			<div className="flex w-8 shrink-0 justify-center pt-1">
-				<span className="flex size-6 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-xs">
-					<Wrench className="size-3.5" />
-				</span>
+		<div className={cn("flex gap-3 py-1.5", OFFSCREEN_RENDERING_CLASS)}>
+			<div className="flex w-8 shrink-0 justify-center pt-2 text-muted-foreground">
+				<Wrench className="size-3.5" />
 			</div>
 			<div className="min-w-0 flex-1">
 				<button
@@ -381,15 +379,8 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 					disabled={!hasDetails}
 					onClick={() => setOpen((value) => !value)}
 					aria-expanded={hasDetails ? open : undefined}
-					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 disabled:cursor-default disabled:hover:bg-transparent"
+					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
 				>
-					<ChevronRight
-						className={cn(
-							"size-3.5 shrink-0 transition-transform",
-							open && "rotate-90",
-							!hasDetails && "invisible",
-						)}
-					/>
 					<code className="truncate font-medium text-foreground">{name}</code>
 					{isError ? (
 						<span className="inline-flex shrink-0 items-center gap-1 text-destructive">
@@ -397,7 +388,7 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 						</span>
 					) : result ? (
 						<span className="inline-flex shrink-0 items-center gap-1">
-							<CheckCircle2 className="size-3.5" /> Completed
+							<CheckCircle2 className="size-3.5" /> Done
 						</span>
 					) : (
 						<span className="shrink-0">Called</span>
@@ -412,6 +403,11 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 								minute: "2-digit",
 							})}
 						</span>
+					) : null}
+					{hasDetails ? (
+						<ChevronRight
+							className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+						/>
 					) : null}
 				</button>
 				{open ? (

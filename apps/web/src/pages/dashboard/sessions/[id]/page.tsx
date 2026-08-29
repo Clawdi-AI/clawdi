@@ -412,19 +412,22 @@ export function SessionDetailContent({
 		(normalizedSearchQuery !== debouncedSearchQuery || isContentFetching || isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
 		if (agentId) {
+			const search = {
+				...(normalizedSearchQuery ? { matchQuery: normalizedSearchQuery } : {}),
+				...(selected === "all" ? {} : { timelineView: selected }),
+			};
 			void router.navigate({
-				...agentSessionDetailLink(
-					agentId,
-					sessionId,
-					selected === "all" ? undefined : { timelineView: selected },
-				),
+				...agentSessionDetailLink(agentId, sessionId, search),
 				replace: true,
 				resetScroll: false,
 			});
 			return;
 		}
 		void router.navigate({
-			...sessionTimelineViewLink(sessionId, selected, { returnTo }),
+			...sessionTimelineViewLink(sessionId, selected, {
+				returnTo,
+				searchQuery: normalizedSearchQuery,
+			}),
 			replace: true,
 			resetScroll: false,
 		});
@@ -528,83 +531,76 @@ export function SessionDetailContent({
 
 			{session.has_content ? (
 				<div className="sticky top-(--header-height) z-10 -mx-4 border-y bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
-					<div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
+					<div className="grid min-w-0 gap-2 md:grid-cols-[minmax(16rem,1fr)_auto] md:items-center">
 						<SessionSearchNavigation
 							sessionId={sessionId}
+							agentId={agentId}
 							query={normalizedSearchQuery}
+							timelineView={timelineView}
 							navigation={searchNavigation}
 							returnTo={returnTo}
 							isSearching={isSearchUpdating}
 							hasSearchError={searchActive && isContentError}
-							className="lg:max-w-2xl"
+							className="md:max-w-xl"
 						/>
-						{searchActive ? null : (
-							<div className="flex min-w-0 items-center justify-between gap-2 lg:ml-auto lg:justify-end">
-								<ToggleGroup
-									value={[timelineView]}
-									onValueChange={(values) => {
-										const selected = values[0];
-										if (
-											selected === "all" ||
-											selected === "user" ||
-											selected === "assistant" ||
-											selected === "tools"
-										) {
-											updateTimelineView(selected);
-										}
-									}}
-									size="sm"
-									spacing={1}
-									aria-label="Timeline view"
-									className="min-w-0 bg-muted p-0.5"
+						<div className="flex min-w-0 items-center justify-between gap-2 md:justify-end">
+							<ToggleGroup
+								value={[timelineView]}
+								onValueChange={(values) => {
+									const selected = values[0];
+									if (
+										selected === "all" ||
+										selected === "user" ||
+										selected === "assistant" ||
+										selected === "tools"
+									) {
+										updateTimelineView(selected);
+									}
+								}}
+								variant="outline"
+								size="sm"
+								spacing={0}
+								aria-label="Timeline view"
+								className="min-w-0"
+							>
+								<ToggleGroupItem value="all" aria-label="All activity" title="All activity">
+									<MessageSquare /> <span className="hidden sm:inline">All</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem value="user" aria-label="Your messages" title="Your messages">
+									<UserRound /> <span className="hidden sm:inline">You</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem
+									value="assistant"
+									aria-label="Agent messages"
+									title="Agent messages"
 								>
-									<ToggleGroupItem
-										value="all"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<MessageSquare /> All
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="user"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<UserRound /> You
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="assistant"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<Bot /> Agent
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="tools"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<Wrench /> Tools
-									</ToggleGroupItem>
-								</ToggleGroup>
-								<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-									{loadedCount > 0 ? (
-										<span className="hidden tabular-nums sm:inline">
-											{loadedCount} of {totalItems}
-										</span>
-									) : null}
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
-										aria-label={
-											direction === "desc"
-												? "Show oldest activity first"
-												: "Show newest activity first"
-										}
-										title={direction === "desc" ? "Newest first" : "Oldest first"}
-									>
-										{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
-									</Button>
-								</div>
+									<Bot /> <span className="hidden sm:inline">Agent</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem value="tools" aria-label="Tool activity" title="Tool activity">
+									<Wrench /> <span className="hidden sm:inline">Tools</span>
+								</ToggleGroupItem>
+							</ToggleGroup>
+							<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+								{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
+									<span className="tabular-nums">
+										{loadedCount} of {totalItems}
+									</span>
+								) : null}
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
+									aria-label={
+										direction === "desc"
+											? "Show oldest activity first"
+											: "Show newest activity first"
+									}
+									title={direction === "desc" ? "Newest first" : "Oldest first"}
+								>
+									{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
+								</Button>
 							</div>
-						)}
+						</div>
 					</div>
 				</div>
 			) : null}

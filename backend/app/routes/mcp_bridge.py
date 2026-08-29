@@ -22,9 +22,8 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
-from sqlalchemy import cast, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.types import String
 
 from app.core.auth import (
     AuthContext,
@@ -36,7 +35,6 @@ from app.core.auth import (
 )
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to, resolve_default_write_project
-from app.core.query_utils import like_needle
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
@@ -61,6 +59,7 @@ from app.services.session_content import (
     session_has_uploaded_content,
 )
 from app.services.session_export import session_to_markdown
+from app.services.session_search import session_search_excerpt, session_search_matches
 from app.services.vault_crypto import decrypt
 
 logger = logging.getLogger(__name__)
@@ -362,7 +361,10 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Keyword query — matches session summary and metadata.",
+                    "description": (
+                        "Case-insensitive phrase query matching session metadata "
+                        "and visible messages."
+                    ),
                 },
                 "limit": {
                     "type": "integer",
@@ -769,33 +771,31 @@ async def _tool_session_search(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     parsed = _validate_arguments(_SessionSearchArguments, arguments)
+    matches = session_search_matches(auth.user_id, parsed.query)
     stmt = (
         _user_sessions_stmt(auth)
-        .order_by(Session.last_activity_at.desc(), Session.id.asc())
+        .join(matches, matches.c.session_id == Session.id)
+        .add_columns(matches.c.content, matches.c.role)
+        .order_by(matches.c.score.desc(), Session.last_activity_at.desc(), Session.id.asc())
         .limit(parsed.limit)
-    )
-    pattern = like_needle(parsed.query)
-    stmt = stmt.where(
-        or_(
-            Session.summary.ilike(pattern, escape="\\"),
-            Session.project_path.ilike(pattern, escape="\\"),
-            Session.local_session_id.ilike(pattern, escape="\\"),
-            cast(Session.id, String).ilike(pattern, escape="\\"),
-        )
     )
     rows = (await db.execute(stmt)).all()
     if not rows:
         return _tool_text(f'No sessions matched "{parsed.query}".')
     lines: list[str] = []
-    for session, agent_type in rows:
+    for session, agent_type, message_content, message_role in rows:
         date = session.last_activity_at.date().isoformat() if session.last_activity_at else "-"
         summary = session.summary or session.local_session_id or "(untitled)"
         project = f" · {session.project_path}" if session.project_path else ""
         model = f" · {session.model}" if session.model else ""
+        message_match = ""
+        if isinstance(message_content, str) and message_role in ("user", "assistant"):
+            excerpt = session_search_excerpt(message_content, parsed.query)
+            message_match = f"\n  - matched {message_role}: {excerpt}"
         lines.append(
             f"- **{summary}**{project}{model}\n"
             f"  - id: `{session.id}` · {agent_type or 'unknown'} · {date} · "
-            f"{session.message_count or 0} msgs"
+            f"{session.message_count or 0} msgs{message_match}"
         )
     return _tool_text(
         f'Found {len(rows)} session(s) matching "{parsed.query}":\n\n' + "\n".join(lines)

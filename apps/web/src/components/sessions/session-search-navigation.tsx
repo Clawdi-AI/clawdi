@@ -1,13 +1,16 @@
 "use client";
 
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { ChevronDown, ChevronUp, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
+import { agentSessionDetailLink } from "@/lib/agent-routes";
 import type { SessionMessagesPage } from "@/lib/api-schemas";
 import {
+	parseSessionTimelineView,
 	type SessionSearchAnchor,
+	type SessionTimelineView,
 	sessionDetailSearchLink,
 	sessionSearchMatchLink,
 } from "@/lib/session-search-anchor";
@@ -18,16 +21,12 @@ type SearchNavigation = NonNullable<SessionMessagesPage["search_navigation"]>;
 function MatchButton({
 	label,
 	anchor,
-	sessionId,
-	query,
-	returnTo,
+	onSelect,
 	icon,
 }: {
 	label: string;
 	anchor: SessionSearchAnchor | null | undefined;
-	sessionId: string;
-	query: string;
-	returnTo?: string;
+	onSelect: (anchor: SessionSearchAnchor) => void;
 	icon: React.ReactNode;
 }) {
 	if (!anchor) {
@@ -41,14 +40,7 @@ function MatchButton({
 		<Button
 			variant="ghost"
 			size="icon-sm"
-			nativeButton={false}
-			render={
-				<Link
-					{...sessionSearchMatchLink(sessionId, anchor, { searchQuery: query, returnTo })}
-					replace
-					resetScroll={false}
-				/>
-			}
+			onClick={() => onSelect(anchor)}
 			aria-label={label}
 			title={label}
 		>
@@ -59,7 +51,9 @@ function MatchButton({
 
 export function SessionSearchNavigation({
 	sessionId,
+	agentId,
 	query,
+	timelineView,
 	navigation,
 	returnTo,
 	isSearching = false,
@@ -67,7 +61,9 @@ export function SessionSearchNavigation({
 	className,
 }: {
 	sessionId: string;
+	agentId?: string | null;
 	query: string;
+	timelineView: SessionTimelineView;
 	navigation?: SearchNavigation | null;
 	returnTo?: string;
 	isSearching?: boolean;
@@ -81,28 +77,50 @@ export function SessionSearchNavigation({
 		setDraftQuery((current) => (query && current.trim() === query ? current : query));
 	}, [query]);
 	const activeNavigation = isSearching || hasSearchError ? null : navigation;
-	const updateQuery = (next: string) => {
-		setDraftQuery(next);
+	const navigate = (search: Record<string, unknown>) => {
+		if (agentId) {
+			void router.navigate({
+				...agentSessionDetailLink(agentId, sessionId, search),
+				replace: true,
+				resetScroll: false,
+			});
+			return;
+		}
 		void router.navigate({
-			...sessionDetailSearchLink(sessionId, next, { returnTo }),
+			to: "/sessions/$id",
+			params: { id: sessionId },
+			search,
 			replace: true,
 			resetScroll: false,
 		});
 	};
+	const latestTimelineView = () =>
+		parseSessionTimelineView(router.state.location.search.timelineView) ?? timelineView;
+	const updateQuery = (next: string) => {
+		setDraftQuery(next);
+		navigate(
+			sessionDetailSearchLink(sessionId, next, {
+				returnTo,
+				timelineView: latestTimelineView(),
+			}).search,
+		);
+	};
 	const navigateToMatch = (anchor: SessionSearchAnchor | null | undefined) => {
 		if (!anchor) return;
-		void router.navigate({
-			...sessionSearchMatchLink(sessionId, anchor, { searchQuery: query, returnTo }),
-			replace: true,
-			resetScroll: false,
-		});
+		navigate(
+			sessionSearchMatchLink(sessionId, anchor, {
+				searchQuery: query,
+				timelineView: latestTimelineView(),
+				returnTo,
+			}).search,
+		);
 	};
 
 	return (
 		<nav
 			aria-label="Search this session"
 			className={cn(
-				"flex min-w-0 flex-1 flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center",
+				"flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground",
 				className,
 			)}
 		>
@@ -111,7 +129,7 @@ export function SessionSearchNavigation({
 				onChange={updateQuery}
 				placeholder="Search this session…"
 				ariaLabel="Search this session"
-				className="min-w-0 flex-1"
+				className="min-w-36 flex-1"
 				ariaKeyShortcuts="Enter Shift+Enter Escape"
 				onKeyDown={(event) => {
 					if (event.nativeEvent.isComposing) return;
@@ -128,38 +146,38 @@ export function SessionSearchNavigation({
 				}}
 			/>
 			{query ? (
-				<div className="flex min-h-8 shrink-0 items-center justify-end gap-2">
+				<div className="flex min-h-8 shrink-0 items-center gap-1 border-l pl-1.5">
 					<span
-						className="inline-flex shrink-0 items-center gap-1.5 tabular-nums text-foreground"
+						className="inline-flex min-w-10 shrink-0 items-center justify-center gap-1 tabular-nums text-foreground"
 						aria-live="polite"
+						title={!isSearching && !hasSearchError && !activeNavigation ? "No matches" : undefined}
 					>
-						{isSearching ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+						{isSearching ? (
+							<>
+								<LoaderCircle className="size-3.5 animate-spin" />
+								<span className="sr-only">Searching</span>
+							</>
+						) : null}
 						{hasSearchError
 							? "Unavailable"
 							: isSearching
-								? "Searching"
+								? null
 								: activeNavigation
-									? `${activeNavigation.index} of ${activeNavigation.total}`
-									: "No matches"}
+									? `${activeNavigation.index} / ${activeNavigation.total}`
+									: "0 / 0"}
 					</span>
-					<div className="flex shrink-0 items-center">
-						<MatchButton
-							label="Previous match"
-							anchor={activeNavigation?.previous}
-							sessionId={sessionId}
-							query={query}
-							returnTo={returnTo}
-							icon={<ChevronUp />}
-						/>
-						<MatchButton
-							label="Next match"
-							anchor={activeNavigation?.next}
-							sessionId={sessionId}
-							query={query}
-							returnTo={returnTo}
-							icon={<ChevronDown />}
-						/>
-					</div>
+					<MatchButton
+						label="Previous match"
+						anchor={activeNavigation?.previous}
+						onSelect={navigateToMatch}
+						icon={<ChevronUp />}
+					/>
+					<MatchButton
+						label="Next match"
+						anchor={activeNavigation?.next}
+						onSelect={navigateToMatch}
+						icon={<ChevronDown />}
+					/>
 				</div>
 			) : null}
 		</nav>

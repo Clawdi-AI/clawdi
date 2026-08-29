@@ -42,12 +42,14 @@ describe("Session search anchors", () => {
 		expect(
 			sessionDetailSearchLink("session-id", " authentication ", {
 				returnTo: "/sessions?q=authentication&page=2",
+				timelineView: "assistant",
 			}),
 		).toEqual({
 			to: "/sessions/$id",
 			params: { id: "session-id" },
 			search: {
 				matchQuery: "authentication",
+				timelineView: "assistant",
 				returnTo: "/sessions?q=authentication&page=2",
 			},
 		});
@@ -56,12 +58,13 @@ describe("Session search anchors", () => {
 		});
 	});
 
-	test("canonicalizes timeline filters and clears them for transcript search", () => {
+	test("canonicalizes timeline filters independently from transcript search", () => {
 		expect(validateSessionDetailSearch({ timelineView: "tools" })).toEqual({
 			timelineView: "tools",
 		});
 		expect(validateSessionDetailSearch({ timelineView: "tools", matchQuery: " answer " })).toEqual({
 			matchQuery: "answer",
+			timelineView: "tools",
 		});
 		expect(validateSessionDetailSearch({ timelineView: "unknown" })).toEqual({});
 		expect(sessionTimelineViewLink("session-id", "all")).toEqual({
@@ -73,6 +76,11 @@ describe("Session search anchors", () => {
 			to: "/sessions/$id",
 			params: { id: "session-id" },
 			search: { timelineView: "assistant" },
+		});
+		expect(sessionTimelineViewLink("session-id", "user", { searchQuery: " answer " })).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: { matchQuery: "answer", timelineView: "user" },
 		});
 	});
 

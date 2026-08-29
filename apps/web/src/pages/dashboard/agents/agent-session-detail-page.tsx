@@ -1,20 +1,30 @@
 "use client";
 
-import type { SessionTimelineView } from "@/lib/session-search-anchor";
+import type { SessionSearchAnchor, SessionTimelineView } from "@/lib/session-search-anchor";
 import { SessionDetailContent } from "@/pages/dashboard/sessions/[id]/page";
 
 type AgentSessionDetailPageProps = {
 	agentId: string;
 	sessionId: string;
+	searchAnchor?: SessionSearchAnchor;
+	searchQuery?: string;
 	timelineView: SessionTimelineView;
 };
 
 export default function AgentSessionDetailPage({
 	agentId,
 	sessionId,
+	searchAnchor,
+	searchQuery,
 	timelineView,
 }: AgentSessionDetailPageProps) {
 	return (
-		<SessionDetailContent sessionId={sessionId} agentId={agentId} timelineView={timelineView} />
+		<SessionDetailContent
+			sessionId={sessionId}
+			agentId={agentId}
+			searchAnchor={searchAnchor}
+			searchQuery={searchQuery}
+			timelineView={timelineView}
+		/>
 	);
 }

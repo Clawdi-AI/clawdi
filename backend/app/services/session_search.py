@@ -6,7 +6,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import case, delete, func, literal, select, update
+from sqlalchemy import String, case, cast, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
@@ -88,6 +88,19 @@ def escaped_contains_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+def session_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
+    compact = " ".join(content.split())
+    if len(compact) <= limit:
+        return compact
+    match_at = compact.casefold().find(query.casefold())
+    if match_at < 0:
+        return f"{compact[: limit - 3]}..."
+    start = max(0, match_at - limit // 3)
+    end = min(len(compact), start + limit)
+    start = max(0, end - limit)
+    return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
+
+
 def _searchable_text(content: str) -> str:
     return content.replace("\x00", "\ufffd")
 
@@ -159,14 +172,52 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     )
 
 
+def session_search_matches(user_id: UUID, query: str) -> Subquery:
+    """Return every exact phrase match with one ranked body hit per Session."""
+    pattern = escaped_contains_pattern(query)
+    message_match = best_session_message_matches(user_id, query)
+    metadata_match = or_(
+        func.coalesce(Session.summary, "").ilike(pattern, escape="\\"),
+        func.coalesce(Session.project_path, "").ilike(pattern, escape="\\"),
+        Session.local_session_id.ilike(pattern, escape="\\"),
+        cast(Session.id, String).ilike(pattern, escape="\\"),
+    )
+    metadata_score = func.greatest(
+        func.similarity(func.coalesce(Session.summary, ""), query),
+        func.similarity(func.coalesce(Session.project_path, ""), query),
+        func.similarity(Session.local_session_id, query),
+        func.similarity(cast(Session.id, String), query),
+    )
+    message_score = func.coalesce(message_match.c.score, 0.0)
+    return (
+        select(
+            Session.id.label("session_id"),
+            func.greatest(metadata_score, message_score).label("score"),
+            message_match.c.content,
+            message_match.c.role,
+            message_match.c.position,
+            message_match.c.content_revision,
+        )
+        .outerjoin(message_match, message_match.c.session_id == Session.id)
+        .where(
+            Session.user_id == user_id,
+            or_(metadata_match, message_match.c.session_id.is_not(None)),
+        )
+        .subquery("session_search_matches")
+    )
+
+
 async def session_message_search_navigation(
     db: AsyncSession,
     session: Session,
     *,
     query: str,
     position: int | None = None,
+    roles: Sequence[SearchRole] | None = None,
 ) -> SessionSearchNavigation | None:
     """Resolve one active match and its transcript-order neighbours."""
+    if roles is not None and not roles:
+        return None
     document_revision = current_document_revision(session)
     if document_revision is None or session.search_index_revision != current_search_revision(
         session
@@ -174,26 +225,25 @@ async def session_message_search_navigation(
         return None
 
     message_match = _message_match_expression(query)
-    ordered_matches = (
-        select(
-            SessionMessageSearch.position.label("position"),
-            func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
-            func.count().over().label("match_total"),
-            func.lag(SessionMessageSearch.position)
-            .over(order_by=SessionMessageSearch.position)
-            .label("previous_position"),
-            func.lead(SessionMessageSearch.position)
-            .over(order_by=SessionMessageSearch.position)
-            .label("next_position"),
-        )
-        .where(
-            SessionMessageSearch.user_id == session.user_id,
-            SessionMessageSearch.session_id == session.id,
-            SessionMessageSearch.content_revision == document_revision,
-            message_match,
-        )
-        .subquery("ordered_session_message_matches")
+    ordered_matches_query = select(
+        SessionMessageSearch.position.label("position"),
+        func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
+        func.count().over().label("match_total"),
+        func.lag(SessionMessageSearch.position)
+        .over(order_by=SessionMessageSearch.position)
+        .label("previous_position"),
+        func.lead(SessionMessageSearch.position)
+        .over(order_by=SessionMessageSearch.position)
+        .label("next_position"),
+    ).where(
+        SessionMessageSearch.user_id == session.user_id,
+        SessionMessageSearch.session_id == session.id,
+        SessionMessageSearch.content_revision == document_revision,
+        message_match,
     )
+    if roles is not None:
+        ordered_matches_query = ordered_matches_query.where(SessionMessageSearch.role.in_(roles))
+    ordered_matches = ordered_matches_query.subquery("ordered_session_message_matches")
     navigation_query = select(
         ordered_matches.c.position,
         ordered_matches.c.match_index,

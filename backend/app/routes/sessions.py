@@ -136,12 +136,13 @@ from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
 from app.services.session_search import (
     SearchableSessionMessage,
-    best_session_message_matches,
+    SearchRole,
     current_search_revision,
-    escaped_contains_pattern,
     replace_snapshot_search_index,
     searchable_snapshot_messages,
     session_message_search_navigation,
+    session_search_excerpt,
+    session_search_matches,
 )
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
@@ -2508,19 +2509,6 @@ _SESSION_SORT_COLUMNS = {
 }
 
 
-def _message_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
-    compact = " ".join(content.split())
-    if len(compact) <= limit:
-        return compact
-    match_at = compact.casefold().find(query.casefold())
-    if match_at < 0:
-        return f"{compact[: limit - 3]}..."
-    start = max(0, match_at - limit // 3)
-    end = min(len(compact), start + limit)
-    start = max(0, end - limit)
-    return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
-
-
 @router.get("/sessions")
 async def list_sessions(
     # Deploy keys carry `sessions:write` (they upload sessions from
@@ -2604,32 +2592,7 @@ async def list_sessions(
     # IS NULL` makes this lookup index-only.
     is_shared_subq = _link_is_shared_subq()
 
-    # Search selection is deterministic phrase containment across metadata and
-    # visible messages. `similarity()` only ranks rows already known to contain
-    # the query; it never introduces typo-tolerant or unexplained candidates.
-    relevance_expr: Any | None
-    metadata_relevance_expr: Any | None = None
-    metadata_match_expr: Any | None = None
-    message_match: Any | None = None
-    message_relevance_expr: Any | None = None
-    if q:
-        contains_pattern = escaped_contains_pattern(q)
-        summary_match = func.coalesce(Session.summary, "").ilike(contains_pattern, escape="\\")
-        project_match = func.coalesce(Session.project_path, "").ilike(
-            contains_pattern,
-            escape="\\",
-        )
-        local_match = Session.local_session_id.ilike(contains_pattern, escape="\\")
-        metadata_match_expr = or_(summary_match, project_match, local_match)
-        sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
-        sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
-        sim_local = func.similarity(Session.local_session_id, q)
-        metadata_relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
-        message_match = best_session_message_matches(auth.user_id, q)
-        message_relevance_expr = func.coalesce(message_match.c.score, 0.0)
-        relevance_expr = func.greatest(metadata_relevance_expr, message_relevance_expr)
-    else:
-        relevance_expr = None
+    search_matches = session_search_matches(auth.user_id, q) if q else None
 
     base = select(
         Session,
@@ -2639,16 +2602,13 @@ async def list_sessions(
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-    if q:
-        assert message_match is not None
-        assert message_relevance_expr is not None
-        base = base.outerjoin(message_match, message_match.c.session_id == Session.id)
+    if search_matches is not None:
+        base = base.join(search_matches, search_matches.c.session_id == Session.id)
         base = base.add_columns(
-            message_relevance_expr,
-            message_match.c.content,
-            message_match.c.role,
-            message_match.c.position,
-            message_match.c.content_revision,
+            search_matches.c.content,
+            search_matches.c.role,
+            search_matches.c.position,
+            search_matches.c.content_revision,
         )
     session_filters: list[Any] = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
@@ -2709,18 +2669,6 @@ async def list_sessions(
         else:
             session_filters.append(_MANUAL_SESSION_SUMMARY_FILTER)
 
-    if q:
-        assert relevance_expr is not None
-        assert metadata_relevance_expr is not None
-        assert metadata_match_expr is not None
-        assert message_match is not None
-        session_filters.append(
-            or_(
-                metadata_match_expr,
-                message_match.c.session_id.is_not(None),
-            )
-        )
-
     base = base.where(*session_filters)
     if agent_filter is not None:
         base = base.where(agent_filter)
@@ -2730,8 +2678,8 @@ async def list_sessions(
     # COUNT(*). For 50k+ session users this saves a measurable
     # fraction of list-page latency.
     count_base = select(Session.id).where(*session_filters)
-    if message_match is not None:
-        count_base = count_base.outerjoin(message_match, message_match.c.session_id == Session.id)
+    if search_matches is not None:
+        count_base = count_base.join(search_matches, search_matches.c.session_id == Session.id)
     if agent_filter is not None:
         count_base = count_base.outerjoin(
             AgentEnvironment,
@@ -2742,13 +2690,13 @@ async def list_sessions(
     # Resolve sort column. `relevance` is special — only valid when
     # `q` is present (else fall back to the date default so the empty-
     # search experience doesn't break). The relevance expression
-    # was built up above; reuse it here so the sort matches the
-    # similarity used for filtering.
+    # comes from the shared search subquery, keeping Web, CLI, and MCP
+    # ordering on the same contract.
     if sort == "relevance":
-        if relevance_expr is None:
+        if search_matches is None:
             sort_col = _SESSION_SORT_COLUMNS["last_activity_at"]
         else:
-            sort_col = relevance_expr
+            sort_col = search_matches.c.score
     else:
         sort_col = _SESSION_SORT_COLUMNS[sort]
     # Tiebreaker on `id` for deterministic offset-pagination order.
@@ -2774,15 +2722,13 @@ async def list_sessions(
                 default_name,
                 machine_name,
                 shared,
-                message_score,
                 message_content,
                 message_role,
                 message_position,
                 message_revision,
             ) = row
             if (
-                message_score is not None
-                and isinstance(message_content, str)
+                isinstance(message_content, str)
                 and message_role in ("user", "assistant")
                 and isinstance(message_position, int)
                 and isinstance(message_revision, str)
@@ -2792,7 +2738,7 @@ async def list_sessions(
                 )
                 search_match = SessionSearchMatchResponse(
                     role=message_role,
-                    excerpt=_message_search_excerpt(message_content, q),
+                    excerpt=session_search_excerpt(message_content, q),
                     anchor=SessionSearchAnchorResponse(
                         kind=anchor_kind,
                         position=message_position,
@@ -3190,11 +3136,21 @@ async def get_session_messages(
     resolved_anchor_position = anchor_position
     resolved_anchor_revision = anchor_revision
     navigation = None
+    search_roles: tuple[SearchRole, ...] | None
+    if view == "user":
+        search_roles = ("user",)
+    elif view == "assistant":
+        search_roles = ("assistant",)
+    elif view == "tools":
+        search_roles = ()
+    else:
+        search_roles = None
     if anchor_kind is None and search_query:
         navigation = await session_message_search_navigation(
             db,
             session,
             query=search_query,
+            roles=search_roles,
         )
         if navigation is not None:
             resolved_anchor_kind = expected_anchor_kind
@@ -3211,6 +3167,7 @@ async def get_session_messages(
             session,
             query=search_query,
             position=anchor_position,
+            roles=search_roles,
         )
     if (
         resolved_anchor_kind == expected_anchor_kind
