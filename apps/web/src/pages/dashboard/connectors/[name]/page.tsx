@@ -7,8 +7,8 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
+import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
@@ -21,7 +21,6 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
@@ -37,7 +36,6 @@ import {
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
-import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
@@ -118,24 +116,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const tools = toolsQ.data;
 	const isToolsLoading = toolsQ.isLoading;
 
-	// Connect mutation: opens the OAuth popup synchronously on click
-	// (browsers count `await`-deferred `window.open` calls as
-	// programmatic and block them) and points it at the OAuth URL once
-	// the backend responds. The popup eventually lands on this same
-	// detail page via the `redirect_url` we send to Composio; React
-	// Query's per-connection window-focus refetch always checks for the
-	// new ACTIVE connection when the user returns to this tab. No polling
-	// loop needed.
-	const api = useApi();
-	const connectAction = useSensitiveAction(async (redirectUrl: string) =>
-		unwrap(
-			await api.POST("/v1/connectors/{app_name}/connect", {
-				params: { path: { app_name: name } },
-				body: { redirect_url: redirectUrl },
-			}),
-		),
-	);
-
 	// Per-row disconnect single-flight guard.
 	//
 	// The render-state Set (`disconnectingIds`) drives the spinner UI.
@@ -176,7 +156,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const activeConnections =
 		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
 	const isConnected = activeConnections.length > 0;
-	const isLoading = isAppLoading;
+	const isLoading = isAppLoading || appQ.isPending;
 
 	const displayName = app?.display_name || formatName(name);
 
@@ -185,91 +165,10 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// the credentials form, and no-auth toolkits are ready immediately.
 	// Missing or unknown metadata is a backend contract error; do not
 	// guess a connection flow.
-	const [credsOpen, setCredsOpen] = useState(false);
 	const authFlow = app ? getConnectorAuthFlow(app.auth_type) : null;
 	const isSetupBlocked = !!app?.connect_disabled;
 	const hasUnsupportedAuthType = !!app && authFlow === null;
 	const usesNoAuth = authFlow === "no_auth";
-	const usesCredentialsForm = authFlow === "credentials";
-	// Synchronous single-flight guard for the connect flow. Mirrors the
-	// disconnect ref above: `connectMutation.isPending` only flips after
-	// TanStack Query notifies subscribers (next microtask + render), so a
-	// fast double-click would queue two `window.open` calls and two
-	// mutations before React re-renders the disabled button. The ref
-	// rejects the second click synchronously.
-	const inflightConnectRef = useRef(false);
-	const startConnect = () => {
-		if (inflightConnectRef.current) return;
-		if (isSetupBlocked) {
-			toast.error("Connector unavailable", {
-				description: "Additional configuration is required. Contact support to continue.",
-			});
-			return;
-		}
-		if (hasUnsupportedAuthType) {
-			toast.error("Connection unavailable", {
-				description: `${displayName} uses an authentication method Clawdi does not support.`,
-			});
-			return;
-		}
-		if (usesNoAuth) {
-			toast.info(`${displayName} does not require setup`);
-			return;
-		}
-		if (usesCredentialsForm) {
-			setCredsOpen(true);
-			return;
-		}
-		// Open the OAuth popup synchronously — counts as user gesture so
-		// the browser doesn't block it. We deliberately do NOT pass
-		// `noopener` here: per MDN, `window.open(..., "_blank",
-		// "noopener,...")` returns `null`, so we'd lose the handle and
-		// could never redirect the blank popup to the real OAuth URL —
-		// the user would just see a permanent about:blank page. We
-		// detach the opener reference manually right after the call,
-		// which gives us the same security posture without breaking the
-		// late-redirect pattern.
-		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
-		if (!popup) {
-			// Popup blocker rejected the open. Bail before firing the
-			// mutation so we don't leak a connection request the user
-			// can't complete — and tell them why nothing happened.
-			toast.error("Popup blocked", {
-				description: "Allow popups for this site to continue.",
-			});
-			return;
-		}
-		try {
-			popup.opener = null;
-		} catch {
-			// Cross-origin browsers can throw on opener writes; the
-			// blank popup hasn't navigated cross-origin yet so this is
-			// safe in practice, but swallow defensively.
-		}
-		inflightConnectRef.current = true;
-		// Send our detail page URL as `redirect_url` so Composio sends the
-		// user back here after OAuth instead of its default callback.
-		// Lets us drop a polling loop — the popup eventually navigates
-		// back to our origin and the connections query force-refetches on
-		// window focus to reflect the new ACTIVE connection.
-		const redirectUrl = window.location.href;
-		void connectAction
-			.execute(redirectUrl)
-			.then((result) => {
-				if (!popup.closed) popup.location.href = result.connect_url;
-			})
-			.catch(() => {
-				popup.close();
-				toast.error("Couldn't start connection", {
-					description: "Try again. If the problem persists, contact support.",
-				});
-			})
-			.finally(() => {
-				inflightConnectRef.current = false;
-			});
-	};
-	const isStarting = connectAction.isPending;
-	const isConnectDisabled = isStarting || hasUnsupportedAuthType || isSetupBlocked;
 	const isReady = isConnected || usesNoAuth;
 	useSetBreadcrumbTitle(displayName);
 
@@ -286,11 +185,12 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// thrown 404 from the hosted catalog adapter) and outright network
 	// failures. Surface it so the user sees what's wrong instead of a
 	// silently-broken connect page.
-	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
+	if (!app) {
+		const appNotFound = isApiNotFoundError(appQ.error) || !appQ.error;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
-				{isApiNotFoundError(appQ.error) ? (
+				{appNotFound ? (
 					<EmptyState
 						icon={Plug}
 						title="Connector unavailable"
@@ -356,15 +256,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						!isSetupBlocked &&
 						!isConnectionsLoading &&
 						activeConnections.length > 0 ? (
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={startConnect}
-								disabled={isConnectDisabled}
-							>
-								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								Connect account
-							</Button>
+							<ConnectorConnectAction app={app} label="Connect account" />
 						) : null
 					}
 				/>
@@ -415,10 +307,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								variant="inset"
 								description="No connected accounts yet."
 								action={
-									<Button onClick={startConnect} disabled={isConnectDisabled}>
-										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-										{isStarting ? "Connecting…" : "Connect account"}
-									</Button>
+									<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
 								}
 							/>
 						)
@@ -480,13 +369,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					void toolsQ.refetch();
 				}}
 				requiresConnection={!usesNoAuth}
-			/>
-
-			<ConnectorCredentialsDialog
-				open={credsOpen}
-				onOpenChange={setCredsOpen}
-				appName={name}
-				displayName={displayName}
 			/>
 		</div>
 	);

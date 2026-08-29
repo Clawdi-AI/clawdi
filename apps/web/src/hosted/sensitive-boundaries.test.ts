@@ -198,7 +198,10 @@ describe("structural secret boundaries without the denylist", () => {
 			["components/settings/api-keys-panel.tsx", ["const createKey = useSensitiveAction"]],
 			["components/sharing/share-project-dialog.tsx", ["const create = useSensitiveAction"]],
 			["components/vault/add-keys-dialog.tsx", ["const save = useSensitiveAction"]],
-			["pages/dashboard/connectors/[name]/page.tsx", ["const connectAction = useSensitiveAction"]],
+			[
+				"components/connectors/connector-connect-action.tsx",
+				["const connect = useSensitiveAction"],
+			],
 			["components/memories/memories-surface.tsx", ["const saveMem0Key = useSensitiveAction"]],
 			["pages/share/project-share-page.tsx", ["const upgrade = useSensitiveAction"]],
 			[

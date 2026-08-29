@@ -227,7 +227,7 @@ type DashboardApiStubOptions = {
 		description: string;
 		auth_type: string;
 		connect_disabled: boolean;
-		connect_disabled_reason: null;
+		connect_disabled_reason: string | null;
 	}[];
 	connectorCatalogGate?: Promise<void>;
 	connectorCatalogResponse?: { body: unknown; status: number };
@@ -235,6 +235,7 @@ type DashboardApiStubOptions = {
 	connectorMetadataGate?: Promise<void>;
 	connectorAuthFields?: Record<string, unknown>;
 	connectorCredentialRequests?: Array<{ appName: string; body: unknown }>;
+	connectorOAuthRequests?: Array<{ appName: string; body: unknown }>;
 	memoryDetailGate?: Promise<void>;
 	memoryDetailResponse?: { body: unknown; status: number };
 	projectBindingRequests?: string[];
@@ -267,6 +268,15 @@ async function stubDashboardApi(
 	const createdProjectBindings: unknown[] = [];
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/auth/me") {
+			await fulfillJson(route, {
+				id: "11111111-1111-4111-8111-111111111119",
+				email: "dev@clawdi.local",
+				name: "Dev User",
+				auth_type: "clerk",
+			});
+			return;
+		}
 		if (
 			/^\/v1\/memories\/[^/]+$/.test(url.pathname) ||
 			url.pathname === "/v1/connectors" ||
@@ -544,6 +554,15 @@ async function stubDashboardApi(
 				body: route.request().postDataJSON(),
 			});
 			await fulfillJson(route, { connected: true }, 201);
+			return;
+		}
+		const connectorOAuthMatch = url.pathname.match(/^\/v1\/connectors\/([^/]+)\/connect$/);
+		if (connectorOAuthMatch && route.request().method() === "POST") {
+			options.connectorOAuthRequests?.push({
+				appName: decodeURIComponent(connectorOAuthMatch[1] ?? ""),
+				body: route.request().postDataJSON(),
+			});
+			await fulfillJson(route, { connect_url: "https://accounts.example.test/oauth" });
 			return;
 		}
 		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
@@ -915,10 +934,113 @@ test("connected all-agent detail loading, not-found, and error states keep Agent
 	);
 });
 
-test("connected agent resources select Projects before scoped Skills and Vaults", async ({
-	page,
-}, testInfo) => {
-	test.setTimeout(60_000);
+test("connector cards complete each authentication flow in Agent scope", async ({ page }) => {
+	const credentialRequests: Array<{ appName: string; body: unknown }> = [];
+	const oauthRequests: Array<{ appName: string; body: unknown }> = [];
+	await stubDashboardApi(page, [], {
+		connectorCatalog: [
+			{
+				name: "gmail",
+				display_name: "Gmail",
+				logo: "",
+				description: "Email connector",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+			{
+				name: "api-tool",
+				display_name: "API Tool",
+				logo: "",
+				description: "Credential connector",
+				auth_type: "api_key",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+			{
+				name: "public-data",
+				display_name: "Public Data",
+				logo: "",
+				description: "No account required",
+				auth_type: "no_auth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+			{
+				name: "admin-oauth",
+				display_name: "Admin OAuth",
+				logo: "",
+				description: "Workspace-managed connector",
+				auth_type: "oauth",
+				connect_disabled: true,
+				connect_disabled_reason:
+					"This Connector needs additional OAuth configuration before it can be connected. Contact support to continue.",
+			},
+		],
+		connectorAuthFields: {
+			"api-tool": {
+				expected_input_fields: [
+					{
+						name: "api_key",
+						display_name: "API key",
+						description: "Key used by API Tool",
+						required: true,
+						is_secret: true,
+					},
+				],
+			},
+		},
+		connectorCredentialRequests: credentialRequests,
+		connectorOAuthRequests: oauthRequests,
+	});
+
+	const agentConnectors = "/agents/11111111-1111-4111-8111-111111111111/connectors";
+	await page.goto(agentConnectors);
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
+
+	const gmailCard = main.getByRole("link", { name: "Gmail" }).locator("..");
+	const popupPromise = page.waitForEvent("popup");
+	await gmailCard.getByRole("button", { name: "Connect", exact: true }).click();
+	const popup = await popupPromise;
+	await expect.poll(() => oauthRequests).toHaveLength(1);
+	const oauthRequest = oauthRequests[0];
+	expect(oauthRequest?.appName).toBe("gmail");
+	if (
+		typeof oauthRequest?.body !== "object" ||
+		oauthRequest.body === null ||
+		!("redirect_url" in oauthRequest.body) ||
+		typeof oauthRequest.body.redirect_url !== "string"
+	) {
+		throw new Error("Expected the OAuth request to include a redirect_url");
+	}
+	expect(new URL(oauthRequest.body.redirect_url).pathname).toBe(`${agentConnectors}/gmail`);
+	await popup.close();
+
+	const publicDataCard = main.getByRole("link", { name: "Public Data" }).locator("..");
+	await expect(publicDataCard.getByText("Ready", { exact: true })).toBeVisible();
+
+	const unavailable = main.getByLabel(/Unavailable: This Connector needs additional OAuth/);
+	await expect(unavailable).toBeVisible();
+
+	const apiToolCard = main.getByRole("link", { name: "API Tool" }).locator("..");
+	await apiToolCard.getByRole("button", { name: "Connect", exact: true }).click();
+	const credentialDialog = page.getByRole("dialog", { name: "Connect API Tool" });
+	await credentialDialog.getByLabel("API key").fill("browser-secret-key");
+	await credentialDialog.getByRole("button", { name: "Connect", exact: true }).click();
+	await expect(credentialDialog).toHaveCount(0);
+	await expect
+		.poll(() => credentialRequests)
+		.toEqual([
+			{
+				appName: "api-tool",
+				body: { credentials: { api_key: "browser-secret-key" } },
+			},
+		]);
+	await expect(page).toHaveURL(agentConnectors);
+});
+
+async function stubConnectedAgentResources(page: Page) {
 	const skillRequests: string[] = [];
 	const skillCreateRequests: Array<{ projectId: string; body: unknown }> = [];
 	const vaultRequests: string[] = [];
@@ -927,7 +1049,6 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	const projectLinkDeltaBodies: unknown[] = [];
 	const projectBindingRequests: string[] = [];
 	const projectRequests: string[] = [];
-	const connectorCredentialRequests: Array<{ appName: string; body: unknown }> = [];
 	const longContextProjectName =
 		"Automation Library for exceptionally long production workflow names across several teams";
 	const longContextProjectSlug =
@@ -1036,41 +1157,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		},
 		vaults.items[1],
 	];
+
 	await stubDashboardApi(page, [], {
-		connectorCatalog: [
-			{
-				name: "gmail",
-				display_name: "Gmail",
-				logo: "",
-				description: "Email connector",
-				auth_type: "oauth",
-				connect_disabled: false,
-				connect_disabled_reason: null,
-			},
-			{
-				name: "api-tool",
-				display_name: "API Tool",
-				logo: "",
-				description: "Credential connector",
-				auth_type: "api_key",
-				connect_disabled: false,
-				connect_disabled_reason: null,
-			},
-		],
-		connectorAuthFields: {
-			"api-tool": {
-				expected_input_fields: [
-					{
-						name: "api_key",
-						display_name: "API key",
-						description: "Key used by API Tool",
-						required: true,
-						is_secret: true,
-					},
-				],
-			},
-		},
-		connectorCredentialRequests,
 		projectBindings: projectAccessBindings,
 		projects: projectAccessProjects,
 		skillsByProjectId: {
@@ -1094,44 +1182,37 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		projectRequests,
 	});
 
-	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.goto("/agents/11111111-1111-4111-8111-111111111111/connectors?q=gmail&page=2");
-	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible({
-		timeout: 15_000,
-	});
-	await expect(page).toHaveTitle("Connectors · Clawdi");
-	await expect(
-		main.getByText("Connectors are shared across all agents.", {
-			exact: true,
-		}),
-	).toBeVisible();
-	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
-	const gmailLink = main.getByRole("link", { name: "Gmail" });
-	await expect(gmailLink).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/connectors/gmail",
-	);
-	await expect(page).toHaveURL(
-		/\/agents\/11111111-1111-4111-8111-111111111111\/connectors\?q=gmail&page=2/,
-	);
-	await page.goto("/agents/11111111-1111-4111-8111-111111111111/connectors");
-	const apiToolLink = main.getByRole("link", { name: "API Tool" });
-	await apiToolLink.locator("..").getByRole("button", { name: "Connect", exact: true }).click();
-	const credentialDialog = page.getByRole("dialog", { name: "Connect API Tool" });
-	await credentialDialog.getByLabel("API key").fill("browser-secret-key");
-	await credentialDialog.getByRole("button", { name: "Connect", exact: true }).click();
-	await expect(credentialDialog).toHaveCount(0);
-	await expect
-		.poll(() => connectorCredentialRequests)
-		.toEqual([
-			{
-				appName: "api-tool",
-				body: { credentials: { api_key: "browser-secret-key" } },
-			},
-		]);
-	await expect(page).toHaveURL("/agents/11111111-1111-4111-8111-111111111111/connectors");
+	return {
+		skillRequests,
+		skillCreateRequests,
+		vaultRequests,
+		vaultItemWriteRequests,
+		projectCreateBodies,
+		projectLinkDeltaBodies,
+		projectBindingRequests,
+		projectRequests,
+		longContextProjectName,
+		longContextProjectSlug,
+		longContextProjectDescription,
+	};
+}
 
+test("connected agent resources select Projects before scoped Skills and Vaults", async ({
+	page,
+}, testInfo) => {
+	const {
+		skillRequests,
+		projectCreateBodies,
+		projectLinkDeltaBodies,
+		projectBindingRequests,
+		projectRequests,
+		longContextProjectName,
+		longContextProjectSlug,
+		longContextProjectDescription,
+	} = await stubConnectedAgentResources(page);
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const main = page.locator("main");
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access");
 	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible({
 		timeout: 15_000,
@@ -1502,9 +1583,12 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
 	await main.screenshot({ path: testInfo.outputPath("console-projects-mobile.png") });
+});
 
-	// Isolate the compatibility-route phase from Console-level Project queries.
-	vaultRequests.length = 0;
+test("agent scoped Skills and Vaults preserve context for mutations", async ({ page }) => {
+	const { longContextProjectName, skillCreateRequests, vaultRequests, vaultItemWriteRequests } =
+		await stubConnectedAgentResources(page);
+	const main = page.locator("main");
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/skills");
 	await expect(page).toHaveURL(

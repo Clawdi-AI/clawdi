@@ -33,6 +33,10 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type SendableSkill = Pick<
+	SkillSummary,
+	"skill_key" | "name" | "project_id" | "content_hash" | "authority" | "project_kind"
+>;
 
 /* Copy or move Cloud-owned Skills between two explicit Projects from the
  * canonical Skill card. Agent Workspace projections are excluded at both the
@@ -42,7 +46,7 @@ export function SendSkillDialog({
 	skill,
 	children,
 }: {
-	skill: SkillSummary;
+	skill: SendableSkill;
 	children?: ReactElement;
 }) {
 	const api = useApi();

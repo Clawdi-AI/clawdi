@@ -2,6 +2,7 @@
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { type ReactNode, Suspense, useCallback, useState } from "react";
@@ -55,6 +56,7 @@ import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
+	memoryDetailHrefForScope,
 	memoryDetailLink,
 	type ResourceNavigationScope,
 } from "@/lib/resource-navigation";
@@ -249,7 +251,11 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	);
 }
 
-export function MemoriesPageActions() {
+export function MemoriesPageActions({
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	scope?: ResourceNavigationScope;
+}) {
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const settings = useQuery({
@@ -305,7 +311,7 @@ export function MemoriesPageActions() {
 					Mem0
 				</ToggleGroupItem>
 			</ToggleGroup>
-			<AddMemoryForm />
+			<AddMemoryForm scope={scope} />
 		</>
 	);
 }
@@ -510,8 +516,9 @@ function Mem0KeyForm({
 	);
 }
 
-function AddMemoryForm() {
+function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 	const api = useOpenApi();
+	const router = useRouter();
 	const queryClient = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [content, setContent] = useState("");
@@ -519,9 +526,16 @@ function AddMemoryForm() {
 	const secretFinding = findLikelySecret(content);
 
 	const createMemory = api.useMutation("post", "/v1/memories", {
-		onSuccess: () => {
+		onSuccess: (memory) => {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
+			toast.success("Memory created", {
+				description: "It is available to every Agent on this account.",
+				action: {
+					label: "Open memory",
+					onClick: () => void router.navigate({ href: memoryDetailHrefForScope(scope, memory.id) }),
+				},
+			});
 		},
 		onError: (error) =>
 			toast.error("Couldn't create memory", { description: normalizeApiError(error) }),

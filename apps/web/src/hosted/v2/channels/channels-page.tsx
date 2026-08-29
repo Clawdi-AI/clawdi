@@ -45,6 +45,7 @@ import {
 	sharedBotsFromPool,
 } from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
+import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-action";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
@@ -249,7 +250,7 @@ function SharedBotsSection({
 			<div>
 				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Clawdi bots</SectionLabel>
 				<p className="mt-1 text-xs text-muted-foreground">
-					Add them from an Agent&apos;s Channels tab.
+					Link an Agent and pair a chat without leaving this page.
 				</p>
 			</div>
 			{content}
@@ -258,9 +259,30 @@ function SharedBotsSection({
 }
 
 function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
+	const atCapacity =
+		bot.max_links !== null && bot.max_links !== undefined && bot.link_count >= bot.max_links;
+	const unavailableReason = !bot.available
+		? "This bot is currently unavailable."
+		: !bot.capabilities.link_agent
+			? "You don't have permission to link this bot."
+			: atCapacity
+				? "This bot has reached its Agent limit."
+				: undefined;
 	return (
 		<div data-shared-channel-account-id={bot.id} className="h-full min-w-0">
-			<SharedChannelCard provider={bot.provider} title={bot.name} />
+			<SharedChannelCard
+				provider={bot.provider}
+				title={bot.name}
+				actions={
+					<LinkChannelAgentAction
+						accountId={bot.id}
+						provider={bot.provider}
+						channelName={bot.name}
+						disabled={Boolean(unavailableReason)}
+						disabledReason={unavailableReason}
+					/>
+				}
+			/>
 		</div>
 	);
 }
@@ -282,25 +304,31 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 					),
 				]}
 				actions={
-					<ConfirmAction
-						title={`Delete ${channel.name}?`}
-						description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
-						confirmLabel="Delete custom bot"
-						destructive
-						onConfirm={() => del.mutateAsync({ params: { path: { account_id: channel.id } } })}
-					>
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="text-muted-foreground hover:text-destructive"
-							disabled={del.isPending}
-							aria-label={`Delete ${channel.name}`}
+					<>
+						<LinkChannelAgentAction
+							accountId={channel.id}
+							provider={channel.provider}
+							channelName={channel.name}
+						/>
+						<ConfirmAction
+							title={`Delete ${channel.name}?`}
+							description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+							confirmLabel="Delete custom bot"
+							destructive
+							onConfirm={() => del.mutateAsync({ params: { path: { account_id: channel.id } } })}
 						>
-							{del.isPending ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
-							{del.isPending ? "Deleting…" : "Delete"}
-						</Button>
-					</ConfirmAction>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								className="text-muted-foreground hover:text-destructive"
+								disabled={del.isPending}
+								aria-label={`Delete ${channel.name}`}
+							>
+								{del.isPending ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
+							</Button>
+						</ConfirmAction>
+					</>
 				}
 			/>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>

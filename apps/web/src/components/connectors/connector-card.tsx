@@ -1,13 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Plug } from "lucide-react";
-import { useCallback, useState } from "react";
-import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
+import { Check } from "lucide-react";
+import { useCallback } from "react";
+import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
-import { Button } from "@/components/ui/button";
 import { useOpenApi } from "@/lib/api";
 import {
 	availableAppQueryOptions,
@@ -15,6 +13,7 @@ import {
 	connectorToolsQueryOptions,
 } from "@/lib/connectors-data";
 import {
+	connectorDetailHrefForScope,
 	connectorDetailLink,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
@@ -37,9 +36,6 @@ export function ConnectorCard({
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
-	const [credentialsOpen, setCredentialsOpen] = useState(false);
-	const canConnectCredentials =
-		!isConnected && !app.connect_disabled && getConnectorAuthFlow(app.auth_type) === "credentials";
 	const prefetchDetail = useCallback(() => {
 		void queryClient.prefetchQuery(availableAppQueryOptions(api, app.name));
 		void queryClient.prefetchQuery(connectorToolsQueryOptions(api, app.name));
@@ -57,19 +53,11 @@ export function ConnectorCard({
 			}
 			meta={app.description}
 			actions={
-				canConnectCredentials ? (
-					<>
-						<Button variant="outline" size="sm" onClick={() => setCredentialsOpen(true)}>
-							<Plug className="size-3.5" />
-							Connect
-						</Button>
-						<ConnectorCredentialsDialog
-							open={credentialsOpen}
-							onOpenChange={setCredentialsOpen}
-							appName={app.name}
-							displayName={app.display_name}
-						/>
-					</>
+				!isConnected ? (
+					<ConnectorConnectAction
+						app={app}
+						redirectHref={connectorDetailHrefForScope(scope, app.name)}
+					/>
 				) : undefined
 			}
 			link={{

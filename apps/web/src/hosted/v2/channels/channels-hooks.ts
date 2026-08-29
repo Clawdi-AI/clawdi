@@ -154,12 +154,12 @@ export function useWhatsAppOnboardingActions() {
 	return { start, refresh, pairingCode, cancel, retry, repair };
 }
 
-export function useChannelAgentLinks(id: string) {
+export function useChannelAgentLinks(id: string, enabled = true) {
 	return useOpenApi().useQuery(
 		"get",
 		"/v1/channels/{account_id}/agent-links",
 		{ params: { path: { account_id: id } } },
-		{ enabled: Boolean(id) },
+		{ enabled: enabled && Boolean(id) },
 	);
 }
 

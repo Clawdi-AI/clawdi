@@ -35,7 +35,7 @@ describe("dialog exit lifecycle", () => {
 			"components/vault/add-keys-dialog.tsx",
 			"components/vault/vaults-surface.tsx",
 			"components/memories/memories-surface.tsx",
-			"hosted/v2/channels/channel-detail-page.tsx",
+			"hosted/v2/channels/link-channel-agent-action.tsx",
 			"hosted/v2/channels/whatsapp-repair-dialog.tsx",
 		]) {
 			expect(source(path), path).toContain("onOpenChangeComplete");
