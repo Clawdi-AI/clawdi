@@ -18,6 +18,8 @@ describe("AI provider icon coverage", () => {
 		expect(iconSource).toContain("@lobehub/icons/es/HermesAgent/components/Mono.js");
 		expect(iconSource).toContain("@lobehub/icons/es/ClaudeCode/components/Color.js");
 		expect(iconSource).toContain("@lobehub/icons/es/Codex/components/Inner.js");
+		expect(iconSource).toContain("@lobehub/icons/es/Pi/components/Mono.js");
+		expect(iconSource).toContain("@lobehub/icons/es/OpenCode/components/Mono.js");
 		expect(viteSource).toContain('noExternal: ["@lobehub/icons"]');
 		expect(viteSource).not.toContain("noExternal: [/^@lobehub");
 		expect(viteSource).not.toContain("optimizeDeps");

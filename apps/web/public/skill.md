@@ -56,7 +56,7 @@ If it prints "Still waiting for approval" (exit code 2), the user hasn't clicked
 clawdi setup
 ```
 
-Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi syncs Sessions only and receives no Skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
+Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync Sessions only; neither receives Skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
 
 ## Sync the user's sessions
 

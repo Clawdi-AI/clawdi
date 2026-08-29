@@ -46,6 +46,7 @@ const ENV_KEYS = [
 	"CLAWDI_SERVE_DEBUG",
 	"HERMES_TEST_MCP_TOKEN",
 	"PI_CODING_AGENT_DIR",
+	"XDG_DATA_HOME",
 ] as const;
 
 let envSnapshot: Partial<Record<(typeof ENV_KEYS)[number], string>> = {};
@@ -156,6 +157,22 @@ describe("setup daemon install", () => {
 		});
 		expect(existsSync(join(home, "pi-agent", "skills"))).toBe(false);
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
+	});
+
+	it("registers OpenCode as sessions-only without installing Skill or MCP state", async () => {
+		const { captured } = installEnvironmentMock("env-opencode");
+		process.env.XDG_DATA_HOME = join(home, "xdg-data");
+
+		await setup({ agent: "opencode", yes: true, daemon: false });
+
+		const registration = captured.find((req) => req.method === "POST" && req.path === "/v1/agents");
+		expect(registration?.body).toMatchObject({
+			agent_type: "opencode",
+			adapter_modules: ["sessions"],
+		});
+		const openCodeHome = join(home, "xdg-data", "opencode");
+		expect(existsSync(join(openCodeHome, "skills"))).toBe(false);
+		expect(existsSync(join(openCodeHome, "mcp.json"))).toBe(false);
 	});
 
 	it("defaults to installing one daemon unit for all registered agents", async () => {

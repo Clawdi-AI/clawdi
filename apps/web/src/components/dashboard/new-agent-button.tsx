@@ -123,7 +123,7 @@ export function NewAgentButton({
 						<ChoiceCard
 							icon={<TerminalSquare />}
 							title="Connect an Agent on your machine"
-							description="Claude Code, Codex, Hermes, or OpenClaw via the CLI."
+							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
 							onClick={chooseConnect}
 						/>
 					</div>

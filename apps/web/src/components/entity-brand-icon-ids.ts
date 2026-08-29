@@ -1,4 +1,11 @@
-export const FRAMEWORK_BRAND_ICON_IDS = ["openclaw", "hermes", "claude-code", "codex"] as const;
+export const FRAMEWORK_BRAND_ICON_IDS = [
+	"openclaw",
+	"hermes",
+	"claude-code",
+	"codex",
+	"pi",
+	"opencode",
+] as const;
 export type FrameworkBrandIconId = (typeof FRAMEWORK_BRAND_ICON_IDS)[number];
 
 export const PROVIDER_BRAND_ICON_IDS = [
