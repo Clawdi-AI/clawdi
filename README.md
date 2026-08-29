@@ -14,7 +14,8 @@
 <p align="center">
   <a href="https://clawdi.ai">Website</a> ·
   <a href="https://github.com/Clawdi-AI/clawdi">GitHub</a> ·
-  <a href="https://deepwiki.com/Clawdi-AI/clawdi">Docs</a> ·
+  <a href="https://docs.clawdi.ai">Docs</a> ·
+  <a href="docs/clawdi-cloud-product-tour.md">Product tour</a> ·
   <a href="https://www.npmjs.com/package/clawdi">npm</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/ai-providers.md">AI Providers</a> ·
@@ -24,7 +25,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
+  <img src="docs/images/dashboard-preview.png" alt="A running Hermes Cloud Agent in the Clawdi dashboard" width="900">
+</p>
+
+<p align="center">
+  <em>Running Hermes Cloud Agent with a linked Project, durable Memories, and recent Sessions. All visible content comes from a synthetic demo workspace.</em><br>
+  <a href="docs/clawdi-cloud-product-tour.md">Open the current Clawdi Cloud product tour →</a>
 </p>
 
 > Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Pi and OpenCode sessions join the same private history. Agent Skill files remain authoritative on their own filesystems.
