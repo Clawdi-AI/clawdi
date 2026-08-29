@@ -184,9 +184,7 @@ describe("stable session enqueue abort fence", () => {
 
 			expect(result.enqueued).toBe(0);
 			expect(queued).toEqual([]);
-			expect(readFencedSessionEntry(readSessionsLock(), fence)?.source_revision).toBe(
-				"source-r2",
-			);
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.source_revision).toBe("source-r2");
 		} finally {
 			if (originalHome === undefined) delete process.env.HOME;
 			else process.env.HOME = originalHome;

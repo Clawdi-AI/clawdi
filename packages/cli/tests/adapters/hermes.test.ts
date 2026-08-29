@@ -293,13 +293,7 @@ describe("HermesAdapter.collectSessions", () => {
 		for await (const batch of changed.batches) {
 			changedIds.push(...batch.sessions.map((session) => session.localSessionId));
 		}
-		expect(changedIds.sort()).toEqual([
-			"bulk-00",
-			"bulk-01",
-			"bulk-02",
-			"bulk-03",
-			"bulk-04",
-		]);
+		expect(changedIds.sort()).toEqual(["bulk-00", "bulk-01", "bulk-02", "bulk-03", "bulk-04"]);
 	});
 
 	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {

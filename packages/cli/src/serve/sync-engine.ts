@@ -291,11 +291,11 @@ export async function enqueueChangedSessionsAfterStability(
 		const fence = opts.fenceFor(session);
 		const sourceRevisionUpdate = session.sourceRevision
 			? {
-				fence,
-				protocol: plan.protocol,
-				localHash: hash,
-				sourceRevision: session.sourceRevision,
-			}
+					fence,
+					protocol: plan.protocol,
+					localHash: hash,
+					sourceRevision: session.sourceRevision,
+				}
 			: null;
 		const blocked = sessionPlanIsDurablyBlocked(fence, plan);
 		if (blocked) {
