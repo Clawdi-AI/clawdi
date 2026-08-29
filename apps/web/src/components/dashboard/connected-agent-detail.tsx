@@ -208,7 +208,7 @@ export function ConnectedAgentDetail({
 							}
 							actions={
 								activeTab === "memories" ? (
-									<MemoriesPageActions />
+									<MemoriesPageActions scope={resourceScope} />
 								) : activeTab === "overview" && legacyDashboardUrl ? (
 									<Button
 										variant="outline"

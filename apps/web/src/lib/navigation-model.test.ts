@@ -263,10 +263,6 @@ describe("sidebar navigation model", () => {
 			new URL("../hosted/agents/hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
-		const agentVaultsTab = readFileSync(
-			new URL("../components/dashboard/agent-vaults-tab.tsx", import.meta.url),
-			"utf8",
-		);
 		const memoriesPage = readFileSync(
 			new URL("../pages/dashboard/memories/page.tsx", import.meta.url),
 			"utf8",
@@ -292,8 +288,6 @@ describe("sidebar navigation model", () => {
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
 		}
-		expect(agentVaultsTab).toContain("@/components/vault/vaults-surface");
-		expect(agentVaultsTab).not.toContain("@/pages/dashboard");
 		expect(connectorsPage).toContain("@/components/connectors/connectors-surface");
 		expect(connectorsPage).not.toContain("useQuery");
 		expect(vaultPage).toContain("@/components/vault/vaults-surface");

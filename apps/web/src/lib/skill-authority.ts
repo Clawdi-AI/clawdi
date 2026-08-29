@@ -11,6 +11,7 @@ export type SkillCapabilities = {
 	canSend: boolean;
 	readOnlyReason: SkillReadOnlyReason | null;
 	badgeLabel: string | null;
+	provenanceLabel: string | null;
 };
 
 const WRITABLE_SKILL_CAPABILITIES: SkillCapabilities = {
@@ -19,15 +20,20 @@ const WRITABLE_SKILL_CAPABILITIES: SkillCapabilities = {
 	canSend: true,
 	readOnlyReason: null,
 	badgeLabel: null,
+	provenanceLabel: null,
 };
 
-function readOnlyCapabilities(reason: SkillReadOnlyReason, badgeLabel: string): SkillCapabilities {
+function readOnlyCapabilities(
+	reason: SkillReadOnlyReason,
+	provenanceLabel: string | null,
+): SkillCapabilities {
 	return {
 		canUpdate: false,
 		canDelete: false,
 		canSend: false,
 		readOnlyReason: reason,
-		badgeLabel,
+		badgeLabel: "Read-only",
+		provenanceLabel,
 	};
 }
 
@@ -41,17 +47,17 @@ export function skillCapabilities(
 	project: Pick<Project, "kind" | "is_owner"> | null | undefined,
 ): SkillCapabilities {
 	if (skill.authority === "agent_sync") {
-		return readOnlyCapabilities("agent-sync", "Synced from Agent · Read-only");
+		return readOnlyCapabilities("agent-sync", "Synced from Agent");
 	}
 	const projectKind = skill.project_kind ?? project?.kind;
 	if (projectKind === "environment") {
-		return readOnlyCapabilities("agent-project", "Workspace · Read-only");
+		return readOnlyCapabilities("agent-project", "Agent Workspace");
 	}
 	if (!skill.project_id || project === undefined || project === null) {
-		return readOnlyCapabilities("unknown", "Read-only");
+		return readOnlyCapabilities("unknown", null);
 	}
 	if (project.is_owner === false) {
-		return readOnlyCapabilities("shared", "Shared · Read-only");
+		return readOnlyCapabilities("shared", "Shared Project");
 	}
 	return WRITABLE_SKILL_CAPABILITIES;
 }

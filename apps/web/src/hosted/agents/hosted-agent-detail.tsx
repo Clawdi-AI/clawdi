@@ -559,7 +559,7 @@ export function HostedAgentDetail({
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
 							activeTab === "memories" ? (
-								<MemoriesPageActions />
+								<MemoriesPageActions scope={resourceScope} />
 							) : interfaceAvailable ? (
 								<Button
 									render={<Link {...agentSectionLink(environmentId, "console")} />}

@@ -279,7 +279,8 @@ function HostedWorkspaceSkillsPanelContent({
 								skill={item.entity}
 								cloudSkill={item.cloudProjection ?? undefined}
 								readOnly
-								readOnlyLabel={item.projectionOnly ? "Synced from Agent · Read-only" : null}
+								readOnlyLabel={item.projectionOnly ? "Read-only" : null}
+								provenanceLabel={item.projectionOnly ? "Synced from Agent" : null}
 								showVersion={Boolean(item.cloudProjection?.version)}
 								actions={
 									item.desired ? (

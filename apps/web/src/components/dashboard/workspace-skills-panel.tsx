@@ -116,7 +116,8 @@ export function ConnectedWorkspaceSkillsPanel({
 							skill={skill}
 							cloudSkill={skill}
 							readOnly
-							readOnlyLabel="Synced from Agent · Read-only"
+							readOnlyLabel="Read-only"
+							provenanceLabel="Synced from Agent"
 							actions={<ConnectedSkillRemoveAction skill={skill} agentType={agentType} />}
 							skillLink={(cloudSkill) =>
 								agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId)

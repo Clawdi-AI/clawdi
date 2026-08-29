@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	BookOpen,
+	Copy,
 	ExternalLink,
 	FileText,
 	FolderKanban,
@@ -39,6 +40,8 @@ import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { displayProjectName, ProjectIdentity } from "@/components/projects/project-metadata";
+import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
+import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -400,7 +403,6 @@ export function SkillDetailContent({
 		uninstall.mutate();
 	};
 
-	const uninstallLocation = sourceProjectName ? `from ${sourceProjectName}` : "from this Project";
 	const isAgentSyncProjection = skill?.authority === "agent_sync";
 	const agentCaption = isAgentSyncProjection
 		? skillAgentLabel
@@ -510,6 +512,12 @@ export function SkillDetailContent({
 						actions={
 							!accessKnown || isReadOnly ? undefined : !isEditing ? (
 								<>
+									<SendSkillDialog skill={skill}>
+										<Button variant="outline" size="sm">
+											<Copy />
+											Copy or move
+										</Button>
+									</SendSkillDialog>
 									<Button
 										variant="outline"
 										size="sm"
@@ -528,14 +536,7 @@ export function SkillDetailContent({
 									</Button>
 									<ConfirmAction
 										title={`Remove ${skill.name} from Project?`}
-										description={
-											<>
-												<p>This removes the skill {uninstallLocation}.</p>
-												<p>
-													Other Projects keep their copies. Add it to this Project again if needed.
-												</p>
-											</>
-										}
+										description={<SkillRemovalDescription projectName={sourceProjectName} />}
 										confirmLabel="Remove from project"
 										destructive
 										onConfirm={onUninstall}
