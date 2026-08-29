@@ -21,6 +21,7 @@ function SessionDetailRoute() {
 			sessionId={id}
 			searchAnchor={searchAnchor}
 			searchQuery={search.matchQuery}
+			timelineView={search.timelineView ?? "all"}
 			returnTo={search.returnTo}
 		/>
 	);

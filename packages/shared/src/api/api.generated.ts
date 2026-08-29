@@ -1347,11 +1347,13 @@ export interface paths {
         };
         /**
          * Get Session Messages
-         * @description Paginated read of a session's messages, for the dashboard.
+         * @description Paginated read of a session's owner-visible timeline.
          *     The CLI's `clawdi pull` mirror still uses
          *     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
          *     this endpoint slices the same blob server-side so the
-         *     dashboard doesn't ship 10+ MB of messages on a long session.
+         *     dashboard doesn't ship 10+ MB of messages on a long session. The default
+         *     `view=messages` preserves the historical response exactly. Other views add
+         *     a typed message/tool timeline without exposing reasoning or hidden events.
          *
          *     Pagination is offset-based within the requested direction. `offset=0`
          *     starts at the oldest visible message for ascending reads and at the newest
@@ -8210,6 +8212,47 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * SessionTimelineMessageResponse
+         * @description Dashboard timeline message with its canonical event position.
+         */
+        SessionTimelineMessageResponse: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Model */
+            model?: string | null;
+            /** Timestamp */
+            timestamp?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "message";
+            /** Position */
+            position: number;
+        };
+        /**
+         * SessionTimelinePage
+         * @description Paginated owner-only projection of visible messages and tool activity.
+         */
+        SessionTimelinePage: {
+            /** Items */
+            items: (components["schemas"]["SessionTimelineMessageResponse"] | components["schemas"]["SessionToolCallResponse"] | components["schemas"]["SessionToolResultResponse"])[];
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Anchor Offset */
+            anchor_offset?: number | null;
+            search_navigation?: components["schemas"]["SessionSearchNavigationResponse"] | null;
+        };
         /** SessionToolCallEvent */
         SessionToolCallEvent: {
             /** Seq */
@@ -8233,6 +8276,29 @@ export interface components {
             arguments_json?: string | null;
             /** Model */
             model?: string | null;
+        };
+        /**
+         * SessionToolCallResponse
+         * @description Safe, owner-only projection of a tool invocation.
+         */
+        SessionToolCallResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "tool_call";
+            /** Position */
+            position: number;
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name: string;
+            /** Arguments Json */
+            arguments_json?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Timestamp */
+            timestamp?: string | null;
         };
         /** SessionToolResultEvent */
         SessionToolResultEvent: {
@@ -8262,6 +8328,34 @@ export interface components {
             parts: (components["schemas"]["SessionTextPart"] | components["schemas"]["SessionAttachmentPart"])[];
             /** Result Json */
             result_json?: string | null;
+        };
+        /**
+         * SessionToolResultResponse
+         * @description Safe, owner-only projection of a tool result.
+         */
+        SessionToolResultResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "tool_result";
+            /** Position */
+            position: number;
+            /** Call Id */
+            call_id: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "error";
+            /** Content */
+            content?: string | null;
+            /** Result Json */
+            result_json?: string | null;
+            /** Timestamp */
+            timestamp?: string | null;
         };
         /** SessionUploadCapabilitiesResponse */
         SessionUploadCapabilitiesResponse: {
@@ -11754,6 +11848,7 @@ export interface operations {
                 offset?: number;
                 limit?: number;
                 direction?: "asc" | "desc";
+                view?: "messages" | "all" | "user" | "assistant" | "tools";
                 anchor_kind?: ("snapshot_offset" | "event_seq") | null;
                 anchor_position?: number | null;
                 anchor_revision?: string | null;
@@ -11773,7 +11868,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionMessagesPage"];
+                    "application/json": components["schemas"]["SessionMessagesPage"] | components["schemas"]["SessionTimelinePage"];
                 };
             };
             /** @description Validation Error */

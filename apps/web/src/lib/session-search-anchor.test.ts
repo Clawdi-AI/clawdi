@@ -3,6 +3,7 @@ import {
 	sessionDetailLink,
 	sessionDetailSearchLink,
 	sessionSearchAnchorFromSearch,
+	sessionTimelineViewLink,
 	validateSessionDetailSearch,
 } from "@/lib/session-search-anchor";
 
@@ -52,6 +53,26 @@ describe("Session search anchors", () => {
 		});
 		expect(validateSessionDetailSearch({ matchQuery: " authentication " })).toEqual({
 			matchQuery: "authentication",
+		});
+	});
+
+	test("canonicalizes timeline filters and clears them for transcript search", () => {
+		expect(validateSessionDetailSearch({ timelineView: "tools" })).toEqual({
+			timelineView: "tools",
+		});
+		expect(validateSessionDetailSearch({ timelineView: "tools", matchQuery: " answer " })).toEqual({
+			matchQuery: "answer",
+		});
+		expect(validateSessionDetailSearch({ timelineView: "unknown" })).toEqual({});
+		expect(sessionTimelineViewLink("session-id", "all")).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: {},
+		});
+		expect(sessionTimelineViewLink("session-id", "assistant")).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
+			search: { timelineView: "assistant" },
 		});
 	});
 

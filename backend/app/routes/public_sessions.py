@@ -46,7 +46,7 @@ from app.services.session_content import (
     SessionContentMissing,
     load_session_messages,
     session_has_uploaded_content,
-    slice_session_messages,
+    slice_session_items,
 )
 from app.services.session_export import (
     public_session_base_fields,
@@ -178,7 +178,7 @@ async def get_shared_session_messages(
         ) from None
 
     total = len(raw)
-    sliced = slice_session_messages(raw, offset=offset, limit=limit, direction=direction)
+    sliced = slice_session_items(raw, offset=offset, limit=limit, direction=direction)
     return SessionMessagesPage(
         items=[SessionMessageResponse.model_validate(m) for m in sliced],
         total=total,

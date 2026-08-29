@@ -1,12 +1,14 @@
 import type { SessionListItem } from "@clawdi/shared/api";
 
 export type SessionSearchAnchor = NonNullable<SessionListItem["search_match"]>["anchor"];
+export type SessionTimelineView = "all" | "user" | "assistant" | "tools";
 
 export interface SessionDetailSearch {
 	matchKind?: SessionSearchAnchor["kind"];
 	matchPosition?: number;
 	matchRevision?: string;
 	matchQuery?: string;
+	timelineView?: Exclude<SessionTimelineView, "all">;
 	returnTo?: string;
 }
 
@@ -16,11 +18,19 @@ function validPosition(value: unknown): number | undefined {
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
+export function parseSessionTimelineView(
+	value: unknown,
+): Exclude<SessionTimelineView, "all"> | undefined {
+	return value === "user" || value === "assistant" || value === "tools" ? value : undefined;
+}
+
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
 	const returnTo = normalizeSessionListReturnTo(search.returnTo);
 	const matchQuery = normalizeSessionMatchQuery(search.matchQuery);
+	const timelineView = matchQuery ? undefined : parseSessionTimelineView(search.timelineView);
 	const standalone = {
 		...(matchQuery ? { matchQuery } : {}),
+		...(timelineView ? { timelineView } : {}),
 		...(returnTo ? { returnTo } : {}),
 	};
 	const kind =
@@ -40,7 +50,24 @@ export function validateSessionDetailSearch(search: Record<string, unknown>): Se
 		matchPosition: position,
 		matchRevision: revision,
 		...(matchQuery ? { matchQuery } : {}),
+		...(timelineView ? { timelineView } : {}),
 		...(returnTo ? { returnTo } : {}),
+	};
+}
+
+export function sessionTimelineViewLink(
+	sessionId: string,
+	view: SessionTimelineView,
+	options: { returnTo?: string } = {},
+) {
+	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	return {
+		to: "/sessions/$id" as const,
+		params: { id: sessionId },
+		search: {
+			...(view === "all" ? {} : { timelineView: view }),
+			...(returnTo ? { returnTo } : {}),
+		},
 	};
 }
 

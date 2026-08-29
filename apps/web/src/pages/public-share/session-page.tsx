@@ -5,7 +5,7 @@ import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { MessageList } from "@/components/sessions/message-list";
+import { SessionTimelineList } from "@/components/sessions/message-list";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { ShareHeaderUser } from "@/components/share/header-user";
 import { NoAccess } from "@/components/share/no-access";
@@ -143,8 +143,8 @@ export default function PublicSharePage({
 					<p className="text-sm text-muted-foreground">This session has no readable content.</p>
 				) : (
 					<div>
-						<MessageList
-							messages={messagesPage.items}
+						<SessionTimelineList
+							items={messagesPage.items}
 							agentType={share.agent_type}
 							userAvatar={share.owner_avatar_url ?? undefined}
 							userName={share.owner_name || "User"}

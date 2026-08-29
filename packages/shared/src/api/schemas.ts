@@ -31,6 +31,10 @@ export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionMessageResponse"];
 export type SessionMessagesPage = Schemas["SessionMessagesPage"];
+export type SessionTimelineItem = Schemas["SessionTimelinePage"]["items"][number];
+export type SessionTimelinePage = Schemas["SessionTimelinePage"];
+export type SessionToolCall = Schemas["SessionToolCallResponse"];
+export type SessionToolResult = Schemas["SessionToolResultResponse"];
 export type SessionUploadResult = Schemas["SessionUploadResponse"];
 export type Environment = Schemas["EnvironmentResponse"];
 

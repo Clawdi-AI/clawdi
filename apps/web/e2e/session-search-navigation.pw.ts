@@ -163,3 +163,116 @@ test("opens a message search result and returns to the same filtered list", asyn
 		);
 	});
 });
+
+test("filters session activity and expands paired tool details", async ({ page }) => {
+	const timeline = [
+		{
+			kind: "message",
+			position: 4,
+			role: "assistant",
+			content: "Final answer after reading the file",
+			model: "gpt-5",
+			timestamp: now,
+		},
+		{
+			kind: "tool_result",
+			position: 3,
+			call_id: "call-read",
+			name: "read",
+			status: "completed",
+			content: "Repository instructions",
+			result_json: null,
+			timestamp: now,
+		},
+		{
+			kind: "tool_call",
+			position: 2,
+			call_id: "call-read",
+			name: "read",
+			arguments_json: '{"path":"README.md"}',
+			model: "gpt-5",
+			timestamp: now,
+		},
+		{
+			kind: "message",
+			position: 1,
+			role: "user",
+			content: "Read the repository instructions",
+			model: null,
+			timestamp: now,
+		},
+	] as const;
+
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") {
+			return fulfillJson(route, [
+				{
+					id: AGENT_ID,
+					name: "Search Codex",
+					display_name: "Search Codex",
+					default_name: "Codex",
+					machine_name: "search-machine",
+					agent_type: "codex",
+				},
+			]);
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}`) {
+			return fulfillJson(route, session);
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			const view = url.searchParams.get("view");
+			const query = url.searchParams.get("search_query");
+			if (query) {
+				expect(view).toBe("all");
+				return fulfillJson(route, {
+					items: [timeline[0]],
+					total: 1,
+					offset: 0,
+					limit: 100,
+					anchor_offset: 0,
+					search_navigation: {
+						index: 1,
+						total: 1,
+						current: anchor,
+						previous: null,
+						next: null,
+					},
+				});
+			}
+			const items =
+				view === "tools" ? timeline.slice(1, 3) : view === "user" ? [timeline[3]] : timeline;
+			return fulfillJson(route, {
+				items,
+				total: items.length,
+				offset: 0,
+				limit: 100,
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto(`/sessions/${SESSION_ID}?timelineView=tools`);
+	const toolActivity = page.getByRole("button", { name: /read.*Completed/ });
+	await expect(toolActivity).toBeVisible();
+	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
+	await toolActivity.click();
+	await expect(page.locator("pre").filter({ hasText: '"path": "README.md"' })).toBeVisible();
+	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
+
+	await page.getByRole("button", { name: "You" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user");
+	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
+	await expect(toolActivity).not.toBeVisible();
+
+	await page.getByRole("button", { name: "Tools" }).click();
+	await page.getByRole("textbox", { name: "Search this session" }).fill("Final answer");
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.searchParams.get("matchQuery") === "Final answer" && !url.searchParams.has("timelineView")
+		);
+	});
+	await expect(page.locator('[data-search-match="true"]')).toContainText(
+		"Final answer after reading the file",
+	);
+});

@@ -273,13 +273,16 @@ describe("agent routes", () => {
 				tab: "sessions",
 				project: "project 1",
 				vault: 42,
+				timelineView: "tools",
 				future: "kept",
 			}),
 		).toEqual({
 			tab: "sessions",
 			project: "project 1",
+			timelineView: "tools",
 			future: "kept",
 		});
+		expect(validateAgentRouteSearch({ timelineView: "unknown" })).toEqual({});
 	});
 
 	it("canonicalizes legacy tab bookmarks through one explicit mapping", () => {

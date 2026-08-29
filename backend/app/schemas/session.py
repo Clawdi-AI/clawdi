@@ -643,6 +643,44 @@ class SessionMessageResponse(BaseModel):
     timestamp: datetime | None = None
 
 
+class SessionTimelineMessageResponse(SessionMessageResponse):
+    """Dashboard timeline message with its canonical event position."""
+
+    kind: Literal["message"] = "message"
+    position: int = Field(ge=0)
+
+
+class SessionToolCallResponse(BaseModel):
+    """Safe, owner-only projection of a tool invocation."""
+
+    kind: Literal["tool_call"] = "tool_call"
+    position: int = Field(ge=0)
+    call_id: str
+    name: str
+    arguments_json: str | None = None
+    model: str | None = None
+    timestamp: datetime | None = None
+
+
+class SessionToolResultResponse(BaseModel):
+    """Safe, owner-only projection of a tool result."""
+
+    kind: Literal["tool_result"] = "tool_result"
+    position: int = Field(ge=0)
+    call_id: str
+    name: str | None = None
+    status: Literal["completed", "error"]
+    content: str | None = None
+    result_json: str | None = None
+    timestamp: datetime | None = None
+
+
+SessionTimelineItemResponse = Annotated[
+    SessionTimelineMessageResponse | SessionToolCallResponse | SessionToolResultResponse,
+    Field(discriminator="kind"),
+]
+
+
 class PublicSessionExportResponse(PublicSessionResponse):
     """Public-safe structured session export payload."""
 
@@ -669,6 +707,24 @@ class SessionMessagesPage(BaseModel):
     limit: int
     # Absolute offset in the requested direction for a resolved search match.
     # Omitted for ordinary pagination and stale or invalidated search anchors.
+    anchor_offset: int | None = Field(
+        default=None,
+        ge=0,
+        exclude_if=lambda value: value is None,
+    )
+    search_navigation: SessionSearchNavigationResponse | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
+class SessionTimelinePage(BaseModel):
+    """Paginated owner-only projection of visible messages and tool activity."""
+
+    items: list[SessionTimelineItemResponse]
+    total: int
+    offset: int
+    limit: int
     anchor_offset: int | None = Field(
         default=None,
         ge=0,
