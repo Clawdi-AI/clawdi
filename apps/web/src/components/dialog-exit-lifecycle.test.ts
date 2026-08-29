@@ -29,10 +29,14 @@ describe("dialog exit lifecycle", () => {
 			"components/command-palette.tsx",
 			"components/connectors/credentials-dialog.tsx",
 			"components/settings/api-keys-panel.tsx",
+			"components/projects/create-project-dialog.tsx",
+			"components/projects/project-actions.tsx",
+			"components/skills/create-skill-dialog.tsx",
 			"components/vault/add-keys-dialog.tsx",
 			"components/vault/vaults-surface.tsx",
 			"components/memories/memories-surface.tsx",
-			"pages/dashboard/projects/page.tsx",
+			"hosted/v2/channels/channel-detail-page.tsx",
+			"hosted/v2/channels/whatsapp-repair-dialog.tsx",
 		]) {
 			expect(source(path), path).toContain("onOpenChangeComplete");
 		}

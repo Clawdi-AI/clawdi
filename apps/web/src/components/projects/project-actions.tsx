@@ -97,6 +97,12 @@ export function ProjectActions({
 					}
 					setEditOpen(nextOpen);
 				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (!nextOpen) {
+						setName(project.name);
+						setDescription(project.description ?? "");
+					}
+				}}
 			>
 				<DialogTrigger
 					render={

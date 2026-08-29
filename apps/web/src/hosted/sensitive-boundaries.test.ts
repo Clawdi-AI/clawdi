@@ -164,6 +164,8 @@ describe("structural secret boundaries without the denylist", () => {
 				[
 					"export function useCreateChannel()",
 					"export function useCreatePairCode(",
+					"export function useLinkChannelAgent(",
+					"export function useUnlinkChannelAgent(",
 					"return useSensitiveAction",
 				],
 			],
@@ -210,7 +212,7 @@ describe("structural secret boundaries without the denylist", () => {
 		}
 		expect(
 			source("hosted/v2/channels/channels-hooks.ts").split("return useSensitiveAction"),
-		).toHaveLength(3);
+		).toHaveLength(5);
 		expect(
 			source("hosted/v2/ai-providers/ai-providers-hooks.ts").split("return useSensitiveAction"),
 		).toHaveLength(5);

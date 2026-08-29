@@ -23,6 +23,7 @@ describe("query refresh presentation contract", () => {
 		const memoryDetail = source("pages/dashboard/memories/[id]/page.tsx");
 		const memories = source("components/memories/memories-surface.tsx");
 		const projectsPage = source("pages/dashboard/projects/page.tsx");
+		const createProjectDialog = source("components/projects/create-project-dialog.tsx");
 		const vaults = source("components/vault/vaults-surface.tsx");
 		const projectDetail = source("pages/dashboard/projects/[id]/page.tsx");
 		const inventoryGate = hostedAgentHome.slice(
@@ -66,7 +67,8 @@ describe("query refresh presentation contract", () => {
 		expect(memories).toContain('$api.useQuery(\n\t\t"get",\n\t\t"/v1/memories"');
 		expect(memories).toContain('api.useMutation("post", "/v1/memories"');
 		expect(memories).toContain('$api.useMutation("delete", "/v1/memories/{memory_id}"');
-		expect(projectsPage).toContain('$api.useMutation("post", "/v1/projects"');
+		expect(projectsPage).toContain("<CreateProjectDialog");
+		expect(createProjectDialog).toContain('api.POST("/v1/projects"');
 		expect(vaults).not.toContain("projectNamesUnavailable={!!projects.error}");
 		expect(projectDetail).not.toContain("selectedBindings.isError");
 	});

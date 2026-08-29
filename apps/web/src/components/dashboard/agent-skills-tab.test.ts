@@ -3,14 +3,16 @@ import { readFileSync } from "node:fs";
 import { AGENT_SECTION_NAVIGATION_ITEMS, agentNavigationGroups } from "@/lib/navigation-model";
 
 describe("agent Skills resource boundary", () => {
-	test("keeps effective Project rows scoped and platform infrastructure out of inventory", () => {
+	test("keeps effective Project rows scoped with ownership-aware resource actions", () => {
 		const source = readFileSync(new URL("./agent-skills-tab.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("resolveAgentProjectScope");
 		expect(source).toContain("fetchAgentProjectSkills");
 		expect(source).toContain("sourceLabelFor");
 		expect(source).not.toContain("cleanupOnly");
-		expect(source).not.toMatch(/api\.DELETE|useMutation/);
+		expect(source).toContain('api.DELETE("/v1/projects/{project_id}/skills/{skill_key}"');
+		expect(source).toContain("capabilitiesFor");
+		expect(source).toContain("onUninstall");
 		expect(source).toContain("AGENT_PROJECT_SKILLS_REFRESH_POLICY");
 		expect(source).not.toMatch(/manifest|reservedSkill|leadingCards/i);
 		expect(source).not.toMatch(/managed_resources|mcp_server|MCP servers/i);

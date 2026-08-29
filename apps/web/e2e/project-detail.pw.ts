@@ -180,12 +180,17 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.toBe(true);
 	await expectNoHorizontalOverflow(page);
 	await page.getByRole("button", { name: "Add skill", exact: true }).click();
-	await expect(page).toHaveURL(`/skills?project=${projectId}&add=1`);
 	const directAddDialog = page.getByRole("dialog", { name: "Add skill" });
 	await expect(directAddDialog).toBeVisible();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/projects/${projectId}` &&
+			url.searchParams.get("tab") === "skills" &&
+			url.searchParams.get("keep") === "state"
+		);
+	});
 	await directAddDialog.getByRole("button", { name: "Cancel" }).click();
-	await expect(page).toHaveURL(`/skills?project=${projectId}`);
-	await page.goBack();
+	await expect(directAddDialog).not.toBeVisible();
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.pathname === `/projects/${projectId}` &&

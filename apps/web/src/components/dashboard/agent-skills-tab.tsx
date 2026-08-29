@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
@@ -16,6 +17,7 @@ import { displayProjectName } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { normalizeApiError } from "@/lib/api-errors";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
@@ -101,7 +103,9 @@ export function AgentSkillsTab({
 	isResolvingAgentProject?: boolean;
 	projectionFence?: string;
 }) {
+	const api = useApi();
 	const $api = useOpenApi();
+	const queryClient = useQueryClient();
 	const {
 		skills,
 		isLoading: skillsLoading,
@@ -126,6 +130,25 @@ export function AgentSkillsTab({
 		() => new Map((projects.data ?? []).map((project) => [project.id, project])),
 		[projects.data],
 	);
+	const removeSkill = useMutation({
+		mutationFn: async ({ skillKey, projectId }: { skillKey: string; projectId: string }) =>
+			unwrap(
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+					params: { path: { project_id: projectId, skill_key: skillKey } },
+				}),
+			),
+		onSuccess: async () => {
+			await Promise.all([
+				refetchSkills(),
+				queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
+			]);
+			toast.success("Skill removed from Project");
+		},
+		onError: (error) =>
+			toast.error("Couldn't remove Skill from Project", {
+				description: normalizeApiError(error),
+			}),
+	});
 
 	if (shouldBlockQueryError(skillsError, skills)) {
 		return (
@@ -162,6 +185,8 @@ export function AgentSkillsTab({
 						skill.project_id ? projectsById.get(skill.project_id) : undefined,
 					)
 				}
+				onUninstall={(skillKey, projectId) => removeSkill.mutateAsync({ skillKey, projectId })}
+				uninstallPending={removeSkill.isPending}
 				sourceLabelFor={(skill) => {
 					const project = skill.project_id ? projectsById.get(skill.project_id) : undefined;
 					const name = project ? displayProjectName(project) : skill.project_name?.trim();

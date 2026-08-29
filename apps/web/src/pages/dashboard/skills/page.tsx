@@ -13,6 +13,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
+import { ProjectActions } from "@/components/projects/project-actions";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -426,6 +427,11 @@ function ProjectSelection({
 							formatResourceCount(project.skill_count, "skill"),
 							formatResourceCount(project.vault_count, "vault"),
 						]}
+						actions={
+							isProjectOwner(project) && isCustomProject(project) ? (
+								<ProjectActions project={project} />
+							) : undefined
+						}
 						link={{ to: "/skills", search: { project: project.id } }}
 					/>
 				))}

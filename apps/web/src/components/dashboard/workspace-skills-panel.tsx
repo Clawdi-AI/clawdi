@@ -179,12 +179,12 @@ function ConnectedSkillRemoveAction({
 		<>
 			<Button
 				variant="ghost"
-				size="sm"
+				size="icon-sm"
 				className="text-muted-foreground hover:text-destructive"
 				onClick={() => setOpen(true)}
+				aria-label={`Uninstall ${skill.name} from Agent`}
 			>
 				<Trash2 className="size-3.5" />
-				Uninstall skill
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
 				<DialogContent className="sm:max-w-xl">

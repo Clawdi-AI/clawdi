@@ -37,7 +37,11 @@ export function WhatsAppRepairDialog({
 				if (!nextOpen) setStarted(false);
 			}}
 		>
-			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+			>
 				<DialogHeader>
 					<DialogTitle>Repair WhatsApp before linking</DialogTitle>
 					<DialogDescription>

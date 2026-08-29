@@ -45,7 +45,7 @@ import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { projectDetailHref } from "@/lib/project-resource-model";
+import { formatResourceCount, projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
@@ -327,6 +327,10 @@ function AgentProjectsPanel({
 									<ProjectResourceCard
 										project={project}
 										navigationScope={navigationScope}
+										footer={[
+											formatResourceCount(project.skill_count, "skill"),
+											formatResourceCount(project.vault_count, "vault"),
+										]}
 										actions={
 											project.is_owner !== false && isCustomProject(project) ? (
 												<ProjectActions project={project} onChanged={onChanged} />
