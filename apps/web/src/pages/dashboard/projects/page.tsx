@@ -2,9 +2,9 @@
 
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Plus, Share2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -12,27 +12,20 @@ import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
+import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
+import { ProjectActions } from "@/components/projects/project-actions";
+import {
+	canManageCustomProject,
+	displayProjectName,
+	isCustomProject,
+} from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
 } from "@/components/projects/project-resource-card";
-import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import { Textarea } from "@/components/ui/textarea";
 import { useOpenApi } from "@/lib/api";
-import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import {
 	formatResourceCount,
@@ -42,7 +35,6 @@ import {
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-type ProjectCreate = components["schemas"]["ProjectCreate"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
 const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
@@ -51,9 +43,6 @@ export default function ProjectsPage() {
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const [newProjectName, setNewProjectName] = useState("");
-	const [newProjectDescription, setNewProjectDescription] = useState("");
-	const [createOpen, setCreateOpen] = useState(false);
 	// URL-backed like the other lists: open a project and come back with the
 	// filter text intact.
 	const [search, setSearch] = useQueryState(
@@ -101,26 +90,6 @@ export default function ProjectsPage() {
 	}, [customProjects, sharedProjects, search]);
 	const blockingProjectsError = shouldBlockQueryError(projects.error, projects.data);
 
-	const createProject = $api.useMutation("post", "/v1/projects", {
-		onSuccess: (project) => {
-			setCreateOpen(false);
-			qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
-			toast.success("Project created");
-			void router.navigate({ href: projectDetailHref(project.id) });
-		},
-		onError: (error) => {
-			toast.error("Couldn't create project", {
-				description: normalizeApiError(error),
-			});
-		},
-	});
-
-	const openCreateDialog = () => {
-		setNewProjectName("");
-		setNewProjectDescription("");
-		setCreateOpen(true);
-	};
-
 	if (projects.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
@@ -128,7 +97,7 @@ export default function ProjectsPage() {
 					title="Projects"
 					description={PROJECTS_RESOURCE.managementDescription}
 					actions={
-						<Button size="sm" onClick={openCreateDialog} disabled>
+						<Button size="sm" disabled>
 							<Plus className="size-3.5" />
 							Create project
 						</Button>
@@ -149,10 +118,23 @@ export default function ProjectsPage() {
 				title="Projects"
 				description={PROJECTS_RESOURCE.managementDescription}
 				actions={
-					<Button size="sm" onClick={openCreateDialog}>
-						<Plus className="size-3.5" />
-						Create project
-					</Button>
+					<CreateProjectDialog
+						onCreated={(project) => {
+							qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+							toast.success("Project created", {
+								description: "It is ready for Skills, Vaults, and Agent links.",
+								action: {
+									label: "Open project",
+									onClick: () => void router.navigate({ href: projectDetailHref(project.id) }),
+								},
+							});
+						}}
+					>
+						<Button size="sm">
+							<Plus className="size-3.5" />
+							Create project
+						</Button>
+					</CreateProjectDialog>
 				}
 			/>
 
@@ -169,74 +151,6 @@ export default function ProjectsPage() {
 					title="Couldn't load projects"
 				/>
 			) : null}
-
-			<Dialog
-				open={createOpen}
-				onOpenChange={setCreateOpen}
-				onOpenChangeComplete={(open) => {
-					if (!open) {
-						setNewProjectName("");
-						setNewProjectDescription("");
-					}
-				}}
-			>
-				<DialogContent className="sm:max-w-xl">
-					<DialogHeader>
-						<DialogTitle>Create project</DialogTitle>
-						<DialogDescription>
-							Create a shareable resource bundle for a team, workflow, or repository. Add Skills,
-							attach Vaults, then link the whole Project to Agents that should use it.
-						</DialogDescription>
-					</DialogHeader>
-					<form
-						className="space-y-4"
-						onSubmit={(event) => {
-							event.preventDefault();
-							if (!newProjectName.trim() || createProject.isPending) return;
-							const body: ProjectCreate = {
-								name: newProjectName.trim(),
-								description: newProjectDescription.trim() || null,
-							};
-							createProject.mutate({ body });
-						}}
-					>
-						<div className="space-y-1.5">
-							<Label htmlFor="project-name">Name</Label>
-							<Input
-								id="project-name"
-								name="project-name"
-								value={newProjectName}
-								maxLength={200}
-								placeholder="Project name…"
-								autoComplete="off"
-								onChange={(event) => setNewProjectName(event.target.value)}
-							/>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="project-description">Description</Label>
-							<Textarea
-								id="project-description"
-								name="project-description"
-								value={newProjectDescription}
-								maxLength={2000}
-								placeholder="What should Agents use this Project for?"
-								autoComplete="off"
-								onChange={(event) => setNewProjectDescription(event.target.value)}
-								className="min-h-24"
-							/>
-						</div>
-						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
-								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create project"}
-							</Button>
-						</DialogFooter>
-					</form>
-				</DialogContent>
-			</Dialog>
 
 			{blockingProjectsError ? null : gridProjects.length === 0 ? (
 				<EmptyState
@@ -259,26 +173,13 @@ export default function ProjectsPage() {
 								shared && project.owner_display ? `by ${project.owner_display}` : null,
 							]}
 							actions={
-								!shared && isCustomProject(project) ? (
-									<ProjectShareAction project={project} />
-								) : null
+								canManageCustomProject(project) ? <ProjectActions project={project} /> : null
 							}
 						/>
 					))}
 				</div>
 			)}
 		</div>
-	);
-}
-
-function ProjectShareAction({ project }: { project: ProjectRow }) {
-	const projectName = displayProjectName(project);
-	return (
-		<ShareProjectDialog projectId={project.id} projectName={projectName} projectKind={project.kind}>
-			<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
-				<Share2 className="size-3.5" />
-			</Button>
-		</ShareProjectDialog>
 	);
 }
 

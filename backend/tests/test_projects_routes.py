@@ -67,6 +67,59 @@ async def test_create_project_rejects_invalid_slug(client):
     assert response.status_code == 422
 
 
+async def test_create_project_for_agent_links_atomically(
+    client,
+    db_session,
+    seed_user,
+    channel_agent,
+):
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=channel_agent.id)
+    try:
+        response = await client.post(
+            f"/v1/projects/for-agent/{channel_agent.id}",
+            json={"name": "Agent Review"},
+        )
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(channel_agent.id),
+        }
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["agent_count"] == 1
+    project_id = uuid.UUID(response.json()["id"])
+    binding = (
+        await db_session.execute(
+            select(AgentProjectBinding).where(
+                AgentProjectBinding.agent_id == channel_agent.id,
+                AgentProjectBinding.project_id == project_id,
+                AgentProjectBinding.binding_type == "context",
+            )
+        )
+    ).scalar_one()
+    assert binding.created_by_user_id == seed_user.id
+
+
+async def test_create_project_for_missing_agent_rolls_back(client, db_session, seed_user):
+    user_id = seed_user.id
+    response = await client.post(
+        f"/v1/projects/for-agent/{uuid.uuid4()}",
+        json={"name": "Must Not Persist"},
+    )
+
+    assert response.status_code == 404, response.text
+    project = (
+        await db_session.execute(
+            select(Project).where(
+                Project.user_id == user_id,
+                Project.name == "Must Not Persist",
+            )
+        )
+    ).scalar_one_or_none()
+    assert project is None
+
+
 async def test_project_detail_reports_server_side_resource_counts(
     client,
     db_session,

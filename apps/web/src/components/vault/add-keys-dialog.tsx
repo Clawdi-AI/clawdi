@@ -181,6 +181,7 @@ export function AddKeysDialog({
 			}
 			const summary = importPlan.summary;
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+			qc.invalidateQueries({ queryKey: ["vaults", "agent-projects"] });
 			qc.invalidateQueries({
 				queryKey: targetVaultId ? ["vault-items", targetVaultId] : ["vault-items"],
 			});

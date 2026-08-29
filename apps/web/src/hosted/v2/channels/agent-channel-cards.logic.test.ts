@@ -3,6 +3,7 @@ import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import {
 	activeAgentLinkForAccount,
+	activeLinkedProviders,
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
 } from "./agent-channel-cards.logic";
@@ -189,5 +190,38 @@ describe("Agent channel card normalization", () => {
 				accountId: "shared",
 			}),
 		).toEqual(expected);
+	});
+
+	test("derives provider occupancy from active links and inventory fallbacks", () => {
+		const embeddedDiscord = account("discord-embedded");
+		embeddedDiscord.provider = "discord";
+		const fallbackWhatsApp = poolBot("whatsapp-fallback", "public", {
+			provider: "whatsapp",
+		});
+		const archivedTelegram = link("archived", "telegram-archived", "2026-08-01T00:00:00Z", {
+			status: "archived",
+			account: account("telegram-archived"),
+		});
+
+		expect(
+			activeLinkedProviders({
+				links: [
+					link("discord", embeddedDiscord.id, "2026-08-01T00:00:00Z", {
+						account: embeddedDiscord,
+					}),
+					link("whatsapp", fallbackWhatsApp.id, "2026-08-01T00:00:00Z"),
+					archivedTelegram,
+				],
+				poolProviders: { whatsapp: [fallbackWhatsApp] },
+			}),
+		).toEqual(new Set(["discord", "whatsapp"]));
+	});
+
+	test("reports unknown occupancy when an active link has no resolvable provider", () => {
+		expect(
+			activeLinkedProviders({
+				links: [link("unknown", "missing-account", "2026-08-01T00:00:00Z")],
+			}),
+		).toBeNull();
 	});
 });

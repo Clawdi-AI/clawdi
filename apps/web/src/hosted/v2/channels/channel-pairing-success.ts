@@ -33,6 +33,7 @@ export function usePairingSuccess({
 	agentLinkId,
 	provider,
 	bindingCount,
+	baselineBindingCount = bindingCount,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -40,6 +41,7 @@ export function usePairingSuccess({
 	agentLinkId: string;
 	provider: string;
 	bindingCount: number;
+	baselineBindingCount?: number;
 }) {
 	const attemptKey = `${accountId}:${agentLinkId}`;
 	const attemptRef = useRef<PairingAttempt | null>(null);
@@ -61,7 +63,7 @@ export function usePairingSuccess({
 	} else if (attemptRef.current?.key !== attemptKey) {
 		attemptRef.current = {
 			key: attemptKey,
-			baselineBindingCount: bindingCount,
+			baselineBindingCount,
 			completed: false,
 		};
 	}

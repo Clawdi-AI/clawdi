@@ -45,6 +45,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
+	vaultDetailHrefForScope,
 	vaultDetailLink,
 } from "@/lib/resource-navigation";
 import { cn } from "@/lib/utils";
@@ -180,7 +181,7 @@ export function VaultsSurface({
 									Add keys
 								</Button>
 							</AddKeysDialog>
-							<NewVaultDialog />
+							<NewVaultDialog navigationScope={navigationScope} />
 						</>
 					}
 				/>
@@ -311,6 +312,7 @@ export function VaultCard({
 	const itemProjectId =
 		vault.project_ids?.find((projectId) => visibleProjectIds?.has(projectId)) ??
 		vault.project_ids?.[0];
+	const canManageVault = vault.is_owner !== false;
 	// Key count ships on the list response (names only, never values) —
 	// no per-card items fetch. EXCEPT under deploy skew: a web build that
 	// knows item_count can face an API that doesn't send it yet (web and
@@ -378,7 +380,25 @@ export function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			actions={actions}
+			actions={
+				canManageVault || actions ? (
+					<>
+						{canManageVault ? (
+							<AddKeysDialog
+								vaultSlug={vault.slug}
+								vaultId={vault.id}
+								vaultProjectId={itemProjectId}
+							>
+								<Button variant="ghost" size="sm" aria-label={`Add keys to ${vault.name}`}>
+									<Plus className="size-3.5" />
+									Add keys
+								</Button>
+							</AddKeysDialog>
+						) : null}
+						{actions}
+					</>
+				) : undefined
+			}
 			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
@@ -389,7 +409,7 @@ export function VaultCardSkeleton() {
 	return <HeroCardSkeleton />;
 }
 
-function NewVaultDialog() {
+function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigationScope }) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
@@ -427,14 +447,18 @@ function NewVaultDialog() {
 				}),
 			);
 		},
-		onSuccess: (created) => {
+		onSuccess: (vault) => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
-			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
-			void router.navigate({
-				to: "/vaults/$slug",
-				params: { slug },
-				search: { vault: created.id },
+			toast.success("Vault created", {
+				description: "Use Add keys on its card, then attach it to a Project.",
+				action: {
+					label: "Open vault",
+					onClick: () =>
+						void router.navigate({
+							href: vaultDetailHrefForScope(navigationScope, vault.slug, vault.id),
+						}),
+				},
 			});
 		},
 		onError: (error) =>

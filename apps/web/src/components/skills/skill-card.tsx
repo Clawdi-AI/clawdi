@@ -76,7 +76,11 @@ export function SkillCard({
 				{canUninstall ? (
 					<ConfirmAction
 						title={`Remove ${skill.name} from Project?`}
-						description={<p>Other Projects keep their copies.</p>}
+						description={
+							<p>
+								Every Agent using this Project loses this Skill. Other Projects keep their copies.
+							</p>
+						}
 						confirmLabel="Remove from project"
 						destructive
 						onConfirm={() => {
