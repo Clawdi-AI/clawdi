@@ -185,11 +185,12 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// thrown 404 from the hosted catalog adapter) and outright network
 	// failures. Surface it so the user sees what's wrong instead of a
 	// silently-broken connect page.
-	if (!app || isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
+	if (!app) {
+		const appNotFound = isApiNotFoundError(appQ.error) || !appQ.error;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 				<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
-				{!app || isApiNotFoundError(appQ.error) ? (
+				{appNotFound ? (
 					<EmptyState
 						icon={Plug}
 						title="Connector unavailable"
