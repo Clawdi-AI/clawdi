@@ -2,8 +2,9 @@
 
 This tour shows the current Clawdi Cloud experience with a synthetic Acme
 Market Intelligence workspace. The demo contains 25 account Memories, five
-Project Skills, 12 Workspace files, a linked Project, and multiple Agent
-Sessions. Names, companies, decisions, and activity are fictional.
+Project Skills, 12 Workspace files, a linked Project, and more than 150 Agent
+Sessions spanning 11 months. Names, companies, decisions, and activity are
+fictional.
 
 For task-by-task instructions, use the canonical [Clawdi
 Docs](https://docs.clawdi.ai). Start with the [Cloud Agent
@@ -16,6 +17,15 @@ Clawdi brings supported Agent activity, context, and tools into one product.
 A **Cloud Agent** runs in a remote runtime managed by Clawdi. A **Connected
 Agent** runs on your computer. Agent software, including Hermes, OpenClaw,
 Claude Code, and Codex, is a separate choice from the run path.
+
+## Review long-running activity
+
+The Overview activity graph summarizes Session starts across the last 12
+months. The synthetic workspace has 111 active days with varied activity
+density, so the dashboard demonstrates sustained Agent use alongside recent
+Sessions and shared Library resources.
+
+![Clawdi Overview with two running demo Agents and a populated 12-month Session activity heatmap](images/dashboard-activity.png)
 
 ## Start from a Running Agent
 
@@ -71,7 +81,7 @@ Sessions provide searchable Agent conversation history for later review and
 recall. Session availability and detail depend on the connected Agent
 software and its synchronization path.
 
-![Two Hermes Sessions showing a saved fact and a fresh-session recall check](images/cloud-sessions.png)
+![Populated synthetic Session history grouped by recent activity](images/cloud-sessions.png)
 
 See [Sessions](https://docs.clawdi.ai/guides/sessions) for search, sharing, and
 export workflows.

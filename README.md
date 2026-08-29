@@ -25,11 +25,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard-preview.png" alt="A running Hermes Cloud Agent in the Clawdi dashboard" width="900">
+  <img src="docs/images/dashboard-activity.png" alt="Clawdi overview with a populated 12-month Agent activity heatmap" width="900">
 </p>
 
 <p align="center">
-  <em>Running Hermes Cloud Agent with a linked Project, durable Memories, and recent Sessions. All visible content comes from a synthetic demo workspace.</em><br>
+  <em>Two running demo Agents with long-term Session activity and shared Library resources. All visible content comes from a synthetic demo workspace.</em><br>
   <a href="docs/clawdi-cloud-product-tour.md">Open the current Clawdi Cloud product tour →</a>
 </p>
 
