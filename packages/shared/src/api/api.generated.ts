@@ -2849,7 +2849,7 @@ export interface paths {
          * @description Run each entity searcher and concat results.
          *
          *     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
-         *     4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+         *     5*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
          *
          *     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
          *     the hybrid provider (FTS + trgm + optional pgvector) for quality.

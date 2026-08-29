@@ -1,11 +1,9 @@
 """Recall counting — bump `Memory.access_count` when agents retrieve memories.
 
-Lives in its own module (not inline in `routes/memories.py`) for two
-reasons: the route file is contested by parallel work, so the call site
-there stays one line; and the counter must be fully isolated from the
-search request path — it runs as a FastAPI background task on its OWN
-session after the response is sent, so it adds zero latency and a
-failed UPDATE can never break a search.
+The counter owns a short-lived database session and never raises. REST
+searches schedule it as a FastAPI background task; MCP searches await it
+before returning so their tool result and recall count stay in step. In
+both paths a failed UPDATE can never break search.
 
 Kill switch: `MEMORY_RECALL_COUNTING=false` disables counting entirely
 (no deploy needed) if the extra write per agent search ever matters.
