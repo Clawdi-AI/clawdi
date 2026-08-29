@@ -5,6 +5,10 @@ const onboardingSource = readFileSync(new URL("./onboarding-card.tsx", import.me
 const setupSource = readFileSync(new URL("./add-agent-setup.tsx", import.meta.url), "utf8");
 const dialogSource = readFileSync(new URL("./add-agent-dialog.tsx", import.meta.url), "utf8");
 const newAgentSource = readFileSync(new URL("./new-agent-button.tsx", import.meta.url), "utf8");
+const publicSkillSource = readFileSync(
+	new URL("../../../public/skill.md", import.meta.url),
+	"utf8",
+);
 const hostedSectionSource = readFileSync(
 	new URL("../../hosted/hosted-agents-section.tsx", import.meta.url),
 	"utf8",
@@ -67,6 +71,24 @@ describe("dashboard agent onboarding", () => {
 });
 
 describe("connected-agent setup paths", () => {
+	test("lists every CLI-connected agent without implying hosted deployment support", () => {
+		expect(setupSource).toContain("Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode");
+		expect(setupSource).toContain(
+			"Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode",
+		);
+		expect(dialogSource).toContain(
+			"Connect an Agent on your machine — Claude Code, Codex, Hermes, OpenClaw, Pi, or",
+		);
+		expect(dialogSource).toContain("OpenCode.");
+		expect(newAgentSource).toContain(
+			"Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI.",
+		);
+		expect(publicSkillSource).toContain("Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode");
+		expect(publicSkillSource).toContain(
+			"Pi and OpenCode sync Sessions only; neither receives Skill or MCP installation.",
+		);
+	});
+
 	test("defaults to sequential npm commands with per-step copy controls", () => {
 		expect(setupSource).toContain('<Tabs defaultValue="commands">');
 		expect(setupSource).toContain('<TabsTrigger value="commands">');

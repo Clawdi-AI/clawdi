@@ -11,7 +11,9 @@ import Minimax from "@lobehub/icons/es/Minimax/components/Color.js";
 import Mistral from "@lobehub/icons/es/Mistral/components/Color.js";
 import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono.js";
 import OpenClaw from "@lobehub/icons/es/OpenClaw/components/Color.js";
+import OpenCode from "@lobehub/icons/es/OpenCode/components/Mono.js";
 import OpenRouter from "@lobehub/icons/es/OpenRouter/components/Color.js";
+import Pi from "@lobehub/icons/es/Pi/components/Mono.js";
 import Qwen from "@lobehub/icons/es/Qwen/components/Color.js";
 import Stepfun from "@lobehub/icons/es/Stepfun/components/Mono.js";
 import Together from "@lobehub/icons/es/Together/components/Color.js";
@@ -44,6 +46,20 @@ const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
 		label: "Claude Code",
 	},
 	codex: { icon: Codex, iconScale: 0.7, label: "Codex", tileClassName: "bg-white" },
+	pi: {
+		icon: Pi,
+		iconClassName: "text-white",
+		iconScale: 0.65,
+		label: "Pi",
+		tileClassName: "bg-black",
+	},
+	opencode: {
+		icon: OpenCode,
+		iconClassName: "text-white",
+		iconScale: 0.75,
+		label: "OpenCode",
+		tileClassName: "bg-black",
+	},
 } satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
 
 const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
