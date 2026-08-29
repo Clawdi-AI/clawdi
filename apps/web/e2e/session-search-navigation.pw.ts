@@ -168,7 +168,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	const timeline = [
 		{
 			kind: "message",
-			position: 4,
+			position: 6,
 			role: "assistant",
 			content: "Final answer after reading the file",
 			model: "gpt-5",
@@ -176,12 +176,31 @@ test("filters session activity and expands paired tool details", async ({ page }
 		},
 		{
 			kind: "tool_result",
-			position: 3,
+			position: 5,
+			call_id: "call-search",
+			name: "search",
+			status: "error",
+			content: "No matching file",
+			result_json: null,
+			timestamp: now,
+		},
+		{
+			kind: "tool_result",
+			position: 4,
 			call_id: "call-read",
 			name: "read",
 			status: "completed",
 			content: "Repository instructions",
 			result_json: null,
+			timestamp: now,
+		},
+		{
+			kind: "tool_call",
+			position: 3,
+			call_id: "call-search",
+			name: "search",
+			arguments_json: '{"query":"session"}',
+			model: "gpt-5",
 			timestamp: now,
 		},
 		{
@@ -226,7 +245,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 			if (query) {
 				await new Promise((resolve) => setTimeout(resolve, 450));
 				if (view !== "assistant" && view !== "all") {
-					const items = view === "tools" ? timeline.slice(1, 3) : [timeline[3]];
+					const items = view === "tools" ? timeline.slice(1, 5) : [timeline[5]];
 					return fulfillJson(route, {
 						items,
 						total: items.length,
@@ -251,7 +270,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 				});
 			}
 			const items =
-				view === "tools" ? timeline.slice(1, 3) : view === "user" ? [timeline[3]] : timeline;
+				view === "tools" ? timeline.slice(1, 5) : view === "user" ? [timeline[5]] : timeline;
 			return fulfillJson(route, {
 				items,
 				total: items.length,
@@ -265,6 +284,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await page.goto(`/sessions/${SESSION_ID}?timelineView=tools`);
 	const toolActivity = page.getByRole("button", { name: /read.*Done/ });
 	await expect(toolActivity).toBeVisible();
+	await expect(page.getByRole("button", { name: /search.*Error/ })).toBeVisible();
 	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
 	await toolActivity.click();
 	await expect(page.locator("pre").filter({ hasText: '"path": "README.md"' })).toBeVisible();

@@ -361,12 +361,52 @@ function ToolDetails({ call, result }: { call?: SessionToolCall; result?: Sessio
 	);
 }
 
-function ToolActivity({ call, result }: { call?: SessionToolCall; result?: SessionToolResult }) {
+interface PairedToolActivity {
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstItem: SessionToolCall | SessionToolResult;
+	firstIndex: number;
+}
+
+// Parallel tool use is commonly serialized as call A, call B, result A,
+// result B. Pair a contiguous tool run by its stable call ID while preserving
+// the first-seen order of each activity.
+function collectToolActivities(items: TimelineEntry[], startIndex: number) {
+	const activities = new Map<string, PairedToolActivity>();
+	let nextIndex = startIndex;
+	while (nextIndex < items.length) {
+		const item = items[nextIndex];
+		if (!isToolEntry(item)) break;
+
+		let activity = activities.get(item.call_id);
+		if (!activity) {
+			activity = {
+				firstItem: item,
+				firstIndex: nextIndex,
+			};
+			activities.set(item.call_id, activity);
+		}
+		if (item.kind === "tool_call") activity.call ??= item;
+		else activity.result ??= item;
+		nextIndex++;
+	}
+	return { activities: [...activities.values()], nextIndex };
+}
+
+function ToolActivity({
+	call,
+	result,
+	firstTimestamp,
+}: {
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstTimestamp?: string | null;
+}) {
 	const [open, setOpen] = useState(false);
 	const name = call?.name ?? result?.name ?? "Tool";
 	const hasDetails = Boolean(call?.arguments_json || result?.content || result?.result_json);
 	const isError = result?.status === "error";
-	const timestamp = call?.timestamp ?? result?.timestamp;
+	const timestamp = firstTimestamp ?? call?.timestamp ?? result?.timestamp;
 
 	return (
 		<div className={cn("flex gap-3 py-1.5", OFFSCREEN_RENDERING_CLASS)}>
@@ -421,9 +461,9 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 }
 
 /**
- * Renders an ordered session timeline. Adjacent call/result events with the
- * same call ID collapse into one tool activity row; tools break message author
- * grouping. The 5-minute threshold matches Slack / Discord message threads.
+ * Renders an ordered session timeline. Calls and results in each contiguous
+ * tool run collapse by call ID into one activity row; tools break message
+ * author grouping. The 5-minute threshold matches Slack / Discord threads.
  *
  * `itemKeys` is an optional caller-provided per-row stable key
  * (e.g. the message's canonical position when the caller is paginating).
@@ -458,40 +498,47 @@ export function SessionTimelineList({
 	const out: React.ReactNode[] = [];
 	let prevDayKey: string | null = null;
 	let previousMessage: TimelineMessage | null = null;
+	const appendDateDivider = (timestamp: string | null | undefined) => {
+		const nextDayKey = dayKey(timestamp);
+		if (!nextDayKey || nextDayKey === prevDayKey) return false;
+		out.push(<DateDivider key={`d-${nextDayKey}`} timestamp={timestamp ?? ""} />);
+		prevDayKey = nextDayKey;
+		return true;
+	};
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i];
-		const dKey = dayKey(item.timestamp);
-		const dividerJustEmitted = Boolean(dKey && dKey !== prevDayKey);
-		if (dKey && dKey !== prevDayKey) {
-			out.push(<DateDivider key={`d-${dKey}`} timestamp={item.timestamp ?? ""} />);
-			prevDayKey = dKey;
-		}
-
 		if (isToolEntry(item)) {
-			const next = items[i + 1];
-			const paired =
-				next && isToolEntry(next) && next.kind !== item.kind && next.call_id === item.call_id
-					? next
-					: null;
-			const call =
-				item.kind === "tool_call" ? item : paired?.kind === "tool_call" ? paired : undefined;
-			const result =
-				item.kind === "tool_result" ? item : paired?.kind === "tool_result" ? paired : undefined;
-			const toolKey = itemKeys?.[i] ?? `${item.kind}:${item.position}`;
-			out.push(<ToolActivity key={toolKey} call={call} result={result} />);
-			if (paired) i++;
+			const { activities, nextIndex } = collectToolActivities(items, i);
+			for (const activity of activities) {
+				appendDateDivider(activity.firstItem.timestamp);
+				const toolKey =
+					itemKeys?.[activity.firstIndex] ??
+					`${activity.firstItem.kind}:${activity.firstItem.position}`;
+				out.push(
+					<ToolActivity
+						key={toolKey}
+						call={activity.call}
+						result={activity.result}
+						firstTimestamp={activity.firstItem.timestamp}
+					/>,
+				);
+			}
+			i = nextIndex - 1;
 			previousMessage = null;
 			continue;
 		}
 
-		const sameAuthor = previousMessage?.role === item.role;
+		const dividerJustEmitted = appendDateDivider(item.timestamp);
+		const sameSpeaker =
+			previousMessage?.role === item.role &&
+			(item.role !== "assistant" || (previousMessage.model ?? null) === (item.model ?? null));
 		const closeInTime =
 			previousMessage?.timestamp && item.timestamp
 				? Math.abs(
 						new Date(item.timestamp).getTime() - new Date(previousMessage.timestamp).getTime(),
 					) < GROUP_GAP_MS
 				: false;
-		const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
+		const isGroupStart = !sameSpeaker || !closeInTime || dividerJustEmitted;
 		const messageKey = itemKeys?.[i] ?? i;
 		const isHighlighted = messageKey === highlightedMessageKey;
 		out.push(
