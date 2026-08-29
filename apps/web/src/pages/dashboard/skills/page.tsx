@@ -15,6 +15,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
 import {
+	canManageCustomProject,
 	displayProjectName,
 	isCustomProject,
 	isProjectOwner,
@@ -428,9 +429,7 @@ function ProjectSelection({
 							formatResourceCount(project.vault_count, "vault"),
 						]}
 						actions={
-							isProjectOwner(project) && isCustomProject(project) ? (
-								<ProjectActions project={project} />
-							) : undefined
+							canManageCustomProject(project) ? <ProjectActions project={project} /> : undefined
 						}
 						link={{ to: "/skills", search: { project: project.id } }}
 					/>

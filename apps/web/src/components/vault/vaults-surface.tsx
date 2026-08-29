@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
@@ -44,6 +45,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
+	vaultDetailHrefForScope,
 	vaultDetailLink,
 } from "@/lib/resource-navigation";
 import { cn } from "@/lib/utils";
@@ -179,7 +181,7 @@ export function VaultsSurface({
 									Add keys
 								</Button>
 							</AddKeysDialog>
-							<NewVaultDialog />
+							<NewVaultDialog navigationScope={navigationScope} />
 						</>
 					}
 				/>
@@ -407,10 +409,11 @@ export function VaultCardSkeleton() {
 	return <HeroCardSkeleton />;
 }
 
-function NewVaultDialog() {
+function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigationScope }) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
+	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
@@ -444,11 +447,18 @@ function NewVaultDialog() {
 				}),
 			);
 		},
-		onSuccess: () => {
+		onSuccess: (vault) => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
 			toast.success("Vault created", {
 				description: "Use Add keys on its card, then attach it to a Project.",
+				action: {
+					label: "Open vault",
+					onClick: () =>
+						void router.navigate({
+							href: vaultDetailHrefForScope(navigationScope, vault.slug, vault.id),
+						}),
+				},
 			});
 		},
 		onError: (error) =>

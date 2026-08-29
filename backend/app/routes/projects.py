@@ -307,7 +307,7 @@ async def create_project_for_agent(
         db=db,
         agent_id=agent_id,
     )
-    return _project_response(project, auth.user_id, owner=auth.user)
+    return _project_response(project, auth.user_id, owner=auth.user, agent_count=1)
 
 
 async def _create_owned_project(

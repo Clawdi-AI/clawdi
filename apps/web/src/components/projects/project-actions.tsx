@@ -30,9 +30,11 @@ type Project = components["schemas"]["ProjectResponse"];
 export function ProjectActions({
 	project,
 	onChanged,
+	onArchived,
 }: {
 	project: Project;
 	onChanged?: () => void | Promise<void>;
+	onArchived?: () => void | Promise<void>;
 }) {
 	const api = useApi();
 	const queryClient = useQueryClient();
@@ -80,6 +82,7 @@ export function ProjectActions({
 		onSuccess: async () => {
 			await refresh();
 			toast.success("Project archived");
+			await onArchived?.();
 		},
 		onError: (error) =>
 			toast.error("Couldn't archive project", { description: normalizeApiError(error) }),

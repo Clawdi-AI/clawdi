@@ -20,6 +20,7 @@ import { PageHeader } from "@/components/page-header";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
 import {
+	canManageCustomProject,
 	compareProjectsForUse,
 	displayProjectName,
 	isCustomProject,
@@ -332,7 +333,7 @@ function AgentProjectsPanel({
 											formatResourceCount(project.vault_count, "vault"),
 										]}
 										actions={
-											project.is_owner !== false && isCustomProject(project) ? (
+											canManageCustomProject(project) ? (
 												<ProjectActions project={project} onChanged={onChanged} />
 											) : undefined
 										}

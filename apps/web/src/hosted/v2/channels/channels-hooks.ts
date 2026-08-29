@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { toast } from "sonner";
+import { activeAgentLinkForAccount } from "@/hosted/v2/channels/agent-channel-cards.logic";
 import { normalizeAgentChannelLinks } from "@/hosted/v2/channels/channel-edit-client.logic";
 import { CHANNEL_HEALTH_REFETCH_INTERVAL_MS } from "@/hosted/v2/channels/channel-health-query";
 import {
@@ -18,6 +19,12 @@ import type {
 } from "@/hosted/v2/channels/channel-types";
 import { ApiError, type OpenApiClient, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
+
+export function isWhatsAppRepairConflict(error: unknown): error is ApiError {
+	return (
+		error instanceof ApiError && error.status === 409 && error.detail === "whatsapp_repair_required"
+	);
+}
 
 /**
  * Typed data hooks for the native channels surface. All reads/writes go
@@ -327,6 +334,14 @@ export function useLinkChannelAgent(accountId: string) {
 			agentId: string;
 			replaceExistingProviderLink: boolean;
 		}) => {
+			const agentLinksOptions = agentChannelLinksQueryOptions(openApi, agentId);
+			const invalidateLinkQueries = () =>
+				Promise.all([
+					qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) }),
+					qc.invalidateQueries({ queryKey: agentLinksOptions.queryKey, exact: true }),
+					qc.invalidateQueries({ queryKey: keys.list }),
+					qc.invalidateQueries({ queryKey: keys.pool }),
+				]);
 			try {
 				const result = unwrap(
 					await api.POST("/v1/channels/{account_id}/agent-links", {
@@ -337,27 +352,32 @@ export function useLinkChannelAgent(accountId: string) {
 						},
 					}),
 				);
-				await Promise.all([
-					qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) }),
-					qc.invalidateQueries({
-						queryKey: agentChannelLinksQueryOptions(openApi, agentId).queryKey,
-						exact: true,
-					}),
-					qc.invalidateQueries({ queryKey: keys.list }),
-					qc.invalidateQueries({ queryKey: keys.pool }),
-				]);
+				await invalidateLinkQueries();
 				toast.success("Channel linked");
 				return result;
 			} catch (error) {
-				if (
-					!(
-						error instanceof ApiError &&
-						error.status === 409 &&
-						error.detail === "whatsapp_repair_required"
-					)
-				) {
-					toastApiError("Couldn't link channel")(error);
+				if (isWhatsAppRepairConflict(error)) throw error;
+				if (error instanceof ApiError && error.status === 409) {
+					try {
+						await qc.invalidateQueries({ queryKey: agentLinksOptions.queryKey, exact: true });
+						const refreshed = await qc.fetchQuery(agentLinksOptions);
+						const existing = activeAgentLinkForAccount({
+							links: refreshed,
+							agentId,
+							accountId,
+						});
+						if (existing) {
+							await invalidateLinkQueries();
+							toast.info("Channel already linked", {
+								description: "Using the existing link for this Agent.",
+							});
+							return existing;
+						}
+					} catch {
+						// Preserve the original conflict when reconciliation cannot refresh state.
+					}
 				}
+				toastApiError("Couldn't link channel")(error);
 				throw error;
 			}
 		},

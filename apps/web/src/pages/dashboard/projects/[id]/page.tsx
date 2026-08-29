@@ -11,7 +11,6 @@ import {
 	Eye,
 	Link2,
 	LogOut,
-	Pencil,
 	Plus,
 	Save,
 	Share2,
@@ -50,6 +49,7 @@ import { HeaderActionGroup } from "@/components/header-action-group";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader, type PageHeaderProps, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { ProjectActions } from "@/components/projects/project-actions";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -97,7 +97,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import { agentDetailQueryKey, agentDetailQueryOptions } from "@/lib/agent-queries";
@@ -744,9 +743,9 @@ export default function ProjectDetailPage({
 								contextLabel={isWorkspace ? "Workspace" : "Project"}
 								onChanged={refresh}
 							/>
-						) : !focus && !isAgentScope && isShareableProject ? (
+						) : !focus && isShareableProject && (!isAgentScope || isOwner) ? (
 							<>
-								{!joinedFromShare
+								{!isAgentScope && !joinedFromShare
 									? manageAgentsDialog(
 											<Button size="sm">
 												<Bot className="mr-1.5 size-3.5" />
@@ -754,17 +753,15 @@ export default function ProjectDetailPage({
 											</Button>,
 										)
 									: null}
-								{isOwner && isShareableProject ? (
-									<ShareProjectDialog
-										projectId={project.id}
-										projectName={displayProjectName(project)}
-										projectKind={project.kind}
-									>
-										<Button variant="outline" size="sm">
-											<Share2 className="mr-1.5 size-3.5" />
-											Share
-										</Button>
-									</ShareProjectDialog>
+								{isOwner ? (
+									<ProjectActions
+										project={project}
+										onChanged={async () => {
+											refresh();
+											await projectQuery.refetch();
+										}}
+										onArchived={() => router.navigate({ href: projectsTarget.href })}
+									/>
 								) : null}
 							</>
 						) : undefined
@@ -1046,17 +1043,6 @@ export default function ProjectDetailPage({
 					onPageChange={setVaultsPage}
 				/>
 			</HubSection>
-
-			{!isAgentScope && localTab === "access" && isOwner ? (
-				<ProjectOwnerPanel
-					project={project}
-					onUpdated={() => {
-						refresh();
-						void projectQuery.refetch();
-					}}
-					onArchived={() => void router.navigate({ href: projectsTarget.href })}
-				/>
-			) : null}
 
 			{!isAgentScope && localTab === "access" && isOwner && isShareableProject ? (
 				<HubSection
@@ -1341,152 +1327,6 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
 		return `Private resources ${access}.`;
 	}
 	return `Project ${access}.`;
-}
-
-function ProjectOwnerPanel({
-	project,
-	onUpdated,
-	onArchived,
-}: {
-	project: ProjectRow;
-	onUpdated: () => void;
-	onArchived: () => void;
-}) {
-	const api = useApi();
-	const [editOpen, setEditOpen] = useState(false);
-	const [name, setName] = useState(project.name);
-	const [description, setDescription] = useState(project.description ?? "");
-	const update = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.PATCH("/v1/projects/{project_id}", {
-					params: { path: { project_id: project.id } },
-					body: { name: name.trim(), description: description.trim() || null },
-				}),
-			),
-		onSuccess: () => {
-			setEditOpen(false);
-			onUpdated();
-			toast.success("Project updated");
-		},
-		onError: (error) =>
-			toast.error("Couldn't update Project", { description: normalizeApiError(error) }),
-	});
-	const archive = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.DELETE("/v1/projects/{project_id}", {
-					params: { path: { project_id: project.id } },
-				}),
-			),
-		onSuccess: () => {
-			toast.success("Project archived");
-			onArchived();
-		},
-		onError: (error) =>
-			toast.error("Couldn't archive Project", { description: normalizeApiError(error) }),
-	});
-
-	return (
-		<DetailPanel className="space-y-4">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div className="space-y-1">
-					<h2 className="text-sm font-semibold">Project settings</h2>
-					<p className="text-xs text-muted-foreground">
-						Update the name and description, or archive this Project when it is no longer used.
-					</p>
-				</div>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={() => {
-						setName(project.name);
-						setDescription(project.description ?? "");
-						setEditOpen(true);
-					}}
-				>
-					<Pencil className="size-3.5" />
-					Edit project
-				</Button>
-			</div>
-			<div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-					<div>
-						<p className="text-sm font-medium">Archive project</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							This immediately unlinks every Agent and removes the Project from active views.
-						</p>
-					</div>
-					<ConfirmAction
-						title={`Archive ${displayProjectName(project)}?`}
-						description={
-							<p>
-								Agents will stop using this Project&apos;s Skills and attached Vaults. Historical
-								resource records are retained.
-							</p>
-						}
-						confirmLabel="Archive project"
-						destructive
-						onConfirm={() => archive.mutateAsync()}
-					>
-						<Button variant="destructive" size="sm" disabled={archive.isPending}>
-							{archive.isPending ? <Spinner /> : <Trash2 className="size-3.5" />}
-							Archive project
-						</Button>
-					</ConfirmAction>
-				</div>
-			</div>
-
-			<Dialog open={editOpen} onOpenChange={setEditOpen}>
-				<DialogContent className="sm:max-w-lg">
-					<DialogHeader>
-						<DialogTitle>Edit project</DialogTitle>
-						<DialogDescription>
-							These details help people recognize the resource bundle. Existing Agent links stay
-							connected.
-						</DialogDescription>
-					</DialogHeader>
-					<form
-						className="space-y-4"
-						onSubmit={(event) => {
-							event.preventDefault();
-							if (name.trim()) update.mutate();
-						}}
-					>
-						<div className="space-y-1.5">
-							<Label htmlFor={`project-name-${project.id}`}>Name</Label>
-							<Input
-								id={`project-name-${project.id}`}
-								value={name}
-								onChange={(event) => setName(event.target.value)}
-								maxLength={200}
-								autoComplete="off"
-							/>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor={`project-description-${project.id}`}>Description</Label>
-							<Textarea
-								id={`project-description-${project.id}`}
-								value={description}
-								onChange={(event) => setDescription(event.target.value)}
-								maxLength={2000}
-								rows={4}
-							/>
-						</div>
-						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setEditOpen(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!name.trim() || update.isPending}>
-								{update.isPending ? <Spinner /> : null}
-								Save changes
-							</Button>
-						</DialogFooter>
-					</form>
-				</DialogContent>
-			</Dialog>
-		</DetailPanel>
-	);
 }
 
 function SharedAccessPanel({

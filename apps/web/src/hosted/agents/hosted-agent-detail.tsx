@@ -251,6 +251,7 @@ import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-b
 import {
 	type AgentChannelCardItem,
 	activeAgentLinkForAccount,
+	activeLinkedProviders,
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
@@ -270,6 +271,7 @@ import {
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	agentChannelLinksQueryOptions,
+	isWhatsAppRepairConflict,
 	useAgentChannelLinks,
 	useBotPool,
 	useChannels,
@@ -2682,13 +2684,14 @@ function ChannelsTab({
 		visibleActiveLinks.find((link) => link.id === linkId)?.binding_count ?? 0;
 	const linkedProviders = useMemo<ReadonlySet<string> | undefined>(() => {
 		if (!linked.data) return undefined;
-		const providers = new Set<string>();
-		for (const link of visibleActiveLinks) {
-			const provider = link.account?.provider ?? accountSummaries.get(link.account_id)?.provider;
-			if (provider) providers.add(provider);
-		}
-		return providers;
-	}, [accountSummaries, visibleActiveLinks]);
+		return (
+			activeLinkedProviders({
+				links: visibleActiveLinks,
+				channels: channels.data ?? [],
+				poolProviders: botPool.data?.providers,
+			}) ?? undefined
+		);
+	}, [botPool.data, channels.data, linked.data, visibleActiveLinks]);
 	const link = useSensitiveAction(
 		async ({
 			channelId,
@@ -2767,11 +2770,7 @@ function ChannelsTab({
 			});
 			return;
 		} catch (error) {
-			if (
-				error instanceof ApiError &&
-				error.status === 409 &&
-				error.detail === "whatsapp_repair_required"
-			) {
+			if (isWhatsAppRepairConflict(error)) {
 				setWhatsappRepair({
 					accountId: channelId,
 					channelName: accountSummaries.get(channelId)?.name ?? "Custom WhatsApp",

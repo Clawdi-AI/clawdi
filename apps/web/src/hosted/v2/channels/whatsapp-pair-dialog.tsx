@@ -14,7 +14,7 @@ import {
 import { WHATSAPP_PAIR_ERROR_NORMALIZER } from "@/hosted/v2/channels/channel-pairing-errors";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelPairCode } from "@/hosted/v2/channels/channel-types";
-import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
+import { isWhatsAppRepairConflict, useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 import {
 	CopyablePairingCode,
 	PairingDialogActions,
@@ -28,7 +28,6 @@ import {
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
-import { ApiError } from "@/lib/api";
 
 const WHATSAPP_PAIR_TTL_SECONDS = 300;
 
@@ -157,10 +156,7 @@ export function WhatsAppPairDialog({
 				})
 			: null;
 	const accountIdentity = channelName?.trim() || "this WhatsApp account";
-	const repairRequired =
-		requestError instanceof ApiError &&
-		requestError.status === 409 &&
-		requestError.detail === "whatsapp_repair_required";
+	const repairRequired = isWhatsAppRepairConflict(requestError);
 
 	return (
 		<Dialog

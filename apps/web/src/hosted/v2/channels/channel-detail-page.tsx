@@ -50,6 +50,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { activeLinkedProviders } from "@/hosted/v2/channels/agent-channel-cards.logic";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import {
@@ -71,12 +72,15 @@ import {
 	channelHealthErrorSummary,
 } from "@/hosted/v2/channels/channel-user-facing-errors";
 import {
+	isWhatsAppRepairConflict,
 	useAgentChannelLinks,
+	useBotPool,
 	useChannel,
 	useChannelActivity,
 	useChannelAgentLinks,
 	useChannelBindings,
 	useChannelHealth,
+	useChannels,
 	useDeleteChannel,
 	useEnvironments,
 	useLinkChannelAgent,
@@ -90,7 +94,7 @@ import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import { WhatsAppRepairDialog } from "@/hosted/v2/channels/whatsapp-repair-dialog";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { toastApiError } from "@/lib/api";
-import { ApiError, isApiNotFoundError } from "@/lib/api-errors";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -368,6 +372,8 @@ function AgentsTab({
 }) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
+	const channels = useChannels();
+	const botPool = useBotPool();
 	const linkAgent = useLinkChannelAgent(accountId);
 	const unlinkAgent = useUnlinkChannelAgent(accountId);
 	const [linkOpen, setLinkOpen] = useState(false);
@@ -407,13 +413,17 @@ function AgentsTab({
 	const linkedAgentIds = new Set(items.map((item) => item.agent_id));
 	const availableAgents = (envs.data ?? []).filter((env) => !linkedAgentIds.has(env.id));
 	const selectedAgent = availableAgents.find((env) => env.id === selectedAgentId);
-	const selectedLinkedProviders = selectedAgentLinks.data
-		? new Set(
-				selectedAgentLinks.data.flatMap((link) =>
-					link.account?.provider ? [link.account.provider] : [],
-				),
-			)
-		: undefined;
+	const selectedLinkedProviders = useMemo(
+		() =>
+			selectedAgentLinks.data
+				? activeLinkedProviders({
+						links: selectedAgentLinks.data,
+						channels: channels.data ?? [],
+						poolProviders: botPool.data?.providers,
+					})
+				: undefined,
+		[selectedAgentLinks.data, channels.data, botPool.data],
+	);
 	const replacementRequired = agentProviderLinkReplacementRequired(
 		selectedAgent?.agent_type,
 		provider,
@@ -465,11 +475,7 @@ function AgentsTab({
 			setLinkOpen(false);
 			setSelectedAgentId("");
 		} catch (error) {
-			if (
-				error instanceof ApiError &&
-				error.status === 409 &&
-				error.detail === "whatsapp_repair_required"
-			) {
+			if (isWhatsAppRepairConflict(error)) {
 				setWhatsappRepair({ agentId, replaceExistingProviderLink });
 				setLinkOpen(false);
 				return;

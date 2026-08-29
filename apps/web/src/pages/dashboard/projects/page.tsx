@@ -1,6 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { useMemo } from "react";
@@ -13,7 +14,11 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
-import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
+import {
+	canManageCustomProject,
+	displayProjectName,
+	isCustomProject,
+} from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
@@ -22,7 +27,11 @@ import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
+import {
+	formatResourceCount,
+	getProjectResourceDefinition,
+	projectDetailHref,
+} from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +42,7 @@ const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 export default function ProjectsPage() {
 	const $api = useOpenApi();
 	const qc = useQueryClient();
+	const router = useRouter();
 	// URL-backed like the other lists: open a project and come back with the
 	// filter text intact.
 	const [search, setSearch] = useQueryState(
@@ -109,10 +119,14 @@ export default function ProjectsPage() {
 				description={PROJECTS_RESOURCE.managementDescription}
 				actions={
 					<CreateProjectDialog
-						onCreated={() => {
+						onCreated={(project) => {
 							qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 							toast.success("Project created", {
 								description: "It is ready for Skills, Vaults, and Agent links.",
+								action: {
+									label: "Open project",
+									onClick: () => void router.navigate({ href: projectDetailHref(project.id) }),
+								},
 							});
 						}}
 					>
@@ -159,7 +173,7 @@ export default function ProjectsPage() {
 								shared && project.owner_display ? `by ${project.owner_display}` : null,
 							]}
 							actions={
-								!shared && isCustomProject(project) ? <ProjectActions project={project} /> : null
+								canManageCustomProject(project) ? <ProjectActions project={project} /> : null
 							}
 						/>
 					))}

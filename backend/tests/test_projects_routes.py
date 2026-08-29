@@ -87,6 +87,7 @@ async def test_create_project_for_agent_links_atomically(
         sync_events.unsubscribe(seed_user.id, queue)
 
     assert response.status_code == 201, response.text
+    assert response.json()["agent_count"] == 1
     project_id = uuid.UUID(response.json()["id"])
     binding = (
         await db_session.execute(

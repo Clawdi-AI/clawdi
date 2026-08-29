@@ -247,7 +247,7 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.getByRole("tablist", { name: "Project pages" })
 		.getByRole("tab", { name: "Access" })
 		.click();
-	await page.getByRole("button", { name: "Edit project" }).click();
+	await page.getByRole("button", { name: "Edit Client Review" }).click();
 	const editDialog = page.getByRole("dialog", { name: "Edit project" });
 	await editDialog.getByLabel("Name").fill("Client Review Updated");
 	await editDialog.getByLabel("Description").fill("Updated Project purpose.");
