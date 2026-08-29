@@ -128,6 +128,7 @@ from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
 from app.services.runtime_source_revision import refresh_runtime_source_revisions
+from app.services.runtime_state_cleanup import cleanup_retired_runtime_state
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError
 from app.services.whatsapp_baileys import (
@@ -3469,6 +3470,172 @@ async def test_channel_link_admission_serializes_behind_runtime_retirement(
         ).scalars()
     )
     assert links == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_retirement_cleanup_archives_channel_authority_and_repairs_replay(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+):
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_TELEGRAM,
+            "name": f"runtime-retirement-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    account_id = UUID(created["id"])
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+
+    now = datetime.now(UTC)
+    binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        external_chat_id=f"retirement-chat-{uuid4().hex}",
+        external_chat_type="private",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=hash_token(f"retirement-{uuid4()}"),
+        expires_at=now + timedelta(minutes=15),
+    )
+    credential = ChannelAgentCredential(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        identity_pub_key_hash=hash_token(f"retirement-credential-{uuid4()}"),
+        identity_public_key=b"retirement-public-key",
+        synthetic_jid=f"retirement-{uuid4().hex}@example.test",
+        encrypted_credentials=b"retirement-encrypted-credentials",
+        credential_nonce=b"retirement-credential-nonce",
+    )
+    db_session.add_all((binding, pair_code, credential))
+    await db_session.flush()
+    inbound_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        binding_id=binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id=binding.external_chat_id,
+        text="queued inbound",
+        payload={},
+    )
+    outbound_message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        binding_id=binding.id,
+        user_id=seed_user.id,
+        direction=MESSAGE_DIRECTION_OUTBOUND,
+        external_chat_id=binding.external_chat_id,
+        text="queued outbound",
+        payload={},
+    )
+    db_session.add_all((inbound_message, outbound_message))
+    await db_session.flush()
+    delivery = ChannelDelivery(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        message_id=outbound_message.id,
+        user_id=seed_user.id,
+        status=DELIVERY_STATUS_PENDING,
+        next_attempt_at=now,
+    )
+    db_session.add(delivery)
+    await db_session.commit()
+
+    state = await db_session.get(HostedRuntimeState, channel_agent.id)
+    fence = await db_session.get(V2RuntimeEnvironmentFence, channel_agent.id)
+    assert state is not None
+    assert fence is not None
+    deployment_id = state.deployment_id
+    retirement_id = f"channel-cleanup-{channel_agent.id}"
+    cleanup_id = f"channel-cleanup-receipt-{channel_agent.id}"
+    await retire_runtime_environment(
+        db_session,
+        environment_id=channel_agent.id,
+        expected_deployment_id=deployment_id,
+        retirement_id=retirement_id,
+        owner_id=seed_user.id,
+    )
+    await db_session.commit()
+
+    receipt, receipt_created, runtime_state_deleted = await cleanup_retired_runtime_state(
+        db_session,
+        environment_id=channel_agent.id,
+        expected_deployment_binding=deployment_id,
+        retirement_id=retirement_id,
+        cleanup_id=cleanup_id,
+    )
+    await db_session.commit()
+
+    for row in (link, binding, pair_code, credential, inbound_message, delivery):
+        await db_session.refresh(row)
+    assert receipt_created is True
+    assert runtime_state_deleted is True
+    assert link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert link.archived_at is not None
+    assert link.agent_token_hash is None
+    assert link.encrypted_agent_token is None
+    assert link.agent_token_nonce is None
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert credential.revoked_at is not None
+    assert inbound_message.delivered_at is not None
+    assert delivery.status == DELIVERY_STATUS_FAILED
+    assert delivery.last_error == "channel_agent_link_archived"
+    assert await db_session.get(HostedRuntimeState, channel_agent.id) is None
+
+    historical_link = ChannelBotAgentLink(
+        account_id=account_id,
+        user_id=seed_user.id,
+        agent_id=channel_agent.id,
+    )
+    channel_service.store_agent_link_token(
+        historical_link,
+        generate_agent_token(CHANNEL_PROVIDER_TELEGRAM),
+    )
+    db_session.add(historical_link)
+    await db_session.flush()
+    historical_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=historical_link.id,
+        user_id=seed_user.id,
+        external_chat_id=f"historical-retirement-chat-{uuid4().hex}",
+        external_chat_type="private",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(historical_binding)
+    await db_session.commit()
+
+    replayed_receipt, replay_created, replay_state_deleted = await cleanup_retired_runtime_state(
+        db_session,
+        environment_id=channel_agent.id,
+        expected_deployment_binding=deployment_id,
+        retirement_id=retirement_id,
+        cleanup_id=cleanup_id,
+    )
+    await db_session.commit()
+
+    await db_session.refresh(historical_link)
+    await db_session.refresh(historical_binding)
+    assert replayed_receipt == receipt
+    assert replay_created is False
+    assert replay_state_deleted is False
+    assert historical_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert historical_link.archived_at is not None
+    assert historical_binding.status == BINDING_STATUS_ARCHIVED
 
 
 @pytest.mark.asyncio
@@ -14844,6 +15011,93 @@ async def test_pair_code_concurrent_claim_is_single_use(
     assert pair_row.claimed_external_chat_id == bindings[0].external_chat_id
 
 
+@pytest.mark.asyncio
+async def test_pair_code_claim_locks_fence_before_link_and_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-runtime-lock-order"},
+        )
+    ).json()
+    pair = (await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})).json()
+    account_id = UUID(created["id"])
+    pair_code_id = UUID(pair["id"])
+    link_id = UUID(created["agent_link_id"])
+    link = await db_session.get(ChannelBotAgentLink, link_id)
+    assert link is not None
+    fence_id = link.agent_id
+
+    fence_locked = asyncio.Event()
+    release_claim = asyncio.Event()
+    original_fence_lock = channel_service._lock_bot_agent_link_runtime_fence
+
+    async def pause_after_fence_lock(*args: Any, **kwargs: Any) -> UUID | None:
+        environment_id = await original_fence_lock(*args, **kwargs)
+        fence_locked.set()
+        await release_claim.wait()
+        return environment_id
+
+    monkeypatch.setattr(
+        channel_service,
+        "_lock_bot_agent_link_runtime_fence",
+        pause_after_fence_lock,
+    )
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def claim() -> channel_service.PairCodeClaimResult:
+        async with session_factory() as claim_db:
+            account = await claim_db.get(ChannelAccount, account_id)
+            assert account is not None
+            result = await channel_service.claim_pair_code(
+                claim_db,
+                account=account,
+                raw_code=pair["code"],
+                external_chat_id="runtime-lock-order-chat",
+                external_chat_type="private",
+                external_chat_name="Runtime lock order",
+                external_user_id="runtime-lock-order-user",
+            )
+            await claim_db.commit()
+            return result
+
+    claim_task = asyncio.create_task(claim())
+    try:
+        await asyncio.wait_for(fence_locked.wait(), timeout=2)
+        async with session_factory() as observer:
+            with pytest.raises(SQLAlchemyError) as fence_lock_error:
+                await observer.scalar(
+                    select(V2RuntimeEnvironmentFence)
+                    .where(V2RuntimeEnvironmentFence.environment_id == fence_id)
+                    .with_for_update(nowait=True)
+                )
+            assert getattr(fence_lock_error.value.orig, "sqlstate", None) == "55P03"
+            await observer.rollback()
+
+        async with session_factory() as observer:
+            locked_link = await observer.scalar(
+                select(ChannelBotAgentLink)
+                .where(ChannelBotAgentLink.id == link_id)
+                .with_for_update(nowait=True)
+            )
+            locked_pair_code = await observer.scalar(
+                select(ChannelPairCode)
+                .where(ChannelPairCode.id == pair_code_id)
+                .with_for_update(nowait=True)
+            )
+            assert locked_link is not None
+            assert locked_pair_code is not None
+            await observer.rollback()
+    finally:
+        release_claim.set()
+        result = await asyncio.wait_for(claim_task, timeout=2)
+
+    assert result.binding is not None
+
+
 @pytest.mark.parametrize(
     ("name", "expected_kind"),
     [
@@ -23732,7 +23986,7 @@ async def test_discord_gateway_guild_delete_archives_cleans_and_is_replay_safe(
 
 @pytest.mark.asyncio
 async def test_archived_agent_cannot_route_channels_and_reactivation_restores_authority(
-    db_session, seed_user, channel_agent
+    client, db_session, seed_user, channel_agent
 ):
     from fastapi import HTTPException
 
@@ -23742,8 +23996,35 @@ async def test_archived_agent_cannot_route_channels_and_reactivation_restores_au
     )
     from app.services.channels import get_strict_v2_hosted_channel_agent_or_409
 
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_TELEGRAM,
+            "name": f"recoverable-agent-{uuid4().hex}",
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        external_chat_id=f"recoverable-agent-chat-{uuid4().hex}",
+        external_chat_type="private",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
     await archive_agent_and_project(db_session, agent=channel_agent)
     await db_session.commit()
+    await db_session.refresh(link)
+    await db_session.refresh(binding)
+    assert link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert link.archived_at is None
+    assert binding.status == BINDING_STATUS_ACTIVE
     with pytest.raises(HTTPException) as exc_info:
         await get_strict_v2_hosted_channel_agent_or_409(
             db_session,
@@ -23754,6 +24035,11 @@ async def test_archived_agent_cannot_route_channels_and_reactivation_restores_au
 
     await reactivate_agent_and_project(db_session, agent=channel_agent)
     await db_session.commit()
+    await db_session.refresh(link)
+    await db_session.refresh(binding)
+    assert link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert link.archived_at is None
+    assert binding.status == BINDING_STATUS_ACTIVE
     restored = await get_strict_v2_hosted_channel_agent_or_409(
         db_session,
         agent_id=channel_agent.id,
