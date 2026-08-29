@@ -334,3 +334,107 @@ test("filters session activity and expands paired tool details", async ({ page }
 	);
 	await expect(page.getByText("1 / 1")).toBeVisible();
 });
+
+test("keeps a long anchored timeline windowed across desktop and mobile", async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const targetPosition = 1500;
+	const query = "virtualized needle";
+	const revision = "events:long-head";
+	const targetAnchor = { kind: "event_seq", position: targetPosition, revision };
+	const makeMessage = (position: number) => ({
+		kind: "message",
+		position,
+		role: position % 4 === 0 ? "user" : "assistant",
+		content:
+			position === targetPosition
+				? `Current ${query} result stays mounted`
+				: `Timeline message ${position} with enough content to exercise dynamic row measurement.`,
+		model: position % 4 === 0 ? null : "gpt-5",
+		timestamp: new Date(Date.parse(now) + position * 1_000).toISOString(),
+	});
+	const browseTimeline = Array.from({ length: 500 }, (_, position) => makeMessage(position));
+	const searchWindowOffset = 1450;
+	const searchWindow = Array.from({ length: 100 }, (_, index) =>
+		makeMessage(searchWindowOffset + index),
+	);
+	const requestedOffsets = new Set<number>();
+
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") {
+			return fulfillJson(route, [
+				{
+					id: AGENT_ID,
+					name: "Search Codex",
+					display_name: "Search Codex",
+					default_name: "Codex",
+					machine_name: "search-machine",
+					agent_type: "codex",
+				},
+			]);
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}`) {
+			return fulfillJson(route, {
+				...session,
+				summary: "Long virtualized session",
+				message_count: 2000,
+				event_head_hash: "long-head",
+			});
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			if (!url.searchParams.has("search_query")) {
+				const offset = Number(url.searchParams.get("offset") ?? 0);
+				requestedOffsets.add(offset);
+				return fulfillJson(route, {
+					items: browseTimeline.slice(offset, offset + 100),
+					total: browseTimeline.length,
+					offset,
+					limit: 100,
+				});
+			}
+			return fulfillJson(route, {
+				items: searchWindow,
+				total: 2000,
+				offset: searchWindowOffset,
+				limit: 100,
+				anchor_offset: targetPosition,
+				search_navigation: {
+					index: 1,
+					total: 1,
+					current: targetAnchor,
+					previous: null,
+					next: null,
+				},
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto(`/sessions/${SESSION_ID}`);
+	const scrollContainer = page.locator("#dashboard-scroll-container");
+	for (const expectedOffset of [100, 200, 300, 400]) {
+		await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+		await expect.poll(() => requestedOffsets.has(expectedOffset)).toBe(true);
+	}
+	const mountedRows = page.locator(
+		'[data-testid="virtualized-session-timeline"] [data-item-index]',
+	);
+	await expect.poll(() => mountedRows.count()).toBeGreaterThan(0);
+	expect(await mountedRows.count()).toBeLessThan(80);
+
+	const search = new URLSearchParams({
+		matchKind: targetAnchor.kind,
+		matchPosition: String(targetAnchor.position),
+		matchRevision: targetAnchor.revision,
+		matchQuery: query,
+	});
+	await page.goto(`/sessions/${SESSION_ID}?${search}`);
+	const current = page.locator('[data-search-match="true"]');
+	await expect(current).toContainText(`Current ${query} result stays mounted`);
+	await expect(current.locator("mark")).toHaveText(query);
+	expect(await mountedRows.count()).toBeLessThan(80);
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(current).toBeVisible();
+	expect(await mountedRows.count()).toBeLessThan(80);
+});

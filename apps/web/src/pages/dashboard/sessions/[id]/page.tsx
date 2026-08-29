@@ -32,11 +32,11 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { SessionTimelineList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
+import { VirtualizedSessionTimelineList } from "@/components/sessions/virtualized-message-list";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -55,6 +55,7 @@ import type {
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { findScrollableContainer } from "@/lib/scroll-container";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
@@ -340,7 +341,7 @@ export function SessionDetailContent({
 
 	useEffect(() => {
 		if (!anchorIdentity || !pagesData) return;
-		if (highlightedMessageKey && highlightedMessageRef.current) {
+		if (highlightedMessageKey) {
 			const handled = `resolved:${highlightedMessageKey}:${anchorIdentity}`;
 			if (handledAnchorRef.current === handled) return;
 			handledAnchorRef.current = handled;
@@ -644,7 +645,7 @@ export function SessionDetailContent({
 					// group-start rows; continuation rows render flush
 					// so a thread looks tight, not gapped.
 					<div>
-						<SessionTimelineList
+						<VirtualizedSessionTimelineList
 							items={timelineItems}
 							itemKeys={timelineKeys}
 							agentType={session.agent_type}
@@ -712,20 +713,7 @@ function JumpToBottomButton() {
 	const anchorRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
-		// Find nearest scrollable ancestor. `overflow-y: auto` on
-		// SidebarInset means it's the canonical scroller; falling
-		// back to `window` if nothing matches keeps single-page
-		// layouts (no sidebar) working.
-		const findScrollableAncestor = (node: Element | null): HTMLElement | Window => {
-			let cur = node?.parentElement ?? null;
-			while (cur) {
-				const overflow = getComputedStyle(cur).overflowY;
-				if (overflow === "auto" || overflow === "scroll") return cur;
-				cur = cur.parentElement;
-			}
-			return window;
-		};
-		const scroller = findScrollableAncestor(anchorRef.current);
+		const scroller = findScrollableContainer(anchorRef.current?.parentElement ?? null);
 		scrollerRef.current = scroller;
 
 		const onScroll = () => {

@@ -91,6 +91,7 @@ function MessageBlock({
 	isHighlighted,
 	highlightedRef,
 	highlightQuery,
+	deferOffscreenRendering,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
@@ -107,6 +108,7 @@ function MessageBlock({
 	isHighlighted?: boolean;
 	highlightedRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
+	deferOffscreenRendering: boolean;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
@@ -120,7 +122,7 @@ function MessageBlock({
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
 				"group flex scroll-mt-24 gap-3 rounded-md",
-				OFFSCREEN_RENDERING_CLASS,
+				deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS,
 				isGroupStart ? "pt-4" : "",
 				isHighlighted && "bg-primary/5 ring-1 ring-primary/30",
 			)}
@@ -196,7 +198,11 @@ function MessageBlock({
 					)}
 				>
 					{isUser ? (
-						<UserMessageBody content={message.content} highlightQuery={highlightQuery} />
+						<UserMessageBody
+							content={message.content}
+							highlightQuery={highlightQuery}
+							revealCollapsedMatch={isHighlighted}
+						/>
 					) : (
 						<Markdown content={message.content} highlightQuery={highlightQuery} />
 					)}
@@ -237,9 +243,11 @@ function isSkillExpansion(content: string): boolean {
 function UserMessageBody({
 	content,
 	highlightQuery,
+	revealCollapsedMatch,
 }: {
 	content: string;
 	highlightQuery?: string;
+	revealCollapsedMatch?: boolean;
 }) {
 	const cmd = parseSlashCommand(content);
 	if (cmd) {
@@ -256,6 +264,7 @@ function UserMessageBody({
 				label="Skill Setup Text"
 				content={content}
 				highlightQuery={highlightQuery}
+				revealMatch={revealCollapsedMatch}
 			/>
 		);
 	}
@@ -276,16 +285,18 @@ function CollapsibleBlock({
 	label,
 	content,
 	highlightQuery,
+	revealMatch,
 }: {
 	label: string;
 	content: string;
 	highlightQuery?: string;
+	revealMatch?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const containsMatch = highlightQuery
 		? splitSearchHighlight(content, highlightQuery).some((part) => part.highlighted)
 		: false;
-	const visible = open || containsMatch;
+	const visible = open || (revealMatch && containsMatch);
 	return (
 		<div className="rounded-md border border-dashed border-border/70 bg-muted/30">
 			<Button
@@ -403,10 +414,12 @@ function ToolActivity({
 	call,
 	result,
 	firstTimestamp,
+	deferOffscreenRendering,
 }: {
 	call?: SessionToolCall;
 	result?: SessionToolResult;
 	firstTimestamp?: string | null;
+	deferOffscreenRendering: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const name = call?.name ?? result?.name ?? "Tool";
@@ -415,7 +428,7 @@ function ToolActivity({
 	const timestamp = firstTimestamp ?? call?.timestamp ?? result?.timestamp;
 
 	return (
-		<div className={cn("flex gap-3 py-1.5", OFFSCREEN_RENDERING_CLASS)}>
+		<div className={cn("flex gap-3 py-1.5", deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS)}>
 			<div className="flex w-8 shrink-0 justify-center pt-2 text-muted-foreground">
 				<Wrench className="size-3.5" />
 			</div>
@@ -469,31 +482,7 @@ function ToolActivity({
 	);
 }
 
-/**
- * Renders an ordered session timeline. Calls and results in each contiguous
- * tool run collapse by call ID into one activity row; tools break message
- * author grouping. The 5-minute threshold matches Slack / Discord threads.
- *
- * `itemKeys` is an optional caller-provided per-row stable key
- * (e.g. the message's canonical position when the caller is paginating).
- * Falls back to the array index, which is fine for SSR / single-page
- * renders where order is stable.
- *
- * Exported as a Component (not a plain function) so server components
- * can render it as `<SessionTimelineList .../>` — React 19 rejects calls to
- * client-module functions from the server tree, but client components
- * rendered as JSX cross the boundary fine.
- */
-export function SessionTimelineList({
-	items,
-	itemKeys,
-	agentType,
-	userAvatar,
-	userName,
-	highlightedMessageKey,
-	highlightedMessageRef,
-	highlightQuery,
-}: {
+export interface SessionTimelineListProps {
 	items: TimelineEntry[];
 	itemKeys?: string[] | null;
 	agentType: string | null | undefined;
@@ -502,42 +491,71 @@ export function SessionTimelineList({
 	highlightedMessageKey?: string | null;
 	highlightedMessageRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
-}) {
+}
+
+interface TimelineRowBase {
+	rowKey: string | number;
+	dividerTimestamp?: string;
+}
+
+interface MessageTimelineRow extends TimelineRowBase {
+	kind: "message";
+	message: TimelineMessage;
+	isGroupStart: boolean;
+}
+
+interface ToolTimelineRow extends TimelineRowBase {
+	kind: "tool";
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstTimestamp?: string | null;
+}
+
+export type SessionTimelineRow = MessageTimelineRow | ToolTimelineRow;
+
+/**
+ * Normalizes source events into the visual rows shared by the static public
+ * transcript and the virtualized dashboard timeline. Tool pairs and date
+ * dividers must be resolved before virtualization so both renderers preserve
+ * identical grouping semantics.
+ */
+export function buildSessionTimelineRows(
+	items: TimelineEntry[],
+	itemKeys?: string[] | null,
+): SessionTimelineRow[] {
 	const GROUP_GAP_MS = 5 * 60_000;
-	const out: React.ReactNode[] = [];
-	let prevDayKey: string | null = null;
+	const rows: SessionTimelineRow[] = [];
+	let previousDayKey: string | null = null;
 	let previousMessage: TimelineMessage | null = null;
-	const appendDateDivider = (timestamp: string | null | undefined) => {
+	const takeDividerTimestamp = (timestamp: string | null | undefined) => {
 		const nextDayKey = dayKey(timestamp);
-		if (!nextDayKey || nextDayKey === prevDayKey) return false;
-		out.push(<DateDivider key={`d-${nextDayKey}`} timestamp={timestamp ?? ""} />);
-		prevDayKey = nextDayKey;
-		return true;
+		if (!timestamp || !nextDayKey || nextDayKey === previousDayKey) return undefined;
+		previousDayKey = nextDayKey;
+		return timestamp;
 	};
+
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i];
 		if (isToolEntry(item)) {
 			const { activities, nextIndex } = collectToolActivities(items, i);
 			for (const activity of activities) {
-				appendDateDivider(activity.firstItem.timestamp);
-				const toolKey =
-					itemKeys?.[activity.firstIndex] ??
-					`${activity.firstItem.kind}:${activity.firstItem.position}`;
-				out.push(
-					<ToolActivity
-						key={toolKey}
-						call={activity.call}
-						result={activity.result}
-						firstTimestamp={activity.firstItem.timestamp}
-					/>,
-				);
+				rows.push({
+					kind: "tool",
+					rowKey:
+						itemKeys?.[activity.firstIndex] ??
+						`${activity.firstItem.kind}:${activity.firstItem.position}`,
+					dividerTimestamp: takeDividerTimestamp(activity.firstItem.timestamp),
+					call: activity.call,
+					result: activity.result,
+					firstTimestamp: activity.firstItem.timestamp,
+				});
 			}
 			i = nextIndex - 1;
 			previousMessage = null;
 			continue;
 		}
 
-		const dividerJustEmitted = appendDateDivider(item.timestamp);
+		const dividerTimestamp = takeDividerTimestamp(item.timestamp);
 		const sameSpeaker =
 			previousMessage?.role === item.role &&
 			(item.role !== "assistant" || (previousMessage.model ?? null) === (item.model ?? null));
@@ -547,23 +565,80 @@ export function SessionTimelineList({
 						new Date(item.timestamp).getTime() - new Date(previousMessage.timestamp).getTime(),
 					) < GROUP_GAP_MS
 				: false;
-		const isGroupStart = !sameSpeaker || !closeInTime || dividerJustEmitted;
-		const messageKey = itemKeys?.[i] ?? i;
-		const isHighlighted = messageKey === highlightedMessageKey;
-		out.push(
-			<MessageBlock
-				key={messageKey}
-				message={item}
-				userAvatar={userAvatar}
-				userName={userName}
-				agentType={agentType}
-				isGroupStart={isGroupStart}
-				isHighlighted={isHighlighted}
-				highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
-				highlightQuery={isHighlighted ? highlightQuery : undefined}
-			/>,
-		);
+		rows.push({
+			kind: "message",
+			rowKey: itemKeys?.[i] ?? i,
+			dividerTimestamp,
+			message: item,
+			isGroupStart: !sameSpeaker || !closeInTime || dividerTimestamp !== undefined,
+		});
 		previousMessage = item;
 	}
-	return <>{out}</>;
+	return rows;
+}
+
+export function SessionTimelineRowView({
+	row,
+	agentType,
+	userAvatar,
+	userName,
+	highlightedMessageKey,
+	highlightedMessageRef,
+	highlightQuery,
+	deferOffscreenRendering,
+}: Omit<SessionTimelineListProps, "items" | "itemKeys"> & {
+	row: SessionTimelineRow;
+	deferOffscreenRendering: boolean;
+}) {
+	const isHighlighted = row.kind === "message" && row.rowKey === highlightedMessageKey;
+	return (
+		<>
+			{row.dividerTimestamp ? <DateDivider timestamp={row.dividerTimestamp} /> : null}
+			{row.kind === "message" ? (
+				<MessageBlock
+					message={row.message}
+					userAvatar={userAvatar}
+					userName={userName}
+					agentType={agentType}
+					isGroupStart={row.isGroupStart}
+					isHighlighted={isHighlighted}
+					highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
+					highlightQuery={highlightQuery}
+					deferOffscreenRendering={deferOffscreenRendering}
+				/>
+			) : (
+				<ToolActivity
+					call={row.call}
+					result={row.result}
+					firstTimestamp={row.firstTimestamp}
+					deferOffscreenRendering={deferOffscreenRendering}
+				/>
+			)}
+		</>
+	);
+}
+
+/**
+ * Static renderer used by public shares. Dashboard timelines use the same row
+ * model through the virtualized renderer.
+ */
+export function SessionTimelineList(props: SessionTimelineListProps) {
+	const rows = buildSessionTimelineRows(props.items, props.itemKeys);
+	return (
+		<>
+			{rows.map((row) => (
+				<SessionTimelineRowView
+					key={row.rowKey}
+					row={row}
+					agentType={props.agentType}
+					userAvatar={props.userAvatar}
+					userName={props.userName}
+					highlightedMessageKey={props.highlightedMessageKey}
+					highlightedMessageRef={props.highlightedMessageRef}
+					highlightQuery={props.highlightQuery}
+					deferOffscreenRendering
+				/>
+			))}
+		</>
+	);
 }

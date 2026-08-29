@@ -6,12 +6,20 @@ import type { SessionTimelineItem } from "@/lib/api-schemas";
 
 const timestamp = "2026-08-29T10:00:00.000Z";
 
-function render(items: SessionTimelineItem[]) {
+function render(
+	items: SessionTimelineItem[],
+	options: {
+		itemKeys?: string[];
+		highlightedMessageKey?: string;
+		highlightQuery?: string;
+	} = {},
+) {
 	return renderToStaticMarkup(
 		createElement(SessionTimelineList, {
 			items,
 			agentType: "codex",
 			userName: "You",
+			...options,
 		}),
 	);
 }
@@ -125,5 +133,43 @@ describe("SessionTimelineList", () => {
 
 		expect(markup).toContain("GPT 5");
 		expect(markup).toContain("Sonnet 4.5");
+	});
+
+	test("marks every visible match while only locating the active result", () => {
+		const markup = render(
+			[
+				{
+					kind: "message",
+					position: 1,
+					role: "user",
+					content: "First exact phrase match",
+					timestamp,
+				},
+				{
+					kind: "message",
+					position: 2,
+					role: "assistant",
+					content: "Current exact phrase match",
+					model: "gpt-5",
+					timestamp,
+				},
+				{
+					kind: "message",
+					position: 3,
+					role: "assistant",
+					content: "Final exact phrase match",
+					model: "gpt-5",
+					timestamp,
+				},
+			],
+			{
+				itemKeys: ["desc:0", "desc:1", "desc:2"],
+				highlightedMessageKey: "desc:1",
+				highlightQuery: "exact phrase",
+			},
+		);
+
+		expect(markup.match(/<mark/g)).toHaveLength(3);
+		expect(markup.match(/data-search-match="true"/g)).toHaveLength(1);
 	});
 });
