@@ -277,6 +277,10 @@ async def global_search(
     sequentially because SQLAlchemy AsyncSession is not safe for concurrent
     operations on the same request-scoped session.
     """
+    query = q.strip()
+    if not query:
+        return SearchResponse(query=query, results=[])
+
     # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are
     # gated by the caller's API-permission list so a narrowly-scoped
@@ -307,7 +311,7 @@ async def global_search(
     hits: list[SearchHit] = []
     for source, searcher in jobs:
         try:
-            r = await searcher(db, auth, q)
+            r = await searcher(db, auth, query)
         except Exception as exc:
             log.warning(
                 "search source %s failed for user %s: %s",
@@ -318,4 +322,4 @@ async def global_search(
             )
             continue
         hits.extend(r)
-    return SearchResponse(query=q, results=hits)
+    return SearchResponse(query=query, results=hits)

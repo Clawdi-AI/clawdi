@@ -1307,9 +1307,10 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
     )
     await client.post("/v1/vault", json={"slug": "alpha-keys", "name": "alpha-keys"})
 
-    r = await client.get("/v1/search?q=alpha")
+    r = await client.get("/v1/search", params={"q": "  alpha  "})
     assert r.status_code == 200
     body = r.json()
+    assert body["query"] == "alpha"
     types = {hit["type"] for hit in body["results"]}
     # Session summary matched, vault slug matched.
     assert "session" in types

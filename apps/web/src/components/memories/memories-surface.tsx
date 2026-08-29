@@ -114,6 +114,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const page = params.page;
 	const pageSize = params.pageSize;
 	const debouncedSearch = useDebouncedValue(search, 250);
+	const searchQuery = debouncedSearch.trim();
 	const apiCategory = category === ALL ? "" : category;
 
 	const { data: settings } = useQuery({
@@ -147,7 +148,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 				query: {
 					page,
 					page_size: pageSize,
-					q: debouncedSearch || undefined,
+					q: searchQuery || undefined,
 					category: apiCategory || undefined,
 				},
 			},
@@ -170,7 +171,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	);
 
 	const emptyMessage =
-		debouncedSearch || apiCategory
+		searchQuery || apiCategory
 			? "No matches — try a different search or category."
 			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
 	const paginationFooter = (
@@ -243,7 +244,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 						emptyMessage={emptyMessage}
 						onDelete={requestDeleteMemory}
 						scope={scope}
-						searchQuery={debouncedSearch}
+						searchQuery={searchQuery}
 					/>
 					{paginationFooter}
 				</div>

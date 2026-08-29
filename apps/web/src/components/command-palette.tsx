@@ -119,6 +119,7 @@ function CommandPalette({
 	const hostedAccess = useProductAccess();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
+	const searchQuery = debounced.trim();
 	const navShortcuts = useMemo(() => {
 		const shortcuts: NavShortcut[] = consoleCommandPaletteItems(false).map((item) => ({
 			label: item.label,
@@ -155,9 +156,9 @@ function CommandPalette({
 	const { data, isFetching } = api.useQuery(
 		"get",
 		"/v1/search",
-		{ params: { query: { q: debounced } } },
+		{ params: { query: { q: searchQuery } } },
 		{
-			enabled: open && debounced.trim().length > 0,
+			enabled: open && searchQuery.length > 0,
 			staleTime: 30_000,
 			// Keep the last page of results visible while a new debounced query
 			// flies out — prevents the palette flashing to "empty" on every
@@ -217,8 +218,8 @@ function CommandPalette({
 		return g;
 	}, [data]);
 
-	const hasQuery = debounced.trim().length > 0;
-	const normalizedQuery = debounced.trim().toLowerCase();
+	const hasQuery = searchQuery.length > 0;
+	const normalizedQuery = searchQuery.toLowerCase();
 	const navMatches = useMemo(
 		() =>
 			normalizedQuery
@@ -230,7 +231,7 @@ function CommandPalette({
 	// Whether we have a stale results payload we can keep showing while a
 	// new debounced query is in flight.
 	const hasStaleResults = hasQuery && (data?.results.length ?? 0) > 0;
-	const resultQuery = data?.query ?? debounced;
+	const resultQuery = data?.query ?? searchQuery;
 
 	// Show "no results" only when (a) the debounced query is active, (b)
 	// fetching is finished, (c) we don't have any results. Previously we
@@ -266,7 +267,7 @@ function CommandPalette({
 				{/* Fixed min-height: stops the dialog from jumping as the user types
 				    (switching between 6 nav shortcuts → N result rows → empty). */}
 				<CommandList className="min-h-[320px]">
-					{showEmpty ? <CommandEmpty>No results for "{debounced}".</CommandEmpty> : null}
+					{showEmpty ? <CommandEmpty>No results for "{searchQuery}".</CommandEmpty> : null}
 
 					{/* First-fetch state: query typed but no prior data yet — show a
 					    neutral loading row inside the list so the dialog isn't
