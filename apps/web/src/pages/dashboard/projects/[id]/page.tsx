@@ -58,6 +58,7 @@ import {
 	projectAgentFor,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
+import { CreateSkillDialog } from "@/components/skills/create-skill-dialog";
 import { SkillCardGrid, SkillCardSkeleton } from "@/components/skills/skill-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -731,14 +732,12 @@ export default function ProjectDetailPage({
 					}
 					actions={
 						focus === "skills" && canManageProjectSkills ? (
-							<Button
-								render={<Link to="/skills" search={{ project: project.id, add: 1 }} />}
-								nativeButton={false}
-								size="sm"
-							>
-								<Plus className="size-3.5" />
-								Add skill
-							</Button>
+							<CreateSkillDialog project={project} onCreated={refresh}>
+								<Button size="sm">
+									<Plus className="size-3.5" />
+									Add skill
+								</Button>
+							</CreateSkillDialog>
 						) : focus === "vaults" && isOwner ? (
 							<ProjectVaultActions
 								projectId={project.id}
@@ -859,15 +858,12 @@ export default function ProjectDetailPage({
 								/>
 							) : null}
 							{canManageProjectSkills ? (
-								<Button
-									render={<Link to="/skills" search={{ project: project.id, add: 1 }} />}
-									nativeButton={false}
-									variant="outline"
-									size="sm"
-								>
-									<Plus className="size-3.5" />
-									Add skill
-								</Button>
+								<CreateSkillDialog project={project} onCreated={refresh}>
+									<Button variant="outline" size="sm">
+										<Plus className="size-3.5" />
+										Add skill
+									</Button>
+								</CreateSkillDialog>
 							) : null}
 						</>
 					) : undefined

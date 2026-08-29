@@ -10,16 +10,13 @@ import {
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
-import {
-	AGENT_CHANNEL_LINKS_REFETCH_INTERVAL_MS,
-	agentChannelLinksQueryBehavior,
-} from "@/hosted/v2/channels/channel-query-options.logic";
+import { agentChannelLinksQueryBehavior } from "@/hosted/v2/channels/channel-query-options.logic";
 import type {
 	ChannelCreate,
 	ChannelCreated,
 	WhatsAppOnboardingSession,
 } from "@/hosted/v2/channels/channel-types";
-import { type OpenApiClient, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { ApiError, type OpenApiClient, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
@@ -316,6 +313,86 @@ export function agentChannelLinksQueryOptions(
 /** An Agent's linked channels and active binding counts in one generated query. */
 export function useAgentChannelLinks(agentId: string, enabled = true, poll = false) {
 	return useQuery(agentChannelLinksQueryOptions(useOpenApi(), agentId, { enabled, poll }));
+}
+
+export function useLinkChannelAgent(accountId: string) {
+	const api = useApi();
+	const openApi = useOpenApi();
+	const qc = useQueryClient();
+	return useSensitiveAction(
+		async ({
+			agentId,
+			replaceExistingProviderLink,
+		}: {
+			agentId: string;
+			replaceExistingProviderLink: boolean;
+		}) => {
+			try {
+				const result = unwrap(
+					await api.POST("/v1/channels/{account_id}/agent-links", {
+						params: { path: { account_id: accountId } },
+						body: {
+							agent_id: agentId,
+							...(replaceExistingProviderLink ? { replace_existing_provider_link: true } : {}),
+						},
+					}),
+				);
+				await Promise.all([
+					qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) }),
+					qc.invalidateQueries({
+						queryKey: agentChannelLinksQueryOptions(openApi, agentId).queryKey,
+						exact: true,
+					}),
+					qc.invalidateQueries({ queryKey: keys.list }),
+					qc.invalidateQueries({ queryKey: keys.pool }),
+				]);
+				toast.success("Channel linked");
+				return result;
+			} catch (error) {
+				if (
+					!(
+						error instanceof ApiError &&
+						error.status === 409 &&
+						error.detail === "whatsapp_repair_required"
+					)
+				) {
+					toastApiError("Couldn't link channel")(error);
+				}
+				throw error;
+			}
+		},
+	);
+}
+
+export function useUnlinkChannelAgent(accountId: string) {
+	const api = useApi();
+	const openApi = useOpenApi();
+	const qc = useQueryClient();
+	return useSensitiveAction(async ({ agentId, linkId }: { agentId: string; linkId: string }) => {
+		try {
+			const result = unwrap(
+				await api.DELETE("/v1/channels/{account_id}/agent-links/{link_id}", {
+					params: { path: { account_id: accountId, link_id: linkId } },
+				}),
+			);
+			await Promise.all([
+				qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) }),
+				qc.invalidateQueries({
+					queryKey: agentChannelLinksQueryOptions(openApi, agentId).queryKey,
+					exact: true,
+				}),
+				qc.invalidateQueries({ queryKey: keys.bindings(accountId) }),
+				qc.invalidateQueries({ queryKey: keys.activity(accountId) }),
+				qc.invalidateQueries({ queryKey: keys.list }),
+				qc.invalidateQueries({ queryKey: keys.pool }),
+			]);
+			toast.success("Channel unlinked");
+			return result;
+		} catch (error) {
+			toastApiError("Couldn't unlink channel")(error);
+			throw error;
+		}
+	});
 }
 
 export function useUnlinkAgentChannel(agentId: string) {

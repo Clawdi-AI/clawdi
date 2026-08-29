@@ -162,7 +162,7 @@ export default function VaultDetailPage({
 		vaultId: resolvedVaultId,
 	});
 	const isOwner = vault?.is_owner !== false;
-	const canManageVault = isOwner && !isAgentScope;
+	const canManageVault = isOwner;
 	const anyProjectId = isAgentScope
 		? requestedProjectId &&
 			requestedProjectIsBound &&
@@ -261,6 +261,7 @@ export default function VaultDetailPage({
 
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+		qc.invalidateQueries({ queryKey: ["vaults", "agent-projects"] });
 		qc.invalidateQueries({ queryKey: ["vault-items", resolvedVaultId, slug] });
 		qc.invalidateQueries({ queryKey: ["vault-detail", slug] });
 	};
@@ -385,6 +386,7 @@ export default function VaultDetailPage({
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+			qc.invalidateQueries({ queryKey: ["vaults", "agent-projects"] });
 			qc.removeQueries({ queryKey: ["vault-items", resolvedVaultId, slug] });
 			toast.success("Vault deleted", {
 				description: `${vault?.name ?? slug} and its keys were removed.`,
@@ -505,7 +507,7 @@ export default function VaultDetailPage({
 				description={
 					isAgentScope
 						? isOwner
-							? "This account-owned Vault is read-only here. Manage its keys or delete it in the resource library."
+							? `Keys live here once and are available to this Agent through the ${requestedAttachmentLabel}.`
 							: "This shared Vault is read-only here. Only its owner can edit its keys."
 						: isOwner
 							? "Keys live here once and work in every Project this Vault is attached to."
@@ -542,17 +544,6 @@ export default function VaultDetailPage({
 								</Button>
 							</ConfirmAction>
 						</>
-					) : isAgentScope ? (
-						<Button
-							render={<Link to={managementTarget.href} />}
-							nativeButton={false}
-							variant="outline"
-							size="sm"
-							className="w-full shrink-0 sm:w-auto"
-						>
-							<ExternalLink className="size-3.5" />
-							Open in resource library
-						</Button>
 					) : null
 				}
 			/>
@@ -574,9 +565,9 @@ export default function VaultDetailPage({
 							) : null}
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">
-							{isAgentScope
-								? "Key names are read-only here. Key values stay protected, and this Agent can use them through the attachment."
-								: "Values are write-only here. Key values stay protected, and attached Projects and Agents can use them."}
+							{canManageVault
+								? "Values are write-only here. Changes apply everywhere this Vault is attached."
+								: "Key names are read-only. Key values stay protected, and this Agent can use them through the attachment."}
 						</p>
 					</div>
 					<div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
@@ -670,11 +661,9 @@ export default function VaultDetailPage({
 						variant="inset"
 						title="No keys yet"
 						description={
-							isAgentScope
-								? isOwner
-									? "Manage this account-owned Vault's keys in the resource library."
-									: "Only the Vault owner can add or edit keys."
-								: "Add one above or paste several at once with Import."
+							canManageVault
+								? "Add one above or paste several at once with Import."
+								: "Only the Vault owner can add or edit keys."
 						}
 					/>
 				) : filteredKeyNames.length === 0 ? (

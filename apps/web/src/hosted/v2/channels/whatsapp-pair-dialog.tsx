@@ -46,6 +46,7 @@ export function WhatsAppPairDialog({
 	agentLinkId,
 	channelName,
 	bindingCount,
+	baselineBindingCount,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -55,6 +56,7 @@ export function WhatsAppPairDialog({
 	agentLinkId: string;
 	channelName?: string;
 	bindingCount: number;
+	baselineBindingCount?: number;
 }) {
 	const pair = useCreatePairCode(accountId, { agentId, toastOnError: false });
 	const { copied, copy } = useCopyToClipboard({
@@ -88,6 +90,7 @@ export function WhatsAppPairDialog({
 		agentLinkId,
 		provider: "whatsapp",
 		bindingCount,
+		baselineBindingCount,
 	});
 
 	const generate = useCallback(

@@ -47,6 +47,7 @@ export function TelegramPairDialog({
 	agentLinkId,
 	channelName,
 	bindingCount,
+	baselineBindingCount,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -56,6 +57,7 @@ export function TelegramPairDialog({
 	agentLinkId: string;
 	channelName?: string;
 	bindingCount: number;
+	baselineBindingCount?: number;
 }) {
 	const pair = useCreatePairCode(accountId, { agentId, toastOnError: false });
 	const { copied, copy } = useCopyToClipboard({
@@ -88,6 +90,7 @@ export function TelegramPairDialog({
 		agentLinkId,
 		provider: "telegram",
 		bindingCount,
+		baselineBindingCount,
 	});
 
 	const generate = useCallback(

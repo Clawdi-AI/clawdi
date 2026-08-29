@@ -1,7 +1,6 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useMemo, useState } from "react";
@@ -311,6 +310,7 @@ export function VaultCard({
 	const itemProjectId =
 		vault.project_ids?.find((projectId) => visibleProjectIds?.has(projectId)) ??
 		vault.project_ids?.[0];
+	const canManageVault = vault.is_owner !== false;
 	// Key count ships on the list response (names only, never values) —
 	// no per-card items fetch. EXCEPT under deploy skew: a web build that
 	// knows item_count can face an API that doesn't send it yet (web and
@@ -378,7 +378,25 @@ export function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			actions={actions}
+			actions={
+				canManageVault || actions ? (
+					<>
+						{canManageVault ? (
+							<AddKeysDialog
+								vaultSlug={vault.slug}
+								vaultId={vault.id}
+								vaultProjectId={itemProjectId}
+							>
+								<Button variant="ghost" size="sm" aria-label={`Add keys to ${vault.name}`}>
+									<Plus className="size-3.5" />
+									Add keys
+								</Button>
+							</AddKeysDialog>
+						) : null}
+						{actions}
+					</>
+				) : undefined
+			}
 			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
@@ -393,7 +411,6 @@ function NewVaultDialog() {
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
-	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
@@ -427,14 +444,11 @@ function NewVaultDialog() {
 				}),
 			);
 		},
-		onSuccess: (created) => {
+		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
-			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
-			void router.navigate({
-				to: "/vaults/$slug",
-				params: { slug },
-				search: { vault: created.id },
+			toast.success("Vault created", {
+				description: "Use Add keys on its card, then attach it to a Project.",
 			});
 		},
 		onError: (error) =>

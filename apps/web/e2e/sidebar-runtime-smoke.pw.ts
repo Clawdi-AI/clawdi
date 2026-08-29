@@ -233,6 +233,8 @@ type DashboardApiStubOptions = {
 	connectorCatalogResponse?: { body: unknown; status: number };
 	connectorMetadataRequests?: string[];
 	connectorMetadataGate?: Promise<void>;
+	connectorAuthFields?: Record<string, unknown>;
+	connectorCredentialRequests?: Array<{ appName: string; body: unknown }>;
 	memoryDetailGate?: Promise<void>;
 	memoryDetailResponse?: { body: unknown; status: number };
 	projectBindingRequests?: string[];
@@ -248,9 +250,11 @@ type DashboardApiStubOptions = {
 	legacySkillDetailRequests?: string[];
 	skillDetailRequests?: string[];
 	skillDetailResponses?: Readonly<Record<string, { body: unknown; status: number }>>;
+	skillCreateRequests?: Array<{ projectId: string; body: unknown }>;
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	vaultRequests?: string[];
+	vaultItemWriteRequests?: Array<{ url: string; body: unknown }>;
 	vaultItems?: readonly (typeof vaults.items)[number][];
 };
 
@@ -259,6 +263,8 @@ async function stubDashboardApi(
 	agentOrderRequests: string[] = [],
 	options: DashboardApiStubOptions = {},
 ) {
+	const createdProjects: unknown[] = [];
+	const createdProjectBindings: unknown[] = [];
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		if (
@@ -314,11 +320,11 @@ async function stubDashboardApi(
 				return;
 			}
 			const agentId = decodeURIComponent(projectBindingsMatch[1] ?? "");
-			await fulfillJson(
-				route,
-				options.projectBindings ??
-					projectBindings.map((binding) => ({ ...binding, agent_id: agentId })),
-			);
+			await fulfillJson(route, [
+				...(options.projectBindings ??
+					projectBindings.map((binding) => ({ ...binding, agent_id: agentId }))),
+				...createdProjectBindings,
+			]);
 			return;
 		}
 		if (
@@ -341,13 +347,14 @@ async function stubDashboardApi(
 			await fulfillJson(route, dashboardStats);
 			return;
 		}
-		if (url.pathname === "/v1/projects" && route.request().method() === "POST") {
+		const agentProjectCreateMatch = url.pathname.match(/^\/v1\/projects\/for-agent\/([^/]+)$/);
+		if (agentProjectCreateMatch && route.request().method() === "POST") {
 			const body = route.request().postDataJSON() as {
 				name?: string;
 				description?: string | null;
 			};
-			options.projectCreateBodies?.push(body);
-			await fulfillJson(route, {
+			const agentId = decodeURIComponent(agentProjectCreateMatch[1] ?? "");
+			const project = {
 				id: "project-created",
 				name: body.name ?? "Created Project",
 				description: body.description ?? null,
@@ -359,7 +366,46 @@ async function stubDashboardApi(
 				is_owner: true,
 				owner_display: "Dev User",
 				owner_handle: "dev-user",
+				skill_count: 0,
+				vault_count: 0,
+				agent_count: 1,
+				member_count: 0,
+			};
+			options.projectCreateBodies?.push(body);
+			createdProjects.push(project);
+			createdProjectBindings.push({
+				id: "binding-project-created",
+				agent_id: agentId,
+				project_id: project.id,
+				binding_type: "context",
+				priority: 3,
+				default_write_enabled: false,
+				created_at: now.toISOString(),
 			});
+			await fulfillJson(route, project, 201);
+			return;
+		}
+		if (url.pathname === "/v1/projects" && route.request().method() === "POST") {
+			const body = route.request().postDataJSON() as {
+				name?: string;
+				description?: string | null;
+			};
+			options.projectCreateBodies?.push(body);
+			const project = {
+				id: "project-created",
+				name: body.name ?? "Created Project",
+				description: body.description ?? null,
+				slug: "created-project",
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: now.toISOString(),
+				is_owner: true,
+				owner_display: "Dev User",
+				owner_handle: "dev-user",
+			};
+			createdProjects.push(project);
+			await fulfillJson(route, project);
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
@@ -369,7 +415,7 @@ async function stubDashboardApi(
 				await fulfillJson(route, options.projectsResponse.body, options.projectsResponse.status);
 				return;
 			}
-			await fulfillJson(route, options.projects ?? projects);
+			await fulfillJson(route, [...(options.projects ?? projects), ...createdProjects]);
 			return;
 		}
 		const projectDetailMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)$/);
@@ -377,7 +423,7 @@ async function stubDashboardApi(
 			options.projectRequests?.push(route.request().url());
 			await options.projectsGate;
 			const projectId = decodeURIComponent(projectDetailMatch[1] ?? "");
-			const project = (options.projects ?? projects).find(
+			const project = [...(options.projects ?? projects), ...createdProjects].find(
 				(candidate) =>
 					typeof candidate === "object" &&
 					candidate !== null &&
@@ -400,6 +446,15 @@ async function stubDashboardApi(
 				page: pageNumber,
 				page_size: pageSize,
 			});
+			return;
+		}
+		const projectSkillCreateMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/skills$/);
+		if (projectSkillCreateMatch && route.request().method() === "POST") {
+			options.skillCreateRequests?.push({
+				projectId: decodeURIComponent(projectSkillCreateMatch[1] ?? ""),
+				body: route.request().postDataJSON(),
+			});
+			await fulfillJson(route, {}, 201);
 			return;
 		}
 		const projectSkillDetailMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/skills\/(.+)$/);
@@ -449,6 +504,12 @@ async function stubDashboardApi(
 			return;
 		}
 		if (/^\/v1\/vault\/[^/]+\/items$/.test(url.pathname)) {
+			if (route.request().method() === "PUT") {
+				options.vaultItemWriteRequests?.push({
+					url: route.request().url(),
+					body: route.request().postDataJSON(),
+				});
+			}
 			await fulfillJson(route, { "(default)": ["API_KEY", "ACCESS_TOKEN"] });
 			return;
 		}
@@ -463,6 +524,26 @@ async function stubDashboardApi(
 				return;
 			}
 			await fulfillJson(route, options.connectorConnections ?? []);
+			return;
+		}
+		const connectorAuthFieldsMatch = url.pathname.match(/^\/v1\/connectors\/([^/]+)\/auth-fields$/);
+		if (connectorAuthFieldsMatch && route.request().method() === "GET") {
+			const appName = decodeURIComponent(connectorAuthFieldsMatch[1] ?? "");
+			await fulfillJson(
+				route,
+				options.connectorAuthFields?.[appName] ?? { expected_input_fields: [] },
+			);
+			return;
+		}
+		const connectorCredentialsMatch = url.pathname.match(
+			/^\/v1\/connectors\/([^/]+)\/connect-credentials$/,
+		);
+		if (connectorCredentialsMatch && route.request().method() === "POST") {
+			options.connectorCredentialRequests?.push({
+				appName: decodeURIComponent(connectorCredentialsMatch[1] ?? ""),
+				body: route.request().postDataJSON(),
+			});
+			await fulfillJson(route, { connected: true }, 201);
 			return;
 		}
 		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
@@ -839,11 +920,14 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 }, testInfo) => {
 	test.setTimeout(60_000);
 	const skillRequests: string[] = [];
+	const skillCreateRequests: Array<{ projectId: string; body: unknown }> = [];
 	const vaultRequests: string[] = [];
+	const vaultItemWriteRequests: Array<{ url: string; body: unknown }> = [];
 	const projectCreateBodies: unknown[] = [];
 	const projectLinkDeltaBodies: unknown[] = [];
 	const projectBindingRequests: string[] = [];
 	const projectRequests: string[] = [];
+	const connectorCredentialRequests: Array<{ appName: string; body: unknown }> = [];
 	const longContextProjectName =
 		"Automation Library for exceptionally long production workflow names across several teams";
 	const longContextProjectSlug =
@@ -953,6 +1037,40 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		vaults.items[1],
 	];
 	await stubDashboardApi(page, [], {
+		connectorCatalog: [
+			{
+				name: "gmail",
+				display_name: "Gmail",
+				logo: "",
+				description: "Email connector",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+			{
+				name: "api-tool",
+				display_name: "API Tool",
+				logo: "",
+				description: "Credential connector",
+				auth_type: "api_key",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+		],
+		connectorAuthFields: {
+			"api-tool": {
+				expected_input_fields: [
+					{
+						name: "api_key",
+						display_name: "API key",
+						description: "Key used by API Tool",
+						required: true,
+						is_secret: true,
+					},
+				],
+			},
+		},
+		connectorCredentialRequests,
 		projectBindings: projectAccessBindings,
 		projects: projectAccessProjects,
 		skillsByProjectId: {
@@ -966,7 +1084,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			],
 		},
 		skillRequests,
+		skillCreateRequests,
 		vaultRequests,
+		vaultItemWriteRequests,
 		vaultItems: projectAccessVaults,
 		projectCreateBodies,
 		projectLinkDeltaBodies,
@@ -995,6 +1115,22 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(page).toHaveURL(
 		/\/agents\/11111111-1111-4111-8111-111111111111\/connectors\?q=gmail&page=2/,
 	);
+	await page.goto("/agents/11111111-1111-4111-8111-111111111111/connectors");
+	const apiToolLink = main.getByRole("link", { name: "API Tool" });
+	await apiToolLink.locator("..").getByRole("button", { name: "Connect", exact: true }).click();
+	const credentialDialog = page.getByRole("dialog", { name: "Connect API Tool" });
+	await credentialDialog.getByLabel("API key").fill("browser-secret-key");
+	await credentialDialog.getByRole("button", { name: "Connect", exact: true }).click();
+	await expect(credentialDialog).toHaveCount(0);
+	await expect
+		.poll(() => connectorCredentialRequests)
+		.toEqual([
+			{
+				appName: "api-tool",
+				body: { credentials: { api_key: "browser-secret-key" } },
+			},
+		]);
+	await expect(page).toHaveURL("/agents/11111111-1111-4111-8111-111111111111/connectors");
 
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access");
 	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible({
@@ -1040,7 +1176,11 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			},
 		]);
 	expect(projectLinkDeltaBodies).toEqual([]);
-	const createdToast = page.locator("[data-sonner-toast]").filter({ hasText: "Project created" });
+	await expect(projectGrid.getByTestId("agent-project-card")).toHaveCount(3);
+	await expect(projectGrid.getByText("Release Review", { exact: true })).toBeVisible();
+	const createdToast = page
+		.locator("[data-sonner-toast]")
+		.filter({ hasText: "Project created and linked" });
 	await createdToast.getByRole("button", { name: "Open project" }).click();
 	await expect(page).toHaveURL((url) => {
 		return (
@@ -1160,6 +1300,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Add keys to Scoped Vault" })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
@@ -1386,7 +1527,31 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
 	);
 	await expect(main.getByText(`Project: ${longContextProjectName}`, { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toBeVisible();
+	const addSkillButton = main.getByRole("button", { name: "Add skill", exact: true });
+	await expect(addSkillButton).toBeVisible();
+	await addSkillButton.click();
+	const addSkillDialog = page.getByRole("dialog", { name: "Add skill" });
+	await addSkillDialog.getByLabel("Name").fill("Release checklist");
+	await addSkillDialog
+		.getByLabel("Instructions")
+		.fill("Review the release checklist before deploy.");
+	await addSkillDialog.getByRole("button", { name: "Add skill", exact: true }).click();
+	await expect(addSkillDialog).toHaveCount(0);
+	await expect(page).toHaveURL(
+		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
+	);
+	await expect
+		.poll(() => skillCreateRequests)
+		.toEqual([
+			{
+				projectId: "project-context-later",
+				body: {
+					name: "Release checklist",
+					description: null,
+					instructions: "Review the release checklist before deploy.",
+				},
+			},
+		]);
 	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/vaults");
@@ -1420,9 +1585,21 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/vaults",
 	);
-	await expect(main.getByRole("button", { name: "Open in resource library" })).toBeVisible();
-	await expect(main.getByRole("button", { name: /^Delete$/ })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /^Delete$/ })).toBeVisible();
+	const addKeysButton = main.getByRole("button", { name: "Add keys", exact: true });
+	await expect(addKeysButton).toBeVisible();
+	await addKeysButton.click();
+	const addKeysDialog = page.getByRole("dialog", { name: "Add keys" });
+	await addKeysDialog.getByRole("textbox").fill("DEPLOY_TOKEN=secret-value");
+	await addKeysDialog.getByRole("button", { name: "Save 1" }).click();
+	await expect(addKeysDialog).toHaveCount(0);
+	await expect.poll(() => vaultItemWriteRequests).toHaveLength(1);
+	const vaultWrite = vaultItemWriteRequests[0];
+	expect(vaultWrite?.body).toEqual({ section: "", fields: { DEPLOY_TOKEN: "secret-value" } });
+	const vaultWriteUrl = new URL(vaultWrite?.url ?? "http://invalid");
+	expect(vaultWriteUrl.searchParams.get("project_id")).toBe("project-smoke");
+	expect(vaultWriteUrl.searchParams.get("vault_id")).toBe("vault-scoped");
 	await expect(page).toHaveURL(
 		"/agents/11111111-1111-4111-8111-111111111111/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
 	);

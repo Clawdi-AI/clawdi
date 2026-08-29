@@ -27,20 +27,23 @@ const linkedChannelRow = agentDetail.slice(
 );
 
 describe("channel IA boundary", () => {
-	test("keeps bot detail read-only for Agent relationships and navigates to Agent Channels", () => {
+	test("manages Agent relationships from bot detail with the shared pairing dialogs", () => {
 		expect(detail).toContain("data-channel-linked-agents");
 		expect(detail).toContain('agentSectionLink(link.agent_id, "channels")');
 		expect(detail).toContain("data-channel-agent-link-id={link.id}");
 		expect(detail).toContain("Linked Agents");
 		expect(detail).not.toContain("LinkAgentDialog");
-		expect(detail).not.toContain("TelegramPairDialog");
+		expect(detail).toContain("useLinkChannelAgent(accountId)");
+		expect(detail).toContain("useUnlinkChannelAgent(accountId)");
+		expect(detail).toContain("<TelegramPairDialog");
+		expect(detail).toContain("<DiscordPairDialog");
+		expect(detail).toContain("<WhatsAppPairDialog");
+		expect(detail).toContain("Pair chat");
+		expect(detail).toContain("Unlink Agent");
 		expect(detail).not.toContain("PairedChatRow");
 		expect(detail).not.toContain("BindingsTab");
 		expect(detail).not.toContain("WhatsAppDevicesTab");
-		expect(detail).not.toContain("Pair Telegram");
 		expect(detail).not.toContain("Unpair");
-		expect(detail).not.toContain("Unlink");
-		expect(detail).not.toContain("Link an agent");
 	});
 
 	test("keeps Link, Pair, Unpair, and Unlink on stable Agent bot cards", () => {
@@ -178,7 +181,9 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("usePairingSuccess");
 		expect(agentDetail).toContain("bindingCount={bindingCountForLink(telegramPair.agentLinkId)}");
 		expect(agentDetail).toContain("bindingCount={bindingCountForLink(discordPair.agentLinkId)}");
-		expect(pairingSuccess).toContain("baselineBindingCount: bindingCount");
+		expect(pairingSuccess).toContain("baselineBindingCount = bindingCount");
+		expect(detail).toContain("const result = await bindings.refetch()");
+		expect(detail).toContain("baselineBindingCount={pairingBaselineBindingCount}");
 		expect(pairingSuccess).toContain(
 			"pairingCountIncreased(bindingCount, attempt.baselineBindingCount)",
 		);

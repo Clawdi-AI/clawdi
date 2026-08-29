@@ -81,7 +81,9 @@ describe("channel mutation feedback", () => {
 		] as const) {
 			expectFeedbackBeforeRequest(detail, feedback, request);
 		}
-		expect(detail).not.toContain("useUnlinkChannelAgent");
+		expect(detail).toContain("linkAgent.isPending");
+		expect(detail).toContain("await linkAgent.execute({");
+		expect(detail).toContain("unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })");
 		expect(detail).not.toContain("useDeleteChannelBinding");
 	});
 });

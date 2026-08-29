@@ -6,8 +6,11 @@ import {
 	ArrowUpRight,
 	Bot,
 	KeyRound,
+	Link2,
 	type LucideIcon,
 	MessageSquareDashed,
+	MessageSquarePlus,
+	Plus,
 	RefreshCw,
 	TerminalSquare,
 	Trash2,
@@ -17,7 +20,7 @@ import {
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentLabel } from "@/components/dashboard/agent-label";
+import { AgentLabel, agentDisplayName } from "@/components/dashboard/agent-label";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
@@ -28,11 +31,31 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
+import {
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
+} from "@/hosted/v2/channels/channel-linking.logic";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
@@ -48,16 +71,26 @@ import {
 	channelHealthErrorSummary,
 } from "@/hosted/v2/channels/channel-user-facing-errors";
 import {
+	useAgentChannelLinks,
 	useChannel,
 	useChannelActivity,
 	useChannelAgentLinks,
+	useChannelBindings,
 	useChannelHealth,
 	useDeleteChannel,
 	useEnvironments,
+	useLinkChannelAgent,
 	useSyncCommands,
+	useUnlinkChannelAgent,
 } from "@/hosted/v2/channels/channels-hooks";
+import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
+import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
+import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
+import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
+import { WhatsAppRepairDialog } from "@/hosted/v2/channels/whatsapp-repair-dialog";
 import { agentSectionLink } from "@/lib/agent-routes";
-import { isApiNotFoundError } from "@/lib/api-errors";
+import { toastApiError } from "@/lib/api";
+import { ApiError, isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -289,7 +322,12 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			) : null}
 
 			<section data-channel-linked-agents className="flex flex-col gap-3">
-				<AgentsTab accountId={id} />
+				<AgentsTab
+					accountId={id}
+					provider={ch.provider}
+					channelName={ch.name}
+					canManage={!providerUnavailable}
+				/>
 			</section>
 
 			<Tabs defaultValue="activity" className="min-w-0">
@@ -317,9 +355,32 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 // ── Agents ───────────────────────────────────────────────────────────────────
 
-function AgentsTab({ accountId }: { accountId: string }) {
+function AgentsTab({
+	accountId,
+	provider,
+	channelName,
+	canManage,
+}: {
+	accountId: string;
+	provider: string;
+	channelName: string;
+	canManage: boolean;
+}) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
+	const linkAgent = useLinkChannelAgent(accountId);
+	const unlinkAgent = useUnlinkChannelAgent(accountId);
+	const [linkOpen, setLinkOpen] = useState(false);
+	const [selectedAgentId, setSelectedAgentId] = useState("");
+	const [pairingLink, setPairingLink] = useState<ChannelAgentLink | null>(null);
+	const [pairingBaselineBindingCount, setPairingBaselineBindingCount] = useState(0);
+	const [pairingLoadingLinkId, setPairingLoadingLinkId] = useState<string | null>(null);
+	const [whatsappRepair, setWhatsappRepair] = useState<{
+		agentId: string;
+		replaceExistingProviderLink: boolean;
+	} | null>(null);
+	const selectedAgentLinks = useAgentChannelLinks(selectedAgentId, Boolean(selectedAgentId));
+	const bindings = useChannelBindings(accountId, pairingLink !== null);
 
 	if (links.isLoading || envs.isLoading) {
 		return <Skeleton className="h-24 w-full rounded-lg" />;
@@ -343,28 +404,117 @@ function AgentsTab({ accountId }: { accountId: string }) {
 		);
 	}
 	const items = links.data ?? [];
+	const linkedAgentIds = new Set(items.map((item) => item.agent_id));
+	const availableAgents = (envs.data ?? []).filter((env) => !linkedAgentIds.has(env.id));
+	const selectedAgent = availableAgents.find((env) => env.id === selectedAgentId);
+	const selectedLinkedProviders = selectedAgentLinks.data
+		? new Set(
+				selectedAgentLinks.data.flatMap((link) =>
+					link.account?.provider ? [link.account.provider] : [],
+				),
+			)
+		: undefined;
+	const replacementRequired = agentProviderLinkReplacementRequired(
+		selectedAgent?.agent_type,
+		provider,
+		selectedLinkedProviders,
+	);
+	const linkStatusUnknown = agentProviderLinkStatusUnknown(
+		selectedAgent?.agent_type,
+		provider,
+		selectedLinkedProviders,
+	);
+	const pairingBindingCount = pairingLink
+		? (bindings.data ?? []).filter((binding) => binding.agent_link_id === pairingLink.id).length
+		: 0;
+	const openPairing = async (link: ChannelAgentLink) => {
+		if (pairingLoadingLinkId) return false;
+		setPairingLoadingLinkId(link.id);
+		try {
+			const result = await bindings.refetch();
+			if (result.error) {
+				toastApiError("Couldn't load paired chats")(result.error);
+				return false;
+			}
+			const baseline = (result.data ?? []).filter(
+				(binding) => binding.agent_link_id === link.id,
+			).length;
+			setPairingBaselineBindingCount(baseline);
+			setPairingLink(link);
+			return true;
+		} finally {
+			setPairingLoadingLinkId(null);
+		}
+	};
+	const closePairing = () => {
+		setPairingLink(null);
+		setPairingBaselineBindingCount(0);
+	};
+	const agentOptions = availableAgents.map((env) => ({
+		value: env.id,
+		label: agentDisplayName(env),
+	}));
+	const submitLink = async (agentId: string, replaceExistingProviderLink: boolean) => {
+		if (!agentId || linkAgent.isPending) return;
+		try {
+			const result = await linkAgent.execute({
+				agentId,
+				replaceExistingProviderLink,
+			});
+			await openPairing(result);
+			setLinkOpen(false);
+			setSelectedAgentId("");
+		} catch (error) {
+			if (
+				error instanceof ApiError &&
+				error.status === 409 &&
+				error.detail === "whatsapp_repair_required"
+			) {
+				setWhatsappRepair({ agentId, replaceExistingProviderLink });
+				setLinkOpen(false);
+				return;
+			}
+			// The shared action already presents the provider or runtime error.
+		}
+	};
+	const linkButton = (
+		<Button
+			disabled={!selectedAgentId || linkStatusUnknown || linkAgent.isPending}
+			onClick={replacementRequired ? undefined : () => void submitLink(selectedAgentId, false)}
+		>
+			{linkAgent.isPending ? <Spinner className="size-3.5" /> : <Link2 />}
+			{linkAgent.isPending ? "Linking…" : "Link Agent"}
+		</Button>
+	);
 
 	return (
 		<div className="flex flex-col gap-3">
-			<SectionHeader label="Linked Agents" count={items.length} />
+			<SectionHeader
+				label="Linked Agents"
+				count={items.length}
+				action={
+					canManage ? (
+						<Button size="sm" variant="outline" onClick={() => setLinkOpen(true)}>
+							<Plus className="size-3.5" />
+							Link Agent
+						</Button>
+					) : undefined
+				}
+			/>
 
 			{items.length === 0 ? (
 				<EmptyState
 					variant="inset"
 					title="No Agents linked"
-					description="Connect this bot from an Agent’s Channels page."
+					description="Link an Agent here, then pair a chat for it."
 				/>
 			) : (
 				<div className={CHANNEL_RELATION_LIST_CLASS}>
 					{items.map((link: ChannelAgentLink) => (
-						<Link
+						<div
 							key={link.id}
-							{...agentSectionLink(link.agent_id, "channels")}
 							data-channel-agent-link-id={link.id}
-							className={cn(
-								CHANNEL_RELATION_ROW_CLASS,
-								"group transition-colors hover:bg-muted/50",
-							)}
+							className={CHANNEL_RELATION_ROW_CLASS}
 						>
 							<AgentName
 								env={findEnv(envs.data, link.agent_id)}
@@ -375,14 +525,177 @@ function AgentsTab({ accountId }: { accountId: string }) {
 									<span key="linked">Linked {relativeTime(link.created_at)}</span>,
 								]}
 							/>
-							<span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground">
-								Channels
-								<ArrowUpRight className="size-3.5" />
-							</span>
-						</Link>
+							<div className="flex shrink-0 items-center gap-1.5">
+								{canManage ? (
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={pairingLoadingLinkId !== null}
+										onClick={() => void openPairing(link)}
+									>
+										{pairingLoadingLinkId === link.id ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<MessageSquarePlus className="size-3.5" />
+										)}
+										Pair chat
+									</Button>
+								) : null}
+								<Button
+									render={<Link {...agentSectionLink(link.agent_id, "channels")} />}
+									nativeButton={false}
+									variant="ghost"
+									size="icon-sm"
+									aria-label="Open Agent Channels"
+								>
+									<ArrowUpRight className="size-3.5" />
+								</Button>
+								{canManage ? (
+									<ConfirmAction
+										title="Unlink Agent?"
+										description={<p>Its paired chats will stop using this channel.</p>}
+										confirmLabel="Unlink Agent"
+										destructive
+										onConfirm={() =>
+											unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })
+										}
+									>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											className="text-muted-foreground hover:text-destructive"
+											aria-label="Unlink Agent"
+										>
+											<Unplug className="size-3.5" />
+										</Button>
+									</ConfirmAction>
+								) : null}
+							</div>
+						</div>
 					))}
 				</div>
 			)}
+
+			<Dialog
+				open={linkOpen}
+				onOpenChange={setLinkOpen}
+				onOpenChangeComplete={(nextOpen) => {
+					if (!nextOpen) setSelectedAgentId("");
+				}}
+			>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Link Agent</DialogTitle>
+						<DialogDescription>
+							Choose an Agent, then pair one of its chats without leaving this channel.
+						</DialogDescription>
+					</DialogHeader>
+					{availableAgents.length > 0 ? (
+						<div className="space-y-1.5">
+							<Label htmlFor="channel-link-agent">Agent</Label>
+							<Select
+								items={agentOptions}
+								value={selectedAgentId}
+								onValueChange={(value) => setSelectedAgentId(value ?? "")}
+							>
+								<SelectTrigger id="channel-link-agent" className="w-full">
+									<SelectValue placeholder="Choose an Agent…" />
+								</SelectTrigger>
+								<SelectContent>
+									{availableAgents.map((env) => (
+										<SelectItem key={env.id} value={env.id}>
+											{agentDisplayName(env)}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					) : (
+						<p className="text-sm text-muted-foreground">Every available Agent is linked.</p>
+					)}
+					{selectedAgentId &&
+					shouldBlockQueryError(selectedAgentLinks.error, selectedAgentLinks.data) ? (
+						<ApiErrorPanel
+							error={selectedAgentLinks.error}
+							onRetry={() => selectedAgentLinks.refetch()}
+							title="Couldn't check this Agent's existing links"
+						/>
+					) : null}
+					<DialogFooter>
+						<Button variant="ghost" onClick={() => setLinkOpen(false)}>
+							Cancel
+						</Button>
+						{replacementRequired ? (
+							<ProviderLinkReplacementConfirm
+								provider={provider}
+								targetName={channelName}
+								onConfirm={() => submitLink(selectedAgentId, true)}
+							>
+								{linkButton}
+							</ProviderLinkReplacementConfirm>
+						) : (
+							linkButton
+						)}
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{pairingLink && provider === "telegram" ? (
+				<TelegramPairDialog
+					open
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) closePairing();
+					}}
+					agentId={pairingLink.agent_id}
+					accountId={accountId}
+					agentLinkId={pairingLink.id}
+					channelName={channelName}
+					bindingCount={pairingBindingCount}
+					baselineBindingCount={pairingBaselineBindingCount}
+				/>
+			) : pairingLink && provider === "discord" ? (
+				<DiscordPairDialog
+					open
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) closePairing();
+					}}
+					agentId={pairingLink.agent_id}
+					accountId={accountId}
+					agentLinkId={pairingLink.id}
+					channelName={channelName}
+					bindingCount={pairingBindingCount}
+					baselineBindingCount={pairingBaselineBindingCount}
+				/>
+			) : pairingLink && provider === "whatsapp" ? (
+				<WhatsAppPairDialog
+					open
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) closePairing();
+					}}
+					agentId={pairingLink.agent_id}
+					accountId={accountId}
+					agentLinkId={pairingLink.id}
+					channelName={channelName}
+					bindingCount={pairingBindingCount}
+					baselineBindingCount={pairingBaselineBindingCount}
+				/>
+			) : null}
+
+			{whatsappRepair ? (
+				<WhatsAppRepairDialog
+					open
+					accountId={accountId}
+					channelName={channelName}
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) setWhatsappRepair(null);
+					}}
+					onRepaired={() => {
+						const repaired = whatsappRepair;
+						setWhatsappRepair(null);
+						void submitLink(repaired.agentId, repaired.replaceExistingProviderLink);
+					}}
+				/>
+			) : null}
 		</div>
 	);
 }

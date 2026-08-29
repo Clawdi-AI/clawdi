@@ -30,7 +30,7 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).not.toContain("· Shared");
 	});
 
-	test("uses the shared channel-linking module without dead global relationship hooks", () => {
+	test("uses scoped relationship hooks without a duplicate linking dialog", () => {
 		const channelFiles = readdirSync(new URL(".", import.meta.url));
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 		const connectDialog = source("./connect-bot-dialog.tsx");
@@ -43,7 +43,8 @@ describe("global Channels inventory", () => {
 			expect(consumer).not.toContain("link-agent-dialog");
 		}
 		expect(hooks).not.toContain("export function useLinkAgent(");
-		expect(hooks).not.toContain("export function useUnlinkChannelAgent(");
+		expect(hooks).toContain("export function useLinkChannelAgent(");
+		expect(hooks).toContain("export function useUnlinkChannelAgent(");
 		expect(hooks).toContain("export function useUnlinkAgentChannel(");
 	});
 
