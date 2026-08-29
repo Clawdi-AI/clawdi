@@ -1,10 +1,10 @@
 # Clawdi Cloud product tour
 
 This tour shows the current Clawdi Cloud experience with a synthetic Acme
-Market Intelligence workspace. The demo contains 25 account Memories, five
-Project Skills, 12 Workspace files, a linked Project, and more than 200 Agent
-Sessions spanning 12 months. Names, companies, decisions, and activity are
-fictional.
+Market Intelligence workspace. The demo contains four Projects, 14 Project
+Skills, four empty demonstration Vaults, 25 account Memories, 12 Workspace
+files, and more than 200 Agent Sessions spanning 12 months. Names, companies,
+decisions, and activity are fictional.
 
 For task-by-task instructions, use the canonical [Clawdi
 Docs](https://docs.clawdi.ai). Start with the [Cloud Agent
@@ -46,7 +46,7 @@ A Project groups Project Skills and Vault access. Linking one to an Agent is
 an explicit action, which makes the selected resources available without
 changing Project ownership.
 
-![The Acme Market Intelligence Project linked to a Hermes Cloud Agent](images/cloud-projects.png)
+![Four synthetic Projects covering market intelligence, competitive research, customer advisory work, and launch intelligence](images/cloud-projects.png)
 
 Read [Projects and
 sharing](https://docs.clawdi.ai/guides/projects-and-sharing) before attaching
@@ -58,10 +58,37 @@ Project Skills are Cloud-owned reusable instructions. Agent Skills remain
 authoritative in the Agent software's guarded filesystem and appear in the
 Cloud dashboard as a read-only inventory.
 
-![Five synthetic Project Skills for research, meeting preparation, executive briefs, content repurposing, and demo data safety](images/cloud-skills.png)
+![Four synthetic Projects containing 14 Project Skills and four attached Vaults](images/cloud-skills.png)
 
 The [Skills guide](https://docs.clawdi.ai/guides/skills) covers both locations,
 copying, explicit imports, and safe review of third-party Skills.
+
+## Scope sensitive configuration with Vaults
+
+Vault access follows Project boundaries. The demo uses four empty Vaults to
+show the attachment model while keeping the public workspace free of API keys,
+tokens, and private configuration values.
+
+![Four empty synthetic Vaults attached to four demo Projects](images/cloud-vaults.png)
+
+Add real values only through the authorized Vault interface and attach each
+Vault to the Projects that need it. See [Projects and
+sharing](https://docs.clawdi.ai/guides/projects-and-sharing) for the access
+model.
+
+## Review credential-free Connector tools
+
+Some Connector toolkits are ready without account authorization. The demo
+verified Code Interpreter, Hacker News, and Composio Search; Code Interpreter
+exposes five sandbox and file tools. The Overview Connector total counts
+authorized external accounts, so account-free toolkits keep that total at
+zero.
+
+![Code Interpreter ready with five tools and no account connection required](images/cloud-connector-codeinterpreter.png)
+
+Use the [connect-an-app
+workflow](https://docs.clawdi.ai/guides/workflows/connect-an-app) for tool review,
+account authorization, and readiness checks.
 
 ## Keep durable account context
 
