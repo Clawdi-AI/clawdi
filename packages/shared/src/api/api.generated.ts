@@ -11683,7 +11683,7 @@ export interface operations {
     list_sessions_v1_sessions_get: {
         parameters: {
             query?: {
-                /** @description Case-insensitive phrase search on summary/project/id and visible message text */
+                /** @description Case-insensitive phrase search on summary/project/local ID and visible message text; cloud session IDs match by UUID prefix */
                 q?: string | null;
                 /** @description Filter by agent_type */
                 agent?: string | null;
