@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import case, delete, func, literal, select, update
+from sqlalchemy import String, case, cast, delete, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
 from app.models.session import Session, SessionEventChunk, SessionMessageSearch
+from app.schemas.session import (
+    SessionSearchAnchorResponse,
+    SessionSearchMatchResponse,
+)
 from app.schemas.session_events import SessionEvent
 from app.services.session_content import load_session_events, load_session_messages
 from app.services.session_events import project_visible_messages
 
 type SearchRole = Literal["user", "assistant"]
+
+_UUID_PREFIX_RE = re.compile(r"^[0-9a-f]{8,32}$", re.IGNORECASE)
 
 
 class SessionSearchFileStore(Protocol):
@@ -86,6 +93,54 @@ async def event_search_projection_complete(
 def escaped_contains_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def _uuid_prefix_pattern(value: str) -> str | None:
+    compact = value.strip().replace("-", "")
+    if not _UUID_PREFIX_RE.fullmatch(compact):
+        return None
+    return f"{compact}%"
+
+
+def session_search_excerpt(content: str, query: str, *, limit: int = 240) -> str:
+    compact = " ".join(content.split())
+    if len(compact) <= limit:
+        return compact
+    match_at = compact.casefold().find(query.casefold())
+    if match_at < 0:
+        return f"{compact[: limit - 3]}..."
+    start = max(0, match_at - limit // 3)
+    end = min(len(compact), start + limit)
+    start = max(0, end - limit)
+    return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
+
+
+def session_search_match_response(
+    session: Session,
+    query: str,
+    *,
+    content: object,
+    role: object,
+    position: object,
+    revision: object,
+) -> SessionSearchMatchResponse | None:
+    """Build the shared API match contract from a ranked search row."""
+    if (
+        not isinstance(content, str)
+        or role not in ("user", "assistant")
+        or not isinstance(position, int)
+        or not isinstance(revision, str)
+    ):
+        return None
+    return SessionSearchMatchResponse(
+        role=role,
+        excerpt=session_search_excerpt(content, query),
+        anchor=SessionSearchAnchorResponse(
+            kind="event_seq" if session.content_protocol == "events-v1" else "snapshot_offset",
+            position=position,
+            revision=revision,
+        ),
+    )
 
 
 def _searchable_text(content: str) -> str:
@@ -159,14 +214,57 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     )
 
 
+def session_search_matches(user_id: UUID, query: str) -> Subquery:
+    """Return every exact phrase match with one ranked body hit per Session."""
+    pattern = escaped_contains_pattern(query)
+    message_match = best_session_message_matches(user_id, query)
+    metadata_matches = [
+        func.coalesce(Session.summary, "").ilike(pattern, escape="\\"),
+        func.coalesce(Session.project_path, "").ilike(pattern, escape="\\"),
+        Session.local_session_id.ilike(pattern, escape="\\"),
+    ]
+    metadata_scores = [
+        func.similarity(func.coalesce(Session.summary, ""), query),
+        func.similarity(func.coalesce(Session.project_path, ""), query),
+        func.similarity(Session.local_session_id, query),
+    ]
+    uuid_prefix = _uuid_prefix_pattern(query)
+    if uuid_prefix is not None:
+        compact_session_id = func.replace(cast(Session.id, String), "-", "")
+        metadata_matches.append(compact_session_id.ilike(uuid_prefix))
+        metadata_scores.append(func.similarity(compact_session_id, uuid_prefix[:-1]))
+    metadata_match = or_(*metadata_matches)
+    metadata_score = func.greatest(*metadata_scores)
+    message_score = func.coalesce(message_match.c.score, 0.0)
+    return (
+        select(
+            Session.id.label("session_id"),
+            func.greatest(metadata_score, message_score).label("score"),
+            message_match.c.content,
+            message_match.c.role,
+            message_match.c.position,
+            message_match.c.content_revision,
+        )
+        .outerjoin(message_match, message_match.c.session_id == Session.id)
+        .where(
+            Session.user_id == user_id,
+            or_(metadata_match, message_match.c.session_id.is_not(None)),
+        )
+        .subquery("session_search_matches")
+    )
+
+
 async def session_message_search_navigation(
     db: AsyncSession,
     session: Session,
     *,
     query: str,
     position: int | None = None,
+    roles: Sequence[SearchRole] | None = None,
 ) -> SessionSearchNavigation | None:
     """Resolve one active match and its transcript-order neighbours."""
+    if roles is not None and not roles:
+        return None
     document_revision = current_document_revision(session)
     if document_revision is None or session.search_index_revision != current_search_revision(
         session
@@ -174,26 +272,25 @@ async def session_message_search_navigation(
         return None
 
     message_match = _message_match_expression(query)
-    ordered_matches = (
-        select(
-            SessionMessageSearch.position.label("position"),
-            func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
-            func.count().over().label("match_total"),
-            func.lag(SessionMessageSearch.position)
-            .over(order_by=SessionMessageSearch.position)
-            .label("previous_position"),
-            func.lead(SessionMessageSearch.position)
-            .over(order_by=SessionMessageSearch.position)
-            .label("next_position"),
-        )
-        .where(
-            SessionMessageSearch.user_id == session.user_id,
-            SessionMessageSearch.session_id == session.id,
-            SessionMessageSearch.content_revision == document_revision,
-            message_match,
-        )
-        .subquery("ordered_session_message_matches")
+    ordered_matches_query = select(
+        SessionMessageSearch.position.label("position"),
+        func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
+        func.count().over().label("match_total"),
+        func.lag(SessionMessageSearch.position)
+        .over(order_by=SessionMessageSearch.position)
+        .label("previous_position"),
+        func.lead(SessionMessageSearch.position)
+        .over(order_by=SessionMessageSearch.position)
+        .label("next_position"),
+    ).where(
+        SessionMessageSearch.user_id == session.user_id,
+        SessionMessageSearch.session_id == session.id,
+        SessionMessageSearch.content_revision == document_revision,
+        message_match,
     )
+    if roles is not None:
+        ordered_matches_query = ordered_matches_query.where(SessionMessageSearch.role.in_(roles))
+    ordered_matches = ordered_matches_query.subquery("ordered_session_message_matches")
     navigation_query = select(
         ordered_matches.c.position,
         ordered_matches.c.match_index,

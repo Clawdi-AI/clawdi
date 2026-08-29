@@ -2,10 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-route-gate";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
-import { parseSessionTimelineView } from "@/lib/session-search-anchor";
+import {
+	sessionSearchAnchorFromSearch,
+	validateSessionDetailSearch,
+} from "@/lib/session-search-anchor";
 import AgentSessionDetailPage from "@/pages/dashboard/agents/agent-session-detail-page";
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/sessions/$sessionId")({
+	validateSearch: validateSessionDetailSearch,
 	head: () => routeHeadTitle("Session"),
 	component: AgentSessionDetailRoute,
 });
@@ -13,6 +17,7 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/sessions
 function AgentSessionDetailRoute() {
 	const { id, sessionId } = Route.useParams();
 	const search = Route.useSearch();
+	const searchAnchor = sessionSearchAnchorFromSearch(search);
 	return (
 		<AgentResourceRouteGate
 			agentId={id}
@@ -23,7 +28,9 @@ function AgentSessionDetailRoute() {
 			<AgentSessionDetailPage
 				agentId={id}
 				sessionId={sessionId}
-				timelineView={parseSessionTimelineView(search.timelineView) ?? "all"}
+				searchAnchor={searchAnchor}
+				searchQuery={search.matchQuery}
+				timelineView={search.timelineView ?? "all"}
 			/>
 		</AgentResourceRouteGate>
 	);

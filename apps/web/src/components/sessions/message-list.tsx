@@ -91,6 +91,7 @@ function MessageBlock({
 	isHighlighted,
 	highlightedRef,
 	highlightQuery,
+	deferOffscreenRendering,
 }: {
 	message: SessionMessage;
 	userAvatar?: string;
@@ -107,6 +108,7 @@ function MessageBlock({
 	isHighlighted?: boolean;
 	highlightedRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
+	deferOffscreenRendering: boolean;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
@@ -120,7 +122,7 @@ function MessageBlock({
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
 				"group flex scroll-mt-24 gap-3 rounded-md",
-				OFFSCREEN_RENDERING_CLASS,
+				deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS,
 				isGroupStart ? "pt-4" : "",
 				isHighlighted && "bg-primary/5 ring-1 ring-primary/30",
 			)}
@@ -196,7 +198,11 @@ function MessageBlock({
 					)}
 				>
 					{isUser ? (
-						<UserMessageBody content={message.content} highlightQuery={highlightQuery} />
+						<UserMessageBody
+							content={message.content}
+							highlightQuery={highlightQuery}
+							revealCollapsedMatch={isHighlighted}
+						/>
 					) : (
 						<Markdown content={message.content} highlightQuery={highlightQuery} />
 					)}
@@ -237,9 +243,11 @@ function isSkillExpansion(content: string): boolean {
 function UserMessageBody({
 	content,
 	highlightQuery,
+	revealCollapsedMatch,
 }: {
 	content: string;
 	highlightQuery?: string;
+	revealCollapsedMatch?: boolean;
 }) {
 	const cmd = parseSlashCommand(content);
 	if (cmd) {
@@ -256,6 +264,7 @@ function UserMessageBody({
 				label="Skill Setup Text"
 				content={content}
 				highlightQuery={highlightQuery}
+				revealMatch={revealCollapsedMatch}
 			/>
 		);
 	}
@@ -276,16 +285,18 @@ function CollapsibleBlock({
 	label,
 	content,
 	highlightQuery,
+	revealMatch,
 }: {
 	label: string;
 	content: string;
 	highlightQuery?: string;
+	revealMatch?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const containsMatch = highlightQuery
 		? splitSearchHighlight(content, highlightQuery).some((part) => part.highlighted)
 		: false;
-	const visible = open || containsMatch;
+	const visible = open || (revealMatch && containsMatch);
 	return (
 		<div className="rounded-md border border-dashed border-border/70 bg-muted/30">
 			<Button
@@ -361,19 +372,65 @@ function ToolDetails({ call, result }: { call?: SessionToolCall; result?: Sessio
 	);
 }
 
-function ToolActivity({ call, result }: { call?: SessionToolCall; result?: SessionToolResult }) {
+interface PairedToolActivity {
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstItem: SessionToolCall | SessionToolResult;
+	firstIndex: number;
+}
+
+// Parallel tool use is commonly serialized as call A, call B, result A,
+// result B. Pair a contiguous tool run by its stable call ID while preserving
+// the first-seen order and every row when a broken producer reuses an ID.
+function collectToolActivities(items: TimelineEntry[], startIndex: number) {
+	const activities: PairedToolActivity[] = [];
+	const activitiesByCallId = new Map<string, PairedToolActivity[]>();
+	let nextIndex = startIndex;
+	while (nextIndex < items.length) {
+		const item = items[nextIndex];
+		if (!isToolEntry(item)) break;
+
+		const matching = activitiesByCallId.get(item.call_id) ?? [];
+		let activity = matching.find((candidate) =>
+			item.kind === "tool_call" ? candidate.call === undefined : candidate.result === undefined,
+		);
+		if (!activity) {
+			activity = {
+				firstItem: item,
+				firstIndex: nextIndex,
+			};
+			matching.push(activity);
+			activitiesByCallId.set(item.call_id, matching);
+			activities.push(activity);
+		}
+		if (item.kind === "tool_call") activity.call = item;
+		else activity.result = item;
+		nextIndex++;
+	}
+	return { activities, nextIndex };
+}
+
+function ToolActivity({
+	call,
+	result,
+	firstTimestamp,
+	deferOffscreenRendering,
+}: {
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstTimestamp?: string | null;
+	deferOffscreenRendering: boolean;
+}) {
 	const [open, setOpen] = useState(false);
 	const name = call?.name ?? result?.name ?? "Tool";
 	const hasDetails = Boolean(call?.arguments_json || result?.content || result?.result_json);
 	const isError = result?.status === "error";
-	const timestamp = call?.timestamp ?? result?.timestamp;
+	const timestamp = firstTimestamp ?? call?.timestamp ?? result?.timestamp;
 
 	return (
-		<div className={cn("flex gap-3 py-2", OFFSCREEN_RENDERING_CLASS)}>
-			<div className="flex w-8 shrink-0 justify-center pt-1">
-				<span className="flex size-6 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-xs">
-					<Wrench className="size-3.5" />
-				</span>
+		<div className={cn("flex gap-3 py-1.5", deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS)}>
+			<div className="flex w-8 shrink-0 justify-center pt-2 text-muted-foreground">
+				<Wrench className="size-3.5" />
 			</div>
 			<div className="min-w-0 flex-1">
 				<button
@@ -381,15 +438,8 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 					disabled={!hasDetails}
 					onClick={() => setOpen((value) => !value)}
 					aria-expanded={hasDetails ? open : undefined}
-					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 disabled:cursor-default disabled:hover:bg-transparent"
+					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
 				>
-					<ChevronRight
-						className={cn(
-							"size-3.5 shrink-0 transition-transform",
-							open && "rotate-90",
-							!hasDetails && "invisible",
-						)}
-					/>
 					<code className="truncate font-medium text-foreground">{name}</code>
 					{isError ? (
 						<span className="inline-flex shrink-0 items-center gap-1 text-destructive">
@@ -397,7 +447,7 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 						</span>
 					) : result ? (
 						<span className="inline-flex shrink-0 items-center gap-1">
-							<CheckCircle2 className="size-3.5" /> Completed
+							<CheckCircle2 className="size-3.5" /> Done
 						</span>
 					) : (
 						<span className="shrink-0">Called</span>
@@ -413,6 +463,14 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 							})}
 						</span>
 					) : null}
+					<ChevronRight
+						aria-hidden="true"
+						className={cn(
+							"size-3.5 shrink-0 transition-transform",
+							open && "rotate-90",
+							!hasDetails && "invisible",
+						)}
+					/>
 				</button>
 				{open ? (
 					<div className="px-2 pb-2 pt-1">
@@ -424,31 +482,7 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 	);
 }
 
-/**
- * Renders an ordered session timeline. Adjacent call/result events with the
- * same call ID collapse into one tool activity row; tools break message author
- * grouping. The 5-minute threshold matches Slack / Discord message threads.
- *
- * `itemKeys` is an optional caller-provided per-row stable key
- * (e.g. the message's canonical position when the caller is paginating).
- * Falls back to the array index, which is fine for SSR / single-page
- * renders where order is stable.
- *
- * Exported as a Component (not a plain function) so server components
- * can render it as `<SessionTimelineList .../>` — React 19 rejects calls to
- * client-module functions from the server tree, but client components
- * rendered as JSX cross the boundary fine.
- */
-export function SessionTimelineList({
-	items,
-	itemKeys,
-	agentType,
-	userAvatar,
-	userName,
-	highlightedMessageKey,
-	highlightedMessageRef,
-	highlightQuery,
-}: {
+export interface SessionTimelineListProps {
 	items: TimelineEntry[];
 	itemKeys?: string[] | null;
 	agentType: string | null | undefined;
@@ -457,61 +491,154 @@ export function SessionTimelineList({
 	highlightedMessageKey?: string | null;
 	highlightedMessageRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
-}) {
+}
+
+interface TimelineRowBase {
+	rowKey: string | number;
+	dividerTimestamp?: string;
+}
+
+interface MessageTimelineRow extends TimelineRowBase {
+	kind: "message";
+	message: TimelineMessage;
+	isGroupStart: boolean;
+}
+
+interface ToolTimelineRow extends TimelineRowBase {
+	kind: "tool";
+	call?: SessionToolCall;
+	result?: SessionToolResult;
+	firstTimestamp?: string | null;
+}
+
+export type SessionTimelineRow = MessageTimelineRow | ToolTimelineRow;
+
+/**
+ * Normalizes source events into the visual rows shared by the static public
+ * transcript and the virtualized dashboard timeline. Tool pairs and date
+ * dividers must be resolved before virtualization so both renderers preserve
+ * identical grouping semantics.
+ */
+export function buildSessionTimelineRows(
+	items: TimelineEntry[],
+	itemKeys?: string[] | null,
+): SessionTimelineRow[] {
 	const GROUP_GAP_MS = 5 * 60_000;
-	const out: React.ReactNode[] = [];
-	let prevDayKey: string | null = null;
+	const rows: SessionTimelineRow[] = [];
+	let previousDayKey: string | null = null;
 	let previousMessage: TimelineMessage | null = null;
+	const takeDividerTimestamp = (timestamp: string | null | undefined) => {
+		const nextDayKey = dayKey(timestamp);
+		if (!timestamp || !nextDayKey || nextDayKey === previousDayKey) return undefined;
+		previousDayKey = nextDayKey;
+		return timestamp;
+	};
+
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i];
-		const dKey = dayKey(item.timestamp);
-		const dividerJustEmitted = Boolean(dKey && dKey !== prevDayKey);
-		if (dKey && dKey !== prevDayKey) {
-			out.push(<DateDivider key={`d-${dKey}`} timestamp={item.timestamp ?? ""} />);
-			prevDayKey = dKey;
-		}
-
 		if (isToolEntry(item)) {
-			const next = items[i + 1];
-			const paired =
-				next && isToolEntry(next) && next.kind !== item.kind && next.call_id === item.call_id
-					? next
-					: null;
-			const call =
-				item.kind === "tool_call" ? item : paired?.kind === "tool_call" ? paired : undefined;
-			const result =
-				item.kind === "tool_result" ? item : paired?.kind === "tool_result" ? paired : undefined;
-			const toolKey = itemKeys?.[i] ?? `${item.kind}:${item.position}`;
-			out.push(<ToolActivity key={toolKey} call={call} result={result} />);
-			if (paired) i++;
+			const { activities, nextIndex } = collectToolActivities(items, i);
+			for (const activity of activities) {
+				rows.push({
+					kind: "tool",
+					rowKey:
+						itemKeys?.[activity.firstIndex] ??
+						`${activity.firstItem.kind}:${activity.firstItem.position}`,
+					dividerTimestamp: takeDividerTimestamp(activity.firstItem.timestamp),
+					call: activity.call,
+					result: activity.result,
+					firstTimestamp: activity.firstItem.timestamp,
+				});
+			}
+			i = nextIndex - 1;
 			previousMessage = null;
 			continue;
 		}
 
-		const sameAuthor = previousMessage?.role === item.role;
+		const dividerTimestamp = takeDividerTimestamp(item.timestamp);
+		const sameSpeaker =
+			previousMessage?.role === item.role &&
+			(item.role !== "assistant" || (previousMessage.model ?? null) === (item.model ?? null));
 		const closeInTime =
 			previousMessage?.timestamp && item.timestamp
 				? Math.abs(
 						new Date(item.timestamp).getTime() - new Date(previousMessage.timestamp).getTime(),
 					) < GROUP_GAP_MS
 				: false;
-		const isGroupStart = !sameAuthor || !closeInTime || dividerJustEmitted;
-		const messageKey = itemKeys?.[i] ?? i;
-		const isHighlighted = messageKey === highlightedMessageKey;
-		out.push(
-			<MessageBlock
-				key={messageKey}
-				message={item}
-				userAvatar={userAvatar}
-				userName={userName}
-				agentType={agentType}
-				isGroupStart={isGroupStart}
-				isHighlighted={isHighlighted}
-				highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
-				highlightQuery={isHighlighted ? highlightQuery : undefined}
-			/>,
-		);
+		rows.push({
+			kind: "message",
+			rowKey: itemKeys?.[i] ?? i,
+			dividerTimestamp,
+			message: item,
+			isGroupStart: !sameSpeaker || !closeInTime || dividerTimestamp !== undefined,
+		});
 		previousMessage = item;
 	}
-	return <>{out}</>;
+	return rows;
+}
+
+export function SessionTimelineRowView({
+	row,
+	agentType,
+	userAvatar,
+	userName,
+	highlightedMessageKey,
+	highlightedMessageRef,
+	highlightQuery,
+	deferOffscreenRendering,
+}: Omit<SessionTimelineListProps, "items" | "itemKeys"> & {
+	row: SessionTimelineRow;
+	deferOffscreenRendering: boolean;
+}) {
+	const isHighlighted = row.kind === "message" && row.rowKey === highlightedMessageKey;
+	return (
+		<>
+			{row.dividerTimestamp ? <DateDivider timestamp={row.dividerTimestamp} /> : null}
+			{row.kind === "message" ? (
+				<MessageBlock
+					message={row.message}
+					userAvatar={userAvatar}
+					userName={userName}
+					agentType={agentType}
+					isGroupStart={row.isGroupStart}
+					isHighlighted={isHighlighted}
+					highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
+					highlightQuery={highlightQuery}
+					deferOffscreenRendering={deferOffscreenRendering}
+				/>
+			) : (
+				<ToolActivity
+					call={row.call}
+					result={row.result}
+					firstTimestamp={row.firstTimestamp}
+					deferOffscreenRendering={deferOffscreenRendering}
+				/>
+			)}
+		</>
+	);
+}
+
+/**
+ * Static renderer used by public shares. Dashboard timelines use the same row
+ * model through the virtualized renderer.
+ */
+export function SessionTimelineList(props: SessionTimelineListProps) {
+	const rows = buildSessionTimelineRows(props.items, props.itemKeys);
+	return (
+		<>
+			{rows.map((row) => (
+				<SessionTimelineRowView
+					key={row.rowKey}
+					row={row}
+					agentType={props.agentType}
+					userAvatar={props.userAvatar}
+					userName={props.userName}
+					highlightedMessageKey={props.highlightedMessageKey}
+					highlightedMessageRef={props.highlightedMessageRef}
+					highlightQuery={props.highlightQuery}
+					deferOffscreenRendering
+				/>
+			))}
+		</>
+	);
 }
