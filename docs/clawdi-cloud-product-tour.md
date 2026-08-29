@@ -2,8 +2,8 @@
 
 This tour shows the current Clawdi Cloud experience with a synthetic Acme
 Market Intelligence workspace. The demo contains 25 account Memories, five
-Project Skills, 12 Workspace files, a linked Project, and more than 150 Agent
-Sessions spanning 11 months. Names, companies, decisions, and activity are
+Project Skills, 12 Workspace files, a linked Project, and more than 200 Agent
+Sessions spanning 12 months. Names, companies, decisions, and activity are
 fictional.
 
 For task-by-task instructions, use the canonical [Clawdi
@@ -21,9 +21,9 @@ Claude Code, and Codex, is a separate choice from the run path.
 ## Review long-running activity
 
 The Overview activity graph summarizes Session starts across the last 12
-months. The synthetic workspace has 111 active days with varied activity
-density, so the dashboard demonstrates sustained Agent use alongside recent
-Sessions and shared Library resources.
+months. The synthetic workspace has 157 active days with an even weekly rhythm
+and varied daily intensity, so the dashboard demonstrates sustained Agent use
+alongside recent Sessions and shared Library resources.
 
 ![Clawdi Overview with two running demo Agents and a populated 12-month Session activity heatmap](images/dashboard-activity.png)
 
