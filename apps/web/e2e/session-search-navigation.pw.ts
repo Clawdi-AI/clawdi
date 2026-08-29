@@ -507,12 +507,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
 	for (let attempt = 0; attempt < 8 && requestedOffsets.size < 5; attempt++) {
 		const requestCount = requestedOffsets.size;
-		const loadMore = page.getByRole("button", { name: /^Load more \(/ });
-		if (await loadMore.isVisible()) {
-			await loadMore.click();
-		} else {
-			await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
-		}
+		await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
 		await expect.poll(() => requestedOffsets.size).toBeGreaterThan(requestCount);
 	}
 	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
