@@ -1421,6 +1421,32 @@ async def archive_bot_agent_link(
     await db.flush()
 
 
+async def archive_active_bot_agent_links_for_agent(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+) -> int:
+    """Archive every active Link after the caller fences new Link admission."""
+
+    rows = (
+        await db.execute(
+            select(ChannelBotAgentLink, ChannelAccount)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+            .where(
+                ChannelBotAgentLink.agent_id == agent_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+            .order_by(ChannelBotAgentLink.id)
+            .execution_options(populate_existing=True)
+            .with_for_update(of=ChannelBotAgentLink)
+        )
+    ).all()
+    for link, account in rows:
+        await archive_bot_agent_link(db, link=link, account=account)
+    return len(rows)
+
+
 async def get_owned_private_channel_account(
     db: AsyncSession,
     *,

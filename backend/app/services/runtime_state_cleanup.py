@@ -15,6 +15,7 @@ from app.models.runtime_observation import (
 from app.models.user import User
 from app.schemas.runtime_observation import RuntimeStateCleanupReceipt
 from app.services.ai_provider_credentials import release_runtime_oauth_claims
+from app.services.channels import archive_active_bot_agent_links_for_agent
 from app.services.runtime_observation import RuntimeObservationProtocolError
 
 
@@ -91,14 +92,21 @@ async def cleanup_retired_runtime_state(
         retirement_id=retirement_id,
     )
 
+    existing_receipt: RuntimeStateCleanupReceipt | None = None
     if fence.runtime_state_cleanup_id is not None:
         if fence.runtime_state_cleanup_id != cleanup_id:
             raise _conflict(
                 "runtime_state_cleanup_conflict",
                 "retired runtime state was cleaned by another obligation",
             )
-        receipt = validate_runtime_state_cleanup_receipt(fence, cleanup_id=cleanup_id)
-        return receipt, False, False
+        existing_receipt = validate_runtime_state_cleanup_receipt(fence, cleanup_id=cleanup_id)
+
+    # Link admission locks the runtime fence before inserting a Link. Holding
+    # the retired fence here makes this replay-safe and closes concurrent
+    # admission before the canonical per-Link cleanup runs.
+    await archive_active_bot_agent_links_for_agent(db, agent_id=environment_id)
+    if existing_receipt is not None:
+        return existing_receipt, False, False
 
     runtime_state = await db.scalar(
         select(HostedRuntimeState)
