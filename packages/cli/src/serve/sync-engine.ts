@@ -45,6 +45,7 @@ import type {
 	SessionScanRequest,
 	SkillModule,
 } from "../adapters/base";
+import { scanSessionModule } from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
 import { computeLastActivityIso } from "../lib/session-activity";
@@ -57,7 +58,11 @@ import {
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
 } from "../lib/session-upload";
-import { readSessionsLock, type SessionFence } from "../lib/sessions-lock";
+import {
+	type FencedSessionLockEntry,
+	readSessionsLock,
+	type SessionFence,
+} from "../lib/sessions-lock";
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
@@ -258,7 +263,7 @@ export class SyncHealth {
 interface StableSessionEnqueueOptions {
 	abort: AbortSignal;
 	sessions: readonly RawSession[];
-	queue: Pick<RetryQueue, "enqueue">;
+	queue: Pick<RetryQueue, "enqueueWhenAvailable">;
 	lastPushedHash: ReadonlyMap<string, string>;
 	inFlightHash: Map<string, string>;
 	protocol: SelectedSessionProtocol;
@@ -284,17 +289,21 @@ export async function enqueueChangedSessionsAfterStability(
 		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
 		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
 		if (opts.abort.aborted) return enqueued;
-		opts.queue.enqueue({
-			kind: "session_push",
-			local_session_id: session.localSessionId,
-			content_hash: hash,
-			api_origin: fence.apiOrigin,
-			environment_id: fence.environmentId,
-			adapter: fence.adapter,
-			source_session_key: fence.sourceSessionKey,
-			enqueued_at: new Date().toISOString(),
-			attempts: 0,
-		});
+		const version = await opts.queue.enqueueWhenAvailable(
+			{
+				kind: "session_push",
+				local_session_id: session.localSessionId,
+				content_hash: hash,
+				api_origin: fence.apiOrigin,
+				environment_id: fence.environmentId,
+				adapter: fence.adapter,
+				source_session_key: fence.sourceSessionKey,
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			},
+			opts.abort,
+		);
+		if (version === null) return enqueued;
 		opts.inFlightHash.set(session.localSessionId, hash);
 		enqueued += 1;
 	}
@@ -915,39 +924,57 @@ async function prepareSessionSync(
 	const { api, queue, health, inFlightSessionHash } = common;
 	const protocol = await negotiateSessionProtocol(api, sessions);
 	const lastPushedSessionHash = loadFencedSessionHashes(api, opts);
+	for (const entry of currentFencedSessionEntries(api, opts)) {
+		if (entry.blocked) {
+			health.set(
+				"push",
+				`session:${entry.source_session_key}`,
+				`blocked: ${entry.blocked.message}`,
+			);
+		}
+	}
+	let pendingScan: SessionScanRequest | null = null;
+	let activeScan: Promise<void> | null = null;
 
-	const onSessionsStable = async (event?: SessionWatchEvent): Promise<void> => {
+	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
-			const request: SessionScanRequest = event?.kind === "paths" ? event : { kind: "complete" };
-			const result = await sessions.collect(request);
-			const enqueued = await enqueueChangedSessionsAfterStability({
-				abort: opts.abort,
-				sessions: result.sessions,
-				queue,
-				lastPushedHash: lastPushedSessionHash,
-				inFlightHash: inFlightSessionHash,
-				protocol,
-				fenceFor: (session) =>
-					sessionFence(api, {
-						environmentId: opts.environmentId,
-						adapter: opts.adapter.agentType,
-						sourceSessionKey: session.localSessionId,
-					}),
-				onBlocked: (session, message) => {
-					health.set("push", `session:${session.localSessionId}`, `blocked: ${message}`);
-					lastPushedSessionHash.set(
-						session.localSessionId,
-						planSessionUpload(session, protocol).localHash,
-					);
-				},
-			});
-			if (result.coverage === "complete") {
-				health.clearAbsent(
-					"push",
-					"session:",
-					new Set(result.sessions.map((session) => `session:${session.localSessionId}`)),
-				);
+			const scan = await scanSessionModule(
+				sessions,
+				request,
+				loadFencedSessionSourceRevisions(api, opts, protocol),
+			);
+			const observedResources = new Set<string>();
+			let enqueued = 0;
+			for await (const batch of scan.batches) {
+				for (const localSessionId of batch.observedLocalSessionIds) {
+					observedResources.add(`session:${localSessionId}`);
+				}
+				enqueued += await enqueueChangedSessionsAfterStability({
+					abort: opts.abort,
+					sessions: batch.sessions,
+					queue,
+					lastPushedHash: lastPushedSessionHash,
+					inFlightHash: inFlightSessionHash,
+					protocol,
+					fenceFor: (session) =>
+						sessionFence(api, {
+							environmentId: opts.environmentId,
+							adapter: opts.adapter.agentType,
+							sourceSessionKey: session.localSessionId,
+						}),
+					onBlocked: (session, message) => {
+						health.set("push", `session:${session.localSessionId}`, `blocked: ${message}`);
+						lastPushedSessionHash.set(
+							session.localSessionId,
+							planSessionUpload(session, protocol).localHash,
+						);
+					},
+				});
+				if (opts.abort.aborted) return;
+			}
+			if (scan.coverage === "complete") {
+				health.clearAbsent("push", "session:", observedResources);
 			}
 			health.clear("push", "session_scan");
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
@@ -958,24 +985,50 @@ async function prepareSessionSync(
 		}
 	};
 
-	await onSessionsStable();
+	const mergeScanRequest = (
+		current: SessionScanRequest | null,
+		next: SessionScanRequest,
+	): SessionScanRequest => {
+		if (!current || current.kind === "complete" || next.kind === "complete") {
+			return current?.kind === "complete" ? current : next;
+		}
+		return { kind: "paths", paths: [...new Set([...current.paths, ...next.paths])] };
+	};
+	const requestScan = (event?: SessionWatchEvent): Promise<void> => {
+		const request: SessionScanRequest = event?.kind === "paths" ? event : { kind: "complete" };
+		pendingScan = mergeScanRequest(pendingScan, request);
+		if (!activeScan) {
+			activeScan = (async () => {
+				while (pendingScan && !opts.abort.aborted) {
+					const next = pendingScan;
+					pendingScan = null;
+					await executeScan(next);
+				}
+			})().finally(() => {
+				activeScan = null;
+			});
+		}
+		return activeScan;
+	};
+
 	return {
 		queueModule: { module: sessions, protocol },
 		lastPushedHash: lastPushedSessionHash,
 		run: async () => {
 			await Promise.all([
+				requestScan(),
 				watchSessions({
 					paths: sessions.watchPaths(),
 					abort: opts.abort,
 					onPathStable: (change) => {
-						if (!opts.abort.aborted) void onSessionsStable(change);
+						if (!opts.abort.aborted) void requestScan(change);
 					},
 					forcePoll: opts.forcePollWatcher,
 				}),
 				(async () => {
 					while (!opts.abort.aborted) {
 						await sleep(RECONCILE_INTERVAL_MS, opts.abort);
-						if (!opts.abort.aborted) await onSessionsStable();
+						if (!opts.abort.aborted) await requestScan();
 					}
 				})(),
 			]);
@@ -995,20 +1048,39 @@ async function runSessionSync(
 
 function loadFencedSessionHashes(api: ApiClient, opts: EngineOpts): Map<string, string> {
 	const hashes = new Map<string, string>();
-	const lock = readSessionsLock();
-	if (lock.version !== 2) return hashes;
-	for (const value of Object.values(lock.sessions)) {
-		if (
-			"local_hash" in value &&
-			value.api_origin === canonicalApiOrigin(api.baseUrl) &&
-			value.environment_id === opts.environmentId &&
-			value.adapter === opts.adapter.agentType &&
-			value.pending === undefined
-		) {
+	for (const value of currentFencedSessionEntries(api, opts)) {
+		if (value.pending === undefined) {
 			hashes.set(value.source_session_key, value.local_hash);
 		}
 	}
 	return hashes;
+}
+
+function loadFencedSessionSourceRevisions(
+	api: ApiClient,
+	opts: EngineOpts,
+	protocol: SelectedSessionProtocol,
+): Map<string, string> {
+	const revisions = new Map<string, string>();
+	for (const value of currentFencedSessionEntries(api, opts)) {
+		if (value.protocol === protocol && value.pending === undefined && value.source_revision) {
+			revisions.set(value.source_session_key, value.source_revision);
+		}
+	}
+	return revisions;
+}
+
+function currentFencedSessionEntries(api: ApiClient, opts: EngineOpts): FencedSessionLockEntry[] {
+	const lock = readSessionsLock();
+	if (lock.version !== 2) return [];
+	const apiOrigin = canonicalApiOrigin(api.baseUrl);
+	return Object.values(lock.sessions).filter(
+		(value): value is FencedSessionLockEntry =>
+			"local_hash" in value &&
+			value.api_origin === apiOrigin &&
+			value.environment_id === opts.environmentId &&
+			value.adapter === opts.adapter.agentType,
+	);
 }
 
 function enqueueMaterializedSkillClaimCleanup(
@@ -1753,7 +1825,7 @@ async function uploadSessionFromQueue(
 
 	const suppressed = result.suppressed?.includes(session.localSessionId) ?? false;
 	if (suppressed) {
-		persistSuppressedSession(fence, plan);
+		persistSuppressedSession(fence, session, plan);
 	} else {
 		const content = await syncSessionContent({
 			api,

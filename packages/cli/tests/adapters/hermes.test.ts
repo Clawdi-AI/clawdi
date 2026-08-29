@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { tarSkillDir } from "../../src/lib/tar";
 import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
@@ -224,6 +225,67 @@ describe("HermesAdapter.collectSessions", () => {
 			type: "message",
 			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
 		});
+	});
+
+	it("scans large stores in bounded batches and expands only revised sessions", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		for (let index = 0; index < 40; index++) {
+			const id = `bulk-${String(index).padStart(2, "0")}`;
+			db.run(
+				"INSERT INTO sessions (id, source, title, started_at, message_count) VALUES (?, 'cron', ?, ?, 1)",
+				id,
+				`Bulk ${index}`,
+				1776247000,
+			);
+			db.run(
+				"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES (?, 'user', ?, ?, 1, 0)",
+				id,
+				`Message ${index}`,
+				1776247000,
+			);
+		}
+		db.close();
+
+		const adapter = new HermesAdapter();
+		const initial = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		const revisions = new Map<string, string>();
+		const initialBatchSizes: number[] = [];
+		for await (const batch of initial.batches) {
+			initialBatchSizes.push(batch.observedLocalSessionIds.length);
+			for (const session of batch.sessions) {
+				if (!session.sourceRevision) throw new Error("expected Hermes source revision");
+				revisions.set(session.localSessionId, session.sourceRevision);
+			}
+		}
+		expect(initialBatchSizes).toEqual([32, 9]);
+		expect(revisions.size).toBe(41);
+
+		const unchanged = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
+		let observed = 0;
+		let expanded = 0;
+		for await (const batch of unchanged.batches) {
+			observed += batch.observedLocalSessionIds.length;
+			expanded += batch.sessions.length;
+		}
+		expect({ observed, expanded }).toEqual({ observed: 41, expanded: 0 });
+
+		const changedDb = new Database(join(tmpHome, ".hermes", "state.db"));
+		changedDb.run(
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES ('bulk-00', 'assistant', 'Changed', 1776247001, 1, 0)",
+		);
+		changedDb.run("UPDATE sessions SET title = 'Renamed' WHERE id = 'bulk-01'");
+		changedDb.run(
+			`UPDATE messages SET display_kind = 'auto_continue', display_metadata = '{"attempt":2}'
+			 WHERE session_id = 'bulk-02'`,
+		);
+		changedDb.run("UPDATE messages SET content = 'M' WHERE session_id = 'bulk-03'");
+		changedDb.close();
+		const changed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
+		const changedIds: string[] = [];
+		for await (const batch of changed.batches) {
+			changedIds.push(...batch.sessions.map((session) => session.localSessionId));
+		}
+		expect(changedIds.sort()).toEqual(["bulk-00", "bulk-01", "bulk-02", "bulk-03"]);
 	});
 
 	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {

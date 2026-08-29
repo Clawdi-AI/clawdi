@@ -103,7 +103,12 @@ describe("stable session enqueue abort fence", () => {
 					rawFilePath: "/sessions/1.jsonl",
 				},
 			],
-			queue: { enqueue: (item: unknown) => queued.push(item) },
+			queue: {
+				enqueueWhenAvailable: async (item: unknown) => {
+					queued.push(item);
+					return 1;
+				},
+			},
 			lastPushedHash: new Map(),
 			inFlightHash: inFlight,
 			protocol: "snapshot-v1",

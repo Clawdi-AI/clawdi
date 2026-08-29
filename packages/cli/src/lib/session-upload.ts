@@ -125,10 +125,19 @@ export function sessionPlanIsDurablyBlocked(
 	return entry?.local_hash === plan.localHash ? (entry.blocked?.message ?? null) : null;
 }
 
-export function persistSuppressedSession(fence: SessionFence, plan: SessionUploadPlan): void {
+function sourceRevisionEntry(session: RawSession): { source_revision?: string } {
+	return session.sourceRevision ? { source_revision: session.sourceRevision } : {};
+}
+
+export function persistSuppressedSession(
+	fence: SessionFence,
+	session: RawSession,
+	plan: SessionUploadPlan,
+): void {
 	persistFencedSessionEntry(fence, {
 		protocol: plan.protocol,
 		local_hash: plan.localHash,
+		...sourceRevisionEntry(session),
 		...(plan.protocol === "snapshot-v1" ? { snapshot_hash: plan.localHash } : {}),
 	});
 }
@@ -192,6 +201,7 @@ async function syncSnapshotSession(input: {
 	persistFencedSessionEntry(input.fence, {
 		protocol: "snapshot-v1",
 		local_hash: input.plan.localHash,
+		...sourceRevisionEntry(input.session),
 		snapshot_hash: input.plan.localHash,
 	});
 	return { status: "synced", uploaded, localHash: input.plan.localHash };
@@ -511,6 +521,7 @@ function persistEventSuccess(
 	persistFencedSessionEntry(input.fence, {
 		protocol: "events-v1",
 		local_hash: input.plan.localHash,
+		...sourceRevisionEntry(input.session),
 		event_generation: head.generation,
 		event_revision: head.revision,
 		event_count: head.count,
@@ -526,6 +537,7 @@ function persistPending(
 	persistFencedSessionEntry(input.fence, {
 		protocol: "events-v1",
 		local_hash: input.plan.localHash,
+		...(prior?.source_revision ? { source_revision: prior.source_revision } : {}),
 		...(prior?.event_generation ? { event_generation: prior.event_generation } : {}),
 		...(prior?.event_revision === undefined ? {} : { event_revision: prior.event_revision }),
 		...(prior?.event_count === undefined ? {} : { event_count: prior.event_count }),
@@ -570,6 +582,7 @@ function persistBlocked(
 	persistFencedSessionEntry(input.fence, {
 		protocol: input.plan.protocol,
 		local_hash: input.plan.localHash,
+		...sourceRevisionEntry(input.session),
 		...(input.plan.protocol === "snapshot-v1" ? { snapshot_hash: input.plan.localHash } : {}),
 		blocked: {
 			code: block.code,

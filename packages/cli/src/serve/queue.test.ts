@@ -253,6 +253,48 @@ describe("RetryQueue", () => {
 		await q.flushPersist();
 	});
 
+	it("waits for capacity when reconciliation must preserve every session", async () => {
+		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
+		q.enqueue({
+			kind: "session_push",
+			...sessionFence("first"),
+			local_session_id: "first",
+			content_hash: "first-hash",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		let secondEnqueued = false;
+		const pending = q
+			.enqueueWhenAvailable(
+				{
+					kind: "session_push",
+					...sessionFence("second"),
+					local_session_id: "second",
+					content_hash: "second-hash",
+					enqueued_at: "2026-01-01T00:00:01Z",
+					attempts: 0,
+				},
+				new AbortController().signal,
+			)
+			.then(() => {
+				secondEnqueued = true;
+			});
+
+		await Promise.resolve();
+		expect(secondEnqueued).toBe(false);
+		expect(q.drainDroppedDelta()).toBe(0);
+		const first = q.peek();
+		if (!first) throw new Error("expected first session");
+		q.markDoneIfVersion(first);
+		await pending;
+
+		expect(q.all().map((item) => item.kind === "session_push" && item.local_session_id)).toEqual([
+			"second",
+		]);
+		expect(q.drainDroppedDelta()).toBe(0);
+		await q.flushPersist();
+	});
+
 	it("markDoneIfVersion removes the item when version matches", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({

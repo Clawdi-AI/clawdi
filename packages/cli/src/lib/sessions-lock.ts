@@ -39,6 +39,7 @@ export interface FencedSessionLockEntry {
 	source_session_key: string;
 	protocol: "snapshot-v1" | "events-v1";
 	local_hash: string;
+	source_revision?: string;
 	snapshot_hash?: string;
 	event_generation?: string;
 	event_revision?: number;
@@ -202,6 +203,7 @@ export function isFencedSessionLockEntry(value: unknown): value is FencedSession
 		typeof value.environment_id === "string" &&
 		typeof value.adapter === "string" &&
 		typeof value.source_session_key === "string" &&
-		(value.protocol === "snapshot-v1" || value.protocol === "events-v1")
+		(value.protocol === "snapshot-v1" || value.protocol === "events-v1") &&
+		(value.source_revision === undefined || typeof value.source_revision === "string")
 	);
 }
