@@ -12,6 +12,8 @@ import {
 	Sparkles,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
+import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { TruncatedText } from "@/components/truncated-text";
 import {
 	Command,
@@ -29,6 +31,7 @@ import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { consoleCommandPaletteItems } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
+import { sessionDetailLink } from "@/lib/session-search-anchor";
 import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
@@ -116,6 +119,7 @@ function CommandPalette({
 	const hostedAccess = useProductAccess();
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
+	const searchQuery = debounced.trim();
 	const navShortcuts = useMemo(() => {
 		const shortcuts: NavShortcut[] = consoleCommandPaletteItems(false).map((item) => ({
 			label: item.label,
@@ -152,9 +156,9 @@ function CommandPalette({
 	const { data, isFetching } = api.useQuery(
 		"get",
 		"/v1/search",
-		{ params: { query: { q: debounced } } },
+		{ params: { query: { q: searchQuery } } },
 		{
-			enabled: open && debounced.trim().length > 0,
+			enabled: open && searchQuery.length > 0,
 			staleTime: 30_000,
 			// Keep the last page of results visible while a new debounced query
 			// flies out — prevents the palette flashing to "empty" on every
@@ -186,6 +190,22 @@ function CommandPalette({
 		},
 		[onOpenChange, router],
 	);
+	const openSearchHit = useCallback(
+		(hit: SearchHit) => {
+			if (hit.type !== "session") {
+				jump(hit.href);
+				return;
+			}
+			onOpenChange(false);
+			void router.navigate({
+				...sessionDetailLink(
+					{ id: hit.id, search_match: hit.search_match },
+					{ searchQuery: data?.query },
+				),
+			});
+		},
+		[data?.query, jump, onOpenChange, router],
+	);
 
 	// Group hits by type — cmdk groups handle the visual separator/label.
 	const grouped = useMemo(() => {
@@ -198,8 +218,8 @@ function CommandPalette({
 		return g;
 	}, [data]);
 
-	const hasQuery = debounced.trim().length > 0;
-	const normalizedQuery = debounced.trim().toLowerCase();
+	const hasQuery = searchQuery.length > 0;
+	const normalizedQuery = searchQuery.toLowerCase();
 	const navMatches = useMemo(
 		() =>
 			normalizedQuery
@@ -211,6 +231,7 @@ function CommandPalette({
 	// Whether we have a stale results payload we can keep showing while a
 	// new debounced query is in flight.
 	const hasStaleResults = hasQuery && (data?.results.length ?? 0) > 0;
+	const resultQuery = data?.query ?? searchQuery;
 
 	// Show "no results" only when (a) the debounced query is active, (b)
 	// fetching is finished, (c) we don't have any results. Previously we
@@ -246,7 +267,7 @@ function CommandPalette({
 				{/* Fixed min-height: stops the dialog from jumping as the user types
 				    (switching between 6 nav shortcuts → N result rows → empty). */}
 				<CommandList className="min-h-[320px]">
-					{showEmpty ? <CommandEmpty>No results for "{debounced}".</CommandEmpty> : null}
+					{showEmpty ? <CommandEmpty>No results for "{searchQuery}".</CommandEmpty> : null}
 
 					{/* First-fetch state: query typed but no prior data yet — show a
 					    neutral loading row inside the list so the dialog isn't
@@ -294,13 +315,21 @@ function CommandPalette({
 												<CommandItem
 													key={`${hit.type}-${hit.id}`}
 													value={`${hit.type}-${hit.id}`}
-													onSelect={() => jump(hit.href)}
+													onSelect={() => openSearchHit(hit)}
 													className={COMMAND_RESULT_ROW_CLASS}
 												>
 													<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 													<div className={COMMAND_RESULT_TEXT_CLASS}>
-														<TruncatedText>{hit.title}</TruncatedText>
-														{hit.subtitle ? (
+														<TruncatedText title={hit.title}>
+															<SearchHighlightedText text={hit.title} query={resultQuery} />
+														</TruncatedText>
+														{hit.type === "session" && hit.search_match ? (
+															<SessionSearchMatchExcerpt
+																match={hit.search_match}
+																query={resultQuery}
+																className="line-clamp-2 text-xs leading-4 text-muted-foreground"
+															/>
+														) : hit.subtitle ? (
 															<TruncatedText className="text-xs text-muted-foreground">
 																{hit.subtitle}
 															</TruncatedText>

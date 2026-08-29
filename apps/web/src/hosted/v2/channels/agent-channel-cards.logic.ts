@@ -83,6 +83,31 @@ export function activeAgentLinkForAccount({
 	);
 }
 
+/** Resolve active-link providers from the embedded account first, then inventory fallbacks. */
+export function activeLinkedProviders({
+	links,
+	channels = [],
+	poolProviders,
+}: {
+	links: readonly AgentChannelLink[];
+	channels?: readonly ChannelAccount[];
+	poolProviders?: Readonly<Record<string, readonly ChannelBotPoolItem[]>>;
+}): ReadonlySet<string> | null {
+	const providerByAccountId = new Map(channels.map((account) => [account.id, account.provider]));
+	for (const providerBots of Object.values(poolProviders ?? {})) {
+		for (const bot of providerBots) providerByAccountId.set(bot.id, bot.provider);
+	}
+
+	const providers = new Set<string>();
+	for (const link of links) {
+		if (link.status.toLowerCase() !== "active") continue;
+		const provider = link.account?.provider ?? providerByAccountId.get(link.account_id);
+		if (!provider) return null;
+		providers.add(provider);
+	}
+	return providers;
+}
+
 type MutableCard = AgentChannelCardItem & {
 	createdAt: string;
 	poolPriority: boolean;

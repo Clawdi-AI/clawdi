@@ -7,6 +7,20 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export function searchExcerpt(text: string, query: string, limit = 240): string {
+	const compact = text.replace(/\s+/g, " ").trim();
+	if (compact.length <= limit) return compact;
+
+	const phrase = query.trim();
+	const match = phrase ? new RegExp(escapeRegExp(phrase), "iu").exec(compact) : null;
+	if (!match) return `${compact.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+
+	let start = Math.max(0, match.index - Math.floor(limit / 3));
+	const end = Math.min(compact.length, start + limit);
+	start = Math.max(0, end - limit);
+	return `${start > 0 ? "…" : ""}${compact.slice(start, end).trim()}${end < compact.length ? "…" : ""}`;
+}
+
 export function createSearchHighlighter(query: string) {
 	const phrase = query.trim();
 	if (!phrase) {

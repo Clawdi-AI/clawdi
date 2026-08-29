@@ -9,6 +9,8 @@ const FRAMEWORKS = {
 	hermes: { label: "Hermes Agent", size: "75%" },
 	"claude-code": { label: "Claude Code", size: "70%" },
 	codex: { label: "Codex", size: "70%" },
+	pi: { label: "Pi", size: "65%" },
+	opencode: { label: "OpenCode", size: "75%" },
 } as const;
 
 describe("AgentFrameworkIcon", () => {
@@ -23,7 +25,7 @@ describe("AgentFrameworkIcon", () => {
 			expect(markup).toContain("<svg");
 			expect(markup).toContain('role="img"');
 			expect(markup).toContain(`aria-label="${label}"`);
-			expect(markup).toContain(`<title>${label}</title>`);
+			expect(markup).toContain(`<title>${id === "opencode" ? "opencode" : label}</title>`);
 			expect(markup).toContain('data-icon-source="lobehub"');
 			expect(markup).toContain(`width="${size}"`);
 			expect(markup).toContain(`height="${size}"`);
@@ -42,6 +44,16 @@ describe("AgentFrameworkIcon", () => {
 		);
 		expect(markup).toContain("bg-white");
 		expect(markup).toContain("text-black");
+	});
+
+	test("keeps the official Pi and OpenCode white marks on black avatar tiles", () => {
+		for (const agent of ["pi", "opencode"]) {
+			const markup = renderToStaticMarkup(
+				<AgentFrameworkIcon agent={agent} pixelSize={40} boxClassName="size-10" />,
+			);
+			expect(markup).toContain("bg-black");
+			expect(markup).toContain("text-white");
+		}
 	});
 
 	test("keeps colored framework marks on the shared neutral tile without forced dark backplates", () => {

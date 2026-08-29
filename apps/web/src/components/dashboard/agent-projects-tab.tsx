@@ -17,7 +17,10 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
+import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
+import { ProjectActions } from "@/components/projects/project-actions";
 import {
+	canManageCustomProject,
 	compareProjectsForUse,
 	displayProjectName,
 	isCustomProject,
@@ -38,15 +41,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { projectDetailHref } from "@/lib/project-resource-model";
+import { formatResourceCount, projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
@@ -55,7 +55,6 @@ import {
 } from "@/lib/resource-navigation";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
-type ProjectCreate = components["schemas"]["ProjectCreate"];
 
 export function AgentProjectsTab({
 	agentId,
@@ -148,13 +147,9 @@ function AgentProjectsPanel({
 	const router = useRouter();
 	const [managedProjectIds, setManagedProjectIds] = useState<Set<string>>(() => new Set());
 	const [manageOpen, setManageOpen] = useState(false);
-	const [createOpen, setCreateOpen] = useState(false);
-	const [newProjectName, setNewProjectName] = useState("");
-	const [newProjectDescription, setNewProjectDescription] = useState("");
 	// React Query pending state is post-render. These refs reject a second
 	// submit synchronously, before another mutation can queue in the same frame.
 	const manageProjectsLockedRef = useRef(false);
-	const createProjectLockedRef = useRef(false);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
@@ -210,46 +205,12 @@ function AgentProjectsPanel({
 		},
 	});
 
-	const createProject = useMutation({
-		mutationFn: async (body: ProjectCreate) => unwrap(await api.POST("/v1/projects", { body })),
-		onSuccess: async (project) => {
-			await onChanged();
-			setNewProjectName("");
-			setNewProjectDescription("");
-			setCreateOpen(false);
-			const returnTarget = resourceCollectionTarget(navigationScope, "projects");
-			const openHref = `${projectDetailHref(project.id)}?from=${encodeURIComponent(returnTarget.href)}`;
-			toast.success("Project created", {
-				description: "Link it when this Agent should use its Skills and attached Vaults.",
-				action: {
-					label: "Open project",
-					onClick: () => void router.navigate({ href: openHref }),
-				},
-			});
-		},
-		onError: (error) =>
-			toast.error("Couldn't create project", { description: normalizeApiError(error) }),
-		onSettled: () => {
-			createProjectLockedRef.current = false;
-		},
-	});
-
 	const submitProjectChanges = () => {
 		if (!hasProjectChanges || manageProjectsLockedRef.current) return;
 		manageProjectsLockedRef.current = true;
 		updateProjectLinks.mutate({
 			addProjectIds: projectIdsToAdd,
 			removeProjectIds: projectIdsToRemove,
-		});
-	};
-
-	const submitCreateProject = () => {
-		const name = newProjectName.trim();
-		if (!name || createProjectLockedRef.current) return;
-		createProjectLockedRef.current = true;
-		createProject.mutate({
-			name,
-			description: newProjectDescription.trim() || null,
 		});
 	};
 
@@ -262,15 +223,26 @@ function AgentProjectsPanel({
 			description="Projects linked to this Agent."
 			actions={
 				<>
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={actionsDisabled}
-						onClick={() => setCreateOpen(true)}
+					<CreateProjectDialog
+						agentId={agentId}
+						onCreated={async (project) => {
+							await onChanged();
+							const returnTarget = resourceCollectionTarget(navigationScope, "projects");
+							const openHref = `${projectDetailHref(project.id)}?from=${encodeURIComponent(returnTarget.href)}`;
+							toast.success("Project created and linked", {
+								description: "This Agent can use its Skills and attached Vaults immediately.",
+								action: {
+									label: "Open project",
+									onClick: () => void router.navigate({ href: openHref }),
+								},
+							});
+						}}
 					>
-						<Plus className="size-3.5" />
-						Create project
-					</Button>
+						<Button size="sm" variant="outline" disabled={actionsDisabled}>
+							<Plus className="size-3.5" />
+							Create project
+						</Button>
+					</CreateProjectDialog>
 					<Button
 						size="sm"
 						disabled={actionsDisabled}
@@ -353,7 +325,19 @@ function AgentProjectsPanel({
 								data-testid="agent-project-card"
 							>
 								{project ? (
-									<ProjectResourceCard project={project} navigationScope={navigationScope} />
+									<ProjectResourceCard
+										project={project}
+										navigationScope={navigationScope}
+										footer={[
+											formatResourceCount(project.skill_count, "skill"),
+											formatResourceCount(project.vault_count, "vault"),
+										]}
+										actions={
+											canManageCustomProject(project) ? (
+												<ProjectActions project={project} onChanged={onChanged} />
+											) : undefined
+										}
+									/>
 								) : (
 									<UnavailableProjectResourceCard />
 								)}
@@ -431,69 +415,6 @@ function AgentProjectsPanel({
 									<Save className="size-3.5" />
 								)}
 								Save changes
-							</Button>
-						</DialogFooter>
-					</form>
-				</DialogContent>
-			</Dialog>
-
-			<Dialog
-				open={createOpen}
-				onOpenChange={setCreateOpen}
-				onOpenChangeComplete={(open) => {
-					if (!open) {
-						setNewProjectName("");
-						setNewProjectDescription("");
-					}
-				}}
-			>
-				<DialogContent className="sm:max-w-md">
-					<DialogHeader>
-						<DialogTitle>Create project</DialogTitle>
-						<DialogDescription>
-							Create a shareable bundle for Skills and attached Vault access. Link it to this Agent
-							when it is ready to use.
-						</DialogDescription>
-					</DialogHeader>
-					<form
-						className="space-y-4"
-						onSubmit={(event) => {
-							event.preventDefault();
-							submitCreateProject();
-						}}
-					>
-						<div className="space-y-1.5">
-							<Label htmlFor="agent-project-name">Name</Label>
-							<Input
-								id="agent-project-name"
-								name="agent-project-name"
-								value={newProjectName}
-								maxLength={200}
-								autoComplete="off"
-								placeholder="Project name…"
-								onChange={(event) => setNewProjectName(event.target.value)}
-							/>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="agent-project-description">Description</Label>
-							<Textarea
-								id="agent-project-description"
-								name="agent-project-description"
-								value={newProjectDescription}
-								maxLength={2000}
-								placeholder="What should Agents use this Project for?"
-								autoComplete="off"
-								onChange={(event) => setNewProjectDescription(event.target.value)}
-								className="min-h-24"
-							/>
-						</div>
-						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-								Cancel
-							</Button>
-							<Button type="submit" disabled={!newProjectName.trim() || createProject.isPending}>
-								{createProject.isPending ? <Spinner className="size-3.5" /> : <Plus />}
-								Create project
 							</Button>
 						</DialogFooter>
 					</form>

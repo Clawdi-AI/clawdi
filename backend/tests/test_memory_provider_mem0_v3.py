@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from types import ModuleType
 from uuid import UUID
 
@@ -110,6 +111,20 @@ class _RecordingMem0Client:
         return self.delete_result
 
 
+class _ThreadRecordingMem0Client(_RecordingMem0Client):
+    search_thread_id: int | None = None
+
+    def search(
+        self,
+        query: str,
+        *,
+        filters: dict[str, object],
+        top_k: int,
+    ) -> object:
+        self.search_thread_id = threading.get_ident()
+        return super().search(query, filters=filters, top_k=top_k)
+
+
 def _provider(
     monkeypatch: pytest.MonkeyPatch,
     client: _RecordingMem0Client,
@@ -182,6 +197,19 @@ async def test_mem0_v3_add_and_search_use_filters_and_top_k(
     ]
     assert sdk_client.search_calls == [("Scoped", _filters(category="decision"), 7)]
     assert hits[0]["source_environment_id"] == str(ENVIRONMENT_ID)
+
+
+@pytest.mark.asyncio
+async def test_mem0_sdk_calls_run_outside_the_event_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk_client = _ThreadRecordingMem0Client(search_result={"results": []})
+    provider = _provider(monkeypatch, sdk_client)
+    event_loop_thread_id = threading.get_ident()
+
+    assert await provider.search(USER_ID, "memory") == []
+    assert sdk_client.search_thread_id is not None
+    assert sdk_client.search_thread_id != event_loop_thread_id
 
 
 @pytest.mark.asyncio

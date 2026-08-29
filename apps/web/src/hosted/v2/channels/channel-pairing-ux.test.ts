@@ -6,6 +6,8 @@ function source(relativePath: string): string {
 }
 
 const detail = source("./channel-detail-page.tsx");
+const linkAction = source("./link-channel-agent-action.tsx");
+const pairingFlow = source("./channel-pairing-flow.tsx");
 const pairDialog = source("./telegram-pair-dialog.tsx");
 const discordPairDialog = source("./discord-pair-dialog.tsx");
 const pairingErrors = source("./channel-pairing-errors.ts");
@@ -27,20 +29,25 @@ const linkedChannelRow = agentDetail.slice(
 );
 
 describe("channel IA boundary", () => {
-	test("keeps bot detail read-only for Agent relationships and navigates to Agent Channels", () => {
+	test("manages Agent relationships from bot detail with the shared pairing dialogs", () => {
 		expect(detail).toContain("data-channel-linked-agents");
 		expect(detail).toContain('agentSectionLink(link.agent_id, "channels")');
 		expect(detail).toContain("data-channel-agent-link-id={link.id}");
 		expect(detail).toContain("Linked Agents");
-		expect(detail).not.toContain("LinkAgentDialog");
-		expect(detail).not.toContain("TelegramPairDialog");
+		expect(detail).toContain("<LinkChannelAgentAction");
+		expect(detail).toContain("useUnlinkChannelAgent(accountId)");
+		expect(linkAction).toContain("useLinkChannelAgent(accountId)");
+		expect(detail).toContain("<ChannelPairingDialog");
+		expect(linkAction).toContain("<ChannelPairingDialog");
+		expect(pairingFlow).toContain("<TelegramPairDialog");
+		expect(pairingFlow).toContain("<DiscordPairDialog");
+		expect(pairingFlow).toContain("<WhatsAppPairDialog");
+		expect(detail).toContain("Pair chat");
+		expect(detail).toContain("Unlink Agent");
 		expect(detail).not.toContain("PairedChatRow");
 		expect(detail).not.toContain("BindingsTab");
 		expect(detail).not.toContain("WhatsAppDevicesTab");
-		expect(detail).not.toContain("Pair Telegram");
 		expect(detail).not.toContain("Unpair");
-		expect(detail).not.toContain("Unlink");
-		expect(detail).not.toContain("Link an agent");
 	});
 
 	test("keeps Link, Pair, Unpair, and Unlink on stable Agent bot cards", () => {
@@ -178,7 +185,9 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("usePairingSuccess");
 		expect(agentDetail).toContain("bindingCount={bindingCountForLink(telegramPair.agentLinkId)}");
 		expect(agentDetail).toContain("bindingCount={bindingCountForLink(discordPair.agentLinkId)}");
-		expect(pairingSuccess).toContain("baselineBindingCount: bindingCount");
+		expect(pairingSuccess).toContain("baselineBindingCount = bindingCount");
+		expect(pairingFlow).toContain("const result = await bindings.refetch()");
+		expect(pairingFlow).toContain("baselineBindingCount: pairing.baselineBindingCount");
 		expect(pairingSuccess).toContain(
 			"pairingCountIncreased(bindingCount, attempt.baselineBindingCount)",
 		);

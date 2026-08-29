@@ -6,7 +6,7 @@ function source(relativePath: string): string {
 }
 
 describe("global Channels inventory", () => {
-	test("separates Custom and Clawdi bot inventory without relationship actions", () => {
+	test("separates Custom and Clawdi bot inventory with in-place relationship actions", () => {
 		const channelsPage = source("./channels-page.tsx");
 
 		expect(channelsPage).toContain("<OwnedBotsSection");
@@ -23,27 +23,30 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).not.toContain("data-ready-bots-section");
 		expect(channelsPage).not.toContain("data-pool-account-id");
 		expect(channelsPage).not.toContain("LinkAgentDialog");
-		expect(channelsPage).not.toContain("Link an agent");
+		expect(channelsPage).toContain("<LinkChannelAgentAction");
+		expect(channelsPage).toContain("Link an Agent and pair a chat without leaving this page.");
 		expect(channelsPage).toContain("Delete custom bot");
 		expect(channelsPage).not.toContain("At capacity");
 		expect(channelsPage).toContain("providersWithBots(counts)");
 		expect(channelsPage).not.toContain("· Shared");
 	});
 
-	test("uses the shared channel-linking module without dead global relationship hooks", () => {
+	test("uses one shared scoped relationship action across channel surfaces", () => {
 		const channelFiles = readdirSync(new URL(".", import.meta.url));
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
 		const hooks = source("./channels-hooks.ts");
+		const linkAction = source("./link-channel-agent-action.tsx");
 
 		expect(channelFiles.filter((file) => file.includes("link-agent-dialog"))).toEqual([]);
-		for (const consumer of [agentDetail, connectDialog, pairDialog]) {
+		for (const consumer of [agentDetail, connectDialog, pairDialog, linkAction]) {
 			expect(consumer).toContain("channel-linking.logic");
 			expect(consumer).not.toContain("link-agent-dialog");
 		}
 		expect(hooks).not.toContain("export function useLinkAgent(");
-		expect(hooks).not.toContain("export function useUnlinkChannelAgent(");
+		expect(hooks).toContain("export function useLinkChannelAgent(");
+		expect(hooks).toContain("export function useUnlinkChannelAgent(");
 		expect(hooks).toContain("export function useUnlinkAgentChannel(");
 	});
 

@@ -138,6 +138,7 @@ export function EntityCardActions({
 		<div
 			className={cn(
 				visibility === "responsive" ? ENTITY_CARD_ACTIONS_CLASS : ENTITY_CARD_ACTIONS_ALWAYS_CLASS,
+				"pointer-events-auto",
 				className,
 			)}
 		>
@@ -531,7 +532,9 @@ export function EntityRow({
 		<>
 			<EntityHeader icon={icon} title={title} titleAdornment={titleAdornment} meta={meta} />
 			{status ? <div className="shrink-0">{status}</div> : null}
-			{trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
+			{trailing ? (
+				<div className="pointer-events-auto relative z-10 shrink-0">{trailing}</div>
+			) : null}
 			{actions ? <EntityCardActions visibility="always">{actions}</EntityCardActions> : null}
 		</>
 	);
@@ -561,7 +564,7 @@ export function EntityRow({
 				<EntityCardChassis
 					variant="compact"
 					className={cn(
-						"flex items-center gap-3 group-hover:bg-muted/50 group-focus-within:bg-muted/50",
+						"pointer-events-none z-10 flex items-center gap-3 group-hover:bg-muted/50 group-focus-within:bg-muted/50",
 						className,
 					)}
 				>

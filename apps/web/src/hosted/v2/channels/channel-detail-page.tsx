@@ -8,6 +8,7 @@ import {
 	KeyRound,
 	type LucideIcon,
 	MessageSquareDashed,
+	MessageSquarePlus,
 	RefreshCw,
 	TerminalSquare,
 	Trash2,
@@ -33,6 +34,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
+import {
+	ChannelPairingDialog,
+	useChannelPairingFlow,
+} from "@/hosted/v2/channels/channel-pairing-flow";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
@@ -55,7 +60,9 @@ import {
 	useDeleteChannel,
 	useEnvironments,
 	useSyncCommands,
+	useUnlinkChannelAgent,
 } from "@/hosted/v2/channels/channels-hooks";
+import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-action";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -289,7 +296,12 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			) : null}
 
 			<section data-channel-linked-agents className="flex flex-col gap-3">
-				<AgentsTab accountId={id} />
+				<AgentsTab
+					accountId={id}
+					provider={ch.provider}
+					channelName={ch.name}
+					canManage={!providerUnavailable}
+				/>
 			</section>
 
 			<Tabs defaultValue="activity" className="min-w-0">
@@ -317,9 +329,21 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 // ── Agents ───────────────────────────────────────────────────────────────────
 
-function AgentsTab({ accountId }: { accountId: string }) {
+function AgentsTab({
+	accountId,
+	provider,
+	channelName,
+	canManage,
+}: {
+	accountId: string;
+	provider: string;
+	channelName: string;
+	canManage: boolean;
+}) {
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
+	const unlinkAgent = useUnlinkChannelAgent(accountId);
+	const pairing = useChannelPairingFlow(accountId);
 
 	if (links.isLoading || envs.isLoading) {
 		return <Skeleton className="h-24 w-full rounded-lg" />;
@@ -346,25 +370,33 @@ function AgentsTab({ accountId }: { accountId: string }) {
 
 	return (
 		<div className="flex flex-col gap-3">
-			<SectionHeader label="Linked Agents" count={items.length} />
+			<SectionHeader
+				label="Linked Agents"
+				count={items.length}
+				action={
+					canManage ? (
+						<LinkChannelAgentAction
+							accountId={accountId}
+							provider={provider}
+							channelName={channelName}
+						/>
+					) : undefined
+				}
+			/>
 
 			{items.length === 0 ? (
 				<EmptyState
 					variant="inset"
 					title="No Agents linked"
-					description="Connect this bot from an Agent’s Channels page."
+					description="Link an Agent here, then pair a chat for it."
 				/>
 			) : (
 				<div className={CHANNEL_RELATION_LIST_CLASS}>
 					{items.map((link: ChannelAgentLink) => (
-						<Link
+						<div
 							key={link.id}
-							{...agentSectionLink(link.agent_id, "channels")}
 							data-channel-agent-link-id={link.id}
-							className={cn(
-								CHANNEL_RELATION_ROW_CLASS,
-								"group transition-colors hover:bg-muted/50",
-							)}
+							className={CHANNEL_RELATION_ROW_CLASS}
 						>
 							<AgentName
 								env={findEnv(envs.data, link.agent_id)}
@@ -375,14 +407,63 @@ function AgentsTab({ accountId }: { accountId: string }) {
 									<span key="linked">Linked {relativeTime(link.created_at)}</span>,
 								]}
 							/>
-							<span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground">
-								Channels
-								<ArrowUpRight className="size-3.5" />
-							</span>
-						</Link>
+							<div className="flex shrink-0 items-center gap-1.5">
+								{canManage ? (
+									<Button
+										size="sm"
+										variant="outline"
+										disabled={pairing.openingLinkId !== null}
+										onClick={() => void pairing.openPairing(link)}
+									>
+										{pairing.openingLinkId === link.id ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<MessageSquarePlus className="size-3.5" />
+										)}
+										Pair chat
+									</Button>
+								) : null}
+								<Button
+									render={<Link {...agentSectionLink(link.agent_id, "channels")} />}
+									nativeButton={false}
+									variant="ghost"
+									size="icon-sm"
+									aria-label="Open Agent Channels"
+								>
+									<ArrowUpRight className="size-3.5" />
+								</Button>
+								{canManage ? (
+									<ConfirmAction
+										title="Unlink Agent?"
+										description={<p>Its paired chats will stop using this channel.</p>}
+										confirmLabel="Unlink Agent"
+										destructive
+										onConfirm={() =>
+											unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })
+										}
+									>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											className="text-muted-foreground hover:text-destructive"
+											aria-label="Unlink Agent"
+										>
+											<Unplug className="size-3.5" />
+										</Button>
+									</ConfirmAction>
+								) : null}
+							</div>
+						</div>
 					))}
 				</div>
 			)}
+
+			<ChannelPairingDialog
+				accountId={accountId}
+				provider={provider}
+				channelName={channelName}
+				flow={pairing}
+			/>
 		</div>
 	);
 }

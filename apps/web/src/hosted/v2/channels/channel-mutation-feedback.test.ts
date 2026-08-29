@@ -74,6 +74,7 @@ describe("channel mutation feedback", () => {
 
 	test("uses per-action feedback for bot-owned detail mutations", () => {
 		const detail = source("./channel-detail-page.tsx");
+		const linkAction = source("./link-channel-agent-action.tsx");
 
 		for (const [feedback, request] of [
 			["setRemoving(true)", "await del.mutateAsync({"],
@@ -81,7 +82,9 @@ describe("channel mutation feedback", () => {
 		] as const) {
 			expectFeedbackBeforeRequest(detail, feedback, request);
 		}
-		expect(detail).not.toContain("useUnlinkChannelAgent");
+		expect(linkAction).toContain("linkAgent.isPending");
+		expect(linkAction).toContain("await linkAgent.execute({");
+		expect(detail).toContain("unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })");
 		expect(detail).not.toContain("useDeleteChannelBinding");
 	});
 });

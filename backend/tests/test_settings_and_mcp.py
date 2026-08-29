@@ -609,7 +609,7 @@ async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_session_search_escapes_like_wildcards(
+async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
     db_session,
     seed_user,
 ):
@@ -617,6 +617,10 @@ async def test_clawdi_mcp_session_search_escapes_like_wildcards(
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.models.session import Session
+    from app.services.session_search import (
+        SearchableSessionMessage,
+        replace_snapshot_search_index,
+    )
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
@@ -627,25 +631,46 @@ async def test_clawdi_mcp_session_search_escapes_like_wildcards(
         agent_type="openclaw",
     )
     now = datetime.now(UTC)
-    db_session.add_all(
+    percent = Session(
+        user_id=seed_user.id,
+        environment_id=env.id,
+        local_session_id="mcp-percent",
+        project_path="/repo/percent",
+        started_at=now,
+        summary="Literal 100% rollout note",
+    )
+    plain = Session(
+        user_id=seed_user.id,
+        environment_id=env.id,
+        local_session_id="mcp-plain",
+        project_path="/repo/plain",
+        started_at=now,
+        summary="Plain runtime work",
+    )
+    body_hash = "a" * 64
+    body = Session(
+        user_id=seed_user.id,
+        environment_id=env.id,
+        local_session_id="mcp-body",
+        project_path="/repo/body",
+        started_at=now,
+        summary="Unrelated title",
+        content_protocol="snapshot-v1",
+        content_hash=body_hash,
+    )
+    db_session.add_all([percent, plain, body])
+    await db_session.flush()
+    await replace_snapshot_search_index(
+        db_session,
+        body,
+        body_hash,
         [
-            Session(
-                user_id=seed_user.id,
-                environment_id=env.id,
-                local_session_id="mcp-percent",
-                project_path="/repo/percent",
-                started_at=now,
-                summary="Literal 100% rollout note",
-            ),
-            Session(
-                user_id=seed_user.id,
-                environment_id=env.id,
-                local_session_id="mcp-plain",
-                project_path="/repo/plain",
-                started_at=now,
-                summary="Plain runtime work",
-            ),
-        ]
+            SearchableSessionMessage(
+                position=0,
+                role="assistant",
+                content="The visible body contains a deployment handoff phrase.",
+            )
+        ],
     )
     await db_session.commit()
 
@@ -663,25 +688,42 @@ async def test_clawdi_mcp_session_search_escapes_like_wildcards(
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.post(
-                "/v1/mcp/clawdi",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 4,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "session_search",
-                        "arguments": {"query": "%", "limit": 10},
+
+            async def search(query: str):
+                return await ac.post(
+                    "/v1/mcp/clawdi",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 4,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "session_search",
+                            "arguments": {"query": query, "limit": 10},
+                        },
                     },
-                },
-            )
+                )
+
+            wildcard_response = await search("%")
+            body_response = await search("deployment handoff phrase")
+            typo_response = await search("deployment handof phrase")
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200, response.text
-    text = response.json()["result"]["content"][0]["text"]
-    assert "Literal 100% rollout note" in text
-    assert "Plain runtime work" not in text
+    assert wildcard_response.status_code == 200, wildcard_response.text
+    wildcard_text = wildcard_response.json()["result"]["content"][0]["text"]
+    assert "Literal 100% rollout note" in wildcard_text
+    assert "Plain runtime work" not in wildcard_text
+
+    assert body_response.status_code == 200, body_response.text
+    body_text = body_response.json()["result"]["content"][0]["text"]
+    assert "Unrelated title" in body_text
+    assert "matched assistant: The visible body contains a deployment handoff phrase." in body_text
+
+    assert typo_response.status_code == 200, typo_response.text
+    assert (
+        'No sessions matched "deployment handof phrase".'
+        in typo_response.json()["result"]["content"][0]["text"]
+    )
 
 
 @pytest.mark.asyncio

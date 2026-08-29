@@ -39,6 +39,34 @@ async def test_agent_search_bumps_access_count(cli_client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_mcp_search_bumps_access_count(cli_client: httpx.AsyncClient):
+    created = await cli_client.post(
+        "/v1/memories",
+        json={"content": "MCP recalls count as agent retrievals", "category": "fact"},
+    )
+    memory_id = created.json()["id"]
+
+    response = await cli_client.post(
+        "/v1/mcp/clawdi",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "memory_search",
+                "arguments": {"query": "agent retrievals"},
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "MCP recalls count" in response.json()["result"]["content"][0]["text"]
+
+    detail = (await cli_client.get(f"/v1/memories/{memory_id}")).json()
+    assert detail["access_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_dashboard_search_does_not_count_as_recall(client: httpx.AsyncClient):
     created = await client.post(
         "/v1/memories",

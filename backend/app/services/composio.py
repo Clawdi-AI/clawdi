@@ -246,8 +246,8 @@ _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
 _TERMINAL_STATUSES = _COMPOSIO_STATUSES - _ACTIVE_OR_PENDING_STATUSES
 _COMPOSIO_METADATA_CACHE_TTL = timedelta(minutes=5)
 CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE = (
-    "Connector requires a custom OAuth auth config in Composio before it can be "
-    "connected. Create it with your own client ID and client secret, then retry."
+    "This Connector needs additional OAuth configuration before it can be connected. "
+    "Contact support to continue."
 )
 
 

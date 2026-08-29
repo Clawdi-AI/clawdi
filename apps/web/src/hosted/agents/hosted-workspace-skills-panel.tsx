@@ -273,14 +273,14 @@ function HostedWorkspaceSkillsPanelContent({
 							mutateSkill.isPending &&
 							mutateSkill.variables?.action === "uninstall" &&
 							mutateSkill.variables.skillKey === item.entity.skill_key;
-						const pendingAction = pending ? mutateSkill.variables?.action : null;
 						return (
 							<SkillCard
 								key={item.entity.skill_key}
 								skill={item.entity}
 								cloudSkill={item.cloudProjection ?? undefined}
 								readOnly
-								readOnlyLabel={item.projectionOnly ? "Synced from Agent · Read-only" : null}
+								readOnlyLabel={item.projectionOnly ? "Read-only" : null}
+								provenanceLabel={item.projectionOnly ? "Synced from Agent" : null}
 								showVersion={Boolean(item.cloudProjection?.version)}
 								actions={
 									item.desired ? (
@@ -300,13 +300,18 @@ function HostedWorkspaceSkillsPanelContent({
 														runMutation({ action: "uninstall", skillKey: item.entity.skill_key })
 													}
 												>
-													<Button variant="ghost" size="sm" disabled={mutateSkill.isPending}>
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														disabled={mutateSkill.isPending}
+														className="text-muted-foreground hover:text-destructive"
+														aria-label={`${pending ? "Uninstalling" : "Uninstall"} ${item.entity.name} from Agent`}
+													>
 														{pending ? (
 															<Spinner className="size-3.5" />
 														) : (
 															<Trash2 className="size-3.5" />
 														)}
-														{pendingAction === "uninstall" ? "Uninstalling…" : "Uninstall"}
 													</Button>
 												</ConfirmAction>
 											) : null}

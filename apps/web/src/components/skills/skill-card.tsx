@@ -11,6 +11,7 @@ import {
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
+import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
 import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,12 +35,13 @@ export function SkillCard({
 	skill,
 	cloudSkill,
 	readOnly = false,
-	readOnlyLabel = "Shared · Read-only",
+	readOnlyLabel = "Read-only",
 	showVersion = true,
 	actions,
 	onUninstall,
 	uninstallPending = false,
 	sourceLabel,
+	provenanceLabel,
 	skillLink,
 }: {
 	skill: SkillCardEntity;
@@ -53,6 +55,8 @@ export function SkillCard({
 	uninstallPending?: boolean;
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
+	/** Quiet origin metadata; status badges stay short so titles retain priority. */
+	provenanceLabel?: string | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
 }) {
@@ -76,7 +80,7 @@ export function SkillCard({
 				{canUninstall ? (
 					<ConfirmAction
 						title={`Remove ${skill.name} from Project?`}
-						description={<p>Other Projects keep their copies.</p>}
+						description={<SkillRemovalDescription />}
 						confirmLabel="Remove from project"
 						destructive
 						onConfirm={() => {
@@ -122,6 +126,7 @@ export function SkillCard({
 			}
 			description={skill.description}
 			footer={[
+				provenanceLabel ? <span key="provenance">{provenanceLabel}</span> : null,
 				sourceLabel ? (
 					<span
 						key="source-label"
@@ -207,6 +212,7 @@ export function SkillCardGrid({
 						cloudSkill={skill}
 						readOnly={readOnly}
 						readOnlyLabel={capabilities?.badgeLabel ?? undefined}
+						provenanceLabel={capabilities?.provenanceLabel}
 						showVersion={showVersionFor?.(skill) ?? true}
 						actions={actionsFor?.(skill)}
 						onUninstall={onUninstall}

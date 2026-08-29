@@ -21,6 +21,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	CONNECTOR_CATALOG_PAGE_SIZE,
+	type ConnectorAvailableApp,
 	useAvailableApps,
 	useConnectedAppCards,
 } from "@/lib/connectors-data";
@@ -250,7 +251,7 @@ function ConnectedRail({
 	onRetry,
 	scope,
 }: {
-	apps: { name: string; display_name: string; description: string; logo: string }[];
+	apps: ConnectorAvailableApp[];
 	activeCount: number;
 	isLoading: boolean;
 	error: Error | null;
@@ -300,7 +301,7 @@ function CatalogSection({
 	onNext,
 	scope,
 }: {
-	items: { name: string; display_name: string; description: string; logo: string }[];
+	items: ConnectorAvailableApp[];
 	total: number;
 	page: number;
 	totalPages: number;

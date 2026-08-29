@@ -20,13 +20,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
-from app.core.query_utils import like_needle
+from app.core.query_utils import like_needle, search_excerpt
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultProjectAttachment
+from app.schemas.session import SessionSearchMatchResponse
 from app.services.memory_provider import get_memory_provider
 from app.services.memory_types import MemoryItem
+from app.services.session_search import (
+    session_search_match_response,
+    session_search_matches,
+)
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -54,6 +59,7 @@ class SearchHit(BaseModel):
     title: str
     subtitle: str | None = None
     href: str
+    search_match: SessionSearchMatchResponse | None = None
 
 
 class SearchResponse(BaseModel):
@@ -69,21 +75,22 @@ type Searcher = Callable[
 
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
-    needle = like_needle(query)
+    matches = session_search_matches(auth.user_id, query)
     # Historical search retains archived Agent labels; this join grants no
     # operational Agent authority.
     stmt = (
-        select(Session, AgentEnvironment.agent_type)
-        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-        .where(Session.user_id == auth.user_id)
-        .where(
-            or_(
-                Session.summary.ilike(needle, escape="\\"),
-                Session.project_path.ilike(needle, escape="\\"),
-                Session.local_session_id.ilike(needle, escape="\\"),
-            )
+        select(
+            Session,
+            AgentEnvironment.agent_type,
+            matches.c.content,
+            matches.c.role,
+            matches.c.position,
+            matches.c.content_revision,
         )
-        .order_by(Session.started_at.desc())
+        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+        .join(matches, matches.c.session_id == Session.id)
+        .where(Session.user_id == auth.user_id)
+        .order_by(matches.c.score.desc(), Session.last_activity_at.desc(), Session.id.asc())
         .limit(TYPE_LIMIT)
     )
     # Bound api_keys can only see sessions in their own env — same
@@ -92,9 +99,17 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
         stmt = stmt.where(Session.environment_id == auth.api_key.environment_id)
     rows = (await db.execute(stmt)).all()
     hits: list[SearchHit] = []
-    for s, agent_type in rows:
+    for s, agent_type, content, role, position, revision in rows:
         title = (s.summary or "").strip() or s.local_session_id[:16]
         subtitle_parts = [p for p in (agent_type, s.project_path) if p]
+        search_match = session_search_match_response(
+            s,
+            query,
+            content=content,
+            role=role,
+            position=position,
+            revision=revision,
+        )
         hits.append(
             SearchHit(
                 type="session",
@@ -102,6 +117,7 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
                 title=title,
                 subtitle=" · ".join(subtitle_parts) or None,
                 href=f"/sessions/{s.id}",
+                search_match=search_match,
             )
         )
     return hits
@@ -116,12 +132,12 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
     )
     hits: list[SearchHit] = []
     for item in rows:
-        if hit := _memory_search_hit(item):
+        if hit := _memory_search_hit(item, query):
             hits.append(hit)
     return hits
 
 
-def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
+def _memory_search_hit(item: MemoryItem, query: str) -> SearchHit | None:
     memory_id = item.get("id")
     content = item.get("content")
     category = item.get("category")
@@ -130,7 +146,7 @@ def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
     return SearchHit(
         type="memory",
         id=memory_id,
-        title=content[:80] + ("…" if len(content) > 80 else ""),
+        title=search_excerpt(content, query, limit=160),
         subtitle=category if isinstance(category, str) else None,
         href=f"/memories/{memory_id}",
     )
@@ -235,7 +251,7 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
             id=str(v.id),
             title=v.name or v.slug,
             subtitle="encrypted secrets",
-            href="/vault",
+            href=f"/vaults/{quote(v.slug, safe='')}?vault={v.id}",
         )
         for v in rows
     ]
@@ -250,7 +266,7 @@ async def global_search(
     """Run each entity searcher and concat results.
 
     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
-    4*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+    5*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
 
     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
     the hybrid provider (FTS + trgm + optional pgvector) for quality.
@@ -261,6 +277,10 @@ async def global_search(
     sequentially because SQLAlchemy AsyncSession is not safe for concurrent
     operations on the same request-scoped session.
     """
+    query = q.strip()
+    if not query:
+        return SearchResponse(query=query, results=[])
+
     # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are
     # gated by the caller's API-permission list so a narrowly-scoped
@@ -291,7 +311,7 @@ async def global_search(
     hits: list[SearchHit] = []
     for source, searcher in jobs:
         try:
-            r = await searcher(db, auth, q)
+            r = await searcher(db, auth, query)
         except Exception as exc:
             log.warning(
                 "search source %s failed for user %s: %s",
@@ -302,4 +322,4 @@ async def global_search(
             )
             continue
         hits.extend(r)
-    return SearchResponse(query=q, results=hits)
+    return SearchResponse(query=query, results=hits)

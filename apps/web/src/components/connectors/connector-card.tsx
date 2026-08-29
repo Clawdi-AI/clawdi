@@ -3,11 +3,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { useCallback } from "react";
+import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
 import { useOpenApi } from "@/lib/api";
-import { availableAppQueryOptions, connectorToolsQueryOptions } from "@/lib/connectors-data";
 import {
+	availableAppQueryOptions,
+	type ConnectorAvailableApp,
+	connectorToolsQueryOptions,
+} from "@/lib/connectors-data";
+import {
+	connectorDetailHrefForScope,
 	connectorDetailLink,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
@@ -24,7 +30,7 @@ export function ConnectorCard({
 	isConnected = false,
 	scope = LIBRARY_RESOURCE_SCOPE,
 }: {
-	app: { name: string; display_name: string; description: string; logo: string };
+	app: ConnectorAvailableApp;
 	isConnected?: boolean;
 	scope?: ResourceNavigationScope;
 }) {
@@ -46,6 +52,14 @@ export function ConnectorCard({
 				) : undefined
 			}
 			meta={app.description}
+			actions={
+				!isConnected ? (
+					<ConnectorConnectAction
+						app={app}
+						redirectHref={connectorDetailHrefForScope(scope, app.name)}
+					/>
+				) : undefined
+			}
 			link={{
 				...connectorDetailLink(scope, app.name),
 				onMouseEnter: prefetchDetail,

@@ -47,6 +47,7 @@ export function DiscordPairDialog({
 	agentLinkId,
 	channelName,
 	bindingCount,
+	baselineBindingCount,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -56,6 +57,7 @@ export function DiscordPairDialog({
 	agentLinkId: string;
 	channelName?: string;
 	bindingCount: number;
+	baselineBindingCount?: number;
 }) {
 	const pair = useCreatePairCode(accountId, { agentId, toastOnError: false });
 	const { copied: installLinkCopied, copy: copyInstallLink } = useCopyToClipboard({
@@ -89,6 +91,7 @@ export function DiscordPairDialog({
 		agentLinkId,
 		provider: "discord",
 		bindingCount,
+		baselineBindingCount,
 	});
 
 	const prepare = useCallback(

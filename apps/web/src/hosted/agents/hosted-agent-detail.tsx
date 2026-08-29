@@ -76,7 +76,6 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
-	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
@@ -252,6 +251,7 @@ import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-b
 import {
 	type AgentChannelCardItem,
 	activeAgentLinkForAccount,
+	activeLinkedProviders,
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
@@ -271,6 +271,7 @@ import {
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	agentChannelLinksQueryOptions,
+	isWhatsAppRepairConflict,
 	useAgentChannelLinks,
 	useBotPool,
 	useChannels,
@@ -283,8 +284,8 @@ import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
 import { PairedChatsDialog } from "@/hosted/v2/channels/paired-chats-dialog";
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
-import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
+import { WhatsAppRepairDialog } from "@/hosted/v2/channels/whatsapp-repair-dialog";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
@@ -558,7 +559,7 @@ export function HostedAgentDetail({
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
 							activeTab === "memories" ? (
-								<MemoriesPageActions />
+								<MemoriesPageActions scope={resourceScope} />
 							) : interfaceAvailable ? (
 								<Button
 									render={<Link {...agentSectionLink(environmentId, "console")} />}
@@ -2623,7 +2624,6 @@ function ChannelsTab({
 		accountId: string;
 		channelName: string;
 		replaceExistingProviderLink: boolean;
-		started: boolean;
 	} | null>(null);
 	const [customBotDialogOpen, setCustomBotDialogOpen] = useState(false);
 	const linkingAccountIdsRef = useRef<Set<string>>(new Set());
@@ -2684,13 +2684,14 @@ function ChannelsTab({
 		visibleActiveLinks.find((link) => link.id === linkId)?.binding_count ?? 0;
 	const linkedProviders = useMemo<ReadonlySet<string> | undefined>(() => {
 		if (!linked.data) return undefined;
-		const providers = new Set<string>();
-		for (const link of visibleActiveLinks) {
-			const provider = link.account?.provider ?? accountSummaries.get(link.account_id)?.provider;
-			if (provider) providers.add(provider);
-		}
-		return providers;
-	}, [accountSummaries, visibleActiveLinks]);
+		return (
+			activeLinkedProviders({
+				links: visibleActiveLinks,
+				channels: channels.data ?? [],
+				poolProviders: botPool.data?.providers,
+			}) ?? undefined
+		);
+	}, [botPool.data, channels.data, linked.data, visibleActiveLinks]);
 	const link = useSensitiveAction(
 		async ({
 			channelId,
@@ -2769,16 +2770,11 @@ function ChannelsTab({
 			});
 			return;
 		} catch (error) {
-			if (
-				error instanceof ApiError &&
-				error.status === 409 &&
-				error.detail === "whatsapp_repair_required"
-			) {
+			if (isWhatsAppRepairConflict(error)) {
 				setWhatsappRepair({
 					accountId: channelId,
 					channelName: accountSummaries.get(channelId)?.name ?? "Custom WhatsApp",
 					replaceExistingProviderLink,
-					started: false,
 				});
 				return;
 			}
@@ -3019,60 +3015,21 @@ function ChannelsTab({
 				/>
 			) : null}
 			{whatsappRepair ? (
-				<Dialog
+				<WhatsAppRepairDialog
 					open
+					accountId={whatsappRepair.accountId}
+					channelName={whatsappRepair.channelName}
 					onOpenChange={(open) => {
 						if (!open) setWhatsappRepair(null);
 					}}
-				>
-					<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
-						<DialogHeader>
-							<DialogTitle>Repair WhatsApp before linking</DialogTitle>
-							<DialogDescription>
-								<span className="font-medium text-foreground">{whatsappRepair.channelName}</span>{" "}
-								needs a fresh linked-device connection. The Custom bot, existing Agent Links, paired
-								chats, and history stay unchanged.
-							</DialogDescription>
-						</DialogHeader>
-						{whatsappRepair.started ? (
-							<WhatsAppDeviceOnboarding
-								repairAccountId={whatsappRepair.accountId}
-								onDone={() => {
-									const repaired = whatsappRepair;
-									setWhatsappRepair(null);
-									void submitLink(repaired.accountId, repaired.replaceExistingProviderLink).catch(
-										() => undefined,
-									);
-								}}
-							/>
-						) : (
-							<>
-								<Alert className="border-warning/30 bg-warning-muted">
-									<AlertCircle aria-hidden />
-									<AlertTitle>Reconnect WhatsApp</AlertTitle>
-									<AlertDescription>
-										Repair clears only the invalid linked-device login, then asks you to scan a
-										fresh QR. It does not replace this Custom bot.
-									</AlertDescription>
-								</Alert>
-								<DialogFooter>
-									<Button variant="outline" onClick={() => setWhatsappRepair(null)}>
-										Cancel
-									</Button>
-									<Button
-										onClick={() =>
-											setWhatsappRepair((current) =>
-												current ? { ...current, started: true } : current,
-											)
-										}
-									>
-										Repair WhatsApp
-									</Button>
-								</DialogFooter>
-							</>
-						)}
-					</DialogContent>
-				</Dialog>
+					onRepaired={() => {
+						const repaired = whatsappRepair;
+						setWhatsappRepair(null);
+						void submitLink(repaired.accountId, repaired.replaceExistingProviderLink).catch(
+							() => undefined,
+						);
+					}}
+				/>
 			) : null}
 		</div>
 	);

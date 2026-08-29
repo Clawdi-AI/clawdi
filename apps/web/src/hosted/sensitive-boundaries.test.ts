@@ -164,6 +164,8 @@ describe("structural secret boundaries without the denylist", () => {
 				[
 					"export function useCreateChannel()",
 					"export function useCreatePairCode(",
+					"export function useLinkChannelAgent(",
+					"export function useUnlinkChannelAgent(",
 					"return useSensitiveAction",
 				],
 			],
@@ -196,7 +198,10 @@ describe("structural secret boundaries without the denylist", () => {
 			["components/settings/api-keys-panel.tsx", ["const createKey = useSensitiveAction"]],
 			["components/sharing/share-project-dialog.tsx", ["const create = useSensitiveAction"]],
 			["components/vault/add-keys-dialog.tsx", ["const save = useSensitiveAction"]],
-			["pages/dashboard/connectors/[name]/page.tsx", ["const connectAction = useSensitiveAction"]],
+			[
+				"components/connectors/connector-connect-action.tsx",
+				["const connect = useSensitiveAction"],
+			],
 			["components/memories/memories-surface.tsx", ["const saveMem0Key = useSensitiveAction"]],
 			["pages/share/project-share-page.tsx", ["const upgrade = useSensitiveAction"]],
 			[
@@ -210,7 +215,7 @@ describe("structural secret boundaries without the denylist", () => {
 		}
 		expect(
 			source("hosted/v2/channels/channels-hooks.ts").split("return useSensitiveAction"),
-		).toHaveLength(3);
+		).toHaveLength(5);
 		expect(
 			source("hosted/v2/ai-providers/ai-providers-hooks.ts").split("return useSensitiveAction"),
 		).toHaveLength(5);

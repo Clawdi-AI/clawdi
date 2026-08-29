@@ -39,7 +39,7 @@ const CLI_STEPS = [
 		title: "Connect and enable sync",
 		code: "clawdi setup",
 		description:
-			"Detects Claude Code, Codex, Hermes, and OpenClaw; connects each one to your account and enables background sync.",
+			"Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode; connects each one to your account and enables background sync.",
 	},
 ];
 
@@ -141,7 +141,8 @@ export function AddAgentSetup() {
 					<div>
 						<p className="text-sm font-medium">Ask your agent to set up Clawdi</p>
 						<p className="mt-1 text-xs text-muted-foreground">
-							Paste this prompt into Claude Code, Codex, Hermes, or OpenClaw on the machine.
+							Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode on the
+							machine.
 						</p>
 					</div>
 					<div className="rounded-lg border bg-muted/30">

@@ -2,6 +2,7 @@
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { type ReactNode, Suspense, useCallback, useState } from "react";
@@ -17,6 +18,7 @@ import {
 } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { memorySettingsForCache } from "@/components/memories/memory-settings-cache";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -55,9 +57,11 @@ import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
+	memoryDetailHrefForScope,
 	memoryDetailLink,
 	type ResourceNavigationScope,
 } from "@/lib/resource-navigation";
+import { searchExcerpt } from "@/lib/search-highlight";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -112,6 +116,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const page = params.page;
 	const pageSize = params.pageSize;
 	const debouncedSearch = useDebouncedValue(search, 250);
+	const searchQuery = debouncedSearch.trim();
 	const apiCategory = category === ALL ? "" : category;
 
 	const { data: settings } = useQuery({
@@ -145,7 +150,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 				query: {
 					page,
 					page_size: pageSize,
-					q: debouncedSearch || undefined,
+					q: searchQuery || undefined,
 					category: apiCategory || undefined,
 				},
 			},
@@ -168,7 +173,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	);
 
 	const emptyMessage =
-		debouncedSearch || apiCategory
+		searchQuery || apiCategory
 			? "No matches — try a different search or category."
 			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
 	const paginationFooter = (
@@ -241,6 +246,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 						emptyMessage={emptyMessage}
 						onDelete={requestDeleteMemory}
 						scope={scope}
+						searchQuery={searchQuery}
 					/>
 					{paginationFooter}
 				</div>
@@ -249,7 +255,11 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	);
 }
 
-export function MemoriesPageActions() {
+export function MemoriesPageActions({
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	scope?: ResourceNavigationScope;
+}) {
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const settings = useQuery({
@@ -305,7 +315,7 @@ export function MemoriesPageActions() {
 					Mem0
 				</ToggleGroupItem>
 			</ToggleGroup>
-			<AddMemoryForm />
+			<AddMemoryForm scope={scope} />
 		</>
 	);
 }
@@ -316,12 +326,14 @@ function MemoryNotesGrid({
 	emptyMessage,
 	onDelete,
 	scope,
+	searchQuery,
 }: {
 	memories: Memory[];
 	isLoading: boolean;
 	emptyMessage: ReactNode;
 	onDelete: (id: string) => Promise<unknown>;
 	scope: ResourceNavigationScope;
+	searchQuery: string;
 }) {
 	if (isLoading) {
 		const cardLineCounts = [4, 7, 3, 5, 6, 4, 8, 3, 5];
@@ -341,7 +353,13 @@ function MemoryNotesGrid({
 	return (
 		<div className={ENTITY_CARD_MASONRY_CLASS}>
 			{memories.map((memory) => (
-				<MemoryCard key={memory.id} memory={memory} onDelete={onDelete} scope={scope} />
+				<MemoryCard
+					key={memory.id}
+					memory={memory}
+					onDelete={onDelete}
+					scope={scope}
+					searchQuery={searchQuery}
+				/>
 			))}
 		</div>
 	);
@@ -351,11 +369,16 @@ export function MemoryCard({
 	memory,
 	onDelete,
 	scope,
+	searchQuery = "",
 }: {
 	memory: Memory;
 	onDelete: (id: string) => Promise<unknown>;
 	scope: ResourceNavigationScope;
+	searchQuery?: string;
 }) {
+	const visibleContent = searchQuery
+		? searchExcerpt(memory.content, searchQuery, 320)
+		: memory.content;
 	return (
 		<EntityCardChassis as="article" variant="resource" interactive>
 			<EntityCardLink
@@ -363,7 +386,9 @@ export function MemoryCard({
 				{...memoryDetailLink(scope, memory.id)}
 				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
 			/>
-			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">{memory.content}</p>
+			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">
+				<SearchHighlightedText text={visibleContent} query={searchQuery} />
+			</p>
 			<EntityMeta
 				className="mt-3 text-xs"
 				items={[
@@ -510,8 +535,9 @@ function Mem0KeyForm({
 	);
 }
 
-function AddMemoryForm() {
+function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 	const api = useOpenApi();
+	const router = useRouter();
 	const queryClient = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [content, setContent] = useState("");
@@ -519,9 +545,16 @@ function AddMemoryForm() {
 	const secretFinding = findLikelySecret(content);
 
 	const createMemory = api.useMutation("post", "/v1/memories", {
-		onSuccess: () => {
+		onSuccess: (memory) => {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
+			toast.success("Memory created", {
+				description: "It is available to every Agent on this account.",
+				action: {
+					label: "Open memory",
+					onClick: () => void router.navigate({ href: memoryDetailHrefForScope(scope, memory.id) }),
+				},
+			});
 		},
 		onError: (error) =>
 			toast.error("Couldn't create memory", { description: normalizeApiError(error) }),

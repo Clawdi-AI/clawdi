@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FRAMEWORK_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
+import { frameworkBrandIcon } from "@/components/entity-brand-icons";
 import { EntityIcon } from "@/components/entity-icon";
 
 const SIZES = ["sm", "md", "lg"] as const;
@@ -17,9 +18,7 @@ describe("EntityIcon LobeHub brands", () => {
 				const expectedIconSize =
 					kindAndId.kind === "provider"
 						? "84%"
-						: kindAndId.id === "openclaw" || kindAndId.id === "hermes"
-							? "75%"
-							: "70%";
+						: `${(frameworkBrandIcon(kindAndId.id)?.iconScale ?? 0.84) * 100}%`;
 				expect(markup).toContain(`width="${expectedIconSize}"`);
 				expect(markup).toContain(`height="${expectedIconSize}"`);
 			}

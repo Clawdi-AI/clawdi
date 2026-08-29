@@ -285,6 +285,38 @@ async def create_project(
     an account-level action, not something a hosted agent pod should do
     with a leaked key.
     """
+    project = await _create_owned_project(body=body, auth=auth, db=db)
+    return _project_response(project, auth.user_id, owner=auth.user)
+
+
+@router.post(
+    "/for-agent/{agent_id}",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_project_for_agent(
+    agent_id: UUID,
+    body: ProjectCreate,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> ProjectResponse:
+    """Create a Project and link it to one owned Agent atomically."""
+    project = await _create_owned_project(
+        body=body,
+        auth=auth,
+        db=db,
+        agent_id=agent_id,
+    )
+    return _project_response(project, auth.user_id, owner=auth.user, agent_count=1)
+
+
+async def _create_owned_project(
+    *,
+    body: ProjectCreate,
+    auth: AuthContext,
+    db: AsyncSession,
+    agent_id: UUID | None = None,
+) -> Project:
     user_id = auth.user_id
     explicit_slug = body.slug is not None
     slug = await _unique_slug(
@@ -302,6 +334,14 @@ async def create_project(
     )
     db.add(project)
     try:
+        await db.flush()
+        if agent_id is not None:
+            await attach_project_to_owned_agents(
+                db,
+                user_id=user_id,
+                project_id=project.id,
+                raw_agent_ids=[str(agent_id)],
+            )
         await notify_sync_subscriptions_changed(db, [user_id])
         await db.commit()
     except IntegrityError as exc:
@@ -310,8 +350,11 @@ async def create_project(
             status.HTTP_409_CONFLICT,
             "A project with this slug already exists",
         ) from exc
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(project)
-    return _project_response(project, user_id, owner=auth.user)
+    return project
 
 
 @router.get("", response_model=list[ProjectResponse])
