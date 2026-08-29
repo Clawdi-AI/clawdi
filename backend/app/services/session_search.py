@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
 from app.models.session import Session, SessionEventChunk, SessionMessageSearch
+from app.schemas.session import (
+    SessionSearchAnchorResponse,
+    SessionSearchMatchResponse,
+)
 from app.schemas.session_events import SessionEvent
 from app.services.session_content import load_session_events, load_session_messages
 from app.services.session_events import project_visible_messages
@@ -109,6 +113,34 @@ def session_search_excerpt(content: str, query: str, *, limit: int = 240) -> str
     end = min(len(compact), start + limit)
     start = max(0, end - limit)
     return f"{'...' if start else ''}{compact[start:end]}{'...' if end < len(compact) else ''}"
+
+
+def session_search_match_response(
+    session: Session,
+    query: str,
+    *,
+    content: object,
+    role: object,
+    position: object,
+    revision: object,
+) -> SessionSearchMatchResponse | None:
+    """Build the shared API match contract from a ranked search row."""
+    if (
+        not isinstance(content, str)
+        or role not in ("user", "assistant")
+        or not isinstance(position, int)
+        or not isinstance(revision, str)
+    ):
+        return None
+    return SessionSearchMatchResponse(
+        role=role,
+        excerpt=session_search_excerpt(content, query),
+        anchor=SessionSearchAnchorResponse(
+            kind="event_seq" if session.content_protocol == "events-v1" else "snapshot_offset",
+            position=position,
+            revision=revision,
+        ),
+    )
 
 
 def _searchable_text(content: str) -> str:

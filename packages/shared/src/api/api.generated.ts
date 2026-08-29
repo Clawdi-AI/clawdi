@@ -7553,6 +7553,7 @@ export interface components {
             subtitle?: string | null;
             /** Href */
             href: string;
+            search_match?: components["schemas"]["SessionSearchMatchResponse"] | null;
         };
         /** SearchResponse */
         SearchResponse: {

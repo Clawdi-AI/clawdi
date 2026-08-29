@@ -141,7 +141,7 @@ from app.services.session_search import (
     replace_snapshot_search_index,
     searchable_snapshot_messages,
     session_message_search_navigation,
-    session_search_excerpt,
+    session_search_match_response,
     session_search_matches,
 )
 from app.services.sync_events import queue_environment_runtime_manifest_changed
@@ -2734,24 +2734,14 @@ async def list_sessions(
                 message_position,
                 message_revision,
             ) = row
-            if (
-                isinstance(message_content, str)
-                and message_role in ("user", "assistant")
-                and isinstance(message_position, int)
-                and isinstance(message_revision, str)
-            ):
-                anchor_kind: Literal["snapshot_offset", "event_seq"] = (
-                    "event_seq" if s.content_protocol == "events-v1" else "snapshot_offset"
-                )
-                search_match = SessionSearchMatchResponse(
-                    role=message_role,
-                    excerpt=session_search_excerpt(message_content, q),
-                    anchor=SessionSearchAnchorResponse(
-                        kind=anchor_kind,
-                        position=message_position,
-                        revision=message_revision,
-                    ),
-                )
+            search_match = session_search_match_response(
+                s,
+                q,
+                content=message_content,
+                role=message_role,
+                position=message_position,
+                revision=message_revision,
+            )
         else:
             s, agent_type, display_name, default_name, machine_name, shared = row
         items.append(

@@ -45,6 +45,98 @@ async function fulfillJson(route: Route, body: unknown) {
 	});
 }
 
+test("opens a global Session body match at the exact message", async ({ page }) => {
+	const query = "global palette anchor";
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") {
+			return fulfillJson(route, [
+				{
+					id: AGENT_ID,
+					name: "Search Codex",
+					display_name: "Search Codex",
+					default_name: "Codex",
+					machine_name: "search-machine",
+					agent_type: "codex",
+				},
+			]);
+		}
+		if (url.pathname === "/v1/sessions") {
+			return fulfillJson(route, { items: [], total: 0, page: 1, page_size: 25 });
+		}
+		if (url.pathname === "/v1/search") {
+			expect(url.searchParams.get("q")).toBe(query);
+			return fulfillJson(route, {
+				query,
+				results: [
+					{
+						type: "session",
+						id: SESSION_ID,
+						title: "Global search result",
+						subtitle: "codex · /workspace/clawdi",
+						href: `/sessions/${SESSION_ID}`,
+						search_match: {
+							role: "assistant",
+							excerpt: `Found the ${query} in this response`,
+							anchor,
+						},
+					},
+				],
+			});
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}`) {
+			return fulfillJson(route, session);
+		}
+		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			expect(url.searchParams.get("search_query")).toBe(query);
+			expect(url.searchParams.get("anchor_position")).toBe(String(anchor.position));
+			return fulfillJson(route, {
+				items: [
+					{
+						kind: "message",
+						position: anchor.position,
+						role: "assistant",
+						content: `Found the ${query} in this response`,
+						model: "gpt-5",
+						timestamp: now,
+					},
+				],
+				total: 1,
+				offset: 0,
+				limit: 100,
+				anchor_offset: 0,
+				search_navigation: {
+					index: 1,
+					total: 1,
+					current: anchor,
+					previous: null,
+					next: null,
+				},
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto("/sessions");
+	await page.getByRole("button", { name: "Search" }).click();
+	const palette = page.getByRole("dialog", { name: "Search" });
+	await palette.getByPlaceholder("Search sessions, memories, skills, vaults…").fill(query);
+	await expect(palette.getByText(`Found the ${query} in this response`)).toBeVisible();
+	await expect(palette.locator("mark")).toHaveText(query);
+	await palette.getByText("Global search result").click();
+
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/sessions/${SESSION_ID}` &&
+			url.searchParams.get("matchPosition") === String(anchor.position) &&
+			url.searchParams.get("matchQuery") === query
+		);
+	});
+	const current = page.locator('[data-search-match="true"]');
+	await expect(current).toContainText(`Found the ${query} in this response`);
+	await expect(current.locator("mark")).toHaveText(query);
+});
+
 test("opens a message search result and returns to the same filtered list", async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.route("**/v1/**", async (route) => {
@@ -412,10 +504,20 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 
 	await page.goto(`/sessions/${SESSION_ID}`);
 	const scrollContainer = page.locator("#dashboard-scroll-container");
-	for (const expectedOffset of [100, 200, 300, 400]) {
-		await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
-		await expect.poll(() => requestedOffsets.has(expectedOffset)).toBe(true);
+	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
+	for (let attempt = 0; attempt < 8 && requestedOffsets.size < 5; attempt++) {
+		const requestCount = requestedOffsets.size;
+		const loadMore = page.getByRole("button", { name: /^Load more \(/ });
+		if (await loadMore.isVisible()) {
+			await loadMore.click();
+		} else {
+			await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+		}
+		await expect.poll(() => requestedOffsets.size).toBeGreaterThan(requestCount);
 	}
+	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
+		0, 100, 200, 300, 400,
+	]);
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
 	);

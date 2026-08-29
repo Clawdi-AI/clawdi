@@ -25,8 +25,13 @@ from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultProjectAttachment
+from app.schemas.session import SessionSearchMatchResponse
 from app.services.memory_provider import get_memory_provider
 from app.services.memory_types import MemoryItem
+from app.services.session_search import (
+    session_search_match_response,
+    session_search_matches,
+)
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -54,6 +59,7 @@ class SearchHit(BaseModel):
     title: str
     subtitle: str | None = None
     href: str
+    search_match: SessionSearchMatchResponse | None = None
 
 
 class SearchResponse(BaseModel):
@@ -69,21 +75,22 @@ type Searcher = Callable[
 
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
-    needle = like_needle(query)
+    matches = session_search_matches(auth.user_id, query)
     # Historical search retains archived Agent labels; this join grants no
     # operational Agent authority.
     stmt = (
-        select(Session, AgentEnvironment.agent_type)
-        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-        .where(Session.user_id == auth.user_id)
-        .where(
-            or_(
-                Session.summary.ilike(needle, escape="\\"),
-                Session.project_path.ilike(needle, escape="\\"),
-                Session.local_session_id.ilike(needle, escape="\\"),
-            )
+        select(
+            Session,
+            AgentEnvironment.agent_type,
+            matches.c.content,
+            matches.c.role,
+            matches.c.position,
+            matches.c.content_revision,
         )
-        .order_by(Session.started_at.desc())
+        .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
+        .join(matches, matches.c.session_id == Session.id)
+        .where(Session.user_id == auth.user_id)
+        .order_by(matches.c.score.desc(), Session.last_activity_at.desc(), Session.id.asc())
         .limit(TYPE_LIMIT)
     )
     # Bound api_keys can only see sessions in their own env — same
@@ -92,9 +99,17 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
         stmt = stmt.where(Session.environment_id == auth.api_key.environment_id)
     rows = (await db.execute(stmt)).all()
     hits: list[SearchHit] = []
-    for s, agent_type in rows:
+    for s, agent_type, content, role, position, revision in rows:
         title = (s.summary or "").strip() or s.local_session_id[:16]
         subtitle_parts = [p for p in (agent_type, s.project_path) if p]
+        search_match = session_search_match_response(
+            s,
+            query,
+            content=content,
+            role=role,
+            position=position,
+            revision=revision,
+        )
         hits.append(
             SearchHit(
                 type="session",
@@ -102,6 +117,7 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
                 title=title,
                 subtitle=" · ".join(subtitle_parts) or None,
                 href=f"/sessions/{s.id}",
+                search_match=search_match,
             )
         )
     return hits

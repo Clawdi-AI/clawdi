@@ -12,6 +12,7 @@ import {
 	Sparkles,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { TruncatedText } from "@/components/truncated-text";
 import {
 	Command,
@@ -29,6 +30,7 @@ import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { consoleCommandPaletteItems } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
+import { sessionDetailLink } from "@/lib/session-search-anchor";
 import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
@@ -186,6 +188,22 @@ function CommandPalette({
 		},
 		[onOpenChange, router],
 	);
+	const openSearchHit = useCallback(
+		(hit: SearchHit) => {
+			if (hit.type !== "session") {
+				jump(hit.href);
+				return;
+			}
+			onOpenChange(false);
+			void router.navigate({
+				...sessionDetailLink(
+					{ id: hit.id, search_match: hit.search_match },
+					{ searchQuery: data?.query },
+				),
+			});
+		},
+		[data?.query, jump, onOpenChange, router],
+	);
 
 	// Group hits by type — cmdk groups handle the visual separator/label.
 	const grouped = useMemo(() => {
@@ -294,13 +312,19 @@ function CommandPalette({
 												<CommandItem
 													key={`${hit.type}-${hit.id}`}
 													value={`${hit.type}-${hit.id}`}
-													onSelect={() => jump(hit.href)}
+													onSelect={() => openSearchHit(hit)}
 													className={COMMAND_RESULT_ROW_CLASS}
 												>
 													<Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 													<div className={COMMAND_RESULT_TEXT_CLASS}>
 														<TruncatedText>{hit.title}</TruncatedText>
-														{hit.subtitle ? (
+														{hit.type === "session" && hit.search_match ? (
+															<SessionSearchMatchExcerpt
+																match={hit.search_match}
+																query={data?.query ?? debounced}
+																className="line-clamp-2 text-xs leading-4 text-muted-foreground"
+															/>
+														) : hit.subtitle ? (
 															<TruncatedText className="text-xs text-muted-foreground">
 																{hit.subtitle}
 															</TruncatedText>

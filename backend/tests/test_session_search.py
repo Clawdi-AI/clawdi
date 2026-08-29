@@ -207,6 +207,10 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
             ),
         },
     }
+    global_search = (await client.get("/v1/search", params={"q": "Original needle"})).json()
+    global_hit = next(hit for hit in global_search["results"] if hit["type"] == "session")
+    assert global_hit["id"] == session_id
+    assert global_hit["search_match"] == matched["items"][0]["search_match"]
     typo = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
     assert typo["items"] == []
     case_insensitive = (await client.get("/v1/sessions", params={"q": "original NEEDLE"})).json()
