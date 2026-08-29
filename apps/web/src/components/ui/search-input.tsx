@@ -1,6 +1,7 @@
 "use client";
 
 import { Search, X } from "lucide-react";
+import type { KeyboardEventHandler } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,8 @@ export function SearchInput({
 	ariaLabel = "Search",
 	className,
 	autoFocus,
+	onKeyDown,
+	ariaKeyShortcuts,
 }: {
 	value: string;
 	onChange: (next: string) => void;
@@ -33,6 +36,8 @@ export function SearchInput({
 	ariaLabel?: string;
 	className?: string;
 	autoFocus?: boolean;
+	onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
+	ariaKeyShortcuts?: string;
 }) {
 	return (
 		<div className={cn("relative", className)}>
@@ -47,6 +52,8 @@ export function SearchInput({
 				className="pl-9 pr-9"
 				autoComplete="off"
 				autoFocus={autoFocus}
+				onKeyDown={onKeyDown}
+				aria-keyshortcuts={ariaKeyShortcuts}
 			/>
 			{value ? (
 				<Button

@@ -98,14 +98,15 @@ function SessionsListInner() {
 	);
 
 	const debouncedSearch = useDebouncedValue(params.q, 250);
+	const draftSearchQuery = params.q.trim();
+	const searchQuery = debouncedSearch.trim();
 	const getSessionLink = useCallback(
-		(session: SessionListItem) =>
-			sessionDetailLink(session, { returnTo, searchQuery: debouncedSearch }),
-		[returnTo, debouncedSearch],
+		(session: SessionListItem) => sessionDetailLink(session, { returnTo, searchQuery }),
+		[returnTo, searchQuery],
 	);
 	const columns = useMemo(
-		() => sessionColumns({ sessionLink: getSessionLink, searchQuery: debouncedSearch }),
-		[getSessionLink, debouncedSearch],
+		() => sessionColumns({ sessionLink: getSessionLink, searchQuery }),
+		[getSessionLink, searchQuery],
 	);
 
 	// Tanstack-react-table owns sorting state internally; mirror it
@@ -115,7 +116,7 @@ function SessionsListInner() {
 
 	const isFiltered =
 		params.agent !== "" ||
-		debouncedSearch !== "" ||
+		draftSearchQuery !== "" ||
 		params.has_pr !== null ||
 		params.automated !== null;
 
@@ -123,7 +124,7 @@ function SessionsListInner() {
 		() => ({
 			page: params.page,
 			page_size: params.pageSize,
-			q: debouncedSearch || undefined,
+			q: searchQuery || undefined,
 			sort: params.sort,
 			order: params.order,
 			agent: params.agent || undefined,
@@ -131,7 +132,7 @@ function SessionsListInner() {
 			automated: params.automated,
 		}),
 		[
-			debouncedSearch,
+			searchQuery,
 			params.agent,
 			params.automated,
 			params.has_pr,
@@ -142,7 +143,7 @@ function SessionsListInner() {
 		],
 	);
 
-	const { data, isLoading, error, refetch } = useQuery({
+	const { data, isLoading, isFetching, error, refetch } = useQuery({
 		...sessionListQueryOptions($api, sessionQuery),
 		// Keep the previous page visible while search, filters, or pagination
 		// move to a new query key.
@@ -189,6 +190,7 @@ function SessionsListInner() {
 
 	const total = data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / params.pageSize));
+	const isListUpdating = data !== undefined && (draftSearchQuery !== searchQuery || isFetching);
 
 	useEffect(() => {
 		if (!data || params.page >= pageCount) return;
@@ -211,9 +213,11 @@ function SessionsListInner() {
 	) {
 		setPaginationState({ pageIndex: params.page - 1, pageSize: params.pageSize });
 	}
-	const emptyMessage = isFiltered
-		? "No sessions match your filters."
-		: "No sessions yet. Once your agent has a conversation, it'll show up here.";
+	const emptyMessage = draftSearchQuery
+		? `No sessions found for “${draftSearchQuery}”.`
+		: isFiltered
+			? "No sessions match your filters."
+			: "No sessions yet. Once your agent has a conversation, it'll show up here.";
 	const sessionToolbar = (
 		<ListToolbar
 			search={
@@ -225,13 +229,14 @@ function SessionsListInner() {
 						// match quality" UX. Restore the date sort if the
 						// box is cleared so the empty-search default goes
 						// back to the activity timeline.
+						const hasQuery = v.trim().length > 0;
 						void setParams({
 							q: v,
 							page: 1,
 							sort:
-								v && params.sort === "last_activity_at"
+								hasQuery && params.sort === "last_activity_at"
 									? "relevance"
-									: !v && params.sort === "relevance"
+									: !hasQuery && params.sort === "relevance"
 										? "last_activity_at"
 										: params.sort,
 						});
@@ -281,9 +286,13 @@ function SessionsListInner() {
 			}
 			actions={
 				<>
-					{isFiltered && data ? (
-						<span className="text-xs text-muted-foreground tabular-nums">
-							{formatNumber(total)} {total === 1 ? "result" : "results"}
+					{(isFiltered || isListUpdating) && data ? (
+						<span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+							{isListUpdating
+								? draftSearchQuery || searchQuery
+									? "Searching…"
+									: "Updating…"
+								: `${formatNumber(total)} ${total === 1 ? "result" : "results"}`}
 						</span>
 					) : null}
 					{isFiltered ? (
@@ -402,8 +411,8 @@ function SessionsListInner() {
 							emptyMessage={emptyMessage}
 							grouped={groupable}
 							groupBy={params.sort === "started_at" ? "started_at" : "last_activity_at"}
-							quietAutomated={debouncedSearch === ""}
-							searchQuery={debouncedSearch}
+							quietAutomated={searchQuery === ""}
+							searchQuery={searchQuery}
 							sessionLink={getSessionLink}
 						/>
 					</div>

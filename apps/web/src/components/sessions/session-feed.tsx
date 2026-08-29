@@ -277,7 +277,7 @@ export function SessionCard({
 						<SessionSearchMatchExcerpt
 							match={session.search_match}
 							query={searchQuery}
-							className="mt-0.5 block text-xs leading-4 text-foreground/75"
+							className="mt-0.5 line-clamp-2 text-xs leading-4 text-foreground/75"
 						/>
 					) : null}
 					<span

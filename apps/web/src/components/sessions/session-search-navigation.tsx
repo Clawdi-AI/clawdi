@@ -86,11 +86,19 @@ export function SessionSearchNavigation({
 			resetScroll: false,
 		});
 	};
+	const navigateToMatch = (anchor: SessionSearchAnchor | null | undefined) => {
+		if (!anchor) return;
+		void router.navigate({
+			...sessionSearchMatchLink(sessionId, anchor, { searchQuery: query, returnTo }),
+			replace: true,
+			resetScroll: false,
+		});
+	};
 
 	return (
 		<nav
 			aria-label="Search this session"
-			className="flex min-w-0 flex-col gap-2 border-y py-2 text-xs text-muted-foreground sm:flex-row sm:items-center"
+			className="sticky top-(--header-height) z-10 -mx-1 flex min-w-0 flex-col gap-2 border-y bg-background/95 px-1 py-2 text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:flex-row sm:items-center"
 		>
 			<SearchInput
 				value={draftQuery}
@@ -98,6 +106,20 @@ export function SessionSearchNavigation({
 				placeholder="Search this session…"
 				ariaLabel="Search this session"
 				className="min-w-0 flex-1"
+				ariaKeyShortcuts="Enter Shift+Enter Escape"
+				onKeyDown={(event) => {
+					if (event.nativeEvent.isComposing) return;
+					if (event.key === "Escape" && draftQuery) {
+						event.preventDefault();
+						updateQuery("");
+						return;
+					}
+					if (event.key !== "Enter") return;
+					const anchor = event.shiftKey ? activeNavigation?.previous : activeNavigation?.next;
+					if (!anchor) return;
+					event.preventDefault();
+					navigateToMatch(anchor);
+				}}
 			/>
 			{query ? (
 				<div className="flex min-h-8 shrink-0 items-center justify-end gap-2">
