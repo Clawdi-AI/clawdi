@@ -244,6 +244,9 @@ describe("HermesAdapter.collectSessions", () => {
 				1776247000,
 			);
 		}
+		db.run(
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES ('bulk-04', 'assistant', 'Reply', 1776247001, 1, 0)",
+		);
 		db.close();
 
 		const adapter = new HermesAdapter();
@@ -279,13 +282,24 @@ describe("HermesAdapter.collectSessions", () => {
 			 WHERE session_id = 'bulk-02'`,
 		);
 		changedDb.run("UPDATE messages SET content = 'M' WHERE session_id = 'bulk-03'");
+		changedDb.run(
+			`UPDATE messages
+			 SET content = CASE role WHEN 'user' THEN 'Short' ELSE 'Message 4' END
+			 WHERE session_id = 'bulk-04'`,
+		);
 		changedDb.close();
 		const changed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
 		const changedIds: string[] = [];
 		for await (const batch of changed.batches) {
 			changedIds.push(...batch.sessions.map((session) => session.localSessionId));
 		}
-		expect(changedIds.sort()).toEqual(["bulk-00", "bulk-01", "bulk-02", "bulk-03"]);
+		expect(changedIds.sort()).toEqual([
+			"bulk-00",
+			"bulk-01",
+			"bulk-02",
+			"bulk-03",
+			"bulk-04",
+		]);
 	});
 
 	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {

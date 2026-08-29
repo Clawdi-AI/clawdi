@@ -60,6 +60,8 @@ import {
 } from "../lib/session-upload";
 import {
 	type FencedSessionLockEntry,
+	type FencedSessionSourceRevisionUpdate,
+	persistFencedSessionSourceRevisions,
 	readSessionsLock,
 	type SessionFence,
 } from "../lib/sessions-lock";
@@ -271,24 +273,42 @@ interface StableSessionEnqueueOptions {
 	onBlocked?(session: RawSession, message: string): void;
 }
 
+interface StableSessionEnqueueResult {
+	enqueued: number;
+	confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[];
+}
+
 export async function enqueueChangedSessionsAfterStability(
 	opts: StableSessionEnqueueOptions,
-): Promise<number> {
-	if (opts.abort.aborted) return 0;
+): Promise<StableSessionEnqueueResult> {
+	const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
+	if (opts.abort.aborted) return { enqueued: 0, confirmedSourceRevisions };
 	let enqueued = 0;
 	for (const session of opts.sessions) {
-		if (opts.abort.aborted) return enqueued;
+		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
 		const plan = planSessionUpload(session, opts.protocol);
 		const hash = plan.localHash;
 		const fence = opts.fenceFor(session);
+		const sourceRevisionUpdate = session.sourceRevision
+			? {
+				fence,
+				protocol: plan.protocol,
+				localHash: hash,
+				sourceRevision: session.sourceRevision,
+			}
+			: null;
 		const blocked = sessionPlanIsDurablyBlocked(fence, plan);
 		if (blocked) {
+			if (sourceRevisionUpdate) confirmedSourceRevisions.push(sourceRevisionUpdate);
 			opts.onBlocked?.(session, blocked);
 			continue;
 		}
-		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
+		if (opts.lastPushedHash.get(session.localSessionId) === hash) {
+			if (sourceRevisionUpdate) confirmedSourceRevisions.push(sourceRevisionUpdate);
+			continue;
+		}
 		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
-		if (opts.abort.aborted) return enqueued;
+		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
 		const version = await opts.queue.enqueueWhenAvailable(
 			{
 				kind: "session_push",
@@ -303,11 +323,11 @@ export async function enqueueChangedSessionsAfterStability(
 			},
 			opts.abort,
 		);
-		if (version === null) return enqueued;
+		if (version === null) return { enqueued, confirmedSourceRevisions };
 		opts.inFlightHash.set(session.localSessionId, hash);
 		enqueued += 1;
 	}
-	return enqueued;
+	return { enqueued, confirmedSourceRevisions };
 }
 
 interface EngineOpts {
@@ -945,12 +965,13 @@ async function prepareSessionSync(
 				loadFencedSessionSourceRevisions(api, opts, protocol),
 			);
 			const observedResources = new Set<string>();
+			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
-				enqueued += await enqueueChangedSessionsAfterStability({
+				const result = await enqueueChangedSessionsAfterStability({
 					abort: opts.abort,
 					sessions: batch.sessions,
 					queue,
@@ -971,8 +992,11 @@ async function prepareSessionSync(
 						);
 					},
 				});
+				enqueued += result.enqueued;
+				confirmedSourceRevisions.push(...result.confirmedSourceRevisions);
 				if (opts.abort.aborted) return;
 			}
+			persistFencedSessionSourceRevisions(confirmedSourceRevisions);
 			if (scan.coverage === "complete") {
 				health.clearAbsent("push", "session:", observedResources);
 			}

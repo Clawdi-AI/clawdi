@@ -402,9 +402,8 @@ export class RetryQueue {
 	 */
 	async enqueueWhenAvailable(item: QueueItemInput, abort: AbortSignal): Promise<number | null> {
 		while (!abort.aborted) {
-			const replacesExisting = this.items.some((existing) =>
-				sameKey(existing, stampVersion(item, this.nextVersion)),
-			);
+			const candidate = stampVersion(item, this.nextVersion);
+			const replacesExisting = this.items.some((existing) => sameKey(existing, candidate));
 			if (replacesExisting || this.items.length < this.maxItems) return this.enqueue(item);
 			await this.waitForCapacityChange(abort);
 		}

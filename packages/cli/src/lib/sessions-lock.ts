@@ -49,6 +49,13 @@ export interface FencedSessionLockEntry {
 	blocked?: SessionUploadBlock;
 }
 
+export interface FencedSessionSourceRevisionUpdate {
+	fence: SessionFence;
+	protocol: FencedSessionLockEntry["protocol"];
+	localHash: string;
+	sourceRevision: string;
+}
+
 export interface LegacySessionLockEntry {
 	hash: string;
 }
@@ -129,6 +136,29 @@ export function persistFencedSessionEntry(
 
 export function clearFencedSessionEntry(fence: SessionFence): void {
 	writeSessionsLock(removeFencedSessionEntry(readSessionsLock(), fence));
+}
+
+export function persistFencedSessionSourceRevisions(
+	updates: readonly FencedSessionSourceRevisionUpdate[],
+): void {
+	if (updates.length === 0) return;
+	const lock = readSessionsLock();
+	let changed = false;
+	for (const update of updates) {
+		const entry = readFencedSessionEntry(lock, update.fence);
+		if (
+			!entry ||
+			entry.pending !== undefined ||
+			entry.protocol !== update.protocol ||
+			entry.local_hash !== update.localHash ||
+			entry.source_revision === update.sourceRevision
+		) {
+			continue;
+		}
+		entry.source_revision = update.sourceRevision;
+		changed = true;
+	}
+	if (changed) writeSessionsLock(lock);
 }
 
 /** Read the current lock while accepting v1 without trusting its unfenced hash. */

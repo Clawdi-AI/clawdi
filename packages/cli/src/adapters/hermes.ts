@@ -82,7 +82,6 @@ interface TableInfoRow {
 }
 
 interface MessageRevisionRow {
-	content_bytes: number;
 	presentation_state: string;
 }
 
@@ -106,7 +105,7 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
 // Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 1;
+const HERMES_SESSION_PROJECTION_REVISION = 2;
 
 function messageTableInfo(db: ReadonlySqliteDatabase): TableInfoRow[] {
 	return db.prepare("PRAGMA table_info(messages)").all() as TableInfoRow[];
@@ -141,19 +140,23 @@ function messageRevisionQuery(columns: readonly TableInfoRow[]): string {
 	// Hermes appends and replaces rows with stable IDs, toggles lifecycle flags,
 	// updates presentation metadata in place, and may clear stale content. Keep
 	// that state exact while reducing large immutable payloads to byte lengths.
+	// SQLite can answer octet_length from the record header without reading the
+	// content payload from overflow pages.
 	return `
-		SELECT COALESCE(SUM(content_bytes), 0) AS content_bytes,
-		       json_group_array(json_array(id, timestamp, active, compacted, display_kind, display_metadata))
-		         AS presentation_state
+		SELECT json_group_array(
+		         json_array(
+		           id, timestamp, active, compacted, display_kind, display_metadata,
+		           octet_length(content)
+		         ) ORDER BY id
+		       ) AS presentation_state
 		FROM (
-			SELECT id, timestamp, LENGTH(CAST(content AS BLOB)) AS content_bytes,
+			SELECT id, timestamp, content,
 			       ${columnOr("active", "1")},
 			       ${columnOr("compacted", "0")},
 			       ${columnOr("display_kind", "NULL")},
 			       ${columnOr("display_metadata", "NULL")}
 			FROM messages
 			WHERE session_id = ?
-			ORDER BY id
 		)
 	`;
 }
@@ -173,7 +176,6 @@ function sessionSourceRevision(row: SessionRow, messages: MessageRevisionRow): s
 				row.input_tokens,
 				row.output_tokens,
 				row.cache_read_tokens,
-				messages.content_bytes,
 				messages.presentation_state,
 			]),
 		)
