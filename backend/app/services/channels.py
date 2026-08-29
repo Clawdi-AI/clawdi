@@ -848,6 +848,31 @@ async def get_strict_v2_hosted_channel_agent_or_409(
     return agent
 
 
+async def _lock_bot_agent_link_runtime_fence(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    link_id: UUID,
+    user_id: UUID,
+) -> UUID | None:
+    """Lock pairing authority before any Link-scoped mutable state."""
+
+    return await db.scalar(
+        select(V2RuntimeEnvironmentFence.environment_id)
+        .select_from(ChannelBotAgentLink)
+        .join(
+            V2RuntimeEnvironmentFence,
+            V2RuntimeEnvironmentFence.environment_id == ChannelBotAgentLink.agent_id,
+        )
+        .where(
+            ChannelBotAgentLink.id == link_id,
+            ChannelBotAgentLink.account_id == account_id,
+            ChannelBotAgentLink.user_id == user_id,
+        )
+        .with_for_update(of=V2RuntimeEnvironmentFence)
+    )
+
+
 async def bot_agent_link_allows_new_pairing(
     db: AsyncSession,
     *,
@@ -855,6 +880,15 @@ async def bot_agent_link_allows_new_pairing(
     link_id: UUID,
     user_id: UUID,
 ) -> bool:
+    fence_environment_id = await _lock_bot_agent_link_runtime_fence(
+        db,
+        account_id=account_id,
+        link_id=link_id,
+        user_id=user_id,
+    )
+    if fence_environment_id is None:
+        return False
+
     row = (
         await db.execute(
             select(
@@ -884,9 +918,10 @@ async def bot_agent_link_allows_new_pairing(
                 ChannelAccount.archived_at.is_(None),
                 AgentEnvironment.user_id == user_id,
                 AgentEnvironment.archived_at.is_(None),
+                V2RuntimeEnvironmentFence.environment_id == fence_environment_id,
             )
             .execution_options(populate_existing=True)
-            .with_for_update(of=(ChannelBotAgentLink, V2RuntimeEnvironmentFence))
+            .with_for_update(of=ChannelBotAgentLink)
         )
     ).one_or_none()
     if row is None:
@@ -1730,12 +1765,39 @@ async def claim_pair_code(
         account_id=account.id,
         external_chat_id=external_chat_id,
     )
+    # This first read is deliberately unlocked. Retirement and pairing share
+    # the strict Fence -> Link -> PairCode row-lock order below.
+    code_hash = hash_token(raw_code)
+    candidate = (
+        await db.execute(
+            select(ChannelPairCode).where(
+                ChannelPairCode.account_id == account.id,
+                ChannelPairCode.code_hash == code_hash,
+            )
+        )
+    ).scalar_one_or_none()
+    if candidate is None:
+        return PairCodeClaimResult(reason="invalid")
+    if candidate.status != PAIR_CODE_STATUS_PENDING:
+        return PairCodeClaimResult(reason="already_used")
+    if candidate.expires_at <= datetime.now(UTC):
+        return PairCodeClaimResult(reason="expired")
+
+    link_id = candidate.bot_agent_link_id
+    user_id = candidate.user_id
+    link_allows_pairing = await bot_agent_link_allows_new_pairing(
+        db,
+        account_id=account.id,
+        link_id=link_id,
+        user_id=user_id,
+    )
     result = await db.execute(
         select(ChannelPairCode)
         .where(
             ChannelPairCode.account_id == account.id,
-            ChannelPairCode.code_hash == hash_token(raw_code),
+            ChannelPairCode.code_hash == code_hash,
         )
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     pair_code = result.scalar_one_or_none()
@@ -1745,11 +1807,10 @@ async def claim_pair_code(
         return PairCodeClaimResult(reason="already_used")
     if pair_code.expires_at <= datetime.now(UTC):
         return PairCodeClaimResult(reason="expired")
-    if not await bot_agent_link_allows_new_pairing(
-        db,
-        account_id=account.id,
-        link_id=pair_code.bot_agent_link_id,
-        user_id=pair_code.user_id,
+    if (
+        pair_code.bot_agent_link_id != link_id
+        or pair_code.user_id != user_id
+        or not link_allows_pairing
     ):
         # Historical pair codes must not let an ineligible Link expand into a
         # new chat binding. Revoke the code while preserving list/unpair/unlink

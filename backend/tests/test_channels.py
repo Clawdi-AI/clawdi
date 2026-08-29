@@ -15011,6 +15011,93 @@ async def test_pair_code_concurrent_claim_is_single_use(
     assert pair_row.claimed_external_chat_id == bindings[0].external_chat_id
 
 
+@pytest.mark.asyncio
+async def test_pair_code_claim_locks_fence_before_link_and_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-runtime-lock-order"},
+        )
+    ).json()
+    pair = (await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})).json()
+    account_id = UUID(created["id"])
+    pair_code_id = UUID(pair["id"])
+    link_id = UUID(created["agent_link_id"])
+    link = await db_session.get(ChannelBotAgentLink, link_id)
+    assert link is not None
+    fence_id = link.agent_id
+
+    fence_locked = asyncio.Event()
+    release_claim = asyncio.Event()
+    original_fence_lock = channel_service._lock_bot_agent_link_runtime_fence
+
+    async def pause_after_fence_lock(*args: Any, **kwargs: Any) -> UUID | None:
+        environment_id = await original_fence_lock(*args, **kwargs)
+        fence_locked.set()
+        await release_claim.wait()
+        return environment_id
+
+    monkeypatch.setattr(
+        channel_service,
+        "_lock_bot_agent_link_runtime_fence",
+        pause_after_fence_lock,
+    )
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def claim() -> channel_service.PairCodeClaimResult:
+        async with session_factory() as claim_db:
+            account = await claim_db.get(ChannelAccount, account_id)
+            assert account is not None
+            result = await channel_service.claim_pair_code(
+                claim_db,
+                account=account,
+                raw_code=pair["code"],
+                external_chat_id="runtime-lock-order-chat",
+                external_chat_type="private",
+                external_chat_name="Runtime lock order",
+                external_user_id="runtime-lock-order-user",
+            )
+            await claim_db.commit()
+            return result
+
+    claim_task = asyncio.create_task(claim())
+    try:
+        await asyncio.wait_for(fence_locked.wait(), timeout=2)
+        async with session_factory() as observer:
+            with pytest.raises(SQLAlchemyError) as fence_lock_error:
+                await observer.scalar(
+                    select(V2RuntimeEnvironmentFence)
+                    .where(V2RuntimeEnvironmentFence.environment_id == fence_id)
+                    .with_for_update(nowait=True)
+                )
+            assert getattr(fence_lock_error.value.orig, "sqlstate", None) == "55P03"
+            await observer.rollback()
+
+        async with session_factory() as observer:
+            locked_link = await observer.scalar(
+                select(ChannelBotAgentLink)
+                .where(ChannelBotAgentLink.id == link_id)
+                .with_for_update(nowait=True)
+            )
+            locked_pair_code = await observer.scalar(
+                select(ChannelPairCode)
+                .where(ChannelPairCode.id == pair_code_id)
+                .with_for_update(nowait=True)
+            )
+            assert locked_link is not None
+            assert locked_pair_code is not None
+            await observer.rollback()
+    finally:
+        release_claim.set()
+        result = await asyncio.wait_for(claim_task, timeout=2)
+
+    assert result.binding is not None
+
+
 @pytest.mark.parametrize(
     ("name", "expected_kind"),
     [
