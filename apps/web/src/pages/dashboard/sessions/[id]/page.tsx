@@ -32,11 +32,11 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { SessionTimelineList } from "@/components/sessions/message-list";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { SessionShareControls } from "@/components/sessions/share-controls";
+import { VirtualizedSessionTimelineList } from "@/components/sessions/virtualized-message-list";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -55,6 +55,7 @@ import type {
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { findScrollableContainer } from "@/lib/scroll-container";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
@@ -212,6 +213,7 @@ export function SessionDetailContent({
 	// "asc" swaps the query key without a wasted "desc" fetch.
 	const [direction, setDirection] = useState<Direction>("desc");
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
+	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
 	const debouncedSearchQuery = useDebouncedValue(normalizedSearchQuery, 250) || undefined;
 	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
@@ -339,7 +341,7 @@ export function SessionDetailContent({
 
 	useEffect(() => {
 		if (!anchorIdentity || !pagesData) return;
-		if (highlightedMessageKey && highlightedMessageRef.current) {
+		if (highlightedMessageKey) {
 			const handled = `resolved:${highlightedMessageKey}:${anchorIdentity}`;
 			if (handledAnchorRef.current === handled) return;
 			handledAnchorRef.current = handled;
@@ -409,22 +411,34 @@ export function SessionDetailContent({
 	const searchActive = Boolean(normalizedSearchQuery);
 	const isSearchUpdating =
 		searchActive &&
-		(normalizedSearchQuery !== debouncedSearchQuery || isContentFetching || isContentLoading);
+		(normalizedSearchQuery !== debouncedSearchQuery ||
+			(isContentFetching && !isFetchingNextPage) ||
+			isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
+		if (timelineView !== "tools") {
+			rememberedSearchQueryRef.current = normalizedSearchQuery;
+		}
+		const retainedSearchQuery =
+			selected === "tools"
+				? undefined
+				: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
 		if (agentId) {
+			const search = {
+				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
+				...(selected === "all" ? {} : { timelineView: selected }),
+			};
 			void router.navigate({
-				...agentSessionDetailLink(
-					agentId,
-					sessionId,
-					selected === "all" ? undefined : { timelineView: selected },
-				),
+				...agentSessionDetailLink(agentId, sessionId, search),
 				replace: true,
 				resetScroll: false,
 			});
 			return;
 		}
 		void router.navigate({
-			...sessionTimelineViewLink(sessionId, selected, { returnTo }),
+			...sessionTimelineViewLink(sessionId, selected, {
+				returnTo,
+				searchQuery: retainedSearchQuery,
+			}),
 			replace: true,
 			resetScroll: false,
 		});
@@ -528,83 +542,88 @@ export function SessionDetailContent({
 
 			{session.has_content ? (
 				<div className="sticky top-(--header-height) z-10 -mx-4 border-y bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
-					<div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
-						<SessionSearchNavigation
-							sessionId={sessionId}
-							query={normalizedSearchQuery}
-							navigation={searchNavigation}
-							returnTo={returnTo}
-							isSearching={isSearchUpdating}
-							hasSearchError={searchActive && isContentError}
-							className="lg:max-w-2xl"
-						/>
-						{searchActive ? null : (
-							<div className="flex min-w-0 items-center justify-between gap-2 lg:ml-auto lg:justify-end">
-								<ToggleGroup
-									value={[timelineView]}
-									onValueChange={(values) => {
-										const selected = values[0];
-										if (
-											selected === "all" ||
-											selected === "user" ||
-											selected === "assistant" ||
-											selected === "tools"
-										) {
-											updateTimelineView(selected);
-										}
-									}}
-									size="sm"
-									spacing={1}
-									aria-label="Timeline view"
-									className="min-w-0 bg-muted p-0.5"
-								>
-									<ToggleGroupItem
-										value="all"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<MessageSquare /> All
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="user"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<UserRound /> You
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="assistant"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<Bot /> Agent
-									</ToggleGroupItem>
-									<ToggleGroupItem
-										value="tools"
-										className="px-2 data-[state=on]:bg-background data-[state=on]:shadow-xs"
-									>
-										<Wrench /> Tools
-									</ToggleGroupItem>
-								</ToggleGroup>
-								<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-									{loadedCount > 0 ? (
-										<span className="hidden tabular-nums sm:inline">
-											{loadedCount} of {totalItems}
-										</span>
-									) : null}
-									<Button
-										variant="ghost"
-										size="icon-sm"
-										onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
-										aria-label={
-											direction === "desc"
-												? "Show oldest activity first"
-												: "Show newest activity first"
-										}
-										title={direction === "desc" ? "Newest first" : "Oldest first"}
-									>
-										{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
-									</Button>
-								</div>
-							</div>
+					<div
+						className={cn(
+							"grid min-w-0 gap-2 md:items-center",
+							timelineView === "tools" ? "md:grid-cols-1" : "md:grid-cols-[minmax(16rem,1fr)_auto]",
 						)}
+					>
+						{timelineView === "tools" ? null : (
+							<SessionSearchNavigation
+								sessionId={sessionId}
+								agentId={agentId}
+								query={normalizedSearchQuery}
+								timelineView={timelineView}
+								navigation={searchNavigation}
+								returnTo={returnTo}
+								isSearching={isSearchUpdating}
+								hasSearchError={searchActive && isContentError}
+								className="md:max-w-xl"
+							/>
+						)}
+						<div
+							className={cn(
+								"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
+								timelineView === "tools" && "md:justify-self-end",
+							)}
+						>
+							<ToggleGroup
+								value={[timelineView]}
+								onValueChange={(values) => {
+									const selected = values[0];
+									if (
+										selected === "all" ||
+										selected === "user" ||
+										selected === "assistant" ||
+										selected === "tools"
+									) {
+										updateTimelineView(selected);
+									}
+								}}
+								variant="outline"
+								size="sm"
+								spacing={0}
+								aria-label="Timeline view"
+								className="min-w-0"
+							>
+								<ToggleGroupItem value="all" aria-label="All activity" title="All activity">
+									<MessageSquare /> <span className="hidden sm:inline">All</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem value="user" aria-label="Your messages" title="Your messages">
+									<UserRound /> <span className="hidden sm:inline">You</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem
+									value="assistant"
+									aria-label="Agent messages"
+									title="Agent messages"
+								>
+									<Bot /> <span className="hidden sm:inline">Agent</span>
+								</ToggleGroupItem>
+								<ToggleGroupItem value="tools" aria-label="Tools activity" title="Tool activity">
+									<Wrench /> <span className="hidden sm:inline">Tools</span>
+								</ToggleGroupItem>
+							</ToggleGroup>
+							<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+								{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
+									<span className="tabular-nums">
+										{loadedCount} of {totalItems}
+									</span>
+								) : null}
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
+									aria-label={
+										direction === "desc"
+											? "Show oldest activity first"
+											: "Show newest activity first"
+									}
+									title={direction === "desc" ? "Newest first" : "Oldest first"}
+								>
+									{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
+								</Button>
+							</div>
+						</div>
 					</div>
 				</div>
 			) : null}
@@ -626,7 +645,7 @@ export function SessionDetailContent({
 					// group-start rows; continuation rows render flush
 					// so a thread looks tight, not gapped.
 					<div>
-						<SessionTimelineList
+						<VirtualizedSessionTimelineList
 							items={timelineItems}
 							itemKeys={timelineKeys}
 							agentType={session.agent_type}
@@ -694,20 +713,7 @@ function JumpToBottomButton() {
 	const anchorRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
-		// Find nearest scrollable ancestor. `overflow-y: auto` on
-		// SidebarInset means it's the canonical scroller; falling
-		// back to `window` if nothing matches keeps single-page
-		// layouts (no sidebar) working.
-		const findScrollableAncestor = (node: Element | null): HTMLElement | Window => {
-			let cur = node?.parentElement ?? null;
-			while (cur) {
-				const overflow = getComputedStyle(cur).overflowY;
-				if (overflow === "auto" || overflow === "scroll") return cur;
-				cur = cur.parentElement;
-			}
-			return window;
-		};
-		const scroller = findScrollableAncestor(anchorRef.current);
+		const scroller = findScrollableContainer(anchorRef.current?.parentElement ?? null);
 		scrollerRef.current = scroller;
 
 		const onScroll = () => {

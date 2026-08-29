@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -53,11 +53,14 @@ async def _push_session(
     tags: list[str] | None = None,
     messages: list[dict] | None = None,
     upload: bool = False,
+    started_at: datetime | None = None,
+    last_activity_at: datetime | None = None,
 ) -> str:
     payload = {
         "environment_id": env_id,
         "local_session_id": local_session_id,
-        "started_at": datetime.now(UTC).isoformat(),
+        "started_at": (started_at or datetime.now(UTC)).isoformat(),
+        "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
         "message_count": len(messages) if messages else 0,
         "summary": summary,
         "project_path": project_path,
@@ -91,7 +94,7 @@ async def _push_session(
 @pytest.mark.asyncio
 async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClient):
     env_id = await _register_env(client)
-    await _push_session(
+    session_id = await _push_session(
         client, env_id, local_session_id="auth-1", summary="user authentication migration"
     )
     await _push_session(client, env_id, local_session_id="dns-1", summary="DNS cache poisoning")
@@ -105,6 +108,17 @@ async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClie
     typo = await client.get("/v1/sessions", params={"q": "athentication"})
     assert typo.status_code == 200
     assert typo.json()["items"] == []
+
+    by_id = await client.get("/v1/sessions", params={"q": session_id.upper()})
+    assert by_id.status_code == 200
+    assert [item["id"] for item in by_id.json()["items"]] == [session_id]
+
+    compact_id = session_id.replace("-", "")
+    by_prefix = await client.get("/v1/sessions", params={"q": compact_id[:8].upper()})
+    assert [item["id"] for item in by_prefix.json()["items"]] == [session_id]
+
+    short_prefix = await client.get("/v1/sessions", params={"q": compact_id[:7]})
+    assert session_id not in {item["id"] for item in short_prefix.json()["items"]}
 
 
 @pytest.mark.asyncio
@@ -122,6 +136,32 @@ async def test_relevance_sort_only_ranks_phrase_matches(client: httpx.AsyncClien
     # Only the summary containing the complete phrase is eligible.
     assert items[0]["summary"] == "oauth token refresh bug"
     assert all(s["summary"] != "UI polish" for s in items)
+
+
+@pytest.mark.asyncio
+async def test_relevance_ties_prefer_recent_activity(client: httpx.AsyncClient):
+    env_id = await _register_env(client)
+    now = datetime.now(UTC)
+    for local_id, age in (("older-body-match", 2), ("newer-body-match", 1)):
+        activity_at = now - timedelta(hours=age)
+        await _push_session(
+            client,
+            env_id,
+            local_session_id=local_id,
+            messages=[{"role": "user", "content": "same ranked phrase"}],
+            upload=True,
+            started_at=activity_at,
+            last_activity_at=activity_at,
+        )
+
+    response = await client.get(
+        "/v1/sessions",
+        params={"q": "same ranked phrase", "sort": "relevance"},
+    )
+    assert [item["local_session_id"] for item in response.json()["items"]] == [
+        "newer-body-match",
+        "older-body-match",
+    ]
 
 
 @pytest.mark.asyncio
@@ -167,6 +207,10 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
             ),
         },
     }
+    global_search = (await client.get("/v1/search", params={"q": "Original needle"})).json()
+    global_hit = next(hit for hit in global_search["results"] if hit["type"] == "session")
+    assert global_hit["id"] == session_id
+    assert global_hit["search_match"] == matched["items"][0]["search_match"]
     typo = (await client.get("/v1/sessions", params={"q": "Orginal needle"})).json()
     assert typo["items"] == []
     case_insensitive = (await client.get("/v1/sessions", params={"q": "original NEEDLE"})).json()
@@ -264,6 +308,30 @@ async def test_snapshot_message_search_navigates_matches_in_transcript_order(
             "revision": first_anchor["revision"],
         },
     }
+
+    assistant_only = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": "needle", "view": "assistant"},
+    )
+    assert assistant_only.status_code == 200, assistant_only.text
+    assert assistant_only.json()["search_navigation"] == {
+        "index": 1,
+        "total": 1,
+        "current": {
+            "kind": "snapshot_offset",
+            "position": 2,
+            "revision": first_anchor["revision"],
+        },
+        "previous": None,
+        "next": None,
+    }
+
+    tools_only = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": "needle", "view": "tools"},
+    )
+    assert tools_only.status_code == 200, tools_only.text
+    assert tools_only.json().get("search_navigation") is None
 
     first = await client.get(
         f"/v1/sessions/{session_id}/messages",
