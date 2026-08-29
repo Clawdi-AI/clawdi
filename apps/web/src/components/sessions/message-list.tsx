@@ -7,6 +7,7 @@ import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
 	SessionMessage,
 	SessionTimelineItem,
@@ -325,14 +326,38 @@ function formatToolPayload(value: string): string {
 	}
 }
 
-function ToolPayload({ label, value }: { label: string; value: string }) {
+function ToolDetails({ call, result }: { call?: SessionToolCall; result?: SessionToolResult }) {
+	const payloads = [
+		call?.arguments_json
+			? { key: "arguments", label: "Arguments", value: call.arguments_json }
+			: null,
+		result?.content ? { key: "output", label: "Output", value: result.content } : null,
+		result?.result_json ? { key: "result", label: "Result", value: result.result_json } : null,
+	].filter((payload): payload is { key: string; label: string; value: string } => payload !== null);
+	const first = payloads[0];
+	if (!first) return null;
+
 	return (
-		<div className="space-y-1">
-			<div className="text-3xs font-medium uppercase text-muted-foreground">{label}</div>
-			<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-2 font-mono text-xs text-foreground">
-				{formatToolPayload(value)}
-			</pre>
-		</div>
+		<Tabs defaultValue={first.key} className="min-w-0 gap-1.5">
+			{payloads.length > 1 ? (
+				<TabsList variant="line" className="h-7">
+					{payloads.map((payload) => (
+						<TabsTrigger key={payload.key} value={payload.key} className="h-7 px-1.5 text-xs">
+							{payload.label}
+						</TabsTrigger>
+					))}
+				</TabsList>
+			) : (
+				<div className="text-3xs font-medium uppercase text-muted-foreground">{first.label}</div>
+			)}
+			{payloads.map((payload) => (
+				<TabsContent key={payload.key} value={payload.key}>
+					<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-l-2 border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
+						{formatToolPayload(payload.value)}
+					</pre>
+				</TabsContent>
+			))}
+		</Tabs>
 	);
 }
 
@@ -344,17 +369,19 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 	const timestamp = call?.timestamp ?? result?.timestamp;
 
 	return (
-		<div className={cn("flex gap-3 py-1.5", OFFSCREEN_RENDERING_CLASS)}>
-			<div className="flex w-8 shrink-0 justify-end pt-1 text-muted-foreground">
-				<Wrench className="size-3.5" />
+		<div className={cn("flex gap-3 py-2", OFFSCREEN_RENDERING_CLASS)}>
+			<div className="flex w-8 shrink-0 justify-center pt-1">
+				<span className="flex size-6 items-center justify-center rounded-md border bg-background text-muted-foreground shadow-xs">
+					<Wrench className="size-3.5" />
+				</span>
 			</div>
-			<div className="min-w-0 flex-1 border-l pl-3">
+			<div className="min-w-0 flex-1">
 				<button
 					type="button"
 					disabled={!hasDetails}
 					onClick={() => setOpen((value) => !value)}
 					aria-expanded={hasDetails ? open : undefined}
-					className="flex min-h-7 w-full min-w-0 items-center gap-2 text-left text-xs text-muted-foreground disabled:cursor-default"
+					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 disabled:cursor-default disabled:hover:bg-transparent"
 				>
 					<ChevronRight
 						className={cn(
@@ -388,12 +415,8 @@ function ToolActivity({ call, result }: { call?: SessionToolCall; result?: Sessi
 					) : null}
 				</button>
 				{open ? (
-					<div className="space-y-3 pb-2 pt-1">
-						{call?.arguments_json ? (
-							<ToolPayload label="Arguments" value={call.arguments_json} />
-						) : null}
-						{result?.content ? <ToolPayload label="Output" value={result.content} /> : null}
-						{result?.result_json ? <ToolPayload label="Result" value={result.result_json} /> : null}
+					<div className="px-2 pb-2 pt-1">
+						<ToolDetails call={call} result={result} />
 					</div>
 				) : null}
 			</div>

@@ -165,6 +165,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 });
 
 test("filters session activity and expands paired tool details", async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
 	const timeline = [
 		{
 			kind: "message",
@@ -225,6 +226,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 			const query = url.searchParams.get("search_query");
 			if (query) {
 				expect(view).toBe("all");
+				await new Promise((resolve) => setTimeout(resolve, 450));
 				return fulfillJson(route, {
 					items: [timeline[0]],
 					total: 1,
@@ -258,6 +260,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
 	await toolActivity.click();
 	await expect(page.locator("pre").filter({ hasText: '"path": "README.md"' })).toBeVisible();
+	await page.getByRole("tab", { name: "Output" }).click();
 	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "You" }).click();
@@ -267,6 +270,8 @@ test("filters session activity and expands paired tool details", async ({ page }
 
 	await page.getByRole("button", { name: "Tools" }).click();
 	await page.getByRole("textbox", { name: "Search this session" }).fill("Final answer");
+	await expect(page.getByText("Searching", { exact: true })).toBeVisible();
+	await expect(toolActivity).toBeVisible();
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.searchParams.get("matchQuery") === "Final answer" && !url.searchParams.has("timelineView")
