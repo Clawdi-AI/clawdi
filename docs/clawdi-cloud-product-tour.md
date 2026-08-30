@@ -90,6 +90,17 @@ Use the [connect-an-app
 workflow](https://docs.clawdi.ai/guides/workflows/connect-an-app) for tool review,
 account authorization, and readiness checks.
 
+## Connect messaging Channels
+
+Channels keep bot connections separate from the Agents and external chats linked
+to them. The released dashboard supports Telegram and Discord bots plus custom
+WhatsApp accounts for compatible Cloud Agent workflows.
+
+![Four Clawdi messaging Channels ready to link to an Agent](images/cloud-channels.png)
+
+Follow the [Channels guide](https://docs.clawdi.ai/guides/channels) to connect a
+bot, link one Agent, pair the intended chat, and verify delivery.
+
 ## Keep durable account context
 
 Memories hold account-level facts, preferences, patterns, decisions, and

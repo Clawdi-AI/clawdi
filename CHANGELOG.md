@@ -21,10 +21,21 @@ database migration, CI, and implementation details.
 
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 - Session search keeps its controls visible in long conversations, supports keyboard match navigation, shows clearer loading feedback, and gives message matches more context in result cards.
+- The public README now focuses on the two run paths, current product capabilities, quickstart, and self-hosting entry points.
+- The product tour now shows messaging Channels and explains the separate bot, Agent link, and paired-chat boundaries.
 
 ### Fixed
 
 - Session detail search now preserves spaces while typing multi-word queries.
+
+## Clawdi CLI v0.14.31
+
+Package: `clawdi@0.14.31`
+
+### Changed
+
+- CLI help and package metadata now describe Clawdi's released run paths and
+  shared Agent resources without listing roadmap features.
 
 ## Clawdi CLI v0.14.30
 
@@ -32,8 +43,8 @@ Package: `clawdi@0.14.30`
 
 ### Changed
 
-- CLI help and package metadata now use Clawdi's canonical “best home for all
-  your AI agents” product positioning.
+- CLI help and package metadata were updated to the product positioning used for
+  this release.
 
 ## Clawdi CLI v0.14.29
 

@@ -389,7 +389,7 @@ async def test_deploy_key_minted_with_full_access_by_default(
 
     Without this property the daemon ends up narrowed to a 3-token API permission list
     and silently can't touch vault / memories / settings, which breaks
-    the "best home for all your AI agents" promise."""
+    Clawdi's shared context and tools promise."""
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
