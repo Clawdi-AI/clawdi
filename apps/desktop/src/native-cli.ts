@@ -11,6 +11,7 @@ import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import { app } from "electron";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const OAUTH_TIMEOUT_MS = 11 * 60_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const PRODUCTION_CLOUD_API_URL = "https://cloud-api.clawdi.ai";
 const PRODUCTION_DEPLOY_API_URL = "https://api.clawdi.ai";
@@ -43,29 +44,14 @@ export class DesktopCliService {
 		};
 	}
 
-	async startAuthentication(): Promise<{
-		authorizationUrl: string;
-		redirectUri: string;
-		expiresAt: string;
-	} | null> {
+	async authenticate(): Promise<void> {
 		const cli = this.cli();
-		const result = await this.runJson(cli, ["auth", "start", "--json"]);
-		if (readString(result.status) === "already_authenticated") return null;
-		const authorizationUrl = readUrl(result.authorizationUrl, "authorization URL", ["https:"]);
-		const redirectUri = readUrl(result.redirectUri, "redirect URI", ["http:"]);
-		const expiresAt = readString(result.expiresAt);
-		if (!expiresAt || !Number.isFinite(Date.parse(expiresAt))) {
-			throw new Error("Clawdi returned an invalid authorization expiry.");
-		}
-		return { authorizationUrl, redirectUri, expiresAt };
-	}
-
-	async finishAuthentication(callbackUrl: string): Promise<void> {
-		const cli = this.cli();
-		await this.run(cli, ["auth", "finish", "--json"], {
-			stdin: callbackUrl,
-			timeoutMs: DEFAULT_TIMEOUT_MS,
+		const result = await this.runJson(cli, ["auth", "login", "--desktop"], {
+			timeoutMs: OAUTH_TIMEOUT_MS,
 		});
+		if (readString(result.status) !== "authenticated") {
+			throw new Error("Clawdi returned an invalid sign-in result.");
+		}
 	}
 
 	async createDashboardSession(): Promise<string> {
@@ -122,7 +108,7 @@ export class DesktopCliService {
 	}
 
 	private resolveBundledCli(): string {
-		const override = process.env.CLAWDI_DESKTOP_CLI?.trim();
+		const override = app.isPackaged ? null : process.env.CLAWDI_DESKTOP_CLI?.trim();
 		if (override) {
 			if (!existsSync(override)) throw new Error("CLAWDI_DESKTOP_CLI does not exist.");
 			return resolve(override);
@@ -159,7 +145,8 @@ export class DesktopCliService {
 		} catch (cause) {
 			throw new DesktopCliError("Could not read the local sign-in state.", { cause });
 		}
-		const authenticated = result.authenticated === true;
+		const authenticated =
+			result.authenticated === true && readString(result.credentialType) === "clerk-oauth";
 		const email = isRecord(result.user) ? readString(result.user.email) : null;
 		const user = isRecord(result.user)
 			? { id: readString(result.user.id) ?? "", ...(email ? { email } : {}) }
@@ -177,8 +164,12 @@ export class DesktopCliService {
 		return { installed, running };
 	}
 
-	private async runJson(cli: string, args: string[]): Promise<Record<string, unknown>> {
-		const result = await this.run(cli, args);
+	private async runJson(
+		cli: string,
+		args: string[],
+		opts: { timeoutMs?: number } = {},
+	): Promise<Record<string, unknown>> {
+		const result = await this.run(cli, args, opts);
 		let value: unknown;
 		try {
 			value = JSON.parse(result.stdout);
@@ -319,21 +310,6 @@ function desktopPlatform(): DesktopBootstrapState["platform"] {
 
 function readString(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function readUrl(value: unknown, label: string, protocols: readonly string[]): string {
-	const raw = readString(value);
-	if (!raw) throw new Error(`Clawdi returned an invalid ${label}.`);
-	let url: URL;
-	try {
-		url = new URL(raw);
-	} catch {
-		throw new Error(`Clawdi returned an invalid ${label}.`);
-	}
-	if (!protocols.includes(url.protocol) || url.username || url.password) {
-		throw new Error(`Clawdi returned an unsafe ${label}.`);
-	}
-	return url.toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

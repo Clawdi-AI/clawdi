@@ -17,6 +17,7 @@
 		"@clawdi/shared": "workspace:*"
 	},
 	"devDependencies": {
+		"@electron/fuses": "^1.8.0",
 		"@playwright/test": "^1.62.1",
 		"@types/bun": "^1.4.0",
 		"@types/node": "^26.2.0",
@@ -36,6 +37,7 @@
 		"directories": {
 			"output": "release"
 		},
+		"afterPack": "scripts/after-pack.mjs",
 		"files": [
 			"dist/**/*",
 			"package.json"

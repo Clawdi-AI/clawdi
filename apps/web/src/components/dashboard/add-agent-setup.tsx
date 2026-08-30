@@ -80,6 +80,11 @@ function CopyButton({
 	);
 }
 
+/**
+ * Shared setup body for every `AddAgentDialog`. Commands and the agent
+ * hand-off prompt are peer paths; while the dialog is open, the setup also
+ * watches for newly registered agents and surfaces an explicit success state.
+ */
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();

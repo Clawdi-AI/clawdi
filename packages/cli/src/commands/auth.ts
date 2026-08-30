@@ -179,14 +179,15 @@ export async function finishOAuthLogin(
 	pending: PendingAuth,
 	callbackUrl: string,
 	expectedCredential: StoredCredentialIdentity,
+	opts: { quiet?: boolean } = {},
 ): Promise<boolean> {
-	const spinner = p.spinner();
-	spinner.start("Exchanging the authorization code...");
+	const spinner = opts.quiet ? null : p.spinner();
+	spinner?.start("Exchanging the authorization code...");
 	let auth: ClerkOAuthAuth;
 	try {
 		auth = await exchangeClerkOAuthCode(pending, callbackUrl);
 	} catch (error) {
-		spinner.stop(chalk.red("Authorization failed."));
+		spinner?.stop(chalk.red("Authorization failed."));
 		if (
 			error instanceof ClerkOAuthError &&
 			!["invalid_oauth_callback", "oauth_network_error"].includes(error.code)
@@ -203,23 +204,27 @@ export async function finishOAuthLogin(
 			pending,
 		});
 	} catch (error) {
-		spinner.stop(chalk.red("Cloud rejected the OAuth session."));
+		spinner?.stop(chalk.red("Cloud rejected the OAuth session."));
 		throw error;
 	}
 	if (verification.kind === "cloud_unverified") {
-		spinner.stop(chalk.yellow("Logged in; Cloud profile verification is temporarily unavailable."));
-		p.log.message(
-			chalk.gray(
-				"The Clerk grant is saved, but Cloud has not verified it. Run `clawdi auth status` and retry a Cloud command when service recovers.",
-			),
+		spinner?.stop(
+			chalk.yellow("Logged in; Cloud profile verification is temporarily unavailable."),
 		);
-		postLoginHint();
+		if (!opts.quiet) {
+			p.log.message(
+				chalk.gray(
+					"The Clerk grant is saved, but Cloud has not verified it. Run `clawdi auth status` and retry a Cloud command when service recovers.",
+				),
+			);
+			postLoginHint();
+		}
 		return true;
 	}
 
 	const me = verification.user;
-	spinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	postLoginHint();
+	spinner?.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+	if (!opts.quiet) postLoginHint();
 	return true;
 }
 
@@ -397,13 +402,13 @@ export async function authComplete() {
 	}
 }
 
-export async function authStartMachine(): Promise<void> {
+export async function authLoginDesktop(): Promise<void> {
 	const existing = getAuth();
-	if (existing) {
+	if (isClerkOAuthAuth(existing)) {
 		console.log(
 			JSON.stringify({
-				schemaVersion: "clawdi.authStart.v1",
-				status: "already_authenticated",
+				schemaVersion: "clawdi.desktopLogin.v1",
+				status: "authenticated",
 				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
 			}),
 		);
@@ -411,56 +416,30 @@ export async function authStartMachine(): Promise<void> {
 	}
 
 	const config = getConfig();
-	const pending = await startOAuthLogin(
-		config.apiUrl,
-		config.deployApiUrl,
-		captureStoredCredentialIdentity(),
-	);
-	console.log(
-		JSON.stringify({
-			schemaVersion: "clawdi.authStart.v1",
-			status: "pending",
-			authorizationUrl: pending.authorizationUrl,
-			redirectUri: pending.redirectUri,
-			expiresAt: pending.expiresAt,
-		}),
-	);
-}
-
-export async function authFinishMachine(): Promise<void> {
-	const existing = getAuth();
-	if (existing) {
-		console.log(
-			JSON.stringify({
-				schemaVersion: "clawdi.authFinish.v1",
-				status: "already_authenticated",
-				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
-			}),
-		);
-		return;
+	const expectedCredential = captureStoredCredentialIdentity();
+	const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
+	let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | null = null;
+	try {
+		loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state);
+		openInBrowser(pending.authorizationUrl);
+		const callbackUrl = await waitForLoopbackCallback(pending, loopback.callbackUrl);
+		await finishOAuthLogin(pending, callbackUrl, expectedCredential, { quiet: true });
+	} catch (error) {
+		if (error instanceof ClerkOAuthError && error.code === "oauth_login_expired") {
+			await clearPendingClerkOAuthLogin(pending);
+		}
+		throw error;
+	} finally {
+		await loopback?.close();
 	}
 
-	const pending = getPendingAuth();
-	if (pending?.authType !== "clerk_oauth_pkce") {
-		throw new Error("No pending authorization. Start sign-in again.");
-	}
-	if (pendingAuthExpired(pending)) {
-		await clearPendingClerkOAuthLogin(pending);
-		throw new Error("Authorization expired. Start sign-in again.");
-	}
-	const callbackUrl = await readCallbackFromStdin();
-	if (!callbackUrl) throw new Error("The authorization callback was empty.");
-	const auth = await exchangeClerkOAuthCode(pending, callbackUrl);
-	const verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
-		expectedCredential: { kind: "none" },
-		pending,
-	});
+	const auth = getAuth();
+	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
 	console.log(
 		JSON.stringify({
-			schemaVersion: "clawdi.authFinish.v1",
+			schemaVersion: "clawdi.desktopLogin.v1",
 			status: "authenticated",
-			cloudVerified: verification.kind === "verified",
-			...(verification.kind === "verified" ? { user: verification.user } : {}),
+			user: { id: auth.userId, ...(auth.email ? { email: auth.email } : {}) },
 		}),
 	);
 }

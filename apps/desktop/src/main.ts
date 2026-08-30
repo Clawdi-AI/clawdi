@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DesktopAgentType } from "@clawdi/shared/desktop";
@@ -10,6 +9,7 @@ import {
 	type IpcMainInvokeEvent,
 	ipcMain,
 	Menu,
+	type MenuItemConstructorOptions,
 	nativeImage,
 	session,
 	shell,
@@ -36,6 +36,7 @@ async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	registerIpc();
 	configurePermissions();
+	createApplicationMenu();
 	createTray();
 	try {
 		const state = await cli.bootstrapState();
@@ -65,20 +66,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
-			const authorization = await cli.startAuthentication();
-			if (authorization) {
-				const receiver = await createOAuthCallbackReceiver(
-					authorization.redirectUri,
-					authorization.expiresAt,
-					authorization.authorizationUrl,
-				);
-				try {
-					await shell.openExternal(authorization.authorizationUrl);
-					await cli.finishAuthentication(await receiver.callback);
-				} finally {
-					await receiver.close();
-				}
-			}
+			await cli.authenticate();
 			return cli.bootstrapState();
 		}),
 	);
@@ -171,9 +159,52 @@ function readAgentTypes(value: unknown): DesktopAgentType[] {
 }
 
 function configurePermissions(): void {
+	session.defaultSession.setPermissionCheckHandler(() => false);
 	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
 		callback(false);
 	});
+}
+
+function createApplicationMenu(): void {
+	const editMenu: MenuItemConstructorOptions = {
+		label: "Edit",
+		submenu: [
+			{ role: "undo" },
+			{ role: "redo" },
+			{ type: "separator" },
+			{ role: "cut" },
+			{ role: "copy" },
+			{ role: "paste" },
+			{ role: "selectAll" },
+		],
+	};
+	const windowMenu: MenuItemConstructorOptions = {
+		label: "Window",
+		submenu: [
+			{ role: "minimize" },
+			{ role: "zoom" },
+			{ type: "separator" },
+			{ role: process.platform === "darwin" ? "front" : "close" },
+		],
+	};
+	const template: MenuItemConstructorOptions[] = [editMenu, windowMenu];
+	if (process.platform === "darwin") {
+		template.unshift({
+			label: app.name,
+			submenu: [
+				{ role: "about" },
+				{ type: "separator" },
+				{ role: "services" },
+				{ type: "separator" },
+				{ role: "hide" },
+				{ role: "hideOthers" },
+				{ role: "unhide" },
+				{ type: "separator" },
+				{ role: "quit" },
+			],
+		});
+	}
+	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()): Promise<void> {
@@ -271,7 +302,9 @@ function connectRendererPath(): string {
 function createTray(): void {
 	const icon = desktopIcon();
 	if (icon.isEmpty()) return;
-	tray = new Tray(icon.resize({ width: 18, height: 18 }));
+	const trayIcon = icon.resize({ width: 18, height: 18 });
+	if (process.platform === "darwin") trayIcon.setTemplateImage(true);
+	tray = new Tray(trayIcon);
 	tray.setToolTip("Clawdi");
 	tray.setContextMenu(
 		Menu.buildFromTemplate([
@@ -320,7 +353,9 @@ async function prepareDashboardSession(): Promise<void> {
 }
 
 function desktopWebUrl(): string {
-	const raw = process.env.CLAWDI_DESKTOP_WEB_URL?.trim() || packagedWebUrl() || DEFAULT_WEB_URL;
+	const raw = app.isPackaged
+		? packagedWebUrl() || DEFAULT_WEB_URL
+		: process.env.CLAWDI_DESKTOP_WEB_URL?.trim() || DEFAULT_WEB_URL;
 	const url = new URL(raw);
 	const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
 	if (
@@ -355,7 +390,7 @@ function isSafeExternalUrl(raw: string): boolean {
 		const url = new URL(raw);
 		const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
 		return (
-			(url.protocol === "https:" || (url.protocol === "http:" && loopback)) &&
+			(url.protocol === "https:" || (!app.isPackaged && url.protocol === "http:" && loopback)) &&
 			!url.username &&
 			!url.password
 		);
@@ -370,101 +405,4 @@ function urlOrigin(raw: string): string | null {
 	} catch {
 		return null;
 	}
-}
-
-interface OAuthCallbackReceiver {
-	callback: Promise<string>;
-	close(): Promise<void>;
-}
-
-async function createOAuthCallbackReceiver(
-	redirectUri: string,
-	expiresAt: string,
-	authorizationUrl: string,
-): Promise<OAuthCallbackReceiver> {
-	const redirect = new URL(redirectUri);
-	const expectedState = new URL(authorizationUrl).searchParams.get("state")?.trim();
-	const port = Number(redirect.port);
-	if (
-		redirect.protocol !== "http:" ||
-		(redirect.hostname !== "127.0.0.1" && redirect.hostname !== "localhost") ||
-		!Number.isInteger(port) ||
-		port < 1 ||
-		port > 65_535 ||
-		!expectedState ||
-		redirect.pathname !== "/oauth/callback"
-	) {
-		throw new Error("Clawdi returned an unsupported browser callback.");
-	}
-	const timeoutMs = Math.max(1, Date.parse(expiresAt) - Date.now());
-	let resolveCallback: (value: string) => void = () => undefined;
-	let rejectCallback: (reason: Error) => void = () => undefined;
-	const callback = new Promise<string>((resolvePromise, reject) => {
-		resolveCallback = resolvePromise;
-		rejectCallback = reject;
-	});
-	const server = createServer((request, response) => {
-		const requestUrl = new URL(request.url ?? "/", redirect.origin);
-		if (request.method !== "GET" || requestUrl.pathname !== redirect.pathname) {
-			response.writeHead(404).end();
-			return;
-		}
-		if (requestUrl.searchParams.get("state") !== expectedState) {
-			response.writeHead(400, {
-				"Content-Type": "text/plain; charset=utf-8",
-				"Cache-Control": "no-store",
-			});
-			response.end("Invalid authorization state.");
-			return;
-		}
-		const accepted = Boolean(requestUrl.searchParams.get("code"));
-		response.writeHead(accepted ? 200 : 400, {
-			"Content-Type": "text/html; charset=utf-8",
-			"Cache-Control": "no-store",
-			"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
-			"Referrer-Policy": "no-referrer",
-			"X-Content-Type-Options": "nosniff",
-		});
-		response.end(
-			"<!doctype html><meta charset=utf-8><title>Clawdi</title>" +
-				`<body style='font:16px system-ui;padding:48px'>${
-					accepted
-						? "Sign-in complete. Return to Clawdi."
-						: "Sign-in was not completed. Return to Clawdi and try again."
-				}</body>`,
-		);
-		resolveCallback(requestUrl.toString());
-	});
-	await listen(server, redirect.hostname, port);
-	const timeout = setTimeout(() => {
-		rejectCallback(new Error("Browser authorization expired."));
-		void closeServer(server);
-	}, timeoutMs);
-	return {
-		callback,
-		close: async () => {
-			clearTimeout(timeout);
-			await closeServer(server);
-		},
-	};
-}
-
-function listen(server: Server, host: string, port: number): Promise<void> {
-	return new Promise((resolvePromise, reject) => {
-		server.once("error", reject);
-		server.listen(port, host, () => {
-			server.removeListener("error", reject);
-			resolvePromise();
-		});
-	});
-}
-
-function closeServer(server: Server): Promise<void> {
-	return new Promise((resolvePromise) => {
-		if (!server.listening) {
-			resolvePromise();
-			return;
-		}
-		server.close(() => resolvePromise());
-	});
 }

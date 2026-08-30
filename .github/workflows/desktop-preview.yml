@@ -52,6 +52,7 @@ jobs:
           ditto "$mount/Clawdi.app" "$runtime_home/Clawdi.app"
           hdiutil detach "$mount"
           trap - EXIT
+          bun x @electron/fuses read --app "$runtime_home/Clawdi.app"
           cli="$runtime_home/Clawdi.app/Contents/Resources/native/clawdi"
           test -x "$cli"
           file "$cli" | grep -q "arm64"

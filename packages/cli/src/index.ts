@@ -138,12 +138,20 @@ authCmd
 	.description("Sign in once with Clerk OAuth Authorization Code + PKCE")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
 	.option("--no-open", "Print the authorization URL and securely paste the callback")
+	.addOption(new Option("--desktop").hideHelp())
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --no-open\n  $ clawdi auth login --manual",
 	)
-	.action(async (opts: { manual?: boolean; open?: boolean }) => {
-		const { authLogin } = await import("./commands/auth.js");
+	.action(async (opts: { manual?: boolean; open?: boolean; desktop?: boolean }) => {
+		const { authLogin, authLoginDesktop } = await import("./commands/auth.js");
+		if (opts.desktop) {
+			if (opts.manual || opts.open === false) {
+				throw new Error("Desktop sign-in does not accept interactive login options.");
+			}
+			await authLoginDesktop();
+			return;
+		}
 		await authLogin(opts);
 	});
 
@@ -153,24 +161,6 @@ authCmd
 	.action(async () => {
 		const { authComplete } = await import("./commands/auth.js");
 		await authComplete();
-	});
-
-authCmd
-	.command("start", { hidden: true })
-	.description("Start a machine-readable browser authorization")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async () => {
-		const { authStartMachine } = await import("./commands/auth.js");
-		await authStartMachine();
-	});
-
-authCmd
-	.command("finish", { hidden: true })
-	.description("Finish machine-readable browser authorization from stdin")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async () => {
-		const { authFinishMachine } = await import("./commands/auth.js");
-		await authFinishMachine();
 	});
 
 authCmd
