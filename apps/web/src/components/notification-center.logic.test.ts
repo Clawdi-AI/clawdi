@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-	type ActionRequiredNotification,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
@@ -8,18 +7,21 @@ import {
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
+	type InboxNotification,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
-const walletAction = {
+const walletNotification = {
 	id: "wallet-low-balance",
 	title: "Your Wallet balance is running low",
 	description: "Top up before Wallet-backed services are interrupted.",
 	badge: "Wallet",
+	sentAt: new Date("2026-05-15T08:00:00Z"),
+	opened: false,
 	actionLabel: "Top up",
 	severity: "warning",
-} satisfies ActionRequiredNotification;
+} satisfies InboxNotification;
 
 const invitation = {
 	id: "inv_1",
@@ -39,7 +41,10 @@ describe("notification center logic", () => {
 		expect(getPendingNotificationCount(undefined)).toBe(0);
 		expect(getPendingNotificationCount([])).toBe(0);
 		expect(getPendingNotificationCount([invitation])).toBe(1);
-		expect(getPendingNotificationCount([invitation], [walletAction])).toBe(2);
+		expect(getPendingNotificationCount([invitation], [walletNotification])).toBe(2);
+		expect(
+			getPendingNotificationCount([invitation], [{ ...walletNotification, opened: true }]),
+		).toBe(1);
 		expect(getPendingNotificationCount([invitation, { ...invitation, id: "inv_2" }])).toBe(2);
 
 		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification Center");
@@ -59,9 +64,9 @@ describe("notification center logic", () => {
 		const empty = getNotificationCenterEmptyCopy();
 		expect(empty.title).toBe("No Pending Notifications");
 		expect(empty.description).toContain("Project invitations");
-		expect(empty.description).toContain("action-required updates");
+		expect(empty.description).toContain("account updates");
 		expect(empty.description).not.toContain("Skills");
-		expect(getNotificationCenterDescription()).toContain("account actions");
+		expect(getNotificationCenterDescription()).toContain("Account updates");
 		expect(getNotificationCenterDescription()).toContain("project invitations");
 	});
 

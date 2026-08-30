@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { WalletAutoReloadAction, WalletState } from "@/hosted/billing/contracts";
-import { walletNotificationCenterItems } from "@/hosted/billing/wallet/wallet-notifications";
 import { lowBalanceBannerState } from "./low-balance-banner.logic";
 
 function wallet(over: Partial<WalletState> = {}): WalletState {
@@ -76,59 +75,5 @@ describe("lowBalanceBannerState", () => {
 			needsAction: false,
 			primaryCta: "retry",
 		});
-	});
-});
-
-describe("walletNotificationCenterItems", () => {
-	test("derives only the highest-priority active Wallet action", () => {
-		expect(walletNotificationCenterItems(wallet())).toEqual([]);
-
-		expect(walletNotificationCenterItems(wallet({ balance_usd: "1" }))).toEqual([
-			expect.objectContaining({
-				id: "wallet-low-balance",
-				actionLabel: "Top up",
-				severity: "warning",
-			}),
-		]);
-		expect(walletNotificationCenterItems(wallet({ auto_reload_status: "payment_failed" }))).toEqual(
-			[
-				expect.objectContaining({
-					id: "wallet-auto-reload-failed",
-					actionLabel: "Review Wallet",
-					severity: "destructive",
-				}),
-			],
-		);
-		expect(
-			walletNotificationCenterItems(wallet({ auto_reload_status: "paused_monthly_limit" })),
-		).toEqual([
-			expect.objectContaining({
-				id: "wallet-auto-reload-cap",
-				actionLabel: "Review auto-reload",
-				severity: "warning",
-			}),
-		]);
-
-		expect(
-			walletNotificationCenterItems(
-				wallet({
-					balance_usd: "1",
-					auto_reload_action: action({ error_code: "card_declined" }),
-				}),
-			),
-		).toEqual([
-			expect.objectContaining({
-				id: "wallet-auto-reload-1",
-				actionLabel: "Retry payment",
-				severity: "destructive",
-			}),
-		]);
-		expect(walletNotificationCenterItems(wallet({ auto_reload_action: action() }))).toEqual([
-			expect.objectContaining({
-				id: "wallet-auto-reload-1",
-				actionLabel: "Confirm payment",
-				severity: "warning",
-			}),
-		]);
 	});
 });

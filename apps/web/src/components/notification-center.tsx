@@ -3,11 +3,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
-	AlertTriangle,
-	ArrowRight,
+	BellRing,
+	Check,
 	CheckCircle2,
+	ExternalLink,
 	InboxIcon,
 	MailOpen,
+	Trash2,
 	XCircle,
 } from "lucide-react";
 import { useState } from "react";
@@ -32,7 +34,6 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
-	type ActionRequiredNotification,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
@@ -40,16 +41,29 @@ import {
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
+	type InboxNotification,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
 export function NotificationCenter({
-	actionRequired = [],
-	onActionRequired,
+	inboxNotifications = [],
+	inboxLoading = false,
+	inboxError = null,
+	busyInboxId,
+	onRetryInbox,
+	onMarkInboxOpened,
+	onDeleteInbox,
+	onOpenInboxAction,
 }: {
-	actionRequired?: readonly ActionRequiredNotification[];
-	onActionRequired?: (notification: ActionRequiredNotification) => void;
+	inboxNotifications?: readonly InboxNotification[];
+	inboxLoading?: boolean;
+	inboxError?: Error | null;
+	busyInboxId?: string;
+	onRetryInbox?: () => void;
+	onMarkInboxOpened?: (notification: InboxNotification) => void;
+	onDeleteInbox?: (notification: InboxNotification) => void;
+	onOpenInboxAction?: (notification: InboxNotification) => void;
 }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -125,7 +139,7 @@ export function NotificationCenter({
 	});
 
 	const items = invitations.data ?? [];
-	const count = getPendingNotificationCount(items, actionRequired);
+	const count = getPendingNotificationCount(items, inboxNotifications);
 	const triggerLabel = getNotificationCenterTriggerLabel(count);
 
 	return (
@@ -160,21 +174,27 @@ export function NotificationCenter({
 				<Separator />
 				<NotificationCenterContent
 					invitations={items}
-					actionRequired={actionRequired}
-					isLoading={invitations.isLoading}
-					error={
+					inboxNotifications={inboxNotifications}
+					invitationsLoading={invitations.isLoading}
+					invitationsError={
 						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
 					}
-					onRetry={() => invitations.refetch()}
+					inboxLoading={inboxLoading}
+					inboxError={inboxError}
+					onRetryInvitations={() => invitations.refetch()}
+					onRetryInbox={onRetryInbox}
 					acceptInvitation={(invitation) =>
 						accept.mutate({ id: invitation.id, projectName: invitation.project_name })
 					}
 					declineInvitation={(invitation) => decline.mutate(invitation.id)}
 					acceptingId={accept.isPending ? accept.variables?.id : undefined}
 					decliningId={decline.isPending ? decline.variables : undefined}
-					onActionRequired={(notification) => {
+					busyInboxId={busyInboxId}
+					onMarkInboxOpened={onMarkInboxOpened}
+					onDeleteInbox={onDeleteInbox}
+					onOpenInboxAction={(notification) => {
 						setOpen(false);
-						onActionRequired?.(notification);
+						onOpenInboxAction?.(notification);
 					}}
 				/>
 				{items.length > 0 ? (
@@ -203,46 +223,66 @@ export function NotificationCenter({
 
 function NotificationCenterContent({
 	invitations,
-	actionRequired,
-	isLoading,
-	error,
-	onRetry,
+	inboxNotifications,
+	invitationsLoading,
+	invitationsError,
+	inboxLoading,
+	inboxError,
+	onRetryInvitations,
+	onRetryInbox,
 	acceptInvitation,
 	declineInvitation,
 	acceptingId,
 	decliningId,
-	onActionRequired,
+	busyInboxId,
+	onMarkInboxOpened,
+	onDeleteInbox,
+	onOpenInboxAction,
 }: {
 	invitations: ProjectInvitationNotification[];
-	actionRequired: readonly ActionRequiredNotification[];
-	isLoading: boolean;
-	error: Error | null;
-	onRetry: () => void;
+	inboxNotifications: readonly InboxNotification[];
+	invitationsLoading: boolean;
+	invitationsError: Error | null;
+	inboxLoading: boolean;
+	inboxError: Error | null;
+	onRetryInvitations: () => void;
+	onRetryInbox?: () => void;
 	acceptInvitation: (invitation: ProjectInvitationNotification) => void;
 	declineInvitation: (invitation: ProjectInvitationNotification) => void;
 	acceptingId?: string;
 	decliningId?: string;
-	onActionRequired: (notification: ActionRequiredNotification) => void;
+	busyInboxId?: string;
+	onMarkInboxOpened?: (notification: InboxNotification) => void;
+	onDeleteInbox?: (notification: InboxNotification) => void;
+	onOpenInboxAction: (notification: InboxNotification) => void;
 }) {
-	const hasNotifications = actionRequired.length > 0 || invitations.length > 0;
+	const hasNotifications = inboxNotifications.length > 0 || invitations.length > 0;
+	const isLoading = invitationsLoading || inboxLoading;
 
 	if (isLoading && !hasNotifications) {
 		return (
 			<div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
 				<Spinner className="size-3.5" />
-				Loading Invitations…
+				Loading Notifications…
 			</div>
 		);
 	}
 
-	if (error && !hasNotifications) {
+	if ((invitationsError || inboxError) && !hasNotifications) {
 		return (
 			<div className="space-y-3 px-4 py-4">
 				<div className="space-y-1">
-					<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
-					<p className="text-xs text-muted-foreground">{normalizeApiError(error)}</p>
+					<div className="text-sm font-medium">Couldn&apos;t Load Notifications</div>
+					<p className="text-xs text-muted-foreground">Please try again.</p>
 				</div>
-				<Button size="sm" variant="outline" onClick={onRetry}>
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => {
+						onRetryInvitations();
+						onRetryInbox?.();
+					}}
+				>
 					Retry
 				</Button>
 			</div>
@@ -266,7 +306,7 @@ function NotificationCenterContent({
 
 	return (
 		<ul className="max-h-[26rem] divide-y overflow-y-auto">
-			{actionRequired.map((notification) => (
+			{inboxNotifications.map((notification) => (
 				<li key={notification.id}>
 					<div className="flex items-start gap-3 px-4 py-3">
 						<IconChip
@@ -274,41 +314,99 @@ function NotificationCenterContent({
 							tint={
 								notification.severity === "destructive"
 									? "bg-destructive/10 text-destructive"
-									: undefined
+									: notification.severity === "warning"
+										? "bg-warning/10 text-warning-foreground"
+										: undefined
 							}
 						>
-							<AlertTriangle />
+							<BellRing />
 						</IconChip>
 						<div className="min-w-0 flex-1 space-y-2">
 							<div className="flex min-w-0 items-start justify-between gap-3">
-								<div className="text-sm font-medium">{notification.title}</div>
-								<Badge
-									variant={notification.severity === "destructive" ? "destructive" : "outline"}
-								>
-									{notification.badge}
-								</Badge>
+								<div className="min-w-0">
+									<div className="text-sm font-medium">{notification.title}</div>
+									<div className="mt-0.5 text-xs text-muted-foreground">
+										{formatNotificationDate(notification.sentAt)}
+									</div>
+								</div>
+								<div className="flex shrink-0 items-center gap-1">
+									{!notification.opened ? <Badge variant="secondary">Unread</Badge> : null}
+									<Badge variant="outline">{notification.badge}</Badge>
+								</div>
 							</div>
 							<p className="text-xs text-muted-foreground">{notification.description}</p>
-							<Button size="sm" onClick={() => onActionRequired(notification)}>
-								<ArrowRight />
-								{notification.actionLabel}
-							</Button>
+							<div className="flex items-center justify-end gap-1.5">
+								{!notification.opened && onMarkInboxOpened ? (
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-sm"
+										title="Mark as read"
+										aria-label="Mark as read"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onMarkInboxOpened(notification)}
+									>
+										<Check />
+									</Button>
+								) : null}
+								{onDeleteInbox ? (
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-sm"
+										title="Delete notification"
+										aria-label="Delete notification"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onDeleteInbox(notification)}
+									>
+										<Trash2 />
+									</Button>
+								) : null}
+								{notification.actionLabel ? (
+									<Button
+										size="sm"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onOpenInboxAction(notification)}
+									>
+										<ExternalLink />
+										{notification.actionLabel}
+									</Button>
+								) : null}
+							</div>
 						</div>
 					</div>
 				</li>
 			))}
-			{isLoading ? (
+			{inboxLoading && inboxNotifications.length === 0 ? (
+				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+					<Spinner className="size-3.5" />
+					Loading Account Updates…
+				</li>
+			) : inboxError ? (
+				<li className="space-y-3 px-4 py-4">
+					<div className="space-y-1">
+						<div className="text-sm font-medium">Account Updates Unavailable</div>
+						<p className="text-xs text-muted-foreground">Please try again.</p>
+					</div>
+					{onRetryInbox ? (
+						<Button size="sm" variant="outline" onClick={onRetryInbox}>
+							Retry
+						</Button>
+					) : null}
+				</li>
+			) : null}
+			{invitationsLoading ? (
 				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
 					<Spinner className="size-3.5" />
 					Loading Invitations…
 				</li>
-			) : error ? (
+			) : invitationsError ? (
 				<li className="space-y-3 px-4 py-4">
 					<div className="space-y-1">
 						<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
-						<p className="text-xs text-muted-foreground">{normalizeApiError(error)}</p>
+						<p className="text-xs text-muted-foreground">{normalizeApiError(invitationsError)}</p>
 					</div>
-					<Button size="sm" variant="outline" onClick={onRetry}>
+					<Button size="sm" variant="outline" onClick={onRetryInvitations}>
 						Retry
 					</Button>
 				</li>
@@ -368,5 +466,14 @@ function formatInvitationDate(createdAt: string): string {
 	return new Date(createdAt).toLocaleDateString(undefined, {
 		month: "short",
 		day: "numeric",
+	});
+}
+
+function formatNotificationDate(sentAt: Date): string {
+	return sentAt.toLocaleString(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
 	});
 }

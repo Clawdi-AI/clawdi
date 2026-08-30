@@ -129,7 +129,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 								)}
 							>
 								<SiteHeader
-									existingCloudDeploymentCount={existingCloudDeploymentCount}
 									actions={
 										IS_HOSTED_BUILD ? (
 											<DashboardHeaderActionSlot>

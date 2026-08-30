@@ -5,13 +5,15 @@ type Schemas = components["schemas"];
 export type ProjectInvitationNotification = Schemas["InvitationResponse"];
 export type AcceptInvitationResponse = Schemas["InvitationAcceptResponse"];
 
-export type ActionRequiredNotification = {
+export type InboxNotification = {
 	id: string;
 	title: string;
 	description: string;
 	badge: string;
-	actionLabel: string;
-	severity: "warning" | "destructive";
+	sentAt: Date;
+	opened: boolean;
+	actionLabel?: string;
+	severity: "info" | "warning" | "destructive";
 };
 
 // Project invitations are the first notification source. Keep the shell named
@@ -27,9 +29,12 @@ export const NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS = [
 
 export function getPendingNotificationCount(
 	notifications: readonly ProjectInvitationNotification[] | null | undefined,
-	actionRequired: readonly ActionRequiredNotification[] = [],
+	inboxNotifications: readonly InboxNotification[] = [],
 ): number {
-	return (notifications?.length ?? 0) + actionRequired.length;
+	return (
+		(notifications?.length ?? 0) +
+		inboxNotifications.filter((notification) => !notification.opened).length
+	);
 }
 
 export function getNotificationCenterTriggerLabel(count: number): string {
@@ -47,13 +52,12 @@ export function getNotificationCenterTitle(count: number): string {
 export function getNotificationCenterEmptyCopy(): { title: string; description: string } {
 	return {
 		title: "No Pending Notifications",
-		description:
-			"Project invitations and other action-required updates will appear here under the top-right Notification Center bell.",
+		description: "Project invitations and account updates will appear here.",
 	};
 }
 
 export function getNotificationCenterDescription(): string {
-	return "Review account actions and project invitations.";
+	return "Account updates and project invitations.";
 }
 
 export function getProjectInvitationAccessCopy(): string {

@@ -15,6 +15,7 @@ import "@/hosted/mava.css";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");
+const loadHostedCustomerIO = () => import("@/hosted/customerio");
 
 export function HostedAnalyticsClient() {
 	const [mounted, setMounted] = useState(false);
@@ -56,6 +57,9 @@ function HostedAnalyticsIdentity() {
 			void loadHostedPostHog().then((mod) => {
 				mod.resetHostedPostHog();
 			});
+			void loadHostedCustomerIO()
+				.then((mod) => mod.syncHostedCustomerIOIdentity(null))
+				.catch(() => console.warn("Customer.io identity reset failed"));
 		}
 	}, [isSignedIn, userId]);
 
@@ -79,6 +83,17 @@ function HostedAnalyticsIdentity() {
 		void loadHostedPostHog().then((mod) => {
 			mod.enrichHostedUser(personProperties);
 		});
+		if (userEmail && userId) {
+			void loadHostedCustomerIO()
+				.then((mod) =>
+					mod.syncHostedCustomerIOIdentity({
+						email: userEmail,
+						name: userFullName,
+						userId,
+					}),
+				)
+				.catch(() => console.warn("Customer.io identity sync failed"));
+		}
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
 
 	useEffect(() => {

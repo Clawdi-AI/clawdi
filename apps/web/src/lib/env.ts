@@ -95,6 +95,10 @@ export const env = createEnv({
 		// analytics both validate cleanly.
 		VITE_POSTHOG_TOKEN: z.string().min(1).optional(),
 
+		// Public Customer.io JavaScript source key. Optional so the hosted app
+		// can run while Inbox delivery is not configured, and absent from OSS.
+		VITE_CUSTOMERIO_CDP_WRITE_KEY: z.string().min(1).optional(),
+
 		// Optional public Sentry DSN. An absent DSN keeps every Sentry hook a
 		// clean no-op for local development and self-hosted deployments.
 		VITE_SENTRY_DSN: httpsOrHttp().optional(),

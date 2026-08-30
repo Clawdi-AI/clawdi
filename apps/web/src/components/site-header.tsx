@@ -8,10 +8,10 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
-const HostedWalletNotificationCenter = IS_HOSTED_BUILD
+const HostedCustomerIONotificationCenter = IS_HOSTED_BUILD
 	? lazy(() =>
-			import("@/hosted/billing/wallet/wallet-notification-center").then((module) => ({
-				default: module.HostedWalletNotificationCenter,
+			import("@/hosted/customerio-notification-center").then((module) => ({
+				default: module.CustomerIONotificationCenter,
 			})),
 		)
 	: null;
@@ -21,13 +21,7 @@ const HostedWalletNotificationCenter = IS_HOSTED_BUILD
  * Keeps shadcn dashboard-01's trigger/separator/content/action shape,
  * with Clawdi-specific breadcrumbs and notifications.
  */
-export function SiteHeader({
-	actions,
-	existingCloudDeploymentCount,
-}: {
-	actions?: ReactNode;
-	existingCloudDeploymentCount: number | null;
-}) {
+export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	return (
 		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
 			<div className="flex w-full min-w-0 items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -40,11 +34,9 @@ export function SiteHeader({
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				{HostedWalletNotificationCenter ? (
+				{HostedCustomerIONotificationCenter ? (
 					<Suspense fallback={<NotificationCenter />}>
-						<HostedWalletNotificationCenter
-							existingCloudDeploymentCount={existingCloudDeploymentCount}
-						/>
+						<HostedCustomerIONotificationCenter />
 					</Suspense>
 				) : (
 					<NotificationCenter />
