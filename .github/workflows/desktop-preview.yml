@@ -58,6 +58,9 @@ jobs:
             "$cli" auth status --json
           HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
             "$cli" daemon doctor --json
+          node ../scripts/smoke-packaged.mjs \
+            "$mount/Clawdi.app/Contents/MacOS/Clawdi" \
+            "$runtime_home/app"
           hdiutil detach "$mount"
           trap - EXIT
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
