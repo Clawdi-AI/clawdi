@@ -12,7 +12,10 @@ import {
 	agentDisplayName,
 	agentTypeLabel,
 } from "@/components/dashboard/agent-label";
-import { syncAgentNameDraft } from "@/components/dashboard/agent-settings-panel.logic";
+import {
+	syncAgentNameDraft,
+	webAgentDisconnectUnavailable,
+} from "@/components/dashboard/agent-settings-panel.logic";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -23,7 +26,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useUnsavedNavigationState } from "@/components/unsaved-navigation-state";
 import {
-	agentDisconnectUnavailable,
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
@@ -194,8 +196,8 @@ export function AgentSettingsPanel({
 	// RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
-	const disconnectUnavailable = agentDisconnectUnavailable({
-		envId: agent.id,
+	const disconnectUnavailable = webAgentDisconnectUnavailable({
+		agentId: agent.id,
 		explicitIdentity: agent.explicit_identity,
 		ownership,
 	});

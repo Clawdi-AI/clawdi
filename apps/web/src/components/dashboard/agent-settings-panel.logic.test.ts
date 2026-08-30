@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { syncAgentNameDraft } from "./agent-settings-panel.logic";
+import { EMPTY_AGENT_OWNERSHIP } from "@clawdi/shared/client";
+import {
+	syncAgentNameDraft,
+	webAgentDisconnectUnavailable,
+} from "./agent-settings-panel.logic";
 
 describe("syncAgentNameDraft", () => {
 	test("initializes a draft from the server", () => {
@@ -20,6 +24,35 @@ describe("syncAgentNameDraft", () => {
 		expect(syncAgentNameDraft("Unsaved name", "Research agent", "Externally renamed")).toBe(
 			"Unsaved name",
 		);
+	});
+});
+
+describe("webAgentDisconnectUnavailable", () => {
+	test("preserves the connected machine-key action", () => {
+		expect(
+			webAgentDisconnectUnavailable({
+				agentId: "agent-id",
+				explicitIdentity: false,
+				ownership: EMPTY_AGENT_OWNERSHIP,
+			}),
+		).toBe(false);
+	});
+
+	test("keeps destructive access closed until ownership is safe", () => {
+		expect(
+			webAgentDisconnectUnavailable({
+				agentId: "agent-id",
+				explicitIdentity: true,
+				ownership: EMPTY_AGENT_OWNERSHIP,
+			}),
+		).toBe(true);
+		expect(
+			webAgentDisconnectUnavailable({
+				agentId: "agent-id",
+				explicitIdentity: false,
+				ownership: null,
+			}),
+		).toBe(true);
 	});
 });
 

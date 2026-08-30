@@ -2,7 +2,7 @@ import type { components } from "@clawdi/shared/api";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { legacyHostedDashboardUrl } from "@/hosted/access/legacy-dashboard-url";
-import { normalizeAgentEnvId } from "@/lib/agent-ownership";
+import { normalizeAgentId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -32,7 +32,7 @@ export function legacyConnectedAgentTiles(
 	const manageHref = legacyHostedDashboardUrl() ?? undefined;
 	return (environments ?? [])
 		.filter((env) => {
-			const envId = normalizeAgentEnvId(env.id);
+			const envId = normalizeAgentId(env.id);
 			return Boolean(envId && legacyEnvIds.has(envId) && !claimedEnvIds?.has(envId));
 		})
 		.map((env) => ({
