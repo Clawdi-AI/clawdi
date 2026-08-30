@@ -24,16 +24,14 @@
 
 Clawdi supports two run paths:
 
-- **Cloud Agents:** deploy a managed Hermes or OpenClaw runtime.
-- **Connected Agents:** connect supported Agent software already running on your computer.
+- **Cloud Agents:** managed Hermes or OpenClaw runtimes.
+- **Connected Agents:** supported Agent software running on your computer.
 
-Clawdi keeps available Agent history and reusable resources together across its dashboard, CLI, and MCP layer. Support varies by Agent software and run path.
+Features vary by Agent software and run path.
 
 ## Start
 
-The fastest path is a managed [Cloud Agent](https://docs.clawdi.ai/cloud-agents/deploy).
-
-To connect an Agent on macOS or Linux:
+Deploy a [Cloud Agent](https://docs.clawdi.ai/cloud-agents/deploy), or connect an Agent on macOS or Linux:
 
 ```bash
 curl -fsSL https://clawdi.ai/install.sh | sh
@@ -42,24 +40,23 @@ clawdi setup
 clawdi doctor
 ```
 
-On Windows, or for a package-manager-owned installation, use Node.js 24+:
+Windows and package-manager installs require Node.js 24+:
 
 ```bash
 npm i -g clawdi
 ```
 
-Read the [Connected Agent quickstart](https://docs.clawdi.ai/getting-started/quickstart) for agent detection, headless login, and setup details.
+See the [Connected Agent quickstart](https://docs.clawdi.ai/getting-started/quickstart).
 
-## Product capabilities
+## Capabilities
 
-- **Sessions and memory:** sync supported Agent history and keep durable context available across sessions.
-- **Skills and Projects:** manage reusable instructions, organize Cloud-owned resources, and link selected Projects to Agents.
-- **Vaults:** store secrets server-side and resolve explicit `clawdi://` references at runtime.
-- **Connectors and Channels:** expose app tools through MCP and connect supported messaging bots to Cloud Agents.
-- **AI Providers:** configure model access for local catalogs and supported Cloud Agent runtimes.
-- **Open source stack:** run the MIT-licensed CLI, FastAPI backend, TanStack dashboard, and PostgreSQL data layer yourself.
+- **Context:** Sessions and durable Memories.
+- **Resources:** Projects, Skills, and Vaults.
+- **Integrations:** MCP Connectors and messaging Channels.
+- **AI Providers:** model access for supported local and Cloud Agent runtimes.
+- **Open source:** MIT-licensed CLI, FastAPI backend, TanStack dashboard, and PostgreSQL.
 
-Precise behavior and access boundaries are documented in [Core concepts](https://docs.clawdi.ai/concepts/core-concepts).
+See [Core concepts](https://docs.clawdi.ai/concepts/core-concepts) for support and access boundaries.
 
 ## Connected Agent support
 
@@ -72,8 +69,6 @@ Precise behavior and access boundaries are documented in [Core concepts](https:/
 | Pi | Yes | No | No |
 | OpenCode | Yes | No | No |
 
-Each adapter exposes only the modules its Agent software supports.
-
 ## Self-host
 
 ```bash
@@ -82,17 +77,15 @@ cd clawdi
 bun install
 ```
 
-The repository contains:
-
 ```text
 apps/web/          TanStack dashboard
-backend/           FastAPI backend and database migrations
+backend/           FastAPI backend and migrations
 packages/cli/      CLI, Agent adapters, and MCP server
 packages/shared/   Shared API types and schemas
 docs/              Architecture and contributor guides
 ```
 
-Follow [`AGENTS.md#local-end-to-end`](AGENTS.md#local-end-to-end) for the complete local runbook. See [Architecture](docs/architecture.md), [AI Providers](docs/ai-providers.md), and [Managed runtime](docs/managed-runtime.md) for deeper technical contracts.
+Follow [`AGENTS.md#local-end-to-end`](AGENTS.md#local-end-to-end). Technical references: [Architecture](docs/architecture.md), [AI Providers](docs/ai-providers.md), and [Managed runtime](docs/managed-runtime.md).
 
 ## Development
 
@@ -102,7 +95,7 @@ bun run test
 bun run check
 ```
 
-`bun run test` uses the clean Docker-backed runner. Backend, frontend, CLI, and release workflows are documented in [`AGENTS.md`](AGENTS.md).
+See [`AGENTS.md`](AGENTS.md) for repository workflows.
 
 ## License
 

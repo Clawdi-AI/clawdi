@@ -1,166 +1,106 @@
 # Clawdi Cloud product tour
 
-This tour shows the current Clawdi Cloud experience with a synthetic Acme
-Market Intelligence workspace. The demo contains four Projects, 14 Project
-Skills, four empty demonstration Vaults, 25 account Memories, 12 Workspace
-files, and more than 200 Agent Sessions spanning 12 months. Names, companies,
-decisions, and activity are fictional.
+Screens use a fictional Acme Market Intelligence workspace. All names, data, decisions, and activity are synthetic.
 
-For task-by-task instructions, use the canonical [Clawdi
-Docs](https://docs.clawdi.ai). Start with the [Cloud Agent
-quickstart](https://docs.clawdi.ai/cloud-agents/deploy) or [connect a local
-Agent](https://docs.clawdi.ai/getting-started/quickstart).
+For setup instructions, use the [Clawdi Docs](https://docs.clawdi.ai): [deploy a Cloud Agent](https://docs.clawdi.ai/cloud-agents/deploy) or [connect an Agent](https://docs.clawdi.ai/getting-started/quickstart).
 
 ## One product, two run paths
 
-Clawdi brings supported Agent activity, context, and tools into one product.
-A **Cloud Agent** runs in a remote runtime managed by Clawdi. A **Connected
-Agent** runs on your computer. Agent software, including Hermes, OpenClaw,
-Claude Code, and Codex, is a separate choice from the run path.
+A **Cloud Agent** runs in Clawdi. A **Connected Agent** runs on your computer. Agent software, such as Hermes, OpenClaw, Claude Code, or Codex, is a separate choice.
 
 ## Deploy a Cloud Agent
 
-The Deploy flow keeps three choices together. Select Agent software—Hermes or
-OpenClaw—then choose an AI provider and main model. Finish with Basic or
-Performance compute for the workload and review the monthly price before
-continuing.
+Choose Hermes or OpenClaw, an AI provider and model, then Basic or Performance compute. Review the monthly price before deploying.
 
 ![Deploy an Agent with Hermes, Clawdi AI, a main model, and Basic compute selected](images/cloud-deploy-agent.png)
 
 ## Choose from AI Providers
 
-Clawdi AI is ready by default, with usage drawn from the Wallet. Bring your own
-key (BYOK) to connect a supported provider and reuse it during Deploy, or add a
-custom OpenAI-compatible endpoint with its connection and credential details.
-For BYOK providers, Agent software sends model traffic directly to the provider;
-Clawdi stores provider metadata and auth references.
+Clawdi AI uses Wallet funds. BYOK connects a supported provider, with model traffic billed by that provider. Custom OpenAI-compatible endpoints are also supported.
 
 ![AI Provider chooser with common providers and a custom OpenAI-compatible endpoint](images/cloud-ai-providers.png)
 
-## Review long-running activity
+## Review activity
 
-The Overview activity graph summarizes Session starts across the last 12
-months. The synthetic workspace has 157 active days with an even weekly rhythm
-and varied daily intensity, so the dashboard demonstrates sustained Agent use
-alongside recent Sessions and shared Library resources.
+Overview shows Session starts, recent Sessions, and Library resources.
 
 ![Clawdi Overview with two running demo Agents and a populated 12-month Session activity heatmap](images/dashboard-activity.png)
 
-## Start from a Running Agent
+## Open a running Agent
 
-The Agent overview brings deployment state, compute, linked Projects, recent
-Sessions, and shared resource counts together. A Cloud Agent can open its
-Agent Interface, Files, and Terminal from the same navigation.
+The Agent page shows status, compute, Projects, Sessions, and resources. Cloud Agents also provide Agent Interface, Files, and Terminal.
 
 ![A running Hermes Cloud Agent with one linked Project, recent Sessions, and 25 Memories](images/dashboard-preview.png)
 
-Follow [Cloud Agent states and
-recovery](https://docs.clawdi.ai/cloud-agents/states-and-recovery) when the
-status remains unclear. Runtime state and individual tool readiness are
-separate checks.
+See [states and recovery](https://docs.clawdi.ai/cloud-agents/states-and-recovery) for unclear runtime status.
 
-## Link selected Projects
+## Link Projects
 
-A Project groups Project Skills and Vault access. Linking one to an Agent is
-an explicit action, which makes the selected resources available without
-changing Project ownership.
+A Project groups Skills and Vault access. Link a Project to share those resources with an Agent.
 
 ![Four synthetic Projects covering market intelligence, competitive research, customer advisory work, and launch intelligence](images/cloud-projects.png)
 
-Read [Projects and
-sharing](https://docs.clawdi.ai/guides/projects-and-sharing) before attaching
-Vaults or inviting a Viewer.
+See [Projects and sharing](https://docs.clawdi.ai/guides/projects-and-sharing).
 
-## Build a reusable Skill library
+## Reuse Skills
 
-Project Skills are Cloud-owned reusable instructions. Agent Skills remain
-authoritative in the Agent software's guarded filesystem and appear in the
-Cloud dashboard as a read-only inventory.
+Project Skills are Cloud-owned instructions. Agent Skills remain in the Agent software and appear as read-only inventory.
 
 ![Four synthetic Projects containing 14 Project Skills and four attached Vaults](images/cloud-skills.png)
 
-The [Skills guide](https://docs.clawdi.ai/guides/skills) covers both locations,
-copying, explicit imports, and safe review of third-party Skills.
+See [Skills](https://docs.clawdi.ai/guides/skills).
 
-## Scope sensitive configuration with Vaults
+## Scope secrets with Vaults
 
-Vault access follows Project boundaries. The demo uses four empty Vaults to
-show the attachment model while keeping the public workspace free of API keys,
-tokens, and private configuration values.
+Vault access follows Project boundaries. The demo Vaults are empty.
 
 ![Four empty synthetic Vaults attached to four demo Projects](images/cloud-vaults.png)
 
-Add real values only through the authorized Vault interface and attach each
-Vault to the Projects that need it. See [Projects and
-sharing](https://docs.clawdi.ai/guides/projects-and-sharing) for the access
-model.
+Add secrets through the Vault interface and attach each Vault only where needed.
 
-## Review credential-free Connector tools
+## Use Connector tools
 
-Some Connector toolkits are ready without account authorization. The demo
-verified Code Interpreter, Hacker News, and Composio Search; Code Interpreter
-exposes five sandbox and file tools. The Overview Connector total counts
-authorized external accounts, so account-free toolkits keep that total at
-zero.
+Some Connectors work without account authorization. Authorized external accounts appear in the Overview Connector count.
 
 ![Code Interpreter ready with five tools and no account connection required](images/cloud-connector-codeinterpreter.png)
 
-Use the [connect-an-app
-workflow](https://docs.clawdi.ai/guides/workflows/connect-an-app) for tool review,
-account authorization, and readiness checks.
+See [Connect an app](https://docs.clawdi.ai/guides/workflows/connect-an-app).
 
 ## Connect messaging Channels
 
-Channels keep bot connections separate from the Agents and external chats linked
-to them. The released dashboard supports Telegram and Discord bots plus custom
-WhatsApp accounts for compatible Cloud Agent workflows.
+Channels link Telegram, Discord, or compatible WhatsApp bots to Cloud Agents.
 
 ![Four Clawdi messaging Channels ready to link to an Agent](images/cloud-channels.png)
 
-Follow the [Channels guide](https://docs.clawdi.ai/guides/channels) to connect a
-bot, link one Agent, pair the intended chat, and verify delivery.
+See [Channels](https://docs.clawdi.ai/guides/channels).
 
-## Keep durable account context
+## Keep durable context
 
-Memories hold account-level facts, preferences, patterns, decisions, and
-context that supported Agents can recall in later interactions. Each record
-should be concise, reusable, and self-contained.
+Memories store concise account-level facts and preferences. Credentials belong in Vaults.
 
 ![Twenty-five synthetic Memories covering research cadence, decisions, formatting preferences, and demo safeguards](images/cloud-memories.png)
 
-Memories stay outside Projects. Store credentials and tokens in Vaults. See
-[Memories](https://docs.clawdi.ai/guides/memories) for categories, recall,
-editing, and deletion.
+See [Memories](https://docs.clawdi.ai/guides/memories).
 
 ## Review Agent history
 
-Sessions provide searchable Agent conversation history for later review and
-recall. Session availability and detail depend on the connected Agent
-software and its synchronization path.
+Sessions provide searchable conversation history. Availability depends on Agent software and connection path.
 
 ![Populated synthetic Session history grouped by recent activity](images/cloud-sessions.png)
 
-See [Sessions](https://docs.clawdi.ai/guides/sessions) for search, sharing, and
-export workflows.
+See [Sessions](https://docs.clawdi.ai/guides/sessions).
 
 ## Use the remote Workspace
 
-A Cloud Agent's Files view opens its private Workspace. The synthetic demo
-includes quarterly reviews, operating calendars, decision logs, feedback
-themes, research sources, launch plans, and KPI history.
+Files opens a Cloud Agent's private Workspace. Keep important work in source control or another durable system; deleting the Agent removes its remote resources.
 
 ![Twelve synthetic long-term Workspace files in the Acme demo folder](images/cloud-files.png)
 
-Workspace files are designed to persist across normal restarts and platform
-updates. Source control or another external system should hold the durable
-copy of important work. Deleting a Cloud Agent permanently removes its remote
-resources. Read [Agent Interface, Files, and
-Terminal](https://docs.clawdi.ai/cloud-agents/agent-interface-and-terminal)
-for access, readiness, and persistence boundaries.
+See [Agent Interface, Files, and Terminal](https://docs.clawdi.ai/cloud-agents/agent-interface-and-terminal).
 
-## Continue the journey
+## Next
 
 - [Give an Agent shared context](https://docs.clawdi.ai/guides/workflows/give-an-agent-context)
-- [Connect an app and verify its tools](https://docs.clawdi.ai/guides/workflows/connect-an-app)
-- [Share a Project with a teammate](https://docs.clawdi.ai/guides/workflows/share-a-project)
+- [Connect an app](https://docs.clawdi.ai/guides/workflows/connect-an-app)
+- [Share a Project](https://docs.clawdi.ai/guides/workflows/share-a-project)
 - [Configure Cloud Agent AI access](https://docs.clawdi.ai/cloud-agents/ai-access)
