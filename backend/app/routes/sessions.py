@@ -192,6 +192,11 @@ async def _analyze_session_upload(data: bytes) -> _SessionUploadAnalysis:
     return await asyncio.to_thread(_analyze_session_upload_sync, data)
 
 
+def _bound_env_id(auth: AuthContext) -> UUID | None:
+    """Return the environment fence carried by an Agent-bound API key."""
+    return auth.bound_environment_id
+
+
 # Clock-skew window for client-supplied `last_activity_at`. Anything
 # more than this far in the future is treated as a sign of broken
 # client clocks (laptop NTP off, container with wrong timezone) or a
@@ -386,7 +391,7 @@ async def _list_agent_identities(
     # — the whole point of the env binding is to bound the blast
     # radius of a leaked key. The full list stays available to
     # Clerk JWT (dashboard) callers.
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = (
         select(AgentEnvironment)
         .where(AgentEnvironment.user_id == auth.user_id, active_agent_filter())
@@ -505,7 +510,7 @@ async def _get_agent_identity(
     *,
     agent_response: bool,
 ) -> AgentResponse | EnvironmentResponse | Response:
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     if bound_env is not None and agent_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     row = (
@@ -559,7 +564,7 @@ async def list_environment_runtime_observed(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedSummaryResponse:
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     filters = [AgentEnvironment.user_id == auth.user_id, active_agent_filter()]
     if bound_env is not None:
         filters.append(AgentEnvironment.id == bound_env)
@@ -1054,7 +1059,7 @@ async def get_environment_runtime_observed(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedResponse:
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
@@ -2555,7 +2560,7 @@ async def list_sessions(
     # Reject an explicit `environment_id` query that doesn't match
     # the binding rather than silently overriding it — the caller
     # asking for the wrong env is a bug worth surfacing.
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id is not None and environment_id != bound_env:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -2746,7 +2751,7 @@ async def get_session_detail(
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     is_shared_subq = _link_is_shared_subq()
     stmt = (
         select(
@@ -2858,7 +2863,7 @@ async def upload_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
@@ -2982,7 +2987,7 @@ async def get_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> list[SessionMessageResponse]:
     """Read session messages from FileStore, typed as SessionMessageResponse[]."""
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,
@@ -3048,7 +3053,7 @@ async def get_session_messages(
             "Search anchor requires kind, position, and revision",
         )
 
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,
@@ -3226,7 +3231,7 @@ async def extract_session_memories(
             "LLM is not configured on this deployment",
         )
 
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
@@ -3315,7 +3320,7 @@ async def export_owned_session_markdown(
     and `source` is `clawdi-session` instead of `clawdi-shared-session`
     so the LLM can tell the two apart if it cares.
     """
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -3642,7 +3647,7 @@ async def _load_session_for_owner(
     404s rather than 403s on visibility violations (env-binding mismatch)
     to avoid leaking which session-ids exist outside the caller's project.
     """
-    bound_env = auth.bound_environment_id
+    bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,
