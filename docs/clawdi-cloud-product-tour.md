@@ -18,6 +18,25 @@ A **Cloud Agent** runs in a remote runtime managed by Clawdi. A **Connected
 Agent** runs on your computer. Agent software, including Hermes, OpenClaw,
 Claude Code, and Codex, is a separate choice from the run path.
 
+## Deploy a Cloud Agent
+
+The Deploy flow keeps three choices together. Select Agent software—Hermes or
+OpenClaw—then choose an AI provider and main model. Finish with Basic or
+Performance compute for the workload and review the monthly price before
+continuing.
+
+![Deploy an Agent with Hermes, Clawdi AI, a main model, and Basic compute selected](images/cloud-deploy-agent.png)
+
+## Choose from AI Providers
+
+Clawdi AI is ready by default, with usage drawn from the Wallet. Bring your own
+key (BYOK) to connect a supported provider and reuse it during Deploy, or add a
+custom OpenAI-compatible endpoint with its connection and credential details.
+For BYOK providers, Agent software sends model traffic directly to the provider;
+Clawdi stores provider metadata and auth references.
+
+![AI Provider chooser with common providers and a custom OpenAI-compatible endpoint](images/cloud-ai-providers.png)
+
 ## Review long-running activity
 
 The Overview activity graph summarizes Session starts across the last 12
