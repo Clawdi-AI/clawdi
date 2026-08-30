@@ -38,6 +38,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_session
+from app.core.query_utils import SearchQuery
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -2499,9 +2500,8 @@ async def list_sessions(
     # summaries and project_paths it had no business reading.
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
-    q: str | None = Query(
+    q: SearchQuery | None = Query(
         default=None,
-        max_length=500,
         description=(
             "Web-style text search on summary/project/local ID and visible message text; "
             "cloud session IDs match by UUID prefix"
@@ -2553,7 +2553,6 @@ async def list_sessions(
     since: datetime | None = Query(default=None, description="Filter to last_activity_at >= since"),
     until: datetime | None = Query(default=None, description="Filter to last_activity_at < until"),
 ) -> Paginated[SessionListItemResponse]:
-    q = q.strip() if q else None
     # Env binding: a bound api_key (deploy key) can only see its
     # own env's sessions. Without this, a key for env A would list
     # env B's sessions because user_id alone doesn't fence them.
@@ -3023,7 +3022,7 @@ async def get_session_messages(
     anchor_kind: Literal["snapshot_offset", "event_seq"] | None = Query(default=None),
     anchor_position: int | None = Query(default=None, ge=0),
     anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
-    search_query: str | None = Query(default=None, max_length=500),
+    search_query: SearchQuery | None = Query(default=None),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionMessagesPage | SessionTimelinePage:
@@ -3043,7 +3042,6 @@ async def get_session_messages(
     a complete anchor opens that exact match. Stale anchors degrade to ordinary
     offset pagination.
     """
-    search_query = search_query.strip() if search_query else None
     anchor_values = (anchor_kind, anchor_position, anchor_revision)
     if any(value is not None for value in anchor_values) and not all(
         value is not None for value in anchor_values

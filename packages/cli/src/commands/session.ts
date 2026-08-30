@@ -6,6 +6,7 @@ import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
+import { requireSearchQuery } from "../lib/search-query";
 import {
 	adapterForType,
 	listRegisteredAgentTypes,
@@ -225,8 +226,7 @@ function printCloudSessionRows(sessions: SessionListItem[], total: number): void
 
 export async function sessionSearch(query: string, opts: CloudSessionOpts = {}): Promise<void> {
 	if (!requireCloudSessionAuth()) return;
-	const trimmedQuery = query.trim();
-	if (!trimmedQuery) throw new Error("Session search query cannot be empty.");
+	const trimmedQuery = requireSearchQuery(query, "Session");
 
 	const api = new ApiClient();
 	const page = unwrap(

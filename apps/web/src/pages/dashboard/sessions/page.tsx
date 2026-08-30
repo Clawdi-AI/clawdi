@@ -1,5 +1,11 @@
 "use client";
 
+import {
+	isSearchQueryReady,
+	SEARCH_QUERY_MAX_LENGTH,
+	SEARCH_QUERY_MIN_LENGTH,
+	searchQueryLength,
+} from "@clawdi/shared/consts";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
@@ -99,7 +105,15 @@ function SessionsListInner() {
 
 	const debouncedSearch = useDebouncedValue(params.q, 250);
 	const draftSearchQuery = params.q.trim();
-	const searchQuery = debouncedSearch.trim();
+	const debouncedSearchQuery = debouncedSearch.trim();
+	const searchQuery = isSearchQueryReady(debouncedSearchQuery) ? debouncedSearchQuery : "";
+	const draftSearchLength = searchQueryLength(draftSearchQuery);
+	const searchQueryError =
+		draftSearchLength > 0 && draftSearchLength < SEARCH_QUERY_MIN_LENGTH
+			? `Type at least ${SEARCH_QUERY_MIN_LENGTH} characters`
+			: draftSearchLength > SEARCH_QUERY_MAX_LENGTH
+				? `Type at most ${SEARCH_QUERY_MAX_LENGTH} characters`
+				: null;
 	const getSessionLink = useCallback(
 		(session: SessionListItem) => sessionDetailLink(session, { returnTo, searchQuery }),
 		[returnTo, searchQuery],
@@ -190,7 +204,9 @@ function SessionsListInner() {
 
 	const total = data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / params.pageSize));
-	const isListUpdating = data !== undefined && (draftSearchQuery !== searchQuery || isFetching);
+	const isListUpdating =
+		data !== undefined &&
+		((isSearchQueryReady(draftSearchQuery) && draftSearchQuery !== searchQuery) || isFetching);
 
 	useEffect(() => {
 		if (!data || params.page >= pageCount) return;
@@ -213,7 +229,7 @@ function SessionsListInner() {
 	) {
 		setPaginationState({ pageIndex: params.page - 1, pageSize: params.pageSize });
 	}
-	const emptyMessage = draftSearchQuery
+	const emptyMessage = searchQuery
 		? `No sessions found for “${draftSearchQuery}”.`
 		: isFiltered
 			? "No sessions match your filters."
@@ -229,7 +245,7 @@ function SessionsListInner() {
 						// match quality" UX. Restore the date sort if the
 						// box is cleared so the empty-search default goes
 						// back to the activity timeline.
-						const hasQuery = v.trim().length > 0;
+						const hasQuery = isSearchQueryReady(v);
 						void setParams({
 							q: v,
 							page: 1,
@@ -242,6 +258,7 @@ function SessionsListInner() {
 						});
 					}}
 					placeholder="Search sessions and messages…"
+					maxLength={SEARCH_QUERY_MAX_LENGTH}
 				/>
 			}
 			filters={
@@ -288,11 +305,13 @@ function SessionsListInner() {
 				<>
 					{(isFiltered || isListUpdating) && data ? (
 						<span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
-							{isListUpdating
-								? draftSearchQuery || searchQuery
-									? "Searching…"
-									: "Updating…"
-								: `${formatNumber(total)} ${total === 1 ? "result" : "results"}`}
+							{searchQueryError
+								? searchQueryError
+								: isListUpdating
+									? draftSearchQuery || searchQuery
+										? "Searching…"
+										: "Updating…"
+									: `${formatNumber(total)} ${total === 1 ? "result" : "results"}`}
 						</span>
 					) : null}
 					{isFiltered ? (

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	literalSearchRank,
 	searchExcerpt,
+	searchHighlightTerms,
 	searchTerms,
 	splitSearchHighlight,
 } from "@/lib/search-highlight";
@@ -35,6 +36,42 @@ describe("search highlighting", () => {
 			.map((part) => part.text.toLocaleLowerCase());
 
 		expect(highlighted).toEqual(["deploy", "handoff"]);
+	});
+
+	test("uses PostgreSQL web-search operands for display", () => {
+		expect(searchTerms('foo OR bar -draft -"private note" "exact phrase"')).toEqual([
+			"foo",
+			"bar",
+			"exact phrase",
+		]);
+		expect(searchHighlightTerms("oauth token refresh")).toEqual([
+			"oauth token refresh",
+			"oauth",
+			"token",
+			"refresh",
+		]);
+	});
+
+	test("highlights a contiguous phrase as one mark", () => {
+		const highlighted = splitSearchHighlight(
+			"The oauth token refresh completed",
+			'"oauth token refresh"',
+		)
+			.filter((part) => part.highlighted)
+			.map((part) => part.text);
+
+		expect(highlighted).toEqual(["oauth token refresh"]);
+	});
+
+	test("does not highlight web-search operators or excluded terms", () => {
+		const highlighted = splitSearchHighlight(
+			"foo before bar and a private draft",
+			"foo OR bar -draft -private",
+		)
+			.filter((part) => part.highlighted)
+			.map((part) => part.text.toLocaleLowerCase());
+
+		expect(highlighted).toEqual(["foo", "bar"]);
 	});
 
 	test("centers excerpts on the earliest term when the phrase is not contiguous", () => {

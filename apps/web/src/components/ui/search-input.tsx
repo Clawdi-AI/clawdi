@@ -28,6 +28,7 @@ export function SearchInput({
 	autoFocus,
 	onKeyDown,
 	ariaKeyShortcuts,
+	maxLength,
 }: {
 	value: string;
 	onChange: (next: string) => void;
@@ -38,6 +39,7 @@ export function SearchInput({
 	autoFocus?: boolean;
 	onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
 	ariaKeyShortcuts?: string;
+	maxLength?: number;
 }) {
 	return (
 		<div className={cn("relative", className)}>
@@ -54,6 +56,7 @@ export function SearchInput({
 				autoFocus={autoFocus}
 				onKeyDown={onKeyDown}
 				aria-keyshortcuts={ariaKeyShortcuts}
+				maxLength={maxLength}
 			/>
 			{value ? (
 				<Button

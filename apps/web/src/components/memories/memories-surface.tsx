@@ -1,6 +1,12 @@
 "use client";
 
 import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
+import {
+	isSearchQueryReady,
+	SEARCH_QUERY_MAX_LENGTH,
+	SEARCH_QUERY_MIN_LENGTH,
+	searchQueryLength,
+} from "@clawdi/shared/consts";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
@@ -116,7 +122,16 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const page = params.page;
 	const pageSize = params.pageSize;
 	const debouncedSearch = useDebouncedValue(search, 250);
-	const searchQuery = debouncedSearch.trim();
+	const draftSearchQuery = search.trim();
+	const debouncedSearchQuery = debouncedSearch.trim();
+	const searchQuery = isSearchQueryReady(debouncedSearchQuery) ? debouncedSearchQuery : "";
+	const draftSearchLength = searchQueryLength(draftSearchQuery);
+	const searchQueryError =
+		draftSearchLength > 0 && draftSearchLength < SEARCH_QUERY_MIN_LENGTH
+			? `Type at least ${SEARCH_QUERY_MIN_LENGTH} characters`
+			: draftSearchLength > SEARCH_QUERY_MAX_LENGTH
+				? `Type at most ${SEARCH_QUERY_MAX_LENGTH} characters`
+				: null;
 	const apiCategory = category === ALL ? "" : category;
 
 	const { data: settings } = useQuery({
@@ -206,6 +221,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 						value={search}
 						onChange={(v) => void setParams({ q: v, page: 1 })}
 						placeholder="Search memories…"
+						maxLength={SEARCH_QUERY_MAX_LENGTH}
 					/>
 				}
 				filters={
@@ -227,6 +243,13 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 							</ToggleGroupItem>
 						))}
 					</ToggleGroup>
+				}
+				actions={
+					searchQueryError ? (
+						<span className="text-xs text-muted-foreground" role="status">
+							{searchQueryError}
+						</span>
+					) : null
 				}
 			/>
 

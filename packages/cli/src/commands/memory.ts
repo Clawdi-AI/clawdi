@@ -4,6 +4,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
 import { sanitizeMetadata } from "../lib/sanitize";
+import { requireSearchQuery } from "../lib/search-query";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
@@ -66,9 +67,10 @@ export async function memoryList(opts: ListOpts = {}) {
 
 export async function memorySearch(query: string, opts: ListOpts = {}) {
 	requireAuth();
+	const searchQuery = requireSearchQuery(query, "Memory");
 	const api = new ApiClient();
 	const page = unwrap(
-		await api.GET("/v1/memories", { params: { query: buildQuery({ ...opts, q: query }) } }),
+		await api.GET("/v1/memories", { params: { query: buildQuery({ ...opts, q: searchQuery }) } }),
 	);
 	const memories = page.items;
 
@@ -78,7 +80,7 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 	}
 
 	if (memories.length === 0) {
-		console.log(chalk.gray(`No memories matching "${sanitizeMetadata(query)}".`));
+		console.log(chalk.gray(`No memories matching "${sanitizeMetadata(searchQuery)}".`));
 		return;
 	}
 
