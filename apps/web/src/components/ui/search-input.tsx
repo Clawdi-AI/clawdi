@@ -2,23 +2,18 @@
 
 import { Search, X } from "lucide-react";
 import type { KeyboardEventHandler } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+} from "@/components/ui/input-group";
 
 /**
- * Canonical search input with magnifying-glass icon + clear button.
- *
- * Used everywhere the dashboard offers a search box: list pages
- * (connectors, skills), table toolbars (`DataTableToolbar`), and
- * filtering panels in detail pages (connector tools list).
- *
- * Pulled out because the same `<div className="relative"><Search />
- * <Input pl-9 pr-9 /><X></div>` pattern was duplicated across four
- * call sites with subtle drift (icon position, clear-button size,
- * placeholder casing).
+ * Canonical shadcn Input Group composition for dashboard search fields.
  */
 export function SearchInput({
+	id,
 	value,
 	onChange,
 	placeholder = "Search…",
@@ -30,6 +25,7 @@ export function SearchInput({
 	ariaKeyShortcuts,
 	maxLength,
 }: {
+	id?: string;
 	value: string;
 	onChange: (next: string) => void;
 	placeholder?: string;
@@ -42,16 +38,18 @@ export function SearchInput({
 	maxLength?: number;
 }) {
 	return (
-		<div className={cn("relative", className)}>
-			<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-			<Input
+		<InputGroup className={className}>
+			<InputGroupAddon>
+				<Search />
+			</InputGroupAddon>
+			<InputGroupInput
+				id={id}
 				name={name}
 				aria-label={ariaLabel}
 				type="text"
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				placeholder={placeholder}
-				className="pl-9 pr-9"
 				autoComplete="off"
 				autoFocus={autoFocus}
 				onKeyDown={onKeyDown}
@@ -59,16 +57,17 @@ export function SearchInput({
 				maxLength={maxLength}
 			/>
 			{value ? (
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					onClick={() => onChange("")}
-					className="-translate-y-1/2 absolute top-1/2 right-1"
-					aria-label="Clear search"
-				>
-					<X className="size-4" />
-				</Button>
+				<InputGroupAddon align="inline-end">
+					<InputGroupButton
+						size="icon-xs"
+						onClick={() => onChange("")}
+						aria-label="Clear search"
+						title="Clear search"
+					>
+						<X />
+					</InputGroupButton>
+				</InputGroupAddon>
 			) : null}
-		</div>
+		</InputGroup>
 	);
 }

@@ -1,4 +1,4 @@
-import { expect, type Route, test } from "@playwright/test";
+import { expect, type Locator, type Route, test } from "@playwright/test";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const AGENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -42,6 +42,13 @@ async function fulfillJson(route: Route, body: unknown) {
 		status: 200,
 		contentType: "application/json",
 		body: JSON.stringify(body),
+	});
+}
+
+async function horizontalBounds(locator: Locator) {
+	return locator.evaluate((element) => {
+		const bounds = element.getBoundingClientRect();
+		return { x: bounds.x, width: bounds.width };
 	});
 }
 
@@ -232,6 +239,10 @@ test("opens a message search result and returns to the same filtered list", asyn
 	await expect(page.locator('[data-search-match="true"]')).toBeVisible();
 	await expect(page.getByText("1 / 2")).toBeVisible();
 	const detailSearch = page.getByRole("textbox", { name: "Search messages" });
+	const searchInputGroup = detailSearch.locator("..");
+	const clearSearchButton = page.getByRole("button", { name: "Clear search" });
+	const initialSearchBounds = await horizontalBounds(searchInputGroup);
+	const initialClearBounds = await horizontalBounds(clearSearchButton);
 	await detailSearch.press("Enter");
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "11");
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
@@ -242,6 +253,8 @@ test("opens a message search result and returns to the same filtered list", asyn
 	await expect(page).toHaveURL((url) => url.searchParams.get("matchPosition") === "7");
 	await detailSearch.fill("x");
 	await expect(page.getByText("2+ chars")).toBeVisible();
+	expect(await horizontalBounds(searchInputGroup)).toEqual(initialSearchBounds);
+	expect(await horizontalBounds(clearSearchButton)).toEqual(initialClearBounds);
 	await page.waitForTimeout(350);
 	expect(requestedSearchQueries).not.toContain("x");
 	await detailSearch.fill("no longer");
@@ -256,6 +269,11 @@ test("opens a message search result and returns to the same filtered list", asyn
 	);
 	await expect(page.locator('[data-search-match="true"] mark')).toHaveText(["no longer"]);
 	await expect(page.getByText("1 / 1")).toBeVisible();
+	expect(await horizontalBounds(clearSearchButton)).toEqual(initialClearBounds);
+	await clearSearchButton.click();
+	await expect(detailSearch).toHaveValue("");
+	await expect(page).toHaveURL((url) => !url.searchParams.has("matchQuery"));
+	expect(await horizontalBounds(searchInputGroup)).toEqual(initialSearchBounds);
 
 	await page.getByText("Back to Sessions", { exact: true }).click();
 	await expect(page).toHaveURL((url) => {
