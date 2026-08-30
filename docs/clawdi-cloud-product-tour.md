@@ -10,7 +10,7 @@ A **Cloud Agent** runs in Clawdi. A **Connected Agent** runs on your computer. A
 
 ## Deploy a Cloud Agent
 
-Choose Hermes or OpenClaw, an AI provider and model, then Basic or Performance compute. Review the monthly price before deploying.
+Choose Hermes or OpenClaw, select AI access and a model when required, then choose Basic or Performance compute. Review the monthly price before deploying.
 
 ![Deploy an Agent with Hermes, Clawdi AI, a main model, and Basic compute selected](images/cloud-deploy-agent.png)
 
