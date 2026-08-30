@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { _electron as electron } from "@playwright/test";
+import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot] = process.argv.slice(2);
 if (!executablePath || !runtimeRoot) {
@@ -12,14 +14,21 @@ const clawdiHome = join(runtimeRoot, "state");
 mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 
-const desktop = await electron.launch({
-	executablePath,
+const output = [];
+const desktop = spawn(executablePath, ["--remote-debugging-port=0"], {
 	env: { ...process.env, HOME: home, CLAWDI_HOME: clawdiHome },
-	timeout: 30_000,
+	stdio: ["ignore", "pipe", "pipe"],
 });
+desktop.stdout.on("data", (chunk) => output.push(chunk.toString()));
+desktop.stderr.on("data", (chunk) => output.push(chunk.toString()));
 
+let browser;
 try {
-	const window = await desktop.firstWindow({ timeout: 30_000 });
+	const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
+	browser = await chromium.connectOverCDP(endpoint);
+	const context = browser.contexts()[0];
+	if (!context) throw new Error("Packaged app did not create a browser context.");
+	const window = context.pages()[0] ?? (await context.waitForEvent("page", { timeout: 30_000 }));
 	const signIn = window.getByRole("heading", { name: "Sign in to Clawdi" });
 	const failure = window.getByRole("heading", { name: "Couldn't finish setup" });
 	await Promise.race([
@@ -29,5 +38,60 @@ try {
 		}),
 	]);
 } finally {
-	await desktop.close();
+	await browser?.close().catch(() => undefined);
+	await stopProcess(desktop);
+}
+
+function waitForDevToolsEndpoint(child, logs, timeout) {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(
+			() => fail(new Error(`Timed out waiting for packaged app startup.\n${logs.join("")}`)),
+			timeout,
+		);
+		const onData = () => {
+			const match = logs.join("").match(/DevTools listening on (ws:\/\/\S+)/);
+			if (match) finish(match[1]);
+		};
+		const onError = (error) => fail(error);
+		const onExit = (code, signal) =>
+			fail(
+				new Error(
+					`Packaged app exited before startup (code=${code}, signal=${signal}).\n${logs.join("")}`,
+				),
+			);
+
+		child.stdout.on("data", onData);
+		child.stderr.on("data", onData);
+		child.once("error", onError);
+		child.once("exit", onExit);
+
+		function cleanup() {
+			clearTimeout(timer);
+			child.stdout.off("data", onData);
+			child.stderr.off("data", onData);
+			child.off("error", onError);
+			child.off("exit", onExit);
+		}
+		function finish(endpoint) {
+			cleanup();
+			resolve(endpoint);
+		}
+		function fail(error) {
+			cleanup();
+			reject(error);
+		}
+	});
+}
+
+async function stopProcess(child) {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	child.kill("SIGTERM");
+	const exited = once(child, "exit").then(() => true);
+	if (await Promise.race([exited, delay(5_000).then(() => false)])) return;
+	child.kill("SIGKILL");
+	await exited;
+}
+
+function delay(milliseconds) {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
