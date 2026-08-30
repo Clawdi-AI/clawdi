@@ -12,7 +12,7 @@ import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import type { HostedInventoryStatus } from "@/hosted/hosted-agent-resolution";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
-import { normalizeAgentEnvId } from "@/lib/agent-ownership";
+import { normalizeAgentId } from "@/lib/agent-ownership";
 
 type Env = components["schemas"]["AgentResponse"];
 
@@ -75,7 +75,7 @@ function isOwnedEnvId(
 	claimedEnvIds: ReadonlySet<string>,
 	legacyEnvIds: ReadonlySet<string>,
 ): boolean {
-	const envId = normalizeAgentEnvId(id);
+	const envId = normalizeAgentId(id);
 	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds.has(envId)));
 }
 

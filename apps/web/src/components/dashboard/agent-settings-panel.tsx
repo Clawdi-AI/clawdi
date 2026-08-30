@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { agentDisconnectEligibility } from "@clawdi/shared/client";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
@@ -22,11 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useUnsavedNavigationState } from "@/components/unsaved-navigation-state";
-import {
-	agentDisconnectUnavailable,
-	agentOwnershipKindFromId,
-	useAgentOwnership,
-} from "@/lib/agent-ownership";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentDetailQueryKey, agentDetailQueryOptions, agentsQueryKey } from "@/lib/agent-queries";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { useProductAccess } from "@/lib/product-access";
@@ -194,11 +191,12 @@ export function AgentSettingsPanel({
 	// RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
-	const disconnectUnavailable = agentDisconnectUnavailable({
-		envId: agent.id,
+	const disconnectUnavailable = !agentDisconnectEligibility({
+		platform: "web",
+		agentId: agent.id,
 		explicitIdentity: agent.explicit_identity,
 		ownership,
-	});
+	}).eligible;
 	const isBusy =
 		updateIdentity.isPending ||
 		uploadMutation.isPending ||

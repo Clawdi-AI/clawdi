@@ -12,7 +12,7 @@ import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inv
 import {
 	type AgentOwnership,
 	EMPTY_AGENT_OWNERSHIP,
-	normalizeAgentEnvId,
+	normalizeAgentId,
 } from "@/lib/agent-ownership";
 import { type LegacyProductAccessStatus, useProductAccess } from "@/lib/product-access";
 
@@ -21,7 +21,7 @@ const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
 function envIdSet(ids: readonly string[] | undefined): ReadonlySet<string> {
 	const set = new Set<string>();
 	for (const id of ids ?? []) {
-		const normalized = normalizeAgentEnvId(id);
+		const normalized = normalizeAgentId(id);
 		if (normalized) set.add(normalized);
 	}
 	return set;
@@ -119,8 +119,8 @@ export function HostedAgentOwnershipSensor({
 		() =>
 			deployApiConfigured
 				? {
-						cloudEnvIds,
-						legacyEnvIds: legacy.envIds ?? EMPTY_ENV_IDS,
+						cloudAgentIds: cloudEnvIds,
+						legacyAgentIds: legacy.envIds ?? EMPTY_ENV_IDS,
 						isResolved: cloudInventory.status === "resolved" && legacy.envIds !== null,
 					}
 				: EMPTY_AGENT_OWNERSHIP,

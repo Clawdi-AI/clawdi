@@ -38,6 +38,9 @@ The hosted box is intentionally opaque. This repo defines API contracts,
 dashboard surfaces, CLI behavior, local mock helpers, and runtime convergence
 code. Hosted service internals live outside this repository.
 
+Cross-platform client behavior and current decision owners are tracked in the
+[client capability matrix](cross-platform-capability-matrix.md).
+
 ## Overview
 
 Clawdi Cloud is a cross-agent sync and recall layer. The CLI reads supported

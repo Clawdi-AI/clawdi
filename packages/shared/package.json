@@ -5,6 +5,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
+		"./client": "./src/client.ts",
 		"./consts": "./src/consts/index.ts",
 		"./sharing": "./src/sharing/agent-handoff.ts",
 		"./x402": "./src/x402/index.ts",
