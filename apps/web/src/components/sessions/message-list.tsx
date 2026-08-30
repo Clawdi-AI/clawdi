@@ -121,9 +121,8 @@ function MessageBlock({
 			data-search-match={isHighlighted ? "true" : undefined}
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
-				"group flex scroll-mt-24 gap-3 rounded-md border-l-2 border-transparent",
+				"group flex scroll-mt-24 gap-3 rounded-md border-l-2 border-transparent p-2",
 				deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS,
-				isGroupStart ? "pt-4" : "",
 				isHighlighted && "border-primary bg-primary/5",
 			)}
 		>
@@ -595,17 +594,19 @@ export function SessionTimelineRowView({
 		<>
 			{row.dividerTimestamp ? <DateDivider timestamp={row.dividerTimestamp} /> : null}
 			{row.kind === "message" ? (
-				<MessageBlock
-					message={row.message}
-					userAvatar={userAvatar}
-					userName={userName}
-					agentType={agentType}
-					isGroupStart={row.isGroupStart}
-					isHighlighted={isHighlighted}
-					highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
-					highlightQuery={highlightQuery}
-					deferOffscreenRendering={deferOffscreenRendering}
-				/>
+				<div className={row.isGroupStart && !row.dividerTimestamp ? "pt-2" : undefined}>
+					<MessageBlock
+						message={row.message}
+						userAvatar={userAvatar}
+						userName={userName}
+						agentType={agentType}
+						isGroupStart={row.isGroupStart}
+						isHighlighted={isHighlighted}
+						highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
+						highlightQuery={highlightQuery}
+						deferOffscreenRendering={deferOffscreenRendering}
+					/>
+				</div>
 			) : (
 				<ToolActivity
 					call={row.call}
