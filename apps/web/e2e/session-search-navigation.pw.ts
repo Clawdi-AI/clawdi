@@ -137,6 +137,12 @@ test("opens a global Session body match at the exact message", async ({ page }) 
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Found the ${query} in this response`);
 	await expect(current.locator("mark")).toHaveText(["global palette anchor"]);
+	expect(
+		await current.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft];
+		}),
+	).toEqual(["8px", "8px", "8px", "8px"]);
 });
 
 test("opens a message search result and returns to the same filtered list", async ({ page }) => {
@@ -452,11 +458,12 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 		model: position % 4 === 0 ? null : "gpt-5",
 		timestamp: new Date(Date.parse(now) + position * 1_000).toISOString(),
 	});
-	const browseTimeline = Array.from({ length: 500 }, (_, position) => makeMessage(position));
+	const browseTimeline = Array.from({ length: 500 }, (_, index) => makeMessage(499 - index));
 	const searchWindowOffset = 1450;
 	const searchWindow = Array.from({ length: 100 }, (_, index) =>
-		makeMessage(searchWindowOffset + index),
+		makeMessage(searchWindowOffset + 99 - index),
 	);
+	const searchAnchorOffset = searchWindowOffset + 49;
 	const requestedOffsets = new Set<number>();
 
 	await page.route("**/v1/**", async (route) => {
@@ -482,6 +489,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 			});
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			expect(url.searchParams.get("direction")).toBe("desc");
 			if (!url.searchParams.has("search_query")) {
 				const offset = Number(url.searchParams.get("offset") ?? 0);
 				requestedOffsets.add(offset);
@@ -497,7 +505,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 				total: 2000,
 				offset: searchWindowOffset,
 				limit: 100,
-				anchor_offset: targetPosition,
+				anchor_offset: searchAnchorOffset,
 				search_navigation: {
 					index: 1,
 					total: 1,
@@ -513,9 +521,10 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await page.goto(`/sessions/${SESSION_ID}`);
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
+	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
 	for (let attempt = 0; attempt < 8 && requestedOffsets.size < 5; attempt++) {
 		const requestCount = requestedOffsets.size;
-		await scrollContainer.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+		await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
 		await expect.poll(() => requestedOffsets.size).toBeGreaterThan(requestCount);
 	}
 	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
