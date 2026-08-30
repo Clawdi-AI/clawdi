@@ -28,6 +28,15 @@ database migration, CI, and implementation details.
 
 - Session detail search now preserves spaces while typing multi-word queries.
 
+## Clawdi CLI v0.14.32
+
+Package: `clawdi@0.14.32`
+
+### Changed
+
+- CLI help and package metadata now use the approved “best home” positioning and
+  concise run-path supporting copy.
+
 ## Clawdi CLI v0.14.31
 
 Package: `clawdi@0.14.31`

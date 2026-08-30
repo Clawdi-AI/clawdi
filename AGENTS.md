@@ -1,7 +1,7 @@
 # Clawdi
 
-The best home for all your AI agents. Clawdi keeps every environment, session,
-memory, skill, cron job, and app connection in one place. This repository
+The best home for all your AI agents. Run them in the cloud or connect your
+own—with their context and tools in one place. This repository
 contains the CLI, FastAPI backend, TanStack dashboard, shared types, agent
 adapters, channels, and sync.
 
