@@ -3,16 +3,19 @@ import type {
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopDetectedAgent,
+	DesktopInstallationState,
 } from "@clawdi/shared/desktop";
 import {
 	ArrowRight,
 	Check,
 	CircleCheckBig,
+	FolderInput,
 	LoaderCircle,
 	RefreshCw,
 	ShieldCheck,
 	TerminalSquare,
 	TriangleAlert,
+	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -24,14 +27,26 @@ declare global {
 	}
 }
 
-type Stage = "loading" | "authenticate" | "select" | "connecting" | "complete" | "error";
+type Stage =
+	| "loading"
+	| "authenticate"
+	| "authenticating"
+	| "select"
+	| "moving"
+	| "connecting"
+	| "complete"
+	| "error";
 
 function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	const [stage, setStage] = useState<Stage>("loading");
 	const [bootstrap, setBootstrap] = useState<DesktopBootstrapState | null>(null);
+	const [installation, setInstallation] = useState<DesktopInstallationState>({
+		requiresMove: false,
+	});
 	const [agents, setAgents] = useState<DesktopDetectedAgent[]>([]);
 	const [selected, setSelected] = useState<Set<DesktopAgentType>>(new Set());
 	const [failure, setFailure] = useState<string | null>(null);
+	const [cancellingAuth, setCancellingAuth] = useState(false);
 
 	const fail = useCallback((error: unknown) => {
 		setFailure(error instanceof Error ? error.message : "Setup could not be completed.");
@@ -40,9 +55,14 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 	const loadAgents = useCallback(async () => {
 		setStage("loading");
+		setFailure(null);
 		try {
-			const detected = await bridge.detectAgents();
+			const [detected, location] = await Promise.all([
+				bridge.detectAgents(),
+				bridge.getInstallationState(),
+			]);
 			setAgents(detected);
+			setInstallation(location);
 			setSelected(
 				new Set(
 					detected
@@ -77,12 +97,27 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	}, [load]);
 
 	async function authenticate() {
-		setStage("loading");
+		setStage("authenticating");
 		setFailure(null);
 		try {
-			const state = await bridge.authenticate();
-			setBootstrap(state);
+			const result = await bridge.authenticate();
+			if (result.status === "cancelled") {
+				setStage("authenticate");
+				return;
+			}
+			setBootstrap(result.state);
 			await loadAgents();
+		} catch (error) {
+			fail(error);
+		} finally {
+			setCancellingAuth(false);
+		}
+	}
+
+	async function cancelAuthentication() {
+		setCancellingAuth(true);
+		try {
+			await bridge.cancelAuthentication();
 		} catch (error) {
 			fail(error);
 		}
@@ -99,6 +134,24 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			await bridge.connectAgents(requested);
 			setStage("complete");
+		} catch (error) {
+			fail(error);
+		}
+	}
+
+	async function moveToApplications() {
+		setStage("moving");
+		setFailure(null);
+		try {
+			const result = await bridge.moveToApplicationsFolder();
+			if (result.status === "cancelled") {
+				setStage("select");
+				return;
+			}
+			if (result.status === "not-required") {
+				setInstallation({ requiresMove: false });
+				await connect();
+			}
 		} catch (error) {
 			fail(error);
 		}
@@ -151,12 +204,34 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 					</div>
 				) : null}
 
+				{stage === "authenticating" ? (
+					<div className="stack">
+						<Centered
+							icon={<LoaderCircle className="spin" />}
+							title="Finish signing in in your browser"
+							description="Clawdi is waiting for the secure browser authorization to finish."
+						/>
+						<footer className="actions">
+							<button
+								className="button secondary"
+								type="button"
+								disabled={cancellingAuth}
+								onClick={() => void cancelAuthentication()}
+							>
+								{cancellingAuth ? <LoaderCircle className="spin" /> : <X />}
+								{cancellingAuth ? "Cancelling…" : "Cancel sign-in"}
+							</button>
+						</footer>
+					</div>
+				) : null}
+
 				{stage === "select" ? (
 					<AgentSelection
 						agents={agents}
 						selected={selected}
 						account={bootstrap?.auth.user?.email}
 						daemonReady={bootstrap?.daemon.running === true}
+						requiresMove={installation.requiresMove}
 						onToggle={(type, checked) => {
 							setSelected((current) => {
 								const next = new Set(current);
@@ -167,7 +242,16 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						}}
 						onRefresh={() => void loadAgents()}
 						onConnect={() => void connect()}
+						onMoveToApplications={() => void moveToApplications()}
 						onOpenDashboard={() => void openDashboard()}
+					/>
+				) : null}
+
+				{stage === "moving" ? (
+					<Centered
+						icon={<FolderInput />}
+						title="Moving Clawdi to Applications"
+						description="Clawdi will reopen automatically so setup can continue safely."
 					/>
 				) : null}
 
@@ -221,18 +305,22 @@ function AgentSelection({
 	selected,
 	account,
 	daemonReady,
+	requiresMove,
 	onToggle,
 	onRefresh,
 	onConnect,
+	onMoveToApplications,
 	onOpenDashboard,
 }: {
 	agents: DesktopDetectedAgent[];
 	selected: ReadonlySet<DesktopAgentType>;
 	account?: string;
 	daemonReady: boolean;
+	requiresMove: boolean;
 	onToggle(type: DesktopAgentType, checked: boolean): void;
 	onRefresh(): void;
 	onConnect(): void;
+	onMoveToApplications(): void;
 	onOpenDashboard(): void;
 }) {
 	const found = useMemo(
@@ -285,17 +373,45 @@ function AgentSelection({
 				})}
 			</div>
 
+			{requiresMove && shouldConnect ? (
+				<div className="notice install-notice">
+					<span className="icon-tile">
+						<FolderInput />
+					</span>
+					<div>
+						<h2>Move Clawdi to Applications</h2>
+						<p>
+							Background sync must be installed from Applications so macOS always starts the correct
+							bundled runtime.
+						</p>
+					</div>
+				</div>
+			) : null}
+
 			<footer className="actions">
+				{requiresMove && shouldConnect ? (
+					<button className="button secondary" type="button" onClick={onOpenDashboard}>
+						Open dashboard
+					</button>
+				) : null}
 				<button
 					className="button primary"
 					type="button"
-					onClick={shouldConnect ? onConnect : onOpenDashboard}
+					onClick={
+						requiresMove && shouldConnect
+							? onMoveToApplications
+							: shouldConnect
+								? onConnect
+								: onOpenDashboard
+					}
 				>
-					{selected.size > 0
-						? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
-						: canRepairDaemon
-							? "Start background sync"
-							: "Open dashboard"}
+					{requiresMove && shouldConnect
+						? "Move to Applications"
+						: selected.size > 0
+							? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+							: canRepairDaemon
+								? "Start background sync"
+								: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>

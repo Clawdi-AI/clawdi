@@ -1013,4 +1013,28 @@ describe("Clerk OAuth loopback", () => {
 		expect(await loopback.callbackUrl).toBe(`${redirectUri}?code=secret-code&state=state-value`);
 		await loopback.close();
 	});
+
+	test("directs Desktop sign-in back to Clawdi without changing the loopback flow", async () => {
+		const probe = createServer();
+		await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+		const address = probe.address();
+		if (!address || typeof address === "string") throw new Error("missing probe port");
+		await new Promise<void>((resolve) => probe.close(() => resolve()));
+		const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
+		const loopback = await startClerkOAuthLoopback(redirectUri, "desktop-state", {
+			returnTarget: "desktop",
+		});
+
+		const rejected = await fetch(`${redirectUri}?state=wrong-state&error=access_denied`);
+		const rejectedHtml = await rejected.text();
+		expect(rejectedHtml).toContain("Return to Clawdi and try again.");
+		expect(rejectedHtml).not.toContain("terminal");
+
+		const accepted = await fetch(`${redirectUri}?code=desktop-code&state=desktop-state`);
+		const acceptedHtml = await accepted.text();
+		expect(acceptedHtml).toContain("Return to Clawdi to continue.");
+		expect(acceptedHtml).not.toContain("terminal");
+		expect(await loopback.callbackUrl).toBe(`${redirectUri}?code=desktop-code&state=desktop-state`);
+		await loopback.close();
+	});
 });

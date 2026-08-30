@@ -1,8 +1,11 @@
 export const DESKTOP_IPC = {
 	bootstrapState: "clawdi:bootstrap-state",
 	authenticate: "clawdi:authenticate",
+	cancelAuthentication: "clawdi:cancel-authentication",
 	detectAgents: "clawdi:detect-agents",
+	installationState: "clawdi:installation-state",
 	connectAgents: "clawdi:connect-agents",
+	moveToApplicationsFolder: "clawdi:move-to-applications-folder",
 	openConnectWizard: "clawdi:open-connect-wizard",
 	openDashboard: "clawdi:open-dashboard",
 } as const;

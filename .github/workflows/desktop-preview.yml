@@ -31,6 +31,7 @@ jobs:
       - name: Verify Desktop
         run: |
           bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test:internal
           bun x biome ci apps/desktop packages/shared/src/desktop.ts
 
       - name: Build unsigned preview DMG

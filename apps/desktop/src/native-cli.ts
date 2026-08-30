@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
@@ -10,23 +9,31 @@ import type {
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import { app } from "electron";
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+import {
+	CommandCancelledError,
+	type CommandOptions,
+	type CommandResult,
+	runCommand,
+} from "./command-runner";
+
 const OAUTH_TIMEOUT_MS = 11 * 60_000;
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 const PRODUCTION_CLOUD_API_URL = "https://cloud-api.clawdi.ai";
 const PRODUCTION_DEPLOY_API_URL = "https://api.clawdi.ai";
-
-interface CommandResult {
-	stdout: string;
-	stderr: string;
-}
 
 interface NativeIdentity {
 	version: string;
 	target: string;
 }
 
+type AuthenticationStatus = "authenticated" | "cancelled";
+
+interface AuthenticationOperation {
+	controller: AbortController;
+	completion: Promise<AuthenticationStatus>;
+}
+
 export class DesktopCliService {
+	private authentication: AuthenticationOperation | null = null;
 	private cliPath: string | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
@@ -44,13 +51,30 @@ export class DesktopCliService {
 		};
 	}
 
-	async authenticate(): Promise<void> {
-		const cli = this.cli();
-		const result = await this.runJson(cli, ["auth", "login", "--desktop"], {
-			timeoutMs: OAUTH_TIMEOUT_MS,
-		});
-		if (readString(result.status) !== "authenticated") {
-			throw new Error("Clawdi returned an invalid sign-in result.");
+	async authenticate(): Promise<AuthenticationStatus> {
+		if (this.authentication) return this.authentication.completion;
+
+		const controller = new AbortController();
+		const operation: AuthenticationOperation = {
+			controller,
+			completion: this.performAuthentication(controller.signal),
+		};
+		this.authentication = operation;
+		try {
+			return await operation.completion;
+		} finally {
+			if (this.authentication === operation) this.authentication = null;
+		}
+	}
+
+	async cancelAuthentication(): Promise<"cancelled" | "not-active"> {
+		const operation = this.authentication;
+		if (!operation) return "not-active";
+		operation.controller.abort();
+		try {
+			return (await operation.completion) === "cancelled" ? "cancelled" : "not-active";
+		} catch {
+			return "not-active";
 		}
 	}
 
@@ -100,6 +124,26 @@ export class DesktopCliService {
 		}
 		await this.run(cli, ["daemon", "install"], { timeoutMs: 60_000 });
 		return { connected, daemonInstalled: true };
+	}
+
+	async restartDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "restart"]);
+	}
+
+	private async performAuthentication(signal: AbortSignal): Promise<AuthenticationStatus> {
+		try {
+			const result = await this.runJson(this.cli(), ["auth", "login", "--desktop"], {
+				signal,
+				timeoutMs: OAUTH_TIMEOUT_MS,
+			});
+			if (readString(result.status) !== "authenticated") {
+				throw new Error("Clawdi returned an invalid sign-in result.");
+			}
+			return "authenticated";
+		} catch (error) {
+			if (error instanceof CommandCancelledError) return "cancelled";
+			throw error;
+		}
 	}
 
 	private cli(): string {
@@ -167,7 +211,7 @@ export class DesktopCliService {
 	private async runJson(
 		cli: string,
 		args: string[],
-		opts: { timeoutMs?: number } = {},
+		opts: CommandOptions = {},
 	): Promise<Record<string, unknown>> {
 		const result = await this.run(cli, args, opts);
 		let value: unknown;
@@ -180,12 +224,21 @@ export class DesktopCliService {
 		return value;
 	}
 
-	private run(
-		cli: string,
-		args: string[],
-		opts: { stdin?: string; timeoutMs?: number } = {},
-	): Promise<CommandResult> {
-		return runCommand(cli, args, opts);
+	private run(cli: string, args: string[], opts: CommandOptions = {}): Promise<CommandResult> {
+		return runCommand(cli, args, {
+			...opts,
+			env: {
+				...process.env,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+				...(app.isPackaged
+					? {
+							CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
+							CLAWDI_DEPLOY_API_URL: PRODUCTION_DEPLOY_API_URL,
+						}
+					: {}),
+			},
+		});
 	}
 }
 
@@ -203,66 +256,6 @@ function runtimeStartError(cause: unknown): DesktopCliError {
 	}
 	return new DesktopCliError("The bundled Clawdi runtime could not start. Reinstall Clawdi.", {
 		cause,
-	});
-}
-
-function runCommand(
-	command: string,
-	args: readonly string[],
-	opts: { stdin?: string; timeoutMs?: number },
-): Promise<CommandResult> {
-	return new Promise((resolvePromise, reject) => {
-		const child = spawn(command, args, {
-			env: {
-				...process.env,
-				CLAWDI_NO_AUTO_UPDATE: "1",
-				CLAWDI_NO_UPDATE_CHECK: "1",
-				...(app.isPackaged
-					? {
-							CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
-							CLAWDI_DEPLOY_API_URL: PRODUCTION_DEPLOY_API_URL,
-						}
-					: {}),
-			},
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		const finish = (error?: Error) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timeout);
-			if (error) reject(error);
-			else resolvePromise({ stdout, stderr });
-		};
-		const append = (current: string, chunk: Buffer) => {
-			const next = current + chunk.toString("utf8");
-			if (Buffer.byteLength(next) > MAX_OUTPUT_BYTES) {
-				child.kill("SIGKILL");
-				finish(new Error("Clawdi produced too much output."));
-			}
-			return next;
-		};
-		child.stdout.on("data", (chunk: Buffer) => {
-			stdout = append(stdout, chunk);
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderr = append(stderr, chunk);
-		});
-		child.on("error", (error) => finish(error));
-		child.on("exit", (code, signal) => {
-			if (code === 0) finish();
-			else {
-				const detail = stderr.trim().split("\n").at(-1) || `exit ${code ?? signal ?? "unknown"}`;
-				finish(new Error(`Clawdi command failed: ${detail}`));
-			}
-		});
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			finish(new Error("Clawdi took too long to respond."));
-		}, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-		child.stdin.end(opts.stdin ?? "");
 	});
 }
 

@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { DesktopAgentType } from "@clawdi/shared/desktop";
+import type {
+	DesktopAgentType,
+	DesktopBootstrapState,
+	DesktopInstallationState,
+	DesktopMoveToApplicationsResult,
+} from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import {
 	app,
 	BrowserWindow,
+	dialog,
 	type IpcMainInvokeEvent,
 	ipcMain,
 	Menu,
@@ -33,7 +39,13 @@ const cli = new DesktopCliService();
 let mainWindow: BrowserWindow | null = null;
 let connectWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let trayState: DesktopBootstrapState | null = null;
+let trayStateChecking = true;
+let trayStateRefresh: Promise<void> | null = null;
+let availableWindowOpening: Promise<void> | null = null;
 let quitting = false;
+
+class DesktopConnectError extends Error {}
 
 protocol.registerSchemesAsPrivileged([
 	{
@@ -51,6 +63,8 @@ if (!app.requestSingleInstanceLock()) {
 
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
+	const startHidden = wasOpenedAtLogin();
+	if (startHidden && process.platform === "darwin") app.dock?.hide();
 	registerConnectProtocol();
 	registerIpc();
 	configurePermissions();
@@ -58,20 +72,25 @@ async function startApplication(): Promise<void> {
 	createTray();
 	try {
 		const state = await cli.bootstrapState();
-		if (state.auth.authenticated && state.daemon.running) {
-			await prepareDashboardSession();
-			await showMainWindow();
-		} else {
-			await showConnectWindow();
+		setTrayState(state);
+		if (!startHidden) {
+			if (state.auth.authenticated && state.daemon.running) {
+				await prepareDashboardSession();
+				await showMainWindow();
+			} else {
+				await showConnectWindow();
+			}
 		}
 	} catch (error) {
 		console.error("Could not open the dashboard", error);
-		await showConnectWindow();
+		setTrayState(null);
+		if (!startHidden) await showConnectWindow();
 	}
 
 	app.on("activate", () => void showAvailableWindow());
 	app.on("before-quit", () => {
 		quitting = true;
+		void cli.cancelAuthentication();
 	});
 }
 
@@ -86,21 +105,41 @@ function registerConnectProtocol(): void {
 
 function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.bootstrapState, (event) =>
-		safeConnectAction(event, "prepare the local runtime", () => cli.bootstrapState()),
+		safeConnectAction(event, "prepare the local runtime", async () => {
+			const state = await cli.bootstrapState();
+			setTrayState(state);
+			return state;
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.installationState, (event) =>
+		safeConnectAction(event, "check the app location", async () => installationState()),
 	);
 	ipcMain.handle(DESKTOP_IPC.detectAgents, (event) =>
 		safeConnectAction(event, "inspect local Agents", () => cli.detectAgents()),
 	);
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
-			await cli.authenticate();
-			return cli.bootstrapState();
+			if ((await cli.authenticate()) === "cancelled") return { status: "cancelled" as const };
+			const state = await cli.bootstrapState();
+			setTrayState(state);
+			return { status: "authenticated" as const, state };
 		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.cancelAuthentication, (event) =>
+		safeConnectAction(event, "cancel sign-in", async () => ({
+			status: await cli.cancelAuthentication(),
+		})),
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawAgentTypes: unknown) =>
 		safeConnectAction(event, "connect the selected Agents", async () => {
-			return cli.connectAgents(readAgentTypes(rawAgentTypes));
+			assertSafeDaemonMutation();
+			const result = await cli.connectAgents(readAgentTypes(rawAgentTypes));
+			void refreshTrayState();
+			return result;
 		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.moveToApplicationsFolder, (event) =>
+		safeConnectAction(event, "move Clawdi to Applications", async () => moveToApplicationsFolder()),
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
@@ -127,7 +166,7 @@ async function safeConnectAction<T>(
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
-		if (error instanceof DesktopCliError) throw error;
+		if (error instanceof DesktopCliError || error instanceof DesktopConnectError) throw error;
 		throw new Error(`Could not ${label}. Try again.`);
 	}
 }
@@ -280,6 +319,7 @@ async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()
 }
 
 async function showConnectWindow(): Promise<void> {
+	if (process.platform === "darwin") await app.dock?.show();
 	if (connectWindow) {
 		if (connectWindow.isMinimized()) connectWindow.restore();
 		connectWindow.show();
@@ -313,6 +353,7 @@ async function showConnectWindow(): Promise<void> {
 	});
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
+		void cli.cancelAuthentication();
 		if (connectWindow === window) connectWindow = null;
 	});
 	await window.loadURL(CONNECT_RENDERER_URL);
@@ -325,24 +366,225 @@ function createTray(): void {
 	if (process.platform === "darwin") trayIcon.setTemplateImage(true);
 	tray = new Tray(trayIcon);
 	tray.setToolTip("Clawdi");
-	tray.setContextMenu(
-		Menu.buildFromTemplate([
-			{ label: "Open Clawdi", click: showAvailableWindow },
-			{
-				label: "Connect Agent",
-				click: () => void showConnectWindow(),
-			},
+	renderTrayMenu();
+	tray.on("click", () => void showAvailableWindow());
+}
+
+function renderTrayMenu(): void {
+	if (!tray) return;
+	const status = trayStatus();
+	const recoveryLabel = trayState?.daemon.installed
+		? "Restart Background Sync"
+		: "Set Up Background Sync…";
+	const template: MenuItemConstructorOptions[] = [
+		{ label: status, enabled: false },
+		{
+			label: recoveryLabel,
+			click: () =>
+				void (trayState?.daemon.installed ? restartBackgroundSync() : showConnectWindow()),
+		},
+		{ label: "Refresh Status", click: () => void refreshTrayState() },
+		{ type: "separator" },
+		{ label: "Open Clawdi", click: showAvailableWindow },
+		{ label: "Connect Agent…", click: () => void showConnectWindow() },
+	];
+
+	if (process.platform === "darwin") {
+		const loginItem = readLoginItemSettings();
+		template.push(
 			{ type: "separator" },
 			{
-				label: "Quit Clawdi",
-				click: () => {
-					quitting = true;
-					app.quit();
-				},
+				type: "checkbox",
+				label: "Open Clawdi at Login",
+				checked: loginItem?.openAtLogin === true,
+				enabled: app.isPackaged && loginItem !== null,
+				click: (item) => void setLaunchAtLogin(item.checked),
 			},
-		]),
+		);
+		if (!loginItem) {
+			template.push({ label: "Login Item: Unavailable", enabled: false });
+		} else if (loginItem.status === "requires-approval") {
+			template.push({ label: "Login Item Requires Approval", enabled: false });
+		}
+	}
+
+	template.push(
+		{ type: "separator" },
+		{
+			label: "Quit Clawdi",
+			click: () => {
+				quitting = true;
+				app.quit();
+			},
+		},
 	);
-	tray.on("click", () => void showAvailableWindow());
+	tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+function trayStatus(): string {
+	if (trayStateChecking) return "Background Sync: Checking…";
+	if (!trayState) return "Background Sync: Unavailable";
+	if (!trayState.auth.authenticated) return "Background Sync: Sign In Required";
+	if (!trayState.daemon.installed) return "Background Sync: Not Set Up";
+	return trayState.daemon.running ? "Background Sync: Running" : "Background Sync: Needs Attention";
+}
+
+function setTrayState(state: DesktopBootstrapState | null): void {
+	trayState = state;
+	trayStateChecking = false;
+	renderTrayMenu();
+}
+
+async function refreshTrayState(): Promise<void> {
+	if (trayStateRefresh) return trayStateRefresh;
+	trayStateChecking = true;
+	renderTrayMenu();
+	const refresh = (async () => {
+		try {
+			setTrayState(await cli.bootstrapState());
+		} catch (error) {
+			console.error("Could not refresh background sync status", error);
+			setTrayState(null);
+		}
+	})();
+	trayStateRefresh = refresh;
+	try {
+		await refresh;
+	} finally {
+		if (trayStateRefresh === refresh) trayStateRefresh = null;
+	}
+}
+
+async function restartBackgroundSync(): Promise<void> {
+	if (installationState().requiresMove) {
+		await promptToMove("Clawdi must be in Applications before it can repair background sync.");
+		return;
+	}
+	trayStateChecking = true;
+	renderTrayMenu();
+	try {
+		await cli.restartDaemon();
+		await refreshTrayState();
+		setTimeout(() => void refreshTrayState(), 2_000).unref();
+	} catch (error) {
+		console.error("Could not restart background sync", error);
+		setTrayState(null);
+		const choice = await dialog.showMessageBox({
+			type: "warning",
+			message: "Background sync could not be restarted",
+			detail: "Open Connect Agent to inspect and repair the local setup.",
+			buttons: ["Open Connect Agent", "Cancel"],
+			defaultId: 0,
+			cancelId: 1,
+		});
+		if (choice.response === 0) await showConnectWindow();
+	}
+}
+
+async function setLaunchAtLogin(enabled: boolean): Promise<void> {
+	if (process.platform !== "darwin" || !app.isPackaged) {
+		renderTrayMenu();
+		return;
+	}
+	if (enabled && installationState().requiresMove) {
+		renderTrayMenu();
+		await promptToMove("Clawdi must be in Applications before it can open at login.");
+		return;
+	}
+	try {
+		app.setLoginItemSettings({ openAtLogin: enabled, type: "mainAppService" });
+		const actual = readLoginItemSettings();
+		if (!actual || actual.openAtLogin !== enabled) {
+			await showLoginItemError();
+		}
+	} catch (error) {
+		console.error("Could not change the login item", error);
+		await showLoginItemError();
+	}
+	renderTrayMenu();
+}
+
+function readLoginItemSettings(): ReturnType<typeof app.getLoginItemSettings> | null {
+	if (process.platform !== "darwin" || !app.isPackaged) return null;
+	try {
+		return app.getLoginItemSettings({ type: "mainAppService" });
+	} catch (error) {
+		console.error("Could not read the login item", error);
+		return null;
+	}
+}
+
+function wasOpenedAtLogin(): boolean {
+	return app.isPackaged && readLoginItemSettings()?.wasOpenedAtLogin === true;
+}
+
+async function showLoginItemError(): Promise<void> {
+	await dialog.showMessageBox({
+		type: "warning",
+		message: "The login item could not be changed",
+		detail: "Review Clawdi in System Settings > General > Login Items and try again.",
+	});
+}
+
+function installationState(): DesktopInstallationState {
+	return {
+		requiresMove: process.platform === "darwin" && app.isPackaged && !app.isInApplicationsFolder(),
+	};
+}
+
+function assertSafeDaemonMutation(): void {
+	if (!installationState().requiresMove) return;
+	throw new DesktopConnectError(
+		"Move Clawdi to Applications before connecting Agents or repairing background sync.",
+	);
+}
+
+function moveToApplicationsFolder(): DesktopMoveToApplicationsResult {
+	if (!installationState().requiresMove) return { status: "not-required" };
+	const moved = app.moveToApplicationsFolder({
+		conflictHandler: (conflictType) => {
+			const running = conflictType === "existsAndRunning";
+			return (
+				dialog.showMessageBoxSync({
+					type: "question",
+					message: running
+						? "Clawdi is already running from Applications"
+						: "Replace the existing Clawdi app?",
+					detail: running
+						? "Open the installed copy and close this one. Background sync remains independent."
+						: "The existing copy will be moved to the Trash before this copy is installed.",
+					buttons: ["Cancel", running ? "Open Installed Clawdi" : "Replace and Move"],
+					defaultId: 0,
+					cancelId: 0,
+					noLink: true,
+				}) === 1
+			);
+		},
+	});
+	return { status: moved ? "relaunching" : "cancelled" };
+}
+
+async function promptToMove(detail: string): Promise<void> {
+	const choice = await dialog.showMessageBox({
+		type: "info",
+		message: "Move Clawdi to Applications",
+		detail: `${detail} Clawdi will reopen automatically after it moves.`,
+		buttons: ["Not Now", "Move to Applications"],
+		defaultId: 1,
+		cancelId: 0,
+		noLink: true,
+	});
+	if (choice.response !== 1) return;
+	try {
+		moveToApplicationsFolder();
+	} catch (error) {
+		console.error("Could not move Clawdi to Applications", error);
+		await dialog.showMessageBox({
+			type: "warning",
+			message: "Clawdi could not be moved",
+			detail: "Move Clawdi to Applications in Finder, reopen it, and try again.",
+		});
+	}
 }
 
 async function showAvailableWindow(): Promise<void> {
@@ -350,10 +592,43 @@ async function showAvailableWindow(): Promise<void> {
 		await showMainWindow();
 		return;
 	}
-	await showConnectWindow();
+	if (connectWindow) {
+		await showConnectWindow();
+		return;
+	}
+	if (availableWindowOpening) return availableWindowOpening;
+
+	const opening = showWindowFromTrayState();
+	availableWindowOpening = opening;
+	try {
+		await opening;
+	} finally {
+		if (availableWindowOpening === opening) availableWindowOpening = null;
+	}
+}
+
+async function showWindowFromTrayState(): Promise<void> {
+	if (!trayState?.auth.authenticated || !trayState.daemon.running) {
+		await showConnectWindow();
+		return;
+	}
+
+	try {
+		await prepareDashboardSession();
+		await showMainWindow();
+	} catch (error) {
+		console.error("Could not open the dashboard", error);
+		const failedWindow = mainWindow;
+		if (failedWindow) {
+			if (!failedWindow.isDestroyed()) failedWindow.destroy();
+			if (mainWindow === failedWindow) mainWindow = null;
+		}
+		await showConnectWindow();
+	}
 }
 
 async function showMainWindow(): Promise<void> {
+	if (process.platform === "darwin") await app.dock?.show();
 	if (!mainWindow) {
 		await createMainWindow(true);
 		return;

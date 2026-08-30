@@ -33,6 +33,21 @@ GitHub release bodies are the published release notes. `CHANGELOG.md` is the
 curated user-facing history in the repository. Keep them aligned for notable
 releases.
 
+## Desktop Release Blocker
+
+Desktop auto-update is not a released surface yet. `apps/desktop/package.json`
+has no publish provider, `desktop-preview.yml` uploads only an unsigned DMG PR
+artifact, and the calendar release workflow does not publish a Developer ID
+signed and notarized Desktop ZIP with update metadata. Until one trusted feed
+contract owns those immutable artifacts, Desktop must not call an updater or
+show a Check for Updates command; the bundled CLI also remains ineligible for
+self-update.
+
+Enabling updates requires one reviewed release change to define the trusted
+provider/feed, attach the signed ZIP and matching update metadata to the same
+release commit, and verify signing, notarization, version, and checksums before
+publication. Unsigned preview artifacts must remain outside that feed.
+
 ## Pre-Merge Checklist
 
 1. Rebase the PR onto `origin/main`.

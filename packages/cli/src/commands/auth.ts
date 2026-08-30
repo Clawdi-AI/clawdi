@@ -420,7 +420,9 @@ export async function authLoginDesktop(): Promise<void> {
 	const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
 	let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | null = null;
 	try {
-		loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state);
+		loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state, {
+			returnTarget: "desktop",
+		});
 		openInBrowser(pending.authorizationUrl);
 		const callbackUrl = await waitForLoopbackCallback(pending, loopback.callbackUrl);
 		await finishOAuthLogin(pending, callbackUrl, expectedCredential, { quiet: true });

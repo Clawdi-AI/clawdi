@@ -43,11 +43,30 @@ export interface DesktopConnectResult {
 	daemonInstalled: boolean;
 }
 
+export interface DesktopInstallationState {
+	requiresMove: boolean;
+}
+
+export type DesktopAuthenticationResult =
+	| { status: "authenticated"; state: DesktopBootstrapState }
+	| { status: "cancelled" };
+
+export interface DesktopAuthenticationCancellationResult {
+	status: "cancelled" | "not-active";
+}
+
+export interface DesktopMoveToApplicationsResult {
+	status: "cancelled" | "not-required" | "relaunching";
+}
+
 export interface ClawdiDesktopConnectBridge {
 	getBootstrapState(): Promise<DesktopBootstrapState>;
-	authenticate(): Promise<DesktopBootstrapState>;
+	getInstallationState(): Promise<DesktopInstallationState>;
+	authenticate(): Promise<DesktopAuthenticationResult>;
+	cancelAuthentication(): Promise<DesktopAuthenticationCancellationResult>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
 	connectAgents(agentTypes: DesktopAgentType[]): Promise<DesktopConnectResult>;
+	moveToApplicationsFolder(): Promise<DesktopMoveToApplicationsResult>;
 	openDashboard(): Promise<void>;
 }
 

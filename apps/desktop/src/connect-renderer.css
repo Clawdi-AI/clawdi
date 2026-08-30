@@ -160,6 +160,11 @@ h1 {
 .actions {
 	display: flex;
 	justify-content: flex-end;
+	gap: 9px;
+}
+
+.install-notice {
+	border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
 }
 
 .button,
