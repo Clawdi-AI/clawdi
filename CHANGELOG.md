@@ -27,6 +27,9 @@ database migration, CI, and implementation details.
 ### Fixed
 
 - Session detail search now preserves spaces while typing multi-word queries.
+- Session search now indexes very large messages in bounded chunks, so long
+  transcripts remain fully searchable without exceeding PostgreSQL full-text
+  limits; results and match navigation still point to the original message.
 
 ## Clawdi CLI v0.14.32
 

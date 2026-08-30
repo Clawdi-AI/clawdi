@@ -13,13 +13,19 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import httpx
 import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.session import Session, SessionMessageSearch
+from app.models.session import (
+    SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
+    SESSION_SEARCH_CHUNK_MAX_CHARACTERS,
+    Session,
+    SessionMessageSearch,
+)
 from app.services.session_search import (
     SearchableSessionMessage,
     rebuild_session_search_index,
@@ -280,6 +286,62 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     await db_session.commit()
     rebuilt = (await client.get("/v1/sessions", params={"q": "authoritative"})).json()
     assert [item["local_session_id"] for item in rebuilt["items"]] == [local_id]
+
+
+@pytest.mark.asyncio
+async def test_oversized_snapshot_search_preserves_phrase_and_message_navigation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "oversized-snapshot-search"
+    overlap_phrase = "overlap token pair"
+    crossing_phrase = "boundary phrase remains searchable"
+    phrase_start = SESSION_SEARCH_CHUNK_MAX_CHARACTERS - 8
+    prefix = "x " * (SESSION_SEARCH_CHUNK_BODY_CHARACTERS // 2) + overlap_phrase + " "
+    content = (
+        prefix
+        + "z" * (phrase_start - len(prefix) - 1)
+        + " "
+        + crossing_phrase
+        + " y" * ((SESSION_SEARCH_CHUNK_MAX_CHARACTERS // 2) + 1)
+    )
+    session_id = await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=[{"role": "user", "content": content}],
+        upload=True,
+    )
+
+    stored_chunks = list(
+        (
+            await db_session.execute(
+                select(SessionMessageSearch)
+                .where(SessionMessageSearch.session_id == UUID(session_id))
+                .order_by(SessionMessageSearch.chunk_index)
+            )
+        ).scalars()
+    )
+    assert len(stored_chunks) >= 2
+    assert all(len(chunk.content) <= SESSION_SEARCH_CHUNK_MAX_CHARACTERS for chunk in stored_chunks)
+    assert [chunk.chunk_index for chunk in stored_chunks] == list(range(len(stored_chunks)))
+
+    search = await client.get(
+        "/v1/sessions",
+        params={"q": crossing_phrase},
+    )
+    assert search.status_code == 200, search.text
+    assert [item["local_session_id"] for item in search.json()["items"]] == [local_id]
+    assert search.json()["items"][0]["search_match"]["anchor"]["position"] == 0
+
+    navigation = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={"search_query": overlap_phrase},
+    )
+    assert navigation.status_code == 200, navigation.text
+    assert navigation.json()["search_navigation"]["total"] == 1
+    assert navigation.json()["search_navigation"]["current"]["position"] == 0
 
 
 @pytest.mark.asyncio
