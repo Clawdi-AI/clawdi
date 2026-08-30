@@ -34,7 +34,6 @@ from app.core.project import (
     validate_project_for_caller,
     validate_project_read_for_caller,
 )
-from app.core.query_utils import like_needle
 from app.core.skill_key import (
     MAX_SKILL_KEY_LEN,
     RESERVED_SKILL_KEY_SUFFIXES,
@@ -85,6 +84,7 @@ from app.services.runtime_manifest_resources import (
     assert_project_skill_not_runtime_managed,
     project_skill_advisory_lock_key,
 )
+from app.services.skill_search import skill_search_filter, skill_search_rank
 from app.services.sync_events import (
     AGENT_SKILL_CHANGED_EVENT,
     AGENT_SKILL_DELETED_EVENT,
@@ -478,25 +478,25 @@ async def _list_skills_with_db(
     # skills in projects they joined as recipients. Project-id-in-visible
     # already gates access correctly; the membership row earned the
     # project its slot in `visible_project_ids`.
-    base = (
-        select(Skill)
-        .where(
-            Skill.is_active,
-            Skill.project_id.in_(visible_project_ids),
-        )
-        .order_by(Skill.skill_key, Skill.project_id, Skill.id)
+    base = select(Skill).where(
+        Skill.is_active,
+        Skill.project_id.in_(visible_project_ids),
     )
-    if q:
-        needle = like_needle(q)
-        base = base.where(
-            or_(
-                Skill.skill_key.ilike(needle, escape="\\"),
-                Skill.name.ilike(needle, escape="\\"),
-                Skill.description.ilike(needle, escape="\\"),
-            )
-        )
+    query = q.strip() if q else ""
+    if query:
+        base = base.where(skill_search_filter(query))
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    if query:
+        base = base.order_by(
+            skill_search_rank(query),
+            Skill.skill_key,
+            Skill.project_id,
+            Skill.id,
+        )
+    else:
+        base = base.order_by(Skill.skill_key, Skill.project_id, Skill.id)
 
     skills = (
         (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()

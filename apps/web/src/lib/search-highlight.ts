@@ -3,6 +3,31 @@ export interface SearchHighlightPart {
 	highlighted: boolean;
 }
 
+type SearchField = string | null | undefined;
+
+export function literalSearchRank(
+	query: string,
+	identityFields: readonly SearchField[],
+	supportingFields: readonly SearchField[] = [],
+): number | null {
+	const phrase = query.trim().toLowerCase();
+	if (!phrase) return 0;
+	const identity = identityFields.map((field) => field?.toLowerCase() ?? "");
+	for (const [index, field] of identity.entries()) {
+		if (field === phrase) return index;
+	}
+	for (const [index, field] of identity.entries()) {
+		if (field.startsWith(phrase)) return identity.length + index;
+	}
+	for (const [index, field] of identity.entries()) {
+		if (field.includes(phrase)) return identity.length * 2 + index;
+	}
+	for (const [index, field] of supportingFields.entries()) {
+		if (field?.toLowerCase().includes(phrase)) return identity.length * 3 + index;
+	}
+	return null;
+}
+
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

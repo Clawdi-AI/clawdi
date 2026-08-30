@@ -334,6 +334,7 @@ function SkillsPageInner() {
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
 						onUninstall={writable ? (skillKey) => removeSkill.mutateAsync(skillKey) : undefined}
 						uninstallPending={removeSkill.isPending}
+						searchQuery={search.trim() || undefined}
 					/>
 
 					{total > PAGE_SIZE ? (

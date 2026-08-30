@@ -14,7 +14,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { identityFor } from "@/lib/identity";
-import { searchExcerpt } from "@/lib/search-highlight";
+import { literalSearchRank, searchExcerpt } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 export interface ProjectMetadata {
@@ -60,26 +60,14 @@ export function projectSupportingText(project: ProjectMetadata) {
 }
 
 export function projectSearchRank(project: ProjectMetadata, query: string): number | null {
-	const phrase = query.trim().toLowerCase();
-	if (!phrase) return 0;
-	const name = displayProjectName(project).toLowerCase();
-	const slug = project.slug.toLowerCase();
-	if (name === phrase) return 0;
-	if (slug === phrase) return 1;
-	if (name.startsWith(phrase)) return 2;
-	if (slug.startsWith(phrase)) return 3;
-	if (name.includes(phrase)) return 4;
-	if (slug.includes(phrase)) return 5;
-	if (project.description?.toLowerCase().includes(phrase)) return 6;
-	if (
-		!isProjectOwner(project) &&
-		[project.owner_display, project.owner_handle].some((owner) =>
-			owner?.toLowerCase().includes(phrase),
-		)
-	) {
-		return 7;
-	}
-	return null;
+	const ownerIdentity = isProjectOwner(project)
+		? undefined
+		: `${project.owner_display ?? ""}\n${project.owner_handle ?? ""}`;
+	return literalSearchRank(
+		query,
+		[displayProjectName(project), project.slug],
+		[project.description, ownerIdentity],
+	);
 }
 
 export function projectMatchesSearch(project: ProjectMetadata, query: string): boolean {

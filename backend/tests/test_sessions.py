@@ -1336,6 +1336,36 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_global_vault_search_includes_unattached_owned_and_deduplicates_attachments(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    project_id: str,
+    workspace_project,
+):
+    from app.models.vault import Vault, VaultProjectAttachment
+
+    token = f"vault-{uuid.uuid4().hex[:10]}"
+    exact_name = Vault(user_id=seed_user.id, name=token, slug=f"z-{token}")
+    exact_slug = Vault(user_id=seed_user.id, name="Slug match", slug=token)
+    db_session.add_all([exact_slug, exact_name])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            VaultProjectAttachment(vault_id=exact_slug.id, project_id=uuid.UUID(project_id)),
+            VaultProjectAttachment(vault_id=exact_slug.id, project_id=workspace_project.id),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get("/v1/search", params={"q": token})
+    assert response.status_code == 200, response.text
+    hits = [hit for hit in response.json()["results"] if hit["type"] == "vault"]
+    assert [hit["id"] for hit in hits] == [str(exact_name.id), str(exact_slug.id)]
+    assert hits[1]["subtitle"] == token
+
+
+@pytest.mark.asyncio
 async def test_global_search_encodes_nested_skill_keys_in_href(
     client: httpx.AsyncClient, db_session, seed_user, project_id: str
 ):
