@@ -444,7 +444,6 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "alembic" },
-    { name = "anyio" },
     { name = "asyncpg" },
     { name = "boto3" },
     { name = "botocore" },
@@ -497,7 +496,6 @@ dev = [
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1" },
     { name = "alembic", specifier = ">=1.14" },
-    { name = "anyio", specifier = ">=4.0,<5" },
     { name = "asyncpg", specifier = "==0.31.0" },
     { name = "boto3", specifier = "==1.43.67" },
     { name = "botocore", specifier = "==1.43.67" },
