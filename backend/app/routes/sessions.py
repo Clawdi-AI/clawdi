@@ -106,6 +106,7 @@ from app.schemas.session import (
 )
 from app.services import memory_extraction
 from app.services.agent_environments import (
+    agent_name_from_fields,
     clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
@@ -189,16 +190,6 @@ def _analyze_session_upload_sync(data: bytes) -> _SessionUploadAnalysis:
 
 async def _analyze_session_upload(data: bytes) -> _SessionUploadAnalysis:
     return await asyncio.to_thread(_analyze_session_upload_sync, data)
-
-
-def _bound_env_id(auth: AuthContext) -> UUID | None:
-    """Return the env_id this caller is bound to, or None for
-    Clerk JWT (multi-env) callers. Bound api_keys carry an
-    `environment_id` on their key row; that's the blast-radius
-    boundary every session read/write must respect."""
-    if auth.is_cli and auth.api_key is not None:
-        return auth.api_key.environment_id
-    return None
 
 
 # Clock-skew window for client-supplied `last_activity_at`. Anything
@@ -395,7 +386,7 @@ async def _list_agent_identities(
     # — the whole point of the env binding is to bound the blast
     # radius of a leaked key. The full list stays available to
     # Clerk JWT (dashboard) callers.
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = (
         select(AgentEnvironment)
         .where(AgentEnvironment.user_id == auth.user_id, active_agent_filter())
@@ -514,7 +505,7 @@ async def _get_agent_identity(
     *,
     agent_response: bool,
 ) -> AgentResponse | EnvironmentResponse | Response:
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     if bound_env is not None and agent_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     row = (
@@ -568,7 +559,7 @@ async def list_environment_runtime_observed(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedSummaryResponse:
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     filters = [AgentEnvironment.user_id == auth.user_id, active_agent_filter()]
     if bound_env is not None:
         filters.append(AgentEnvironment.id == bound_env)
@@ -1063,7 +1054,7 @@ async def get_environment_runtime_observed(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedResponse:
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     if bound_env is not None and environment_id != bound_env:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
 
@@ -1300,7 +1291,7 @@ async def _hosted_deployment_ids(
 def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
     return AgentResponse(
         id=str(env.id),
-        name=_agent_name_from_fields(
+        name=agent_name_from_fields(
             env.display_name, env.default_name, env.machine_name, env.agent_type
         ),
         default_name=env.default_name,
@@ -1351,21 +1342,6 @@ def _identity_response(
     if agent_response:
         return _agent_to_response(env)
     return _env_to_response_with_deployment_id(env, hosted_deployment_id)
-
-
-def _agent_name_from_fields(
-    display_name: str | None,
-    default_name: str | None,
-    machine_name: str | None,
-    agent_type: str | None,
-) -> str:
-    return (
-        (display_name or "").strip()
-        or (default_name or "").strip()
-        or (machine_name or "").strip()
-        or agent_type
-        or "Unknown"
-    )
 
 
 def _detect_avatar_image(data: bytes) -> tuple[str, str] | None:
@@ -2579,7 +2555,7 @@ async def list_sessions(
     # Reject an explicit `environment_id` query that doesn't match
     # the binding rather than silently overriding it — the caller
     # asking for the wrong env is a bug worth surfacing.
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     if bound_env is not None and environment_id is not None and environment_id != bound_env:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -2770,7 +2746,7 @@ async def get_session_detail(
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     is_shared_subq = _link_is_shared_subq()
     stmt = (
         select(
@@ -2882,7 +2858,7 @@ async def upload_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
@@ -3006,7 +2982,7 @@ async def get_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> list[SessionMessageResponse]:
     """Read session messages from FileStore, typed as SessionMessageResponse[]."""
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,
@@ -3072,7 +3048,7 @@ async def get_session_messages(
             "Search anchor requires kind, position, and revision",
         )
 
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,
@@ -3250,7 +3226,7 @@ async def extract_session_memories(
             "LLM is not configured on this deployment",
         )
 
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
@@ -3339,7 +3315,7 @@ async def export_owned_session_markdown(
     and `source` is `clawdi-session` instead of `clawdi-shared-session`
     so the LLM can tell the two apart if it cares.
     """
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -3567,7 +3543,7 @@ def _session_to_response(
     search_match: SessionSearchMatchResponse | None = None,
 ) -> SessionListItemResponse:
     agent_name = (
-        _agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
+        agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
         if any((agent_display_name, agent_default_name, machine_name))
         else None
     )
@@ -3666,7 +3642,7 @@ async def _load_session_for_owner(
     404s rather than 403s on visibility violations (env-binding mismatch)
     to avoid leaking which session-ids exist outside the caller's project.
     """
-    bound_env = _bound_env_id(auth)
+    bound_env = auth.bound_environment_id
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.id == session_id,

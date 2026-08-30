@@ -3,6 +3,7 @@
 import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
+	Bot,
 	Brain,
 	FolderKanban,
 	Key,
@@ -45,6 +46,7 @@ interface NavShortcut {
 }
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
+	agent: Bot,
 	session: MessageSquare,
 	memory: Brain,
 	project: FolderKanban,
@@ -53,12 +55,14 @@ const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 };
 
 const TYPE_LABEL: Record<SearchHit["type"], string> = {
+	agent: "Agents",
 	session: "Sessions",
 	memory: "Memories",
 	project: "Projects",
 	skill: "Skills",
 	vault: "Vaults",
 };
+const SEARCH_RESULT_TYPES = ["agent", "session", "memory", "project", "skill", "vault"] as const;
 
 const COMMAND_RESULT_ROW_CLASS = "items-start gap-2 py-2.5";
 const COMMAND_RESULT_TEXT_CLASS = "flex min-w-0 flex-col gap-0.5";
@@ -217,6 +221,14 @@ function CommandPalette({
 		}
 		return g;
 	}, [data]);
+	const resultGroups = useMemo(
+		() =>
+			SEARCH_RESULT_TYPES.flatMap((type) => {
+				const hits = grouped[type];
+				return hits?.length ? [{ type, hits }] : [];
+			}),
+		[grouped],
+	);
 
 	const hasQuery = searchQuery.length > 0;
 	const normalizedQuery = searchQuery.toLowerCase();
@@ -251,14 +263,14 @@ function CommandPalette({
 				if (!nextOpen) setQuery("");
 			}}
 			title="Search"
-			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
+			description="Open a page or search agents, sessions, memories, projects, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 		>
 			<Command label="Global search" shouldFilter={false}>
 				<div className="relative">
 					<CommandInput
 						value={query}
 						onValueChange={setQuery}
-						placeholder="Search sessions, memories, skills, vaults…"
+						placeholder="Search agents, sessions, memories, projects, skills, vaults…"
 					/>
 					{hasQuery && isFetching ? (
 						<Spinner className="pointer-events-none absolute top-3.5 right-4 size-4 text-muted-foreground" />
@@ -303,9 +315,7 @@ function CommandPalette({
 					) : null}
 
 					{hasQuery
-						? (["session", "memory", "project", "skill", "vault"] as const).map((type, i) => {
-								const hits = grouped[type];
-								if (!hits?.length) return null;
+						? resultGroups.map(({ type, hits }, i) => {
 								const Icon = TYPE_ICON[type];
 								return (
 									<div key={type}>
@@ -331,7 +341,7 @@ function CommandPalette({
 															/>
 														) : hit.subtitle ? (
 															<TruncatedText className="text-xs text-muted-foreground">
-																{hit.subtitle}
+																<SearchHighlightedText text={hit.subtitle} query={resultQuery} />
 															</TruncatedText>
 														) : null}
 													</div>

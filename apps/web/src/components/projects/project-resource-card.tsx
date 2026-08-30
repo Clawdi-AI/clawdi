@@ -7,8 +7,10 @@ import {
 	isProjectOwner,
 	ProjectKindBadge,
 	type ProjectMetadata,
+	projectSearchSupportingText,
 	projectSupportingText,
 } from "@/components/projects/project-metadata";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { Badge } from "@/components/ui/badge";
 import { identityFor } from "@/lib/identity";
 import {
@@ -29,6 +31,7 @@ export function ProjectResourceCard({
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	link,
+	searchQuery,
 	className,
 }: {
 	project: ProjectMetadata;
@@ -38,6 +41,8 @@ export function ProjectResourceCard({
 	navigationScope?: ResourceNavigationScope;
 	/** Optional collection-local destination while retaining the canonical card. */
 	link?: EntityCardLinkOptions;
+	/** Collection-local search context; highlights and explains the matching field. */
+	searchQuery?: string;
 	className?: string;
 }) {
 	const projectName = displayProjectName(project);
@@ -52,7 +57,9 @@ export function ProjectResourceCard({
 					{identity.emoji}
 				</IconChip>
 			}
-			title={projectName}
+			title={
+				searchQuery ? <SearchHighlightedText text={projectName} query={searchQuery} /> : projectName
+			}
 			badges={
 				showKind || showViewer ? (
 					<>
@@ -61,7 +68,16 @@ export function ProjectResourceCard({
 					</>
 				) : undefined
 			}
-			description={projectSupportingText(project)}
+			description={
+				searchQuery ? (
+					<SearchHighlightedText
+						text={projectSearchSupportingText(project, searchQuery)}
+						query={searchQuery}
+					/>
+				) : (
+					projectSupportingText(project)
+				)
+			}
 			footer={footer}
 			actions={actions}
 			link={detailLink}

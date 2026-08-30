@@ -120,7 +120,9 @@ test("opens a global Session body match at the exact message", async ({ page }) 
 	await page.goto("/sessions");
 	await page.getByTestId("app-sidebar-search-button").click();
 	const palette = page.getByRole("dialog", { name: "Search" });
-	await palette.getByPlaceholder("Search sessions, memories, skills, vaults…").fill(query);
+	await palette
+		.getByPlaceholder("Search agents, sessions, memories, projects, skills, vaults…")
+		.fill(query);
 	await expect(palette.getByText(`Found the ${query} in this response`)).toBeVisible();
 	await expect(palette.locator("mark")).toHaveText(query);
 	await palette.getByText("Global search result").click();

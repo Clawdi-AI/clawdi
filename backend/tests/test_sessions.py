@@ -462,7 +462,7 @@ async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
 
 
 @pytest.mark.asyncio
-async def test_session_list_and_detail_include_canonical_agent_identity_fields(
+async def test_sessions_and_search_use_canonical_agent_identity_fields(
     client: httpx.AsyncClient, db_session: AsyncSession
 ):
     from sqlalchemy import select
@@ -510,6 +510,18 @@ async def test_session_list_and_detail_include_canonical_agent_identity_fields(
     assert detail_body["agent_name"] == "Launch runner"
     assert detail_body["agent_display_name"] == "Launch runner"
     assert detail_body["agent_default_name"] == "Research Agent"
+
+    search = await client.get("/v1/search", params={"q": "Research Agent"})
+    assert search.status_code == 200, search.text
+    agent_hit = next(hit for hit in search.json()["results"] if hit["type"] == "agent")
+    assert agent_hit == {
+        "type": "agent",
+        "id": env_id,
+        "title": "Launch runner",
+        "subtitle": "Research Agent",
+        "href": f"/agents/{env_id}",
+        "search_match": None,
+    }
 
 
 @pytest.mark.asyncio

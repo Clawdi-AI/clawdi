@@ -14,6 +14,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { identityFor } from "@/lib/identity";
+import { searchExcerpt } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 export interface ProjectMetadata {
@@ -56,6 +57,53 @@ export function projectSupportingText(project: ProjectMetadata) {
 	if (!isProjectOwner(project)) return `Shared by ${projectOwnerLabel(project)}`;
 	if (project.kind === "environment") return "Private Agent Workspace";
 	return "Project you own";
+}
+
+export function projectSearchRank(project: ProjectMetadata, query: string): number | null {
+	const phrase = query.trim().toLowerCase();
+	if (!phrase) return 0;
+	const name = displayProjectName(project).toLowerCase();
+	const slug = project.slug.toLowerCase();
+	if (name === phrase) return 0;
+	if (slug === phrase) return 1;
+	if (name.startsWith(phrase)) return 2;
+	if (slug.startsWith(phrase)) return 3;
+	if (name.includes(phrase)) return 4;
+	if (slug.includes(phrase)) return 5;
+	if (project.description?.toLowerCase().includes(phrase)) return 6;
+	if (
+		!isProjectOwner(project) &&
+		[project.owner_display, project.owner_handle].some((owner) =>
+			owner?.toLowerCase().includes(phrase),
+		)
+	) {
+		return 7;
+	}
+	return null;
+}
+
+export function projectMatchesSearch(project: ProjectMetadata, query: string): boolean {
+	return projectSearchRank(project, query) !== null;
+}
+
+export function projectSearchSupportingText(project: ProjectMetadata, query: string): string {
+	const phrase = query.trim().toLowerCase();
+	if (!phrase) return projectSupportingText(project);
+
+	if (project.slug.toLowerCase().includes(phrase)) return `Slug: ${project.slug}`;
+
+	const description = project.description?.trim();
+	if (description?.toLowerCase().includes(phrase)) {
+		return searchExcerpt(description, query, 160);
+	}
+
+	const matchingOwner = [project.owner_display, project.owner_handle].find((owner) =>
+		owner?.toLowerCase().includes(phrase),
+	);
+	if (!isProjectOwner(project) && matchingOwner) {
+		return `Shared by ${matchingOwner}`;
+	}
+	return projectSupportingText(project);
 }
 
 export function isCustomProject(project: Pick<ProjectMetadata, "kind">): boolean {

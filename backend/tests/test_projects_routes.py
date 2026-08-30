@@ -460,15 +460,28 @@ async def test_project_agent_delta_is_atomic_and_skips_noop_notifications(
         sync_events.unsubscribe(user_id, conflict_queue)
 
 
-async def test_global_search_finds_projects_by_name_and_slug(client):
+async def test_global_search_finds_projects_by_name_slug_and_description(client):
     created = await client.post("/v1/projects", json={"name": "Redpill Launch"})
     assert created.status_code == 201, created.text
     project_id = created.json()["id"]
+    described = await client.post(
+        "/v1/projects",
+        json={
+            "name": "Alpha Migration Notes",
+            "description": "Coordinates the redpill rollout across services.",
+        },
+    )
+    assert described.status_code == 201, described.text
+    described_project_id = described.json()["id"]
 
     by_name = await client.get("/v1/search", params={"q": "redpill"})
     assert by_name.status_code == 200, by_name.text
     project_hits = [h for h in by_name.json()["results"] if h["type"] == "project"]
-    assert [(h["id"], h["href"]) for h in project_hits] == [(project_id, f"/projects/{project_id}")]
+    assert [(h["id"], h["href"]) for h in project_hits] == [
+        (project_id, f"/projects/{project_id}"),
+        (described_project_id, f"/projects/{described_project_id}"),
+    ]
+    assert "redpill" in project_hits[1]["subtitle"]
 
     by_slug = await client.get("/v1/search", params={"q": "redpill-launch"})
     slug_hits = [h for h in by_slug.json()["results"] if h["type"] == "project"]

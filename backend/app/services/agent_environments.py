@@ -361,6 +361,21 @@ def agent_type_default_label(agent_type: str) -> str:
     return _AGENT_TYPE_LABELS.get(agent_type, agent_type.strip() or "Agent")
 
 
+def agent_name_from_fields(
+    display_name: str | None,
+    default_name: str | None,
+    machine_name: str | None,
+    agent_type: str | None,
+) -> str:
+    return (
+        (display_name or "").strip()
+        or (default_name or "").strip()
+        or (machine_name or "").strip()
+        or agent_type
+        or "Unknown"
+    )
+
+
 def _agent_default_name_index(name: str, base: str) -> int | None:
     if name == base:
         return 1
