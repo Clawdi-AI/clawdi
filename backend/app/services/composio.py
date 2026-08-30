@@ -1511,15 +1511,15 @@ async def get_available_apps(
     items = [
         (toolkit, _serialize_app(toolkit, allow_unknown_auth_type=True)) for toolkit in toolkits
     ]
-    if search:
-        q = search.lower()
-        items = [
-            (toolkit, app)
+    query = (search or "").strip().casefold()
+    if query:
+        ranked_items = [
+            (rank, toolkit, app)
             for toolkit, app in items
-            if q in app.name.lower()
-            or q in app.display_name.lower()
-            or q in app.description.lower()
+            if (rank := _connector_search_rank(app, query)) is not None
         ]
+        ranked_items.sort(key=lambda item: item[0])
+        items = [(toolkit, app) for _, toolkit, app in ranked_items]
     needs_custom_oauth = any(
         _requires_preconfigured_custom_oauth(
             toolkit,
@@ -1550,6 +1550,22 @@ async def get_available_apps(
         "page": page,
         "page_size": page_size,
     }
+
+
+def _connector_search_rank(app: ConnectorAvailableAppResponse, query: str) -> int | None:
+    identity = (app.display_name.casefold(), app.name.casefold())
+    for index, value in enumerate(identity):
+        if value == query:
+            return index
+    for index, value in enumerate(identity):
+        if value.startswith(query):
+            return len(identity) + index
+    for index, value in enumerate(identity):
+        if query in value:
+            return len(identity) * 2 + index
+    if query in app.description.casefold():
+        return len(identity) * 3
+    return None
 
 
 def _str_or_none(value: str | None) -> str | None:

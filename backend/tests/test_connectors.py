@@ -238,6 +238,18 @@ def _hackernews_detail_toolkit() -> _FakeToolkit:
     )
 
 
+def _search_toolkit(slug: str, name: str, description: str) -> _FakeToolkit:
+    return _FakeToolkit(
+        slug=slug,
+        name=name,
+        meta=_meta(description),
+        auth_schemes=[],
+        composio_managed_auth_schemes=[],
+        no_auth=True,
+        auth_config_details=[],
+    )
+
+
 class FakeToolkits:
     def __init__(
         self,
@@ -461,6 +473,31 @@ async def test_catalog_without_auth_metadata_is_unknown_not_oauth2(
     page = await composio.get_available_apps(search="posthog")
 
     assert page["items"][0].auth_type == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_catalog_search_prioritizes_identity_before_description(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = FakeClient(
+        list_toolkits=[
+            _search_toolkit("postal", "Postal", "Routes Gmail messages"),
+            _search_toolkit("team-mail", "Team Gmail", "Team inbox"),
+            _search_toolkit("gmail-analytics", "Mail insights", "Analytics"),
+            _search_toolkit("gmail", "Gmail", "Google email"),
+        ]
+    )
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+
+    page = await composio.get_available_apps(search="  GMAIL  ")
+
+    assert [app.name for app in page["items"]] == [
+        "gmail",
+        "gmail-analytics",
+        "team-mail",
+        "postal",
+    ]
 
 
 @pytest.mark.asyncio
