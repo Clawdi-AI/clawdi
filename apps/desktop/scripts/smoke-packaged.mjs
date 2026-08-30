@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync } from "node:fs";
@@ -37,6 +38,12 @@ try {
 			throw new Error(`Packaged setup failed:\n${await window.locator("body").innerText()}`);
 		}),
 	]);
+	await window.close();
+	await delay(500);
+	assert.ok(
+		desktop.exitCode === null && desktop.signalCode === null,
+		`Desktop exited when Connect Agent closed.\n${output.join("")}`,
+	);
 } finally {
 	await browser?.close().catch(() => undefined);
 	await stopProcess(desktop);

@@ -54,6 +54,10 @@ button {
 	-webkit-app-region: drag;
 }
 
+.dashboard-titlebar {
+	padding-left: 22px;
+}
+
 .brand-mark,
 .icon-tile,
 .status-icon,
@@ -100,6 +104,15 @@ h1 {
 
 .content {
 	padding: 26px;
+}
+
+.failure-content {
+	max-width: 480px;
+	margin: 10vh auto 0;
+}
+
+.failure-actions {
+	justify-content: center;
 }
 
 .stack {

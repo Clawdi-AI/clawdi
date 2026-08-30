@@ -19,6 +19,7 @@ import {
 	nativeImage,
 	net,
 	protocol,
+	type Session,
 	session,
 	shell,
 	Tray,
@@ -30,6 +31,9 @@ const DEFAULT_WEB_URL = "https://cloud.clawdi.ai";
 const CONNECT_SCHEME = "clawdi-app";
 const CONNECT_HOST = "connect";
 const CONNECT_RENDERER_URL = `${CONNECT_SCHEME}://${CONNECT_HOST}/renderer.html`;
+const DASHBOARD_FAILURE_URL = `${CONNECT_RENDERER_URL}?surface=dashboard-failure`;
+const DASHBOARD_PARTITION = "persist:clawdi-dashboard";
+const ERR_ABORTED = -3;
 const CONNECT_ASSETS = new Map([
 	["/renderer.html", "renderer.html"],
 	["/connect-renderer.js", "connect-renderer.js"],
@@ -43,6 +47,8 @@ let trayState: DesktopBootstrapState | null = null;
 let trayStateChecking = true;
 let trayStateRefresh: Promise<void> | null = null;
 let availableWindowOpening: Promise<void> | null = null;
+let dashboardWindowOpening: Promise<boolean> | null = null;
+let dashboardFailureOpening: Promise<void> | null = null;
 let quitting = false;
 
 class DesktopConnectError extends Error {}
@@ -57,6 +63,7 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
+	app.on("window-all-closed", () => undefined);
 	app.on("second-instance", () => void showAvailableWindow());
 	void app.whenReady().then(startApplication);
 }
@@ -65,18 +72,24 @@ async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
-	registerConnectProtocol();
+	const dashboardSession = session.fromPartition(DASHBOARD_PARTITION);
+	registerLocalProtocol(session.defaultSession);
+	registerLocalProtocol(dashboardSession);
 	registerIpc();
-	configurePermissions();
+	configurePermissions(dashboardSession);
 	createApplicationMenu();
 	createTray();
+	app.on("before-quit", () => {
+		quitting = true;
+		void cli.cancelAuthentication();
+	});
+
 	try {
 		const state = await cli.bootstrapState();
 		setTrayState(state);
 		if (!startHidden) {
 			if (state.auth.authenticated && state.daemon.running) {
-				await prepareDashboardSession();
-				await showMainWindow();
+				await loadDashboardWithRecovery();
 			} else {
 				await showConnectWindow();
 			}
@@ -88,14 +101,10 @@ async function startApplication(): Promise<void> {
 	}
 
 	app.on("activate", () => void showAvailableWindow());
-	app.on("before-quit", () => {
-		quitting = true;
-		void cli.cancelAuthentication();
-	});
 }
 
-function registerConnectProtocol(): void {
-	protocol.handle(CONNECT_SCHEME, (request) => {
+function registerLocalProtocol(targetSession: Session): void {
+	targetSession.protocol.handle(CONNECT_SCHEME, (request) => {
 		const url = new URL(request.url);
 		const asset = url.host === CONNECT_HOST ? CONNECT_ASSETS.get(url.pathname) : null;
 		if (request.method !== "GET" || !asset) return new Response(null, { status: 404 });
@@ -143,8 +152,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
-			await prepareDashboardSession();
-			await showMainWindow();
+			await loadDashboardWithRecovery();
 			connectWindow?.hide();
 		}),
 	);
@@ -152,6 +160,13 @@ function registerIpc(): void {
 		safeDashboardAction(event, "open Connect Agent", async () => {
 			await showConnectWindow();
 			mainWindow?.hide();
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.retryDashboard, (event) =>
+		safeDashboardAction(event, "reconnect the dashboard", async () => {
+			if (!(await loadDashboardWithRecovery())) {
+				throw new Error("Dashboard reconnection failed.");
+			}
 		}),
 	);
 }
@@ -187,8 +202,11 @@ async function safeDashboardAction<T>(
 
 function assertDashboardSender(event: IpcMainInvokeEvent): void {
 	if (event.sender !== mainWindow?.webContents) throw new Error("Unexpected desktop client.");
-	const senderUrl = event.senderFrame?.url;
-	if (!senderUrl) throw new Error("Unexpected desktop client URL.");
+	const senderFrame = event.senderFrame;
+	if (!senderFrame || senderFrame !== event.sender.mainFrame)
+		throw new Error("Unexpected desktop client frame.");
+	const senderUrl = senderFrame.url;
+	if (senderUrl === DASHBOARD_FAILURE_URL) return;
 	let senderOrigin: string;
 	try {
 		senderOrigin = new URL(senderUrl).origin;
@@ -203,8 +221,10 @@ function assertDashboardSender(event: IpcMainInvokeEvent): void {
 function assertConnectSender(event: IpcMainInvokeEvent): void {
 	if (event.sender !== connectWindow?.webContents)
 		throw new Error("Unexpected Connect Agent client.");
-	const senderUrl = event.senderFrame?.url;
-	if (!senderUrl) throw new Error("Unexpected Connect Agent URL.");
+	const senderFrame = event.senderFrame;
+	if (!senderFrame || senderFrame !== event.sender.mainFrame)
+		throw new Error("Unexpected Connect Agent frame.");
+	const senderUrl = senderFrame.url;
 	if (senderUrl !== CONNECT_RENDERER_URL) {
 		throw new Error("Unexpected Connect Agent URL.");
 	}
@@ -222,10 +242,37 @@ function readAgentTypes(value: unknown): DesktopAgentType[] {
 	return agentTypes;
 }
 
-function configurePermissions(): void {
+function configurePermissions(dashboardSession: Session): void {
 	session.defaultSession.setPermissionCheckHandler(() => false);
 	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
 		callback(false);
+	});
+
+	const dashboardOrigin = new URL(desktopWebUrl()).origin;
+	const allowsClipboardWrite = (
+		webContents: Electron.WebContents | null,
+		permission: string,
+		requestingUrl: string,
+		embeddingUrl: string,
+	) =>
+		permission === "clipboard-sanitized-write" &&
+		webContents !== null &&
+		webContents === mainWindow?.webContents &&
+		urlOrigin(webContents.getURL()) === dashboardOrigin &&
+		urlOrigin(requestingUrl) === dashboardOrigin &&
+		urlOrigin(embeddingUrl) === dashboardOrigin;
+	dashboardSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+		allowsClipboardWrite(
+			webContents,
+			permission,
+			requestingOrigin,
+			details.embeddingOrigin ?? requestingOrigin,
+		),
+	);
+	dashboardSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+		callback(
+			allowsClipboardWrite(webContents, permission, details.requestingUrl, webContents.getURL()),
+		);
 	});
 }
 
@@ -271,7 +318,7 @@ function createApplicationMenu(): void {
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()): Promise<void> {
+async function createMainWindow(initialUrl: string): Promise<void> {
 	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "shell-preload.cjs");
 	const icon = desktopIcon();
 	const window = new BrowserWindow({
@@ -284,6 +331,7 @@ async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
 			preload,
+			partition: DASHBOARD_PARTITION,
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
@@ -298,19 +346,42 @@ async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()
 		return { action: "deny" };
 	});
 	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
-		if (urlOrigin(url) !== trustedOrigin) {
+		if (url !== DASHBOARD_FAILURE_URL && urlOrigin(url) !== trustedOrigin) {
 			event.preventDefault();
 			if (isSafeExternalUrl(url)) void shell.openExternal(url);
 		}
 	};
 	window.webContents.on("will-navigate", preventUntrustedNavigation);
 	window.webContents.on("will-redirect", preventUntrustedNavigation);
+	window.webContents.on(
+		"did-fail-load",
+		(_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+			if (
+				quitting ||
+				!isMainFrame ||
+				errorCode === ERR_ABORTED ||
+				validatedUrl === DASHBOARD_FAILURE_URL ||
+				mainWindow !== window
+			)
+				return;
+			console.error(`Dashboard failed to load: ${errorDescription} (${errorCode})`);
+			void showDashboardFailure().catch((error) =>
+				console.error("Could not show the dashboard recovery page", error),
+			);
+		},
+	);
+	window.webContents.on("render-process-gone", (_event, details) => {
+		if (quitting || mainWindow !== window) return;
+		console.error(`Dashboard renderer exited: ${details.reason}`);
+		void showDashboardFailure(true).catch((error) =>
+			console.error("Could not show the dashboard recovery page", error),
+		);
+	});
 	window.on("close", (event) => {
 		if (quitting) return;
 		event.preventDefault();
 		window.hide();
 	});
-	if (showOnReady) window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		if (mainWindow === window) mainWindow = null;
 	});
@@ -613,29 +684,68 @@ async function showWindowFromTrayState(): Promise<void> {
 		return;
 	}
 
-	try {
-		await prepareDashboardSession();
-		await showMainWindow();
-	} catch (error) {
-		console.error("Could not open the dashboard", error);
-		const failedWindow = mainWindow;
-		if (failedWindow) {
-			if (!failedWindow.isDestroyed()) failedWindow.destroy();
-			if (mainWindow === failedWindow) mainWindow = null;
-		}
-		await showConnectWindow();
-	}
+	await loadDashboardWithRecovery();
 }
 
 async function showMainWindow(): Promise<void> {
-	if (process.platform === "darwin") await app.dock?.show();
-	if (!mainWindow) {
-		await createMainWindow(true);
+	const window = mainWindow;
+	if (!window || window.isDestroyed()) {
+		await loadDashboardWithRecovery();
 		return;
 	}
-	if (mainWindow.isMinimized()) mainWindow.restore();
-	mainWindow.show();
-	mainWindow.focus();
+	await presentMainWindow(window);
+}
+
+async function loadDashboardWithRecovery(): Promise<boolean> {
+	if (dashboardWindowOpening) return dashboardWindowOpening;
+	const opening = (async () => {
+		try {
+			await prepareDashboardSession();
+			const window = mainWindow;
+			if (!window || window.isDestroyed()) throw new Error("Dashboard window was closed");
+			await presentMainWindow(window);
+			return true;
+		} catch (error) {
+			console.error("Could not open the dashboard", error);
+			await showDashboardFailure();
+			return false;
+		}
+	})();
+	dashboardWindowOpening = opening;
+	try {
+		return await opening;
+	} finally {
+		if (dashboardWindowOpening === opening) dashboardWindowOpening = null;
+	}
+}
+
+async function showDashboardFailure(forceReload = false): Promise<void> {
+	if (dashboardFailureOpening && !forceReload) return dashboardFailureOpening;
+	const opening = (async () => {
+		let window = mainWindow;
+		if (!window || window.isDestroyed()) {
+			await createMainWindow(DASHBOARD_FAILURE_URL);
+			window = mainWindow;
+		} else if (forceReload || window.webContents.getURL() !== DASHBOARD_FAILURE_URL) {
+			await window.loadURL(DASHBOARD_FAILURE_URL);
+		}
+		if (!window || window.isDestroyed()) throw new Error("Dashboard recovery window was closed");
+		await presentMainWindow(window);
+	})();
+	dashboardFailureOpening = opening;
+	try {
+		await opening;
+	} finally {
+		if (dashboardFailureOpening === opening) dashboardFailureOpening = null;
+	}
+}
+
+async function presentMainWindow(window: BrowserWindow): Promise<void> {
+	if (process.platform === "darwin") await app.dock?.show();
+	if (window.isDestroyed()) throw new Error("Dashboard window was closed");
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
 }
 
 async function prepareDashboardSession(): Promise<void> {
@@ -643,7 +753,7 @@ async function prepareDashboardSession(): Promise<void> {
 	const url = new URL("/desktop-auth", desktopWebUrl());
 	url.hash = new URLSearchParams({ ticket }).toString();
 	if (mainWindow) await mainWindow.loadURL(url.toString());
-	else await createMainWindow(false, url.toString());
+	else await createMainWindow(url.toString());
 }
 
 function desktopWebUrl(): string {

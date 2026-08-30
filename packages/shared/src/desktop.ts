@@ -72,4 +72,5 @@ export interface ClawdiDesktopConnectBridge {
 
 export interface ClawdiDesktopShellBridge {
 	openConnectWizard(): Promise<void>;
+	retryDashboard(): Promise<void>;
 }
