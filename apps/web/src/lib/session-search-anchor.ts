@@ -1,4 +1,5 @@
 import type { SessionListItem } from "@clawdi/shared/api";
+import { SEARCH_QUERY_MAX_LENGTH, searchQueryLength } from "@clawdi/shared/consts";
 
 export type SessionSearchAnchor = NonNullable<SessionListItem["search_match"]>["anchor"];
 export type SessionTimelineView = "all" | "user" | "assistant" | "tools";
@@ -104,7 +105,9 @@ export function sessionDetailSearchLink(
 function normalizeSessionMatchQuery(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim();
-	return normalized.length > 0 && normalized.length <= 500 ? normalized : undefined;
+	return normalized && searchQueryLength(normalized) <= SEARCH_QUERY_MAX_LENGTH
+		? normalized
+		: undefined;
 }
 
 export function normalizeSessionListReturnTo(value: unknown): string | undefined {

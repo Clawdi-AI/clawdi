@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.query_utils import search_excerpt, search_highlight_terms, search_terms
 from app.models.session import (
     SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
     SESSION_SEARCH_CHUNK_MAX_CHARACTERS,
@@ -95,6 +96,50 @@ async def _push_session(
 
     listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/v1/search",
+        "/v1/sessions",
+        "/v1/memories",
+        "/v1/sessions/00000000-0000-0000-0000-000000000001/messages",
+    ),
+)
+async def test_remote_search_rejects_single_character_queries(
+    client: httpx.AsyncClient,
+    path: str,
+) -> None:
+    parameter = "search_query" if path.endswith("/messages") else "q"
+    response = await client.get(path, params={parameter: " x "})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_remote_search_accepts_two_character_cjk_query(client: httpx.AsyncClient) -> None:
+    response = await client.get("/v1/sessions", params={"q": "中文"})
+
+    assert response.status_code == 200
+
+
+def test_search_display_terms_follow_websearch_syntax() -> None:
+    query = 'foo OR bar -draft -"private note" "exact phrase"'
+    assert search_terms(query) == ("foo", "bar", "exact phrase")
+    assert search_highlight_terms("oauth token refresh") == (
+        "oauth token refresh",
+        "oauth",
+        "token",
+        "refresh",
+    )
+    excerpt = search_excerpt(
+        f"{'before ' * 40}oauth token refresh completed{' after' * 40}",
+        '"oauth token refresh"',
+        limit=80,
+    )
+    assert "oauth token refresh" in excerpt
 
 
 @pytest.mark.asyncio

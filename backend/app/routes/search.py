@@ -13,7 +13,7 @@ from typing import Literal
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import and_, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.core.query_utils import (
+    SearchQuery,
     escape_like,
     lexical_search_filter,
     like_needle,
@@ -442,9 +443,9 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
 
 @router.get("")
 async def global_search(
+    q: SearchQuery,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-    q: str = Query(..., min_length=1, max_length=200),
 ) -> SearchResponse:
     """Run each entity searcher and concat results.
 
@@ -460,9 +461,7 @@ async def global_search(
     sequentially because SQLAlchemy AsyncSession is not safe for concurrent
     operations on the same request-scoped session.
     """
-    query = q.strip()
-    if not query:
-        return SearchResponse(query=query, results=[])
+    query = q
 
     # Each subsource enforces the same permission boundary the direct
     # route does. Skills, sessions, and memories subqueries are

@@ -1,5 +1,6 @@
 "use client";
 
+import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
 	keepPreviousData,
 	useInfiniteQuery,
@@ -214,7 +215,10 @@ export function SessionDetailContent({
 	const [direction, setDirection] = useState<Direction>("desc");
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
 	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
-	const debouncedSearchQuery = useDebouncedValue(normalizedSearchQuery, 250) || undefined;
+	const effectiveSearchQuery = isSearchQueryReady(normalizedSearchQuery)
+		? normalizedSearchQuery
+		: "";
+	const debouncedSearchQuery = useDebouncedValue(effectiveSearchQuery, 250) || undefined;
 	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
 		if (stored === "asc") setDirection("asc");
@@ -408,10 +412,10 @@ export function SessionDetailContent({
 	}
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
-	const searchActive = Boolean(normalizedSearchQuery);
+	const searchActive = Boolean(effectiveSearchQuery);
 	const isSearchUpdating =
 		searchActive &&
-		(normalizedSearchQuery !== debouncedSearchQuery ||
+		(effectiveSearchQuery !== debouncedSearchQuery ||
 			(isContentFetching && !isFetchingNextPage) ||
 			isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
@@ -559,6 +563,7 @@ export function SessionDetailContent({
 								isSearching={isSearchUpdating}
 								hasSearchError={searchActive && isContentError}
 								className="md:max-w-xl"
+								maxLength={SEARCH_QUERY_MAX_LENGTH}
 							/>
 						)}
 						<div

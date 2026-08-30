@@ -1,5 +1,10 @@
 "use client";
 
+import {
+	isSearchQueryReady,
+	SEARCH_QUERY_MAX_LENGTH,
+	SEARCH_QUERY_MIN_LENGTH,
+} from "@clawdi/shared/consts";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -125,6 +130,7 @@ function CommandPalette({
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
 	const searchQuery = debounced.trim();
+	const remoteSearchReady = isSearchQueryReady(searchQuery);
 	const navShortcuts = useMemo(() => {
 		const shortcuts: NavShortcut[] = consoleCommandPaletteItems(false).map((item) => ({
 			label: item.label,
@@ -163,7 +169,7 @@ function CommandPalette({
 		"/v1/search",
 		{ params: { query: { q: searchQuery } } },
 		{
-			enabled: open && searchQuery.length > 0,
+			enabled: open && remoteSearchReady,
 			staleTime: 30_000,
 			// Keep the last page of results visible while a new debounced query
 			// flies out — prevents the palette flashing to "empty" on every
@@ -215,13 +221,14 @@ function CommandPalette({
 	// Group hits by type — cmdk groups handle the visual separator/label.
 	const grouped = useMemo(() => {
 		const g: Partial<Record<SearchHit["type"], SearchHit[]>> = {};
+		if (!remoteSearchReady) return g;
 		for (const hit of data?.results ?? []) {
 			const existing = g[hit.type] ?? [];
 			existing.push(hit);
 			g[hit.type] = existing;
 		}
 		return g;
-	}, [data]);
+	}, [data, remoteSearchReady]);
 	const resultGroups = useMemo(
 		() =>
 			SEARCH_RESULT_TYPES.flatMap((type) => {
@@ -249,14 +256,14 @@ function CommandPalette({
 
 	// Whether we have a stale results payload we can keep showing while a
 	// new debounced query is in flight.
-	const hasStaleResults = hasQuery && (data?.results.length ?? 0) > 0;
+	const hasStaleResults = remoteSearchReady && (data?.results.length ?? 0) > 0;
 	const resultQuery = data?.query ?? searchQuery;
 
 	// Show "no results" only when (a) the debounced query is active, (b)
 	// fetching is finished, (c) we don't have any results. Previously we
 	// flashed through an in-between state each keystroke.
 	const showEmpty =
-		hasQuery &&
+		remoteSearchReady &&
 		!isFetching &&
 		!hasStaleResults &&
 		navMatches.length === 0 &&
@@ -278,20 +285,26 @@ function CommandPalette({
 						value={query}
 						onValueChange={setQuery}
 						placeholder="Search agents, sessions, memories, projects, skills, vaults…"
+						maxLength={SEARCH_QUERY_MAX_LENGTH}
 					/>
-					{hasQuery && isFetching ? (
+					{remoteSearchReady && isFetching ? (
 						<Spinner className="pointer-events-none absolute top-3.5 right-4 size-4 text-muted-foreground" />
 					) : null}
 				</div>
 				{/* Fixed min-height: stops the dialog from jumping as the user types
 				    (switching between 6 nav shortcuts → N result rows → empty). */}
 				<CommandList className="min-h-[320px]">
+					{hasQuery && !remoteSearchReady ? (
+						<div role="status" className="px-3 py-2 text-xs text-muted-foreground">
+							Type at least {SEARCH_QUERY_MIN_LENGTH} characters to search your workspace.
+						</div>
+					) : null}
 					{showEmpty ? <CommandEmpty>No results for "{searchQuery}".</CommandEmpty> : null}
 
 					{/* First-fetch state: query typed but no prior data yet — show a
 					    neutral loading row inside the list so the dialog isn't
 					    just an empty box while the debounce + network settles. */}
-					{hasQuery && isFetching && !hasStaleResults ? (
+					{remoteSearchReady && isFetching && !hasStaleResults ? (
 						<div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
 							<Spinner />
 							Searching…
@@ -321,7 +334,7 @@ function CommandPalette({
 						</CommandGroup>
 					) : null}
 
-					{hasQuery
+					{remoteSearchReady
 						? resultGroups.map(({ type, hits }, i) => {
 								const Icon = TYPE_ICON[type];
 								return (

@@ -35,7 +35,12 @@ from app.core.auth import (
 )
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to, resolve_default_write_project
-from app.core.query_utils import search_excerpt
+from app.core.query_utils import (
+    SEARCH_QUERY_MAX_LENGTH,
+    SEARCH_QUERY_MIN_LENGTH,
+    SearchQuery,
+    search_excerpt,
+)
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
@@ -92,16 +97,8 @@ class _NoArguments(_ToolArguments):
 
 
 class _MemorySearchArguments(_ToolArguments):
-    query: StrictStr = Field(min_length=1, max_length=2_000)
+    query: SearchQuery
     limit: StrictInt = Field(default=10, ge=1, le=50)
-
-    @field_validator("query")
-    @classmethod
-    def _strip_query(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("query is required")
-        return value
 
 
 class _MemoryAddArguments(_ToolArguments):
@@ -118,16 +115,8 @@ class _MemoryAddArguments(_ToolArguments):
 
 
 class _SessionSearchArguments(_ToolArguments):
-    query: StrictStr = Field(min_length=1, max_length=2_000)
+    query: SearchQuery
     limit: StrictInt = Field(default=10, ge=1, le=20)
-
-    @field_validator("query")
-    @classmethod
-    def _strip_query(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("query is required")
-        return value
 
 
 class _SessionReadArguments(_ToolArguments):
@@ -259,6 +248,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "properties": {
                 "query": {
                     "type": "string",
+                    "minLength": SEARCH_QUERY_MIN_LENGTH,
+                    "maxLength": SEARCH_QUERY_MAX_LENGTH,
                     "description": (
                         "Natural-language query in any language — the search does semantic "
                         "matching, no keyword optimization needed. Pass the user's own phrasing "
@@ -367,6 +358,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "properties": {
                 "query": {
                     "type": "string",
+                    "minLength": SEARCH_QUERY_MIN_LENGTH,
+                    "maxLength": SEARCH_QUERY_MAX_LENGTH,
                     "description": (
                         "Case-insensitive phrase query matching session metadata "
                         "and visible messages."

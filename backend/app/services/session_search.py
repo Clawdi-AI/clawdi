@@ -255,7 +255,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
 
 
 def session_search_matches(user_id: UUID, query: str) -> Subquery:
-    """Return every all-term match with one ranked body hit per Session."""
+    """Return every web-search match with one ranked body hit per Session."""
     pattern = like_needle(query)
     message_match = best_session_message_matches(user_id, query)
     metadata_fields = (
