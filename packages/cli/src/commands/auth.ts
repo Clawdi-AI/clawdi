@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { readJson } from "../lib/api-client";
+import { ApiClient, readJson, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -461,6 +461,23 @@ export async function authFinishMachine(): Promise<void> {
 			status: "authenticated",
 			cloudVerified: verification.kind === "verified",
 			...(verification.kind === "verified" ? { user: verification.user } : {}),
+		}),
+	);
+}
+
+export async function authDesktopSessionMachine(): Promise<void> {
+	const auth = getAuth();
+	if (!isClerkOAuthAuth(auth)) {
+		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in again from Clawdi Desktop.");
+	}
+
+	const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
+
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.desktopSession.v1",
+			ticket: payload.ticket,
+			expiresIn: payload.expires_in,
 		}),
 	);
 }

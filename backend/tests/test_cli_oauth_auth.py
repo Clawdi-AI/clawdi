@@ -668,6 +668,49 @@ async def test_disabled_oauth_setting_fails_closed_for_access_tokens(
 
 
 @pytest.mark.asyncio
+async def test_oauth_desktop_ticket_is_short_lived_and_not_cached(
+    raw_auth_client: httpx.AsyncClient,
+    clerk_oauth_signing_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+    clerk_sub = f"user_desktop_{uuid.uuid4().hex}"
+
+    class FakeResponse:
+        status_code = 200
+        content = b'{"token":"desktop_ticket"}'
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: Any):
+            captured["timeout"] = kwargs["timeout"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            return False
+
+        async def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            captured["url"] = url
+            captured.update(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(cli_auth_module.httpx, "AsyncClient", FakeAsyncClient)
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-ticket",
+        headers={
+            "Authorization": f"Bearer {_oauth_access_token(clerk_oauth_signing_key, clerk_sub)}"
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ticket": "desktop_ticket", "expires_in": 60}
+    assert response.headers["cache-control"] == "no-store"
+    assert captured["url"] == "https://api.clerk.com/v1/sign_in_tokens"
+    assert captured["json"] == {"user_id": clerk_sub, "expires_in_seconds": 60}
+
+
+@pytest.mark.asyncio
 async def test_oauth_revoke_uses_validated_oauth_identity_and_safe_proxy(
     raw_auth_client: httpx.AsyncClient,
     clerk_oauth_signing_key: str,

@@ -14,6 +14,8 @@ import { app } from "electron";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+const PRODUCTION_CLOUD_API_URL = "https://cloud-api.clawdi.ai";
+const PRODUCTION_DEPLOY_API_URL = "https://api.clawdi.ai";
 
 interface CommandResult {
 	stdout: string;
@@ -66,6 +68,17 @@ export class DesktopCliService {
 			stdin: callbackUrl,
 			timeoutMs: DEFAULT_TIMEOUT_MS,
 		});
+	}
+
+	async createDashboardSession(): Promise<string> {
+		const cli = await this.cli();
+		const result = await this.runJson(cli, ["auth", "desktop-session", "--json"]);
+		const ticket = readString(result.ticket);
+		const expiresIn = typeof result.expiresIn === "number" ? result.expiresIn : 0;
+		if (!ticket || ticket.length > 8192 || expiresIn <= 0 || expiresIn > 120) {
+			throw new Error("Clawdi returned an invalid desktop sign-in session.");
+		}
+		return ticket;
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
@@ -226,7 +239,16 @@ function runCommand(
 ): Promise<CommandResult> {
 	return new Promise((resolvePromise, reject) => {
 		const child = spawn(command, args, {
-			env: { ...process.env, CLAWDI_NO_UPDATE_CHECK: "1" },
+			env: {
+				...process.env,
+				CLAWDI_NO_UPDATE_CHECK: "1",
+				...(app.isPackaged
+					? {
+							CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
+							CLAWDI_DEPLOY_API_URL: PRODUCTION_DEPLOY_API_URL,
+						}
+					: {}),
+			},
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let stdout = "";

@@ -24,7 +24,8 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.device_authorization import DeviceAuthorization
 from app.schemas.cli_auth import (
+    DesktopSessionTicketResponse,
     DeviceApproveRequest,
     DeviceDenyRequest,
     DeviceLookupResponse,
@@ -62,6 +64,12 @@ _USER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _USER_CODE_LEN = 8
 _DEVICE_TTL = timedelta(minutes=10)
 _POLL_INTERVAL_SEC = 2
+_DESKTOP_SESSION_TTL_SEC = 60
+
+
+class _ClerkSignInToken(BaseModel):
+    token: str = Field(min_length=1, max_length=8192)
+
 
 # Hard cap on rows in `device_authorizations` at any moment. The endpoint is
 # unauthenticated by design (CLI has no key yet), so without a ceiling a bot
@@ -183,6 +191,59 @@ async def revoke_oauth_refresh_grant(
     if not 200 <= response.status_code < 300:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth CLI revocation failed")
     return OAuthRevokeResponse(status="revoked")
+
+
+@router.post("/oauth/desktop-ticket", response_model=DesktopSessionTicketResponse)
+async def create_desktop_session_ticket(
+    response: Response,
+    auth: AuthContext = Depends(require_oauth_cli_auth),
+) -> DesktopSessionTicketResponse:
+    """Exchange the first-party CLI identity for a one-use browser session ticket."""
+    clerk_id = auth.user.clerk_id
+    if not clerk_id or not settings.clerk_secret_key:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Desktop sign-in is not configured",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            upstream = await client.post(
+                clerk_backend_url("sign_in_tokens"),
+                headers=clerk_backend_headers(),
+                json={
+                    "user_id": clerk_id,
+                    "expires_in_seconds": _DESKTOP_SESSION_TTL_SEC,
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Desktop sign-in is temporarily unavailable",
+        ) from None
+    except httpx.HTTPError:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Desktop sign-in failed",
+        ) from None
+
+    if upstream.status_code >= 500:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Desktop sign-in is temporarily unavailable",
+        )
+    if not 200 <= upstream.status_code < 300:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Desktop sign-in failed")
+    try:
+        sign_in = _ClerkSignInToken.model_validate_json(upstream.content)
+    except ValidationError:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Desktop sign-in failed") from None
+
+    response.headers["Cache-Control"] = "no-store"
+    return DesktopSessionTicketResponse(
+        ticket=sign_in.token,
+        expires_in=_DESKTOP_SESSION_TTL_SEC,
+    )
 
 
 def _real_client_ip(request: Request) -> str:

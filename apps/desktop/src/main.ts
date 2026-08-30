@@ -28,7 +28,7 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
-	app.on("second-instance", () => showMainWindow());
+	app.on("second-instance", () => void showMainWindow());
 	void app.whenReady().then(startApplication);
 }
 
@@ -37,16 +37,20 @@ async function startApplication(): Promise<void> {
 	registerIpc();
 	configurePermissions();
 	createTray();
-	await createMainWindow(false);
 	try {
 		const state = await cli.bootstrapState();
-		if (state.auth.authenticated && state.daemon.running) showMainWindow();
-		else await showConnectWindow();
+		if (state.auth.authenticated && state.daemon.running) {
+			await prepareDashboardSession();
+			await showMainWindow();
+		} else {
+			await showConnectWindow();
+			if (state.auth.authenticated) void prepareDashboardSession();
+		}
 	} catch {
 		await showConnectWindow();
 	}
 
-	app.on("activate", () => showMainWindow());
+	app.on("activate", () => void showMainWindow());
 	app.on("before-quit", () => {
 		quitting = true;
 	});
@@ -62,19 +66,21 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			const authorization = await cli.startAuthentication();
-			if (!authorization) return cli.bootstrapState();
-			const receiver = await createOAuthCallbackReceiver(
-				authorization.redirectUri,
-				authorization.expiresAt,
-				authorization.authorizationUrl,
-			);
-			try {
-				await shell.openExternal(authorization.authorizationUrl);
-				await cli.finishAuthentication(await receiver.callback);
-				return cli.bootstrapState();
-			} finally {
-				await receiver.close();
+			if (authorization) {
+				const receiver = await createOAuthCallbackReceiver(
+					authorization.redirectUri,
+					authorization.expiresAt,
+					authorization.authorizationUrl,
+				);
+				try {
+					await shell.openExternal(authorization.authorizationUrl);
+					await cli.finishAuthentication(await receiver.callback);
+				} finally {
+					await receiver.close();
+				}
 			}
+			await prepareDashboardSession();
+			return cli.bootstrapState();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawAgentTypes: unknown) =>
@@ -84,7 +90,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
-			showMainWindow();
+			await showMainWindow();
 			connectWindow?.hide();
 		}),
 	);
@@ -166,7 +172,7 @@ function configurePermissions(): void {
 	});
 }
 
-async function createMainWindow(showOnReady = true): Promise<void> {
+async function createMainWindow(showOnReady = true, initialUrl = desktopWebUrl()): Promise<void> {
 	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "shell-preload.cjs");
 	const icon = desktopIcon();
 	const window = new BrowserWindow({
@@ -210,7 +216,7 @@ async function createMainWindow(showOnReady = true): Promise<void> {
 		if (mainWindow === window) mainWindow = null;
 	});
 
-	await window.loadURL(webUrl);
+	await window.loadURL(initialUrl);
 }
 
 async function showConnectWindow(): Promise<void> {
@@ -280,17 +286,29 @@ function createTray(): void {
 			},
 		]),
 	);
-	tray.on("click", showMainWindow);
+	tray.on("click", () => void showMainWindow());
 }
 
-function showMainWindow(): void {
+async function showMainWindow(): Promise<void> {
 	if (!mainWindow) {
-		void createMainWindow(true);
+		await createMainWindow(true);
 		return;
 	}
 	if (mainWindow.isMinimized()) mainWindow.restore();
 	mainWindow.show();
 	mainWindow.focus();
+}
+
+async function prepareDashboardSession(): Promise<void> {
+	try {
+		const ticket = await cli.createDashboardSession();
+		const url = new URL("/desktop-auth", desktopWebUrl());
+		url.hash = new URLSearchParams({ ticket }).toString();
+		if (mainWindow) await mainWindow.loadURL(url.toString());
+		else await createMainWindow(false, url.toString());
+	} catch (error) {
+		console.error("Could not prepare the dashboard session", error);
+	}
 }
 
 function desktopWebUrl(): string {

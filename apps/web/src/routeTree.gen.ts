@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteImport } from './routes/_protected'
+import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
@@ -59,6 +60,11 @@ import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImp
 
 const ProtectedRoute = ProtectedRouteImport.update({
   id: '/_protected',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesktopAuthRoute = DesktopAuthRouteImport.update({
+  id: '/desktop-auth',
+  path: '/desktop-auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -328,6 +334,7 @@ const ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedDashboardIndexRoute
+  '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
@@ -375,6 +382,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof ProtectedDashboardIndexRoute
+  '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
@@ -421,6 +429,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_protected': typeof ProtectedRouteWithChildren
+  '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
@@ -472,6 +481,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
     | '/cli-authorize'
@@ -519,6 +529,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
     | '/cli-authorize'
@@ -564,6 +575,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_protected'
+    | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
     | '/_protected/_dashboard'
@@ -614,6 +626,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ProtectedRoute: typeof ProtectedRouteWithChildren
+  DesktopAuthRoute: typeof DesktopAuthRoute
   SignInRoute: typeof SignInRouteWithChildren
   SignUpRoute: typeof SignUpRouteWithChildren
   SIdRoute: typeof SIdRoute
@@ -629,6 +642,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ProtectedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/desktop-auth': {
+      id: '/desktop-auth'
+      path: '/desktop-auth'
+      fullPath: '/desktop-auth'
+      preLoaderRoute: typeof DesktopAuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -1112,6 +1132,7 @@ const SignUpRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   ProtectedRoute: ProtectedRouteWithChildren,
+  DesktopAuthRoute: DesktopAuthRoute,
   SignInRoute: SignInRouteWithChildren,
   SignUpRoute: SignUpRouteWithChildren,
   SIdRoute: SIdRoute,

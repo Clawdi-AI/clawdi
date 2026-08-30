@@ -744,6 +744,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cli/auth/oauth/desktop-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Desktop Session Ticket
+         * @description Exchange the first-party CLI identity for a one-use browser session ticket.
+         */
+        post: operations["create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/cli/auth/device": {
         parameters: {
             query?: never;
@@ -5410,6 +5430,16 @@ export interface components {
         DefaultProjectResponse: {
             /** Project Id */
             project_id: string;
+        };
+        /**
+         * DesktopSessionTicketResponse
+         * @description Short-lived, one-use Clerk ticket for the first-party desktop shell.
+         */
+        DesktopSessionTicketResponse: {
+            /** Ticket */
+            ticket: string;
+            /** Expires In */
+            expires_in: number;
         };
         /** DeviceApproveRequest */
         DeviceApproveRequest: {
@@ -10532,6 +10562,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesktopSessionTicketResponse"];
                 };
             };
         };
