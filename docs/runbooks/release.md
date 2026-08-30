@@ -111,29 +111,6 @@ releases.
 8. Update the PR body with the latest head SHA, verification, release impact,
    migration notes, and whether the CLI publish workflow will run.
 
-## Desktop Signing
-
-Create a GitHub environment named `macos-release`, allow deployments only from
-the `main` branch, and require approval before its secrets are exposed. Add
-these environment secrets:
-
-| Secret | Value |
-| --- | --- |
-| `MACOS_CERTIFICATE_P12_BASE64` | Base64-encoded `Developer ID Application` `.p12` export |
-| `MACOS_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
-| `APPLE_API_KEY_P8_BASE64` | Base64-encoded App Store Connect API `.p8` key |
-| `APPLE_API_KEY_ID` | App Store Connect API key ID |
-| `APPLE_API_ISSUER` | App Store Connect API issuer ID |
-| `APPLE_TEAM_ID` | Apple Developer team ID from the signing certificate |
-
-Use an App Store Connect team API key with the Developer role. Keep signing
-credentials out of repository and pull-request secrets. The `Desktop Preview`
-workflow remains unsigned; `Desktop Release` is the only workflow allowed to
-read the protected credentials. Dispatch it from the `main` branch after the
-matching desktop package version is set. The release fails closed unless
-`codesign`, Gatekeeper assessment, and stapled notarization-ticket validation
-all succeed.
-
 ## Merge And Release
 
 1. Merge the PR into `main` after required checks are green.
