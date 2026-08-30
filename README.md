@@ -27,7 +27,7 @@ Clawdi supports two run paths:
 - **Cloud Agents:** deploy a managed Hermes or OpenClaw runtime.
 - **Connected Agents:** connect supported Agent software already running on your computer.
 
-Clawdi brings available Agent history and reusable resources into one dashboard, CLI, and MCP layer. Support varies by Agent software and run path.
+Clawdi keeps available Agent history and reusable resources together across its dashboard, CLI, and MCP layer. Support varies by Agent software and run path.
 
 ## Start
 
