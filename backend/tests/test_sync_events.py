@@ -39,6 +39,7 @@ from app.core.skill_sync_protocol import (
     resolve_skill_sync_protocol,
 )
 from app.models.api_key import ApiKey
+from app.models.distributed_state import SyncSubscriptionLease
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
@@ -433,6 +434,59 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
 
     assert all(task.done() for task in internal_tasks)
     assert all(task.cancelled() for task in internal_tasks)
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_waits_for_lease_release_transaction(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    """Repeated request cancellation must not interrupt the lease DELETE."""
+    _api_key, _auth, iterator = await _open_api_key_stream(db_session, seed_user)
+    pool = app_engine.sync_engine.pool
+    checked_out_before = pool.checkedout()
+    lease_id = (
+        await db_session.execute(
+            select(SyncSubscriptionLease.id)
+            .where(SyncSubscriptionLease.user_id == seed_user.id)
+            .with_for_update()
+        )
+    ).scalar_one()
+    release_started = asyncio.Event()
+
+    def capture_release(_connection, _cursor, statement: str, *_args) -> None:
+        if statement.lstrip().startswith("DELETE FROM sync_subscription_leases"):
+            release_started.set()
+
+    event.listen(app_engine.sync_engine, "before_cursor_execute", capture_release)
+    next_chunk = asyncio.create_task(iterator.__anext__())
+    try:
+        await asyncio.sleep(0)
+        assert next_chunk.cancel("disconnect")
+        await asyncio.wait_for(release_started.wait(), timeout=1)
+        assert next_chunk.cancel("disconnect-again")
+        await asyncio.sleep(0)
+        assert not next_chunk.done()
+
+        await db_session.commit()
+        with pytest.raises(asyncio.CancelledError, match="disconnect-again"):
+            await next_chunk
+
+        assert (
+            await db_session.scalar(
+                select(SyncSubscriptionLease.id).where(SyncSubscriptionLease.id == lease_id)
+            )
+            is None
+        )
+        assert pool.checkedout() == checked_out_before
+    finally:
+        event.remove(app_engine.sync_engine, "before_cursor_execute", capture_release)
+        if db_session.in_transaction():
+            await db_session.rollback()
+        if not next_chunk.done():
+            next_chunk.cancel()
+            await asyncio.gather(next_chunk, return_exceptions=True)
+        await iterator.aclose()
 
 
 @pytest.mark.asyncio
