@@ -226,7 +226,7 @@ function ConnectorsList({
 				connectedNames={connectedNames}
 				isLoading={isCatalogLoading}
 				error={catalogError}
-				query={query}
+				query={debouncedQuery}
 				onRetry={() => {
 					void catalogQ.refetch();
 				}}
@@ -348,6 +348,7 @@ function CatalogSection({
 							app={app}
 							isConnected={connectedNames.has(app.name)}
 							scope={scope}
+							searchQuery={query.trim() || undefined}
 						/>
 					))}
 				</div>

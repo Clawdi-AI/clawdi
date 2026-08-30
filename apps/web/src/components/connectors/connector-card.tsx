@@ -5,7 +5,9 @@ import { Check } from "lucide-react";
 import { useCallback } from "react";
 import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { connectorSearchSupportingText } from "@/components/connectors/connector-search";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { useOpenApi } from "@/lib/api";
 import {
 	availableAppQueryOptions,
@@ -29,10 +31,12 @@ export function ConnectorCard({
 	app,
 	isConnected = false,
 	scope = LIBRARY_RESOURCE_SCOPE,
+	searchQuery,
 }: {
 	app: ConnectorAvailableApp;
 	isConnected?: boolean;
 	scope?: ResourceNavigationScope;
+	searchQuery?: string;
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -45,13 +49,28 @@ export function ConnectorCard({
 		<EntityRow
 			ariaLabel={app.display_name}
 			icon={<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />}
-			title={app.display_name}
+			title={
+				searchQuery ? (
+					<SearchHighlightedText text={app.display_name} query={searchQuery} />
+				) : (
+					app.display_name
+				)
+			}
 			titleAdornment={
 				isConnected ? (
 					<Check className="size-3.5 shrink-0 text-success" aria-label="Connected" />
 				) : undefined
 			}
-			meta={app.description}
+			meta={
+				searchQuery ? (
+					<SearchHighlightedText
+						text={connectorSearchSupportingText(app, searchQuery)}
+						query={searchQuery}
+					/>
+				) : (
+					app.description
+				)
+			}
 			actions={
 				!isConnected ? (
 					<ConnectorConnectAction
