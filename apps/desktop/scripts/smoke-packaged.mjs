@@ -47,7 +47,8 @@ async function waitForConnectWindow(context, timeout) {
 	while (Date.now() < deadline) {
 		const window = context.pages().find((page) => {
 			try {
-				return new URL(page.url()).pathname.endsWith("/renderer.html");
+				const url = new URL(page.url());
+				return url.protocol === "clawdi-app:" && url.pathname === "/renderer.html";
 			} catch {
 				return false;
 			}

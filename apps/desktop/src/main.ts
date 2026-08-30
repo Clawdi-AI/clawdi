@@ -11,6 +11,8 @@ import {
 	Menu,
 	type MenuItemConstructorOptions,
 	nativeImage,
+	net,
+	protocol,
 	session,
 	shell,
 	Tray,
@@ -19,11 +21,26 @@ import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 
 const DEFAULT_WEB_URL = "https://cloud.clawdi.ai";
+const CONNECT_SCHEME = "clawdi-app";
+const CONNECT_HOST = "connect";
+const CONNECT_RENDERER_URL = `${CONNECT_SCHEME}://${CONNECT_HOST}/renderer.html`;
+const CONNECT_ASSETS = new Map([
+	["/renderer.html", "renderer.html"],
+	["/connect-renderer.js", "connect-renderer.js"],
+	["/connect-renderer.css", "connect-renderer.css"],
+]);
 const cli = new DesktopCliService();
 let mainWindow: BrowserWindow | null = null;
 let connectWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+
+protocol.registerSchemesAsPrivileged([
+	{
+		scheme: CONNECT_SCHEME,
+		privileges: { standard: true, secure: true, supportFetchAPI: true },
+	},
+]);
 
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
@@ -34,6 +51,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
+	registerConnectProtocol();
 	registerIpc();
 	configurePermissions();
 	createApplicationMenu();
@@ -54,6 +72,15 @@ async function startApplication(): Promise<void> {
 	app.on("activate", () => void showAvailableWindow());
 	app.on("before-quit", () => {
 		quitting = true;
+	});
+}
+
+function registerConnectProtocol(): void {
+	protocol.handle(CONNECT_SCHEME, (request) => {
+		const url = new URL(request.url);
+		const asset = url.host === CONNECT_HOST ? CONNECT_ASSETS.get(url.pathname) : null;
+		if (request.method !== "GET" || !asset) return new Response(null, { status: 404 });
+		return net.fetch(pathToFileURL(join(app.getAppPath(), "dist", asset)).toString());
 	});
 }
 
@@ -139,9 +166,7 @@ function assertConnectSender(event: IpcMainInvokeEvent): void {
 		throw new Error("Unexpected Connect Agent client.");
 	const senderUrl = event.senderFrame?.url;
 	if (!senderUrl) throw new Error("Unexpected Connect Agent URL.");
-	const expected = pathToFileURL(connectRendererPath());
-	const sender = new URL(senderUrl);
-	if (sender.protocol !== expected.protocol || sender.pathname !== expected.pathname) {
+	if (senderUrl !== CONNECT_RENDERER_URL) {
 		throw new Error("Unexpected Connect Agent URL.");
 	}
 }
@@ -284,19 +309,13 @@ async function showConnectWindow(): Promise<void> {
 	connectWindow = window;
 	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 	window.webContents.on("will-navigate", (event, url) => {
-		if (new URL(url).pathname !== pathToFileURL(connectRendererPath()).pathname) {
-			event.preventDefault();
-		}
+		if (url !== CONNECT_RENDERER_URL) event.preventDefault();
 	});
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		if (connectWindow === window) connectWindow = null;
 	});
-	await window.loadFile(connectRendererPath());
-}
-
-function connectRendererPath(): string {
-	return join(app.getAppPath(), "dist", "renderer.html");
+	await window.loadURL(CONNECT_RENDERER_URL);
 }
 
 function createTray(): void {
