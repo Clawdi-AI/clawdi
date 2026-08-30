@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-	getAcceptedProjectInvitationToastCopy,
 	type ActionRequiredNotification,
+	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTitle,
@@ -43,8 +43,12 @@ describe("notification center logic", () => {
 		expect(getPendingNotificationCount([invitation, { ...invitation, id: "inv_2" }])).toBe(2);
 
 		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification Center");
-		expect(getNotificationCenterTriggerLabel(1)).toBe("Notification Center, 1 Pending Notification");
-		expect(getNotificationCenterTriggerLabel(2)).toBe("Notification Center, 2 Pending Notifications");
+		expect(getNotificationCenterTriggerLabel(1)).toBe(
+			"Notification Center, 1 Pending Notification",
+		);
+		expect(getNotificationCenterTriggerLabel(2)).toBe(
+			"Notification Center, 2 Pending Notifications",
+		);
 	});
 
 	test("formats notification title and empty copy without Skills-specific language", () => {

@@ -283,9 +283,7 @@ function NotificationCenterContent({
 							<div className="flex min-w-0 items-start justify-between gap-3">
 								<div className="text-sm font-medium">{notification.title}</div>
 								<Badge
-									variant={
-										notification.severity === "destructive" ? "destructive" : "outline"
-									}
+									variant={notification.severity === "destructive" ? "destructive" : "outline"}
 								>
 									{notification.badge}
 								</Badge>
@@ -341,9 +339,7 @@ function NotificationCenterContent({
 										<Badge variant="outline">Viewer</Badge>
 									</div>
 								</div>
-								<p className="text-xs text-muted-foreground">
-									{getProjectInvitationAccessCopy()}
-								</p>
+								<p className="text-xs text-muted-foreground">{getProjectInvitationAccessCopy()}</p>
 							</div>
 							<div className="flex justify-end gap-1.5">
 								<Button

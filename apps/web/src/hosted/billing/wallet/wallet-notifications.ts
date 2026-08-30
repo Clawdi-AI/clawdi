@@ -14,9 +14,7 @@ export function walletNotificationCenterItems(
 		return [
 			{
 				id: `wallet-auto-reload-${action.attempt_id}`,
-				title: state.declined
-					? "Auto-reload was declined"
-					: "Your bank needs to confirm a top-up",
+				title: state.declined ? "Auto-reload was declined" : "Your bank needs to confirm a top-up",
 				description: state.declined
 					? "We couldn’t charge your saved card. Retry or update your payment method before the remaining balance runs out."
 					: "A top-up is waiting for confirmation from your bank. Confirm it before the remaining balance runs out.",

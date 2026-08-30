@@ -90,15 +90,15 @@ describe("walletNotificationCenterItems", () => {
 				severity: "warning",
 			}),
 		]);
-		expect(
-			walletNotificationCenterItems(wallet({ auto_reload_status: "payment_failed" })),
-		).toEqual([
-			expect.objectContaining({
-				id: "wallet-auto-reload-failed",
-				actionLabel: "Review Wallet",
-				severity: "destructive",
-			}),
-		]);
+		expect(walletNotificationCenterItems(wallet({ auto_reload_status: "payment_failed" }))).toEqual(
+			[
+				expect.objectContaining({
+					id: "wallet-auto-reload-failed",
+					actionLabel: "Review Wallet",
+					severity: "destructive",
+				}),
+			],
+		);
 		expect(
 			walletNotificationCenterItems(wallet({ auto_reload_status: "paused_monthly_limit" })),
 		).toEqual([
@@ -123,9 +123,7 @@ describe("walletNotificationCenterItems", () => {
 				severity: "destructive",
 			}),
 		]);
-		expect(
-			walletNotificationCenterItems(wallet({ auto_reload_action: action() })),
-		).toEqual([
+		expect(walletNotificationCenterItems(wallet({ auto_reload_action: action() }))).toEqual([
 			expect.objectContaining({
 				id: "wallet-auto-reload-1",
 				actionLabel: "Confirm payment",

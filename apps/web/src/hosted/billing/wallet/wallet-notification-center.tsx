@@ -2,8 +2,8 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { NotificationCenter } from "@/components/notification-center";
-import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { walletNotificationCenterItems } from "@/hosted/billing/wallet/wallet-notifications";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { headerWalletBalanceApplicable } from "@/hosted/global-wallet-balance";
 import { useProductAccess } from "@/lib/product-access";
 
