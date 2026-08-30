@@ -6,9 +6,11 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
+import { DesktopConnectWizard } from "@/components/dashboard/desktop-connect-wizard";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useOpenApi } from "@/lib/api";
+import { useDesktopBridge } from "@/lib/desktop";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
@@ -80,12 +82,17 @@ function CopyButton({
 	);
 }
 
-/**
- * Shared setup body for every `AddAgentDialog`. Commands and the agent
- * hand-off prompt are peer paths; while the dialog is open, the setup also
- * watches for newly registered agents and surfaces an explicit success state.
- */
+/** Uses the native wizard in Electron and keeps the CLI hand-off for browsers. */
 export function AddAgentSetup() {
+	const desktopBridge = useDesktopBridge();
+	if (desktopBridge === undefined) {
+		return <div className="min-h-48 animate-pulse rounded-lg bg-muted/30" />;
+	}
+	if (desktopBridge) return <DesktopConnectWizard bridge={desktopBridge} />;
+	return <CliAddAgentSetup />;
+}
+
+function CliAddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
 	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;

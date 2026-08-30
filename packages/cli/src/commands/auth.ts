@@ -397,6 +397,74 @@ export async function authComplete() {
 	}
 }
 
+export async function authStartMachine(): Promise<void> {
+	const existing = getAuth();
+	if (existing) {
+		console.log(
+			JSON.stringify({
+				schemaVersion: "clawdi.authStart.v1",
+				status: "already_authenticated",
+				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
+			}),
+		);
+		return;
+	}
+
+	const config = getConfig();
+	const pending = await startOAuthLogin(
+		config.apiUrl,
+		config.deployApiUrl,
+		captureStoredCredentialIdentity(),
+	);
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.authStart.v1",
+			status: "pending",
+			authorizationUrl: pending.authorizationUrl,
+			redirectUri: pending.redirectUri,
+			expiresAt: pending.expiresAt,
+		}),
+	);
+}
+
+export async function authFinishMachine(): Promise<void> {
+	const existing = getAuth();
+	if (existing) {
+		console.log(
+			JSON.stringify({
+				schemaVersion: "clawdi.authFinish.v1",
+				status: "already_authenticated",
+				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
+			}),
+		);
+		return;
+	}
+
+	const pending = getPendingAuth();
+	if (pending?.authType !== "clerk_oauth_pkce") {
+		throw new Error("No pending authorization. Start sign-in again.");
+	}
+	if (pendingAuthExpired(pending)) {
+		await clearPendingClerkOAuthLogin(pending);
+		throw new Error("Authorization expired. Start sign-in again.");
+	}
+	const callbackUrl = await readCallbackFromStdin();
+	if (!callbackUrl) throw new Error("The authorization callback was empty.");
+	const auth = await exchangeClerkOAuthCode(pending, callbackUrl);
+	const verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
+		expectedCredential: { kind: "none" },
+		pending,
+	});
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.authFinish.v1",
+			status: "authenticated",
+			cloudVerified: verification.kind === "verified",
+			...(verification.kind === "verified" ? { user: verification.user } : {}),
+		}),
+	);
+}
+
 export async function authLogout() {
 	if (!isLoggedIn()) {
 		p.log.info("Not logged in.");

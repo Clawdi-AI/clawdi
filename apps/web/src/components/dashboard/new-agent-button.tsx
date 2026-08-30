@@ -2,7 +2,7 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { IconChip } from "@/components/icon-chip";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useDesktopBridge } from "@/lib/desktop";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useProductAccess } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -33,6 +34,7 @@ export function NewAgentButton({
 	className?: string;
 } = {}) {
 	const router = useRouter();
+	const desktopBridge = useDesktopBridge();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
@@ -40,6 +42,10 @@ export function NewAgentButton({
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
+
+	useEffect(() => {
+		return desktopBridge?.onOpenConnectWizard(() => setConnectOpen(true));
+	}, [desktopBridge]);
 
 	function handleClick() {
 		if (checkingDeployAccess) return;
@@ -123,7 +129,11 @@ export function NewAgentButton({
 						<ChoiceCard
 							icon={<TerminalSquare />}
 							title="Connect an Agent on your machine"
-							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
+							description={
+								desktopBridge
+									? "Find and connect Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode."
+									: "Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
+							}
 							onClick={chooseConnect}
 						/>
 					</div>

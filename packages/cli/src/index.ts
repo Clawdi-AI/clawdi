@@ -156,6 +156,24 @@ authCmd
 	});
 
 authCmd
+	.command("start", { hidden: true })
+	.description("Start a machine-readable browser authorization")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async () => {
+		const { authStartMachine } = await import("./commands/auth.js");
+		await authStartMachine();
+	});
+
+authCmd
+	.command("finish", { hidden: true })
+	.description("Finish machine-readable browser authorization from stdin")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async () => {
+		const { authFinishMachine } = await import("./commands/auth.js");
+		await authFinishMachine();
+	});
+
+authCmd
 	.command("logout")
 	.description("Remove local credentials")
 	.action(async () => {
@@ -1556,6 +1574,16 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+
+agentCmd
+	.command("detect")
+	.description("Detect supported local agents without changing them")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { agentDetectCommand } = await import("./commands/agent-detect.js");
+		await agentDetectCommand(opts);
+	});
+
 const agentCredentialsCmd = agentCmd
 	.command("credentials")
 	.description("Sync local CLI credential profiles");
