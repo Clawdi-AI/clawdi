@@ -25,10 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useUnsavedNavigationState } from "@/components/unsaved-navigation-state";
-import {
-	agentOwnershipKindFromId,
-	useAgentOwnership,
-} from "@/lib/agent-ownership";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { agentDetailQueryKey, agentDetailQueryOptions, agentsQueryKey } from "@/lib/agent-queries";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { useProductAccess } from "@/lib/product-access";

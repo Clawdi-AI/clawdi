@@ -1,4 +1,4 @@
-import { agentDisconnectEligibility, type AgentOwnership } from "@clawdi/shared/client";
+import { type AgentOwnership, agentDisconnectEligibility } from "@clawdi/shared/client";
 
 export function syncAgentNameDraft(
 	currentDraft: string,

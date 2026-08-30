@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { EMPTY_AGENT_OWNERSHIP } from "@clawdi/shared/client";
-import {
-	syncAgentNameDraft,
-	webAgentDisconnectUnavailable,
-} from "./agent-settings-panel.logic";
+import { syncAgentNameDraft, webAgentDisconnectUnavailable } from "./agent-settings-panel.logic";
 
 describe("syncAgentNameDraft", () => {
 	test("initializes a draft from the server", () => {

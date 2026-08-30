@@ -130,9 +130,7 @@ describe("agentDisconnectEligibility", () => {
 		] as const;
 
 		for (const { agentId, ownership, expected } of cases) {
-			expect(
-				agentDisconnectEligibility({ platform: "web", agentId, ownership }),
-			).toEqual(expected);
+			expect(agentDisconnectEligibility({ platform: "web", agentId, ownership })).toEqual(expected);
 		}
 	});
 });
