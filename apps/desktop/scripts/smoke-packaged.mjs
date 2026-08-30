@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { _electron as electron } from "playwright";
+import { _electron as electron } from "@playwright/test";
 
 const [executablePath, runtimeRoot] = process.argv.slice(2);
 if (!executablePath || !runtimeRoot) {
