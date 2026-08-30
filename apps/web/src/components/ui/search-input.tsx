@@ -13,6 +13,7 @@ import {
  * Canonical shadcn Input Group composition for dashboard search fields.
  */
 export function SearchInput({
+	id,
 	value,
 	onChange,
 	placeholder = "Search…",
@@ -24,6 +25,7 @@ export function SearchInput({
 	ariaKeyShortcuts,
 	maxLength,
 }: {
+	id?: string;
 	value: string;
 	onChange: (next: string) => void;
 	placeholder?: string;
@@ -41,6 +43,7 @@ export function SearchInput({
 				<Search />
 			</InputGroupAddon>
 			<InputGroupInput
+				id={id}
 				name={name}
 				aria-label={ariaLabel}
 				type="text"

@@ -87,6 +87,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
 	Select,
 	SelectContent,
@@ -1755,14 +1756,15 @@ function ProjectVaultActions({
 						>
 							<div className="space-y-1.5">
 								<Label htmlFor={`project-vault-search-${projectId}`}>Search Vaults</Label>
-								<Input
+								<SearchInput
 									id={`project-vault-search-${projectId}`}
 									value={attachSearch}
-									onChange={(event) => {
-										setAttachSearch(event.target.value);
+									onChange={(value) => {
+										setAttachSearch(value);
 										setSelectedVaultId("");
 									}}
 									placeholder="Search Vaults…"
+									ariaLabel="Search Vaults"
 								/>
 							</div>
 							{attachableVaults.length === 0 ? (
