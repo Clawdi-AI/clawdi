@@ -1,10 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { lazy, type ReactNode, Suspense } from "react";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const HostedWalletNotificationCenter = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/billing/wallet/wallet-notification-center").then((module) => ({
+				default: module.HostedWalletNotificationCenter,
+			})),
+		)
+	: null;
 
 /**
  * Dashboard chrome — the header bar above SidebarInset content.
@@ -13,10 +23,10 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
  */
 export function SiteHeader({
 	actions,
-	notificationCenter,
+	existingCloudDeploymentCount,
 }: {
 	actions?: ReactNode;
-	notificationCenter?: ReactNode;
+	existingCloudDeploymentCount: number | null;
 }) {
 	return (
 		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
@@ -30,7 +40,15 @@ export function SiteHeader({
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				{notificationCenter ?? <NotificationCenter />}
+				{HostedWalletNotificationCenter ? (
+					<Suspense fallback={<NotificationCenter />}>
+						<HostedWalletNotificationCenter
+							existingCloudDeploymentCount={existingCloudDeploymentCount}
+						/>
+					</Suspense>
+				) : (
+					<NotificationCenter />
+				)}
 			</div>
 		</header>
 	);

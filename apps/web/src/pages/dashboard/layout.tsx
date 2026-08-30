@@ -5,7 +5,6 @@ import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
-import { NotificationCenter } from "@/components/notification-center";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,14 +53,6 @@ const GlobalWalletBalance = IS_HOSTED_BUILD
 	? lazy(() =>
 			import("@/hosted/global-wallet-balance").then((m) => ({
 				default: m.GlobalWalletBalance,
-			})),
-		)
-	: null;
-
-const HostedWalletNotificationCenter = IS_HOSTED_BUILD
-	? lazy(() =>
-			import("@/hosted/billing/wallet/wallet-notification-center").then((m) => ({
-				default: m.HostedWalletNotificationCenter,
 			})),
 		)
 	: null;
@@ -138,15 +129,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 								)}
 							>
 								<SiteHeader
-									notificationCenter={
-										HostedWalletNotificationCenter ? (
-											<Suspense fallback={<NotificationCenter />}>
-												<HostedWalletNotificationCenter
-													existingCloudDeploymentCount={existingCloudDeploymentCount}
-												/>
-											</Suspense>
-										) : undefined
-									}
+									existingCloudDeploymentCount={existingCloudDeploymentCount}
 									actions={
 										IS_HOSTED_BUILD ? (
 											<DashboardHeaderActionSlot>
