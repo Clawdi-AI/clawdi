@@ -159,10 +159,23 @@ async def _refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Even
 
 
 async def _release_subscription_lease_safely(lease_id: UUID) -> None:
-    try:
-        await release_sync_subscription_lease(lease_id)
-    except Exception as error:  # noqa: BLE001 - expiry is the crash-safe fallback
-        log.warning("sync events: subscription lease release failed: %s", error)
+    async def release() -> None:
+        try:
+            await release_sync_subscription_lease(lease_id)
+        except Exception as error:  # noqa: BLE001 - expiry is the crash-safe fallback
+            log.warning("sync events: subscription lease release failed: %s", error)
+
+    release_task = asyncio.create_task(release())
+    cancellation: asyncio.CancelledError | None = None
+    while not release_task.done():
+        try:
+            await asyncio.shield(release_task)
+        except asyncio.CancelledError as error:
+            cancellation = error
+
+    release_task.result()
+    if cancellation is not None:
+        raise cancellation
 
 
 async def _stream(
