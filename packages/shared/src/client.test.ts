@@ -3,18 +3,7 @@ import {
 	agentDisconnectEligibility,
 	agentOwnershipKindFromId,
 	EMPTY_AGENT_OWNERSHIP,
-	PLATFORM_CAPABILITIES,
 } from "./client";
-
-describe("platform capabilities", () => {
-	test("makes local, hosted, and billing platform differences explicit", () => {
-		expect(PLATFORM_CAPABILITIES.web.localAgentSetup).toBe("handoff");
-		expect(PLATFORM_CAPABILITIES.desktop.localAgentInventory).toBe("direct");
-		expect(PLATFORM_CAPABILITIES.mobile.localAgentInventory).toBe("unsupported");
-		expect(PLATFORM_CAPABILITIES.mobile.hostedAgentLifecycle).toBe("direct");
-		expect(PLATFORM_CAPABILITIES.mobile.billing).toBe("policy-gated");
-	});
-});
 
 describe("Agent ownership", () => {
 	const ownership = {

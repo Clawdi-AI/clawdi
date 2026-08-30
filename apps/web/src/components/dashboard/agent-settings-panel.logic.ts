@@ -1,5 +1,3 @@
-import { type AgentOwnership, agentDisconnectEligibility } from "@clawdi/shared/client";
-
 export function syncAgentNameDraft(
 	currentDraft: string,
 	previousServerName: string | undefined,
@@ -9,21 +7,4 @@ export function syncAgentNameDraft(
 		return nextServerName;
 	}
 	return currentDraft;
-}
-
-export function webAgentDisconnectUnavailable({
-	agentId,
-	explicitIdentity,
-	ownership,
-}: {
-	agentId: string | null | undefined;
-	explicitIdentity?: boolean | null;
-	ownership: AgentOwnership | null;
-}): boolean {
-	return !agentDisconnectEligibility({
-		platform: "web",
-		agentId,
-		explicitIdentity,
-		ownership,
-	}).eligible;
 }
