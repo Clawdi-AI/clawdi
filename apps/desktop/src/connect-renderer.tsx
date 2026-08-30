@@ -201,7 +201,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 							<TriangleAlert />
 							<div>
 								<h2>Couldn't finish setup</h2>
-								<p>{failure ?? "Check your connection and try again."}</p>
+								<p>{failure ?? "Try again."}</p>
 							</div>
 						</div>
 						<footer className="actions">

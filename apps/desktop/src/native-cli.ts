@@ -30,11 +30,11 @@ export class DesktopCliService {
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = this.cli();
-		const [identity, auth, doctor] = await Promise.all([
-			this.identity(cli),
-			this.authState(cli),
-			this.doctorState(cli),
-		]);
+		const identity = await this.identity(cli);
+		const auth = await this.authState(cli);
+		const doctor = auth.authenticated
+			? await this.doctorState(cli)
+			: { installed: false, running: false };
 		return {
 			platform: desktopPlatform(),
 			cli: { status: "ready", version: identity.version },
@@ -139,7 +139,12 @@ export class DesktopCliService {
 	}
 
 	private async identity(cli: string): Promise<NativeIdentity> {
-		const result = await this.run(cli, ["update", "--native-identity"], { timeoutMs: 20_000 });
+		let result: CommandResult;
+		try {
+			result = await this.run(cli, ["update", "--native-identity"], { timeoutMs: 20_000 });
+		} catch (cause) {
+			throw runtimeStartError(cause);
+		}
 		const [version, target, extra] = result.stdout.trim().split("\t");
 		if (!version || !target || extra || !/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(version)) {
 			throw new Error("The bundled Clawdi runtime has an invalid identity.");
@@ -148,7 +153,12 @@ export class DesktopCliService {
 	}
 
 	private async authState(cli: string): Promise<DesktopBootstrapState["auth"]> {
-		const result = await this.runJson(cli, ["auth", "status", "--json"]);
+		let result: Record<string, unknown>;
+		try {
+			result = await this.runJson(cli, ["auth", "status", "--json"]);
+		} catch (cause) {
+			throw new DesktopCliError("Could not read the local sign-in state.", { cause });
+		}
 		const authenticated = result.authenticated === true;
 		const email = isRecord(result.user) ? readString(result.user.email) : null;
 		const user = isRecord(result.user)
@@ -186,6 +196,23 @@ export class DesktopCliService {
 	): Promise<CommandResult> {
 		return runCommand(cli, args, opts);
 	}
+}
+
+export class DesktopCliError extends Error {}
+
+function runtimeStartError(cause: unknown): DesktopCliError {
+	const code = isRecord(cause) ? readString(cause.code) : null;
+	if (code === "EACCES" || code === "EPERM") {
+		return new DesktopCliError("macOS blocked the bundled Clawdi runtime.", { cause });
+	}
+	if (code === "ENOENT") {
+		return new DesktopCliError("The bundled Clawdi runtime is missing. Reinstall Clawdi.", {
+			cause,
+		});
+	}
+	return new DesktopCliError("The bundled Clawdi runtime could not start. Reinstall Clawdi.", {
+		cause,
+	});
 }
 
 function runCommand(

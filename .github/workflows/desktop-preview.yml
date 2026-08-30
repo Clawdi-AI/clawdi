@@ -44,6 +44,22 @@ jobs:
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
           test "${#dmg[@]}" -eq 1
+          mount="$RUNNER_TEMP/clawdi-dmg"
+          runtime_home="$RUNNER_TEMP/clawdi-runtime"
+          mkdir -p "$mount" "$runtime_home/home" "$runtime_home/state"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "${dmg[0]}"
+          trap 'hdiutil detach "$mount"' EXIT
+          cli="$mount/Clawdi.app/Contents/Resources/native/clawdi"
+          test -x "$cli"
+          file "$cli" | grep -q "arm64"
+          HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
+            "$cli" update --native-identity
+          HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
+            "$cli" auth status --json
+          HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
+            "$cli" daemon doctor --json
+          hdiutil detach "$mount"
+          trap - EXIT
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 
       - name: Upload unsigned preview

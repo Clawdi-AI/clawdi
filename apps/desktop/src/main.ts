@@ -16,7 +16,7 @@ import {
 	Tray,
 } from "electron";
 import { DESKTOP_IPC } from "./ipc";
-import { DesktopCliService } from "./native-cli";
+import { DesktopCliError, DesktopCliService } from "./native-cli";
 
 const DEFAULT_WEB_URL = "https://cloud.clawdi.ai";
 const cli = new DesktopCliService();
@@ -112,7 +112,8 @@ async function safeConnectAction<T>(
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
-		throw new Error(`Could not ${label}. Check your connection and try again.`);
+		if (error instanceof DesktopCliError) throw error;
+		throw new Error(`Could not ${label}. Try again.`);
 	}
 }
 
