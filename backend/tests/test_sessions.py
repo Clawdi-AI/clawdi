@@ -1334,6 +1334,15 @@ async def test_global_search_returns_hits_across_types(client: httpx.AsyncClient
         assert hit["title"]
         assert hit["href"].startswith("/")
 
+    multi_term = await client.get("/v1/search", params={"q": "searchable billing"})
+    assert multi_term.status_code == 200, multi_term.text
+    session_hits = [hit for hit in multi_term.json()["results"] if hit["type"] == "session"]
+    assert [hit["title"] for hit in session_hits] == ["Investigate alpha bug in billing"]
+
+    missing_term = await client.get("/v1/search", params={"q": "searchable missing"})
+    assert missing_term.status_code == 200, missing_term.text
+    assert not [hit for hit in missing_term.json()["results"] if hit["type"] == "session"]
+
 
 @pytest.mark.asyncio
 async def test_global_vault_search_includes_unattached_owned_and_deduplicates_attachments(
@@ -1363,6 +1372,11 @@ async def test_global_vault_search_includes_unattached_owned_and_deduplicates_at
     hits = [hit for hit in response.json()["results"] if hit["type"] == "vault"]
     assert [hit["id"] for hit in hits] == [str(exact_name.id), str(exact_slug.id)]
     assert hits[1]["subtitle"] == token
+
+    multi_term = await client.get("/v1/search", params={"q": f"slug {token}"})
+    assert multi_term.status_code == 200, multi_term.text
+    multi_term_hits = [hit for hit in multi_term.json()["results"] if hit["type"] == "vault"]
+    assert [hit["id"] for hit in multi_term_hits] == [str(exact_slug.id)]
 
 
 @pytest.mark.asyncio

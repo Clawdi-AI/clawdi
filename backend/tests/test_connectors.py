@@ -499,6 +499,12 @@ async def test_catalog_search_prioritizes_identity_before_description(
         "postal",
     ]
 
+    multi_term = await composio.get_available_apps(search="gmail inbox")
+    assert [app.name for app in multi_term["items"]] == ["team-mail"]
+
+    missing_term = await composio.get_available_apps(search="gmail missing")
+    assert missing_term["items"] == []
+
 
 @pytest.mark.asyncio
 async def test_connector_detail_requires_explicit_toolkit_auth_metadata(

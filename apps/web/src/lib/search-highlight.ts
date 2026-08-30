@@ -5,6 +5,19 @@ export interface SearchHighlightPart {
 
 type SearchField = string | null | undefined;
 
+export function searchTerms(query: string): string[] {
+	const terms: string[] = [];
+	const seen = new Set<string>();
+	for (const term of query.trim().split(/\s+/u)) {
+		if (!term) continue;
+		const folded = term.toLocaleLowerCase();
+		if (seen.has(folded)) continue;
+		seen.add(folded);
+		terms.push(term);
+	}
+	return terms;
+}
+
 export function literalSearchRank(
 	query: string,
 	identityFields: readonly SearchField[],
@@ -25,7 +38,16 @@ export function literalSearchRank(
 	for (const [index, field] of supportingFields.entries()) {
 		if (field?.toLowerCase().includes(phrase)) return identity.length * 3 + index;
 	}
-	return null;
+
+	const terms = searchTerms(query).map((term) => term.toLocaleLowerCase());
+	const supporting = supportingFields.map((field) => field?.toLocaleLowerCase() ?? "");
+	const fields = [...identity, ...supporting];
+	if (!terms.every((term) => fields.some((field) => field.includes(term)))) return null;
+
+	const supportingTermCount = terms.filter(
+		(term) => !identity.some((field) => field.includes(term)),
+	).length;
+	return identity.length * 3 + supporting.length + supportingTermCount;
 }
 
 function escapeRegExp(value: string): string {
@@ -37,22 +59,29 @@ export function searchExcerpt(text: string, query: string, limit = 240): string 
 	if (compact.length <= limit) return compact;
 
 	const phrase = query.trim();
-	const match = phrase ? new RegExp(escapeRegExp(phrase), "iu").exec(compact) : null;
-	if (!match) return `${compact.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
+	const phraseMatch = phrase ? new RegExp(escapeRegExp(phrase), "iu").exec(compact) : null;
+	const folded = compact.toLocaleLowerCase();
+	const fallbackIndex = Math.min(
+		...searchTerms(query)
+			.map((term) => folded.indexOf(term.toLocaleLowerCase()))
+			.filter((index) => index >= 0),
+	);
+	const matchIndex = phraseMatch?.index ?? (Number.isFinite(fallbackIndex) ? fallbackIndex : -1);
+	if (matchIndex < 0) return `${compact.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 
-	let start = Math.max(0, match.index - Math.floor(limit / 3));
+	let start = Math.max(0, matchIndex - Math.floor(limit / 3));
 	const end = Math.min(compact.length, start + limit);
 	start = Math.max(0, end - limit);
 	return `${start > 0 ? "…" : ""}${compact.slice(start, end).trim()}${end < compact.length ? "…" : ""}`;
 }
 
 export function createSearchHighlighter(query: string) {
-	const phrase = query.trim();
-	if (!phrase) {
+	const terms = searchTerms(query).sort((a, b) => b.length - a.length);
+	if (terms.length === 0) {
 		return (text: string): SearchHighlightPart[] => [{ text, highlighted: false }];
 	}
 
-	const pattern = new RegExp(escapeRegExp(phrase), "giu");
+	const pattern = new RegExp(terms.map(escapeRegExp).join("|"), "giu");
 	return (text: string): SearchHighlightPart[] => {
 		pattern.lastIndex = 0;
 		const parts: SearchHighlightPart[] = [];

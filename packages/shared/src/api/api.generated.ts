@@ -2851,8 +2851,8 @@ export interface paths {
          *     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
          *     6*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
          *
-         *     Sessions/projects/skills/vaults use `ILIKE` (small tables) — memories goes
-         *     through the hybrid provider (FTS + trgm + optional pgvector) for quality.
+         *     Sessions/projects/skills/vaults use literal + PostgreSQL full-text search;
+         *     memories use the hybrid provider (FTS + trgm + optional pgvector).
          *
          *     A single failing source (e.g. the memory provider briefly unavailable)
          *     degrades to partial results rather than failing the whole request —
@@ -11684,7 +11684,7 @@ export interface operations {
     list_sessions_v1_sessions_get: {
         parameters: {
             query?: {
-                /** @description Case-insensitive phrase search on summary/project/local ID and visible message text; cloud session IDs match by UUID prefix */
+                /** @description Web-style text search on summary/project/local ID and visible message text; cloud session IDs match by UUID prefix */
                 q?: string | null;
                 /** @description Filter by agent_type */
                 agent?: string | null;

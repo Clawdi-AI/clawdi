@@ -124,7 +124,7 @@ test("opens a global Session body match at the exact message", async ({ page }) 
 		.getByPlaceholder("Search agents, sessions, memories, projects, skills, vaults…")
 		.fill(query);
 	await expect(palette.getByText(`Found the ${query} in this response`)).toBeVisible();
-	await expect(palette.locator("mark")).toHaveText(query);
+	await expect(palette.locator("mark")).toHaveText(["Global", "global", "palette", "anchor"]);
 	await palette.getByText("Global search result").click();
 
 	await expect(page).toHaveURL((url) => {
@@ -136,7 +136,7 @@ test("opens a global Session body match at the exact message", async ({ page }) 
 	});
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Found the ${query} in this response`);
-	await expect(current.locator("mark")).toHaveText(query);
+	await expect(current.locator("mark")).toHaveText(["global", "palette", "anchor"]);
 });
 
 test("opens a message search result and returns to the same filtered list", async ({ page }) => {
@@ -216,7 +216,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 
 	await page.goto("/sessions?q=authentication%20timeout&agent=codex&page=2&view=table");
 	const visibleResult = page.locator('[data-testid="session-card"]:visible');
-	await expect(visibleResult.locator("mark")).toHaveText("authentication timeout");
+	await expect(visibleResult.locator("mark")).toHaveText(["authentication", "timeout"]);
 
 	await visibleResult
 		.getByRole("link", { name: "Open session Fix authentication timeout" })
@@ -242,7 +242,7 @@ test("opens a message search result and returns to the same filtered list", asyn
 	await expect(page.locator('[data-search-match="true"]')).toContainText(
 		"Verified the authentication timeout no longer recurs",
 	);
-	await expect(page.locator('[data-search-match="true"] mark')).toHaveText("no longer");
+	await expect(page.locator('[data-search-match="true"] mark')).toHaveText(["no", "longer"]);
 	await expect(page.getByText("1 / 1")).toBeVisible();
 
 	await page.getByText("Back to Sessions", { exact: true }).click();
@@ -530,7 +530,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await page.goto(`/sessions/${SESSION_ID}?${search}`);
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Current ${query} result stays mounted`);
-	await expect(current.locator("mark")).toHaveText(query);
+	await expect(current.locator("mark")).toHaveText(["virtualized", "needle"]);
 	expect(await mountedRows.count()).toBeLessThan(80);
 
 	await page.setViewportSize({ width: 390, height: 844 });

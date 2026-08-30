@@ -32,6 +32,7 @@ import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { consoleCommandPaletteItems } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
+import { searchTerms } from "@/lib/search-highlight";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
@@ -231,13 +232,19 @@ function CommandPalette({
 	);
 
 	const hasQuery = searchQuery.length > 0;
-	const normalizedQuery = searchQuery.toLowerCase();
+	const normalizedTerms = useMemo(
+		() => searchTerms(searchQuery).map((term) => term.toLocaleLowerCase()),
+		[searchQuery],
+	);
 	const navMatches = useMemo(
 		() =>
-			normalizedQuery
-				? navShortcuts.filter((s) => s.searchText.toLowerCase().includes(normalizedQuery))
+			normalizedTerms.length > 0
+				? navShortcuts.filter((shortcut) => {
+						const text = shortcut.searchText.toLocaleLowerCase();
+						return normalizedTerms.every((term) => text.includes(term));
+					})
 				: navShortcuts,
-		[navShortcuts, normalizedQuery],
+		[navShortcuts, normalizedTerms],
 	);
 
 	// Whether we have a stale results payload we can keep showing while a

@@ -705,6 +705,7 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
 
             wildcard_response = await search("%")
             body_response = await search("deployment handoff phrase")
+            reordered_response = await search("phrase deployment")
             typo_response = await search("deployment handof phrase")
     finally:
         app.dependency_overrides.clear()
@@ -718,6 +719,13 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
     body_text = body_response.json()["result"]["content"][0]["text"]
     assert "Unrelated title" in body_text
     assert "matched assistant: The visible body contains a deployment handoff phrase." in body_text
+
+    assert reordered_response.status_code == 200, reordered_response.text
+    reordered_text = reordered_response.json()["result"]["content"][0]["text"]
+    assert "Unrelated title" in reordered_text
+    assert "matched assistant: The visible body contains a deployment handoff phrase." in (
+        reordered_text
+    )
 
     assert typo_response.status_code == 200, typo_response.text
     assert (

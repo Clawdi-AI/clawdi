@@ -1565,6 +1565,11 @@ def _connector_search_rank(app: ConnectorAvailableAppResponse, query: str) -> in
             return len(identity) * 2 + index
     if query in app.description.casefold():
         return len(identity) * 3
+    fields = (*identity, app.description.casefold())
+    terms = tuple(dict.fromkeys(query.split()))
+    if terms and all(any(term in field for field in fields) for term in terms):
+        supporting_matches = sum(any(term in field for field in fields[2:]) for term in terms)
+        return len(identity) * 3 + 1 + supporting_matches
     return None
 
 

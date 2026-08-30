@@ -1,4 +1,4 @@
-import { literalSearchRank } from "@/lib/search-highlight";
+import { literalSearchRank, searchTerms } from "@/lib/search-highlight";
 
 interface SearchableVault {
 	name: string;
@@ -10,11 +10,12 @@ export function vaultSearchRank(vault: SearchableVault, query: string): number |
 }
 
 export function vaultSearchSupportingText(vault: SearchableVault, query: string): string | null {
-	const phrase = query.trim().toLowerCase();
+	const terms = searchTerms(query).map((term) => term.toLocaleLowerCase());
+	const title = vault.name.toLocaleLowerCase();
+	const relevantTerms = terms.filter((term) => !title.includes(term));
 	if (
-		phrase &&
-		vault.slug.toLowerCase().includes(phrase) &&
-		vault.slug.toLowerCase() !== vault.name.toLowerCase()
+		relevantTerms.some((term) => vault.slug.toLocaleLowerCase().includes(term)) &&
+		vault.slug.toLocaleLowerCase() !== title
 	) {
 		return `Slug: ${vault.slug}`;
 	}

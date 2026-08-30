@@ -57,7 +57,8 @@ function searchHighlightPlugin(query: string) {
 								data: {
 									hName: "mark",
 									hProperties: {
-										className: "rounded-sm bg-primary/20 px-0.5 text-inherit",
+										className:
+											"bg-transparent font-semibold text-foreground underline decoration-primary/50 decoration-1 underline-offset-2",
 									},
 								},
 								children: [{ type: "text", value: part.text }],

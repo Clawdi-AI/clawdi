@@ -2503,7 +2503,7 @@ async def list_sessions(
         default=None,
         max_length=500,
         description=(
-            "Case-insensitive phrase search on summary/project/local ID and visible message text; "
+            "Web-style text search on summary/project/local ID and visible message text; "
             "cloud session IDs match by UUID prefix"
         ),
     ),
