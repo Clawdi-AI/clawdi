@@ -5,6 +5,15 @@ type Schemas = components["schemas"];
 export type ProjectInvitationNotification = Schemas["InvitationResponse"];
 export type AcceptInvitationResponse = Schemas["InvitationAcceptResponse"];
 
+export type ActionRequiredNotification = {
+	id: string;
+	title: string;
+	description: string;
+	badge: string;
+	actionLabel: string;
+	severity: "warning" | "destructive";
+};
+
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access
 // changes) can join without replacing the header affordance.
@@ -18,13 +27,14 @@ export const NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS = [
 
 export function getPendingNotificationCount(
 	notifications: readonly ProjectInvitationNotification[] | null | undefined,
+	actionRequired: readonly ActionRequiredNotification[] = [],
 ): number {
-	return notifications?.length ?? 0;
+	return (notifications?.length ?? 0) + actionRequired.length;
 }
 
 export function getNotificationCenterTriggerLabel(count: number): string {
-	if (count === 1) return "Notification Center, 1 Pending Invitation";
-	if (count > 1) return `Notification Center, ${count} Pending Invitations`;
+	if (count === 1) return "Notification Center, 1 Pending Notification";
+	if (count > 1) return `Notification Center, ${count} Pending Notifications`;
 	return "Notification Center";
 }
 
@@ -40,6 +50,10 @@ export function getNotificationCenterEmptyCopy(): { title: string; description: 
 		description:
 			"Project invitations and other action-required updates will appear here under the top-right Notification Center bell.",
 	};
+}
+
+export function getNotificationCenterDescription(): string {
+	return "Review account actions and project invitations.";
 }
 
 export function getProjectInvitationAccessCopy(): string {

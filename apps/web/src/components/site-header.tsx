@@ -11,7 +11,13 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
  * Keeps shadcn dashboard-01's trigger/separator/content/action shape,
  * with Clawdi-specific breadcrumbs and notifications.
  */
-export function SiteHeader({ actions }: { actions?: ReactNode }) {
+export function SiteHeader({
+	actions,
+	notificationCenter,
+}: {
+	actions?: ReactNode;
+	notificationCenter?: ReactNode;
+}) {
 	return (
 		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
 			<div className="flex w-full min-w-0 items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -24,7 +30,7 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				<NotificationCenter />
+				{notificationCenter ?? <NotificationCenter />}
 			</div>
 		</header>
 	);

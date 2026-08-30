@@ -2,7 +2,14 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
+import {
+	AlertTriangle,
+	ArrowRight,
+	CheckCircle2,
+	InboxIcon,
+	MailOpen,
+	XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { IconChip } from "@/components/icon-chip";
@@ -25,7 +32,9 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
+	type ActionRequiredNotification,
 	getAcceptedProjectInvitationToastCopy,
+	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTitle,
 	getNotificationCenterTriggerLabel,
@@ -35,7 +44,13 @@ import {
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
-export function NotificationCenter() {
+export function NotificationCenter({
+	actionRequired = [],
+	onActionRequired,
+}: {
+	actionRequired?: readonly ActionRequiredNotification[];
+	onActionRequired?: (notification: ActionRequiredNotification) => void;
+}) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const api = useApi();
@@ -110,7 +125,7 @@ export function NotificationCenter() {
 	});
 
 	const items = invitations.data ?? [];
-	const count = getPendingNotificationCount(items);
+	const count = getPendingNotificationCount(items, actionRequired);
 	const triggerLabel = getNotificationCenterTriggerLabel(count);
 
 	return (
@@ -140,11 +155,12 @@ export function NotificationCenter() {
 						<PopoverTitle>{getNotificationCenterTitle(count)}</PopoverTitle>
 						{count > 0 ? <Badge variant="secondary">{count} Pending</Badge> : null}
 					</div>
-					<PopoverDescription>{getProjectInvitationAccessCopy()}</PopoverDescription>
+					<PopoverDescription>{getNotificationCenterDescription()}</PopoverDescription>
 				</PopoverHeader>
 				<Separator />
 				<NotificationCenterContent
 					invitations={items}
+					actionRequired={actionRequired}
 					isLoading={invitations.isLoading}
 					error={
 						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
@@ -156,22 +172,30 @@ export function NotificationCenter() {
 					declineInvitation={(invitation) => decline.mutate(invitation.id)}
 					acceptingId={accept.isPending ? accept.variables?.id : undefined}
 					decliningId={decline.isPending ? decline.variables : undefined}
+					onActionRequired={(notification) => {
+						setOpen(false);
+						onActionRequired?.(notification);
+					}}
 				/>
-				<Separator />
-				<div className="flex items-center justify-between gap-3 px-4 py-3">
-					<p className="text-xs text-muted-foreground">
-						Accepted invites appear under Shared Projects.
-					</p>
-					<Button
-						render={<Link to="/projects" />}
-						nativeButton={false}
-						variant="ghost"
-						size="sm"
-						onClick={() => setOpen(false)}
-					>
-						View Accepted Invites
-					</Button>
-				</div>
+				{items.length > 0 ? (
+					<>
+						<Separator />
+						<div className="flex items-center justify-between gap-3 px-4 py-3">
+							<p className="text-xs text-muted-foreground">
+								Accepted invites appear under Shared Projects.
+							</p>
+							<Button
+								render={<Link to="/projects" />}
+								nativeButton={false}
+								variant="ghost"
+								size="sm"
+								onClick={() => setOpen(false)}
+							>
+								View Accepted Invites
+							</Button>
+						</div>
+					</>
+				) : null}
 			</PopoverContent>
 		</Popover>
 	);
@@ -179,6 +203,7 @@ export function NotificationCenter() {
 
 function NotificationCenterContent({
 	invitations,
+	actionRequired,
 	isLoading,
 	error,
 	onRetry,
@@ -186,8 +211,10 @@ function NotificationCenterContent({
 	declineInvitation,
 	acceptingId,
 	decliningId,
+	onActionRequired,
 }: {
 	invitations: ProjectInvitationNotification[];
+	actionRequired: readonly ActionRequiredNotification[];
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
@@ -195,8 +222,11 @@ function NotificationCenterContent({
 	declineInvitation: (invitation: ProjectInvitationNotification) => void;
 	acceptingId?: string;
 	decliningId?: string;
+	onActionRequired: (notification: ActionRequiredNotification) => void;
 }) {
-	if (isLoading) {
+	const hasNotifications = actionRequired.length > 0 || invitations.length > 0;
+
+	if (isLoading && !hasNotifications) {
 		return (
 			<div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
 				<Spinner className="size-3.5" />
@@ -205,7 +235,7 @@ function NotificationCenterContent({
 		);
 	}
 
-	if (error) {
+	if (error && !hasNotifications) {
 		return (
 			<div className="space-y-3 px-4 py-4">
 				<div className="space-y-1">
@@ -219,7 +249,7 @@ function NotificationCenterContent({
 		);
 	}
 
-	if (invitations.length === 0) {
+	if (!hasNotifications) {
 		const empty = getNotificationCenterEmptyCopy();
 		return (
 			<div className="flex items-start gap-3 px-4 py-5">
@@ -235,8 +265,57 @@ function NotificationCenterContent({
 	}
 
 	return (
-		<ul className="max-h-[26rem] overflow-y-auto">
-			{invitations.map((invitation, index) => {
+		<ul className="max-h-[26rem] divide-y overflow-y-auto">
+			{actionRequired.map((notification) => (
+				<li key={notification.id}>
+					<div className="flex items-start gap-3 px-4 py-3">
+						<IconChip
+							size="sm"
+							tint={
+								notification.severity === "destructive"
+									? "bg-destructive/10 text-destructive"
+									: undefined
+							}
+						>
+							<AlertTriangle />
+						</IconChip>
+						<div className="min-w-0 flex-1 space-y-2">
+							<div className="flex min-w-0 items-start justify-between gap-3">
+								<div className="text-sm font-medium">{notification.title}</div>
+								<Badge
+									variant={
+										notification.severity === "destructive" ? "destructive" : "outline"
+									}
+								>
+									{notification.badge}
+								</Badge>
+							</div>
+							<p className="text-xs text-muted-foreground">{notification.description}</p>
+							<Button size="sm" onClick={() => onActionRequired(notification)}>
+								<ArrowRight />
+								{notification.actionLabel}
+							</Button>
+						</div>
+					</div>
+				</li>
+			))}
+			{isLoading ? (
+				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+					<Spinner className="size-3.5" />
+					Loading Invitations…
+				</li>
+			) : error ? (
+				<li className="space-y-3 px-4 py-4">
+					<div className="space-y-1">
+						<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
+						<p className="text-xs text-muted-foreground">{normalizeApiError(error)}</p>
+					</div>
+					<Button size="sm" variant="outline" onClick={onRetry}>
+						Retry
+					</Button>
+				</li>
+			) : null}
+			{invitations.map((invitation) => {
 				const accepting = acceptingId === invitation.id;
 				const declining = decliningId === invitation.id;
 				const busy = accepting || declining;
@@ -263,8 +342,7 @@ function NotificationCenterContent({
 									</div>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Open the Project after accepting to review shared resources. Adding it to an agent
-									is a separate step.
+									{getProjectInvitationAccessCopy()}
 								</p>
 							</div>
 							<div className="flex justify-end gap-1.5">
@@ -283,7 +361,6 @@ function NotificationCenterContent({
 								</Button>
 							</div>
 						</div>
-						{index < invitations.length - 1 ? <Separator /> : null}
 					</li>
 				);
 			})}

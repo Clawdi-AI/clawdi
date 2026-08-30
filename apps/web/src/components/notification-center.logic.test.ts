@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	getAcceptedProjectInvitationToastCopy,
+	type ActionRequiredNotification,
+	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTitle,
 	getNotificationCenterTriggerLabel,
@@ -9,6 +11,15 @@ import {
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
+
+const walletAction = {
+	id: "wallet-low-balance",
+	title: "Your Wallet balance is running low",
+	description: "Top up before Wallet-backed services are interrupted.",
+	badge: "Wallet",
+	actionLabel: "Top up",
+	severity: "warning",
+} satisfies ActionRequiredNotification;
 
 const invitation = {
 	id: "inv_1",
@@ -28,11 +39,12 @@ describe("notification center logic", () => {
 		expect(getPendingNotificationCount(undefined)).toBe(0);
 		expect(getPendingNotificationCount([])).toBe(0);
 		expect(getPendingNotificationCount([invitation])).toBe(1);
+		expect(getPendingNotificationCount([invitation], [walletAction])).toBe(2);
 		expect(getPendingNotificationCount([invitation, { ...invitation, id: "inv_2" }])).toBe(2);
 
 		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification Center");
-		expect(getNotificationCenterTriggerLabel(1)).toBe("Notification Center, 1 Pending Invitation");
-		expect(getNotificationCenterTriggerLabel(2)).toBe("Notification Center, 2 Pending Invitations");
+		expect(getNotificationCenterTriggerLabel(1)).toBe("Notification Center, 1 Pending Notification");
+		expect(getNotificationCenterTriggerLabel(2)).toBe("Notification Center, 2 Pending Notifications");
 	});
 
 	test("formats notification title and empty copy without Skills-specific language", () => {
@@ -45,6 +57,8 @@ describe("notification center logic", () => {
 		expect(empty.description).toContain("Project invitations");
 		expect(empty.description).toContain("action-required updates");
 		expect(empty.description).not.toContain("Skills");
+		expect(getNotificationCenterDescription()).toContain("account actions");
+		expect(getNotificationCenterDescription()).toContain("project invitations");
 	});
 
 	test("keeps project invitation invariants as the first notification type", () => {
