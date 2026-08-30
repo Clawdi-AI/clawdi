@@ -1,0 +1,327 @@
+import type {
+	ClawdiDesktopConnectBridge,
+	DesktopAgentType,
+	DesktopBootstrapState,
+	DesktopDetectedAgent,
+} from "@clawdi/shared/desktop";
+import {
+	ArrowRight,
+	Check,
+	CircleCheckBig,
+	LoaderCircle,
+	RefreshCw,
+	ShieldCheck,
+	TerminalSquare,
+	TriangleAlert,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import "./connect-renderer.css";
+
+declare global {
+	interface Window {
+		clawdiConnect?: ClawdiDesktopConnectBridge;
+	}
+}
+
+type Stage = "loading" | "authenticate" | "select" | "connecting" | "complete" | "error";
+
+function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
+	const [stage, setStage] = useState<Stage>("loading");
+	const [bootstrap, setBootstrap] = useState<DesktopBootstrapState | null>(null);
+	const [agents, setAgents] = useState<DesktopDetectedAgent[]>([]);
+	const [selected, setSelected] = useState<Set<DesktopAgentType>>(new Set());
+	const [failure, setFailure] = useState<string | null>(null);
+
+	const fail = useCallback((error: unknown) => {
+		setFailure(error instanceof Error ? error.message : "Setup could not be completed.");
+		setStage("error");
+	}, []);
+
+	const loadAgents = useCallback(async () => {
+		setStage("loading");
+		try {
+			const detected = await bridge.detectAgents();
+			setAgents(detected);
+			setSelected(
+				new Set(
+					detected
+						.filter((agent) => agent.detected && !agent.registered)
+						.map((agent) => agent.type),
+				),
+			);
+			setStage("select");
+		} catch (error) {
+			fail(error);
+		}
+	}, [bridge, fail]);
+
+	const load = useCallback(async () => {
+		setStage("loading");
+		setFailure(null);
+		try {
+			const state = await bridge.getBootstrapState();
+			setBootstrap(state);
+			if (!state.auth.authenticated) {
+				setStage("authenticate");
+				return;
+			}
+			await loadAgents();
+		} catch (error) {
+			fail(error);
+		}
+	}, [bridge, fail, loadAgents]);
+
+	useEffect(() => {
+		void load();
+	}, [load]);
+
+	async function authenticate() {
+		setStage("loading");
+		setFailure(null);
+		try {
+			const state = await bridge.authenticate();
+			setBootstrap(state);
+			await loadAgents();
+		} catch (error) {
+			fail(error);
+		}
+	}
+
+	async function connect() {
+		const requested =
+			selected.size > 0
+				? [...selected]
+				: agents.filter((agent) => agent.registered).map((agent) => agent.type);
+		if (requested.length === 0) return;
+		setStage("connecting");
+		setFailure(null);
+		try {
+			await bridge.connectAgents(requested);
+			setStage("complete");
+		} catch (error) {
+			fail(error);
+		}
+	}
+
+	async function openDashboard() {
+		try {
+			await bridge.openDashboard();
+		} catch (error) {
+			fail(error);
+		}
+	}
+
+	return (
+		<main className="app-shell">
+			<header className="titlebar">
+				<div className="brand-mark" aria-hidden="true">
+					<TerminalSquare />
+				</div>
+				<div>
+					<h1>Connect Agent</h1>
+					<p>Clawdi Desktop</p>
+				</div>
+			</header>
+
+			<section className="content">
+				{stage === "loading" ? (
+					<Centered icon={<LoaderCircle className="spin" />} title="Checking this Mac" />
+				) : null}
+
+				{stage === "authenticate" ? (
+					<div className="stack">
+						<div className="notice">
+							<span className="icon-tile">
+								<ShieldCheck />
+							</span>
+							<div>
+								<h2>Sign in to Clawdi</h2>
+								<p>
+									Clawdi opens your default browser for secure authorization, then returns here
+									automatically.
+								</p>
+							</div>
+						</div>
+						<footer className="actions">
+							<button className="button primary" type="button" onClick={() => void authenticate()}>
+								Continue in browser <ArrowRight />
+							</button>
+						</footer>
+					</div>
+				) : null}
+
+				{stage === "select" ? (
+					<AgentSelection
+						agents={agents}
+						selected={selected}
+						account={bootstrap?.auth.user?.email}
+						daemonReady={bootstrap?.daemon.running === true}
+						onToggle={(type, checked) => {
+							setSelected((current) => {
+								const next = new Set(current);
+								if (checked) next.add(type);
+								else next.delete(type);
+								return next;
+							});
+						}}
+						onRefresh={() => void loadAgents()}
+						onConnect={() => void connect()}
+					/>
+				) : null}
+
+				{stage === "connecting" ? (
+					<Centered
+						icon={<LoaderCircle className="spin" />}
+						title="Connecting your Agents"
+						description="Clawdi is registering them and starting background sync."
+					/>
+				) : null}
+
+				{stage === "complete" ? (
+					<div className="stack">
+						<Centered
+							icon={<CircleCheckBig />}
+							title="Agents connected"
+							description="Background sync keeps running when Clawdi is closed."
+							tone="success"
+						/>
+						<footer className="actions">
+							<button className="button primary" type="button" onClick={() => void openDashboard()}>
+								Open dashboard <ArrowRight />
+							</button>
+						</footer>
+					</div>
+				) : null}
+
+				{stage === "error" ? (
+					<div className="stack">
+						<div className="error-notice" role="alert">
+							<TriangleAlert />
+							<div>
+								<h2>Couldn't finish setup</h2>
+								<p>{failure ?? "Check your connection and try again."}</p>
+							</div>
+						</div>
+						<footer className="actions">
+							<button className="button secondary" type="button" onClick={() => void load()}>
+								<RefreshCw /> Retry
+							</button>
+						</footer>
+					</div>
+				) : null}
+			</section>
+		</main>
+	);
+}
+
+function AgentSelection({
+	agents,
+	selected,
+	account,
+	daemonReady,
+	onToggle,
+	onRefresh,
+	onConnect,
+}: {
+	agents: DesktopDetectedAgent[];
+	selected: ReadonlySet<DesktopAgentType>;
+	account?: string;
+	daemonReady: boolean;
+	onToggle(type: DesktopAgentType, checked: boolean): void;
+	onRefresh(): void;
+	onConnect(): void;
+}) {
+	const found = useMemo(
+		() => agents.filter((agent) => agent.detected || agent.registered).length,
+		[agents],
+	);
+	const canRepairDaemon = !daemonReady && agents.some((agent) => agent.registered);
+	return (
+		<div className="stack">
+			<div className="section-heading">
+				<div>
+					<h2>{found > 0 ? `Found ${found} Agent${found === 1 ? "" : "s"}` : "No Agents found"}</h2>
+					<p>{account ? `Connecting to ${account}` : "Select the Agents to connect."}</p>
+				</div>
+				<button className="icon-button" type="button" onClick={onRefresh} title="Scan again">
+					<RefreshCw />
+				</button>
+			</div>
+
+			<div className="agent-list">
+				{agents.map((agent) => {
+					const available = agent.detected && !agent.registered;
+					return (
+						<label className={`agent-row${available ? "" : " unavailable"}`} key={agent.type}>
+							<input
+								type="checkbox"
+								checked={agent.registered || selected.has(agent.type)}
+								disabled={!available}
+								onChange={(event) => onToggle(agent.type, event.currentTarget.checked)}
+							/>
+							<span className="agent-icon" aria-hidden="true">
+								<TerminalSquare />
+							</span>
+							<span className="agent-copy">
+								<strong>{agent.displayName}</strong>
+								<small>
+									{agent.registered
+										? "Already connected"
+										: agent.detected
+											? (agent.version ?? "Local data found")
+											: agent.inspection === "failed"
+												? "Couldn't inspect"
+												: "Not installed"}
+								</small>
+							</span>
+							{agent.registered ? <Check className="row-check" /> : null}
+						</label>
+					);
+				})}
+			</div>
+
+			<footer className="actions">
+				<button
+					className="button primary"
+					type="button"
+					disabled={selected.size === 0 && !canRepairDaemon}
+					onClick={onConnect}
+				>
+					{selected.size > 0
+						? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+						: canRepairDaemon
+							? "Start background sync"
+							: "Agents connected"}
+					<ArrowRight />
+				</button>
+			</footer>
+		</div>
+	);
+}
+
+function Centered({
+	icon,
+	title,
+	description,
+	tone = "brand",
+}: {
+	icon: React.ReactNode;
+	title: string;
+	description?: string;
+	tone?: "brand" | "success";
+}) {
+	return (
+		<div className="centered">
+			<span className={`status-icon ${tone}`}>{icon}</span>
+			<h2>{title}</h2>
+			{description ? <p>{description}</p> : null}
+		</div>
+	);
+}
+
+const root = document.getElementById("root");
+const bridge = window.clawdiConnect;
+if (!root) throw new Error("Clawdi connect root is missing.");
+if (!bridge) throw new Error("Clawdi connect bridge is unavailable.");
+createRoot(root).render(<ConnectApp bridge={bridge} />);

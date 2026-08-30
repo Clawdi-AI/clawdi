@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DesktopAgentType } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import {
@@ -21,6 +21,7 @@ import { DesktopCliService } from "./native-cli";
 const DEFAULT_WEB_URL = "https://cloud.clawdi.ai";
 const cli = new DesktopCliService();
 let mainWindow: BrowserWindow | null = null;
+let connectWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 
@@ -36,7 +37,14 @@ async function startApplication(): Promise<void> {
 	registerIpc();
 	configurePermissions();
 	createTray();
-	await createMainWindow();
+	await createMainWindow(false);
+	try {
+		const state = await cli.bootstrapState();
+		if (state.auth.authenticated && state.daemon.running) showMainWindow();
+		else await showConnectWindow();
+	} catch {
+		await showConnectWindow();
+	}
 
 	app.on("activate", () => showMainWindow());
 	app.on("before-quit", () => {
@@ -46,18 +54,19 @@ async function startApplication(): Promise<void> {
 
 function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.bootstrapState, (event) =>
-		safeDesktopAction(event, "prepare the local runtime", () => cli.bootstrapState()),
+		safeConnectAction(event, "prepare the local runtime", () => cli.bootstrapState()),
 	);
 	ipcMain.handle(DESKTOP_IPC.detectAgents, (event) =>
-		safeDesktopAction(event, "inspect local Agents", () => cli.detectAgents()),
+		safeConnectAction(event, "inspect local Agents", () => cli.detectAgents()),
 	);
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
-		safeDesktopAction(event, "sign in", async () => {
+		safeConnectAction(event, "sign in", async () => {
 			const authorization = await cli.startAuthentication();
 			if (!authorization) return cli.bootstrapState();
 			const receiver = await createOAuthCallbackReceiver(
 				authorization.redirectUri,
 				authorization.expiresAt,
+				authorization.authorizationUrl,
 			);
 			try {
 				await shell.openExternal(authorization.authorizationUrl);
@@ -69,19 +78,28 @@ function registerIpc(): void {
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawAgentTypes: unknown) =>
-		safeDesktopAction(event, "connect the selected Agents", async () => {
+		safeConnectAction(event, "connect the selected Agents", async () => {
 			return cli.connectAgents(readAgentTypes(rawAgentTypes));
 		}),
 	);
+	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
+		safeConnectAction(event, "open the dashboard", async () => {
+			showMainWindow();
+			connectWindow?.hide();
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
+		safeDashboardAction(event, "open Connect Agent", showConnectWindow),
+	);
 }
 
-async function safeDesktopAction<T>(
+async function safeConnectAction<T>(
 	event: IpcMainInvokeEvent,
 	label: string,
 	action: () => Promise<T>,
 ): Promise<T> {
 	try {
-		assertTrustedSender(event);
+		assertConnectSender(event);
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
@@ -89,7 +107,21 @@ async function safeDesktopAction<T>(
 	}
 }
 
-function assertTrustedSender(event: IpcMainInvokeEvent): void {
+async function safeDashboardAction<T>(
+	event: IpcMainInvokeEvent,
+	label: string,
+	action: () => Promise<T>,
+): Promise<T> {
+	try {
+		assertDashboardSender(event);
+		return await action();
+	} catch (error) {
+		console.error(`Could not ${label}`, error);
+		throw new Error(`Could not ${label}. Try again.`);
+	}
+}
+
+function assertDashboardSender(event: IpcMainInvokeEvent): void {
 	if (event.sender !== mainWindow?.webContents) throw new Error("Unexpected desktop client.");
 	const senderUrl = event.senderFrame?.url;
 	if (!senderUrl) throw new Error("Unexpected desktop client URL.");
@@ -101,6 +133,18 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 	}
 	if (senderOrigin !== new URL(desktopWebUrl()).origin) {
 		throw new Error("Unexpected desktop client origin.");
+	}
+}
+
+function assertConnectSender(event: IpcMainInvokeEvent): void {
+	if (event.sender !== connectWindow?.webContents)
+		throw new Error("Unexpected Connect Agent client.");
+	const senderUrl = event.senderFrame?.url;
+	if (!senderUrl) throw new Error("Unexpected Connect Agent URL.");
+	const expected = pathToFileURL(connectRendererPath());
+	const sender = new URL(senderUrl);
+	if (sender.protocol !== expected.protocol || sender.pathname !== expected.pathname) {
+		throw new Error("Unexpected Connect Agent URL.");
 	}
 }
 
@@ -122,8 +166,8 @@ function configurePermissions(): void {
 	});
 }
 
-async function createMainWindow(): Promise<void> {
-	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "preload.cjs");
+async function createMainWindow(showOnReady = true): Promise<void> {
+	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "shell-preload.cjs");
 	const icon = desktopIcon();
 	const window = new BrowserWindow({
 		width: 1320,
@@ -149,7 +193,7 @@ async function createMainWindow(): Promise<void> {
 		return { action: "deny" };
 	});
 	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
-		if (new URL(url).origin !== trustedOrigin) {
+		if (urlOrigin(url) !== trustedOrigin) {
 			event.preventDefault();
 			if (isSafeExternalUrl(url)) void shell.openExternal(url);
 		}
@@ -161,12 +205,57 @@ async function createMainWindow(): Promise<void> {
 		event.preventDefault();
 		window.hide();
 	});
-	window.once("ready-to-show", () => window.show());
+	if (showOnReady) window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		if (mainWindow === window) mainWindow = null;
 	});
 
 	await window.loadURL(webUrl);
+}
+
+async function showConnectWindow(): Promise<void> {
+	if (connectWindow) {
+		if (connectWindow.isMinimized()) connectWindow.restore();
+		connectWindow.show();
+		connectWindow.focus();
+		return;
+	}
+
+	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "connect-preload.cjs");
+	const icon = desktopIcon();
+	const window = new BrowserWindow({
+		width: 560,
+		height: 680,
+		minWidth: 480,
+		minHeight: 560,
+		show: false,
+		backgroundColor: "#faf9f7",
+		title: "Connect Agent",
+		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
+		...(icon.isEmpty() ? {} : { icon }),
+		webPreferences: {
+			preload,
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	});
+	connectWindow = window;
+	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	window.webContents.on("will-navigate", (event, url) => {
+		if (new URL(url).pathname !== pathToFileURL(connectRendererPath()).pathname) {
+			event.preventDefault();
+		}
+	});
+	window.once("ready-to-show", () => window.show());
+	window.on("closed", () => {
+		if (connectWindow === window) connectWindow = null;
+	});
+	await window.loadFile(connectRendererPath());
+}
+
+function connectRendererPath(): string {
+	return join(app.getAppPath(), "dist", "renderer.html");
 }
 
 function createTray(): void {
@@ -179,10 +268,7 @@ function createTray(): void {
 			{ label: "Open Clawdi", click: showMainWindow },
 			{
 				label: "Connect Agent",
-				click: () => {
-					showMainWindow();
-					mainWindow?.webContents.send(DESKTOP_IPC.openConnectWizard);
-				},
+				click: () => void showConnectWindow(),
 			},
 			{ type: "separator" },
 			{
@@ -199,7 +285,7 @@ function createTray(): void {
 
 function showMainWindow(): void {
 	if (!mainWindow) {
-		void createMainWindow();
+		void createMainWindow(true);
 		return;
 	}
 	if (mainWindow.isMinimized()) mainWindow.restore();
@@ -241,11 +327,22 @@ function desktopIcon() {
 function isSafeExternalUrl(raw: string): boolean {
 	try {
 		const url = new URL(raw);
+		const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
 		return (
-			(url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+			(url.protocol === "https:" || (url.protocol === "http:" && loopback)) &&
+			!url.username &&
+			!url.password
 		);
 	} catch {
 		return false;
+	}
+}
+
+function urlOrigin(raw: string): string | null {
+	try {
+		return new URL(raw).origin;
+	} catch {
+		return null;
 	}
 }
 
@@ -257,17 +354,22 @@ interface OAuthCallbackReceiver {
 async function createOAuthCallbackReceiver(
 	redirectUri: string,
 	expiresAt: string,
+	authorizationUrl: string,
 ): Promise<OAuthCallbackReceiver> {
 	const redirect = new URL(redirectUri);
+	const expectedState = new URL(authorizationUrl).searchParams.get("state")?.trim();
+	const port = Number(redirect.port);
 	if (
 		redirect.protocol !== "http:" ||
 		(redirect.hostname !== "127.0.0.1" && redirect.hostname !== "localhost") ||
-		!redirect.port ||
+		!Number.isInteger(port) ||
+		port < 1 ||
+		port > 65_535 ||
+		!expectedState ||
 		redirect.pathname !== "/oauth/callback"
 	) {
 		throw new Error("Clawdi returned an unsupported browser callback.");
 	}
-	const port = Number(redirect.port);
 	const timeoutMs = Math.max(1, Date.parse(expiresAt) - Date.now());
 	let resolveCallback: (value: string) => void = () => undefined;
 	let rejectCallback: (reason: Error) => void = () => undefined;
@@ -281,13 +383,29 @@ async function createOAuthCallbackReceiver(
 			response.writeHead(404).end();
 			return;
 		}
-		response.writeHead(200, {
+		if (requestUrl.searchParams.get("state") !== expectedState) {
+			response.writeHead(400, {
+				"Content-Type": "text/plain; charset=utf-8",
+				"Cache-Control": "no-store",
+			});
+			response.end("Invalid authorization state.");
+			return;
+		}
+		const accepted = Boolean(requestUrl.searchParams.get("code"));
+		response.writeHead(accepted ? 200 : 400, {
 			"Content-Type": "text/html; charset=utf-8",
 			"Cache-Control": "no-store",
+			"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+			"Referrer-Policy": "no-referrer",
+			"X-Content-Type-Options": "nosniff",
 		});
 		response.end(
 			"<!doctype html><meta charset=utf-8><title>Clawdi</title>" +
-				"<body style='font:16px system-ui;padding:48px'>Sign-in complete. Return to Clawdi.</body>",
+				`<body style='font:16px system-ui;padding:48px'>${
+					accepted
+						? "Sign-in complete. Return to Clawdi."
+						: "Sign-in was not completed. Return to Clawdi and try again."
+				}</body>`,
 		);
 		resolveCallback(requestUrl.toString());
 	});

@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  deployments: read
 
 concurrency:
   group: desktop-preview-${{ github.event.pull_request.number }}
@@ -29,52 +28,19 @@ jobs:
 
       - uses: ./.github/actions/setup-bun-ci
 
-      - name: Resolve the matching Web preview
-        id: web-preview
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const ref = context.payload.pull_request.head.sha;
-            for (let attempt = 0; attempt < 40; attempt += 1) {
-              const deployments = await github.rest.repos.listDeployments({
-                owner,
-                repo,
-                ref,
-                environment: "Preview",
-                per_page: 10,
-              });
-              for (const deployment of deployments.data) {
-                const statuses = await github.rest.repos.listDeploymentStatuses({
-                  owner,
-                  repo,
-                  deployment_id: deployment.id,
-                  per_page: 10,
-                });
-                const ready = statuses.data.find(
-                  (status) => status.state === "success" && status.environment_url,
-                );
-                if (ready?.environment_url) {
-                  core.setOutput("url", ready.environment_url);
-                  return;
-                }
-              }
-              await new Promise((resolve) => setTimeout(resolve, 15000));
-            }
-            core.setFailed("The matching Web preview was not ready within ten minutes.");
+      - name: Verify Desktop
+        run: |
+          bun run --cwd apps/desktop typecheck
+          bun x biome ci apps/desktop packages/shared/src/desktop.ts
 
       - name: Build unsigned preview DMG
-        env:
-          PREVIEW_WEB_URL: ${{ steps.web-preview.outputs.url }}
         run: |
           bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
           bun x electron-builder \
             --projectDir apps/desktop \
             --mac dmg \
-            --arm64 \
-            --config.extraMetadata.clawdiWebUrl="$PREVIEW_WEB_URL"
+            --arm64
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
           test "${#dmg[@]}" -eq 1

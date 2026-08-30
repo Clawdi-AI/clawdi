@@ -2,7 +2,7 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { IconChip } from "@/components/icon-chip";
@@ -43,10 +43,6 @@ export function NewAgentButton({
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
 
-	useEffect(() => {
-		return desktopBridge?.onOpenConnectWizard(() => setConnectOpen(true));
-	}, [desktopBridge]);
-
 	function handleClick() {
 		if (checkingDeployAccess) return;
 		if (canDeployOnClawdi || deployAccessError) {
@@ -58,6 +54,10 @@ export function NewAgentButton({
 
 	function chooseConnect() {
 		setChooserOpen(false);
+		if (desktopBridge) {
+			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
+			return;
+		}
 		setConnectOpen(true);
 	}
 

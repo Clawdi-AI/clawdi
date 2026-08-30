@@ -1,8 +1,9 @@
 {
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
-		"lib": ["ES2022"],
-		"types": ["node", "electron"]
+		"lib": ["ES2022", "DOM"],
+		"jsx": "react-jsx",
+		"types": ["node", "bun", "electron", "react", "react-dom"]
 	},
-	"include": ["src/**/*.ts", "scripts/**/*.ts"]
+	"include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts"]
 }

@@ -43,10 +43,14 @@ export interface DesktopConnectResult {
 	daemonInstalled: boolean;
 }
 
-export interface ClawdiDesktopBridge {
+export interface ClawdiDesktopConnectBridge {
 	getBootstrapState(): Promise<DesktopBootstrapState>;
 	authenticate(): Promise<DesktopBootstrapState>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
 	connectAgents(agentTypes: DesktopAgentType[]): Promise<DesktopConnectResult>;
-	onOpenConnectWizard(listener: () => void): () => void;
+	openDashboard(): Promise<void>;
+}
+
+export interface ClawdiDesktopShellBridge {
+	openConnectWizard(): Promise<void>;
 }

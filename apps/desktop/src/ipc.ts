@@ -4,4 +4,5 @@ export const DESKTOP_IPC = {
 	detectAgents: "clawdi:detect-agents",
 	connectAgents: "clawdi:connect-agents",
 	openConnectWizard: "clawdi:open-connect-wizard",
+	openDashboard: "clawdi:open-dashboard",
 } as const;
