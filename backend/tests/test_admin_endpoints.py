@@ -210,10 +210,12 @@ async def _replace_managed_provider_runtime_metadata(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("api_mode", ["codex_responses", "openai_responses"])
 async def test_admin_v1_managed_provider_supports_metadata_only_repair(
     admin_client,
     db_session,
     seed_user,
+    api_mode: str,
 ):
     from sqlalchemy import select
 
@@ -228,12 +230,12 @@ async def test_admin_v1_managed_provider_supports_metadata_only_repair(
         type="custom_openai_compatible",
         label="Legacy managed provider",
         base_url=old_url,
-        api_mode=MANAGED_AI_PROVIDER_API_MODE,
+        api_mode=api_mode,
         auth_type="api_key",
         auth_ref=None,
         auth_metadata={"source": "managed", "profile": "default"},
         managed_by="clawdi",
-        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
         models=[{"id": "gpt-5.6-sol"}],
     )
     db_session.add(provider)
@@ -271,6 +273,8 @@ async def test_admin_v1_managed_provider_supports_metadata_only_repair(
 
     await db_session.refresh(provider)
     assert provider.base_url == new_url
+    assert provider.api_mode == api_mode
+    assert provider.runtime_env_name == "CLAWDI_MANAGED_OPENAI_API_KEY"
     assert provider.auth_type == "api_key"
     assert provider.auth_ref is None
     assert provider.auth_metadata == {"source": "managed", "profile": "default"}

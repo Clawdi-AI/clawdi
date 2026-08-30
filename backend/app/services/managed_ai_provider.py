@@ -57,7 +57,13 @@ MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY = "clawdi_provisioning_discovery_key"
 
 _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 # Keep the exact pairings emitted by released admin upserts, not two independent allowlists.
-_SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS = frozenset(
+_SUPPORTED_V1_MANAGED_PROVIDER_CONTRACTS = frozenset(
+    {
+        (V1_MANAGED_AI_PROVIDER_API_MODE, _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV),
+        ("codex_responses", _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV),
+    }
+)
+_SUPPORTED_V2_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS = frozenset(
     {
         ("openai_chat", _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV),
         ("openai_chat", MANAGED_AI_PROVIDER_RUNTIME_ENV),
@@ -155,11 +161,17 @@ def validate_managed_provider_base_url(base_url: str) -> None:
 def is_supported_managed_provider_runtime_contract(provider: AiProvider) -> bool:
     """Return whether a managed provider is safe for metadata-only admin writes."""
 
+    runtime_contract = (provider.api_mode, provider.runtime_env_name)
+    if provider.provider_id == V1_MANAGED_AI_PROVIDER_ID:
+        supported_runtime_contract = runtime_contract in _SUPPORTED_V1_MANAGED_PROVIDER_CONTRACTS
+    else:
+        supported_runtime_contract = (
+            is_v2_deployment_managed_provider_id(provider.provider_id)
+            and runtime_contract in _SUPPORTED_V2_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS
+        )
     return (
-        is_runtime_metadata_managed_provider_id(provider.provider_id)
+        supported_runtime_contract
         and provider.type == MANAGED_AI_PROVIDER_TYPE
-        and (provider.api_mode, provider.runtime_env_name)
-        in _SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS
         and provider.auth_type == "api_key"
         and provider.auth_ref is None
         and (provider.auth_metadata or {}).get("source") == "managed"
@@ -301,6 +313,12 @@ def replace_managed_provider_runtime_metadata(
         raise ValueError("unsupported runtime metadata managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
+    if provider.provider_id == V1_MANAGED_AI_PROVIDER_ID:
+        if provider.base_url == normalized_base_url and provider.models == models:
+            return False
+        provider.base_url = normalized_base_url
+        provider.models = models
+        return True
     if (
         provider.type == MANAGED_AI_PROVIDER_TYPE
         and provider.api_mode == MANAGED_AI_PROVIDER_API_MODE
