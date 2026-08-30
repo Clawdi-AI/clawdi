@@ -22,6 +22,7 @@ database migration, CI, and implementation details.
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 - Session search keeps its controls visible in long conversations, supports keyboard match navigation, shows clearer loading feedback, and gives message matches more context in result cards.
 - The public README now focuses on the two run paths, current product capabilities, quickstart, and self-hosting entry points.
+- The product tour now shows messaging Channels and explains the separate bot, Agent link, and paired-chat boundaries.
 
 ### Fixed
 
