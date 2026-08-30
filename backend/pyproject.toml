@@ -298,6 +298,7 @@ strict = [
     "app/services/session_search.py",
     "app/services/sharing.py",
     "app/services/skill_installer.py",
+    "app/services/skill_search.py",
     "app/services/sync_events.py",
     "app/services/tar_utils.py",
     "app/services/telegram_rate_limiter.py",

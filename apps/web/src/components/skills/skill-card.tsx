@@ -10,8 +10,10 @@ import {
 	HeroCardSkeleton,
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
+import { skillSearchSupportingText } from "@/components/skills/skill-search";
 import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +45,7 @@ export function SkillCard({
 	sourceLabel,
 	provenanceLabel,
 	skillLink,
+	searchQuery,
 }: {
 	skill: SkillCardEntity;
 	/** Real Cloud entity backing navigation/selection/Project mutations. */
@@ -59,6 +62,8 @@ export function SkillCard({
 	provenanceLabel?: string | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
+	/** Collection-local search context; highlights and explains the matching field. */
+	searchQuery?: string;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!cloudSkill?.project_id;
@@ -109,7 +114,9 @@ export function SkillCard({
 					{id.emoji}
 				</IconChip>
 			}
-			title={skill.name}
+			title={
+				searchQuery ? <SearchHighlightedText text={skill.name} query={searchQuery} /> : skill.name
+			}
 			badges={
 				<>
 					{showVersion && skill.version !== undefined ? (
@@ -124,7 +131,16 @@ export function SkillCard({
 					) : null}
 				</>
 			}
-			description={skill.description}
+			description={
+				searchQuery ? (
+					<SearchHighlightedText
+						text={skillSearchSupportingText(skill, searchQuery)}
+						query={searchQuery}
+					/>
+				) : (
+					skill.description
+				)
+			}
 			footer={[
 				provenanceLabel ? <span key="provenance">{provenanceLabel}</span> : null,
 				sourceLabel ? (
@@ -169,6 +185,7 @@ export function SkillCardGrid({
 	skillLink,
 	actionsFor,
 	showVersionFor,
+	searchQuery,
 }: {
 	skills: SkillSummary[];
 	isLoading: boolean;
@@ -185,6 +202,7 @@ export function SkillCardGrid({
 	skillLink?: SkillLinkBuilder;
 	actionsFor?: (skill: SkillSummary) => ReactNode;
 	showVersionFor?: (skill: SkillSummary) => boolean;
+	searchQuery?: string;
 }) {
 	if (isLoading) {
 		return (
@@ -219,6 +237,7 @@ export function SkillCardGrid({
 						uninstallPending={uninstallPending}
 						sourceLabel={sourceLabelFor?.(skill) ?? null}
 						skillLink={skillLink}
+						searchQuery={searchQuery}
 					/>
 				);
 			})}

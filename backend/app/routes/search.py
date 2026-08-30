@@ -38,6 +38,11 @@ from app.services.session_search import (
     session_search_matches,
 )
 from app.services.sharing import safe_owner_display
+from app.services.skill_search import (
+    skill_search_filter,
+    skill_search_rank,
+    skill_search_subtitle,
+)
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -238,7 +243,6 @@ def _memory_search_hit(item: MemoryItem, query: str) -> SearchHit | None:
 
 
 async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
-    needle = like_needle(query)
     visible_project_ids = await project_ids_visible_to(db, auth)
     stmt = (
         select(Skill)
@@ -246,14 +250,8 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
             Skill.is_active,
             Skill.project_id.in_(visible_project_ids),
         )
-        .where(
-            or_(
-                Skill.skill_key.ilike(needle, escape="\\"),
-                Skill.name.ilike(needle, escape="\\"),
-                Skill.description.ilike(needle, escape="\\"),
-            )
-        )
-        .order_by(Skill.skill_key)
+        .where(skill_search_filter(query))
+        .order_by(skill_search_rank(query), Skill.skill_key, Skill.project_id, Skill.id)
         .limit(TYPE_LIMIT)
     )
     rows = (await db.execute(stmt)).scalars().all()
@@ -262,7 +260,7 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
             type="skill",
             id=str(s.id),
             title=s.name or s.skill_key,
-            subtitle=s.description,
+            subtitle=skill_search_subtitle(s, query),
             # Include the project so a multi-agent account where the
             # same `skill_key` exists in two projects routes the
             # palette click to the row that actually matched. The
@@ -371,22 +369,42 @@ def _project_search_subtitle(
 
 
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    exact = escape_like(query)
+    prefix = f"{exact}%"
     needle = like_needle(query)
     visible_project_ids = await project_ids_visible_to(db, auth)
-    stmt = (
-        select(Vault)
-        .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
+    visible_vault = (
+        select(VaultProjectAttachment.id)
         .where(
+            VaultProjectAttachment.vault_id == Vault.id,
             VaultProjectAttachment.project_id.in_(visible_project_ids),
         )
+        .exists()
+    )
+    visibility = (
+        visible_vault
+        if auth.bound_environment_id is not None
+        else or_(Vault.user_id == auth.user_id, visible_vault)
+    )
+    rank = case(
+        (Vault.name.ilike(exact, escape="\\"), 0),
+        (Vault.slug.ilike(exact, escape="\\"), 1),
+        (Vault.name.ilike(prefix, escape="\\"), 2),
+        (Vault.slug.ilike(prefix, escape="\\"), 3),
+        (Vault.name.ilike(needle, escape="\\"), 4),
+        (Vault.slug.ilike(needle, escape="\\"), 5),
+        else_=6,
+    )
+    stmt = (
+        select(Vault)
+        .where(visibility)
         .where(
             or_(
                 Vault.slug.ilike(needle, escape="\\"),
                 Vault.name.ilike(needle, escape="\\"),
             )
         )
-        .distinct()
-        .order_by(Vault.slug)
+        .order_by(rank, Vault.name, Vault.id)
         .limit(TYPE_LIMIT)
     )
     rows = (await db.execute(stmt)).scalars().all()
@@ -395,7 +413,11 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
             type="vault",
             id=str(v.id),
             title=v.name or v.slug,
-            subtitle="encrypted secrets",
+            subtitle=(
+                v.slug
+                if query.casefold() in v.slug.casefold() and v.slug.casefold() != v.name.casefold()
+                else "encrypted secrets"
+            ),
             href=f"/vaults/{quote(v.slug, safe='')}?vault={v.id}",
         )
         for v in rows

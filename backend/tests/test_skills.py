@@ -1419,6 +1419,64 @@ async def test_list_skills_order_and_etag_are_stable_across_pages(
 
 
 @pytest.mark.asyncio
+async def test_skill_search_uses_shared_relevance_and_description_excerpt(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    project_id: str,
+):
+    token = f"deploy-{uuid.uuid4().hex[:10]}"
+    exact_name = Skill(
+        user_id=seed_user.id,
+        project_id=uuid.UUID(project_id),
+        skill_key=f"z-{token}",
+        name=token,
+        description="Exact display-name match",
+        content_hash="a" * 64,
+    )
+    exact_key = Skill(
+        user_id=seed_user.id,
+        project_id=uuid.UUID(project_id),
+        skill_key=token,
+        name="Key match",
+        description="Exact key match",
+        content_hash="b" * 64,
+    )
+    description_match = Skill(
+        user_id=seed_user.id,
+        project_id=uuid.UUID(project_id),
+        skill_key=f"supporting-{uuid.uuid4().hex[:10]}",
+        name="Description match",
+        description=f"{'before ' * 40}{token}{' after' * 40}",
+        content_hash="c" * 64,
+    )
+    db_session.add_all([description_match, exact_key, exact_name])
+    await db_session.commit()
+
+    listed = await client.get(
+        "/v1/skills",
+        params={"project_id": project_id, "q": token},
+    )
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["items"]] == [
+        str(exact_name.id),
+        str(exact_key.id),
+        str(description_match.id),
+    ]
+
+    searched = await client.get("/v1/search", params={"q": token})
+    assert searched.status_code == 200, searched.text
+    hits = [hit for hit in searched.json()["results"] if hit["type"] == "skill"]
+    assert [hit["id"] for hit in hits] == [
+        str(exact_name.id),
+        str(exact_key.id),
+        str(description_match.id),
+    ]
+    assert token in hits[-1]["subtitle"]
+    assert len(hits[-1]["subtitle"]) <= 166
+
+
+@pytest.mark.asyncio
 async def test_list_skills_etag_covers_project_and_machine_metadata(
     client: httpx.AsyncClient,
     db_session,

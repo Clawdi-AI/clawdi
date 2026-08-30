@@ -152,7 +152,8 @@ async def test_recipient_can_read_shared_project_skill_detail_and_search(
         vault_search = await client.get("/v1/search", params={"q": f"shared-vault-{nonce}"})
         assert vault_search.status_code == 200, vault_search.text
         vault_hits = [h for h in vault_search.json()["results"] if h["type"] == "vault"]
-        assert any(h["title"] == f"Shared Vault {nonce}" for h in vault_hits), vault_search.json()
+        vault_hit = next(h for h in vault_hits if h["title"] == f"Shared Vault {nonce}")
+        assert vault_hit["subtitle"] == f"shared-vault-{nonce}"
     finally:
         await db_session.delete(shared)
         await db_session.delete(owner)

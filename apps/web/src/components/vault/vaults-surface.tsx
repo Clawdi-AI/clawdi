@@ -15,6 +15,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { displayProjectName } from "@/components/projects/project-metadata";
+import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,6 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
+import { vaultSearchRank, vaultSearchSupportingText } from "@/components/vault/vault-search";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
@@ -126,10 +128,10 @@ export function VaultsSurface({
 	);
 	const hasActiveFilter = search.trim().length > 0 || projectFilter !== "all";
 	const filtered = useMemo(() => {
-		const q = search.trim().toLowerCase();
+		const q = search.trim();
 		const rows = vaultsForSelectedProject(items, projectFilter);
 		if (!q) return rows;
-		return rows.filter((v) => [v.name, v.slug].join(" ").toLowerCase().includes(q));
+		return rows.filter((vault) => vaultSearchRank(vault, q) !== null);
 	}, [items, search, projectFilter]);
 	// Only projects that actually hold a vault — an empty filter option is
 	// noise. Ranked by how many vaults they hold, busiest first.
@@ -158,8 +160,14 @@ export function VaultsSurface({
 	// where the curation work starts.
 	const byKeysDesc = (a: VaultSummary, b: VaultSummary) =>
 		(b.item_count ?? 0) - (a.item_count ?? 0) || a.name.localeCompare(b.name);
-	const mine = filtered.filter((v) => v.is_owner !== false).sort(byKeysDesc);
-	const shared = filtered.filter((v) => v.is_owner === false).sort(byKeysDesc);
+	const bySearchRank = (a: VaultSummary, b: VaultSummary) =>
+		(vaultSearchRank(a, search) ?? Number.MAX_SAFE_INTEGER) -
+			(vaultSearchRank(b, search) ?? Number.MAX_SAFE_INTEGER) ||
+		a.name.localeCompare(b.name) ||
+		a.id.localeCompare(b.id);
+	const sortVaults = search.trim() ? bySearchRank : byKeysDesc;
+	const mine = filtered.filter((v) => v.is_owner !== false).sort(sortVaults);
+	const shared = filtered.filter((v) => v.is_owner === false).sort(sortVaults);
 
 	return (
 		<div
@@ -261,6 +269,7 @@ export function VaultsSurface({
 								projectNamesUnavailable={projectNamesUnavailable}
 								visibleProjectIds={visibleProjectIds}
 								navigationScope={navigationScope}
+								searchQuery={search.trim() || undefined}
 							/>
 						))}
 					</div>
@@ -280,6 +289,7 @@ export function VaultsSurface({
 										visibleProjectIds={visibleProjectIds}
 										navigationScope={navigationScope}
 										shared
+										searchQuery={search.trim() || undefined}
 									/>
 								))}
 							</div>
@@ -299,6 +309,7 @@ export function VaultCard({
 	navigationScope,
 	shared = false,
 	actions,
+	searchQuery,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
@@ -307,6 +318,7 @@ export function VaultCard({
 	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
 	actions?: ReactNode;
+	searchQuery?: string;
 }) {
 	const api = useApi();
 	const itemProjectId =
@@ -350,6 +362,7 @@ export function VaultCard({
 	) : (
 		formatResourceCount(keyCount, "key")
 	);
+	const searchSupportingText = searchQuery ? vaultSearchSupportingText(vault, searchQuery) : null;
 
 	return (
 		<HeroCard
@@ -363,7 +376,14 @@ export function VaultCard({
 					) : null}
 				</IconChip>
 			}
-			title={vault.name}
+			title={
+				searchQuery ? <SearchHighlightedText text={vault.name} query={searchQuery} /> : vault.name
+			}
+			description={
+				searchSupportingText ? (
+					<SearchHighlightedText text={searchSupportingText} query={searchQuery ?? ""} />
+				) : undefined
+			}
 			footer={[
 				keyCountLabel,
 				usedBy.length > 0 ? (
