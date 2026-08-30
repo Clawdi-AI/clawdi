@@ -268,10 +268,18 @@ class Session(Base, TimestampMixin):
     related_refs: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
 
 
+SESSION_SEARCH_CHUNK_BODY_CHARACTERS = 16_000
+SESSION_SEARCH_CHUNK_OVERLAP_CHARACTERS = 2_000
+SESSION_SEARCH_CHUNK_MAX_CHARACTERS = (
+    SESSION_SEARCH_CHUNK_BODY_CHARACTERS + SESSION_SEARCH_CHUNK_OVERLAP_CHARACTERS
+)
+
+
 class SessionMessageSearch(Base):
     __tablename__ = "session_message_search"
     __table_args__ = (
         CheckConstraint("position >= 0", name="ck_session_message_search_position"),
+        CheckConstraint("chunk_index >= 0", name="ck_session_message_search_chunk_index"),
         CheckConstraint(
             "role IN ('user', 'assistant')",
             name="ck_session_message_search_role",
@@ -286,7 +294,12 @@ class SessionMessageSearch(Base):
         ),
         Index(
             "ix_session_message_search_content_fts",
-            text("to_tsvector('simple'::regconfig, content)"),
+            text(
+                "CASE WHEN char_length(content) <= "
+                f"{SESSION_SEARCH_CHUNK_MAX_CHARACTERS} "
+                "THEN to_tsvector('simple'::regconfig, content) "
+                "ELSE to_tsvector('simple'::regconfig, ''::text) END"
+            ),
             postgresql_using="gin",
         ),
     )
@@ -306,6 +319,12 @@ class SessionMessageSearch(Base):
     )
     content_revision: Mapped[str] = mapped_column(String(80), primary_key=True, nullable=False)
     position: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        nullable=False,
+        server_default=text("0"),
+    )
     role: Mapped[Literal["user", "assistant"]] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
 

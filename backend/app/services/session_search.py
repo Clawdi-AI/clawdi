@@ -7,7 +7,18 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import String, case, cast, delete, func, literal, or_, select, update
+from sqlalchemy import (
+    String,
+    case,
+    cast,
+    delete,
+    func,
+    literal,
+    literal_column,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
@@ -18,7 +29,13 @@ from app.core.query_utils import (
     text_search_document,
     websearch_query,
 )
-from app.models.session import Session, SessionEventChunk, SessionMessageSearch
+from app.models.session import (
+    SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
+    SESSION_SEARCH_CHUNK_MAX_CHARACTERS,
+    Session,
+    SessionEventChunk,
+    SessionMessageSearch,
+)
 from app.schemas.session import (
     SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
@@ -136,12 +153,36 @@ def _searchable_text(content: str) -> str:
     return content.replace("\x00", "\ufffd")
 
 
+def session_search_chunks(content: str) -> list[str]:
+    """Split one message into bounded, overlapping search documents."""
+    if len(content) <= SESSION_SEARCH_CHUNK_MAX_CHARACTERS:
+        return [content]
+
+    chunks: list[str] = []
+    start = 0
+    while start + SESSION_SEARCH_CHUNK_MAX_CHARACTERS < len(content):
+        chunks.append(content[start : start + SESSION_SEARCH_CHUNK_MAX_CHARACTERS])
+        start += SESSION_SEARCH_CHUNK_BODY_CHARACTERS
+    chunks.append(content[start:])
+    return chunks
+
+
+def _message_search_document():
+    content = SessionMessageSearch.content
+    return case(
+        (
+            func.char_length(content) <= literal_column(str(SESSION_SEARCH_CHUNK_MAX_CHARACTERS)),
+            text_search_document((content,)),
+        ),
+        else_=text_search_document((literal_column("''::text"),)),
+    )
+
+
 def _message_match_expression(query: str):
-    search_document = text_search_document((SessionMessageSearch.content,))
     return lexical_search_filter(
         query,
         (SessionMessageSearch.content,),
-        search_vector=search_document,
+        search_vector=_message_search_document(),
     )
 
 
@@ -164,7 +205,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     message_match = _message_match_expression(query)
     phrase_match = SessionMessageSearch.content.ilike(like_needle(query), escape="\\")
     lexical_rank = func.ts_rank_cd(
-        text_search_document((SessionMessageSearch.content,)),
+        _message_search_document(),
         websearch_query(query),
     )
     candidates = (
@@ -172,6 +213,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             SessionMessageSearch.session_id.label("session_id"),
             SessionMessageSearch.content_revision.label("content_revision"),
             SessionMessageSearch.position.label("position"),
+            SessionMessageSearch.chunk_index.label("chunk_index"),
             SessionMessageSearch.content.label("content"),
             SessionMessageSearch.role.label("role"),
             case(
@@ -206,6 +248,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             candidates.c.session_id,
             candidates.c.score.desc(),
             candidates.c.position.asc(),
+            candidates.c.chunk_index.asc(),
         )
         .subquery("best_session_message_match")
     )
@@ -280,25 +323,30 @@ async def session_message_search_navigation(
         return None
 
     message_match = _message_match_expression(query)
-    ordered_matches_query = select(
-        SessionMessageSearch.position.label("position"),
-        func.row_number().over(order_by=SessionMessageSearch.position).label("match_index"),
-        func.count().over().label("match_total"),
-        func.lag(SessionMessageSearch.position)
-        .over(order_by=SessionMessageSearch.position)
-        .label("previous_position"),
-        func.lead(SessionMessageSearch.position)
-        .over(order_by=SessionMessageSearch.position)
-        .label("next_position"),
-    ).where(
+    matching_positions_query = select(SessionMessageSearch.position.label("position")).where(
         SessionMessageSearch.user_id == session.user_id,
         SessionMessageSearch.session_id == session.id,
         SessionMessageSearch.content_revision == document_revision,
         message_match,
     )
     if roles is not None:
-        ordered_matches_query = ordered_matches_query.where(SessionMessageSearch.role.in_(roles))
-    ordered_matches = ordered_matches_query.subquery("ordered_session_message_matches")
+        matching_positions_query = matching_positions_query.where(
+            SessionMessageSearch.role.in_(roles)
+        )
+    matching_positions = matching_positions_query.group_by(SessionMessageSearch.position).subquery(
+        "matching_session_message_positions"
+    )
+    ordered_matches = select(
+        matching_positions.c.position,
+        func.row_number().over(order_by=matching_positions.c.position).label("match_index"),
+        func.count().over().label("match_total"),
+        func.lag(matching_positions.c.position)
+        .over(order_by=matching_positions.c.position)
+        .label("previous_position"),
+        func.lead(matching_positions.c.position)
+        .over(order_by=matching_positions.c.position)
+        .label("next_position"),
+    ).subquery("ordered_session_message_matches")
     navigation_query = select(
         ordered_matches.c.position,
         ordered_matches.c.match_index,
@@ -371,10 +419,12 @@ def _add_documents(
                 generation_id=generation_id,
                 content_revision=content_revision,
                 position=message.position,
+                chunk_index=chunk_index,
                 role=message.role,
-                content=message.content,
+                content=content,
             )
             for message in messages
+            for chunk_index, content in enumerate(session_search_chunks(message.content))
         ]
     )
 
