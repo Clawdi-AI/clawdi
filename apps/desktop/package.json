@@ -37,7 +37,7 @@
 		"directories": {
 			"output": "release"
 		},
-		"afterPack": "scripts/after-pack.mjs",
+		"afterPack": "apps/desktop/scripts/after-pack.mjs",
 		"files": [
 			"dist/**/*",
 			"package.json"
