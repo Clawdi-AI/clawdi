@@ -48,6 +48,16 @@ def websearch_query(query: str) -> ColumnElement[Any]:
     return func.websearch_to_tsquery(_SIMPLE_TEXT_SEARCH_CONFIG, query)
 
 
+def text_search_document(
+    fields: Sequence[SQLColumnExpression[Any]],
+) -> ColumnElement[Any]:
+    """Build the canonical simple-config document used by filters and indexes."""
+    if not fields:
+        raise ValueError("text search requires at least one field")
+    source = fields[0] if len(fields) == 1 else func.concat_ws(" ", *fields)
+    return func.to_tsvector(_SIMPLE_TEXT_SEARCH_CONFIG, source)
+
+
 def lexical_search_filter(
     query: str,
     fields: Sequence[SQLColumnExpression[Any]],
@@ -60,10 +70,7 @@ def lexical_search_filter(
     )
     document = search_vector
     if document is None:
-        document = func.to_tsvector(
-            _SIMPLE_TEXT_SEARCH_CONFIG,
-            func.concat_ws(" ", *fields),
-        )
+        document = text_search_document(fields)
     return or_(literal_match, document.op("@@")(websearch_query(query)))
 
 
