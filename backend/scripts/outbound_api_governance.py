@@ -35,7 +35,6 @@ SDK_IMPORT_OWNERS: dict[str, str] = {
 # removed dependency root requires an explicit review of its owner and types.
 EXPECTED_THIRD_PARTY_IMPORT_ROOTS = frozenset(
     {
-        "anyio",
         "asyncpg",
         "boto3",
         "botocore",

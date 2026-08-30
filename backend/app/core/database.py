@@ -1,8 +1,9 @@
+import asyncio
+import logging
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import anyio
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, ExceptionContext
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
@@ -15,6 +16,8 @@ from app.services.metrics import (
     db_pool_checked_out,
     db_query_duration,
 )
+
+log = logging.getLogger(__name__)
 
 _QUERY_STARTED_AT = "clawdi_query_started_at"
 _CONNECTION_CHECKED_OUT_AT = "clawdi_connection_checked_out_at"
@@ -105,9 +108,33 @@ event.listen(engine.sync_engine.pool, "checkin", _connection_checkin)
 
 
 async def _close_session(session: AsyncSession) -> None:
-    """Return the connection before leaving a cancelled request scope."""
-    with anyio.CancelScope(shield=True):
-        await session.close()
+    """Return the connection before propagating request cancellation."""
+    close_task = asyncio.create_task(session.close())
+    cancellation: asyncio.CancelledError | None = None
+
+    while not close_task.done():
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+        except Exception as exc:
+            if cancellation is None:
+                raise
+
+            log.exception("Database session cleanup failed during request cancellation")
+            raise cancellation from exc
+
+    try:
+        close_task.result()
+    except Exception as exc:
+        if cancellation is None:
+            raise
+
+        log.exception("Database session cleanup failed during request cancellation")
+        raise cancellation from exc
+
+    if cancellation is not None:
+        raise cancellation
 
 
 class _CancellationSafeAsyncSession(AsyncSession):
