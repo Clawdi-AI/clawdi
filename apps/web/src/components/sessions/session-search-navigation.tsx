@@ -1,10 +1,16 @@
 "use client";
 
+import { SEARCH_QUERY_MIN_LENGTH, searchQueryLength } from "@clawdi/shared/consts";
 import { useRouter } from "@tanstack/react-router";
-import { ChevronDown, ChevronUp, LoaderCircle } from "lucide-react";
+import { ChevronDown, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { SearchInput } from "@/components/ui/search-input";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+	InputGroupText,
+} from "@/components/ui/input-group";
 import { agentSessionDetailLink } from "@/lib/agent-routes";
 import type { SessionMessagesPage } from "@/lib/api-schemas";
 import {
@@ -31,21 +37,20 @@ function MatchButton({
 }) {
 	if (!anchor) {
 		return (
-			<Button variant="ghost" size="icon-sm" disabled aria-label={label} title={label}>
+			<InputGroupButton size="icon-xs" disabled aria-label={label} title={label}>
 				{icon}
-			</Button>
+			</InputGroupButton>
 		);
 	}
 	return (
-		<Button
-			variant="ghost"
-			size="icon-sm"
+		<InputGroupButton
+			size="icon-xs"
 			onClick={() => onSelect(anchor)}
 			aria-label={label}
 			title={label}
 		>
 			{icon}
-		</Button>
+		</InputGroupButton>
 	);
 }
 
@@ -59,6 +64,7 @@ export function SessionSearchNavigation({
 	isSearching = false,
 	hasSearchError = false,
 	className,
+	maxLength,
 }: {
 	sessionId: string;
 	agentId?: string | null;
@@ -69,6 +75,7 @@ export function SessionSearchNavigation({
 	isSearching?: boolean;
 	hasSearchError?: boolean;
 	className?: string;
+	maxLength?: number;
 }) {
 	const router = useRouter();
 	const [draftQuery, setDraftQuery] = useState(query);
@@ -77,6 +84,7 @@ export function SessionSearchNavigation({
 		setDraftQuery((current) => (query && current.trim() === query ? current : query));
 	}, [query]);
 	const activeNavigation = isSearching || hasSearchError ? null : navigation;
+	const queryTooShort = Boolean(query) && searchQueryLength(query) < SEARCH_QUERY_MIN_LENGTH;
 	const navigate = (search: Record<string, unknown>) => {
 		if (agentId) {
 			void router.navigate({
@@ -119,69 +127,95 @@ export function SessionSearchNavigation({
 	return (
 		<nav
 			aria-label="Search messages"
-			className={cn(
-				"flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground",
-				className,
-			)}
+			className={cn("min-w-0 flex-1 text-xs text-muted-foreground", className)}
 		>
-			<SearchInput
-				value={draftQuery}
-				onChange={updateQuery}
-				placeholder="Search messages…"
-				ariaLabel="Search messages"
-				className="min-w-36 flex-1"
-				ariaKeyShortcuts="Enter Shift+Enter Escape"
-				onKeyDown={(event) => {
-					if (event.nativeEvent.isComposing) return;
-					if (event.key === "Escape" && draftQuery) {
+			<InputGroup className="min-w-36">
+				<InputGroupAddon>
+					<Search />
+				</InputGroupAddon>
+				<InputGroupInput
+					name="search"
+					aria-label="Search messages"
+					type="text"
+					value={draftQuery}
+					onChange={(event) => updateQuery(event.target.value)}
+					placeholder="Search messages…"
+					autoComplete="off"
+					aria-keyshortcuts="Enter Shift+Enter Escape"
+					maxLength={maxLength}
+					onKeyDown={(event) => {
+						if (event.nativeEvent.isComposing) return;
+						if (event.key === "Escape" && draftQuery) {
+							event.preventDefault();
+							updateQuery("");
+							return;
+						}
+						if (event.key !== "Enter") return;
+						const anchor = event.shiftKey ? activeNavigation?.previous : activeNavigation?.next;
+						if (!anchor) return;
 						event.preventDefault();
-						updateQuery("");
-						return;
-					}
-					if (event.key !== "Enter") return;
-					const anchor = event.shiftKey ? activeNavigation?.previous : activeNavigation?.next;
-					if (!anchor) return;
-					event.preventDefault();
-					navigateToMatch(anchor);
-				}}
-			/>
-			{query ? (
-				<div className="flex min-h-8 shrink-0 items-center gap-1 border-l pl-1.5">
-					<span
-						className="inline-flex min-w-10 shrink-0 items-center justify-center gap-1 tabular-nums text-foreground"
-						aria-live="polite"
-					>
-						{isSearching ? (
+						navigateToMatch(anchor);
+					}}
+				/>
+				{draftQuery ? (
+					<InputGroupAddon align="inline-end" className="gap-0.5">
+						{query ? (
+							<InputGroupText
+								className="w-16 shrink-0 justify-center truncate text-xs tabular-nums text-foreground"
+								aria-live="polite"
+							>
+								{queryTooShort ? (
+									<>
+										<span aria-hidden="true">{SEARCH_QUERY_MIN_LENGTH}+ chars</span>
+										<span className="sr-only">
+											Type at least {SEARCH_QUERY_MIN_LENGTH} characters
+										</span>
+									</>
+								) : isSearching ? (
+									<>
+										<LoaderCircle className="size-3.5 animate-spin" />
+										<span className="sr-only">Searching</span>
+									</>
+								) : null}
+								{queryTooShort ? null : hasSearchError ? (
+									"Unavailable"
+								) : isSearching ? null : activeNavigation ? (
+									`${activeNavigation.index} / ${activeNavigation.total}`
+								) : (
+									<>
+										<span aria-hidden="true">0 / 0</span>
+										<span className="sr-only">No matches</span>
+									</>
+								)}
+							</InputGroupText>
+						) : null}
+						{query ? (
 							<>
-								<LoaderCircle className="size-3.5 animate-spin" />
-								<span className="sr-only">Searching</span>
+								<MatchButton
+									label="Previous match"
+									anchor={activeNavigation?.previous}
+									onSelect={navigateToMatch}
+									icon={<ChevronUp />}
+								/>
+								<MatchButton
+									label="Next match"
+									anchor={activeNavigation?.next}
+									onSelect={navigateToMatch}
+									icon={<ChevronDown />}
+								/>
 							</>
 						) : null}
-						{hasSearchError ? (
-							"Unavailable"
-						) : isSearching ? null : activeNavigation ? (
-							`${activeNavigation.index} / ${activeNavigation.total}`
-						) : (
-							<>
-								<span aria-hidden="true">0 / 0</span>
-								<span className="sr-only">No matches</span>
-							</>
-						)}
-					</span>
-					<MatchButton
-						label="Previous match"
-						anchor={activeNavigation?.previous}
-						onSelect={navigateToMatch}
-						icon={<ChevronUp />}
-					/>
-					<MatchButton
-						label="Next match"
-						anchor={activeNavigation?.next}
-						onSelect={navigateToMatch}
-						icon={<ChevronDown />}
-					/>
-				</div>
-			) : null}
+						<InputGroupButton
+							size="icon-xs"
+							onClick={() => updateQuery("")}
+							aria-label="Clear search"
+							title="Clear search"
+						>
+							<X />
+						</InputGroupButton>
+					</InputGroupAddon>
+				) : null}
+			</InputGroup>
 		</nav>
 	);
 }

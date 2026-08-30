@@ -5,10 +5,20 @@ export interface SearchHighlightPart {
 
 type SearchField = string | null | undefined;
 
+const WEBSEARCH_TOKEN_PATTERN = /(-?)"([^"]+)"|(\S+)/gu;
+
+export const SEARCH_MARK_CLASS =
+	"box-decoration-clone rounded-sm bg-primary/20 px-px text-foreground";
+
 export function searchTerms(query: string): string[] {
 	const terms: string[] = [];
 	const seen = new Set<string>();
-	for (const term of query.trim().split(/\s+/u)) {
+	for (const match of query.matchAll(WEBSEARCH_TOKEN_PATTERN)) {
+		const [, negated, quoted, unquoted] = match;
+		const term = quoted !== undefined ? quoted.trim() : (unquoted ?? "");
+		if (quoted !== undefined ? Boolean(negated) : term.startsWith("-") || /^or$/iu.test(term)) {
+			continue;
+		}
 		if (!term) continue;
 		const folded = term.toLocaleLowerCase();
 		if (seen.has(folded)) continue;
@@ -16,6 +26,15 @@ export function searchTerms(query: string): string[] {
 		terms.push(term);
 	}
 	return terms;
+}
+
+export function searchHighlightTerms(query: string): string[] {
+	const terms = searchTerms(query);
+	const phrase = query.trim();
+	const hasWebsearchOperator =
+		phrase.includes('"') ||
+		phrase.split(/\s+/u).some((term) => term.startsWith("-") || /^or$/iu.test(term));
+	return phrase && terms.length > 1 && !hasWebsearchOperator ? [phrase, ...terms] : terms;
 }
 
 export function literalSearchRank(
@@ -58,15 +77,19 @@ export function searchExcerpt(text: string, query: string, limit = 240): string 
 	const compact = text.replace(/\s+/g, " ").trim();
 	if (compact.length <= limit) return compact;
 
-	const phrase = query.trim();
-	const phraseMatch = phrase ? new RegExp(escapeRegExp(phrase), "iu").exec(compact) : null;
-	const folded = compact.toLocaleLowerCase();
+	const terms = searchTerms(query);
+	const highlightTerms = searchHighlightTerms(query);
+	const preferredPhrase = highlightTerms.length > terms.length ? highlightTerms[0] : undefined;
+	const preferredIndex = preferredPhrase
+		? (new RegExp(escapeRegExp(preferredPhrase), "iu").exec(compact)?.index ?? -1)
+		: -1;
 	const fallbackIndex = Math.min(
-		...searchTerms(query)
-			.map((term) => folded.indexOf(term.toLocaleLowerCase()))
+		...terms
+			.map((term) => new RegExp(escapeRegExp(term), "iu").exec(compact)?.index ?? -1)
 			.filter((index) => index >= 0),
 	);
-	const matchIndex = phraseMatch?.index ?? (Number.isFinite(fallbackIndex) ? fallbackIndex : -1);
+	const matchIndex =
+		preferredIndex >= 0 ? preferredIndex : Number.isFinite(fallbackIndex) ? fallbackIndex : -1;
 	if (matchIndex < 0) return `${compact.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 
 	let start = Math.max(0, matchIndex - Math.floor(limit / 3));
@@ -76,7 +99,7 @@ export function searchExcerpt(text: string, query: string, limit = 240): string 
 }
 
 export function createSearchHighlighter(query: string) {
-	const terms = searchTerms(query).sort((a, b) => b.length - a.length);
+	const terms = searchHighlightTerms(query).sort((a, b) => b.length - a.length);
 	if (terms.length === 0) {
 		return (text: string): SearchHighlightPart[] => [{ text, highlighted: false }];
 	}

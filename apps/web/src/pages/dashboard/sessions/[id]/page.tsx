@@ -1,5 +1,6 @@
 "use client";
 
+import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
 	keepPreviousData,
 	useInfiniteQuery,
@@ -20,7 +21,7 @@ import {
 	Wrench,
 	Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -71,6 +72,10 @@ import {
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+
+const SESSION_MESSAGE_PAGE_SIZE = 100;
+const SESSION_MESSAGE_API_DIRECTION = "desc" as const;
+type SessionMessageDirection = "asc" | "desc";
 
 function normalizeTimelinePage(
 	page: SessionMessagesPage | SessionTimelinePage,
@@ -198,28 +203,26 @@ export function SessionDetailContent({
 		enabled: !!agentId,
 	});
 
-	// Direction toggle: "desc" (newest-first, default) is the most
-	// common review case for clawdi — users open a session to see
-	// "what happened recently". For 5000-message sessions, the old
-	// asc default forced the user to "Load more" through every page
-	// just to reach today's messages. Defaulting desc + persisting
-	// the user's choice in localStorage matches Slack/Discord (they
-	// scroll-to-bottom on open) without requiring a scroll gesture
-	// to find the latest reply.
-	type Direction = "asc" | "desc";
+	// Conversations default to chronological order with the latest message
+	// at the bottom. The API still returns newest-first pages so opening a
+	// long session only fetches its tail; the virtualized renderer reverses
+	// the loaded window and preserves the viewport as older pages prepend.
 	// SSR and hydration must agree on the first render, so the stored
 	// preference syncs in a layout effect instead of the state initializer.
 	// Layout effects run before the messages query subscribes, so a stored
-	// "asc" swaps the query key without a wasted "desc" fetch.
-	const [direction, setDirection] = useState<Direction>("desc");
+	// "desc" swaps the presentation before paint without a second fetch.
+	const [direction, setDirection] = useState<SessionMessageDirection>("asc");
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
 	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
-	const debouncedSearchQuery = useDebouncedValue(normalizedSearchQuery, 250) || undefined;
+	const effectiveSearchQuery = isSearchQueryReady(normalizedSearchQuery)
+		? normalizedSearchQuery
+		: "";
+	const debouncedSearchQuery = useDebouncedValue(effectiveSearchQuery, 250) || undefined;
 	useIsomorphicLayoutEffect(() => {
 		const stored = localStorage.getItem("clawdi.session.message-direction");
-		if (stored === "asc") setDirection("asc");
+		if (stored === "desc") setDirection("desc");
 	}, []);
-	const persistDirection = (d: Direction) => {
+	const persistDirection = (d: SessionMessageDirection) => {
 		setDirection(d);
 		try {
 			localStorage.setItem("clawdi.session.message-direction", d);
@@ -232,14 +235,11 @@ export function SessionDetailContent({
 	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
 	// whole blob in one shot and Markdown-render every turn,
 	// which froze the page for seconds. Now we load 100 at a time
-	// and the IntersectionObserver in `LoadMoreSentinel` requests
-	// the next page when the user scrolls near the bottom.
+	// and the pagination controls request
+	// the next page when the user approaches the older edge.
 	//
-	// The backend applies the direction before offset pagination, so offset=0
-	// always means "start from the selected end". This keeps the newest-first
-	// page correct even while metadata and an incremental event append briefly
-	// describe different revisions.
-	const PAGE_SIZE = 100;
+	// Fetching newest-first is independent from presentation order. It avoids
+	// walking every older page just to render the current end of the chat.
 	const {
 		data: pagesData,
 		isLoading: isContentLoading,
@@ -251,16 +251,11 @@ export function SessionDetailContent({
 		isFetchingNextPage,
 		isFetching: isContentFetching,
 	} = useInfiniteQuery({
-		// Direction in queryKey so toggling refetches from the new
-		// end (rather than reordering already-loaded pages, which
-		// would only show the OLDEST 100 in newest-first mode —
-		// confusing).
 		queryKey: [
 			"session-messages",
 			sessionId,
 			session?.content_hash ?? null,
 			session?.event_head_hash ?? null,
-			direction,
 			timelineView,
 			searchAnchor?.kind ?? null,
 			searchAnchor?.position ?? null,
@@ -275,8 +270,8 @@ export function SessionDetailContent({
 						path: { session_id: sessionId },
 						query: {
 							offset: pageParam,
-							limit: PAGE_SIZE,
-							direction,
+							limit: SESSION_MESSAGE_PAGE_SIZE,
+							direction: SESSION_MESSAGE_API_DIRECTION,
 							view: timelineView,
 							...(pageParam === 0 && searchAnchor
 								? {
@@ -308,12 +303,13 @@ export function SessionDetailContent({
 		gcTime: SESSION_MESSAGES_GC_MS,
 		placeholderData: keepPreviousData,
 	});
+	const loadMoreMessages = useCallback(() => {
+		if (!isFetchingNextPage) void fetchNextPage();
+	}, [fetchNextPage, isFetchingNextPage]);
 
 	// Flatten pages → ordered message list, paired with a stable
-	// React key per row. The key is the message's canonical position
-	// (`page.offset + k`) so it stays put across pagination, direction
-	// toggles, and refetches — array-index keys would break grouping
-	// memo when prepended pages shift positions.
+	// React key per row. The key is the server page position
+	// (`page.offset + k`) so it stays put when older pages prepend.
 	const { timelineItems, timelineKeys } = useMemo(() => {
 		if (!pagesData) return { timelineItems: null, timelineKeys: null };
 		const items: SessionTimelineItem[] = [];
@@ -321,16 +317,16 @@ export function SessionDetailContent({
 		for (const page of pagesData.pages) {
 			for (let k = 0; k < page.items.length; k++) {
 				items.push(page.items[k]);
-				keys.push(`${direction}:${page.offset + k}`);
+				keys.push(`${SESSION_MESSAGE_API_DIRECTION}:${page.offset + k}`);
 			}
 		}
 		return { timelineItems: items, timelineKeys: keys };
-	}, [pagesData, direction]);
+	}, [pagesData]);
 	const totalItems = pagesData?.pages[0]?.total ?? 0;
 	const loadedCount = timelineItems?.length ?? 0;
 	const anchorOffset = pagesData?.pages[0]?.anchor_offset;
 	const highlightedMessageKey =
-		typeof anchorOffset === "number" ? `${direction}:${anchorOffset}` : null;
+		typeof anchorOffset === "number" ? `${SESSION_MESSAGE_API_DIRECTION}:${anchorOffset}` : null;
 	const highlightedMessageRef = useRef<HTMLDivElement | null>(null);
 	const handledAnchorRef = useRef<string | null>(null);
 	const searchNavigation = pagesData?.pages[0]?.search_navigation;
@@ -408,10 +404,10 @@ export function SessionDetailContent({
 	}
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
-	const searchActive = Boolean(normalizedSearchQuery);
+	const searchActive = Boolean(effectiveSearchQuery);
 	const isSearchUpdating =
 		searchActive &&
-		(normalizedSearchQuery !== debouncedSearchQuery ||
+		(effectiveSearchQuery !== debouncedSearchQuery ||
 			(isContentFetching && !isFetchingNextPage) ||
 			isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
@@ -559,6 +555,7 @@ export function SessionDetailContent({
 								isSearching={isSearchUpdating}
 								hasSearchError={searchActive && isContentError}
 								className="md:max-w-xl"
+								maxLength={SEARCH_QUERY_MAX_LENGTH}
 							/>
 						)}
 						<div
@@ -641,10 +638,17 @@ export function SessionDetailContent({
 						title="Couldn't load activity"
 					/>
 				) : timelineItems?.length ? (
-					// Spacing comes from MessageBlock's `pt-4` on
-					// group-start rows; continuation rows render flush
-					// so a thread looks tight, not gapped.
 					<div>
+						{direction === "asc" && hasNextPage ? (
+							<LoadMoreControl
+								loadedCount={loadedCount}
+								totalCount={totalItems}
+								isFetching={isFetchingNextPage}
+								onLoad={loadMoreMessages}
+								label="Load earlier"
+								autoLoad={false}
+							/>
+						) : null}
 						<VirtualizedSessionTimelineList
 							items={timelineItems}
 							itemKeys={timelineKeys}
@@ -654,13 +658,19 @@ export function SessionDetailContent({
 							highlightedMessageKey={highlightedMessageKey}
 							highlightedMessageRef={highlightedMessageRef}
 							highlightQuery={debouncedSearchQuery}
+							direction={direction}
+							totalItemCount={totalItems}
+							hasMoreItems={Boolean(hasNextPage)}
+							isLoadingMore={isFetchingNextPage}
+							onLoadMore={loadMoreMessages}
 						/>
-						{hasNextPage ? (
-							<LoadMoreSentinel
+						{direction === "desc" && hasNextPage ? (
+							<LoadMoreControl
 								loadedCount={loadedCount}
 								totalCount={totalItems}
 								isFetching={isFetchingNextPage}
-								onLoad={() => fetchNextPage()}
+								onLoad={loadMoreMessages}
+								label="Load older"
 							/>
 						) : null}
 					</div>
@@ -768,26 +778,28 @@ function JumpToBottomButton() {
 // ---------------------------------------------------------------------------
 
 /**
- * Auto-loads the next page when the user scrolls within ~300px of
- * this sentinel. The IntersectionObserver fires on enter; we
- * de-bounce with `isFetching` so a fast scroll doesn't queue up
- * multiple requests for the same page. The button is also clickable
- * — gives the user manual control AND a fallback if the observer
- * fails (older browsers, headless render contexts, etc.).
+ * Manual pagination fallback. Newest-first mode also observes this
+ * bottom-edge control; chronological mode uses Virtuoso's `startReached`
+ * so prepended rows retain their exact scroll position.
  */
-function LoadMoreSentinel({
+function LoadMoreControl({
 	loadedCount,
 	totalCount,
 	isFetching,
 	onLoad,
+	label,
+	autoLoad = true,
 }: {
 	loadedCount: number;
 	totalCount: number;
 	isFetching: boolean;
 	onLoad: () => void;
+	label: string;
+	autoLoad?: boolean;
 }) {
 	const ref = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
+		if (!autoLoad) return;
 		const node = ref.current;
 		if (!node) return;
 		if (typeof IntersectionObserver === "undefined") return;
@@ -796,21 +808,21 @@ function LoadMoreSentinel({
 				const entry = entries[0];
 				if (entry?.isIntersecting && !isFetching) onLoad();
 			},
-			// Trigger 300px before the sentinel is fully in view —
+			// Trigger 300px before the control is fully in view —
 			// keeps the scroll continuous instead of pausing while
 			// the next page fetches.
 			{ rootMargin: "300px" },
 		);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [isFetching, onLoad]);
+	}, [autoLoad, isFetching, onLoad]);
 
 	return (
 		<div ref={ref} className="flex flex-col items-center gap-2 py-4">
 			<Button variant="ghost" size="sm" onClick={onLoad} disabled={isFetching}>
 				{isFetching
-					? `Loading more… (${loadedCount}/${totalCount})`
-					: `Load more (${loadedCount}/${totalCount})`}
+					? `Loading… (${loadedCount}/${totalCount})`
+					: `${label} (${loadedCount}/${totalCount})`}
 			</Button>
 		</div>
 	);

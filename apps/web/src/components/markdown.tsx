@@ -15,7 +15,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { createSearchHighlighter } from "@/lib/search-highlight";
+import { createSearchHighlighter, SEARCH_MARK_CLASS } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -57,8 +57,7 @@ function searchHighlightPlugin(query: string) {
 								data: {
 									hName: "mark",
 									hProperties: {
-										className:
-											"bg-transparent font-semibold text-foreground underline decoration-primary/50 decoration-1 underline-offset-2",
+										className: SEARCH_MARK_CLASS,
 									},
 								},
 								children: [{ type: "text", value: part.text }],

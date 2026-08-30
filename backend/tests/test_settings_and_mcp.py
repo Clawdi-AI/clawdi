@@ -703,7 +703,7 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
                     },
                 )
 
-            wildcard_response = await search("%")
+            wildcard_response = await search("100%")
             body_response = await search("deployment handoff phrase")
             reordered_response = await search("phrase deployment")
             typo_response = await search("deployment handof phrase")
@@ -1357,7 +1357,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
                     "jsonrpc": "2.0",
                     "id": 5,
                     "method": "tools/call",
-                    "params": {"name": "memory_search", "arguments": {"query": "x"}},
+                    "params": {"name": "memory_search", "arguments": {"query": "xy"}},
                 },
             )
             runtime_key.scopes = None

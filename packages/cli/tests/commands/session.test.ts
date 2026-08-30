@@ -27,6 +27,12 @@ afterEach(() => {
 });
 
 describe("cloud session commands", () => {
+	it("rejects single-character searches before making a request", async () => {
+		await expect(sessionSearch(" x ")).rejects.toThrow(
+			"Session search query must be at least 2 characters.",
+		);
+	});
+
 	it("searches through the cloud session query contract", async () => {
 		const { captured, restore } = mockFetch([
 			{

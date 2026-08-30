@@ -9,7 +9,6 @@ import {
 	FolderInput,
 	ListChecks,
 	Plus,
-	Search,
 	Share2,
 	Trash2,
 } from "lucide-react";
@@ -45,8 +44,8 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
 	Select,
 	SelectContent,
@@ -573,16 +572,13 @@ export default function VaultDetailPage({
 					<div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
 						{keyNames.length > 0 ? (
 							<>
-								<div className="relative w-full sm:w-auto">
-									<Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-									<Input
-										value={search}
-										onChange={(e) => setSearch(e.target.value)}
-										placeholder="Search keys…"
-										aria-label="Search keys"
-										className="h-8 w-full pl-8 text-sm sm:w-52"
-									/>
-								</div>
+								<SearchInput
+									value={search}
+									onChange={setSearch}
+									placeholder="Search keys…"
+									ariaLabel="Search keys"
+									className="h-8 w-full sm:w-52"
+								/>
 								{canManageVault ? (
 									<Button
 										variant={selectMode ? "secondary" : "outline"}
