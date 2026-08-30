@@ -174,10 +174,12 @@ from app.services.managed_ai_provider import (
     archive_clawdi_managed_provider,
     cleanup_deployment_managed_provider,
     find_clawdi_managed_provider,
-    is_supported_deployment_managed_provider_contract,
+    is_runtime_metadata_managed_provider_id,
+    is_supported_managed_provider_runtime_contract,
     is_v2_deployment_managed_provider_id,
     lock_deployment_managed_provider_mutation,
-    replace_deployment_managed_provider_metadata,
+    lock_runtime_metadata_managed_provider_mutation,
+    replace_managed_provider_runtime_metadata,
     upsert_clawdi_managed_provider,
 )
 from app.services.platform_contract import (
@@ -548,7 +550,7 @@ async def _resolve_or_create_admin_owner(
 
 
 def _require_managed_provider_contract(provider: AiProvider) -> None:
-    if not is_supported_deployment_managed_provider_contract(provider):
+    if not is_supported_managed_provider_runtime_contract(provider):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Stored managed AI provider contract is invalid",
@@ -1018,7 +1020,7 @@ async def admin_get_clawdi_managed_ai_provider(
 ) -> AdminDeploymentManagedAiProviderResponse:
     """Read one first-party managed provider within an explicit owner scope."""
 
-    if not is_v2_deployment_managed_provider_id(provider_id):
+    if not is_runtime_metadata_managed_provider_id(provider_id):
         raise HTTPException(
             status.HTTP_405_METHOD_NOT_ALLOWED,
             "Method Not Allowed",
@@ -1264,7 +1266,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
 ) -> AdminDeploymentManagedAiProviderResponse:
     """Replace deployment-managed runtime metadata without changing auth state."""
 
-    if not is_v2_deployment_managed_provider_id(provider_id):
+    if not is_runtime_metadata_managed_provider_id(provider_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
     owner = body.owner
     action = "ai_provider.managed.runtime_metadata.replace"
@@ -1274,7 +1276,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         provider_id=provider_id,
         action=action,
     )
-    await lock_deployment_managed_provider_mutation(
+    await lock_runtime_metadata_managed_provider_mutation(
         db,
         owner_user_id=target.id,
         provider_id=provider_id,
@@ -1294,7 +1296,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         )
     try:
         _require_managed_provider_contract(provider)
-        changed = replace_deployment_managed_provider_metadata(
+        changed = replace_managed_provider_runtime_metadata(
             provider,
             base_url=body.base_url,
             models=(

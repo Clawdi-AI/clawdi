@@ -28,6 +28,7 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
     MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    V1_MANAGED_AI_PROVIDER_ID,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
@@ -205,6 +206,82 @@ async def _replace_managed_provider_runtime_metadata(
         f"/v1/admin/ai-providers/{provider_id}/runtime-metadata",
         headers=_AUTH,
         json=body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_v1_managed_provider_supports_metadata_only_repair(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+
+    old_url = "https://legacy-gateway.example.test/v1"
+    new_url = "https://stable-gateway.example.test/v1"
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id=V1_MANAGED_AI_PROVIDER_ID,
+        type="custom_openai_compatible",
+        label="Legacy managed provider",
+        base_url=old_url,
+        api_mode=MANAGED_AI_PROVIDER_API_MODE,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        models=[{"id": "gpt-5.6-sol"}],
+    )
+    db_session.add(provider)
+    await db_session.commit()
+
+    readback = await admin_client.get(
+        f"/v1/admin/ai-providers/{V1_MANAGED_AI_PROVIDER_ID}",
+        headers=_AUTH,
+        params=owner,
+    )
+    replaced = await _replace_managed_provider_runtime_metadata(
+        admin_client,
+        V1_MANAGED_AI_PROVIDER_ID,
+        {
+            "owner": owner,
+            "base_url": new_url,
+            "models": [{"id": "gpt-5.6-sol"}],
+        },
+    )
+    delete_response = await admin_client.delete(
+        f"/v1/admin/ai-providers/{V1_MANAGED_AI_PROVIDER_ID}",
+        headers=_AUTH,
+        params=owner,
+    )
+
+    assert readback.status_code == 200, readback.text
+    assert readback.json()["owner"] == owner
+    assert readback.json()["provider_id"] == V1_MANAGED_AI_PROVIDER_ID
+    assert readback.json()["base_url"] == old_url
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["owner"] == owner
+    assert replaced.json()["provider_id"] == V1_MANAGED_AI_PROVIDER_ID
+    assert replaced.json()["base_url"] == new_url
+    assert delete_response.status_code == 405, delete_response.text
+
+    await db_session.refresh(provider)
+    assert provider.base_url == new_url
+    assert provider.auth_type == "api_key"
+    assert provider.auth_ref is None
+    assert provider.auth_metadata == {"source": "managed", "profile": "default"}
+    assert (
+        await db_session.scalar(
+            select(AiProviderAuthPayload.id).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == V1_MANAGED_AI_PROVIDER_ID,
+            )
+        )
+        is None
     )
 
 

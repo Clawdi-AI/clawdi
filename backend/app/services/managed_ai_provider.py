@@ -110,6 +110,14 @@ def is_managed_provider_id(provider_id: str) -> bool:
     return provider_id == V1_MANAGED_AI_PROVIDER_ID or is_v2_managed_provider_id(provider_id)
 
 
+def is_runtime_metadata_managed_provider_id(provider_id: str) -> bool:
+    """Return whether admin may read or replace non-auth runtime metadata."""
+
+    return provider_id == V1_MANAGED_AI_PROVIDER_ID or is_v2_deployment_managed_provider_id(
+        provider_id
+    )
+
+
 def runtime_managed_provider_id(provider_id: str) -> str:
     """Return the stable agent-facing id for a managed provider binding."""
 
@@ -144,11 +152,11 @@ def validate_managed_provider_base_url(base_url: str) -> None:
         raise ValueError(str(exc)) from exc
 
 
-def is_supported_deployment_managed_provider_contract(provider: AiProvider) -> bool:
-    """Return whether a stored deployment provider matches a released contract."""
+def is_supported_managed_provider_runtime_contract(provider: AiProvider) -> bool:
+    """Return whether a managed provider is safe for metadata-only admin writes."""
 
     return (
-        is_v2_deployment_managed_provider_id(provider.provider_id)
+        is_runtime_metadata_managed_provider_id(provider.provider_id)
         and provider.type == MANAGED_AI_PROVIDER_TYPE
         and (provider.api_mode, provider.runtime_env_name)
         in _SUPPORTED_DEPLOYMENT_MANAGED_PROVIDER_CONTRACTS
@@ -157,6 +165,17 @@ def is_supported_deployment_managed_provider_contract(provider: AiProvider) -> b
         and (provider.auth_metadata or {}).get("source") == "managed"
         and provider.managed_by == "clawdi"
     )
+
+
+async def _lock_managed_provider_mutation(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> None:
+    await lock_ai_provider_owner(db, owner_user_id)
+    lock_name = f"managed-ai-provider:{owner_user_id}:{provider_id}"
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
 
 async def lock_deployment_managed_provider_mutation(
@@ -173,9 +192,28 @@ async def lock_deployment_managed_provider_mutation(
 
     if not is_v2_deployment_managed_provider_id(provider_id):
         raise ValueError("unsupported deployment managed provider id")
-    await lock_ai_provider_owner(db, owner_user_id)
-    lock_name = f"managed-ai-provider:{owner_user_id}:{provider_id}"
-    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
+    await _lock_managed_provider_mutation(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+    )
+
+
+async def lock_runtime_metadata_managed_provider_mutation(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> None:
+    """Serialize a metadata-only mutation for one supported managed provider."""
+
+    if not is_runtime_metadata_managed_provider_id(provider_id):
+        raise ValueError("unsupported runtime metadata managed provider id")
+    await _lock_managed_provider_mutation(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+    )
 
 
 async def upsert_clawdi_managed_provider(
@@ -251,7 +289,7 @@ async def upsert_clawdi_managed_provider(
     return provider
 
 
-def replace_deployment_managed_provider_metadata(
+def replace_managed_provider_runtime_metadata(
     provider: AiProvider,
     *,
     base_url: str,
@@ -259,8 +297,8 @@ def replace_deployment_managed_provider_metadata(
 ) -> bool:
     """Replace runtime metadata without touching provider auth state."""
 
-    if not is_v2_deployment_managed_provider_id(provider.provider_id):
-        raise ValueError("unsupported deployment managed provider id")
+    if not is_runtime_metadata_managed_provider_id(provider.provider_id):
+        raise ValueError("unsupported runtime metadata managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
     if (
@@ -290,7 +328,7 @@ async def find_clawdi_managed_provider(
 ) -> AiProvider | None:
     """Find one managed provider without crossing its account boundary."""
 
-    if not is_v2_managed_provider_id(provider_id):
+    if not is_managed_provider_id(provider_id):
         raise ValueError("unsupported managed provider id")
     query = select(AiProvider).where(
         AiProvider.owner_user_id == owner_user_id,
@@ -364,7 +402,7 @@ async def cleanup_deployment_managed_provider(
     if provider is None:
         return None
     if (
-        not is_supported_deployment_managed_provider_contract(provider)
+        not is_supported_managed_provider_runtime_contract(provider)
         or provider.id != expected_provider_uuid
         or (provider.capabilities or {}).get(MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY)
         != provisioning_discovery_key
