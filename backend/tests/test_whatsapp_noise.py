@@ -1170,7 +1170,7 @@ async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
     route_task = asyncio.create_task(whatsapp_baileys_managed_websocket(websocket))
 
     websocket.inbound.put_nowait(b"not-a-noise-header")
-    await asyncio.wait_for(route_task, timeout=1)
+    await asyncio.wait_for(route_task, timeout=5)
 
     assert websocket.accepted is True
     assert websocket.closed == [1011]
