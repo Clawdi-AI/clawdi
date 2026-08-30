@@ -328,14 +328,17 @@ tag before authenticated readiness. It deliberately calls this reconcile
 because a normal `kamal deploy` does not update accessories; it never calls the
 broader `kamal accessory remove`, which also removes image/data resources.
 
-The Kamal `web` primary role runs the image's default API process. That API
-entrypoint alone runs `alembic upgrade head`, and it starts Uvicorn only after
-the migration succeeds; the non-primary `channels-worker` role does not run
-migrations. Kamal keeps the still-serving old API in rotation while the new
-primary boots, then requires the new primary to pass the proxy `/health` gate
-before it boots non-primary roles. Consequently every migration must use an
-expand/contract sequence compatible with the old API during this rolling
-window. A routine Kamal deploy must not separately run Alembic by hand.
+The release workflow runs `alembic upgrade head` once as an exact-image Kamal
+release task on the primary host before rolling the application. This lets
+online migrations such as `CREATE INDEX CONCURRENTLY` finish while the old API
+continues serving, without consuming the new container's health deadline. The
+API entrypoint repeats the same idempotent migration command as a fail-closed
+safety check and starts Uvicorn only after it succeeds; the non-primary
+`channels-worker` role does not run migrations. Kamal then keeps the old API in
+rotation until the new primary passes the proxy `/health` gate, before booting
+non-primary roles. Every migration must therefore remain expand/contract
+compatible with the old API during this window. Operators must use the release
+workflow rather than running Alembic independently.
 
 The proxy `/health` gate reaches the API handler that executes database
 `SELECT 1`. The image-level Docker HEALTHCHECK calls the same local path for

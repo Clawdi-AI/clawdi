@@ -385,4 +385,7 @@ jobs:
             )"
           fi
           scripts/deploy-whatsapp-sidecar.sh
+          kamal app exec --primary --roles web --raw \
+            --version "${{ needs.build.outputs.image_tag }}" \
+            alembic upgrade head
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"

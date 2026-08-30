@@ -7,7 +7,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    Computed,
     DateTime,
     ForeignKey,
     Index,
@@ -18,7 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -286,8 +285,8 @@ class SessionMessageSearch(Base):
             postgresql_ops={"content": "gin_trgm_ops"},
         ),
         Index(
-            "ix_session_message_search_content_tsv",
-            "content_tsv",
+            "ix_session_message_search_content_fts",
+            text("to_tsvector('simple'::regconfig, content)"),
             postgresql_using="gin",
         ),
     )
@@ -309,10 +308,6 @@ class SessionMessageSearch(Base):
     position: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     role: Mapped[Literal["user", "assistant"]] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_tsv: Mapped[str | None] = mapped_column(
-        TSVECTOR,
-        Computed("to_tsvector('simple', content)", persisted=True),
-    )
 
 
 class SessionEventGeneration(Base, TimestampMixin):
