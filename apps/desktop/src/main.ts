@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -207,7 +208,7 @@ function showMainWindow(): void {
 }
 
 function desktopWebUrl(): string {
-	const raw = process.env.CLAWDI_DESKTOP_WEB_URL?.trim() || DEFAULT_WEB_URL;
+	const raw = process.env.CLAWDI_DESKTOP_WEB_URL?.trim() || packagedWebUrl() || DEFAULT_WEB_URL;
 	const url = new URL(raw);
 	const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
 	if (
@@ -218,6 +219,16 @@ function desktopWebUrl(): string {
 		throw new Error("CLAWDI_DESKTOP_WEB_URL must be HTTPS or a loopback development URL.");
 	}
 	return url.toString();
+}
+
+function packagedWebUrl(): string | null {
+	if (!app.isPackaged) return null;
+	const metadata: unknown = JSON.parse(
+		readFileSync(join(app.getAppPath(), "package.json"), "utf8"),
+	);
+	if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return null;
+	const value = Reflect.get(metadata, "clawdiWebUrl");
+	return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function desktopIcon() {
