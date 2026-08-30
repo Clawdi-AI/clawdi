@@ -1,4 +1,4 @@
-import { splitSearchHighlight } from "@/lib/search-highlight";
+import { SEARCH_MARK_CLASS, splitSearchHighlight } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 export function SearchHighlightedText({
@@ -16,13 +16,7 @@ export function SearchHighlightedText({
 		<span className={className}>
 			{splitSearchHighlight(text, query).map((part, index) =>
 				part.highlighted ? (
-					<mark
-						key={`${index}:${part.text}`}
-						className={cn(
-							"bg-transparent font-semibold text-foreground underline decoration-primary/50 decoration-1 underline-offset-2",
-							markClassName,
-						)}
-					>
+					<mark key={`${index}:${part.text}`} className={cn(SEARCH_MARK_CLASS, markClassName)}>
 						{part.text}
 					</mark>
 				) : (

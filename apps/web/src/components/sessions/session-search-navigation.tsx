@@ -1,5 +1,6 @@
 "use client";
 
+import { SEARCH_QUERY_MIN_LENGTH, searchQueryLength } from "@clawdi/shared/consts";
 import { useRouter } from "@tanstack/react-router";
 import { ChevronDown, ChevronUp, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -59,6 +60,7 @@ export function SessionSearchNavigation({
 	isSearching = false,
 	hasSearchError = false,
 	className,
+	maxLength,
 }: {
 	sessionId: string;
 	agentId?: string | null;
@@ -69,6 +71,7 @@ export function SessionSearchNavigation({
 	isSearching?: boolean;
 	hasSearchError?: boolean;
 	className?: string;
+	maxLength?: number;
 }) {
 	const router = useRouter();
 	const [draftQuery, setDraftQuery] = useState(query);
@@ -77,6 +80,7 @@ export function SessionSearchNavigation({
 		setDraftQuery((current) => (query && current.trim() === query ? current : query));
 	}, [query]);
 	const activeNavigation = isSearching || hasSearchError ? null : navigation;
+	const queryTooShort = Boolean(query) && searchQueryLength(query) < SEARCH_QUERY_MIN_LENGTH;
 	const navigate = (search: Record<string, unknown>) => {
 		if (agentId) {
 			void router.navigate({
@@ -131,6 +135,7 @@ export function SessionSearchNavigation({
 				ariaLabel="Search messages"
 				className="min-w-36 flex-1"
 				ariaKeyShortcuts="Enter Shift+Enter Escape"
+				maxLength={maxLength}
 				onKeyDown={(event) => {
 					if (event.nativeEvent.isComposing) return;
 					if (event.key === "Escape" && draftQuery) {
@@ -151,13 +156,18 @@ export function SessionSearchNavigation({
 						className="inline-flex min-w-10 shrink-0 items-center justify-center gap-1 tabular-nums text-foreground"
 						aria-live="polite"
 					>
-						{isSearching ? (
+						{queryTooShort ? (
+							<>
+								<span aria-hidden="true">{SEARCH_QUERY_MIN_LENGTH}+ chars</span>
+								<span className="sr-only">Type at least {SEARCH_QUERY_MIN_LENGTH} characters</span>
+							</>
+						) : isSearching ? (
 							<>
 								<LoaderCircle className="size-3.5 animate-spin" />
 								<span className="sr-only">Searching</span>
 							</>
 						) : null}
-						{hasSearchError ? (
+						{queryTooShort ? null : hasSearchError ? (
 							"Unavailable"
 						) : isSearching ? null : activeNavigation ? (
 							`${activeNavigation.index} / ${activeNavigation.total}`

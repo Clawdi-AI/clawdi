@@ -11,6 +11,7 @@ from app.core.auth import (
     require_scope,
 )
 from app.core.database import get_session
+from app.core.query_utils import SearchQuery
 from app.models.memory import Memory
 from app.models.session import AgentEnvironment, Session
 from app.schemas.common import Paginated
@@ -150,7 +151,7 @@ async def list_memories(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
     category: str | None = Query(default=None),
-    q: str | None = Query(default=None),
+    q: SearchQuery | None = Query(default=None),
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
 ) -> Paginated[MemoryResponse]:
     provider = await get_memory_provider(str(auth.user_id), db)
