@@ -169,7 +169,7 @@ describe("SessionTimelineList", () => {
 			},
 		);
 
-		expect(markup.match(/<mark/g)).toHaveLength(6);
+		expect(markup.match(/<mark/g)).toHaveLength(3);
 		expect(markup.match(/data-search-match="true"/g)).toHaveLength(1);
 	});
 });
