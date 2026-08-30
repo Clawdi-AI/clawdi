@@ -425,6 +425,9 @@ describe("backend image release workflow contract", () => {
 		);
 		expect(kamalDeploy?.run).toContain("gem install kamal -v '2.12.0' --no-document");
 		expect(kamalDeploy?.run).toContain('test "$(kamal version)" = "2.12.0"');
+		expect(kamalDeploy?.run).toContain("kamal app exec --primary --roles web --raw");
+		expect(kamalDeploy?.run).toContain(`--version "\${{ needs.build.outputs.image_tag }}"`);
+		expect(kamalDeploy?.run).toContain("alembic upgrade head");
 		expect(kamalDeploy?.run).toContain(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
 		);
@@ -486,8 +489,9 @@ describe("backend image release workflow contract", () => {
 		expect(channelWorkerSource).toMatch(
 			/workers = build_channel_workers\(\)\n\s+if health is not None:\n\s+health\.ready = True/,
 		);
-		expect(releaseRunbook).toContain("every migration must use an");
-		expect(releaseRunbook).toContain("expand/contract sequence");
+		expect(releaseRunbook).toMatch(
+			/Every migration must therefore remain expand\/contract\s+compatible/,
+		);
 	});
 });
 

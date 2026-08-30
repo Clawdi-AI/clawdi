@@ -15,6 +15,7 @@ from app.core.query_utils import (
     lexical_search_filter,
     like_needle,
     search_excerpt,
+    text_search_document,
     websearch_query,
 )
 from app.models.session import Session, SessionEventChunk, SessionMessageSearch
@@ -136,10 +137,11 @@ def _searchable_text(content: str) -> str:
 
 
 def _message_match_expression(query: str):
+    search_document = text_search_document((SessionMessageSearch.content,))
     return lexical_search_filter(
         query,
         (SessionMessageSearch.content,),
-        search_vector=SessionMessageSearch.content_tsv,
+        search_vector=search_document,
     )
 
 
@@ -162,7 +164,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
     message_match = _message_match_expression(query)
     phrase_match = SessionMessageSearch.content.ilike(like_needle(query), escape="\\")
     lexical_rank = func.ts_rank_cd(
-        SessionMessageSearch.content_tsv,
+        text_search_document((SessionMessageSearch.content,)),
         websearch_query(query),
     )
     candidates = (
