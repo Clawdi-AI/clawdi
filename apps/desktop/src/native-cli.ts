@@ -1,7 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
 	DesktopAgentType,
@@ -28,10 +26,10 @@ interface NativeIdentity {
 }
 
 export class DesktopCliService {
-	private cliPromise: Promise<string> | null = null;
+	private cliPath: string | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
-		const cli = await this.cli();
+		const cli = this.cli();
 		const [identity, auth, doctor] = await Promise.all([
 			this.identity(cli),
 			this.authState(cli),
@@ -50,7 +48,7 @@ export class DesktopCliService {
 		redirectUri: string;
 		expiresAt: string;
 	} | null> {
-		const cli = await this.cli();
+		const cli = this.cli();
 		const result = await this.runJson(cli, ["auth", "start", "--json"]);
 		if (readString(result.status) === "already_authenticated") return null;
 		const authorizationUrl = readUrl(result.authorizationUrl, "authorization URL", ["https:"]);
@@ -63,7 +61,7 @@ export class DesktopCliService {
 	}
 
 	async finishAuthentication(callbackUrl: string): Promise<void> {
-		const cli = await this.cli();
+		const cli = this.cli();
 		await this.run(cli, ["auth", "finish", "--json"], {
 			stdin: callbackUrl,
 			timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -71,7 +69,7 @@ export class DesktopCliService {
 	}
 
 	async createDashboardSession(): Promise<string> {
-		const cli = await this.cli();
+		const cli = this.cli();
 		const result = await this.runJson(cli, ["auth", "desktop-session", "--json"]);
 		const ticket = readString(result.ticket);
 		const expiresIn = typeof result.expiresIn === "number" ? result.expiresIn : 0;
@@ -82,7 +80,7 @@ export class DesktopCliService {
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
-		const cli = await this.cli();
+		const cli = this.cli();
 		const result = await this.runJson(cli, ["agent", "detect", "--json"]);
 		if (!Array.isArray(result.agents))
 			throw new Error("Clawdi returned invalid agent detection data.");
@@ -95,7 +93,7 @@ export class DesktopCliService {
 			throw new Error("Choose at least one supported Agent.");
 		}
 
-		const cli = await this.cli();
+		const cli = this.cli();
 		const detected = await this.detectAgents();
 		const available = new Map(detected.map((agent) => [agent.type, agent]));
 		for (const type of requested) {
@@ -118,12 +116,12 @@ export class DesktopCliService {
 		return { connected, daemonInstalled: true };
 	}
 
-	private cli(): Promise<string> {
-		this.cliPromise ??= this.activateManagedCli();
-		return this.cliPromise;
+	private cli(): string {
+		this.cliPath ??= this.resolveBundledCli();
+		return this.cliPath;
 	}
 
-	private async activateManagedCli(): Promise<string> {
+	private resolveBundledCli(): string {
 		const override = process.env.CLAWDI_DESKTOP_CLI?.trim();
 		if (override) {
 			if (!existsSync(override)) throw new Error("CLAWDI_DESKTOP_CLI does not exist.");
@@ -137,49 +135,7 @@ export class DesktopCliService {
 		if (!existsSync(bundledCli)) {
 			throw new Error("The bundled Clawdi runtime is missing. Reinstall the desktop app.");
 		}
-		const bundledIdentity = await this.identity(bundledCli);
-		const prefix = join(homedir(), ".local");
-		const launcher = join(prefix, "bin", "clawdi");
-		if (existsSync(launcher)) {
-			try {
-				const installedIdentity = await this.identity(launcher);
-				if (
-					installedIdentity.version === bundledIdentity.version &&
-					installedIdentity.target === bundledIdentity.target
-				) {
-					return launcher;
-				}
-			} catch {
-				// Native activation below owns the collision decision and error message.
-			}
-		}
-
-		const nativeRoot = join(prefix, "share", "clawdi");
-		mkdirSync(nativeRoot, { recursive: true, mode: 0o755 });
-		const stage = join(nativeRoot, `.stage-${randomUUID()}`);
-		mkdirSync(stage, { mode: 0o755 });
-		try {
-			cpSync(resourceRoot, stage, { recursive: true, errorOnExist: true, force: false });
-			const stagedCli = join(stage, "clawdi");
-			chmodSync(stagedCli, 0o755);
-			const result = await this.run(stagedCli, [
-				"update",
-				"--native-activate",
-				"--native-stage",
-				stage,
-				"--native-prefix",
-				prefix,
-				"--native-version",
-				bundledIdentity.version,
-				"--native-target",
-				bundledIdentity.target,
-			]);
-			const activated = result.stdout.trim();
-			if (activated !== launcher) throw new Error("Clawdi activated an unexpected launcher path.");
-			return launcher;
-		} finally {
-			if (existsSync(stage)) rmSync(stage, { recursive: true, force: true });
-		}
+		return bundledCli;
 	}
 
 	private async identity(cli: string): Promise<NativeIdentity> {
@@ -241,6 +197,7 @@ function runCommand(
 		const child = spawn(command, args, {
 			env: {
 				...process.env,
+				CLAWDI_NO_AUTO_UPDATE: "1",
 				CLAWDI_NO_UPDATE_CHECK: "1",
 				...(app.isPackaged
 					? {

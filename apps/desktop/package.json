@@ -26,7 +26,6 @@
 		"lucide-react": "catalog:",
 		"react": "catalog:",
 		"react-dom": "catalog:",
-		"tar": "^7.5.22",
 		"typescript": "catalog:"
 	},
 	"build": {

@@ -5,6 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useDesktopBridge } from "@/lib/desktop";
 import { routeHeadTitle } from "@/lib/document-title";
 
 export const Route = createFileRoute("/desktop-auth")({
@@ -15,8 +16,17 @@ export const Route = createFileRoute("/desktop-auth")({
 function DesktopAuthPage() {
 	const { isLoaded: authLoaded, isSignedIn } = useAuth();
 	const { signIn } = useSignIn();
+	const desktopBridge = useDesktopBridge();
 	const attempted = useRef(false);
 	const [failed, setFailed] = useState(false);
+
+	function recover() {
+		if (desktopBridge) {
+			void desktopBridge.openConnectWizard().catch(() => setFailed(true));
+			return;
+		}
+		window.location.replace("/sign-in");
+	}
 
 	useEffect(() => {
 		if (!authLoaded || attempted.current) return;
@@ -57,7 +67,7 @@ function DesktopAuthPage() {
 				{failed ? (
 					<>
 						<h1 className="text-lg font-semibold">Desktop sign-in expired</h1>
-						<Button onClick={() => window.location.replace("/sign-in")}>Sign in</Button>
+						<Button onClick={recover}>{desktopBridge ? "Return to Clawdi" : "Sign in"}</Button>
 					</>
 				) : (
 					<>

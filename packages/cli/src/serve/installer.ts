@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import {
 	type CurrentCliInvocation,
+	isMacApplicationBundleExecutable,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
@@ -89,6 +90,7 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * Whitelist deliberately narrow:
  *   - CLAWDI_AUTH_TOKEN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
+ *   - CLAWDI_NO_AUTO_UPDATE: keep an embedding application in charge of updates
  *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT /
  *     CLAWDI_DAEMON_RPC_ALLOW_REMOTE: HTTP listener settings for
  *     the owner-token-protected control RPC
@@ -110,6 +112,7 @@ const PERSISTED_ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_API_URL",
 	"CLAWDI_STATE_DIR",
+	"CLAWDI_NO_AUTO_UPDATE",
 	"CLAWDI_DAEMON_RPC_HOST",
 	"CLAWDI_DAEMON_RPC_PORT",
 	"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
@@ -174,9 +177,13 @@ function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
 	let invocation: CurrentCliInvocation;
 	try {
 		const layout = resolveCurrentCliLayout();
-		if (layout.kind === "native" && !layout.nativeOwnership) {
+		const applicationManagedNative =
+			platform() === "darwin" &&
+			process.env.CLAWDI_NO_AUTO_UPDATE === "1" &&
+			isMacApplicationBundleExecutable(layout.executablePath);
+		if (layout.kind === "native" && !layout.nativeOwnership && !applicationManagedNative) {
 			throw new Error(
-				"an unowned native executable cannot install a daemon; install the native distribution with install.sh first",
+				"an unowned native executable cannot install a daemon; install the native distribution or use the CLI bundled with Clawdi Desktop",
 			);
 		}
 		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts));

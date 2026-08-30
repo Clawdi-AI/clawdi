@@ -167,6 +167,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						}}
 						onRefresh={() => void loadAgents()}
 						onConnect={() => void connect()}
+						onOpenDashboard={() => void openDashboard()}
 					/>
 				) : null}
 
@@ -223,6 +224,7 @@ function AgentSelection({
 	onToggle,
 	onRefresh,
 	onConnect,
+	onOpenDashboard,
 }: {
 	agents: DesktopDetectedAgent[];
 	selected: ReadonlySet<DesktopAgentType>;
@@ -231,12 +233,14 @@ function AgentSelection({
 	onToggle(type: DesktopAgentType, checked: boolean): void;
 	onRefresh(): void;
 	onConnect(): void;
+	onOpenDashboard(): void;
 }) {
 	const found = useMemo(
 		() => agents.filter((agent) => agent.detected || agent.registered).length,
 		[agents],
 	);
 	const canRepairDaemon = !daemonReady && agents.some((agent) => agent.registered);
+	const shouldConnect = selected.size > 0 || canRepairDaemon;
 	return (
 		<div className="stack">
 			<div className="section-heading">
@@ -285,14 +289,13 @@ function AgentSelection({
 				<button
 					className="button primary"
 					type="button"
-					disabled={selected.size === 0 && !canRepairDaemon}
-					onClick={onConnect}
+					onClick={shouldConnect ? onConnect : onOpenDashboard}
 				>
 					{selected.size > 0
 						? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
 						: canRepairDaemon
 							? "Start background sync"
-							: "Agents connected"}
+							: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>

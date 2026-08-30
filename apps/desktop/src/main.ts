@@ -28,7 +28,7 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
-	app.on("second-instance", () => void showMainWindow());
+	app.on("second-instance", () => void showAvailableWindow());
 	void app.whenReady().then(startApplication);
 }
 
@@ -44,13 +44,13 @@ async function startApplication(): Promise<void> {
 			await showMainWindow();
 		} else {
 			await showConnectWindow();
-			if (state.auth.authenticated) void prepareDashboardSession();
 		}
-	} catch {
+	} catch (error) {
+		console.error("Could not open the dashboard", error);
 		await showConnectWindow();
 	}
 
-	app.on("activate", () => void showMainWindow());
+	app.on("activate", () => void showAvailableWindow());
 	app.on("before-quit", () => {
 		quitting = true;
 	});
@@ -79,7 +79,6 @@ function registerIpc(): void {
 					await receiver.close();
 				}
 			}
-			await prepareDashboardSession();
 			return cli.bootstrapState();
 		}),
 	);
@@ -90,12 +89,16 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
+			await prepareDashboardSession();
 			await showMainWindow();
 			connectWindow?.hide();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
-		safeDashboardAction(event, "open Connect Agent", showConnectWindow),
+		safeDashboardAction(event, "open Connect Agent", async () => {
+			await showConnectWindow();
+			mainWindow?.hide();
+		}),
 	);
 }
 
@@ -271,7 +274,7 @@ function createTray(): void {
 	tray.setToolTip("Clawdi");
 	tray.setContextMenu(
 		Menu.buildFromTemplate([
-			{ label: "Open Clawdi", click: showMainWindow },
+			{ label: "Open Clawdi", click: showAvailableWindow },
 			{
 				label: "Connect Agent",
 				click: () => void showConnectWindow(),
@@ -286,7 +289,15 @@ function createTray(): void {
 			},
 		]),
 	);
-	tray.on("click", () => void showMainWindow());
+	tray.on("click", () => void showAvailableWindow());
+}
+
+async function showAvailableWindow(): Promise<void> {
+	if (mainWindow) {
+		await showMainWindow();
+		return;
+	}
+	await showConnectWindow();
 }
 
 async function showMainWindow(): Promise<void> {
@@ -300,15 +311,11 @@ async function showMainWindow(): Promise<void> {
 }
 
 async function prepareDashboardSession(): Promise<void> {
-	try {
-		const ticket = await cli.createDashboardSession();
-		const url = new URL("/desktop-auth", desktopWebUrl());
-		url.hash = new URLSearchParams({ ticket }).toString();
-		if (mainWindow) await mainWindow.loadURL(url.toString());
-		else await createMainWindow(false, url.toString());
-	} catch (error) {
-		console.error("Could not prepare the dashboard session", error);
-	}
+	const ticket = await cli.createDashboardSession();
+	const url = new URL("/desktop-auth", desktopWebUrl());
+	url.hash = new URLSearchParams({ ticket }).toString();
+	if (mainWindow) await mainWindow.loadURL(url.toString());
+	else await createMainWindow(false, url.toString());
 }
 
 function desktopWebUrl(): string {

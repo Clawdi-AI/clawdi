@@ -2,7 +2,11 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { resolveCurrentCliInvocation, resolveCurrentCliLayout } from "./current-cli-invocation";
+import {
+	isMacApplicationBundleExecutable,
+	resolveCurrentCliInvocation,
+	resolveCurrentCliLayout,
+} from "./current-cli-invocation";
 
 const root = mkdtempSync(join(tmpdir(), "clawdi-invocation-"));
 const executable = join(root, "bun");
@@ -72,5 +76,15 @@ describe("resolveCurrentCliInvocation", () => {
 			nativeIdentity: null,
 		});
 		expect(layout.resourceRoot).toBe(realpathSync(resolve(import.meta.dir, "../..")));
+	});
+
+	it("recognizes only the native CLI location owned by a macOS application bundle", () => {
+		expect(
+			isMacApplicationBundleExecutable("/Applications/Clawdi.app/Contents/Resources/native/clawdi"),
+		).toBe(true);
+		expect(isMacApplicationBundleExecutable("/Applications/Clawdi.app/Contents/MacOS/clawdi")).toBe(
+			false,
+		);
+		expect(isMacApplicationBundleExecutable("/tmp/native/clawdi")).toBe(false);
 	});
 });
