@@ -1,7 +1,7 @@
 {
 	"name": "clawdi",
-	"version": "0.14.31",
-	"description": "Run and connect AI agents. Manage their sessions, memory, skills, secrets, and app tools in one place.",
+	"version": "0.14.32",
+	"description": "The best home for all your AI agents. Run them in the cloud or connect your own—with their context and tools in one place.",
 	"license": "MIT",
 	"type": "module",
 	"sideEffects": false,

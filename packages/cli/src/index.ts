@@ -35,7 +35,7 @@ function collectValues(value: string, prev: string[] = []): string[] {
 program
 	.name("clawdi")
 	.description(
-		"Run and connect AI agents. Manage their sessions, memory, skills, secrets, and app tools in one place.",
+		"The best home for all your AI agents. Run them in the cloud or connect your own—with their context and tools in one place.",
 	)
 	.version(getCliVersion())
 	.addHelpText(

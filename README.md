@@ -1,7 +1,7 @@
 <h1 align="center">Clawdi</h1>
 
 <p align="center">
-  <strong>Run and connect AI agents. Manage their sessions, memory, skills, secrets, and app tools in one place.</strong>
+  <strong>The best home for all your AI agents.<br>Run them in the cloud or connect your own—with their context and tools in one place.</strong>
 </p>
 
 <p align="center">
