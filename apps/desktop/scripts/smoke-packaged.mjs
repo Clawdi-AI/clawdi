@@ -28,7 +28,7 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	const window = context.pages()[0] ?? (await context.waitForEvent("page", { timeout: 30_000 }));
+	const window = await waitForConnectWindow(context, 30_000);
 	const signIn = window.getByRole("heading", { name: "Sign in to Clawdi" });
 	const failure = window.getByRole("heading", { name: "Couldn't finish setup" });
 	await Promise.race([
@@ -40,6 +40,27 @@ try {
 } finally {
 	await browser?.close().catch(() => undefined);
 	await stopProcess(desktop);
+}
+
+async function waitForConnectWindow(context, timeout) {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		const window = context.pages().find((page) => {
+			try {
+				return new URL(page.url()).pathname.endsWith("/renderer.html");
+			} catch {
+				return false;
+			}
+		});
+		if (window) return window;
+		await delay(100);
+	}
+	throw new Error(
+		`Packaged app did not open Connect Agent. Pages: ${context
+			.pages()
+			.map((page) => page.url())
+			.join(", ")}`,
+	);
 }
 
 function waitForDevToolsEndpoint(child, logs, timeout) {
