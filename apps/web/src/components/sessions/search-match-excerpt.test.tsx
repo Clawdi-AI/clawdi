@@ -6,7 +6,7 @@ import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-ex
 const anchor = { kind: "event_seq" as const, position: 4, revision: "events:revision" };
 
 describe("SessionSearchMatchExcerpt", () => {
-	test("highlights the matching phrase without hiding the surrounding excerpt", () => {
+	test("highlights every matching term without hiding the surrounding excerpt", () => {
 		const markup = renderToStaticMarkup(
 			createElement(SessionSearchMatchExcerpt, {
 				match: { role: "assistant", excerpt: "Fixed the authentication timeout", anchor },
@@ -15,7 +15,8 @@ describe("SessionSearchMatchExcerpt", () => {
 		);
 
 		expect(markup).toContain("Fixed the ");
-		expect(markup).toContain(">authentication timeout</mark>");
+		expect(markup).toContain(">authentication</mark> <mark");
+		expect(markup).toContain(">timeout</mark>");
 	});
 
 	test("renders query text as escaped content", () => {

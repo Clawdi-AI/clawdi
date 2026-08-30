@@ -21,7 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
-from app.core.query_utils import escape_like, like_needle, search_excerpt
+from app.core.query_utils import (
+    escape_like,
+    lexical_search_filter,
+    like_needle,
+    search_excerpt,
+    search_terms,
+)
 from app.models.project import Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment, Session
@@ -88,7 +94,6 @@ type Searcher = Callable[
 async def _search_agents(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     exact = escape_like(query)
     prefix = f"{exact}%"
-    needle = like_needle(query)
     fields = (
         AgentEnvironment.display_name,
         AgentEnvironment.default_name,
@@ -108,7 +113,7 @@ async def _search_agents(db: AsyncSession, auth: AuthContext, query: str) -> lis
         .where(
             AgentEnvironment.user_id == auth.user_id,
             active_agent_filter(),
-            or_(*(field.ilike(needle, escape="\\") for field in fields)),
+            lexical_search_filter(query, fields),
         )
         .order_by(
             rank,
@@ -146,7 +151,8 @@ def _agent_search_subtitle(agent: AgentEnvironment, query: str) -> str | None:
         agent.agent_type,
     )
     type_label = agent_type_default_label(agent.agent_type)
-    folded_query = query.casefold()
+    terms = tuple(term.casefold() for term in search_terms(query))
+    title_terms = tuple(term for term in terms if term not in title.casefold())
     candidates = (
         agent.display_name,
         agent.default_name,
@@ -156,7 +162,11 @@ def _agent_search_subtitle(agent: AgentEnvironment, query: str) -> str | None:
     )
     for candidate in candidates:
         label = (candidate or "").strip()
-        if label and label.casefold() != title.casefold() and folded_query in label.casefold():
+        if (
+            label
+            and label.casefold() != title.casefold()
+            and any(term in label.casefold() for term in (title_terms or terms))
+        ):
             return label
     context = [
         label for label in (type_label, agent.machine_name) if label.casefold() != title.casefold()
@@ -288,12 +298,27 @@ async def _search_projects(db: AsyncSession, auth: AuthContext, query: str) -> l
         ProjectMembership.project_id == Project.id,
         ProjectMembership.member_user_id == auth.user_id,
     )
-    shared_owner_match = and_(
-        Project.user_id != auth.user_id,
-        or_(
-            User.name.ilike(needle, escape="\\"),
-            and_(User.name.is_(None), User.email.ilike(needle, escape="\\")),
-            ProjectMembership.resolved_owner_handle.ilike(needle, escape="\\"),
+    project_match = lexical_search_filter(
+        query,
+        (
+            Project.name,
+            Project.slug,
+            Project.description,
+            case((Project.user_id != auth.user_id, User.name), else_=""),
+            case(
+                (
+                    and_(Project.user_id != auth.user_id, User.name.is_(None)),
+                    User.email,
+                ),
+                else_="",
+            ),
+            case(
+                (
+                    Project.user_id != auth.user_id,
+                    ProjectMembership.resolved_owner_handle,
+                ),
+                else_="",
+            ),
         ),
     )
     rank = case(
@@ -313,12 +338,7 @@ async def _search_projects(db: AsyncSession, auth: AuthContext, query: str) -> l
         .where(
             Project.id.in_(visible_project_ids),
             Project.archived_at.is_(None),
-            or_(
-                Project.name.ilike(needle, escape="\\"),
-                Project.slug.ilike(needle, escape="\\"),
-                Project.description.ilike(needle, escape="\\"),
-                shared_owner_match,
-            ),
+            project_match,
         )
         .order_by(rank, Project.name, Project.id)
         .limit(TYPE_LIMIT)
@@ -351,17 +371,17 @@ def _project_search_subtitle(
     caller_user_id: UUID,
 ) -> str:
     description = (project.description or "").strip()
-    folded_query = query.casefold()
-    if folded_query in project.slug.casefold():
+    terms = tuple(term.casefold() for term in search_terms(query))
+    if any(term in project.slug.casefold() for term in terms):
         return project.slug
-    if description and folded_query in description.casefold():
+    if description and any(term in description.casefold() for term in terms):
         return search_excerpt(description, query, limit=160)
     if project.user_id != caller_user_id:
         owner_labels = [safe_owner_display(owner)]
         if membership is not None:
             owner_labels.append(membership.resolved_owner_handle)
         if label := next(
-            (label for label in owner_labels if folded_query in label.casefold()),
+            (label for label in owner_labels if any(term in label.casefold() for term in terms)),
             None,
         ):
             return f"Shared by {label}"
@@ -398,12 +418,7 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
     stmt = (
         select(Vault)
         .where(visibility)
-        .where(
-            or_(
-                Vault.slug.ilike(needle, escape="\\"),
-                Vault.name.ilike(needle, escape="\\"),
-            )
-        )
+        .where(lexical_search_filter(query, (Vault.slug, Vault.name)))
         .order_by(rank, Vault.name, Vault.id)
         .limit(TYPE_LIMIT)
     )
@@ -415,7 +430,8 @@ async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> lis
             title=v.name or v.slug,
             subtitle=(
                 v.slug
-                if query.casefold() in v.slug.casefold() and v.slug.casefold() != v.name.casefold()
+                if any(term.casefold() in v.slug.casefold() for term in search_terms(query))
+                and v.slug.casefold() != v.name.casefold()
                 else "encrypted secrets"
             ),
             href=f"/vaults/{quote(v.slug, safe='')}?vault={v.id}",
@@ -435,8 +451,8 @@ async def global_search(
     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
     6*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
 
-    Sessions/projects/skills/vaults use `ILIKE` (small tables) — memories goes
-    through the hybrid provider (FTS + trgm + optional pgvector) for quality.
+    Sessions/projects/skills/vaults use literal + PostgreSQL full-text search;
+    memories use the hybrid provider (FTS + trgm + optional pgvector).
 
     A single failing source (e.g. the memory provider briefly unavailable)
     degrades to partial results rather than failing the whole request —

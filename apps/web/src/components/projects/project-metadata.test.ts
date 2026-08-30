@@ -69,4 +69,10 @@ describe("Project search projection", () => {
 		expect(projectSearchRank(project, "production rollout")).toBe(6);
 		expect(projectSearchRank(project, "a1b2")).toBe(7);
 	});
+
+	test("matches terms across fields and explains the supporting match", () => {
+		expect(projectMatchesSearch(project, "launch production")).toBe(true);
+		expect(projectSearchSupportingText(project, "launch production")).toContain("production");
+		expect(projectMatchesSearch(project, "launch missing")).toBe(false);
+	});
 });

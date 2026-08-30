@@ -11,7 +11,12 @@ from sqlalchemy import String, case, cast, delete, func, literal, or_, select, u
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
-from app.core.query_utils import like_needle, search_excerpt
+from app.core.query_utils import (
+    lexical_search_filter,
+    like_needle,
+    search_excerpt,
+    websearch_query,
+)
 from app.models.session import Session, SessionEventChunk, SessionMessageSearch
 from app.schemas.session import (
     SessionSearchAnchorResponse,
@@ -131,9 +136,10 @@ def _searchable_text(content: str) -> str:
 
 
 def _message_match_expression(query: str):
-    return SessionMessageSearch.content.ilike(
-        like_needle(query),
-        escape="\\",
+    return lexical_search_filter(
+        query,
+        (SessionMessageSearch.content,),
+        search_vector=SessionMessageSearch.content_tsv,
     )
 
 
@@ -154,6 +160,11 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
         else_=func.concat("snapshot:", Session.content_hash),
     )
     message_match = _message_match_expression(query)
+    phrase_match = SessionMessageSearch.content.ilike(like_needle(query), escape="\\")
+    lexical_rank = func.ts_rank_cd(
+        SessionMessageSearch.content_tsv,
+        websearch_query(query),
+    )
     candidates = (
         select(
             SessionMessageSearch.session_id.label("session_id"),
@@ -161,9 +172,10 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             SessionMessageSearch.position.label("position"),
             SessionMessageSearch.content.label("content"),
             SessionMessageSearch.role.label("role"),
-            # Body search is deterministic phrase containment. The constant
-            # only participates in cross-field ranking on the Session list.
-            literal(1.0).label("score"),
+            case(
+                (phrase_match, literal(2.0) + lexical_rank),
+                else_=literal(0.75) + lexical_rank,
+            ).label("score"),
         )
         .where(
             SessionMessageSearch.user_id == user_id,
@@ -198,14 +210,16 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
 
 
 def session_search_matches(user_id: UUID, query: str) -> Subquery:
-    """Return every exact phrase match with one ranked body hit per Session."""
+    """Return every all-term match with one ranked body hit per Session."""
     pattern = like_needle(query)
     message_match = best_session_message_matches(user_id, query)
-    metadata_matches = [
-        func.coalesce(Session.summary, "").ilike(pattern, escape="\\"),
-        func.coalesce(Session.project_path, "").ilike(pattern, escape="\\"),
-        Session.local_session_id.ilike(pattern, escape="\\"),
-    ]
+    metadata_fields = (
+        func.coalesce(Session.summary, ""),
+        func.coalesce(Session.project_path, ""),
+        Session.local_session_id,
+    )
+    metadata_match = lexical_search_filter(query, metadata_fields)
+    metadata_phrase_match = or_(*(field.ilike(pattern, escape="\\") for field in metadata_fields))
     metadata_scores = [
         func.similarity(func.coalesce(Session.summary, ""), query),
         func.similarity(func.coalesce(Session.project_path, ""), query),
@@ -214,10 +228,19 @@ def session_search_matches(user_id: UUID, query: str) -> Subquery:
     uuid_prefix = _uuid_prefix_pattern(query)
     if uuid_prefix is not None:
         compact_session_id = func.replace(cast(Session.id, String), "-", "")
-        metadata_matches.append(compact_session_id.ilike(uuid_prefix))
+        metadata_match = or_(metadata_match, compact_session_id.ilike(uuid_prefix))
+        metadata_phrase_match = or_(
+            metadata_phrase_match,
+            compact_session_id.ilike(uuid_prefix),
+        )
         metadata_scores.append(func.similarity(compact_session_id, uuid_prefix[:-1]))
-    metadata_match = or_(*metadata_matches)
-    metadata_score = func.greatest(*metadata_scores)
+    metadata_score = case(
+        (
+            metadata_phrase_match,
+            literal(1.0) + func.greatest(*metadata_scores),
+        ),
+        else_=literal(0.5),
+    )
     message_score = func.coalesce(message_match.c.score, 0.0)
     return (
         select(

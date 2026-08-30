@@ -1,7 +1,7 @@
 """Session list/search endpoint tests.
 
 Covers the upgraded `/api/sessions` list endpoint:
-  - case-insensitive phrase search across metadata and visible messages
+  - PostgreSQL web search across metadata and visible messages
   - Filters: model, tag, min_messages, min_duration, has_pr
   - `sort=relevance` ordering
   - Default behavior unchanged (no q, no filters → date-sorted list)
@@ -92,7 +92,7 @@ async def _push_session(
 
 
 @pytest.mark.asyncio
-async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClient):
+async def test_metadata_search_is_literal_and_case_insensitive(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     session_id = await _push_session(
         client, env_id, local_session_id="auth-1", summary="user authentication migration"
@@ -122,20 +122,31 @@ async def test_metadata_search_requires_the_query_phrase(client: httpx.AsyncClie
 
 
 @pytest.mark.asyncio
-async def test_relevance_sort_only_ranks_phrase_matches(client: httpx.AsyncClient):
+async def test_relevance_sort_prioritizes_phrase_over_all_term_match(client: httpx.AsyncClient):
     env_id = await _register_env(client)
     # Exact-match summary, partial-match summary, no-match summary.
     await _push_session(client, env_id, local_session_id="exact", summary="oauth token refresh bug")
     await _push_session(
-        client, env_id, local_session_id="partial", summary="refresh the page on token error"
+        client,
+        env_id,
+        local_session_id="partial",
+        summary="refresh the OAuth flow after a token error",
     )
     await _push_session(client, env_id, local_session_id="other", summary="UI polish")
 
     r = await client.get("/v1/sessions?q=oauth+token+refresh&sort=relevance")
     items = r.json()["items"]
-    # Only the summary containing the complete phrase is eligible.
-    assert items[0]["summary"] == "oauth token refresh bug"
+    assert [item["summary"] for item in items] == [
+        "oauth token refresh bug",
+        "refresh the OAuth flow after a token error",
+    ]
     assert all(s["summary"] != "UI polish" for s in items)
+
+    quoted = await client.get(
+        "/v1/sessions",
+        params={"q": '"oauth token refresh"', "sort": "relevance"},
+    )
+    assert [item["summary"] for item in quoted.json()["items"]] == ["oauth token refresh bug"]
 
 
 @pytest.mark.asyncio
@@ -215,6 +226,8 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     assert typo["items"] == []
     case_insensitive = (await client.get("/v1/sessions", params={"q": "original NEEDLE"})).json()
     assert [item["local_session_id"] for item in case_insensitive["items"]] == [local_id]
+    reordered = (await client.get("/v1/sessions", params={"q": "literal original"})).json()
+    assert [item["local_session_id"] for item in reordered["items"]] == [local_id]
     literal = (await client.get("/v1/sessions", params={"q": "%_"})).json()
     assert [item["local_session_id"] for item in literal["items"]] == [local_id]
     backslash = (await client.get("/v1/sessions", params={"q": "slash\\needle"})).json()

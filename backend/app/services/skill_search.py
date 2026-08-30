@@ -1,18 +1,22 @@
 """Shared literal search semantics for Skill collection surfaces."""
 
-from sqlalchemy import case, or_
+from sqlalchemy import case
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.query_utils import escape_like, like_needle, search_excerpt
+from app.core.query_utils import (
+    escape_like,
+    lexical_search_filter,
+    like_needle,
+    search_excerpt,
+    search_terms,
+)
 from app.models.skill import Skill
 
 
 def skill_search_filter(query: str) -> ColumnElement[bool]:
-    needle = like_needle(query)
-    return or_(
-        Skill.name.ilike(needle, escape="\\"),
-        Skill.skill_key.ilike(needle, escape="\\"),
-        Skill.description.ilike(needle, escape="\\"),
+    return lexical_search_filter(
+        query,
+        (Skill.name, Skill.skill_key, Skill.description),
     )
 
 
@@ -33,10 +37,10 @@ def skill_search_rank(query: str) -> ColumnElement[int]:
 
 
 def skill_search_subtitle(skill: Skill, query: str) -> str:
-    folded_query = query.casefold()
-    if folded_query in skill.skill_key.casefold():
+    terms = tuple(term.casefold() for term in search_terms(query))
+    if any(term in skill.skill_key.casefold() for term in terms):
         return skill.skill_key
     description = (skill.description or "").strip()
-    if description and folded_query in description.casefold():
+    if description and any(term in description.casefold() for term in terms):
         return search_excerpt(description, query, limit=160)
     return description or skill.skill_key

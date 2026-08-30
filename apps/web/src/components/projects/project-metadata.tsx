@@ -14,7 +14,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { identityFor } from "@/lib/identity";
-import { literalSearchRank, searchExcerpt } from "@/lib/search-highlight";
+import { literalSearchRank, searchExcerpt, searchTerms } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
 export interface ProjectMetadata {
@@ -75,18 +75,23 @@ export function projectMatchesSearch(project: ProjectMetadata, query: string): b
 }
 
 export function projectSearchSupportingText(project: ProjectMetadata, query: string): string {
-	const phrase = query.trim().toLowerCase();
-	if (!phrase) return projectSupportingText(project);
+	const terms = searchTerms(query).map((term) => term.toLocaleLowerCase());
+	if (terms.length === 0) return projectSupportingText(project);
+	const title = displayProjectName(project).toLocaleLowerCase();
+	const supportingTerms = terms.filter((term) => !title.includes(term));
+	const relevantTerms = supportingTerms.length > 0 ? supportingTerms : terms;
 
-	if (project.slug.toLowerCase().includes(phrase)) return `Slug: ${project.slug}`;
+	if (relevantTerms.some((term) => project.slug.toLocaleLowerCase().includes(term))) {
+		return `Slug: ${project.slug}`;
+	}
 
 	const description = project.description?.trim();
-	if (description?.toLowerCase().includes(phrase)) {
+	if (description && relevantTerms.some((term) => description.toLocaleLowerCase().includes(term))) {
 		return searchExcerpt(description, query, 160);
 	}
 
 	const matchingOwner = [project.owner_display, project.owner_handle].find((owner) =>
-		owner?.toLowerCase().includes(phrase),
+		relevantTerms.some((term) => owner?.toLocaleLowerCase().includes(term)),
 	);
 	if (!isProjectOwner(project) && matchingOwner) {
 		return `Shared by ${matchingOwner}`;

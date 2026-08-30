@@ -18,7 +18,10 @@ export function SearchHighlightedText({
 				part.highlighted ? (
 					<mark
 						key={`${index}:${part.text}`}
-						className={cn("rounded-sm bg-primary/15 px-0.5 text-inherit", markClassName)}
+						className={cn(
+							"bg-transparent font-semibold text-foreground underline decoration-primary/50 decoration-1 underline-offset-2",
+							markClassName,
+						)}
 					>
 						{part.text}
 					</mark>

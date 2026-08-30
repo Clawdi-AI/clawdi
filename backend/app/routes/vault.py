@@ -16,7 +16,7 @@ from app.core.project import (
     resolve_personal_project,
     validate_project_for_caller,
 )
-from app.core.query_utils import like_needle
+from app.core.query_utils import lexical_search_filter
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
 from app.models.vault import (
@@ -118,13 +118,7 @@ async def list_vaults(
         .order_by(Vault.slug)
     )
     if q:
-        needle = like_needle(q)
-        base = base.where(
-            or_(
-                Vault.slug.ilike(needle, escape="\\"),
-                Vault.name.ilike(needle, escape="\\"),
-            )
-        )
+        base = base.where(lexical_search_filter(q, (Vault.slug, Vault.name)))
 
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     rows = (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()

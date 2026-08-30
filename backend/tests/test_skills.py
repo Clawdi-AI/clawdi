@@ -1475,6 +1475,13 @@ async def test_skill_search_uses_shared_relevance_and_description_excerpt(
     assert token in hits[-1]["subtitle"]
     assert len(hits[-1]["subtitle"]) <= 166
 
+    multi_term = await client.get(
+        "/v1/skills",
+        params={"project_id": project_id, "q": f"{token} display-name"},
+    )
+    assert multi_term.status_code == 200, multi_term.text
+    assert [item["id"] for item in multi_term.json()["items"]] == [str(exact_name.id)]
+
 
 @pytest.mark.asyncio
 async def test_list_skills_etag_covers_project_and_machine_metadata(

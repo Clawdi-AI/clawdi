@@ -12,8 +12,9 @@ describe("Markdown search highlighting", () => {
 			}),
 		);
 
-		expect(markup.match(/<mark/g)).toHaveLength(1);
-		expect(markup).toContain(">authentication timeout</mark>");
+		expect(markup.match(/<mark/g)).toHaveLength(2);
+		expect(markup).toContain(">authentication</mark> <mark");
+		expect(markup).toContain(">timeout</mark>");
 		expect(markup).toContain("authentication timeout\n</code>");
 	});
 });
