@@ -2849,10 +2849,10 @@ export interface paths {
          * @description Run each entity searcher and concat results.
          *
          *     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
-         *     5*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+         *     6*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
          *
-         *     Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
-         *     the hybrid provider (FTS + trgm + optional pgvector) for quality.
+         *     Sessions/projects/skills/vaults use `ILIKE` (small tables) — memories goes
+         *     through the hybrid provider (FTS + trgm + optional pgvector) for quality.
          *
          *     A single failing source (e.g. the memory provider briefly unavailable)
          *     degrades to partial results rather than failing the whole request —
@@ -7544,7 +7544,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "session" | "memory" | "project" | "skill" | "vault";
+            type: "agent" | "session" | "memory" | "project" | "skill" | "vault";
             /** Id */
             id: string;
             /** Title */

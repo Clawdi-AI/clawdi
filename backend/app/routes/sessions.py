@@ -106,6 +106,7 @@ from app.schemas.session import (
 )
 from app.services import memory_extraction
 from app.services.agent_environments import (
+    agent_name_from_fields,
     clear_connected_agent_registration,
     local_machine_registration_key,
     register_agent_environment,
@@ -192,13 +193,8 @@ async def _analyze_session_upload(data: bytes) -> _SessionUploadAnalysis:
 
 
 def _bound_env_id(auth: AuthContext) -> UUID | None:
-    """Return the env_id this caller is bound to, or None for
-    Clerk JWT (multi-env) callers. Bound api_keys carry an
-    `environment_id` on their key row; that's the blast-radius
-    boundary every session read/write must respect."""
-    if auth.is_cli and auth.api_key is not None:
-        return auth.api_key.environment_id
-    return None
+    """Return the environment fence carried by an Agent-bound API key."""
+    return auth.bound_environment_id
 
 
 # Clock-skew window for client-supplied `last_activity_at`. Anything
@@ -1300,7 +1296,7 @@ async def _hosted_deployment_ids(
 def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
     return AgentResponse(
         id=str(env.id),
-        name=_agent_name_from_fields(
+        name=agent_name_from_fields(
             env.display_name, env.default_name, env.machine_name, env.agent_type
         ),
         default_name=env.default_name,
@@ -1351,21 +1347,6 @@ def _identity_response(
     if agent_response:
         return _agent_to_response(env)
     return _env_to_response_with_deployment_id(env, hosted_deployment_id)
-
-
-def _agent_name_from_fields(
-    display_name: str | None,
-    default_name: str | None,
-    machine_name: str | None,
-    agent_type: str | None,
-) -> str:
-    return (
-        (display_name or "").strip()
-        or (default_name or "").strip()
-        or (machine_name or "").strip()
-        or agent_type
-        or "Unknown"
-    )
 
 
 def _detect_avatar_image(data: bytes) -> tuple[str, str] | None:
@@ -3567,7 +3548,7 @@ def _session_to_response(
     search_match: SessionSearchMatchResponse | None = None,
 ) -> SessionListItemResponse:
     agent_name = (
-        _agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
+        agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
         if any((agent_display_name, agent_default_name, machine_name))
         else None
     )

@@ -156,6 +156,11 @@ class AuthContext:
     def user_id(self):
         return self._user_id
 
+    @property
+    def bound_environment_id(self) -> UUID | None:
+        """Environment fence carried by an Agent-bound API key."""
+        return self.api_key.environment_id if self.api_key is not None else None
+
 
 async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if not token.startswith(API_KEY_PREFIX):

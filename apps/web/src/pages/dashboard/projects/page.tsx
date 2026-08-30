@@ -16,8 +16,9 @@ import { CreateProjectDialog } from "@/components/projects/create-project-dialog
 import { ProjectActions } from "@/components/projects/project-actions";
 import {
 	canManageCustomProject,
-	displayProjectName,
 	isCustomProject,
+	projectMatchesSearch,
+	projectSearchRank,
 } from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
@@ -79,14 +80,13 @@ export default function ProjectsPage() {
 			...customProjects.map((project) => ({ project, shared: false })),
 			...sharedProjects.map((project) => ({ project, shared: true })),
 		];
-		const q = search.trim().toLowerCase();
-		if (!q) return all;
-		return all.filter(({ project }) =>
-			[displayProjectName(project), project.slug, project.owner_display ?? ""]
-				.join(" ")
-				.toLowerCase()
-				.includes(q),
-		);
+		return all
+			.filter(({ project }) => projectMatchesSearch(project, search))
+			.sort(
+				(a, b) =>
+					(projectSearchRank(a.project, search) ?? Number.MAX_SAFE_INTEGER) -
+					(projectSearchRank(b.project, search) ?? Number.MAX_SAFE_INTEGER),
+			);
 	}, [customProjects, sharedProjects, search]);
 	const blockingProjectsError = shouldBlockQueryError(projects.error, projects.data);
 
@@ -167,6 +167,7 @@ export default function ProjectsPage() {
 						<ProjectResourceCard
 							key={project.id}
 							project={project}
+							searchQuery={search.trim() || undefined}
 							footer={[
 								formatResourceCount(project.skill_count, "skill"),
 								formatResourceCount(project.vault_count, "vault"),

@@ -11,27 +11,33 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Literal
 from urllib.parse import quote
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
-from app.core.query_utils import like_needle, search_excerpt
+from app.core.query_utils import escape_like, like_needle, search_excerpt
 from app.models.project import Project
+from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
+from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
 from app.schemas.session import SessionSearchMatchResponse
+from app.services.agent_environments import agent_name_from_fields, agent_type_default_label
+from app.services.agent_lifecycle import active_agent_filter
 from app.services.memory_provider import get_memory_provider
 from app.services.memory_types import MemoryItem
 from app.services.session_search import (
     session_search_match_response,
     session_search_matches,
 )
+from app.services.sharing import safe_owner_display
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -50,7 +56,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["search"])
 
-SearchType = Literal["session", "memory", "project", "skill", "vault"]
+SearchType = Literal["agent", "session", "memory", "project", "skill", "vault"]
 
 
 class SearchHit(BaseModel):
@@ -74,6 +80,85 @@ type Searcher = Callable[
 ]
 
 
+async def _search_agents(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    exact = escape_like(query)
+    prefix = f"{exact}%"
+    needle = like_needle(query)
+    fields = (
+        AgentEnvironment.display_name,
+        AgentEnvironment.default_name,
+        AgentEnvironment.machine_name,
+        AgentEnvironment.agent_type,
+    )
+    rank = case(
+        *[(field.ilike(exact, escape="\\"), index) for index, field in enumerate(fields)],
+        *[
+            (field.ilike(prefix, escape="\\"), index + len(fields))
+            for index, field in enumerate(fields)
+        ],
+        else_=len(fields) * 2,
+    )
+    stmt = (
+        select(AgentEnvironment)
+        .where(
+            AgentEnvironment.user_id == auth.user_id,
+            active_agent_filter(),
+            or_(*(field.ilike(needle, escape="\\") for field in fields)),
+        )
+        .order_by(
+            rank,
+            AgentEnvironment.sort_order,
+            AgentEnvironment.created_at,
+            AgentEnvironment.id,
+        )
+        .limit(TYPE_LIMIT)
+    )
+    if auth.bound_environment_id is not None:
+        stmt = stmt.where(AgentEnvironment.id == auth.bound_environment_id)
+    agents = (await db.execute(stmt)).scalars().all()
+    return [
+        SearchHit(
+            type="agent",
+            id=str(agent.id),
+            title=agent_name_from_fields(
+                agent.display_name,
+                agent.default_name,
+                agent.machine_name,
+                agent.agent_type,
+            ),
+            subtitle=_agent_search_subtitle(agent, query),
+            href=f"/agents/{agent.id}",
+        )
+        for agent in agents
+    ]
+
+
+def _agent_search_subtitle(agent: AgentEnvironment, query: str) -> str | None:
+    title = agent_name_from_fields(
+        agent.display_name,
+        agent.default_name,
+        agent.machine_name,
+        agent.agent_type,
+    )
+    type_label = agent_type_default_label(agent.agent_type)
+    folded_query = query.casefold()
+    candidates = (
+        agent.display_name,
+        agent.default_name,
+        agent.machine_name,
+        type_label,
+        agent.agent_type,
+    )
+    for candidate in candidates:
+        label = (candidate or "").strip()
+        if label and label.casefold() != title.casefold() and folded_query in label.casefold():
+            return label
+    context = [
+        label for label in (type_label, agent.machine_name) if label.casefold() != title.casefold()
+    ]
+    return " · ".join(dict.fromkeys(context)) or None
+
+
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     matches = session_search_matches(auth.user_id, query)
     # Historical search retains archived Agent labels; this join grants no
@@ -95,8 +180,8 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
     )
     # Bound api_keys can only see sessions in their own env — same
     # boundary the direct list_sessions route enforces.
-    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
-        stmt = stmt.where(Session.environment_id == auth.api_key.environment_id)
+    if auth.bound_environment_id is not None:
+        stmt = stmt.where(Session.environment_id == auth.bound_environment_id)
     rows = (await db.execute(stmt)).all()
     hits: list[SearchHit] = []
     for s, agent_type, content, role, position, revision in rows:
@@ -197,32 +282,92 @@ async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> lis
 
 
 async def _search_projects(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
+    exact = escape_like(query)
+    prefix = f"{exact}%"
     needle = like_needle(query)
     visible_project_ids = await project_ids_visible_to(db, auth)
+    membership_join = and_(
+        ProjectMembership.project_id == Project.id,
+        ProjectMembership.member_user_id == auth.user_id,
+    )
+    shared_owner_match = and_(
+        Project.user_id != auth.user_id,
+        or_(
+            User.name.ilike(needle, escape="\\"),
+            and_(User.name.is_(None), User.email.ilike(needle, escape="\\")),
+            ProjectMembership.resolved_owner_handle.ilike(needle, escape="\\"),
+        ),
+    )
+    rank = case(
+        (Project.name.ilike(exact, escape="\\"), 0),
+        (Project.slug.ilike(exact, escape="\\"), 1),
+        (Project.name.ilike(prefix, escape="\\"), 2),
+        (Project.slug.ilike(prefix, escape="\\"), 3),
+        (Project.name.ilike(needle, escape="\\"), 4),
+        (Project.slug.ilike(needle, escape="\\"), 5),
+        (Project.description.ilike(needle, escape="\\"), 6),
+        else_=7,
+    )
     stmt = (
-        select(Project)
+        select(Project, User, ProjectMembership)
+        .join(User, User.id == Project.user_id)
+        .outerjoin(ProjectMembership, membership_join)
         .where(
             Project.id.in_(visible_project_ids),
             Project.archived_at.is_(None),
             or_(
                 Project.name.ilike(needle, escape="\\"),
                 Project.slug.ilike(needle, escape="\\"),
+                Project.description.ilike(needle, escape="\\"),
+                shared_owner_match,
             ),
         )
-        .order_by(Project.name)
+        .order_by(rank, Project.name, Project.id)
         .limit(TYPE_LIMIT)
     )
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = (await db.execute(stmt)).all()
     return [
         SearchHit(
             type="project",
             id=str(p.id),
             title=p.name,
-            subtitle=p.slug,
+            subtitle=_project_search_subtitle(
+                p,
+                query,
+                owner=owner,
+                membership=membership,
+                caller_user_id=auth.user_id,
+            ),
             href=f"/projects/{p.id}",
         )
-        for p in rows
+        for p, owner, membership in rows
     ]
+
+
+def _project_search_subtitle(
+    project: Project,
+    query: str,
+    *,
+    owner: User,
+    membership: ProjectMembership | None,
+    caller_user_id: UUID,
+) -> str:
+    description = (project.description or "").strip()
+    folded_query = query.casefold()
+    if folded_query in project.slug.casefold():
+        return project.slug
+    if description and folded_query in description.casefold():
+        return search_excerpt(description, query, limit=160)
+    if project.user_id != caller_user_id:
+        owner_labels = [safe_owner_display(owner)]
+        if membership is not None:
+            owner_labels.append(membership.resolved_owner_handle)
+        if label := next(
+            (label for label in owner_labels if folded_query in label.casefold()),
+            None,
+        ):
+            return f"Shared by {label}"
+    return description or project.slug
 
 
 async def _search_vaults(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
@@ -266,10 +411,10 @@ async def global_search(
     """Run each entity searcher and concat results.
 
     Each searcher returns at most `TYPE_LIMIT` rows; total is capped at
-    5*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
+    6*TYPE_LIMIT which keeps the palette responsive even with noisy queries.
 
-    Sessions/skills/vaults use `ILIKE` (small tables) — memories goes through
-    the hybrid provider (FTS + trgm + optional pgvector) for quality.
+    Sessions/projects/skills/vaults use `ILIKE` (small tables) — memories goes
+    through the hybrid provider (FTS + trgm + optional pgvector) for quality.
 
     A single failing source (e.g. the memory provider briefly unavailable)
     degrades to partial results rather than failing the whole request —
@@ -293,7 +438,7 @@ async def global_search(
     # we limit it to user JWT and wide-access personal CLI keys
     # (mirrors `require_user_auth` semantics on the direct vault
     # routes).
-    jobs: list[tuple[str, Searcher]] = []
+    jobs: list[tuple[str, Searcher]] = [("agents", _search_agents)]
     if _has_scope(auth, "skills:read"):
         jobs.append(("skills", _search_skills))
     if not is_scoped_api_key(auth):

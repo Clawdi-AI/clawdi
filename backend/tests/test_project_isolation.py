@@ -513,6 +513,11 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
         )
         assert resp.status_code == 200
         assert resp.json()["items"] == [], resp.json()
+
+        search = await client.get("/v1/search", params={"q": "Env"})
+        assert search.status_code == 200, search.text
+        agent_ids = {hit["id"] for hit in search.json()["results"] if hit["type"] == "agent"}
+        assert agent_ids == {str(env_a.id)}
     finally:
         await client.aclose()
         app.dependency_overrides.clear()

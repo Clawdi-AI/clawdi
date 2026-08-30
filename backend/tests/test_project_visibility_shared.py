@@ -143,6 +143,12 @@ async def test_recipient_can_read_shared_project_skill_detail_and_search(
         skill_hits = [h for h in skill_search.json()["results"] if h["type"] == "skill"]
         assert any(h["id"] for h in skill_hits), skill_search.json()
 
+        project_search = await client.get("/v1/search", params={"q": f"ro-{nonce}"})
+        assert project_search.status_code == 200, project_search.text
+        project_hit = next(h for h in project_search.json()["results"] if h["type"] == "project")
+        assert project_hit["id"] == str(shared.id)
+        assert project_hit["subtitle"] == f"Shared by ro-{nonce}"
+
         vault_search = await client.get("/v1/search", params={"q": f"shared-vault-{nonce}"})
         assert vault_search.status_code == 200, vault_search.text
         vault_hits = [h for h in vault_search.json()["results"] if h["type"] == "vault"]
