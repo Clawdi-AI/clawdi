@@ -111,10 +111,15 @@ test("commits Session search keys atomically before prefetching", async ({ page 
 	requests.length = 0;
 	const clearRequest = holdPageOne(null);
 	await search.fill("");
-	await expect(page).toHaveURL((url) => !url.searchParams.has("q") && !url.searchParams.has("sort"));
+	await expect(page).toHaveURL(
+		(url) => !url.searchParams.has("q") && !url.searchParams.has("sort"),
+	);
 	await clearRequest.started;
 	await page.evaluate(
-		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
 	);
 	expect(requests).toEqual([{ q: null, sort: "last_activity_at", page: "1" }]);
 	clearRequest.release();
@@ -126,11 +131,15 @@ test("commits Session search keys atomically before prefetching", async ({ page 
 	const searchRequest = holdPageOne("fresh needle");
 	await search.fill("fresh needle");
 	await expect(page).toHaveURL(
-		(url) => url.searchParams.get("q") === "fresh needle" && url.searchParams.get("sort") === "relevance",
+		(url) =>
+			url.searchParams.get("q") === "fresh needle" && url.searchParams.get("sort") === "relevance",
 	);
 	await searchRequest.started;
 	await page.evaluate(
-		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
 	);
 	expect(requests).toEqual([{ q: "fresh needle", sort: "relevance", page: "1" }]);
 	searchRequest.release();
