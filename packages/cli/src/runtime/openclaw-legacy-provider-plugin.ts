@@ -71,11 +71,7 @@ export function removeLegacyManagedOpenClawProviderPlugin(input: {
 		"managed-sources",
 		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
 	);
-	const installDir = join(
-		input.stateRoot,
-		"extensions",
-		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-	);
+	const installDir = join(input.stateRoot, "extensions", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
 	if (!existsSync(sourceDir) && !existsSync(installDir)) return;
 
 	const observation = inspectLegacyPlugin(input.commandPath, input.home);

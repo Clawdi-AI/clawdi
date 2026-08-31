@@ -2684,21 +2684,17 @@ describe("runtime manifest reconciliation invariants", () => {
 				readFileSync(commandLog, "utf8")
 					.trim()
 					.split("\n")
-						.filter((command) => command === "agents list --json"),
+					.filter((command) => command === "agents list --json"),
 			);
 		const sdkCounts = () => callCounts(readFileSync(sdkLog, "utf8").trim().split("\n"));
 
 		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
 		const firstHotspots = hotspotCounts();
 		const firstSdkCalls = sdkCounts();
-			for (const hotspot of ["agents list --json"]) {
+		for (const hotspot of ["agents list --json"]) {
 			expect(firstHotspots[hotspot]).toBeGreaterThan(0);
 		}
-		for (const sdk of [
-			"device-bootstrap",
-			"provider-auth",
-				"config-mutation",
-		]) {
+		for (const sdk of ["device-bootstrap", "provider-auth", "config-mutation"]) {
 			expect(firstSdkCalls[sdk]).toBeGreaterThan(0);
 		}
 
@@ -2726,14 +2722,14 @@ describe("runtime manifest reconciliation invariants", () => {
 			firstSdkCalls["config-mutation"] ?? 0,
 		);
 
-			const rosterConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+		const rosterConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 		const agents = rosterConfig.agents as Record<string, unknown>;
 		agents.list = [{ id: "research", agentDir: join(paths.userHome, "research-agent") }];
 		writeFileSync(configPath, `${JSON.stringify(rosterConfig, null, 2)}\n`);
 		const beforeRosterChange = sdkCounts();
 		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
-				expect(hotspotCounts()["agents list --json"]).toBeGreaterThan(
-					firstHotspots["agents list --json"] ?? 0,
+		expect(hotspotCounts()["agents list --json"]).toBeGreaterThan(
+			firstHotspots["agents list --json"] ?? 0,
 		);
 		const afterRosterChange = sdkCounts();
 		expect(afterRosterChange["provider-auth"]).toBeGreaterThan(
@@ -2744,8 +2740,8 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(converge(manifestFor("https://provider-v2.example.test/v1", 2)).installErrors).toEqual(
 			[],
 		);
-			const revisedHotspots = hotspotCounts();
-			expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
+		const revisedHotspots = hotspotCounts();
+		expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
 		const revisedSdkCalls = sdkCounts();
 		for (const [sdk, count] of Object.entries(firstSdkCalls)) {
 			expect(revisedSdkCalls[sdk]).toBeGreaterThan(count);

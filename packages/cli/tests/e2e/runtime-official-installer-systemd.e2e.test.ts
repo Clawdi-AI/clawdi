@@ -100,11 +100,7 @@ function installLegacyManagedProviderPlugin(input: {
 		"managed-sources",
 		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
 	);
-	const installDir = join(
-		input.stateDir,
-		"extensions",
-		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-	);
+	const installDir = join(input.stateDir, "extensions", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
 	mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
 	chmodSync(dirname(sourceDir), 0o700);
 	chownSync(dirname(sourceDir), input.runtimeUid, input.runtimeGid);
@@ -115,29 +111,35 @@ function installLegacyManagedProviderPlugin(input: {
 	);
 	writeFileSync(
 		join(sourceDir, "openclaw.plugin.json"),
-		`${JSON.stringify({
-			id: LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-			enabledByDefault: true,
-			activation: { onStartup: false },
-			setup: {
-				providers: [
-					{ id: "clawdi", authMethods: ["api-key"], envVars: ["CLAWDI_AI_API_KEY"] },
-				],
-				requiresRuntime: false,
+		`${JSON.stringify(
+			{
+				id: LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
+				enabledByDefault: true,
+				activation: { onStartup: false },
+				setup: {
+					providers: [{ id: "clawdi", authMethods: ["api-key"], envVars: ["CLAWDI_AI_API_KEY"] }],
+					requiresRuntime: false,
+				},
+				configSchema: { type: "object", additionalProperties: false, properties: {} },
 			},
-			configSchema: { type: "object", additionalProperties: false, properties: {} },
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 		{ mode: 0o600 },
 	);
 	writeFileSync(
 		join(sourceDir, "package.json"),
-		`${JSON.stringify({
-			name: "@clawdi/openclaw-managed-provider",
-			version: "1.0.0",
-			private: true,
-			type: "module",
-			openclaw: { extensions: ["./index.js"] },
-		}, null, 2)}\n`,
+		`${JSON.stringify(
+			{
+				name: "@clawdi/openclaw-managed-provider",
+				version: "1.0.0",
+				private: true,
+				type: "module",
+				openclaw: { extensions: ["./index.js"] },
+			},
+			null,
+			2,
+		)}\n`,
 		{ mode: 0o600 },
 	);
 	chownTreeWithoutFollowingLinks(sourceDir, input.runtimeUid, input.runtimeGid);
@@ -159,12 +161,7 @@ function installLegacyManagedProviderPlugin(input: {
 	});
 	const installed = run(["plugins", "install", sourceDir, "--force", ...consentArgs]);
 	expect(installed.status, installed.stderr).toBe(0);
-	const inspected = run([
-		"plugins",
-		"inspect",
-		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-		"--json",
-	]);
+	const inspected = run(["plugins", "inspect", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID, "--json"]);
 	expect(inspected.status, inspected.stderr).toBe(0);
 	expect(JSON.parse(String(inspected.stdout))).toMatchObject({
 		plugin: { id: LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID },

@@ -75,7 +75,6 @@ import {
 	ensureHostedCodexCli,
 	previewHostedAiProviderProjectionRevision,
 } from "./manifest-providers";
-import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 import {
 	removeStaleRuntimeRunConfigs,
@@ -92,6 +91,7 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";

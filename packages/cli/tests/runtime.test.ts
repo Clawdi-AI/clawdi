@@ -3255,7 +3255,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-		it("pins OpenClaw context and repairs config before provider projection", () => {
+	it("pins OpenClaw context and repairs config before provider projection", () => {
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
@@ -3284,10 +3284,10 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors).toEqual([]);
-			const commands = readFileSync(commandLog, "utf8").trim().split("\n");
-			const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
-			expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
-			expect(commands.some((command) => command.startsWith("plugins "))).toBe(false);
+		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
+		const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
+		expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
+		expect(commands.some((command) => command.startsWith("plugins "))).toBe(false);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
 		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
 

@@ -1,3 +1,4 @@
+import { expect, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -9,7 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { expect, test } from "bun:test";
 import {
 	LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
 	removeLegacyManagedOpenClawProviderPlugin,
@@ -20,16 +20,8 @@ test("uninstalls the owned legacy provider plugin once", () => {
 	try {
 		const home = join(root, "home");
 		const stateRoot = join(home, ".openclaw");
-		const sourceDir = join(
-			stateRoot,
-			"managed-sources",
-			LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-		);
-		const installDir = join(
-			stateRoot,
-			"extensions",
-			LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-		);
+		const sourceDir = join(stateRoot, "managed-sources", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
+		const installDir = join(stateRoot, "extensions", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
 		const commandPath = join(home, ".local", "bin", "openclaw");
 		const commandLog = join(root, "commands.log");
 		mkdirSync(sourceDir, { recursive: true });
@@ -88,16 +80,8 @@ test("refuses to uninstall an unowned plugin with the legacy id", () => {
 	try {
 		const home = join(root, "home");
 		const stateRoot = join(home, ".openclaw");
-		const sourceDir = join(
-			stateRoot,
-			"managed-sources",
-			LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-		);
-		const installDir = join(
-			stateRoot,
-			"extensions",
-			LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
-		);
+		const sourceDir = join(stateRoot, "managed-sources", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
+		const installDir = join(stateRoot, "extensions", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
 		const commandPath = join(home, ".local", "bin", "openclaw");
 		const commandLog = join(root, "commands.log");
 		mkdirSync(sourceDir, { recursive: true });
