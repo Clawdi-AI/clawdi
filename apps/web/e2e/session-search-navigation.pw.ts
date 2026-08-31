@@ -415,12 +415,14 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(toolActivity).toBeVisible();
 	await expect(page.getByRole("button", { name: /search.*Error/ })).toBeVisible();
 	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeChecked();
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeDisabled();
 	await toolActivity.click();
 	await expect(page.locator("pre").filter({ hasText: '"path": "README.md"' })).toBeVisible();
 	await page.getByRole("tab", { name: "Output" }).click();
 	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
 
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,tools");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).toBeVisible();
@@ -429,18 +431,15 @@ test("filters session activity and expands paired tool details", async ({ page }
 		(url) => url.searchParams.get("matchQuery") === "Read the repository",
 	);
 
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => {
 		return url.searchParams.get("timelineView") === "tools" && !url.searchParams.has("matchQuery");
 	});
 	await expect(page.getByRole("textbox", { name: "Search messages" })).not.toBeVisible();
-	await expect(page.getByRole("button", { name: "Tools activity" })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeChecked();
 	await expect(toolActivity).toBeVisible();
 
-	await page.getByRole("button", { name: "Agent messages" }).click();
+	await page.getByRole("checkbox", { name: "Agent" }).click();
 	const restoredSearch = page.getByRole("textbox", { name: "Search messages" });
 	await expect(restoredSearch).toHaveValue("Read the repository");
 	await expect(page).toHaveURL((url) => {
@@ -449,7 +448,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 			url.searchParams.get("timelineView") === "assistant,tools"
 		);
 	});
-	await page.getByRole("button", { name: "Tools activity" }).click();
+	await page.getByRole("checkbox", { name: "Tools" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "assistant");
 	await expect(toolActivity).not.toBeVisible();
 	await restoredSearch.fill("Final answer");
@@ -464,7 +463,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 		"Final answer after reading the file",
 	);
 	await expect(page.getByText("1 / 1")).toBeVisible();
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,assistant");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).not.toBeVisible();
@@ -569,9 +568,13 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	const loadEarlier = page.getByRole("button", { name: /^Load earlier/ });
+	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+	await waitForTimelineLayout();
+	expect(requestedOffsets.size).toBe(1);
 	for (let attempt = 0; attempt < 8 && requestedOffsets.size < 5; attempt++) {
 		const requestCount = requestedOffsets.size;
-		await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+		await loadEarlier.click();
 		await expect.poll(() => requestedOffsets.size).toBeGreaterThan(requestCount);
 	}
 	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
@@ -588,6 +591,13 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	).toBeLessThan(2);
 	await jumpToLatest.click();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect
+		.poll(() =>
+			scrollContainer.evaluate(
+				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+			),
+		)
+		.toBeLessThan(2);
 	await expect(jumpToLatest).not.toBeVisible();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
@@ -609,7 +619,6 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	expect(await mountedRows.count()).toBeLessThan(80);
 
 	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
-	const loadEarlier = page.getByRole("button", { name: /^Load earlier/ });
 	await waitForTimelineLayout();
 	await expect(current).not.toBeInViewport();
 	if (!requestedSearchOffsets.has(1550)) {
