@@ -74,14 +74,75 @@ jobs:
             "$runtime_home/install-smoke" \
             install
           cd "$GITHUB_WORKSPACE"
-          smoke_web_url="http://127.0.0.1:17891"
+          smoke_local_url="http://127.0.0.1:17891"
+          smoke_ready_file="$RUNNER_TEMP/clawdi-dashboard-ready"
+          smoke_server_log="$RUNNER_TEMP/clawdi-dashboard-server.log"
+          tunnel_log="$RUNNER_TEMP/clawdi-dashboard-tunnel.log"
+          node apps/desktop/scripts/dashboard-smoke-server.mjs \
+            "$smoke_local_url" \
+            "$smoke_ready_file" >"$smoke_server_log" 2>&1 &
+          smoke_server_pid=$!
+          cleanup_dashboard_smoke() {
+            if [ -n "${tunnel_pid:-}" ]; then
+              kill "$tunnel_pid" 2>/dev/null || true
+              wait "$tunnel_pid" 2>/dev/null || true
+            fi
+            kill "$smoke_server_pid" 2>/dev/null || true
+            wait "$smoke_server_pid" 2>/dev/null || true
+          }
+          finish_dashboard_smoke() {
+            status=$?
+            if [ -n "${production_cli:-}" ] && [ -f "$production_cli" ]; then
+              cp "$production_cli" "$native_cli"
+            fi
+            cleanup_dashboard_smoke
+            if [ "$status" -ne 0 ]; then
+              cat "$smoke_server_log"
+              if [ -f "$tunnel_log" ]; then cat "$tunnel_log"; fi
+            fi
+            trap - EXIT
+            exit "$status"
+          }
+          trap finish_dashboard_smoke EXIT
+          curl -fsSL \
+            -o "$RUNNER_TEMP/cloudflared.tgz" \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-darwin-arm64.tgz
+          echo "9042c2c5d8b2de78e60f313d5fb31b6c5c1cebde787a3caf1f2c9588084ac442  $RUNNER_TEMP/cloudflared.tgz" \
+            | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/cloudflared.tgz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/cloudflared" tunnel \
+            --no-autoupdate \
+            --url "$smoke_local_url" >"$tunnel_log" 2>&1 &
+          tunnel_pid=$!
+          smoke_web_url=""
+          smoke_web_address=""
+          for _ in {1..60}; do
+            smoke_web_url=$(sed -nE \
+              's#.*(https://[a-z0-9-]+\.trycloudflare\.com).*#\1#p' \
+              "$tunnel_log" | head -n 1)
+            if [ -n "$smoke_web_url" ]; then
+              smoke_web_host=$(node -p 'new URL(process.argv[1]).hostname' "$smoke_web_url")
+              smoke_web_address=$(dig +short @1.1.1.1 "$smoke_web_host" A \
+                | sed -nE '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/p' \
+                | head -n 1)
+            fi
+            if [ -n "$smoke_web_address" ] && curl -fsS \
+              --resolve "$smoke_web_host:443:$smoke_web_address" \
+              "$smoke_web_url/health" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          test -n "$smoke_web_url" -a -n "$smoke_web_address"
+          curl -fsS \
+            --resolve "$smoke_web_host:443:$smoke_web_address" \
+            "$smoke_web_url/health" >/dev/null
           smoke_output="$RUNNER_TEMP/clawdi-smoke-build"
           native_cli="apps/desktop/resources/native/clawdi"
           production_cli="$RUNNER_TEMP/clawdi-production-cli"
           cp "$native_cli" "$production_cli"
           cp apps/desktop/scripts/fake-native-smoke.sh "$native_cli"
           chmod +x "$native_cli"
-          trap 'cp "$production_cli" "$native_cli"' EXIT
           CSC_FOR_PULL_REQUEST=true bun x electron-builder \
             --projectDir apps/desktop \
             --mac dir \
@@ -91,7 +152,6 @@ jobs:
             --config.mac.identity=- \
             --config.mac.hardenedRuntime=false
           cp "$production_cli" "$native_cli"
-          trap - EXIT
           dashboard_app="$runtime_home/Applications/Clawdi.app"
           mkdir -p "$(dirname "$dashboard_app")"
           ditto "$smoke_output/mac-arm64/Clawdi.app" "$dashboard_app"
@@ -109,7 +169,11 @@ jobs:
             "$dashboard_app/Contents/MacOS/Clawdi" \
             "$runtime_home/dashboard-smoke" \
             dashboard \
-            "$smoke_web_url"
+            "$smoke_web_url" \
+            "$smoke_ready_file" \
+            "$smoke_web_address"
+          cleanup_dashboard_smoke
+          trap - EXIT
           cd "$(dirname "$dmg_path")"
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 

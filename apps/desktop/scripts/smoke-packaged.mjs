@@ -1,18 +1,31 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
-const [executablePath, runtimeRoot, surface = "install", rawDashboardUrl] = process.argv.slice(2);
+const [
+	executablePath,
+	runtimeRoot,
+	surface = "install",
+	rawDashboardUrl,
+	dashboardReadyFile,
+	dashboardAddress,
+] = process.argv.slice(2);
 if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
 	throw new Error(
-		"usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard] [dashboard-url]",
+		"usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard] [dashboard-url] [ready-file] [dashboard-address]",
 	);
 }
-const dashboardUrl = surface === "dashboard" ? readDashboardUrl(rawDashboardUrl) : null;
+let dashboardUrl;
+if (surface === "dashboard") {
+	dashboardUrl = readDashboardUrl(rawDashboardUrl);
+	if (!dashboardReadyFile || isIP(dashboardAddress) !== 4) {
+		throw new Error("dashboard smoke requires a ready-file and IPv4 dashboard-address.");
+	}
+}
 
 const home = join(runtimeRoot, "home");
 const clawdiHome = join(runtimeRoot, "state");
@@ -20,9 +33,16 @@ mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 
 const output = [];
-const dashboardSmoke = dashboardUrl ? await startDashboardServer(dashboardUrl, output) : null;
 const desktopArgs = [`--user-data-dir=${join(runtimeRoot, "electron-data")}`];
 if (surface === "install") desktopArgs.push("--remote-debugging-port=0");
+else {
+	desktopArgs.push(
+		`--host-resolver-rules=MAP ${dashboardUrl.hostname} ${dashboardAddress}`,
+		"--no-proxy-server",
+		`--log-net-log=${join(runtimeRoot, "net-log.json")}`,
+		"--net-log-capture-mode=Everything",
+	);
+}
 const desktop = spawn(executablePath, desktopArgs, {
 	env: {
 		...process.env,
@@ -40,7 +60,7 @@ let browser;
 let failure;
 try {
 	if (surface === "dashboard") {
-		await waitForDashboardReady(dashboardSmoke, desktop, 45_000);
+		await waitForDashboardReady(dashboardReadyFile, desktop, 45_000);
 	} else {
 		const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
 		browser = await chromium.connectOverCDP(endpoint);
@@ -53,11 +73,10 @@ try {
 } finally {
 	await browser?.close().catch(() => undefined);
 	await stopProcess(desktop);
-	await closeServer(dashboardSmoke?.server);
 }
 if (failure) {
 	throw new Error(
-		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, runtimeRoot)}`,
+		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, runtimeRoot, dashboardUrl)}`,
 	);
 }
 
@@ -104,101 +123,91 @@ async function waitForWindow(context, timeout) {
 
 function readDashboardUrl(raw) {
 	const url = new URL(raw);
-	if (
-		url.protocol !== "http:" ||
-		url.hostname !== "127.0.0.1" ||
-		!url.port ||
-		url.pathname !== "/" ||
-		url.username ||
-		url.password
-	) {
-		throw new Error("dashboard-url must be an HTTP 127.0.0.1 origin.");
+	if (url.protocol !== "https:" || url.pathname !== "/" || url.username || url.password) {
+		throw new Error("dashboard-url must be an HTTPS origin.");
 	}
 	return url;
 }
 
-async function startDashboardServer(url, output) {
-	let signalReady;
-	const ready = new Promise((resolve) => {
-		signalReady = resolve;
-	});
-	const server = createServer((request, response) => {
-		const requestUrl = new URL(request.url ?? "/", url);
-		output.push(`Dashboard request: ${requestUrl.pathname}\n`);
-		let body;
-		if (requestUrl.pathname === "/desktop-auth") {
-			body = '<!doctype html><title>Signing in</title><script src="/redirect.js"></script>';
-		} else if (requestUrl.pathname === "/redirect.js") {
-			response
-				.writeHead(200, {
-					"Cache-Control": "no-store",
-					"Content-Type": "text/javascript; charset=utf-8",
-				})
-				.end('location.replace("/");');
-			return;
-		} else if (requestUrl.pathname === "/") {
-			body =
-				'<!doctype html><title>Dashboard</title><h1>Dashboard ready</h1><script src="/ready.js"></script>';
-		} else if (requestUrl.pathname === "/ready.js") {
-			response
-				.writeHead(200, {
-					"Cache-Control": "no-store",
-					"Content-Type": "text/javascript; charset=utf-8",
-				})
-				.end(
-					'if (document.querySelector("h1")?.textContent === "Dashboard ready") fetch("/ready", { method: "POST" });',
-				);
-			return;
-		} else if (request.method === "POST" && requestUrl.pathname === "/ready") {
-			response.writeHead(204).end();
-			signalReady();
-			return;
-		} else {
-			response.writeHead(404).end();
-			return;
+async function waitForDashboardReady(readyFile, desktop, timeout) {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		if (existsSync(readyFile)) return;
+		if (desktop.exitCode !== null || desktop.signalCode !== null) {
+			throw new Error(
+				`Packaged app exited (code=${desktop.exitCode}, signal=${desktop.signalCode}).`,
+			);
 		}
-		response
-			.writeHead(200, {
-				"Cache-Control": "no-store",
-				"Content-Type": "text/html; charset=utf-8",
-			})
-			.end(body);
-	});
-	await new Promise((resolve, reject) => {
-		const onError = (error) => reject(error);
-		server.once("error", onError);
-		server.listen(Number(url.port), url.hostname, () => {
-			server.off("error", onError);
-			resolve();
-		});
-	});
-	return { ready, server };
-}
-
-async function waitForDashboardReady(smoke, desktop, timeout) {
-	if (!smoke) throw new Error("Dashboard smoke server is not running.");
-	let timer;
-	try {
-		await Promise.race([
-			smoke.ready,
-			once(desktop, "exit").then(([code, signal]) => {
-				throw new Error(`Packaged app exited (code=${code}, signal=${signal}).`);
-			}),
-			new Promise((_, reject) => {
-				timer = setTimeout(() => reject(new Error("Timed out loading the dashboard.")), timeout);
-			}),
-		]);
-	} finally {
-		clearTimeout(timer);
+		await delay(100);
 	}
+	throw new Error("Timed out loading the dashboard.");
 }
 
-function diagnostics(output, runtimeRoot) {
+function diagnostics(output, runtimeRoot, dashboardUrl) {
 	let cliLog = "<no CLI calls>";
 	try {
 		cliLog = readFileSync(join(runtimeRoot, "native-cli.log"), "utf8").trim() || cliLog;
 	} catch {}
-	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliLog}`;
+	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliLog}\nNetwork events:\n${networkDiagnostics(runtimeRoot, dashboardUrl)}`;
+}
+
+function networkDiagnostics(runtimeRoot, dashboardUrl) {
+	if (!dashboardUrl) return "<not captured>";
+	try {
+		const log = JSON.parse(readFileSync(join(runtimeRoot, "net-log.json"), "utf8"));
+		const events = Array.isArray(log.events) ? log.events : [];
+		const sourceIds = new Set(
+			events
+				.filter((event) => JSON.stringify(event.params ?? {}).includes(dashboardUrl.hostname))
+				.map((event) => event.source?.id)
+				.filter((id) => typeof id === "number"),
+		);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const event of events) {
+				const dependencies = dependencyIds(event.params);
+				if (sourceIds.has(event.source?.id)) {
+					for (const id of dependencies) changed = addSource(sourceIds, id) || changed;
+				} else if (dependencies.some((id) => sourceIds.has(id))) {
+					changed = addSource(sourceIds, event.source?.id) || changed;
+				}
+			}
+		}
+		const eventTypes = new Map(
+			Object.entries(log.constants?.logEventTypes ?? {}).map(([name, value]) => [value, name]),
+		);
+		return JSON.stringify(
+			events
+				.filter((event) => sourceIds.has(event.source?.id))
+				.slice(-100)
+				.map((event) => ({
+					type: eventTypes.get(event.type) ?? event.type,
+					phase: event.phase,
+					source: event.source,
+					params: event.params,
+				})),
+			null,
+			2,
+		);
+	} catch (error) {
+		return `<could not read net log: ${error.message}>`;
+	}
+}
+
+function dependencyIds(value) {
+	if (!value || typeof value !== "object") return [];
+	const dependency = value.source_dependency;
+	return [
+		...(dependency && typeof dependency.id === "number" ? [dependency.id] : []),
+		...Object.values(value).flatMap(dependencyIds),
+	];
+}
+
+function addSource(sourceIds, id) {
+	if (typeof id !== "number" || sourceIds.has(id)) return false;
+	sourceIds.add(id);
+	return true;
 }
 
 function waitForDevToolsEndpoint(child, logs, timeout) {
@@ -249,11 +258,6 @@ async function stopProcess(child) {
 	if (await Promise.race([exited, delay(5_000).then(() => false)])) return;
 	child.kill("SIGKILL");
 	await exited;
-}
-
-async function closeServer(server) {
-	if (!server) return;
-	await new Promise((resolve) => server.close(resolve));
 }
 
 function delay(milliseconds) {
