@@ -581,6 +581,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	).toBeLessThan(2);
 	await jumpToLatest.click();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect(jumpToLatest).not.toBeVisible();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
 	);
