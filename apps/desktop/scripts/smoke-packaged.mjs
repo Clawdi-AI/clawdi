@@ -24,11 +24,8 @@ const dashboardSmoke = dashboardUrl ? await startDashboardServer(dashboardUrl, o
 const desktopArgs = [`--user-data-dir=${join(runtimeRoot, "electron-data")}`];
 if (surface === "install") desktopArgs.push("--remote-debugging-port=0");
 else {
-	desktopArgs.push(
-		`--log-net-log=${join(runtimeRoot, "net-log.json")}`,
-		"--net-log-capture-mode=Everything",
-		"--no-proxy-server",
-	);
+	// The smoke server is loopback-only; production loads a public HTTPS origin.
+	desktopArgs.push("--disable-features=LocalNetworkAccessChecks");
 }
 const desktop = spawn(executablePath, desktopArgs, {
 	env: {
@@ -64,7 +61,7 @@ try {
 }
 if (failure) {
 	throw new Error(
-		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, runtimeRoot, dashboardUrl)}`,
+		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, runtimeRoot)}`,
 	);
 }
 
@@ -200,64 +197,12 @@ async function waitForDashboardReady(smoke, desktop, timeout) {
 	}
 }
 
-function diagnostics(output, runtimeRoot, dashboardUrl) {
+function diagnostics(output, runtimeRoot) {
 	let cliLog = "<no CLI calls>";
 	try {
 		cliLog = readFileSync(join(runtimeRoot, "native-cli.log"), "utf8").trim() || cliLog;
 	} catch {}
-	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliLog}\nNetwork events:\n${networkDiagnostics(runtimeRoot, dashboardUrl)}`;
-}
-
-function networkDiagnostics(runtimeRoot, dashboardUrl) {
-	if (!dashboardUrl) return "<not captured>";
-	try {
-		const log = JSON.parse(readFileSync(join(runtimeRoot, "net-log.json"), "utf8"));
-		const eventTypes = new Map(
-			Object.entries(log.constants?.logEventTypes ?? {}).map(([name, value]) => [value, name]),
-		);
-		const needle = dashboardUrl.origin;
-		const allEvents = Array.isArray(log.events) ? log.events : [];
-		const sourceIds = new Set(
-			allEvents
-				.filter((event) => JSON.stringify(event.params ?? {}).includes(needle))
-				.map((event) => event.source?.id)
-				.filter((id) => typeof id === "number"),
-		);
-		let changed = true;
-		while (changed) {
-			changed = false;
-			for (const event of allEvents) {
-				if (!sourceIds.has(event.source?.id)) continue;
-				for (const id of dependencyIds(event.params)) {
-					if (sourceIds.has(id)) continue;
-					sourceIds.add(id);
-					changed = true;
-				}
-			}
-		}
-		const events = allEvents
-			.filter((event) => sourceIds.has(event.source?.id))
-			.slice(-80)
-			.map((event) => ({
-				type: eventTypes.get(event.type) ?? event.type,
-				phase: event.phase,
-				source: event.source,
-				params: event.params,
-			}));
-		return events.length > 0 ? JSON.stringify(events, null, 2) : `<no events for ${needle}>`;
-	} catch (error) {
-		return `<could not read net log: ${error.message}>`;
-	}
-}
-
-function dependencyIds(value) {
-	const ids = [];
-	if (!value || typeof value !== "object") return ids;
-	if (value.source_dependency && typeof value.source_dependency.id === "number") {
-		ids.push(value.source_dependency.id);
-	}
-	for (const child of Object.values(value)) ids.push(...dependencyIds(child));
-	return ids;
+	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliLog}`;
 }
 
 function waitForDevToolsEndpoint(child, logs, timeout) {
