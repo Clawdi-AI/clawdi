@@ -55,6 +55,7 @@ from app.models.session_permission import (
     PERMISSION_KINDS,
     SessionPermission,
 )
+from app.models.session_share import SessionShare
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
     HostedRuntimePlatformMcpServer,
@@ -130,6 +131,7 @@ from app.services.runtime_source_revision import (
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
+    SessionContentUnavailable,
     load_session_content_projection,
     load_session_messages,
     session_has_uploaded_content,
@@ -2574,7 +2576,7 @@ async def list_sessions(
     # toggle). The partial unique index on
     # `session_permissions(session_id, kind, COALESCE(...)) WHERE revoked_at
     # IS NULL` makes this lookup index-only.
-    is_shared_subq = _link_is_shared_subq()
+    is_shared_subq = _session_is_shared_subq()
 
     if q:
         search_match_rows = session_search_matches(auth.user_id, q)
@@ -2805,7 +2807,7 @@ async def get_session_detail(
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
     bound_env = _bound_env_id(auth)
-    is_shared_subq = _link_is_shared_subq()
+    is_shared_subq = _session_is_shared_subq()
     stmt = (
         select(
             Session,
@@ -2870,10 +2872,25 @@ async def delete_session(
             )
         ).scalars()
     )
+    share_file_keys = list(
+        (
+            await db.execute(
+                select(SessionShare.snapshot_file_key)
+                .where(
+                    SessionShare.session_id == session.id,
+                    SessionShare.snapshot_file_key.is_not(None),
+                )
+                .distinct()
+            )
+        ).scalars()
+    )
     try:
         await file_store.delete(session.file_key or _session_content_key(session))
         for file_key in event_file_keys:
             await file_store.delete(file_key)
+        for file_key in share_file_keys:
+            if file_key is not None:
+                await file_store.delete(file_key)
     except Exception:
         log.exception("session_content_delete_failed session_id=%s", session.id)
         await db.rollback()
@@ -3058,6 +3075,11 @@ async def get_session_content(
         raw = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3137,6 +3159,11 @@ async def get_session_messages(
         projection = await load_session_content_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3319,6 +3346,11 @@ async def extract_session_memories(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3411,6 +3443,11 @@ async def export_owned_session_markdown(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3671,14 +3708,14 @@ def _related_refs_response(
 # --- Permission helpers ----------------------------------------------------
 
 
-def _link_is_shared_subq():
+def _session_is_shared_subq():
     """Correlated EXISTS used in list/detail queries to compute
     `Session.is_shared`. True when an active `kind='link'` permission
     row exists for the session. Index-only via the partial unique
     index on `session_permissions(session_id, kind, COALESCE(...))
     WHERE revoked_at IS NULL`.
     """
-    return (
+    legacy_link = (
         select(1)
         .where(
             SessionPermission.session_id == Session.id,
@@ -3687,8 +3724,17 @@ def _link_is_shared_subq():
         )
         .correlate(Session)
         .exists()
-        .label("is_shared")
     )
+    frozen_share = (
+        select(1)
+        .where(
+            SessionShare.session_id == Session.id,
+            SessionShare.revoked_at.is_(None),
+        )
+        .correlate(Session)
+        .exists()
+    )
+    return or_(legacy_link, frozen_share).label("is_shared")
 
 
 def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:

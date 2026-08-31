@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from uuid import UUID
 
 from pydantic import JsonValue
 
@@ -42,6 +43,69 @@ def _yaml_escape(value: object) -> str:
 
 def _build_share_url(session: Session) -> str:
     return f"{settings.web_origin}/s/{session.id}"
+
+
+def _build_session_share_url(share_id: UUID) -> str:
+    return f"{settings.web_origin}/s/{share_id}"
+
+
+def _message_body_lines(messages: Sequence[JsonValue]) -> list[str]:
+    body_lines: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role_value = message.get("role")
+        role = role_value if isinstance(role_value, str) and role_value else "unknown"
+        model_value = message.get("model")
+        model = model_value if isinstance(model_value, str) and model_value else None
+        timestamp_value = message.get("timestamp")
+        timestamp = (
+            timestamp_value if isinstance(timestamp_value, str) and timestamp_value else None
+        )
+
+        heading_parts: list[str] = [f"## {role.capitalize()}"]
+        if role == "assistant" and model:
+            heading_parts.append(f"({model})")
+        if timestamp:
+            heading_parts.append(f"· {timestamp}")
+        body_lines.extend((" ".join(heading_parts), ""))
+
+        content_value = message.get("content")
+        body_lines.extend((content_value if isinstance(content_value, str) else "", ""))
+    return body_lines
+
+
+def session_share_to_markdown(
+    *,
+    share_id: UUID,
+    title: str,
+    agent_type: str | None,
+    model: str | None,
+    started_at: str,
+    message_count: int,
+    messages: Sequence[JsonValue],
+) -> str:
+    """Serialize a frozen Session share without owner-only metadata."""
+    front_matter_lines = [
+        "---",
+        f"source: {_yaml_escape('clawdi-shared-session')}",
+        f"url: {_yaml_escape(_build_session_share_url(share_id))}",
+    ]
+    if agent_type:
+        front_matter_lines.append(f"agent: {_yaml_escape(agent_type)}")
+    if model:
+        front_matter_lines.append(f"model: {_yaml_escape(model)}")
+    front_matter_lines.extend(
+        (
+            f"started_at: {_yaml_escape(str(started_at))}",
+            f"messages: {message_count}",
+            "---",
+            "",
+            f"# {title}",
+            "",
+        )
+    )
+    return "\n".join(front_matter_lines + _message_body_lines(messages))
 
 
 def public_session_base_fields(
@@ -162,39 +226,9 @@ def session_to_markdown(
 
     body_lines: list[str] = ["", f"# {title}", ""]
 
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        role_value = message.get("role")
-        role = role_value if isinstance(role_value, str) and role_value else "unknown"
-        model_value = message.get("model")
-        model = model_value if isinstance(model_value, str) and model_value else None
-        timestamp_value = message.get("timestamp")
-        timestamp = (
-            timestamp_value if isinstance(timestamp_value, str) and timestamp_value else None
-        )
-
-        # Heading: capitalized role, optional model badge, optional timestamp.
-        # Format is stable so an LLM consuming the body can parse turn
-        # boundaries by looking for `^## `.
-        heading_parts: list[str] = [f"## {role.capitalize()}"]
-        if role == "assistant" and model:
-            heading_parts.append(f"({model})")
-        if timestamp:
-            heading_parts.append(f"· {timestamp}")
-        body_lines.append(" ".join(heading_parts))
-        body_lines.append("")
-
-        content_value = message.get("content")
-        content = content_value if isinstance(content_value, str) else ""
-        # Content is raw — adapter has already normalized to a string.
-        # NOT wrapped in a fence; many messages are already Markdown
-        # (or contain fences themselves), and double-fencing produces
-        # the agent-confusing nested-fence rendering issue.
-        body_lines.append(content)
-        body_lines.append("")
-
-    return "\n".join(front_matter_lines + body_lines)
+    # Content stays raw: adapters already normalized it and many messages
+    # contain Markdown fences that must not be nested inside another fence.
+    return "\n".join(front_matter_lines + body_lines + _message_body_lines(messages))
 
 
 def session_to_json(

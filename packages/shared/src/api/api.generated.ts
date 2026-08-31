@@ -971,6 +971,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{session_id}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Session Shares */
+        get: operations["list_session_shares_v1_sessions__session_id__shares_get"];
+        put?: never;
+        /** Create Share */
+        post: operations["create_share_v1_sessions__session_id__shares_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session-shares/{share_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Share */
+        delete: operations["revoke_share_v1_session_shares__share_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/public/session-shares/{share_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Public Share */
+        get: operations["get_public_share_v1_public_session_shares__share_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/public/session-shares/{share_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Public Share Messages */
+        get: operations["get_public_share_messages_v1_public_session_shares__share_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/public/session-shares/{share_id}/export.md": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Public Share Markdown */
+        get: operations["export_public_share_markdown_v1_public_session_shares__share_id__export_md_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/public/session-shares/{share_id}/export.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Public Share Json */
+        get: operations["export_public_share_json_v1_public_session_shares__share_id__export_json_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -7057,6 +7160,66 @@ export interface components {
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
         };
+        /** PublicSessionShareExportResponse */
+        PublicSessionShareExportResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Agent Type */
+            agent_type: string | null;
+            /** Model */
+            model: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Message Count */
+            message_count: number;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "session" | "through" | "response";
+            /** Messages */
+            messages: components["schemas"]["SessionMessageResponse"][];
+            /** Share Url */
+            share_url: string;
+        };
+        /** PublicSessionShareResponse */
+        PublicSessionShareResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Agent Type */
+            agent_type: string | null;
+            /** Model */
+            model: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Message Count */
+            message_count: number;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "session" | "through" | "response";
+        };
         /** RuntimeApplyIdentityRequest */
         RuntimeApplyIdentityRequest: {
             /** Generation */
@@ -8128,8 +8291,8 @@ export interface components {
          * SessionPermissionCreate
          * @description `POST /v1/sessions/{id}/permissions` body.
          *
-         *     For today's "Public access" toggle the body is just
-         *     `{"kind": "link"}`. Future invite-by-email sends `{"kind": "email",
+         *     Legacy live-link access uses `{"kind": "link"}`. Future
+         *     invite-by-email sends `{"kind": "email",
          *     "email": "alice@x.com"}`; future direct user grant sends
          *     `{"kind": "user", "user_id": "..."}`.
          */
@@ -8187,8 +8350,8 @@ export interface components {
         /**
          * SessionPermissionsResponse
          * @description `GET /v1/sessions/{id}/permissions` — active permissions for a
-         *     session, newest-first. Drives the share popover state and (in the
-         *     future) the "people with access" list.
+         *     session, newest-first. Preserves legacy live-link management and can
+         *     later support a "people with access" list.
          */
         SessionPermissionsResponse: {
             /** Permissions */
@@ -8253,6 +8416,50 @@ export interface components {
             current: components["schemas"]["SessionSearchAnchorResponse"];
             previous?: components["schemas"]["SessionSearchAnchorResponse"] | null;
             next?: components["schemas"]["SessionSearchAnchorResponse"] | null;
+        };
+        /**
+         * SessionShareCreate
+         * @description Create an immutable public snapshot of all or part of a Session.
+         */
+        SessionShareCreate: {
+            /**
+             * Scope
+             * @default session
+             * @enum {string}
+             */
+            scope: "session" | "through" | "response";
+            /** Position */
+            position?: number | null;
+        };
+        /** SessionShareResponse */
+        SessionShareResponse: {
+            /** Id */
+            id: string;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "session" | "through" | "response";
+            /** Start Position */
+            start_position: number | null;
+            /** End Position */
+            end_position: number;
+            /** Message Count */
+            message_count: number;
+            /** Share Url */
+            share_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** SessionSharesResponse */
+        SessionSharesResponse: {
+            /** Shares */
+            shares: components["schemas"]["SessionShareResponse"][];
         };
         /** SessionTextPart */
         SessionTextPart: {
@@ -10964,6 +11171,228 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionEventsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_session_shares_v1_sessions__session_id__shares_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSharesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_share_v1_sessions__session_id__shares_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionShareCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionShareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_share_v1_session_shares__share_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                share_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_public_share_v1_public_session_shares__share_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                share_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicSessionShareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_public_share_messages_v1_public_session_shares__share_id__messages_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                share_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionMessagesPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_public_share_markdown_v1_public_session_shares__share_id__export_md_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                share_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_public_share_json_v1_public_session_shares__share_id__export_json_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                share_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicSessionShareExportResponse"];
                 };
             };
             /** @description Validation Error */

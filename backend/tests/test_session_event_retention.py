@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.session import Session, SessionEventChunk, SessionEventGeneration
+from app.models.session_share import SessionShare
 from app.models.user import User
 from app.services.session_event_retention_worker import SessionEventRetentionWorker
 
@@ -89,7 +90,9 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
     superseded.superseded_at = now - timedelta(days=8)
     abandoned = generation(session.id, status="staging", created_at=now - timedelta(days=2))
     recent = generation(session.id, status="staging", created_at=now)
-    db_session.add_all([current, superseded, abandoned, recent])
+    shared = generation(session.id, status="committed", created_at=now - timedelta(days=30))
+    shared.superseded_at = now - timedelta(days=8)
+    db_session.add_all([current, superseded, abandoned, recent, shared])
     await db_session.flush()
     session.content_protocol = "events-v1"
     session.event_generation_id = current.id
@@ -100,6 +103,23 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
         [
             chunk(session.id, superseded.id, "events/superseded.ndjson"),
             chunk(session.id, abandoned.id, "events/abandoned.ndjson"),
+            chunk(session.id, shared.id, "events/shared.ndjson"),
+            SessionShare(
+                session_id=session.id,
+                created_by=seed_user.id,
+                scope="session",
+                end_position=0,
+                source_protocol="events-v1",
+                source_revision=str(shared.id),
+                event_generation_id=shared.id,
+                public_metadata={
+                    "title": "Shared generation",
+                    "agent_type": None,
+                    "model": None,
+                    "started_at": now.isoformat(),
+                    "message_count": 1,
+                },
+            ),
         ]
     )
     await db_session.commit()
@@ -122,7 +142,17 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
                 )
             )
         )
-        assert remaining == {current.id, recent.id}
+        assert remaining == {current.id, recent.id, shared.id}
+
+        share = (
+            await db_session.execute(
+                select(SessionShare).where(SessionShare.event_generation_id == shared.id)
+            )
+        ).scalar_one()
+        share.revoked_at = now
+        await db_session.commit()
+        assert await worker.run_once(now=now) == shared.id
+        assert "events/shared.ndjson" in store.deleted
     finally:
         await db_session.delete(session)
         await db_session.commit()

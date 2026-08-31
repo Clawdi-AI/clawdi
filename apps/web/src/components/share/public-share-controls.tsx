@@ -1,8 +1,6 @@
 "use client";
 
 import { Check, FileJson, FileText, Link2, MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -11,7 +9,8 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn, errorMessage } from "@/lib/utils";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { cn } from "@/lib/utils";
 
 /**
  * Read-only share affordances for the public share page (`/s/{id}`).
@@ -37,7 +36,7 @@ function buildShareUrl(sessionId: string): string {
 }
 
 function CopyLinkButton({ url }: { url: string }) {
-	const { copied, copy } = useCopyToClipboard(url, "Link");
+	const { copied, copy } = useCopyToClipboard({ success: "Link copied" });
 	return (
 		<Button
 			variant="outline"
@@ -45,7 +44,7 @@ function CopyLinkButton({ url }: { url: string }) {
 			// 36px on mobile (matches Button's default `size="icon"`), 32px
 			// at `sm:` and up — denser desktop cluster, thumb-safe phone.
 			className={cn("size-9 sm:size-8", copied && "text-success")}
-			onClick={copy}
+			onClick={() => copy(url)}
 			aria-label="Copy share link"
 			title="Copy share link"
 		>
@@ -57,8 +56,10 @@ function CopyLinkButton({ url }: { url: string }) {
 function ExportMenu({ url }: { url: string }) {
 	const mdUrl = `${url}.md`;
 	const jsonUrl = `${url}.json`;
-	const { copy: copyMd } = useCopyToClipboard(mdUrl, "Markdown URL");
-	const { copy: copyJson } = useCopyToClipboard(jsonUrl, "JSON URL");
+	const { copy: copyMd } = useCopyToClipboard({
+		success: "Markdown URL copied",
+	});
+	const { copy: copyJson } = useCopyToClipboard({ success: "JSON URL copied" });
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger
@@ -76,11 +77,11 @@ function ExportMenu({ url }: { url: string }) {
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-52">
 				<DropdownMenuGroup>
-					<DropdownMenuItem onClick={copyMd}>
+					<DropdownMenuItem onClick={() => copyMd(mdUrl)}>
 						<FileText className="size-3.5" />
 						Copy Markdown URL
 					</DropdownMenuItem>
-					<DropdownMenuItem onClick={copyJson}>
+					<DropdownMenuItem onClick={() => copyJson(jsonUrl)}>
 						<FileJson className="size-3.5" />
 						Copy JSON URL
 					</DropdownMenuItem>
@@ -88,30 +89,4 @@ function ExportMenu({ url }: { url: string }) {
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
-}
-
-function useCopyToClipboard(url: string, label: string) {
-	const [copied, setCopied] = useState(false);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(
-		() => () => {
-			if (timerRef.current) clearTimeout(timerRef.current);
-		},
-		[],
-	);
-
-	async function copy() {
-		try {
-			await navigator.clipboard.writeText(url);
-			setCopied(true);
-			if (timerRef.current) clearTimeout(timerRef.current);
-			timerRef.current = setTimeout(() => setCopied(false), 1500);
-			toast.success(`${label} copied`);
-		} catch (e) {
-			toast.error(errorMessage(e));
-		}
-	}
-
-	return { copied, copy };
 }

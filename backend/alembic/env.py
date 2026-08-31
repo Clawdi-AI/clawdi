@@ -26,6 +26,7 @@ from app.models import (  # noqa: F401 - register models
     runtime_observation,
     session,
     session_permission,
+    session_share,
     skill,
     user,
     vault,

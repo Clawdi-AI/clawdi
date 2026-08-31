@@ -37,6 +37,8 @@ class _ContentErrorFileStore:
     async def get(self, key: str) -> bytes:
         if self._failure_name == "missing":
             raise FileNotFoundError(key)
+        if self._failure_name == "unavailable":
+            raise RuntimeError("object store unavailable")
         if self._failure_name == "non-object-message":
             return b"[1]"
         return b"not valid JSON"
@@ -337,7 +339,12 @@ async def test_public_exports_disable_caching_on_validation_and_missing_session(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_name", "expected_status"),
-    [("missing", 404), ("invalid", 500), ("non-object-message", 500)],
+    [
+        ("missing", 404),
+        ("unavailable", 503),
+        ("invalid", 500),
+        ("non-object-message", 500),
+    ],
 )
 async def test_public_exports_disable_caching_on_content_errors(
     client: httpx.AsyncClient,

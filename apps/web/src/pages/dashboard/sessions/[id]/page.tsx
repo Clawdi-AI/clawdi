@@ -24,7 +24,11 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
-import { SessionShareControls } from "@/components/sessions/share-controls";
+import {
+	SessionShareButton,
+	SessionShareDialog,
+	type SessionShareTarget,
+} from "@/components/sessions/share-controls";
 import { VirtualizedSessionTimelineList } from "@/components/sessions/virtualized-message-list";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
@@ -162,15 +166,24 @@ export function SessionDetailContent({
 			});
 			void router.navigate({ href: sessionsHref, replace: true }).then(
 				() => {
-					queryClient.removeQueries({ queryKey: sessionDetailQueryKey(sessionId), exact: true });
-					queryClient.removeQueries({ queryKey: ["session-messages", sessionId] });
-					queryClient.removeQueries({ queryKey: ["session-permissions", sessionId] });
+					queryClient.removeQueries({
+						queryKey: sessionDetailQueryKey(sessionId),
+						exact: true,
+					});
+					queryClient.removeQueries({
+						queryKey: ["session-messages", sessionId],
+					});
+					queryClient.removeQueries({
+						queryKey: ["session-permissions", sessionId],
+					});
 				},
 				() => window.location.replace(sessionsHref),
 			);
 		},
 		onError: (error) => {
-			toast.error("Couldn't delete session", { description: normalizeApiError(error) });
+			toast.error("Couldn't delete session", {
+				description: normalizeApiError(error),
+			});
 		},
 	});
 	const onDelete = () => deleteSession.mutateAsync({ params: { path: { session_id: sessionId } } });
@@ -210,6 +223,14 @@ export function SessionDetailContent({
 	// the loaded window and preserves the viewport as older pages prepend.
 	const [isTimelineAtBottom, setIsTimelineAtBottom] = useState(true);
 	const [latestScrollRequestId, setLatestScrollRequestId] = useState(0);
+	const [shareTarget, setShareTarget] = useState<SessionShareTarget>({
+		scope: "session",
+	});
+	const [shareOpen, setShareOpen] = useState(false);
+	const openShare = (target: SessionShareTarget) => {
+		setShareTarget(target);
+		setShareOpen(true);
+	};
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
 	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
 	const timelineCategories = sessionTimelineCategories(timelineView);
@@ -499,7 +520,7 @@ export function SessionDetailContent({
 				}
 				actions={
 					<div className="flex items-center gap-2">
-						<SessionShareControls sessionId={session.id} isShared={session.is_shared ?? false} />
+						<SessionShareButton onClick={() => openShare({ scope: "session" })} />
 						<ConfirmAction
 							title="Permanently delete this cloud Session?"
 							description={
@@ -645,6 +666,7 @@ export function SessionDetailContent({
 							windowStartOffset={pagesData?.pages[0]?.offset ?? 0}
 							onAtBottomChange={setIsTimelineAtBottom}
 							latestScrollRequestId={latestScrollRequestId}
+							onShareMessage={openShare}
 						/>
 					</div>
 				) : (
@@ -676,6 +698,13 @@ export function SessionDetailContent({
 			!isTimelineTransitioning ? (
 				<JumpToBottomButton onJump={jumpToLatest} />
 			) : null}
+
+			<SessionShareDialog
+				sessionId={session.id}
+				target={shareTarget}
+				open={shareOpen}
+				onOpenChange={setShareOpen}
+			/>
 		</div>
 	);
 }

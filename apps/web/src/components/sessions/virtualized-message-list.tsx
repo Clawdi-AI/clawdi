@@ -49,7 +49,10 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	} | null>(null);
 	const [readyWindowKey, setReadyWindowKey] = useState<string | null>(null);
 	const [atBottomWindowKey, setAtBottomWindowKey] = useState<string | null>(null);
-	const [measuredList, setMeasuredList] = useState({ windowKey: null as string | null, height: 0 });
+	const [measuredList, setMeasuredList] = useState({
+		windowKey: null as string | null,
+		height: 0,
+	});
 	// `firstItemIndex` is React Virtuoso's documented inverse-scrolling
 	// contract. It decreases by exactly the number of visual rows prepended,
 	// preserving the viewport while older pages load above the conversation.
@@ -140,7 +143,11 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 			return;
 		}
 		issuedLatestScrollRequestRef.current = requestId;
-		activeLatestScrollRef.current = { requestId, reachedBottom: false, windowKey };
+		activeLatestScrollRef.current = {
+			requestId,
+			reachedBottom: false,
+			windowKey,
+		};
 		virtuoso.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
 	}, [
 		props.latestScrollRequestId,
@@ -211,6 +218,7 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 						userName={props.userName}
 						highlightedMessageKey={props.highlightedMessageKey}
 						highlightQuery={props.highlightQuery}
+						onShareMessage={props.onShareMessage}
 						deferOffscreenRendering={false}
 					/>
 				)}
