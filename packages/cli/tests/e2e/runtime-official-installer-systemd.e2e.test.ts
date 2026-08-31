@@ -892,7 +892,15 @@ test("propagates the real official OpenClaw installer failure without committing
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	writeFileSync(gatewayEnvironment, "PRESERVED_ENV=before\n", { mode: 0o600 });
 	chownSync(gatewayEnvironment, runtimeUid, runtimeGid);
-	mkdirSync(dirname(unitPath), { recursive: true });
+	mkdirSync(dirname(unitPath), { recursive: true, mode: 0o700 });
+	for (const path of [
+		join(runtimeHome, ".config"),
+		join(runtimeHome, ".config", "systemd"),
+		dirname(unitPath),
+	]) {
+		chmodSync(path, 0o700);
+		chownSync(path, runtimeUid, runtimeGid);
+	}
 	mkdirSync(unitPath, { recursive: false });
 	writeFileSync(unitSentinel, "preserve directory target\n");
 	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
