@@ -1372,8 +1372,9 @@ export interface paths {
          *     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
          *     this endpoint slices the same blob server-side so the
          *     dashboard doesn't ship 10+ MB of messages on a long session. The default
-         *     `view=messages` preserves the historical response exactly. Other views add
-         *     a typed message/tool timeline without exposing reasoning or hidden events.
+         *     `view=messages` preserves the historical response exactly. Other views and
+         *     the composable `include` filter add a typed message/tool timeline without
+         *     exposing reasoning or hidden events.
          *
          *     Pagination is offset-based within the requested direction. `offset=0`
          *     starts at the oldest visible message for ascending reads and at the newest
@@ -11920,6 +11921,8 @@ export interface operations {
                 limit?: number;
                 direction?: "asc" | "desc";
                 view?: "messages" | "all" | "user" | "assistant" | "tools";
+                /** @description Composable timeline categories. When present, this takes precedence over view and returns the typed timeline projection. */
+                include?: ("user" | "assistant" | "tools")[] | null;
                 anchor_kind?: ("snapshot_offset" | "event_seq") | null;
                 anchor_position?: number | null;
                 anchor_revision?: string | null;

@@ -364,37 +364,41 @@ test("filters session activity and expands paired tool details", async ({ page }
 			return fulfillJson(route, session);
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
-			const view = url.searchParams.get("view");
+			expect(url.searchParams.get("view")).toBe("all");
+			const requestedCategories = url.searchParams.getAll("include");
+			const categories = new Set(
+				requestedCategories.length > 0 ? requestedCategories : ["user", "assistant", "tools"],
+			);
+			const items = timeline.filter((item) =>
+				item.kind === "message" ? categories.has(item.role) : categories.has("tools"),
+			);
 			const query = url.searchParams.get("search_query");
 			if (query) {
 				await new Promise((resolve) => setTimeout(resolve, 450));
-				if (view !== "assistant" && view !== "all") {
-					const items = view === "tools" ? timeline.slice(1, 5) : [timeline[5]];
-					return fulfillJson(route, {
-						items,
-						total: items.length,
-						offset: 0,
-						limit: 100,
-						search_navigation: null,
-					});
-				}
+				const matchIndex = items.findIndex(
+					(item) =>
+						item.kind === "message" && item.content.toLowerCase().includes(query.toLowerCase()),
+				);
+				const match = matchIndex >= 0 ? items[matchIndex] : null;
 				return fulfillJson(route, {
-					items: [timeline[0]],
-					total: 1,
+					items,
+					total: items.length,
 					offset: 0,
 					limit: 100,
-					anchor_offset: 0,
-					search_navigation: {
-						index: 1,
-						total: 1,
-						current: anchor,
-						previous: null,
-						next: null,
-					},
+					...(match
+						? {
+								anchor_offset: matchIndex,
+								search_navigation: {
+									index: 1,
+									total: 1,
+									current: { ...anchor, position: match.position },
+									previous: null,
+									next: null,
+								},
+							}
+						: { search_navigation: null }),
 				});
 			}
-			const items =
-				view === "tools" ? timeline.slice(1, 5) : view === "user" ? [timeline[5]] : timeline;
 			return fulfillJson(route, {
 				items,
 				total: items.length,
@@ -417,15 +421,15 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "Your messages" }).click();
-	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user");
+	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,tools");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
-	await expect(toolActivity).not.toBeVisible();
+	await expect(toolActivity).toBeVisible();
 	await page.getByRole("textbox", { name: "Search messages" }).fill("Read the repository");
 	await expect(page).toHaveURL(
 		(url) => url.searchParams.get("matchQuery") === "Read the repository",
 	);
 
-	await page.getByRole("button", { name: "Tools activity" }).click();
+	await page.getByRole("button", { name: "Your messages" }).click();
 	await expect(page).toHaveURL((url) => {
 		return url.searchParams.get("timelineView") === "tools" && !url.searchParams.has("matchQuery");
 	});
@@ -442,9 +446,12 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.searchParams.get("matchQuery") === "Read the repository" &&
-			url.searchParams.get("timelineView") === "assistant"
+			url.searchParams.get("timelineView") === "assistant,tools"
 		);
 	});
+	await page.getByRole("button", { name: "Tools activity" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "assistant");
+	await expect(toolActivity).not.toBeVisible();
 	await restoredSearch.fill("Final answer");
 	await expect(page).toHaveURL((url) => {
 		return (
@@ -457,6 +464,10 @@ test("filters session activity and expands paired tool details", async ({ page }
 		"Final answer after reading the file",
 	);
 	await expect(page.getByText("1 / 1")).toBeVisible();
+	await page.getByRole("button", { name: "Your messages" }).click();
+	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,assistant");
+	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
+	await expect(toolActivity).not.toBeVisible();
 });
 
 test("keeps a long anchored timeline windowed across desktop and mobile", async ({ page }) => {
@@ -481,8 +492,12 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const searchWindow = Array.from({ length: 100 }, (_, index) =>
 		makeMessage(searchWindowOffset + 99 - index),
 	);
+	const olderSearchWindow = Array.from({ length: 100 }, (_, index) =>
+		makeMessage(searchWindowOffset - 1 - index),
+	);
 	const searchAnchorOffset = searchWindowOffset + 49;
 	const requestedOffsets = new Set<number>();
+	const requestedSearchOffsets = new Set<number>();
 
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -508,8 +523,9 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
 			expect(url.searchParams.get("direction")).toBe("desc");
-			if (!url.searchParams.has("search_query")) {
-				const offset = Number(url.searchParams.get("offset") ?? 0);
+			const offset = Number(url.searchParams.get("offset") ?? 0);
+			const isSearchPagination = offset >= searchWindowOffset;
+			if (!url.searchParams.has("search_query") && !isSearchPagination) {
 				requestedOffsets.add(offset);
 				return fulfillJson(route, {
 					items: browseTimeline.slice(offset, offset + 100),
@@ -518,19 +534,25 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 					limit: 100,
 				});
 			}
+			requestedSearchOffsets.add(offset);
+			const loadingOlder = offset === searchWindowOffset + searchWindow.length;
 			return fulfillJson(route, {
-				items: searchWindow,
+				items: loadingOlder ? olderSearchWindow : searchWindow,
 				total: 2000,
-				offset: searchWindowOffset,
+				offset: loadingOlder ? offset : searchWindowOffset,
 				limit: 100,
-				anchor_offset: searchAnchorOffset,
-				search_navigation: {
-					index: 1,
-					total: 1,
-					current: targetAnchor,
-					previous: null,
-					next: null,
-				},
+				...(loadingOlder
+					? {}
+					: {
+							anchor_offset: searchAnchorOffset,
+							search_navigation: {
+								index: 1,
+								total: 1,
+								current: targetAnchor,
+								previous: null,
+								next: null,
+							},
+						}),
 			});
 		}
 		return fulfillJson(route, {});
@@ -548,6 +570,17 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
 		0, 100, 200, 300, 400,
 	]);
+	const jumpToLatest = page.getByRole("button", { name: "Jump to latest" });
+	await expect(jumpToLatest).toBeVisible();
+	const [jumpBounds, scrollBounds] = await Promise.all([
+		horizontalBounds(jumpToLatest),
+		horizontalBounds(scrollContainer),
+	]);
+	expect(
+		Math.abs(jumpBounds.x + jumpBounds.width / 2 - (scrollBounds.x + scrollBounds.width / 2)),
+	).toBeLessThan(2);
+	await jumpToLatest.click();
+	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
 	);
@@ -569,4 +602,26 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(current).toBeVisible();
 	expect(await mountedRows.count()).toBeLessThan(80);
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+	await page.getByRole("button", { name: "Load earlier (100/2000)" }).click();
+	await expect.poll(() => requestedSearchOffsets.has(1550)).toBe(true);
+	await expect(page.getByRole("button", { name: "Load earlier (200/2000)" })).toBeVisible();
+	const stableScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) => {
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+			}),
+	);
+	const settledScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
+	expect(Math.abs(settledScrollTop - stableScrollTop)).toBeLessThan(2);
+	const currentMatchInViewport = await current.evaluateAll((elements) =>
+		elements.some((element) => {
+			const bounds = element.getBoundingClientRect();
+			return bounds.bottom > 0 && bounds.top < window.innerHeight;
+		}),
+	);
+	expect(currentMatchInViewport).toBe(false);
 });

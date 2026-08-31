@@ -2,14 +2,21 @@ import type { SessionListItem } from "@clawdi/shared/api";
 import { SEARCH_QUERY_MAX_LENGTH, searchQueryLength } from "@clawdi/shared/consts";
 
 export type SessionSearchAnchor = NonNullable<SessionListItem["search_match"]>["anchor"];
-export type SessionTimelineView = "all" | "user" | "assistant" | "tools";
+export const SESSION_TIMELINE_CATEGORIES = ["user", "assistant", "tools"] as const;
+export type SessionTimelineCategory = (typeof SESSION_TIMELINE_CATEGORIES)[number];
+type SessionTimelineFilteredView =
+	| SessionTimelineCategory
+	| "user,assistant"
+	| "user,tools"
+	| "assistant,tools";
+export type SessionTimelineView = "all" | SessionTimelineFilteredView;
 
 export interface SessionDetailSearch {
 	matchKind?: SessionSearchAnchor["kind"];
 	matchPosition?: number;
 	matchRevision?: string;
 	matchQuery?: string;
-	timelineView?: Exclude<SessionTimelineView, "all">;
+	timelineView?: SessionTimelineFilteredView;
 	returnTo?: string;
 }
 
@@ -25,23 +32,59 @@ function validPosition(value: unknown): number | undefined {
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-export function parseSessionTimelineView(
-	value: unknown,
-): Exclude<SessionTimelineView, "all"> | undefined {
-	return value === "user" || value === "assistant" || value === "tools" ? value : undefined;
+export function parseSessionTimelineView(value: unknown): SessionTimelineFilteredView | undefined {
+	if (typeof value !== "string") return undefined;
+	const values = value.split(",");
+	if (
+		values.length === 0 ||
+		values.some(
+			(category) => !SESSION_TIMELINE_CATEGORIES.includes(category as SessionTimelineCategory),
+		)
+	) {
+		return undefined;
+	}
+	const view = sessionTimelineViewFromCategories(values);
+	return view === "all" || view === null ? undefined : view;
+}
+
+export function sessionTimelineCategories(view: SessionTimelineView): SessionTimelineCategory[] {
+	return view === "all"
+		? [...SESSION_TIMELINE_CATEGORIES]
+		: (view.split(",") as SessionTimelineCategory[]);
+}
+
+export function sessionTimelineViewFromCategories(
+	values: readonly string[],
+): SessionTimelineView | null {
+	const selected = new Set(
+		values.filter((value): value is SessionTimelineCategory =>
+			SESSION_TIMELINE_CATEGORIES.includes(value as SessionTimelineCategory),
+		),
+	);
+	if (selected.size === 0) return null;
+	if (selected.size === SESSION_TIMELINE_CATEGORIES.length) return "all";
+	return SESSION_TIMELINE_CATEGORIES.filter((category) => selected.has(category)).join(
+		",",
+	) as SessionTimelineFilteredView;
+}
+
+export function sessionTimelineIncludesMessages(view: SessionTimelineView): boolean {
+	return sessionTimelineCategories(view).some((category) => category !== "tools");
 }
 
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
 	const returnTo = normalizeSessionListReturnTo(search.returnTo);
 	const timelineView = parseSessionTimelineView(search.timelineView);
 	const matchQuery =
-		timelineView === "tools" ? undefined : normalizeSessionMatchQuery(search.matchQuery);
+		timelineView && !sessionTimelineIncludesMessages(timelineView)
+			? undefined
+			: normalizeSessionMatchQuery(search.matchQuery);
 	const standalone = {
 		...(matchQuery ? { matchQuery } : {}),
 		...(timelineView ? { timelineView } : {}),
 		...(returnTo ? { returnTo } : {}),
 	};
-	if (timelineView === "tools") return standalone;
+	if (timelineView && !sessionTimelineIncludesMessages(timelineView)) return standalone;
 	const kind =
 		search.matchKind === "snapshot_offset" || search.matchKind === "event_seq"
 			? search.matchKind
@@ -70,7 +113,9 @@ export function sessionTimelineViewLink(
 	options: { returnTo?: string; searchQuery?: string } = {},
 ): SessionDetailLink {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
-	const matchQuery = view === "tools" ? undefined : normalizeSessionMatchQuery(options.searchQuery);
+	const matchQuery = sessionTimelineIncludesMessages(view)
+		? normalizeSessionMatchQuery(options.searchQuery)
+		: undefined;
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
@@ -90,7 +135,10 @@ export function sessionDetailSearchLink(
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	const timelineView =
 		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
-	const matchQuery = timelineView === "tools" ? undefined : normalizeSessionMatchQuery(query);
+	const matchQuery =
+		!timelineView || sessionTimelineIncludesMessages(timelineView)
+			? normalizeSessionMatchQuery(query)
+			: undefined;
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
@@ -167,7 +215,7 @@ export function sessionSearchMatchLink(
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
 	const timelineView =
 		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
-	if (timelineView === "tools") {
+	if (timelineView && !sessionTimelineIncludesMessages(timelineView)) {
 		return sessionTimelineViewLink(sessionId, timelineView, { returnTo });
 	}
 	const matchQuery = normalizeSessionMatchQuery(options.searchQuery);

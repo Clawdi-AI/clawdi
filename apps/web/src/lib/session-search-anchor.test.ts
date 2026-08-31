@@ -3,6 +3,8 @@ import {
 	sessionDetailLink,
 	sessionDetailSearchLink,
 	sessionSearchAnchorFromSearch,
+	sessionTimelineCategories,
+	sessionTimelineViewFromCategories,
 	sessionTimelineViewLink,
 	validateSessionDetailSearch,
 } from "@/lib/session-search-anchor";
@@ -100,6 +102,21 @@ describe("Session search anchors", () => {
 			params: { id: "session-id" },
 			search: { timelineView: "tools" },
 		});
+	});
+
+	test("canonicalizes composable timeline categories", () => {
+		expect(validateSessionDetailSearch({ timelineView: "tools,user" })).toEqual({
+			timelineView: "user,tools",
+		});
+		expect(
+			validateSessionDetailSearch({ timelineView: "user,assistant", matchQuery: " answer " }),
+		).toEqual({
+			matchQuery: "answer",
+			timelineView: "user,assistant",
+		});
+		expect(sessionTimelineCategories("all")).toEqual(["user", "assistant", "tools"]);
+		expect(sessionTimelineViewFromCategories(["tools", "assistant"])).toBe("assistant,tools");
+		expect(sessionTimelineViewFromCategories([])).toBeNull();
 	});
 
 	test("drops partial or malformed anchors as one unit", () => {

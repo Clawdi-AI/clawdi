@@ -3019,6 +3019,13 @@ async def get_session_messages(
     limit: int = Query(default=100, ge=1, le=500),
     direction: Literal["asc", "desc"] = Query(default="asc"),
     view: Literal["messages", "all", "user", "assistant", "tools"] = Query(default="messages"),
+    include: list[Literal["user", "assistant", "tools"]] | None = Query(
+        default=None,
+        description=(
+            "Composable timeline categories. When present, this takes precedence "
+            "over view and returns the typed timeline projection."
+        ),
+    ),
     anchor_kind: Literal["snapshot_offset", "event_seq"] | None = Query(default=None),
     anchor_position: int | None = Query(default=None, ge=0),
     anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
@@ -3031,8 +3038,9 @@ async def get_session_messages(
     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
     this endpoint slices the same blob server-side so the
     dashboard doesn't ship 10+ MB of messages on a long session. The default
-    `view=messages` preserves the historical response exactly. Other views add
-    a typed message/tool timeline without exposing reasoning or hidden events.
+    `view=messages` preserves the historical response exactly. Other views and
+    the composable `include` filter add a typed message/tool timeline without
+    exposing reasoning or hidden events.
 
     Pagination is offset-based within the requested direction. `offset=0`
     starts at the oldest visible message for ascending reads and at the newest
@@ -3080,7 +3088,16 @@ async def get_session_messages(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
 
-    if view == "messages":
+    if include is not None:
+        included_categories = frozenset(include)
+    elif view == "messages":
+        included_categories = None
+    elif view == "all":
+        included_categories = frozenset(("user", "assistant", "tools"))
+    else:
+        included_categories = frozenset((view,))
+
+    if included_categories is None:
         projected_items = projection.messages
         source_positions = projection.source_positions
     else:
@@ -3092,9 +3109,12 @@ async def get_session_messages(
                 strict=True,
             )
             if (
-                view == "all"
-                or (view == "tools" and item.get("kind") in ("tool_call", "tool_result"))
-                or (view in ("user", "assistant") and item.get("role") == view)
+                (item.get("role") == "user" and "user" in included_categories)
+                or (item.get("role") == "assistant" and "assistant" in included_categories)
+                or (
+                    "tools" in included_categories
+                    and item.get("kind") in ("tool_call", "tool_result")
+                )
             )
         ]
         projected_items = [item for item, _ in filtered_timeline]
@@ -3113,14 +3133,10 @@ async def get_session_messages(
     resolved_anchor_revision = anchor_revision
     navigation = None
     search_roles: tuple[SearchRole, ...] | None
-    if view == "user":
-        search_roles = ("user",)
-    elif view == "assistant":
-        search_roles = ("assistant",)
-    elif view == "tools":
-        search_roles = ()
-    else:
+    if included_categories is None:
         search_roles = None
+    else:
+        search_roles = tuple(role for role in ("user", "assistant") if role in included_categories)
     if anchor_kind is None and search_query:
         navigation = await session_message_search_navigation(
             db,
@@ -3200,7 +3216,7 @@ async def get_session_messages(
         "anchor_offset": anchor_offset,
         "search_navigation": search_navigation,
     }
-    if view == "messages":
+    if included_categories is None:
         return SessionMessagesPage.model_validate(page_values)
     return SessionTimelinePage.model_validate(page_values)
 
