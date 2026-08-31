@@ -537,7 +537,7 @@ export function SessionDetailContent({
 			</DetailStats>
 
 			{session.has_content ? (
-				<div className="sticky top-(--header-height) z-10 -mx-4 border-y bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
+				<div className="sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
 					<div
 						className={cn(
 							"grid min-w-0 gap-2 md:items-center",
