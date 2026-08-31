@@ -91,7 +91,7 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
-import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
+import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
@@ -492,20 +492,18 @@ function prepareRuntimeApplyDependencies(
 		}
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		const managedOpenClawObservation = state.observations.get("openclaw");
+		if (managedOpenClawObservation?.commandPath) {
+			removeLegacyManagedOpenClawProviderPlugin({
+				home: openClawContext.home,
+				stateRoot: openClawContext.stateRoot,
+				commandPath: managedOpenClawObservation.commandPath,
+			});
+		}
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
 			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
 				openClawContext,
 				runtimeProbeRevision(context, "openclaw"),
 			);
-			if (!managedOpenClawObservation.commandPath) {
-				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
-			}
-			ensureManagedOpenClawProviderPlugin({
-				context: openClawContext,
-				commandPath: managedOpenClawObservation.commandPath,
-				revision: runtimeProbeRevision(context, "openclaw"),
-				refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
-			});
 		}
 		if (opts.preparedHostedAgentPlugins) {
 			const commands = hostedAgentPluginCommands(projectionHome);
@@ -945,6 +943,9 @@ function applyRuntimeEntryProjections(
 interface RuntimeActivationPlan {
 	systemdUnits: ReturnType<typeof writeRuntimeSystemdState>;
 	officialServicePlan: ReturnType<typeof planOfficialRuntimeServices>;
+	publishSystemdUnits: (
+		deferredRuntimeUserUnitNames?: readonly string[],
+	) => ReturnType<typeof writeRuntimeSystemdState>;
 }
 
 function prepareRuntimeActivation(
@@ -954,37 +955,45 @@ function prepareRuntimeActivation(
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 ): RuntimeActivationPlan {
 	const { manifest, paths, opts, secretValues, hermesWhatsAppAuthDir, workspaceRoot } = context;
-	const systemdUnits = writeRuntimeSystemdState({
-		runtimePrograms: state.runtimeSystemdUserPrograms,
-		egressProgram: egressProjection.egressSystemdProgram,
-		egressIdentity: egressProjection.egressIdentity,
-		runtimeIdentity: context.hostedRuntimeContract.identity,
-		manifest,
-		paths,
-		workspaceRoot,
-		daemonAuthTokenFile: egressProjection.daemonAuthTokenFile,
-		secretValues,
-		providerProjectionRevisions,
-		runtimeRevision: (desired, runtime, secrets, providerRevision) =>
-			runtimeProgramRevisionForManifest(
-				desired,
-				runtime,
-				secrets,
-				providerRevision,
-				hermesWhatsAppAuthDir,
-				state.openClawOwnerBrowserBootstrapSupported,
-			),
-		commonEnvironment: egressProjection.commonSystemdEnvironment,
-	});
-	state.staleSystemdFiles = systemdUnits.staleFiles;
-	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
-	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
 	const officialServicePlan = planOfficialRuntimeServices(
 		state.runtimeSystemdUserPrograms,
 		paths,
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
 		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
+	const publishSystemdUnits = (deferredRuntimeUserUnitNames: readonly string[] = []) =>
+		writeRuntimeSystemdState({
+			runtimePrograms: state.runtimeSystemdUserPrograms,
+			egressProgram: egressProjection.egressSystemdProgram,
+			egressIdentity: egressProjection.egressIdentity,
+			runtimeIdentity: context.hostedRuntimeContract.identity,
+			manifest,
+			paths,
+			workspaceRoot,
+			daemonAuthTokenFile: egressProjection.daemonAuthTokenFile,
+			secretValues,
+			providerProjectionRevisions,
+			runtimeRevision: (desired, runtime, secrets, providerRevision) =>
+				runtimeProgramRevisionForManifest(
+					desired,
+					runtime,
+					secrets,
+					providerRevision,
+					hermesWhatsAppAuthDir,
+					state.openClawOwnerBrowserBootstrapSupported,
+				),
+			commonEnvironment: egressProjection.commonSystemdEnvironment,
+			// OpenClaw 2026.8.1 validates the effective service definition during
+			// install. Publish Clawdi's drop-in only after the installer has created
+			// the official base unit.
+			deferredRuntimeUserUnitNames,
+		});
+	const systemdUnits = publishSystemdUnits(
+		officialServicePlan.pending.map((item) => item.unitName),
+	);
+	state.staleSystemdFiles = systemdUnits.staleFiles;
+	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
+	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
 	// Agent Plugin mutations must precede every native service installer.
 	const appliedAgentPluginTransaction = state.agentPluginTransaction;
 	if (appliedAgentPluginTransaction?.hasMutations) {
@@ -1007,7 +1016,7 @@ function prepareRuntimeActivation(
 		state.agentPluginTransaction = null;
 		state.agentPluginMutationAttempted = false;
 	}
-	return { systemdUnits, officialServicePlan };
+	return { systemdUnits, officialServicePlan, publishSystemdUnits };
 }
 
 interface RuntimeActivationOutputs {
@@ -1049,6 +1058,9 @@ function activateRuntimeServices(
 			throw new Error(`official ${item.unitName} service revision could not be verified`);
 		}
 		officialServicePlan.serviceRevisions[item.unitName] = item.serviceRevision;
+	}
+	if (officialServicePlan.pending.length > 0) {
+		activationPlan.systemdUnits = activationPlan.publishSystemdUnits();
 	}
 	state.officialServiceCommandRevisions = officialServicePlan.serviceRevisions;
 	if (opts.systemdApply) {

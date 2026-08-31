@@ -81,7 +81,7 @@ export const OPENCLAW_SDK_EXPORT_PATHS = {
 	configMutation: "config-mutation",
 	deviceBootstrap: "device-bootstrap",
 	providerAuth: "provider-auth",
-	providerEnvVars: "provider-env-vars",
+	sessionTranscript: "session-transcript-runtime",
 } as const;
 
 export function resolveOpenClawSdkExport(
@@ -149,8 +149,6 @@ export const OPENCLAW_CONFIG_MUTATION_EXPORTS = [
 	"readConfigFileSnapshotForWrite",
 	"mutateConfigFile",
 ] as const;
-export const OPENCLAW_PROVIDER_ENV_VARS_EXPORTS = ["listKnownProviderAuthEnvVarNames"] as const;
-
 export function openClawSdkFunctionGuard(namespace: string, exports: readonly string[]): string {
 	return exports.map((name) => `typeof ${namespace}.${name} !== "function"`).join(" ||\n  ");
 }

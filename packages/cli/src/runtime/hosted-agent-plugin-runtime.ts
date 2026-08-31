@@ -13,6 +13,7 @@ import {
 	withPreparedAgentPluginDirectory,
 } from "./hosted-agent-plugin-package";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import { openClawAgentPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import {
 	openClawAgentPluginInspectSchema,
 	openClawPluginListSchema,
@@ -297,6 +298,11 @@ function createOpenClawDriver(input: {
 			home: input.home,
 			cwd: input.home,
 		});
+	let capabilityConsentArgs: { install: string[]; enable: string[] } | null = null;
+	const requireAgentPluginSupport = () => {
+		capabilityConsentArgs ??= openClawAgentPluginCapabilityConsentArgs(run);
+		return capabilityConsentArgs;
+	};
 	const observe = (name: string, nativeId?: string): NativePluginObservation | null => {
 		if (nativeId !== undefined) assertNativeId(nativeId);
 		const list = parseJson(run(["plugins", "list", "--json"]), openClawPluginListSchema);
@@ -351,8 +357,9 @@ function createOpenClawDriver(input: {
 		installTarget: (nativeId) => nativeInstallTarget(input.home, "openclaw", nativeId),
 		observe,
 		install(prepared) {
+			const consent = requireAgentPluginSupport();
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				const result = run(["plugins", "install", sourceDir, "--force"]);
+				const result = run(["plugins", "install", sourceDir, "--force", ...consent.install]);
 				if (result.status !== 0) {
 					throw nativeCommandFailure("OpenClaw native Agent Plugin install failed", result);
 				}
@@ -364,7 +371,13 @@ function createOpenClawDriver(input: {
 			return installed;
 		},
 		setEnabled(observation, enabled) {
-			const result = run(["plugins", enabled ? "enable" : "disable", observation.nativeId]);
+			const consent = enabled ? requireAgentPluginSupport() : null;
+			const result = run([
+				"plugins",
+				enabled ? "enable" : "disable",
+				observation.nativeId,
+				...(consent?.enable ?? []),
+			]);
 			if (result.status !== 0) {
 				throw nativeCommandFailure("OpenClaw native Agent Plugin state change failed", result);
 			}

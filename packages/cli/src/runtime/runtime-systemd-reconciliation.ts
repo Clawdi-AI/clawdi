@@ -704,6 +704,16 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	return join(input.paths.systemdUserRoot, unitName);
 }
 
+function removeSystemdUserEnvironmentDropIn(paths: RuntimePaths, name: string): void {
+	const path = systemdDropInFilePath(paths, name);
+	withRuntimeUserSystemdFiles(() => {
+		rmSync(path, { force: true });
+		if (existsSync(dirname(path)) && readdirSync(dirname(path)).length === 0) {
+			rmdirSync(dirname(path));
+		}
+	});
+}
+
 function removeGeneratedRuntimeBaseUnit(paths: RuntimePaths, unitName: string): void {
 	const path = join(paths.systemdUserRoot, unitName);
 	if (!isGeneratedRuntimeSystemdPath(path)) return;
@@ -1162,6 +1172,7 @@ export function writeRuntimeSystemdState(input: {
 	providerProjectionRevisions: Partial<Record<string, string | null>>;
 	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[4];
 	commonEnvironment: Record<string, string>;
+	deferredRuntimeUserUnitNames?: readonly string[];
 }): {
 	systemUnits: string[];
 	userUnits: string[];
@@ -1187,6 +1198,7 @@ export function writeRuntimeSystemdState(input: {
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
 	const userUnits: string[] = [];
+	const deferredRuntimeUserUnitNames = new Set(input.deferredRuntimeUserUnitNames ?? []);
 	const desiredSystemUnitNames = [
 		...(daemonAuthTokenFile ? ["clawdi-runtime-watch.service", "clawdi-daemon.service"] : []),
 		...(activeEgressProgram ? ["clawdi-runtime-sidecar.service"] : []),
@@ -1273,6 +1285,11 @@ export function writeRuntimeSystemdState(input: {
 					runtimeIdentity,
 				}),
 			);
+			continue;
+		}
+		if (deferredRuntimeUserUnitNames.has(runtimeSystemdUserUnitName(program))) {
+			removeGeneratedRuntimeBaseUnit(paths, runtimeSystemdUserUnitName(program));
+			removeSystemdUserEnvironmentDropIn(paths, runtimeSystemdProgramName(program));
 			continue;
 		}
 		userUnits.push(

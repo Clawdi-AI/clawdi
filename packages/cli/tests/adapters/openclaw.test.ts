@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
@@ -26,6 +27,20 @@ beforeEach(() => {
 	writeFileSync(
 		command,
 		`#!/bin/sh
+if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/legacy-inventory-test" ]; then
+  printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/sessions/sessions.json"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"oc-session-001","updatedAt":1776247205000,"sessionFile":"%s/.openclaw/agents/main/sessions/oc-session-001.jsonl","model":"claude-opus-4-7","inputTokens":12,"outputTokens":6,"cacheRead":2,"displayName":"Fixture session","acp":{"cwd":"/Users/fixture/project","lastActivityAt":1776247205000}}]}\n' "$HOME" "$HOME"
+  exit 0
+fi
+if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
+  updated_at=1776247205000
+  if [ -f "$HOME/.openclaw/sqlite-session-updated-at" ]; then updated_at=$(cat "$HOME/.openclaw/sqlite-session-updated-at"); fi
+  printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/agent/openclaw-agent.sqlite"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"sqlite-session-001","updatedAt":%s,"sessionStartedAt":1776247200000,"model":"gpt-5.6-sol","modelProvider":"openai","inputTokens":8,"outputTokens":5,"cacheRead":2,"label":"Active SQLite branch"}]}\n' "$HOME" "$updated_at"
+  exit 0
+fi
+if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
+  printf '%s\n' '{"messages":[{"id":"active-user","role":"user","content":"kept question","timestamp":"2026-04-15T10:00:00.000Z"},{"id":"active-assistant","parentId":"active-user","role":"assistant","content":"kept answer","model":"gpt-5.6-sol","timestamp":"2026-04-15T10:00:05.000Z"}],"hasMore":false}'
+  exit 0
+fi
 if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}' "$HOME"
   if [ -d "$HOME/.openclaw/agents/financial" ]; then printf ',{"id":"financial","workspace":"%s/.openclaw/agents/financial"}' "$HOME"; fi
@@ -215,7 +230,6 @@ describe("OpenClawAdapter.collectSessions", () => {
 	});
 
 	it("returns empty when sessions.json is missing", async () => {
-		const { rmSync } = await import("node:fs");
 		rmSync(join(tmpHome, ".openclaw", "agents", "main", "sessions", "sessions.json"));
 		// Also remove the fixture's `agents/main` dir so listAgentDirs returns
 		// no candidates. (Otherwise scanning continues over the dir, finds no
@@ -224,6 +238,149 @@ describe("OpenClawAdapter.collectSessions", () => {
 		rmSync(join(tmpHome, ".openclaw", "agents", "main"), { recursive: true, force: true });
 		const a = new OpenClawAdapter();
 		expect((await a.sessions.collect({ kind: "complete" })).sessions).toEqual([]);
+	});
+
+	it("reads SQLite sessions through OpenClaw's public transcript SDK", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sqlitePath = join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite");
+		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
+		mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
+		mkdirSync(packageRoot, { recursive: true });
+		writeFileSync(sqlitePath, "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		writeFileSync(
+			join(packageRoot, "package.json"),
+			JSON.stringify({
+				name: "openclaw",
+				type: "module",
+				exports: {
+					"./plugin-sdk/session-transcript-runtime": "./session-transcript-runtime.js",
+				},
+			}),
+		);
+		writeFileSync(
+			join(packageRoot, "session-transcript-runtime.js"),
+			`export async function readVisibleSessionTranscriptMessageEntries() {
+  return [
+    { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "SDK question" } },
+    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-04-15T10:00:05.000Z", message: { role: "assistant", content: "SDK answer", model: "gpt-5.6-sol" } },
+  ];
+}
+`,
+		);
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+
+		const sessions = (await new OpenClawAdapter().sessions.collect({ kind: "complete" })).sessions;
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+			"SDK question",
+			"SDK answer",
+		]);
+	});
+
+	it("falls back to OpenClaw's public Gateway transcript projection", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sqlitePath = join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite");
+		mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
+		writeFileSync(sqlitePath, "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+
+		const adapter = new OpenClawAdapter();
+		const { sessions } = await adapter.sessions.collect({ kind: "complete" });
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]).toMatchObject({
+			localSessionId: "sqlite-session-001",
+			messageCount: 2,
+			model: "gpt-5.6-sol",
+			rawFilePath: sqlitePath,
+			summary: "Active SQLite branch",
+		});
+		expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+			"kept question",
+			"kept answer",
+		]);
+		expect(adapter.sessions.watchPaths()).toContain(sqlitePath);
+		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-wal`);
+		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-journal`);
+	});
+
+	it("reads legacy inventory JSONL without requiring a live Gateway", async () => {
+		writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
+
+		const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]).toMatchObject({
+			localSessionId: "oc-session-001",
+			projectPath: "/Users/fixture/project",
+			messageCount: 2,
+			sourceRevision: "oc-session-001:1776247205000",
+		});
+	});
+
+	it("does not materialize an unchanged official transcript", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
+		const readLog = join(stateRoot, "transcript-reads.log");
+		mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
+		mkdirSync(packageRoot, { recursive: true });
+		writeFileSync(join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite"), "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		writeFileSync(
+			join(packageRoot, "package.json"),
+			JSON.stringify({
+				name: "openclaw",
+				type: "module",
+				exports: {
+					"./plugin-sdk/session-transcript-runtime": "./session-transcript-runtime.js",
+				},
+			}),
+		);
+		writeFileSync(
+			join(packageRoot, "session-transcript-runtime.js"),
+			`import { appendFileSync } from "node:fs";
+export async function readVisibleSessionTranscriptMessageEntries() {
+  appendFileSync(${JSON.stringify(readLog)}, "read\\n");
+  return [
+    { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "question" } },
+    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-04-15T10:00:05.000Z", message: { role: "assistant", content: "answer" } },
+  ];
+}
+`,
+		);
+
+		const adapter = new OpenClawAdapter();
+		const first = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		const firstBatches: SessionScanBatch[] = [];
+		for await (const batch of first.batches) firstBatches.push(batch);
+		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
+		expect(revision).toBe("sqlite-session-001:1776247205000");
+		expect(readFileSync(readLog, "utf8")).toBe("read\n");
+
+		const unchanged = await scanSessionModule(
+			adapter.sessions,
+			{ kind: "complete" },
+			new Map([["sqlite-session-001", revision ?? ""]]),
+		);
+		const unchangedBatches: SessionScanBatch[] = [];
+		for await (const batch of unchanged.batches) unchangedBatches.push(batch);
+		expect(unchangedBatches[0]?.sessions).toEqual([]);
+		expect(unchangedBatches[0]?.observedLocalSessionIds).toEqual(["sqlite-session-001"]);
+		expect(readFileSync(readLog, "utf8")).toBe("read\n");
+
+		writeFileSync(join(stateRoot, "sqlite-session-updated-at"), "1776247206000");
+		const changed = await scanSessionModule(
+			adapter.sessions,
+			{ kind: "complete" },
+			new Map([["sqlite-session-001", revision ?? ""]]),
+		);
+		const changedBatches: SessionScanBatch[] = [];
+		for await (const batch of changed.batches) changedBatches.push(batch);
+		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe("sqlite-session-001:1776247206000");
+		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 	});
 
 	it("scans every agents/<id>/ subdir (issue #28)", async () => {
