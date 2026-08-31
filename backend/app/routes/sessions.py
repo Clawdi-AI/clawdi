@@ -23,10 +23,11 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, tuple_, update
+from sqlalchemy import case, func, or_, select, text, true, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.auth import (
     AuthContext,
@@ -2575,7 +2576,15 @@ async def list_sessions(
     # IS NULL` makes this lookup index-only.
     is_shared_subq = _link_is_shared_subq()
 
-    search_matches = session_search_matches(auth.user_id, q) if q else None
+    if q:
+        search_match_rows = session_search_matches(auth.user_id, q)
+        search_matches = (
+            select(*search_match_rows.c)
+            .cte("materialized_session_search_matches")
+            .prefix_with("MATERIALIZED")
+        )
+    else:
+        search_matches = None
 
     base = select(
         Session,
@@ -2668,8 +2677,6 @@ async def list_sessions(
             AgentEnvironment,
             Session.environment_id == AgentEnvironment.id,
         ).where(agent_filter)
-    total = (await db.execute(select(func.count()).select_from(count_base.subquery()))).scalar_one()
-
     # Resolve sort column. `relevance` is special — only valid when
     # `q` is present (else fall back to the date default so the empty-
     # search experience doesn't break). The relevance expression
@@ -2682,6 +2689,8 @@ async def list_sessions(
             sort_col = search_matches.c.score
     else:
         sort_col = _SESSION_SORT_COLUMNS[sort]
+    if search_matches is not None:
+        base = base.add_columns(sort_col.label("page_sort_value"))
     # Relevance ties are common because visible-message matches receive a
     # constant score. Prefer recent Sessions before the stable UUID tiebreaker,
     # matching the MCP search contract.
@@ -2696,7 +2705,52 @@ async def list_sessions(
     order_columns.append(Session.id.asc())
     ordered = base.order_by(*order_columns)
 
-    rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
+    page_query = ordered.limit(page_size).offset((page - 1) * page_size)
+    if search_matches is None:
+        # Keep the common no-search path as two simple index-friendly queries.
+        total = (
+            await db.execute(select(func.count()).select_from(count_base.subquery()))
+        ).scalar_one()
+        rows = (await db.execute(page_query)).all()
+    else:
+        # The count and page both consume the materialized search CTE in one
+        # statement, so PostgreSQL evaluates the expensive search only once.
+        page_rows = page_query.cte("session_page")
+        total_row = (
+            select(func.count().label("total"))
+            .select_from(count_base.subquery())
+            .cte("session_total")
+        )
+        page_session = aliased(Session, page_rows)
+        page_order_columns = [
+            page_rows.c.page_sort_value.asc()
+            if order == "asc"
+            else page_rows.c.page_sort_value.desc()
+        ]
+        if sort == "relevance":
+            page_order_columns.append(page_rows.c.last_activity_at.desc())
+        page_order_columns.append(page_rows.c.id.asc())
+        result_rows = (
+            await db.execute(
+                select(
+                    page_session,
+                    page_rows.c.agent_type,
+                    page_rows.c.display_name,
+                    page_rows.c.default_name,
+                    page_rows.c.machine_name,
+                    page_rows.c.is_shared,
+                    page_rows.c.content,
+                    page_rows.c.role,
+                    page_rows.c.position,
+                    page_rows.c.content_revision,
+                    total_row.c.total,
+                )
+                .select_from(total_row.outerjoin(page_rows, true()))
+                .order_by(*page_order_columns)
+            )
+        ).all()
+        total = result_rows[0].total
+        rows = [row[:-1] for row in result_rows if row[0] is not None]
 
     items: list[SessionListItemResponse] = []
     for row in rows:
