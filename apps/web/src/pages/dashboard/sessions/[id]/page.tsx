@@ -217,7 +217,8 @@ export function SessionDetailContent({
 	const effectiveSearchQuery = isSearchQueryReady(normalizedSearchQuery)
 		? normalizedSearchQuery
 		: "";
-	const debouncedSearchQuery = useDebouncedValue(effectiveSearchQuery, 250) || undefined;
+	const debouncedSearchValue = useDebouncedValue(effectiveSearchQuery, 250);
+	const debouncedSearchQuery = effectiveSearchQuery ? debouncedSearchValue || undefined : undefined;
 
 	// Paginated message fetch via the new `/messages` endpoint.
 	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
@@ -398,26 +399,20 @@ export function SessionDetailContent({
 	const isTimelineTransitioning =
 		isSearchDebouncing || isContentPlaceholderData || (isContentFetching && !isFetchingNextPage);
 	const isSearchUpdating = searchActive && (isTimelineTransitioning || isContentLoading);
-	const updateTimelineView = (selected: SessionTimelineView) => {
-		if (searchableTimeline) {
-			rememberedSearchQueryRef.current = normalizedSearchQuery;
-		}
-		const retainedSearchQuery = !sessionTimelineIncludesMessages(selected)
-			? undefined
-			: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
+	const navigateTimelineView = (selected: SessionTimelineView, retainedSearchQuery?: string) => {
 		if (agentId) {
 			const search = {
 				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
 				...(selected === "all" ? {} : { timelineView: selected }),
+				...(returnTo ? { returnTo } : {}),
 			};
-			void router.navigate({
+			return router.navigate({
 				...agentSessionDetailLink(agentId, sessionId, search),
 				replace: true,
 				resetScroll: false,
 			});
-			return;
 		}
-		void router.navigate({
+		return router.navigate({
 			...sessionTimelineViewLink(sessionId, selected, {
 				returnTo,
 				searchQuery: retainedSearchQuery,
@@ -426,12 +421,35 @@ export function SessionDetailContent({
 			resetScroll: false,
 		});
 	};
+	const updateTimelineView = (selected: SessionTimelineView) => {
+		if (searchableTimeline) {
+			rememberedSearchQueryRef.current = normalizedSearchQuery;
+		}
+		const retainedSearchQuery = !sessionTimelineIncludesMessages(selected)
+			? undefined
+			: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
+		void navigateTimelineView(selected, retainedSearchQuery);
+	};
 	const updateTimelineCategory = (category: SessionTimelineCategory, included: boolean) => {
 		const categories = included
 			? [...timelineCategories, category]
 			: timelineCategories.filter((value) => value !== category);
 		const selected = sessionTimelineViewFromCategories(categories);
 		if (selected) updateTimelineView(selected);
+	};
+	const jumpToLatest = () => {
+		if (pagesData?.pages[0]?.offset === 0) {
+			setLatestScrollRequestId((requestId) => requestId + 1);
+			return;
+		}
+		rememberedSearchQueryRef.current = "";
+		void navigateTimelineView(timelineView).then(
+			() => setLatestScrollRequestId((requestId) => requestId + 1),
+			() => {
+				rememberedSearchQueryRef.current = normalizedSearchQuery;
+				toast.error("Couldn't open latest messages");
+			},
+		);
 	};
 
 	return (
@@ -624,6 +642,7 @@ export function SessionDetailContent({
 							highlightScrollRequestKey={highlightScrollRequestKey}
 							highlightQuery={debouncedSearchQuery}
 							totalItemCount={totalItems}
+							windowStartOffset={pagesData?.pages[0]?.offset ?? 0}
 							onAtBottomChange={setIsTimelineAtBottom}
 							latestScrollRequestId={latestScrollRequestId}
 						/>
@@ -655,7 +674,7 @@ export function SessionDetailContent({
 			timelineItems.length > 0 &&
 			!isTimelineAtBottom &&
 			!isTimelineTransitioning ? (
-				<JumpToBottomButton onJump={() => setLatestScrollRequestId((requestId) => requestId + 1)} />
+				<JumpToBottomButton onJump={jumpToLatest} />
 			) : null}
 		</div>
 	);

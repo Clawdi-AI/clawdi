@@ -497,6 +497,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const searchAnchorOffset = searchWindowOffset + 49;
 	const requestedOffsets = new Set<number>();
 	const requestedSearchOffsets = new Set<number>();
+	let latestPageRequestCount = 0;
 	const waitForTimelineLayout = () =>
 		page.evaluate(
 			() =>
@@ -533,6 +534,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 			const isSearchPagination = offset >= searchWindowOffset;
 			if (!url.searchParams.has("search_query") && !isSearchPagination) {
 				requestedOffsets.add(offset);
+				if (offset === 0) latestPageRequestCount += 1;
 				return fulfillJson(route, {
 					items: browseTimeline.slice(offset, offset + 100),
 					total: browseTimeline.length,
@@ -616,6 +618,8 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Current ${query} result stays mounted`);
 	await expect(current.locator("mark")).toHaveText(["virtualized needle"]);
+	await expect(current).toBeInViewport();
+	await waitForTimelineLayout();
 	expect(await mountedRows.count()).toBeLessThan(80);
 
 	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
@@ -635,6 +639,28 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 		})
 		.toBeLessThan(2);
 	await expect(current).not.toBeInViewport();
+	const latestRequestsBeforeJump = latestPageRequestCount;
+	await expect(jumpToLatest).toBeVisible();
+	await jumpToLatest.click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/sessions/${SESSION_ID}` &&
+			!url.searchParams.has("matchKind") &&
+			!url.searchParams.has("matchPosition") &&
+			!url.searchParams.has("matchRevision") &&
+			!url.searchParams.has("matchQuery")
+		);
+	});
+	await expect.poll(() => latestPageRequestCount).toBeGreaterThan(latestRequestsBeforeJump);
+	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect
+		.poll(() =>
+			scrollContainer.evaluate(
+				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+			),
+		)
+		.toBeLessThan(2);
+	await expect(jumpToLatest).not.toBeVisible();
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(searchUrl);
