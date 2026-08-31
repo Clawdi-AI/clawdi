@@ -44,9 +44,6 @@
 			"dist/**/*",
 			"package.json"
 		],
-		"extraMetadata": {
-			"clawdiWebUrl": "https://cloud.clawdi.ai"
-		},
 		"extraResources": [
 			{
 				"from": "resources/native",

@@ -1,30 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { isIP } from "node:net";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
-const [
-	executablePath,
-	runtimeRoot,
-	surface = "install",
-	rawDashboardUrl,
-	dashboardReadyFile,
-	dashboardAddress,
-] = process.argv.slice(2);
+const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
 if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
-	throw new Error(
-		"usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard] [dashboard-url] [ready-file] [dashboard-address]",
-	);
-}
-let dashboardUrl;
-if (surface === "dashboard") {
-	dashboardUrl = readDashboardUrl(rawDashboardUrl);
-	if (!dashboardReadyFile || isIP(dashboardAddress) !== 4) {
-		throw new Error("dashboard smoke requires a ready-file and IPv4 dashboard-address.");
-	}
+	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
 }
 
 const home = join(runtimeRoot, "home");
@@ -33,14 +16,10 @@ mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 
 const output = [];
-const desktopArgs = [`--user-data-dir=${join(runtimeRoot, "electron-data")}`];
-if (surface === "install") desktopArgs.push("--remote-debugging-port=0");
-else {
-	desktopArgs.push(
-		`--host-resolver-rules=MAP ${dashboardUrl.hostname} ${dashboardAddress}`,
-		"--no-proxy-server",
-	);
-}
+const desktopArgs = [
+	`--user-data-dir=${join(runtimeRoot, "electron-data")}`,
+	"--remote-debugging-port=0",
+];
 const desktop = spawn(executablePath, desktopArgs, {
 	env: {
 		...process.env,
@@ -57,15 +36,12 @@ desktop.stderr.on("data", (chunk) => output.push(chunk.toString()));
 let browser;
 let failure;
 try {
-	if (surface === "dashboard") {
-		await waitForDashboardReady(dashboardReadyFile, desktop, 45_000);
-	} else {
-		const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
-		browser = await chromium.connectOverCDP(endpoint);
-		const context = browser.contexts()[0];
-		if (!context) throw new Error("Packaged app did not create a browser context.");
-		await verifyInstallGate(context, desktop, output);
-	}
+	const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
+	browser = await chromium.connectOverCDP(endpoint);
+	const context = browser.contexts()[0];
+	if (!context) throw new Error("Packaged app did not create a browser context.");
+	if (surface === "dashboard") await verifyLocalDashboard(context);
+	else await verifyInstallGate(context, desktop, output);
 } catch (error) {
 	failure = error;
 } finally {
@@ -79,7 +55,7 @@ if (failure) {
 }
 
 async function verifyInstallGate(context, desktop, output) {
-	const window = await waitForWindow(context, 30_000);
+	const window = await waitForWindow(context, null, 30_000);
 	const moveToApplications = window.getByRole("heading", {
 		name: "Move Clawdi to Applications",
 	});
@@ -98,12 +74,26 @@ async function verifyInstallGate(context, desktop, output) {
 	);
 }
 
-async function waitForWindow(context, timeout) {
+async function verifyLocalDashboard(context) {
+	const window = await waitForWindow(context, "dashboard", 30_000);
+	await window.getByRole("heading", { name: "Local sessions" }).waitFor({ timeout: 20_000 });
+	const session = window.getByRole("button", { name: /Fix local-first dashboard/ });
+	await session.waitFor({ state: "visible", timeout: 20_000 });
+	await session.click();
+	await window.getByText("Keep the dashboard on this Mac.").waitFor({ timeout: 20_000 });
+	await window.getByText("Local session rendering is ready.").waitFor({ timeout: 20_000 });
+}
+
+async function waitForWindow(context, surface, timeout) {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		const window = context.pages().find((page) => {
 			try {
-				return new URL(page.url()).protocol === "clawdi-app:";
+				const url = new URL(page.url());
+				return (
+					url.protocol === "clawdi-app:" &&
+					(surface === null || url.searchParams.get("surface") === surface)
+				);
 			} catch {
 				return false;
 			}
@@ -117,28 +107,6 @@ async function waitForWindow(context, timeout) {
 			.map((page) => page.url())
 			.join(", ")}`,
 	);
-}
-
-function readDashboardUrl(raw) {
-	const url = new URL(raw);
-	if (url.protocol !== "https:" || url.pathname !== "/" || url.username || url.password) {
-		throw new Error("dashboard-url must be an HTTPS origin.");
-	}
-	return url;
-}
-
-async function waitForDashboardReady(readyFile, desktop, timeout) {
-	const deadline = Date.now() + timeout;
-	while (Date.now() < deadline) {
-		if (existsSync(readyFile)) return;
-		if (desktop.exitCode !== null || desktop.signalCode !== null) {
-			throw new Error(
-				`Packaged app exited (code=${desktop.exitCode}, signal=${desktop.signalCode}).`,
-			);
-		}
-		await delay(100);
-	}
-	throw new Error("Timed out loading the dashboard.");
 }
 
 function diagnostics(output, runtimeRoot) {

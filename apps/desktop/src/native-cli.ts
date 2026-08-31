@@ -4,7 +4,10 @@ import type {
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopConnectResult,
+	DesktopDashboardState,
 	DesktopDetectedAgent,
+	DesktopLocalSession,
+	DesktopLocalSessionDetail,
 } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import { app } from "electron";
@@ -78,15 +81,37 @@ export class DesktopCliService {
 		}
 	}
 
-	async createDashboardSession(): Promise<string> {
+	async dashboardState(): Promise<DesktopDashboardState> {
 		const cli = this.cli();
-		const result = await this.runJson(cli, ["auth", "desktop-session", "--json"]);
-		const ticket = readString(result.ticket);
-		const expiresIn = typeof result.expiresIn === "number" ? result.expiresIn : 0;
-		if (!ticket || ticket.length > 8192 || expiresIn <= 0 || expiresIn > 120) {
-			throw new Error("Clawdi returned an invalid desktop sign-in session.");
+		const [auth, daemon, result] = await Promise.all([
+			this.authState(cli).catch(() => ({ authenticated: false as const, user: null })),
+			this.doctorState(cli).catch(() => ({ installed: false, running: false })),
+			this.runJsonValue(cli, ["session", "list", "--all-agents", "--limit", "200", "--json"]),
+		]);
+		if (!Array.isArray(result)) throw new Error("Clawdi returned invalid local session data.");
+		return { auth, daemon, sessions: result.map(parseLocalSession) };
+	}
+
+	async readLocalSession(
+		agent: DesktopAgentType,
+		sessionId: string,
+	): Promise<DesktopLocalSessionDetail> {
+		const result = await this.runJson(this.cli(), [
+			"session",
+			"read-local",
+			sessionId,
+			"--agent",
+			agent,
+			"--json",
+		]);
+		if (result.schema_version !== "clawdi.desktopLocalSession.v1") {
+			throw new Error("Clawdi returned incompatible local session data.");
 		}
-		return ticket;
+		const session = parseLocalSession(result.session);
+		if (session.agent !== agent || session.id !== sessionId || !Array.isArray(result.messages)) {
+			throw new Error("Clawdi returned invalid local session data.");
+		}
+		return { session, messages: result.messages.map(parseLocalSessionMessage) };
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
@@ -213,15 +238,22 @@ export class DesktopCliService {
 		args: string[],
 		opts: CommandOptions = {},
 	): Promise<Record<string, unknown>> {
+		const value = await this.runJsonValue(cli, args, opts);
+		if (!isRecord(value)) throw new Error("Clawdi returned invalid structured output.");
+		return value;
+	}
+
+	private async runJsonValue(
+		cli: string,
+		args: string[],
+		opts: CommandOptions = {},
+	): Promise<unknown> {
 		const result = await this.run(cli, args, opts);
-		let value: unknown;
 		try {
-			value = JSON.parse(result.stdout);
+			return JSON.parse(result.stdout);
 		} catch {
 			throw new Error("Clawdi returned invalid structured output.");
 		}
-		if (!isRecord(value)) throw new Error("Clawdi returned invalid structured output.");
-		return value;
 	}
 
 	private run(cli: string, args: string[], opts: CommandOptions = {}): Promise<CommandResult> {
@@ -277,6 +309,60 @@ function parseDetectedAgent(value: unknown): DesktopDetectedAgent {
 	};
 }
 
+function parseLocalSession(value: unknown): DesktopLocalSession {
+	if (!isRecord(value) || !isDesktopAgentType(value.agent)) {
+		throw new Error("Clawdi returned invalid local session data.");
+	}
+	const id = readString(value.id);
+	const agentName = readString(value.agent_name);
+	const startedAt = readDateString(value.started_at);
+	const endedAt = value.ended_at === null ? null : readDateString(value.ended_at);
+	if (
+		!id ||
+		!agentName ||
+		!startedAt ||
+		(value.ended_at !== null && !endedAt) ||
+		!Number.isSafeInteger(value.message_count) ||
+		(value.message_count as number) < 0 ||
+		(value.duration_seconds !== null &&
+			(typeof value.duration_seconds !== "number" || value.duration_seconds < 0))
+	) {
+		throw new Error("Clawdi returned invalid local session data.");
+	}
+	return {
+		id,
+		agent: value.agent,
+		agentName,
+		project: nullableString(value.project),
+		startedAt,
+		endedAt,
+		messageCount: value.message_count as number,
+		durationSeconds: value.duration_seconds as number | null,
+		model: nullableString(value.model),
+		summary: nullableString(value.summary),
+	};
+}
+
+function parseLocalSessionMessage(value: unknown): DesktopLocalSessionDetail["messages"][number] {
+	if (
+		!isRecord(value) ||
+		(value.role !== "user" && value.role !== "assistant") ||
+		typeof value.content !== "string"
+	) {
+		throw new Error("Clawdi returned invalid local session messages.");
+	}
+	const timestamp = value.timestamp === null ? null : readDateString(value.timestamp);
+	if (value.timestamp !== null && !timestamp) {
+		throw new Error("Clawdi returned invalid local session messages.");
+	}
+	return {
+		role: value.role,
+		content: value.content,
+		model: nullableString(value.model),
+		timestamp,
+	};
+}
+
 function displayNameFor(type: DesktopAgentType): string {
 	return (
 		{
@@ -303,6 +389,15 @@ function desktopPlatform(): DesktopBootstrapState["platform"] {
 
 function readString(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function nullableString(value: unknown): string | null {
+	return value === null ? null : readString(value);
+}
+
+function readDateString(value: unknown): string | null {
+	const raw = readString(value);
+	return raw && !Number.isNaN(Date.parse(raw)) ? raw : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

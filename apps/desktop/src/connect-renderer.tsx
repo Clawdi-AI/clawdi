@@ -3,15 +3,24 @@ import type {
 	ClawdiDesktopShellBridge,
 	DesktopAgentType,
 	DesktopBootstrapState,
+	DesktopDashboardState,
 	DesktopDetectedAgent,
+	DesktopLocalSession,
+	DesktopLocalSessionDetail,
 } from "@clawdi/shared/desktop";
 import {
+	ArrowLeft,
 	ArrowRight,
 	Check,
 	CircleCheckBig,
+	Cloud,
+	CloudOff,
 	FolderInput,
+	HardDrive,
 	LoaderCircle,
+	MessageSquare,
 	RefreshCw,
+	Search,
 	ShieldCheck,
 	TerminalSquare,
 	TriangleAlert,
@@ -410,66 +419,235 @@ function AgentSelection({
 	);
 }
 
-function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
-	const [pending, setPending] = useState<"retry" | "connect" | null>(null);
-	const [failed, setFailed] = useState(false);
+function DashboardApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
+	const [state, setState] = useState<DesktopDashboardState | null>(null);
+	const [selected, setSelected] = useState<DesktopLocalSessionDetail | null>(null);
+	const [query, setQuery] = useState("");
+	const [loading, setLoading] = useState(true);
+	const [detailLoading, setDetailLoading] = useState(false);
+	const [failure, setFailure] = useState<string | null>(null);
 
-	async function run(action: "retry" | "connect") {
-		setPending(action);
-		setFailed(false);
+	const refresh = useCallback(async () => {
+		setLoading(true);
+		setFailure(null);
 		try {
-			await (action === "retry" ? bridge.retryDashboard() : bridge.openConnectWizard());
-		} catch {
-			setFailed(true);
+			setState(await bridge.getDashboardState());
+		} catch (error) {
+			setFailure(error instanceof Error ? error.message : "Couldn't read local sessions.");
 		} finally {
-			setPending(null);
+			setLoading(false);
+		}
+	}, [bridge]);
+
+	useEffect(() => {
+		void refresh();
+	}, [refresh]);
+
+	const sessions = useMemo(() => {
+		const needle = query.trim().toLocaleLowerCase();
+		if (!needle) return state?.sessions ?? [];
+		return (state?.sessions ?? []).filter((session) =>
+			[session.summary, session.project, session.agentName, session.model, session.id]
+				.filter((value): value is string => Boolean(value))
+				.some((value) => value.toLocaleLowerCase().includes(needle)),
+		);
+	}, [query, state]);
+
+	async function openSession(session: DesktopLocalSession) {
+		setDetailLoading(true);
+		setFailure(null);
+		try {
+			setSelected(await bridge.readLocalSession(session.agent, session.id));
+		} catch (error) {
+			setFailure(error instanceof Error ? error.message : "Couldn't read the local session.");
+		} finally {
+			setDetailLoading(false);
 		}
 	}
 
+	async function openConnectWizard() {
+		setFailure(null);
+		try {
+			await bridge.openConnectWizard();
+		} catch (error) {
+			setFailure(error instanceof Error ? error.message : "Couldn't open Connect Agent.");
+		}
+	}
+
+	const syncReady = state?.auth.authenticated === true && state.daemon.running;
 	return (
-		<main className="app-shell">
-			<header className="titlebar dashboard-titlebar">
-				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+		<main className="dashboard-shell">
+			<aside className="dashboard-sidebar">
+				<div className="dashboard-brand">
+					<span className="brand-mark" aria-hidden="true">
+						<TerminalSquare />
+					</span>
+					<div>
+						<h1>Clawdi</h1>
+						<p>Desktop</p>
+					</div>
 				</div>
-				<div>
-					<h1>Clawdi</h1>
-					<p>Desktop</p>
+				<nav className="dashboard-nav" aria-label="Desktop navigation">
+					<button className="dashboard-nav-item active" type="button">
+						<MessageSquare /> Sessions
+					</button>
+				</nav>
+				<div className="dashboard-sidebar-footer">
+					<div className={`sync-state${syncReady ? " ready" : ""}`}>
+						{syncReady ? <Cloud /> : <CloudOff />}
+						<div>
+							<strong>{syncReady ? "Cloud sync on" : "Local data available"}</strong>
+							<small>
+								{syncReady
+									? (state?.auth.user?.email ?? "Background sync is running")
+									: "Sign-in is optional for local history"}
+							</small>
+						</div>
+					</div>
+					<button
+						className="button secondary dashboard-connect"
+						type="button"
+						onClick={() => void openConnectWizard()}
+					>
+						<TerminalSquare /> Connect Agent
+					</button>
 				</div>
-			</header>
-			<section className="content failure-content">
-				<div className="stack">
-					<Centered
-						icon={<TriangleAlert />}
-						title={failed ? "Couldn't reconnect" : "Dashboard unavailable"}
-						description={
-							failed
-								? "Try again, or open Connect Agent to check the local connection."
-								: "Clawdi couldn't load your dashboard. Check your connection and try again."
-						}
-					/>
-					<footer className="actions failure-actions">
+			</aside>
+
+			<section className="dashboard-main">
+				<header className="dashboard-toolbar">
+					<div>
+						<h2>{selected ? selected.session.summary || "Session" : "Local sessions"}</h2>
+						<p>
+							{selected
+								? `${selected.session.agentName} · ${displayProject(selected.session.project)}`
+								: "Read directly from the Agents on this Mac"}
+						</p>
+					</div>
+					<div className="toolbar-actions">
+						<span className="local-badge">
+							<HardDrive /> On this Mac
+						</span>
 						<button
-							className="button secondary"
+							className="icon-button"
 							type="button"
-							disabled={pending !== null}
-							onClick={() => void run("connect")}
+							title="Refresh local sessions"
+							aria-label="Refresh local sessions"
+							disabled={loading}
+							onClick={() => void refresh()}
 						>
-							<TerminalSquare /> Connect Agent
+							<RefreshCw className={loading ? "spin" : undefined} />
 						</button>
-						<button
-							className="button primary"
-							type="button"
-							disabled={pending !== null}
-							onClick={() => void run("retry")}
-						>
-							<RefreshCw className={pending === "retry" ? "spin" : undefined} /> Retry
-						</button>
-					</footer>
-				</div>
+					</div>
+				</header>
+
+				{failure ? (
+					<div className="dashboard-alert" role="alert">
+						<TriangleAlert />
+						<span>{failure}</span>
+					</div>
+				) : null}
+
+				{selected ? (
+					<SessionDetail detail={selected} onBack={() => setSelected(null)} />
+				) : (
+					<div className="sessions-view">
+						<label className="dashboard-search">
+							<Search aria-hidden="true" />
+							<input
+								type="search"
+								placeholder="Search local sessions"
+								value={query}
+								onChange={(event) => setQuery(event.currentTarget.value)}
+							/>
+						</label>
+						{loading || detailLoading ? (
+							<Centered icon={<LoaderCircle className="spin" />} title="Reading this Mac" />
+						) : sessions.length === 0 ? (
+							<Centered
+								icon={<MessageSquare />}
+								title={query ? "No matching sessions" : "No local sessions yet"}
+								description={
+									query
+										? "Try a different project, Agent, model, or summary."
+										: "Connect an Agent or start a coding session. History will appear here without uploading first."
+								}
+							/>
+						) : (
+							<div className="session-list">
+								{sessions.map((session) => (
+									<button
+										className="session-row"
+										type="button"
+										key={`${session.agent}:${session.id}`}
+										onClick={() => void openSession(session)}
+									>
+										<span className="session-copy">
+											<strong>{session.summary || displayProject(session.project)}</strong>
+											<small>{displayProject(session.project)}</small>
+										</span>
+										<span>{session.agentName}</span>
+										<span>{session.messageCount} messages</span>
+										<time dateTime={session.startedAt}>{relativeDate(session.startedAt)}</time>
+										<ArrowRight />
+									</button>
+								))}
+							</div>
+						)}
+					</div>
+				)}
 			</section>
 		</main>
 	);
+}
+
+function SessionDetail({ detail, onBack }: { detail: DesktopLocalSessionDetail; onBack(): void }) {
+	return (
+		<div className="session-detail">
+			<button className="back-button" type="button" onClick={onBack}>
+				<ArrowLeft /> All sessions
+			</button>
+			<div className="session-meta">
+				<span>{detail.session.agentName}</span>
+				<span>{detail.session.model ?? "Unknown model"}</span>
+				<span>{relativeDate(detail.session.startedAt)}</span>
+			</div>
+			<div className="message-list">
+				{detail.messages.map((message, index) => (
+					<article
+						className={`message ${message.role}`}
+						key={`${message.timestamp ?? "message"}-${index}`}
+					>
+						<header>
+							<strong>{message.role === "user" ? "You" : "Assistant"}</strong>
+							{message.timestamp ? (
+								<time dateTime={message.timestamp}>{relativeDate(message.timestamp)}</time>
+							) : null}
+						</header>
+						<p>{message.content}</p>
+					</article>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function displayProject(project: string | null): string {
+	if (!project) return "No project";
+	const parts = project.split("/").filter(Boolean);
+	return parts.at(-1) ?? project;
+}
+
+function relativeDate(raw: string): string {
+	const date = new Date(raw);
+	const seconds = Math.round((date.getTime() - Date.now()) / 1_000);
+	const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+	if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
+	const minutes = Math.round(seconds / 60);
+	if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
+	const hours = Math.round(minutes / 60);
+	if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
+	return formatter.format(Math.round(hours / 24), "day");
 }
 
 function Centered({
@@ -494,10 +672,10 @@ function Centered({
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Clawdi connect root is missing.");
-const failureSurface = new URLSearchParams(window.location.search).get("surface");
-if (failureSurface === "dashboard-failure" && window.clawdiDesktop) {
-	document.title = "Dashboard unavailable · Clawdi";
-	createRoot(root).render(<DashboardFailureApp bridge={window.clawdiDesktop} />);
+const surface = new URLSearchParams(window.location.search).get("surface");
+if (surface === "dashboard" && window.clawdiDesktop) {
+	document.title = "Clawdi";
+	createRoot(root).render(<DashboardApp bridge={window.clawdiDesktop} />);
 } else if (window.clawdiConnect) {
 	createRoot(root).render(<ConnectApp bridge={window.clawdiConnect} />);
 } else {

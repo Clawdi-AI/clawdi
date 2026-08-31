@@ -8,5 +8,6 @@ export const DESKTOP_IPC = {
 	moveToApplicationsFolder: "clawdi:move-to-applications-folder",
 	openConnectWizard: "clawdi:open-connect-wizard",
 	openDashboard: "clawdi:open-dashboard",
-	retryDashboard: "clawdi:retry-dashboard",
+	dashboardState: "clawdi:dashboard-state",
+	readLocalSession: "clawdi:read-local-session",
 } as const;

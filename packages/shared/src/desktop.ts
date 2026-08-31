@@ -59,6 +59,37 @@ export interface DesktopMoveToApplicationsResult {
 	status: "cancelled" | "not-required" | "relaunching";
 }
 
+export interface DesktopLocalSession {
+	id: string;
+	agent: DesktopAgentType;
+	agentName: string;
+	project: string | null;
+	startedAt: string;
+	endedAt: string | null;
+	messageCount: number;
+	durationSeconds: number | null;
+	model: string | null;
+	summary: string | null;
+}
+
+export interface DesktopLocalSessionMessage {
+	role: "user" | "assistant";
+	content: string;
+	model: string | null;
+	timestamp: string | null;
+}
+
+export interface DesktopLocalSessionDetail {
+	session: DesktopLocalSession;
+	messages: DesktopLocalSessionMessage[];
+}
+
+export interface DesktopDashboardState {
+	auth: DesktopBootstrapState["auth"];
+	daemon: DesktopBootstrapState["daemon"];
+	sessions: DesktopLocalSession[];
+}
+
 export interface ClawdiDesktopConnectBridge {
 	getBootstrapState(): Promise<DesktopBootstrapState>;
 	getInstallationState(): Promise<DesktopInstallationState>;
@@ -71,6 +102,7 @@ export interface ClawdiDesktopConnectBridge {
 }
 
 export interface ClawdiDesktopShellBridge {
+	getDashboardState(): Promise<DesktopDashboardState>;
+	readLocalSession(agent: DesktopAgentType, sessionId: string): Promise<DesktopLocalSessionDetail>;
 	openConnectWizard(): Promise<void>;
-	retryDashboard(): Promise<void>;
 }

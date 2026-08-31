@@ -1,17 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sessionRead, sessionSearch } from "../../src/commands/session";
-import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
+import {
+	sessionList,
+	sessionRead,
+	sessionReadLocal,
+	sessionSearch,
+} from "../../src/commands/session";
+import {
+	type AgentHomeOverrideSnapshot,
+	jsonResponse,
+	mockFetch,
+	restoreAgentHomeOverrides,
+	seedAuthAndEnv,
+	snapshotAndClearAgentHomeOverrides,
+} from "./helpers";
 
 let tmpHome: string;
 let originalHome: string | undefined;
 let originalApiUrl: string | undefined;
+let agentHomeOverrides: AgentHomeOverrideSnapshot;
 
 beforeEach(() => {
 	originalHome = process.env.HOME;
 	originalApiUrl = process.env.CLAWDI_API_URL;
+	agentHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = mkdtempSync(join(tmpdir(), "clawdi-session-command-"));
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_API_URL = "http://localhost:8000";
@@ -23,7 +37,45 @@ afterEach(() => {
 	else process.env.HOME = originalHome;
 	if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
 	else process.env.CLAWDI_API_URL = originalApiUrl;
+	restoreAgentHomeOverrides(agentHomeOverrides);
 	rmSync(tmpHome, { recursive: true, force: true });
+});
+
+describe("local session commands", () => {
+	it("lists and reads local history without cloud registration", async () => {
+		rmSync(join(tmpHome, ".clawdi", "environments"), { recursive: true, force: true });
+		const sessionsDir = join(tmpHome, ".pi", "agent", "sessions");
+		mkdirSync(sessionsDir, { recursive: true });
+		copyFileSync(
+			join(import.meta.dir, "..", "fixtures", "pi", "session-v1.jsonl"),
+			join(sessionsDir, "session-v1.jsonl"),
+		);
+
+		const output: string[] = [];
+		const originalLog = console.log;
+		console.log = (value?: unknown) => output.push(String(value));
+		try {
+			await sessionList({ json: true });
+			const listed = JSON.parse(output.pop() ?? "[]");
+			expect(listed).toEqual([
+				expect.objectContaining({
+					id: "pi.legacy-session",
+					agent: "pi",
+					agent_name: "Pi",
+				}),
+			]);
+
+			await sessionReadLocal("pi.legacy-session", { agent: "pi", json: true });
+			const detail = JSON.parse(output.pop() ?? "{}");
+			expect(detail).toMatchObject({
+				schema_version: "clawdi.desktopLocalSession.v1",
+				session: { id: "pi.legacy-session", agent: "pi", agent_name: "Pi" },
+			});
+			expect(detail.messages.length).toBeGreaterThan(0);
+		} finally {
+			console.log = originalLog;
+		}
+	});
 });
 
 describe("cloud session commands", () => {
