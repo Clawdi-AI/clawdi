@@ -8,19 +8,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import {
-	ArrowDown,
-	ArrowDownNarrowWide,
-	ArrowUpNarrowWide,
-	Bot,
-	Clock,
-	Hash,
-	MessageSquare,
-	Trash2,
-	UserRound,
-	Wrench,
-	Zap,
-} from "lucide-react";
+import { ArrowDown, Clock, Hash, MessageSquare, Trash2, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -40,11 +28,12 @@ import { SessionShareControls } from "@/components/sessions/share-controls";
 import { VirtualizedSessionTimelineList } from "@/components/sessions/virtualized-message-list";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSectionHref, agentSessionDetailLink } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -57,7 +46,6 @@ import type {
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { findScrollableContainer } from "@/lib/scroll-container";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
@@ -67,6 +55,7 @@ import {
 } from "@/lib/session-queries";
 import {
 	type SessionSearchAnchor,
+	type SessionTimelineCategory,
 	type SessionTimelineView,
 	sessionTimelineCategories,
 	sessionTimelineIncludesMessages,
@@ -74,12 +63,19 @@ import {
 	sessionTimelineViewLink,
 } from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { useIsomorphicLayoutEffect } from "@/lib/use-isomorphic-layout-effect";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 const SESSION_MESSAGE_PAGE_SIZE = 100;
 const SESSION_MESSAGE_API_DIRECTION = "desc" as const;
-type SessionMessageDirection = "asc" | "desc";
+
+const TIMELINE_FILTERS: readonly {
+	category: SessionTimelineCategory;
+	label: string;
+}[] = [
+	{ category: "user", label: "You" },
+	{ category: "assistant", label: "Agent" },
+	{ category: "tools", label: "Tools" },
+];
 
 function normalizeTimelinePage(
 	page: SessionMessagesPage | SessionTimelinePage,
@@ -112,6 +108,7 @@ export default function SessionDetailPage({
 }) {
 	return (
 		<SessionDetailContent
+			key={sessionId}
 			sessionId={sessionId}
 			searchAnchor={searchAnchor}
 			searchQuery={searchQuery}
@@ -207,15 +204,11 @@ export function SessionDetailContent({
 		enabled: !!agentId,
 	});
 
-	// Conversations default to chronological order with the latest message
-	// at the bottom. The API still returns newest-first pages so opening a
+	// Conversations use chronological order with the latest message at the
+	// bottom. The API returns newest-first pages so opening a
 	// long session only fetches its tail; the virtualized renderer reverses
 	// the loaded window and preserves the viewport as older pages prepend.
-	// SSR and hydration must agree on the first render, so the stored
-	// preference syncs in a layout effect instead of the state initializer.
-	// Layout effects run before the messages query subscribes, so a stored
-	// "desc" swaps the presentation before paint without a second fetch.
-	const [direction, setDirection] = useState<SessionMessageDirection>("asc");
+	const [isTimelineAtBottom, setIsTimelineAtBottom] = useState(true);
 	const [latestScrollRequestId, setLatestScrollRequestId] = useState(0);
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
 	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
@@ -224,26 +217,14 @@ export function SessionDetailContent({
 	const effectiveSearchQuery = isSearchQueryReady(normalizedSearchQuery)
 		? normalizedSearchQuery
 		: "";
-	const debouncedSearchQuery = useDebouncedValue(effectiveSearchQuery, 250) || undefined;
-	useIsomorphicLayoutEffect(() => {
-		const stored = localStorage.getItem("clawdi.session.message-direction");
-		if (stored === "desc") setDirection("desc");
-	}, []);
-	const persistDirection = (d: SessionMessageDirection) => {
-		setDirection(d);
-		try {
-			localStorage.setItem("clawdi.session.message-direction", d);
-		} catch {
-			/* private mode / quota / non-browser — direction stays in-memory */
-		}
-	};
+	const debouncedSearchValue = useDebouncedValue(effectiveSearchQuery, 250);
+	const debouncedSearchQuery = effectiveSearchQuery ? debouncedSearchValue || undefined : undefined;
 
 	// Paginated message fetch via the new `/messages` endpoint.
 	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
 	// whole blob in one shot and Markdown-render every turn,
 	// which froze the page for seconds. Now we load 100 at a time
-	// and the pagination controls request
-	// the next page when the user approaches the older edge.
+	// and explicit pagination controls request older pages on demand.
 	//
 	// Fetching newest-first is independent from presentation order. It avoids
 	// walking every older page just to render the current end of the chat.
@@ -414,31 +395,24 @@ export function SessionDetailContent({
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 	const searchActive = Boolean(effectiveSearchQuery);
-	const isSearchUpdating =
-		searchActive &&
-		(effectiveSearchQuery !== debouncedSearchQuery ||
-			(isContentFetching && !isFetchingNextPage) ||
-			isContentLoading);
-	const updateTimelineView = (selected: SessionTimelineView) => {
-		if (searchableTimeline) {
-			rememberedSearchQueryRef.current = normalizedSearchQuery;
-		}
-		const retainedSearchQuery = !sessionTimelineIncludesMessages(selected)
-			? undefined
-			: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
+	const isSearchDebouncing = effectiveSearchQuery !== (debouncedSearchQuery ?? "");
+	const isTimelineTransitioning =
+		isSearchDebouncing || isContentPlaceholderData || (isContentFetching && !isFetchingNextPage);
+	const isSearchUpdating = searchActive && (isTimelineTransitioning || isContentLoading);
+	const navigateTimelineView = (selected: SessionTimelineView, retainedSearchQuery?: string) => {
 		if (agentId) {
 			const search = {
 				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
 				...(selected === "all" ? {} : { timelineView: selected }),
+				...(returnTo ? { returnTo } : {}),
 			};
-			void router.navigate({
+			return router.navigate({
 				...agentSessionDetailLink(agentId, sessionId, search),
 				replace: true,
 				resetScroll: false,
 			});
-			return;
 		}
-		void router.navigate({
+		return router.navigate({
 			...sessionTimelineViewLink(sessionId, selected, {
 				returnTo,
 				searchQuery: retainedSearchQuery,
@@ -446,6 +420,36 @@ export function SessionDetailContent({
 			replace: true,
 			resetScroll: false,
 		});
+	};
+	const updateTimelineView = (selected: SessionTimelineView) => {
+		if (searchableTimeline) {
+			rememberedSearchQueryRef.current = normalizedSearchQuery;
+		}
+		const retainedSearchQuery = !sessionTimelineIncludesMessages(selected)
+			? undefined
+			: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
+		void navigateTimelineView(selected, retainedSearchQuery);
+	};
+	const updateTimelineCategory = (category: SessionTimelineCategory, included: boolean) => {
+		const categories = included
+			? [...timelineCategories, category]
+			: timelineCategories.filter((value) => value !== category);
+		const selected = sessionTimelineViewFromCategories(categories);
+		if (selected) updateTimelineView(selected);
+	};
+	const jumpToLatest = () => {
+		if (pagesData?.pages[0]?.offset === 0) {
+			setLatestScrollRequestId((requestId) => requestId + 1);
+			return;
+		}
+		rememberedSearchQueryRef.current = "";
+		void navigateTimelineView(timelineView).then(
+			() => setLatestScrollRequestId((requestId) => requestId + 1),
+			() => {
+				rememberedSearchQueryRef.current = normalizedSearchQuery;
+				toast.error("Couldn't open latest messages");
+			},
+		);
 	};
 
 	return (
@@ -572,53 +576,34 @@ export function SessionDetailContent({
 								!searchableTimeline && "md:justify-self-end",
 							)}
 						>
-							<ToggleGroup
-								multiple
-								value={timelineCategories}
-								onValueChange={(values) => {
-									const selected = sessionTimelineViewFromCategories(values);
-									if (selected) updateTimelineView(selected);
-								}}
-								variant="outline"
-								size="sm"
-								spacing={0}
-								aria-label="Timeline view"
-								className="min-w-0"
-							>
-								<ToggleGroupItem value="user" aria-label="Your messages" title="Your messages">
-									<UserRound /> <span className="hidden sm:inline">You</span>
-								</ToggleGroupItem>
-								<ToggleGroupItem
-									value="assistant"
-									aria-label="Agent messages"
-									title="Agent messages"
-								>
-									<Bot /> <span className="hidden sm:inline">Agent</span>
-								</ToggleGroupItem>
-								<ToggleGroupItem value="tools" aria-label="Tools activity" title="Tool activity">
-									<Wrench /> <span className="hidden sm:inline">Tools</span>
-								</ToggleGroupItem>
-							</ToggleGroup>
-							<div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-								{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
-									<span className="tabular-nums">
-										{loadedCount} of {totalItems}
-									</span>
-								) : null}
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									onClick={() => persistDirection(direction === "desc" ? "asc" : "desc")}
-									aria-label={
-										direction === "desc"
-											? "Show oldest activity first"
-											: "Show newest activity first"
-									}
-									title={direction === "desc" ? "Newest first" : "Oldest first"}
-								>
-									{direction === "desc" ? <ArrowDownNarrowWide /> : <ArrowUpNarrowWide />}
-								</Button>
-							</div>
+							<fieldset className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+								<legend className="sr-only">Show in timeline</legend>
+								{TIMELINE_FILTERS.map(({ category, label }) => {
+									const checked = timelineCategories.includes(category);
+									const disabled = checked && timelineCategories.length === 1;
+									const id = `timeline-filter-${category}`;
+									return (
+										<div key={category} className="flex items-center gap-1.5">
+											<Checkbox
+												id={id}
+												checked={checked}
+												disabled={disabled}
+												onCheckedChange={(value) =>
+													updateTimelineCategory(category, value === true)
+												}
+											/>
+											<Label htmlFor={id} className="cursor-pointer text-xs font-normal">
+												{label}
+											</Label>
+										</div>
+									);
+								})}
+							</fieldset>
+							{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
+								<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+									{loadedCount} of {totalItems}
+								</span>
+							) : null}
 						</div>
 					</div>
 				</div>
@@ -638,14 +623,13 @@ export function SessionDetailContent({
 					/>
 				) : timelineItems?.length ? (
 					<div>
-						{direction === "asc" && hasNextPage ? (
+						{hasNextPage ? (
 							<LoadMoreControl
 								loadedCount={loadedCount}
 								totalCount={totalItems}
 								isFetching={isFetchingNextPage}
 								onLoad={loadMoreMessages}
 								label="Load earlier"
-								autoLoad={false}
 							/>
 						) : null}
 						<VirtualizedSessionTimelineList
@@ -657,22 +641,11 @@ export function SessionDetailContent({
 							highlightedMessageKey={highlightedMessageKey}
 							highlightScrollRequestKey={highlightScrollRequestKey}
 							highlightQuery={debouncedSearchQuery}
-							direction={direction}
 							totalItemCount={totalItems}
-							hasMoreItems={Boolean(hasNextPage)}
-							isLoadingMore={isFetchingNextPage}
-							onLoadMore={loadMoreMessages}
+							windowStartOffset={pagesData?.pages[0]?.offset ?? 0}
+							onAtBottomChange={setIsTimelineAtBottom}
 							latestScrollRequestId={latestScrollRequestId}
 						/>
-						{direction === "desc" && hasNextPage ? (
-							<LoadMoreControl
-								loadedCount={loadedCount}
-								totalCount={totalItems}
-								isFetching={isFetchingNextPage}
-								onLoad={loadMoreMessages}
-								label="Load older"
-							/>
-						) : null}
 					</div>
 				) : (
 					<EmptyContent view={timelineView} />
@@ -695,12 +668,13 @@ export function SessionDetailContent({
 				</DetailPanel>
 			)}
 
-			{/* Floating "jump to bottom" — only meaningful in asc mode
-			    where the newest message is at the bottom of a long
-			    list. In desc mode the newest is already at the top,
-			    so there's nothing to jump to. */}
-			{direction === "asc" && timelineItems && timelineItems.length > 20 ? (
-				<JumpToBottomButton onJump={() => setLatestScrollRequestId((requestId) => requestId + 1)} />
+			{/* The conversation is always chronological, so leaving its
+			    bottom makes the latest message available as a direct jump. */}
+			{timelineItems &&
+			timelineItems.length > 0 &&
+			!isTimelineAtBottom &&
+			!isTimelineTransitioning ? (
+				<JumpToBottomButton onJump={jumpToLatest} />
 			) : null}
 		</div>
 	);
@@ -711,60 +685,32 @@ export function SessionDetailContent({
  * comment threads — when you've scrolled up in a long conversation,
  * the latest message becomes hard to find.
  *
- * Visibility follows the dashboard's actual scroll container. The button
- * emits a request; Virtuoso remains the sole owner of scroll positioning.
+ * Visibility and positioning both follow Virtuoso's viewport state. The
+ * button emits a request; Virtuoso remains the sole owner of scrolling.
  */
 function JumpToBottomButton({ onJump }: { onJump: () => void }) {
 	const { state: sidebarState } = useSidebar();
-	const [visible, setVisible] = useState(false);
-	const anchorRef = useRef<HTMLDivElement | null>(null);
-
-	useEffect(() => {
-		const scroller = findScrollableContainer(anchorRef.current?.parentElement ?? null);
-
-		const onScroll = () => {
-			let scrollBottom: number;
-			if (scroller instanceof Window) {
-				const doc = document.documentElement;
-				scrollBottom = doc.scrollHeight - (window.scrollY + window.innerHeight);
-			} else {
-				scrollBottom = scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight);
-			}
-			setVisible(scrollBottom > 600);
-		};
-		onScroll();
-		scroller.addEventListener("scroll", onScroll, { passive: true });
-		return () => scroller.removeEventListener("scroll", onScroll);
-	}, []);
 
 	return (
-		<>
-			{/* Anchor used at mount to locate the scrollable ancestor.
-			    Hidden but stays in the DOM so the ref keeps pointing
-			    at a valid node for the lifetime of the component. */}
-			<div ref={anchorRef} aria-hidden className="hidden" />
-			{visible ? (
-				<div
-					className={cn(
-						"pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center md:right-2",
-						sidebarState === "expanded"
-							? "md:left-[calc(var(--clawdi-rail-width)+var(--sidebar-width))]"
-							: "md:left-[calc(var(--clawdi-rail-width)+var(--spacing)*2)]",
-					)}
-				>
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						className="pointer-events-auto shadow-md"
-						onClick={onJump}
-					>
-						<ArrowDown className="size-4" />
-						Jump to latest
-					</Button>
-				</div>
-			) : null}
-		</>
+		<div
+			className={cn(
+				"pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center md:right-2",
+				sidebarState === "expanded"
+					? "md:left-[calc(var(--clawdi-rail-width)+var(--sidebar-width))]"
+					: "md:left-[calc(var(--clawdi-rail-width)+var(--spacing)*2)]",
+			)}
+		>
+			<Button
+				type="button"
+				variant="secondary"
+				size="sm"
+				className="pointer-events-auto shadow-md"
+				onClick={onJump}
+			>
+				<ArrowDown className="size-4" />
+				Jump to latest
+			</Button>
+		</div>
 	);
 }
 
@@ -773,9 +719,8 @@ function JumpToBottomButton({ onJump }: { onJump: () => void }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Manual pagination fallback. Newest-first mode also observes this
- * bottom-edge control; chronological mode uses Virtuoso's `startReached`
- * so prepended rows retain their exact scroll position.
+ * Explicit history pagination. Keeping the request user-initiated avoids
+ * repeatedly loading pages while a prepended timeline remains at its edge.
  */
 function LoadMoreControl({
 	loadedCount,
@@ -783,37 +728,15 @@ function LoadMoreControl({
 	isFetching,
 	onLoad,
 	label,
-	autoLoad = true,
 }: {
 	loadedCount: number;
 	totalCount: number;
 	isFetching: boolean;
 	onLoad: () => void;
 	label: string;
-	autoLoad?: boolean;
 }) {
-	const ref = useRef<HTMLDivElement | null>(null);
-	useEffect(() => {
-		if (!autoLoad) return;
-		const node = ref.current;
-		if (!node) return;
-		if (typeof IntersectionObserver === "undefined") return;
-		const observer = new IntersectionObserver(
-			(entries) => {
-				const entry = entries[0];
-				if (entry?.isIntersecting && !isFetching) onLoad();
-			},
-			// Trigger 300px before the control is fully in view —
-			// keeps the scroll continuous instead of pausing while
-			// the next page fetches.
-			{ rootMargin: "300px" },
-		);
-		observer.observe(node);
-		return () => observer.disconnect();
-	}, [autoLoad, isFetching, onLoad]);
-
 	return (
-		<div ref={ref} className="flex flex-col items-center gap-2 py-4">
+		<div className="flex flex-col items-center gap-2 py-4">
 			<Button variant="ghost" size="sm" onClick={onLoad} disabled={isFetching}>
 				{isFetching
 					? `Loading… (${loadedCount}/${totalCount})`
