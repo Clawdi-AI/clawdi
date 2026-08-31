@@ -617,7 +617,7 @@ function runPluginInstallWithFallback(
 		try {
 			runRuntimeUserCommand(
 				commandPath,
-				["plugins", "install", spec, "--force"],
+				["plugins", "install", spec, "--force", "--accept-capabilities"],
 				"",
 				home,
 				workspaceRoot,

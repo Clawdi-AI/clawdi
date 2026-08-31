@@ -352,7 +352,7 @@ function createOpenClawDriver(input: {
 		observe,
 		install(prepared) {
 			withPreparedAgentPluginDirectory(prepared, (sourceDir) => {
-				const result = run(["plugins", "install", sourceDir, "--force"]);
+				const result = run(["plugins", "install", sourceDir, "--force", "--accept-capabilities"]);
 				if (result.status !== 0) {
 					throw nativeCommandFailure("OpenClaw native Agent Plugin install failed", result);
 				}
@@ -364,7 +364,12 @@ function createOpenClawDriver(input: {
 			return installed;
 		},
 		setEnabled(observation, enabled) {
-			const result = run(["plugins", enabled ? "enable" : "disable", observation.nativeId]);
+			const result = run([
+				"plugins",
+				enabled ? "enable" : "disable",
+				observation.nativeId,
+				...(enabled ? ["--accept-capabilities"] : []),
+			]);
 			if (result.status !== 0) {
 				throw nativeCommandFailure("OpenClaw native Agent Plugin state change failed", result);
 			}

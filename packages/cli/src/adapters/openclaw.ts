@@ -1,7 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+	OPENCLAW_SDK_EXPORT_PATHS,
+	resolveOpenClawSdkExport,
+} from "../lib/codex-oauth-native-store";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -127,6 +132,175 @@ interface SessionEntry {
 	subject?: string;
 	label?: string;
 	acp?: { cwd?: string; lastActivityAt?: number };
+}
+
+interface OfficialSessionEntry extends SessionEntry {
+	agentId: string;
+	key: string;
+	sessionId: string;
+	spawnedCwd?: string;
+	spawnedWorkspaceDir?: string;
+	sessionStartedAt?: number;
+}
+
+interface OfficialSessionInventory {
+	entries: OfficialSessionEntry[];
+	storePaths: Map<string, string>;
+}
+
+const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
+function runOpenClawJson(args: string[]): JsonObject | null {
+	const result = spawnSync("openclaw", args, {
+		encoding: "utf8",
+		env: process.env,
+		maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
+		timeout: 120_000,
+	});
+	if (result.status !== 0) return null;
+	try {
+		return jsonObject(JSON.parse(result.stdout)) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function readOfficialSessionInventory(): OfficialSessionInventory | null {
+	const override = process.env.OPENCLAW_AGENT_ID?.trim();
+	const payload = runOpenClawJson([
+		"sessions",
+		"--json",
+		...(override ? ["--agent", override] : ["--all-agents"]),
+		"--limit",
+		"all",
+	]);
+	if (!payload || !Array.isArray(payload.sessions)) return null;
+
+	const entries = payload.sessions.flatMap((value): OfficialSessionEntry[] => {
+		const row = jsonObject(value);
+		const agentId = jsonString(row?.agentId);
+		const key = jsonString(row?.key);
+		const sessionId = jsonString(row?.sessionId);
+		if (!row || !agentId || !key || !sessionId) return [];
+		const number = (field: string) => {
+			const candidate = row[field];
+			return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
+		};
+		return [
+			{
+				agentId,
+				key,
+				sessionId,
+				updatedAt: number("updatedAt"),
+				sessionStartedAt: number("sessionStartedAt"),
+				inputTokens: number("inputTokens"),
+				outputTokens: number("outputTokens"),
+				totalTokens: number("totalTokens"),
+				cacheRead: number("cacheRead"),
+				cacheWrite: number("cacheWrite"),
+				model: jsonString(row.model) ?? undefined,
+				modelProvider: jsonString(row.modelProvider) ?? undefined,
+				label: jsonString(row.label) ?? undefined,
+				spawnedCwd: jsonString(row.spawnedCwd) ?? undefined,
+				spawnedWorkspaceDir: jsonString(row.spawnedWorkspaceDir) ?? undefined,
+			},
+		];
+	});
+	const storePaths = new Map<string, string>();
+	if (Array.isArray(payload.stores)) {
+		for (const value of payload.stores) {
+			const store = jsonObject(value);
+			const agentId = jsonString(store?.agentId);
+			const path = jsonString(store?.path);
+			if (agentId && path) storePaths.set(agentId, path);
+		}
+	}
+	return { entries, storePaths };
+}
+
+async function readOfficialSessionMessagesFromSdk(
+	entry: OfficialSessionEntry,
+): Promise<JsonObject[] | null> {
+	const sdkPath = resolveOpenClawSdkExport(
+		process.env.HOME ?? homedir(),
+		[],
+		OPENCLAW_SDK_EXPORT_PATHS.sessionTranscript,
+	);
+	if (!sdkPath) return null;
+	try {
+		const sdk: unknown = await import(pathToFileURL(sdkPath).href);
+		if (
+			typeof sdk !== "object" ||
+			sdk === null ||
+			!("readVisibleSessionTranscriptMessageEntries" in sdk) ||
+			typeof sdk.readVisibleSessionTranscriptMessageEntries !== "function"
+		)
+			return null;
+		const result: unknown = await sdk.readVisibleSessionTranscriptMessageEntries({
+			agentId: entry.agentId,
+			sessionId: entry.sessionId,
+			sessionKey: entry.key,
+		});
+		if (!Array.isArray(result)) return null;
+		return result.flatMap((value): JsonObject[] => {
+			const item = jsonObject(value);
+			const message = jsonObject(item?.message);
+			if (!item || !message) return [];
+			return [
+				{
+					...message,
+					...(jsonString(item.entryId) ? { id: jsonString(item.entryId) } : {}),
+					...(jsonString(item.parentId) ? { parentId: jsonString(item.parentId) } : {}),
+					...(jsonString(item.createdAt) ? { timestamp: jsonString(item.createdAt) } : {}),
+				},
+			];
+		});
+	} catch {
+		return null;
+	}
+}
+
+function readOfficialSessionMessagesFromGateway(entry: OfficialSessionEntry): JsonObject[] | null {
+	let offset = 0;
+	let messages: JsonObject[] = [];
+	const seenOffsets = new Set<number>();
+	while (!seenOffsets.has(offset)) {
+		seenOffsets.add(offset);
+		const payload = runOpenClawJson([
+			"gateway",
+			"call",
+			"chat.history",
+			"--params",
+			JSON.stringify({
+				agentId: entry.agentId,
+				limit: 1000,
+				maxChars: 500_000,
+				offset,
+				sessionId: entry.sessionId,
+				sessionKey: entry.key,
+			}),
+			"--json",
+		]);
+		if (!payload || !Array.isArray(payload.messages)) return null;
+		const page = payload.messages.flatMap((value): JsonObject[] => {
+			const message = jsonObject(value);
+			return message ? [message] : [];
+		});
+		messages = [...page, ...messages];
+		if (payload.hasMore !== true) return messages;
+		if (typeof payload.nextOffset !== "number" || payload.nextOffset <= offset) return null;
+		offset = payload.nextOffset;
+	}
+	return null;
+}
+
+async function readOfficialSessionMessages(
+	entry: OfficialSessionEntry,
+): Promise<JsonObject[] | null> {
+	return (
+		(await readOfficialSessionMessagesFromSdk(entry)) ??
+		readOfficialSessionMessagesFromGateway(entry)
+	);
 }
 
 interface TranscriptLine {
@@ -333,6 +507,15 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		result: Pick<SessionScanResult, "sessions" | "dedupedCount">;
 		matchedTranscriptPaths: Set<string>;
 	}> {
+		const officialInventory = readOfficialSessionInventory();
+		if (officialInventory) {
+			return this.collectOfficialSessionsMatching(
+				officialInventory,
+				opts,
+				transcriptPaths,
+				localSessionId,
+			);
+		}
 		const agentDirs = listAgentDirs();
 		if (agentDirs.length === 0) {
 			return {
@@ -487,6 +670,111 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		};
 	}
 
+	private async collectOfficialSessionsMatching(
+		inventory: OfficialSessionInventory,
+		opts: { projectFilter?: string },
+		transcriptPaths?: ReadonlySet<string>,
+		localSessionId?: string,
+	): Promise<{
+		result: Pick<SessionScanResult, "sessions" | "dedupedCount">;
+		matchedTranscriptPaths: Set<string>;
+	}> {
+		// SQLite is a shared backing store, so a concrete database notification
+		// always expands to a complete inventory scan.
+		if (transcriptPaths) {
+			return this.collectOfficialSessionsMatching(inventory, opts, undefined, localSessionId);
+		}
+		const absFilter = opts.projectFilter ? resolve(opts.projectFilter) : null;
+		const sessions: RawSession[] = [];
+		for (const entry of inventory.entries) {
+			if (localSessionId !== undefined && entry.sessionId !== localSessionId) continue;
+			const updatedAt = entry.updatedAt;
+			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) continue;
+			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? null;
+			if (
+				absFilter &&
+				(!projectPath || (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)))
+			)
+				continue;
+
+			const transcript = await readOfficialSessionMessages(entry);
+			if (!transcript) {
+				console.warn(
+					`[openclaw] could not read active transcript for ${entry.sessionId} through official transcript surfaces`,
+				);
+				continue;
+			}
+			const drafts: SessionEventDraft[] = [];
+			const modelsUsed = new Set<string>();
+			if (entry.model) modelsUsed.add(entry.model);
+			let currentModel = entry.model ?? null;
+			let startedAt: Date | null = null;
+			let endedAt: Date | null = null;
+			for (const [recordSeq, message] of transcript.entries()) {
+				const timestamp = jsonString(message.timestamp) ?? jsonString(message.createdAt);
+				const raw = {
+					type: "message",
+					...(jsonString(message.id) ? { id: jsonString(message.id) } : {}),
+					...(timestamp ? { timestamp } : {}),
+					message,
+				};
+				drafts.push(
+					...openClawEventDrafts(
+						raw,
+						`${entry.agentId}:${entry.sessionId}`,
+						recordSeq,
+						currentModel,
+					),
+				);
+				const messageModel = jsonString(message.model);
+				if (messageModel) {
+					modelsUsed.add(messageModel);
+					currentModel = messageModel;
+				}
+				if (timestamp) {
+					const parsed = new Date(timestamp);
+					if (!Number.isNaN(parsed.getTime())) {
+						startedAt ??= parsed;
+						endedAt = parsed;
+					}
+				}
+			}
+			const events = sequenceSessionEvents(drafts);
+			const messages = projectEventsToMessages(events);
+			if (messages.length === 0) continue;
+			startedAt ??= new Date(entry.sessionStartedAt ?? updatedAt);
+			endedAt ??= new Date(updatedAt);
+			const firstUserContent = messages.find((message) => message.role === "user")?.content;
+			const storePath =
+				inventory.storePaths.get(entry.agentId) ??
+				join(agentsRoot(), entry.agentId, "agent", "openclaw-agent.sqlite");
+			sessions.push({
+				localSessionId: entry.sessionId,
+				projectPath,
+				startedAt,
+				endedAt,
+				messageCount: messages.length,
+				inputTokens: entry.inputTokens ?? 0,
+				outputTokens: entry.outputTokens ?? 0,
+				cacheReadTokens: entry.cacheRead ?? 0,
+				model: currentModel,
+				modelsUsed: [...modelsUsed],
+				durationSeconds: durationSecondsBetween(startedAt, endedAt),
+				summary:
+					entry.label ??
+					(firstUserContent === undefined ? null : safeTruncate(firstUserContent, 200)),
+				messages,
+				events,
+				rawFilePath: storePath,
+				sourceRevision: `${entry.sessionId}:${updatedAt}`,
+			});
+		}
+		return {
+			result: { sessions, dedupedCount: 0 },
+			matchedTranscriptPaths: new Set(),
+		};
+	}
+
 	private async collectSkills(): Promise<RawSkill[]> {
 		const skills: RawSkill[] = [];
 		const seen = new Map<string, string>(); // skillKey → first-winning agentDir
@@ -594,9 +882,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	private getSessionsWatchPaths(): string[] {
-		const paths = listAgentDirs()
-			.map((dir) => join(dir, "sessions"))
-			.filter((path) => existsSync(path));
+		const paths = listAgentDirs().flatMap((dir) =>
+			[join(dir, "sessions"), join(dir, "agent", "openclaw-agent.sqlite")].filter((path) =>
+				existsSync(path),
+			),
+		);
 		return paths.length > 0 ? paths : [sessionsDir()];
 	}
 

@@ -264,7 +264,7 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 	if (!observation || !pluginOwnershipMatches(observation, sourceDir, input.context)) {
 		runPluginCommand(
 			input.commandPath,
-			["plugins", "install", sourceDir, "--force"],
+			["plugins", "install", sourceDir, "--force", "--accept-capabilities"],
 			input.context.home,
 			"OpenClaw managed provider plugin install failed",
 		);
@@ -282,7 +282,7 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 	if (!observation.plugin.enabled || observation.plugin.status !== "loaded") {
 		runPluginCommand(
 			input.commandPath,
-			["plugins", "enable", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID],
+			["plugins", "enable", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID, "--accept-capabilities"],
 			input.context.home,
 			"OpenClaw managed provider plugin enable failed",
 		);

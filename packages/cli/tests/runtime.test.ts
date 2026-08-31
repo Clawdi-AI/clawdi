@@ -1072,7 +1072,7 @@ if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   printf '{"plugin":{"id":"clawdi-managed-provider","source":"%s/index.js","origin":"global","status":"%s","version":"1.0.0","enabled":%s},"install":{"source":"path","sourcePath":"%s","installPath":"%s","version":"1.0.0"}}\\n' "$plugin_root" "$status" "$enabled" "$source_path" "$plugin_root"
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ]; then
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ] && [ "\${5:-}" = "--accept-capabilities" ]; then
   rm -rf "$plugin_root"
   mkdir -p "$(dirname "$plugin_root")" "$state_dir/state"
   cp -R "$3" "$plugin_root"
@@ -1080,7 +1080,7 @@ if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--fo
   printf '%s\\n' installed > "$state_dir/state/openclaw.sqlite"
   exit 0
 fi
-if [ "$*" = "plugins enable clawdi-managed-provider" ]; then
+if [ "$*" = "plugins enable clawdi-managed-provider --accept-capabilities" ]; then
   test -f "$plugin_root/openclaw.plugin.json"
   touch "$plugin_root/.enabled"
   exit 0
@@ -3341,7 +3341,9 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
 		const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
 		const installIndex = commands.findIndex(
-			(command) => command.startsWith("plugins install ") && command.endsWith(" --force"),
+			(command) =>
+				command.startsWith("plugins install ") &&
+				command.endsWith(" --force --accept-capabilities"),
 		);
 		expect(installIndex, commands.join(" | ")).toBeGreaterThan(-1);
 		expect(doctorIndex).toBeLessThan(installIndex);
@@ -8151,8 +8153,7 @@ elif [ "${runtime}" = "hermes" ] && [ "\${1:-}" = "config" ]; then
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
-  test -s '${join(paths.systemdEnvRoot, `${serviceName}.service.env`)}'
-  test -s '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
+  test ! -e '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
   mkdir -p '${dirname(runtimeUnit)}' '${systemctlStateRoot}'
   printf '[Service]\\nExecStart=${runtime} gateway run\\n' > '${runtimeUnit}'
 	  systemctl --user enable --now '${serviceName}.service'
@@ -8762,7 +8763,7 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
@@ -8941,7 +8942,7 @@ exit 64
 				});
 			}
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-				"plugins install @openclaw/discord --force\n",
+				"plugins install @openclaw/discord --force --accept-capabilities\n",
 			);
 			const openclawRunConfig = JSON.parse(
 				readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
@@ -9813,7 +9814,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1\\n'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force --accept-capabilities" ]; then
   mkdir -p '${dirname(openclawPluginSource)}'
   printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
   exit 0
@@ -9887,7 +9888,7 @@ exit 0
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
-if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   echo "plugin install failed" >&2
   exit 73
 fi
@@ -10128,7 +10129,7 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   exit 0
 fi
@@ -10198,7 +10199,7 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
@@ -10264,7 +10265,7 @@ exit 64
 		expect(patches[2].session).toEqual({ dmScope: null });
 		expect(patches[2].channels.telegram).toBeNull();
 		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-			"plugins install @openclaw/discord --force\n",
+			"plugins install @openclaw/discord --force --accept-capabilities\n",
 		);
 	});
 
@@ -10291,7 +10292,7 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   cat > '${openclawPatch}'
   exit 0
 fi
-if [ "$*" = "plugins install @openclaw/discord --force" ]; then
+if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
   exit 0

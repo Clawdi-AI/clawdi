@@ -483,6 +483,10 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				nativeId: "acme-tools",
 			},
 		});
+		expect(runner.liveMutations().map((call) => call.args)).toEqual([
+			["plugins", "install", expect.any(String), "--force", "--accept-capabilities"],
+			["plugins", "enable", "acme-tools", "--accept-capabilities"],
+		]);
 		const liveMutations = runner.liveMutations().length;
 		const repeat = prepareTransaction(
 			desiredState("openclaw", desired, { runtime: "openclaw", plugin: desired }),

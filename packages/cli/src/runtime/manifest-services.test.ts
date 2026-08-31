@@ -238,6 +238,7 @@ function writeFakeGatewayCli(input: {
 		envPath: string;
 		snapshotPrefix: string;
 	};
+	forbiddenDropInPath?: string;
 }): void {
 	const version =
 		input.version ?? (input.runtime === "hermes" ? "Hermes Agent v0.18.0" : "OpenClaw 2026.7.29");
@@ -249,7 +250,10 @@ function writeFakeGatewayCli(input: {
     cp '${input.requiredSystemdState.envPath}' '${input.requiredSystemdState.snapshotPrefix}.env'
     cp '${input.requiredSystemdState.dropInPath}' '${input.requiredSystemdState.snapshotPrefix}.conf'
     printf '%s systemd state ready\\n' '${input.runtime}' >> '${input.logPath}'`
-		: "";
+		: input.forbiddenDropInPath
+			? `test ! -e '${input.forbiddenDropInPath}'
+    printf '%s drop-in absent\n' '${input.runtime}' >> '${input.logPath}'`
+			: "";
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
 		input.path,
@@ -1297,7 +1301,7 @@ esac
 		}
 	});
 
-	test("upgrades legacy hosted drop-ins before official installers restart units", () => {
+	test("installs official base units before publishing hosted drop-ins", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
@@ -1322,11 +1326,7 @@ esac
 				logPath,
 				runtime,
 				unitPath: join(paths.systemdUserRoot, `${name}.service`),
-				requiredSystemdState: {
-					dropInPath,
-					envPath,
-					snapshotPrefix: join(paths.runRoot, `${name}-installer-state`),
-				},
+				forbiddenDropInPath: dropInPath,
 			});
 		}
 		const manifest: RuntimeManifest = {
@@ -1381,25 +1381,16 @@ esac
 		expect(prerequisiteActivations).toBe(0);
 		expect(finalActivations).toBe(1);
 		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-4)).toEqual([
-			"hermes systemd state ready",
+			"hermes drop-in absent",
 			"hermes gateway install --force",
-			"openclaw systemd state ready",
+			"openclaw drop-in absent",
 			"openclaw gateway install --force --json",
 		]);
 		for (const name of ["openclaw-gateway", "hermes-gateway"]) {
 			const envPath = join(paths.systemdEnvRoot, `${name}.service.env`);
-			expect(readFileSync(join(paths.runRoot, `${name}-installer-state.env`), "utf8")).toBe(
-				readFileSync(envPath, "utf8"),
-			);
 			const installerDropIn = readFileSync(
-				join(paths.runRoot, `${name}-installer-state.conf`),
+				join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf"),
 				"utf8",
-			);
-			expect(installerDropIn).toBe(
-				readFileSync(
-					join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf"),
-					"utf8",
-				),
 			);
 			expect(installerDropIn).not.toContain("\nExecStart=");
 			expect(installerDropIn).not.toContain("\nWorkingDirectory=");
@@ -1732,7 +1723,7 @@ cat > '${logPath}'
 		});
 	});
 
-	test("leaves hosted drop-ins for forward convergence when official install fails", () => {
+	test("withholds hosted drop-ins until an official install succeeds", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
@@ -1838,7 +1829,7 @@ esac
 			expect(installerLogStat.uid).toBe(0);
 			expect(installerLogStat.gid).toBe(0);
 		}
-		expect(existsSync(dropInPath)).toBe(true);
+		expect(existsSync(dropInPath)).toBe(false);
 		expect(authorityCommits).toBe(0);
 		expect(finalActivations).toBe(0);
 		expect(
@@ -1873,7 +1864,7 @@ esac
 			"official openclaw-gateway service install failed",
 		);
 		expect(existsSync(unitPath)).toBe(false);
-		expect(existsSync(dropInPath)).toBe(true);
+		expect(existsSync(dropInPath)).toBe(false);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 

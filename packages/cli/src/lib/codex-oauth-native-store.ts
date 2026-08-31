@@ -82,6 +82,7 @@ export const OPENCLAW_SDK_EXPORT_PATHS = {
 	deviceBootstrap: "device-bootstrap",
 	providerAuth: "provider-auth",
 	providerEnvVars: "provider-env-vars",
+	sessionTranscript: "session-transcript-runtime",
 } as const;
 
 export function resolveOpenClawSdkExport(

@@ -192,7 +192,7 @@ if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   printf '{"plugin":{"id":"clawdi-managed-provider","source":"%s/index.js","origin":"global","status":"%s","version":"1.0.0","enabled":%s},"install":{"source":"path","sourcePath":"%s","installPath":"%s","version":"1.0.0"}}\\n' "$plugin_root" "$status" "$enabled" "$source_path" "$plugin_root"
   exit 0
 fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ]; then
+if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ] && [ "\${5:-}" = "--accept-capabilities" ]; then
   rm -rf "$plugin_root"
   mkdir -p "$(dirname "$plugin_root")" "$state_dir/state"
   cp -R "$3" "$plugin_root"
@@ -200,7 +200,7 @@ if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--fo
   printf '%s\\n' installed > "$state_dir/state/openclaw.sqlite"
   exit 0
 fi
-if [ "$*" = "plugins enable clawdi-managed-provider" ]; then
+if [ "$*" = "plugins enable clawdi-managed-provider --accept-capabilities" ]; then
   test -f "$plugin_root/openclaw.plugin.json"
   touch "$plugin_root/.enabled"
   exit 0

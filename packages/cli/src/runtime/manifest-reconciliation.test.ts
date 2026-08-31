@@ -754,12 +754,12 @@ EOF
 	    test -f "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json" || exit 1
 	    printf '{"plugin":{"id":"clawdi-managed-provider","name":"Clawdi Managed Provider Metadata","source":"%s/.openclaw/extensions/clawdi-managed-provider/index.js","origin":"global","status":"loaded","version":"1.0.0","enabled":true},"mcpServers":[],"diagnostics":[],"install":{"source":"path","sourcePath":"%s/.openclaw/managed-sources/clawdi-managed-provider","installPath":"%s/.openclaw/extensions/clawdi-managed-provider"}}\n' "$HOME" "$HOME" "$HOME"
 	    ;;
-	  "plugins install "*" --force")
+	  "plugins install "*" --force --accept-capabilities")
 	    rm -rf "$HOME/.openclaw/extensions/clawdi-managed-provider"
 	    mkdir -p "$HOME/.openclaw/extensions"
 	    cp -R "$3" "$HOME/.openclaw/extensions/clawdi-managed-provider"
 	    ;;
-	  "plugins enable clawdi-managed-provider")
+	  "plugins enable clawdi-managed-provider --accept-capabilities")
 	    ;;
 	  "skills install "*)
 	    source_dir="$3"

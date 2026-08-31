@@ -966,8 +966,7 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(detail).not.toContain("EISDIR");
 	const installerOutput = readFileSync(installerOutputLog, "utf8");
 	expect(installerOutput).toContain("exitCode=1");
-	expect(installerOutput).toContain("Gateway install failed:");
-	expect(installerOutput).toContain("EISDIR");
+	expect(installerOutput).toContain("SERVICE_DEFINITION_UNKNOWN");
 	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
@@ -982,7 +981,7 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
 	expect(statSync(openClawConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
-	expect(existsSync(dropInPath)).toBe(true);
+	expect(existsSync(dropInPath)).toBe(false);
 	expect(existsSync(paths.manifestLastGood)).toBe(false);
 	expect(existsSync(workspaceRoot)).toBe(true);
 	rmSync(unitPath, { recursive: true, force: true });
@@ -1113,6 +1112,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		const providerAuthSdkPath = resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.providerAuth);
 		expect(providerAuthSdkPath).not.toBeNull();
 		if (!providerAuthSdkPath) throw new Error("official OpenClaw provider-auth SDK is unavailable");
+		expect(resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.sessionTranscript)).not.toBeNull();
 		const authTargets = [null, activeAgentDir, secondaryAgentDir];
 		const runProviderAuthHelper = (action: "seed" | "inspect") =>
 			spawnSync(
@@ -1347,7 +1347,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			auth: { mode: "token", token: "size-drop-gateway-token" },
 		});
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
-		expect(appliedConfig.agents.list).toEqual([{ id: "main" }]);
+		expect(appliedConfig.agents.list).toBeUndefined();
 		expect(appliedConfig.auth).toEqual({
 			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
 			order: { openai: ["openai:user"] },
