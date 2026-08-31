@@ -8,6 +8,15 @@ image="clawdi-runtime-official-installer-systemd-test:local-$$"
 container="clawdi-runtime-official-installer-systemd-test-$$"
 
 cleanup() {
+	local status=$?
+	if [[ "$status" -ne 0 ]]; then
+		docker exec "$container" bash -lc '
+			while IFS= read -r -d "" log; do
+				printf "\n===== %s =====\n" "$log"
+				cat "$log"
+			done < <(find /tmp /var/lib -type f -path "*/installer-logs/*.log" -print0 2>/dev/null)
+		' || true
+	fi
 	docker rm -f "$container" >/dev/null 2>&1 || true
 	docker image rm "$image" >/dev/null 2>&1 || true
 }
