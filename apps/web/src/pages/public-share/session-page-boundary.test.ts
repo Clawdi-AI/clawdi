@@ -16,11 +16,12 @@ describe("server hydration boundaries", () => {
 	test("keeps identity-dependent reads and response policy in one server function", () => {
 		expect(functionsSource).toContain('setResponseHeader("cache-control", "no-store")');
 		expect(functionsSource).toContain("await auth()");
+		expect(functionsSource).toContain('api.GET("/v1/public/session-shares/{share_id}"');
+		expect(functionsSource).toContain('api.GET("/v1/public/session-shares/{share_id}/messages"');
 		expect(functionsSource).toContain('api.GET("/v1/public/sessions/{session_id}"');
 		expect(functionsSource).toContain('api.GET("/v1/public/sessions/{session_id}/messages"');
-		expect(functionsSource).toContain(
-			'return { kind: "ok", share: shareResult.data, messagesPage }',
-		);
+		expect(functionsSource).toContain('source: "share"');
+		expect(functionsSource).toContain('source: "legacy"');
 		expect(protectedRouteSource).toContain(
 			'const getAuthState = createServerFn({ method: "GET" }).handler',
 		);

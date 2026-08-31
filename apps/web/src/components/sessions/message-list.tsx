@@ -1,6 +1,15 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, CircleX, Terminal, Wrench } from "lucide-react";
+import {
+	CheckCircle2,
+	ChevronRight,
+	CircleX,
+	Copy,
+	ListEnd,
+	Share2,
+	Terminal,
+	Wrench,
+} from "lucide-react";
 import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
@@ -8,6 +17,8 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import type {
 	SessionMessage,
 	SessionTimelineItem,
@@ -18,6 +29,8 @@ import { splitSearchHighlight } from "@/lib/search-highlight";
 import { cn, formatAbsoluteTooltip } from "@/lib/utils";
 
 const OFFSCREEN_RENDERING_CLASS = "[content-visibility:auto] [contain-intrinsic-size:auto_160px]";
+type TimelineMessage = SessionMessage | Extract<SessionTimelineItem, { kind: "message" }>;
+type TimelineEntry = SessionMessage | SessionTimelineItem;
 
 /**
  * Message-thread rendering primitives, shared between the owner-dashboard
@@ -91,8 +104,9 @@ function MessageBlock({
 	isHighlighted,
 	highlightQuery,
 	deferOffscreenRendering,
+	onShareMessage,
 }: {
-	message: SessionMessage;
+	message: TimelineMessage;
 	userAvatar?: string;
 	userName: string;
 	agentType: string | null | undefined;
@@ -107,9 +121,11 @@ function MessageBlock({
 	isHighlighted?: boolean;
 	highlightQuery?: string;
 	deferOffscreenRendering: boolean;
+	onShareMessage?: (target: { scope: "through" | "response"; position: number }) => void;
 }) {
 	const isUser = message.role === "user";
 	const agentName = agentTypeLabel(agentType);
+	const position = "position" in message ? message.position : null;
 
 	return (
 		// `group` lives on the whole row so the continuation-row hover
@@ -203,7 +219,87 @@ function MessageBlock({
 						<Markdown content={message.content} highlightQuery={highlightQuery} />
 					)}
 				</div>
+				<MessageActions
+					content={message.content}
+					position={position}
+					isAssistant={!isUser}
+					onShareMessage={onShareMessage}
+				/>
 			</div>
+		</div>
+	);
+}
+
+function MessageActions({
+	content,
+	position,
+	isAssistant,
+	onShareMessage,
+}: {
+	content: string;
+	position: number | null;
+	isAssistant: boolean;
+	onShareMessage?: (target: { scope: "through" | "response"; position: number }) => void;
+}) {
+	const { copied, copy } = useCopyToClipboard({ success: false });
+	return (
+		<div
+			role="toolbar"
+			aria-label="Message actions"
+			className="pointer-events-none mt-0.5 flex min-h-6 w-fit items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+		>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<Button
+							variant="ghost"
+							size="icon-xs"
+							className="text-muted-foreground pointer-coarse:size-11"
+							onClick={() => copy(content)}
+							aria-label="Copy message"
+						/>
+					}
+				>
+					{copied ? <CheckCircle2 /> : <Copy />}
+				</TooltipTrigger>
+				<TooltipContent>Copy message</TooltipContent>
+			</Tooltip>
+			{isAssistant && position !== null && onShareMessage ? (
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								className="text-muted-foreground pointer-coarse:size-11"
+								onClick={() => onShareMessage({ scope: "response", position })}
+								aria-label="Share response"
+							/>
+						}
+					>
+						<Share2 />
+					</TooltipTrigger>
+					<TooltipContent>Share response</TooltipContent>
+				</Tooltip>
+			) : null}
+			{position !== null && onShareMessage ? (
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<Button
+								variant="ghost"
+								size="icon-xs"
+								className="text-muted-foreground pointer-coarse:size-11"
+								onClick={() => onShareMessage({ scope: "through", position })}
+								aria-label="Share conversation to here"
+							/>
+						}
+					>
+						<ListEnd />
+					</TooltipTrigger>
+					<TooltipContent>Share conversation to here</TooltipContent>
+				</Tooltip>
+			) : null}
 		</div>
 	);
 }
@@ -317,9 +413,6 @@ function CollapsibleBlock({
 		</div>
 	);
 }
-
-type TimelineMessage = SessionMessage | Extract<SessionTimelineItem, { kind: "message" }>;
-type TimelineEntry = SessionMessage | SessionTimelineItem;
 
 function isToolEntry(entry: TimelineEntry): entry is SessionToolCall | SessionToolResult {
 	return "kind" in entry && (entry.kind === "tool_call" || entry.kind === "tool_result");
@@ -486,6 +579,7 @@ export interface SessionTimelineListProps {
 	userName: string;
 	highlightedMessageKey?: string | null;
 	highlightQuery?: string;
+	onShareMessage?: (target: { scope: "through" | "response"; position: number }) => void;
 }
 
 interface TimelineRowBase {
@@ -580,6 +674,7 @@ export function SessionTimelineRowView({
 	highlightedMessageKey,
 	highlightQuery,
 	deferOffscreenRendering,
+	onShareMessage,
 }: Omit<SessionTimelineListProps, "items" | "itemKeys"> & {
 	row: SessionTimelineRow;
 	deferOffscreenRendering: boolean;
@@ -599,6 +694,7 @@ export function SessionTimelineRowView({
 						isHighlighted={isHighlighted}
 						highlightQuery={highlightQuery}
 						deferOffscreenRendering={deferOffscreenRendering}
+						onShareMessage={onShareMessage}
 					/>
 				</div>
 			) : (
@@ -630,6 +726,7 @@ export function SessionTimelineList(props: SessionTimelineListProps) {
 					userName={props.userName}
 					highlightedMessageKey={props.highlightedMessageKey}
 					highlightQuery={props.highlightQuery}
+					onShareMessage={props.onShareMessage}
 					deferOffscreenRendering
 				/>
 			))}
