@@ -182,6 +182,10 @@ function fakeManagedOpenClawProviderPluginCommands(): string {
 	return `
 state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 plugin_root="$state_dir/extensions/clawdi-managed-provider"
+if [ "$*" = "plugins install --help" ] || [ "$*" = "plugins enable --help" ]; then
+  printf '%s\n' '--accept-capabilities'
+  exit 0
+fi
 if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   test -f "$plugin_root/openclaw.plugin.json" || exit 1
   test -f "$plugin_root/.source-path" || exit 1

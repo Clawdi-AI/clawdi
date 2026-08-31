@@ -750,6 +750,9 @@ EOF
 	  "agents list --json")
 	    printf '[{"id":"main","workspace":"%s"}]\n' "$HOME/.openclaw/workspace"
 	    ;;
+	  "plugins install --help"|"plugins enable --help")
+	    printf '%s\n' '--accept-capabilities'
+	    ;;
 	  "plugins inspect clawdi-managed-provider --json")
 	    test -f "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json" || exit 1
 	    printf '{"plugin":{"id":"clawdi-managed-provider","name":"Clawdi Managed Provider Metadata","source":"%s/.openclaw/extensions/clawdi-managed-provider/index.js","origin":"global","status":"loaded","version":"1.0.0","enabled":true},"mcpServers":[],"diagnostics":[],"install":{"source":"path","sourcePath":"%s/.openclaw/managed-sources/clawdi-managed-provider","installPath":"%s/.openclaw/extensions/clawdi-managed-provider"}}\n' "$HOME" "$HOME" "$HOME"

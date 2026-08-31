@@ -26,6 +26,7 @@ import {
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import {
 	runRuntimeUserCommand,
@@ -612,12 +613,20 @@ function runPluginInstallWithFallback(
 	home: string,
 	workspaceRoot: string,
 ): void {
+	const capabilityConsentArgs = openClawPluginCapabilityConsentArgs("install", (args) => {
+		const result = spawnRuntimeUserCommand(commandPath, args, home, workspaceRoot);
+		return {
+			status: result.status,
+			stdout: String(result.stdout ?? ""),
+			stderr: String(result.stderr ?? ""),
+		};
+	});
 	let lastError: unknown = null;
 	for (const spec of specs) {
 		try {
 			runRuntimeUserCommand(
 				commandPath,
-				["plugins", "install", spec, "--force", "--accept-capabilities"],
+				["plugins", "install", spec, "--force", ...capabilityConsentArgs],
 				"",
 				home,
 				workspaceRoot,

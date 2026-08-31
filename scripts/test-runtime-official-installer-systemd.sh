@@ -13,7 +13,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --quiet --file "$fixture" --tag "$image" "$(dirname -- "$fixture")" >/dev/null
+build_args=()
+for name in OPENCLAW_VERSION OPENCLAW_COMMIT OPENCLAW_INTEGRITY; do
+	value_name="CLAWDI_TEST_${name}"
+	if [[ -n "${!value_name:-}" ]]; then
+		build_args+=(--build-arg "${name}=${!value_name}")
+	fi
+done
+
+docker build --quiet "${build_args[@]}" --file "$fixture" --tag "$image" \
+	"$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
 	--name "$container" \
 	--tmpfs /run \

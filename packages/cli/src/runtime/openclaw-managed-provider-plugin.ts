@@ -10,6 +10,7 @@ import {
 	type OpenClawHostedContext,
 } from "./hosted-openclaw-context";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
@@ -200,6 +201,23 @@ function runPluginCommand(command: string, args: string[], home: string, operati
 	if (result.status !== 0) throw commandFailure(operation, result);
 }
 
+function pluginCapabilityConsentArgs(
+	command: string,
+	action: "enable" | "install",
+	home: string,
+): string[] {
+	return openClawPluginCapabilityConsentArgs(action, (args) => {
+		const result = spawnRuntimeUserCommand(command, args, home, home, {
+			timeoutMs: COMMAND_TIMEOUT_MS,
+		});
+		return {
+			status: result.status,
+			stdout: String(result.stdout ?? ""),
+			stderr: String(result.stderr ?? ""),
+		};
+	});
+}
+
 const VERIFY_MARKER_HELPER = `
 import { pathToFileURL } from "node:url";
 const sdk = await import(pathToFileURL(process.argv[1]).href);
@@ -264,7 +282,13 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 	if (!observation || !pluginOwnershipMatches(observation, sourceDir, input.context)) {
 		runPluginCommand(
 			input.commandPath,
-			["plugins", "install", sourceDir, "--force", "--accept-capabilities"],
+			[
+				"plugins",
+				"install",
+				sourceDir,
+				"--force",
+				...pluginCapabilityConsentArgs(input.commandPath, "install", input.context.home),
+			],
 			input.context.home,
 			"OpenClaw managed provider plugin install failed",
 		);
@@ -282,7 +306,12 @@ export function ensureManagedOpenClawProviderPlugin(input: {
 	if (!observation.plugin.enabled || observation.plugin.status !== "loaded") {
 		runPluginCommand(
 			input.commandPath,
-			["plugins", "enable", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID, "--accept-capabilities"],
+			[
+				"plugins",
+				"enable",
+				CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
+				...pluginCapabilityConsentArgs(input.commandPath, "enable", input.context.home),
+			],
 			input.context.home,
 			"OpenClaw managed provider plugin enable failed",
 		);

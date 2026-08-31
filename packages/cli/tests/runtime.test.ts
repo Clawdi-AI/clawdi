@@ -1062,6 +1062,10 @@ function fakeManagedOpenClawProviderPluginCommands(): string {
 	return `
 state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 plugin_root="$state_dir/extensions/clawdi-managed-provider"
+if [ "$*" = "plugins install --help" ] || [ "$*" = "plugins enable --help" ]; then
+  printf '%s\n' '--accept-capabilities'
+  exit 0
+fi
 if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
   test -f "$plugin_root/openclaw.plugin.json" || exit 1
   test -f "$plugin_root/.source-path" || exit 1
@@ -8757,6 +8761,10 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
   exit 0
 fi
+if [ "$*" = "plugins install --help" ]; then
+  printf '%s\\n' '--accept-capabilities'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   printf '%s\n' "$*" >> '${openclawPatchArgs}'
   cat >> '${openclawPatch}'
@@ -9784,7 +9792,7 @@ exit 64
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf8")).toBe(repairedConfig);
 	}, 60_000);
 
-	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
+	it("isolates OpenClaw WhatsApp DMs with the legacy plugin CLI", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9814,7 +9822,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1\\n'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force --accept-capabilities" ]; then
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
   mkdir -p '${dirname(openclawPluginSource)}'
   printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
   exit 0
@@ -9888,6 +9896,10 @@ exit 0
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
+if [ "$*" = "plugins install --help" ]; then
+  printf '%s\\n' '--accept-capabilities'
+  exit 0
+fi
 if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   echo "plugin install failed" >&2
   exit 73
@@ -10194,6 +10206,10 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
   exit 0
 fi
+if [ "$*" = "plugins install --help" ]; then
+  printf '%s\\n' '--accept-capabilities'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >> '${openclawPatch}'
   printf '\\n---\\n' >> '${openclawPatch}'
@@ -10286,6 +10302,10 @@ exit 64
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
+  exit 0
+fi
+if [ "$*" = "plugins install --help" ]; then
+  printf '%s\\n' '--accept-capabilities'
   exit 0
 fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then

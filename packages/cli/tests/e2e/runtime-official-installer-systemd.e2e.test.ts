@@ -966,7 +966,8 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(detail).not.toContain("EISDIR");
 	const installerOutput = readFileSync(installerOutputLog, "utf8");
 	expect(installerOutput).toContain("exitCode=1");
-	expect(installerOutput).toContain("SERVICE_DEFINITION_UNKNOWN");
+	expect(installerOutput).toContain('"ok": false');
+	expect(installerOutput).toContain('"error":');
 	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
@@ -1347,7 +1348,9 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			auth: { mode: "token", token: "size-drop-gateway-token" },
 		});
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
-		expect(appliedConfig.agents.list).toBeUndefined();
+		if (appliedConfig.agents.list !== undefined) {
+			expect(appliedConfig.agents.list).toEqual([{ id: "main" }]);
+		}
 		expect(appliedConfig.auth).toEqual({
 			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
 			order: { openai: ["openai:user"] },

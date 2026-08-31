@@ -30,6 +30,7 @@ import type {
 	AgentAdapterCore,
 	RawSession,
 	RawSkill,
+	SessionBatchScan,
 	SessionScanRequest,
 	SessionScanResult,
 } from "./base";
@@ -186,6 +187,8 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 			const candidate = row[field];
 			return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
 		};
+		const acp = jsonObject(row.acp);
+		const acpLastActivityAt = acp?.lastActivityAt;
 		return [
 			{
 				agentId,
@@ -200,9 +203,23 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 				cacheWrite: number("cacheWrite"),
 				model: jsonString(row.model) ?? undefined,
 				modelProvider: jsonString(row.modelProvider) ?? undefined,
+				sessionFile: jsonString(row.sessionFile) ?? undefined,
+				displayName: jsonString(row.displayName) ?? undefined,
+				subject: jsonString(row.subject) ?? undefined,
 				label: jsonString(row.label) ?? undefined,
 				spawnedCwd: jsonString(row.spawnedCwd) ?? undefined,
 				spawnedWorkspaceDir: jsonString(row.spawnedWorkspaceDir) ?? undefined,
+				...(acp
+					? {
+							acp: {
+								cwd: jsonString(acp.cwd) ?? undefined,
+								lastActivityAt:
+									typeof acpLastActivityAt === "number" && Number.isFinite(acpLastActivityAt)
+										? acpLastActivityAt
+										: undefined,
+							},
+						}
+					: {}),
 			},
 		];
 	});
@@ -292,15 +309,6 @@ function readOfficialSessionMessagesFromGateway(entry: OfficialSessionEntry): Js
 		offset = payload.nextOffset;
 	}
 	return null;
-}
-
-async function readOfficialSessionMessages(
-	entry: OfficialSessionEntry,
-): Promise<JsonObject[] | null> {
-	return (
-		(await readOfficialSessionMessagesFromSdk(entry)) ??
-		readOfficialSessionMessagesFromGateway(entry)
-	);
 }
 
 interface TranscriptLine {
@@ -424,11 +432,115 @@ function openClawEventDrafts(
 	return drafts;
 }
 
+interface SessionCollection {
+	sessions: RawSession[];
+	observedLocalSessionIds: readonly string[];
+	dedupedCount: number;
+	matchedTranscriptPaths: Set<string>;
+}
+
+function singleSessionBatch(
+	coverage: SessionScanResult["coverage"],
+	collection: SessionCollection,
+): SessionBatchScan {
+	return {
+		coverage,
+		batches: (async function* () {
+			yield {
+				sessions: collection.sessions,
+				observedLocalSessionIds: collection.observedLocalSessionIds,
+				dedupedCount: collection.dedupedCount,
+			};
+		})(),
+	};
+}
+
+function materializeOpenClawJsonlSession(input: {
+	entry: SessionEntry;
+	indexPath: string;
+	projectPath: string | null;
+	sourceAgentId: string;
+	sourceRevision: string;
+	transcriptPath: string;
+}): RawSession | null {
+	const { entry, indexPath, projectPath, sourceAgentId, sourceRevision, transcriptPath } = input;
+	const sessionId = entry.sessionId;
+	const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
+	if (!sessionId || !updatedAt) return null;
+
+	let events = [] as import("./base").SessionEvent[];
+	let startedAt: Date | null = null;
+	let endedAt: Date | null = null;
+	const modelsUsed = new Set<string>();
+	if (entry.model) modelsUsed.add(entry.model);
+	let currentModel = entry.model ?? null;
+
+	if (!existsSync(transcriptPath)) {
+		if (entry.sessionFile) {
+			console.warn(`[openclaw] transcript missing for ${sessionId}: ${transcriptPath}`);
+		}
+	} else {
+		try {
+			const transcriptContent = readFileSync(transcriptPath, "utf-8");
+			const drafts: SessionEventDraft[] = [];
+			for (const { data: raw, recordSeq } of completeJsonlRecords(transcriptContent)) {
+				const parsed = raw as TranscriptLine;
+				drafts.push(
+					...openClawEventDrafts(raw, `${sourceAgentId}:${sessionId}`, recordSeq, currentModel),
+				);
+
+				const timestamp = parsed.timestamp ? new Date(parsed.timestamp) : null;
+				if (timestamp && !Number.isNaN(timestamp.getTime())) {
+					startedAt ??= timestamp;
+					endedAt = timestamp;
+				}
+				if (parsed.type === "model_change" && parsed.modelId) {
+					modelsUsed.add(parsed.modelId);
+					currentModel = parsed.modelId;
+				}
+			}
+			events = sequenceSessionEvents(drafts);
+		} catch {
+			// An unreadable transcript is omitted without hiding other sessions.
+		}
+	}
+
+	const messages = projectEventsToMessages(events);
+	if (messages.length === 0) return null;
+	startedAt ??= new Date(updatedAt);
+	endedAt ??= new Date(updatedAt);
+	const firstUserContent = messages.find((message) => message.role === "user")?.content;
+	return {
+		localSessionId: sessionId,
+		projectPath,
+		startedAt,
+		endedAt,
+		messageCount: messages.length,
+		inputTokens: entry.inputTokens ?? 0,
+		outputTokens: entry.outputTokens ?? 0,
+		cacheReadTokens: entry.cacheRead ?? 0,
+		model: currentModel,
+		modelsUsed: [...modelsUsed],
+		durationSeconds: durationSecondsBetween(startedAt, endedAt),
+		summary:
+			entry.displayName ??
+			entry.subject ??
+			entry.label ??
+			(firstUserContent === undefined ? null : safeTruncate(firstUserContent, 200)),
+		messages,
+		events,
+		rawFilePath: existsSync(transcriptPath) ? transcriptPath : indexPath,
+		sourceRevision,
+	};
+}
+
 export class OpenClawAdapter implements AgentAdapterCore {
 	readonly agentType = "openclaw" as const;
 	readonly sessions = {
 		contentProtocol: async () => "events-v1" as const,
 		collect: (request: SessionScanRequest) => this.collectSessions(request),
+		scan: (request: SessionScanRequest, knownSourceRevisions: ReadonlyMap<string, string>) =>
+			this.scanSessions(request, knownSourceRevisions),
 		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
@@ -463,12 +575,55 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+		const scan = await this.scanSessions(request, new Map());
+		const sessions: RawSession[] = [];
+		let dedupedCount = 0;
+		for await (const batch of scan.batches) {
+			sessions.push(...batch.sessions);
+			dedupedCount += batch.dedupedCount;
+		}
+		return { sessions, dedupedCount, coverage: scan.coverage };
+	}
+
+	private async scanSessions(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+	): Promise<SessionBatchScan> {
+		const officialInventory = readOfficialSessionInventory();
+		if (officialInventory) {
+			const collection = await this.collectOfficialSessionsMatching(
+				officialInventory,
+				request,
+				undefined,
+				knownSourceRevisions,
+			);
+			return singleSessionBatch("complete", collection);
+		}
+
+		const collection = await this.collectLegacySessions(request, knownSourceRevisions);
+		return singleSessionBatch(collection.coverage, collection);
+	}
+
+	private async collectLegacySessions(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+	): Promise<SessionCollection & { coverage: SessionScanResult["coverage"] }> {
 		if (request.kind === "complete") {
-			const { result } = await this.collectSessionsMatching(request);
-			return { ...result, coverage: "complete" };
+			return {
+				...(await this.collectLegacySessionsMatching(
+					request,
+					undefined,
+					undefined,
+					knownSourceRevisions,
+				)),
+				coverage: "complete",
+			};
 		}
 		if (request.paths.length === 0) {
-			return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+			return this.collectLegacySessions(
+				{ kind: "complete", projectFilter: request.projectFilter },
+				knownSourceRevisions,
+			);
 		}
 		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
 		const transcriptPaths = new Set<string>();
@@ -479,47 +634,63 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				basename(normalized) === "sessions.json" ||
 				!normalized.endsWith(".jsonl")
 			) {
-				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				return this.collectLegacySessions(
+					{ kind: "complete", projectFilter: request.projectFilter },
+					knownSourceRevisions,
+				);
 			}
 			transcriptPaths.add(normalized);
 		}
 
-		const collection = await this.collectSessionsMatching(request, transcriptPaths);
+		const collection = await this.collectLegacySessionsMatching(
+			request,
+			transcriptPaths,
+			undefined,
+			knownSourceRevisions,
+		);
 		for (const path of transcriptPaths) {
 			if (existsSync(path) && !collection.matchedTranscriptPaths.has(path)) {
-				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				return this.collectLegacySessions(
+					{ kind: "complete", projectFilter: request.projectFilter },
+					knownSourceRevisions,
+				);
 			}
 		}
-		return { ...collection.result, coverage: "partial" };
+		return { ...collection, coverage: "partial" };
 	}
 
 	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+		const officialInventory = readOfficialSessionInventory();
+		if (officialInventory) {
+			return (
+				(
+					await this.collectOfficialSessionsMatching(
+						officialInventory,
+						{},
+						localSessionId,
+						new Map(),
+					)
+				).sessions[0] ?? null
+			);
+		}
 		return (
-			(await this.collectSessionsMatching({}, undefined, localSessionId)).result.sessions[0] ?? null
+			(await this.collectLegacySessionsMatching({}, undefined, localSessionId, new Map()))
+				.sessions[0] ?? null
 		);
 	}
 
-	private async collectSessionsMatching(
+	private async collectLegacySessionsMatching(
 		opts: { projectFilter?: string },
 		transcriptPaths?: ReadonlySet<string>,
 		localSessionId?: string,
-	): Promise<{
-		result: Pick<SessionScanResult, "sessions" | "dedupedCount">;
-		matchedTranscriptPaths: Set<string>;
-	}> {
-		const officialInventory = readOfficialSessionInventory();
-		if (officialInventory) {
-			return this.collectOfficialSessionsMatching(
-				officialInventory,
-				opts,
-				transcriptPaths,
-				localSessionId,
-			);
-		}
+		knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
+	): Promise<SessionCollection> {
 		const agentDirs = listAgentDirs();
 		if (agentDirs.length === 0) {
 			return {
-				result: { sessions: [], dedupedCount: 0 },
+				sessions: [],
+				dedupedCount: 0,
+				observedLocalSessionIds: [],
 				matchedTranscriptPaths: new Set(),
 			};
 		}
@@ -532,6 +703,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		}
 
 		const sessions: RawSession[] = [];
+		const observedLocalSessionIds: string[] = [];
 		const matchedTranscriptPaths = new Set<string>();
 
 		for (const agentRoot of agentDirs) {
@@ -570,102 +742,28 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				const normalizedTranscriptPath = resolve(transcriptPath);
 				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
 				if (transcriptPaths) matchedTranscriptPaths.add(normalizedTranscriptPath);
+				observedLocalSessionIds.push(sessionId);
+				const sourceRevision = `${sessionId}:${updatedAt}`;
+				if (knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
-				let events = [] as import("./base").SessionEvent[];
-				let startedAt: Date | null = null;
-				let endedAt: Date | null = null;
-				const modelsUsed = new Set<string>();
-				if (entry.model) modelsUsed.add(entry.model);
-				let currentModel = entry.model ?? null;
-
-				if (!existsSync(transcriptPath)) {
-					if (entry.sessionFile) {
-						// Index points at an absolute or relative transcript that we
-						// can't reach from this process (different mount, stale path,
-						// path-join bug regression). Surface it instead of silently
-						// dropping the session.
-						console.warn(`[openclaw] transcript missing for ${sessionId}: ${transcriptPath}`);
-					}
-				} else {
-					try {
-						const transcriptContent = readFileSync(transcriptPath, "utf-8");
-						const drafts: SessionEventDraft[] = [];
-						for (const { data: raw, recordSeq } of completeJsonlRecords(transcriptContent)) {
-							const parsed = raw as TranscriptLine;
-							drafts.push(
-								...openClawEventDrafts(
-									raw,
-									`${sourceAgentId}:${sessionId}`,
-									recordSeq,
-									currentModel,
-								),
-							);
-
-							const ts = parsed.timestamp
-								? new Date(
-										typeof parsed.timestamp === "number" ? parsed.timestamp : parsed.timestamp,
-									)
-								: null;
-							if (ts && !Number.isNaN(ts.getTime())) {
-								if (!startedAt) startedAt = ts;
-								endedAt = ts;
-							}
-
-							// `model_change` payload shape is inferred from the pi-coding-agent
-							// types; not verified against a live OpenClaw transcript. Defensive.
-							if (parsed.type === "model_change" && parsed.modelId) {
-								modelsUsed.add(parsed.modelId);
-								currentModel = parsed.modelId;
-							}
-						}
-						events = sequenceSessionEvents(drafts);
-					} catch {
-						// Unreadable transcript — fall through with whatever we have.
-					}
-				}
-
-				const messages = projectEventsToMessages(events);
-				if (messages.length === 0) continue;
-
-				// Defensive fallback: a transcript with messages but no timestamps at all
-				// shouldn't happen in practice, but keep the session recoverable via the
-				// index's updatedAt rather than throwing.
-				startedAt ??= new Date(updatedAt);
-				endedAt ??= new Date(updatedAt);
-
-				const durationSeconds = durationSecondsBetween(startedAt, endedAt);
-
-				const firstUserContent = messages.find((m) => m.role === "user")?.content;
-				const summary =
-					entry.displayName ??
-					entry.subject ??
-					entry.label ??
-					(firstUserContent === undefined ? null : safeTruncate(firstUserContent, 200));
-
-				sessions.push({
-					localSessionId: sessionId,
+				const session = materializeOpenClawJsonlSession({
+					entry: { ...entry, sessionId, updatedAt },
+					indexPath,
 					projectPath,
-					startedAt,
-					endedAt,
-					messageCount: messages.length,
-					inputTokens: entry.inputTokens ?? 0,
-					outputTokens: entry.outputTokens ?? 0,
-					cacheReadTokens: entry.cacheRead ?? 0,
-					model: currentModel,
-					modelsUsed: [...modelsUsed],
-					durationSeconds,
-					summary,
-					messages,
-					events,
-					rawFilePath: existsSync(transcriptPath) ? transcriptPath : indexPath,
+					sourceAgentId,
+					sourceRevision,
+					transcriptPath,
 				});
+				if (session) sessions.push(session);
 			}
 		}
 
 		// OpenClaw stores one session per ACP transcript with stable sessionIds
 		// — no resume-chain duplication to dedupe.
 		return {
-			result: { sessions, dedupedCount: 0 },
+			sessions,
+			dedupedCount: 0,
+			observedLocalSessionIds,
 			matchedTranscriptPaths,
 		};
 	}
@@ -673,31 +771,44 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	private async collectOfficialSessionsMatching(
 		inventory: OfficialSessionInventory,
 		opts: { projectFilter?: string },
-		transcriptPaths?: ReadonlySet<string>,
 		localSessionId?: string,
-	): Promise<{
-		result: Pick<SessionScanResult, "sessions" | "dedupedCount">;
-		matchedTranscriptPaths: Set<string>;
-	}> {
-		// SQLite is a shared backing store, so a concrete database notification
-		// always expands to a complete inventory scan.
-		if (transcriptPaths) {
-			return this.collectOfficialSessionsMatching(inventory, opts, undefined, localSessionId);
-		}
+		knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
+	): Promise<SessionCollection> {
 		const absFilter = opts.projectFilter ? resolve(opts.projectFilter) : null;
 		const sessions: RawSession[] = [];
+		const observedLocalSessionIds: string[] = [];
 		for (const entry of inventory.entries) {
 			if (localSessionId !== undefined && entry.sessionId !== localSessionId) continue;
 			const updatedAt = entry.updatedAt;
 			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) continue;
-			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? null;
+			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
 			if (
 				absFilter &&
 				(!projectPath || (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)))
 			)
 				continue;
+			observedLocalSessionIds.push(entry.sessionId);
+			const sourceRevision = `${entry.sessionId}:${updatedAt}`;
+			if (knownSourceRevisions.get(entry.sessionId) === sourceRevision) continue;
 
-			const transcript = await readOfficialSessionMessages(entry);
+			let transcript = await readOfficialSessionMessagesFromSdk(entry);
+			if (transcript === null && entry.sessionFile) {
+				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
+				const transcriptPath = isAbsolute(entry.sessionFile)
+					? entry.sessionFile
+					: join(sessionsDirForAgent, entry.sessionFile);
+				const legacy = materializeOpenClawJsonlSession({
+					entry,
+					indexPath: join(sessionsDirForAgent, "sessions.json"),
+					projectPath,
+					sourceAgentId: entry.agentId,
+					sourceRevision,
+					transcriptPath,
+				});
+				if (legacy) sessions.push(legacy);
+				continue;
+			}
+			transcript ??= readOfficialSessionMessagesFromGateway(entry);
 			if (!transcript) {
 				console.warn(
 					`[openclaw] could not read active transcript for ${entry.sessionId} through official transcript surfaces`,
@@ -766,11 +877,13 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				messages,
 				events,
 				rawFilePath: storePath,
-				sourceRevision: `${entry.sessionId}:${updatedAt}`,
+				sourceRevision,
 			});
 		}
 		return {
-			result: { sessions, dedupedCount: 0 },
+			sessions,
+			dedupedCount: 0,
+			observedLocalSessionIds,
 			matchedTranscriptPaths: new Set(),
 		};
 	}
@@ -882,11 +995,14 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	private getSessionsWatchPaths(): string[] {
-		const paths = listAgentDirs().flatMap((dir) =>
-			[join(dir, "sessions"), join(dir, "agent", "openclaw-agent.sqlite")].filter((path) =>
-				existsSync(path),
-			),
-		);
+		const paths = listAgentDirs().flatMap((dir) => {
+			const sessionRoot = join(dir, "sessions");
+			const database = join(dir, "agent", "openclaw-agent.sqlite");
+			return [
+				...(existsSync(sessionRoot) ? [sessionRoot] : []),
+				...(existsSync(database) ? [database, `${database}-wal`, `${database}-journal`] : []),
+			];
+		});
 		return paths.length > 0 ? paths : [sessionsDir()];
 	}
 
