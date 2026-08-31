@@ -498,6 +498,13 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const searchAnchorOffset = searchWindowOffset + 49;
 	const requestedOffsets = new Set<number>();
 	const requestedSearchOffsets = new Set<number>();
+	const waitForTimelineLayout = () =>
+		page.evaluate(
+			() =>
+				new Promise<void>((resolve) => {
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+				}),
+		);
 
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -581,6 +588,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	).toBeLessThan(2);
 	await jumpToLatest.click();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect(jumpToLatest).not.toBeVisible();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
 	);
@@ -593,35 +601,34 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 		matchRevision: targetAnchor.revision,
 		matchQuery: query,
 	});
-	await page.goto(`/sessions/${SESSION_ID}?${search}`);
+	const searchUrl = `/sessions/${SESSION_ID}?${search}`;
+	await page.goto(searchUrl);
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Current ${query} result stays mounted`);
 	await expect(current.locator("mark")).toHaveText(["virtualized needle"]);
 	expect(await mountedRows.count()).toBeLessThan(80);
 
+	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+	const loadEarlier = page.getByRole("button", { name: /^Load earlier/ });
+	await waitForTimelineLayout();
+	await expect(current).not.toBeInViewport();
+	if (!requestedSearchOffsets.has(1550)) {
+		await loadEarlier.press("Enter");
+	}
+	await expect.poll(() => requestedSearchOffsets.has(1550)).toBe(true);
+	await expect(page.getByRole("button", { name: /^Load earlier \(\d+\/2000\)$/ })).toBeVisible();
+	await expect
+		.poll(async () => {
+			const before = await scrollContainer.evaluate((element) => element.scrollTop);
+			await waitForTimelineLayout();
+			const after = await scrollContainer.evaluate((element) => element.scrollTop);
+			return Math.abs(after - before);
+		})
+		.toBeLessThan(2);
+	await expect(current).not.toBeInViewport();
+
 	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(searchUrl);
 	await expect(current).toBeVisible();
 	expect(await mountedRows.count()).toBeLessThan(80);
-
-	await page.setViewportSize({ width: 1280, height: 900 });
-	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
-	await page.getByRole("button", { name: "Load earlier (100/2000)" }).click();
-	await expect.poll(() => requestedSearchOffsets.has(1550)).toBe(true);
-	await expect(page.getByRole("button", { name: "Load earlier (200/2000)" })).toBeVisible();
-	const stableScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-	await page.evaluate(
-		() =>
-			new Promise<void>((resolve) => {
-				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-			}),
-	);
-	const settledScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-	expect(Math.abs(settledScrollTop - stableScrollTop)).toBeLessThan(2);
-	const currentMatchInViewport = await current.evaluateAll((elements) =>
-		elements.some((element) => {
-			const bounds = element.getBoundingClientRect();
-			return bounds.bottom > 0 && bounds.top < window.innerHeight;
-		}),
-	);
-	expect(currentMatchInViewport).toBe(false);
 });

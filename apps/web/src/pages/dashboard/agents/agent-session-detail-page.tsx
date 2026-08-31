@@ -20,6 +20,7 @@ export default function AgentSessionDetailPage({
 }: AgentSessionDetailPageProps) {
 	return (
 		<SessionDetailContent
+			key={sessionId}
 			sessionId={sessionId}
 			agentId={agentId}
 			searchAnchor={searchAnchor}
