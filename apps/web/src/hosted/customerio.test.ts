@@ -72,6 +72,19 @@ describe("Customer.io browser configuration", () => {
 		expect(analytics.identify).toHaveBeenCalledWith("usr_K8fJ3pQm");
 	});
 
+	test("clears a persisted SDK identity on the first anonymous sync", async () => {
+		const analytics = analyticsDouble();
+		const controller = createHostedCustomerIOController(
+			{ writeKey: "write_key", region: "us" },
+			() => ({ analytics, ready: Promise.resolve() }),
+		);
+
+		await controller.syncIdentity(null);
+		await controller.syncIdentity(null);
+
+		expect(analytics.reset).toHaveBeenCalledTimes(1);
+	});
+
 	test("rejects non-canonical profile IDs before calling the SDK", async () => {
 		const analytics = analyticsDouble();
 		const load = mock(() => ({ analytics, ready: Promise.resolve() }));

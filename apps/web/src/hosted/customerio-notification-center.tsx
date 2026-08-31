@@ -124,9 +124,22 @@ export function CustomerIONotificationCenter() {
 				}
 				onOpenInboxAction={(notification) =>
 					void runMessageAction(notification, async (item) => {
-						if (!item.opened) await item.message.markOpened();
+						const target = item.actionUrl
+							? resolveHostedNotificationUrl(item.actionUrl, window.location.origin)
+							: null;
+						// External tabs must open during the click task or popup blockers may reject them.
+						if (!item.opened && target?.kind !== "external") {
+							await item.message.markOpened();
+						}
 						item.message.trackClick(item.actionLabel);
-						if (item.actionUrl) openNotificationUrl(item.actionUrl);
+						if (!target) {
+							toast.error("This notification link is invalid");
+							return;
+						}
+						openNotificationTarget(target);
+						if (!item.opened && target.kind === "external") {
+							await item.message.markOpened();
+						}
 					})
 				}
 			/>
@@ -195,12 +208,9 @@ function badgeForMessageType(type: string): string {
 	return "Update";
 }
 
-function openNotificationUrl(value: string) {
-	const target = resolveHostedNotificationUrl(value, window.location.origin);
-	if (!target) {
-		toast.error("This notification link is invalid");
-		return;
-	}
+function openNotificationTarget(
+	target: NonNullable<ReturnType<typeof resolveHostedNotificationUrl>>,
+) {
 	if (target.kind === "same-origin") {
 		window.location.assign(target.url);
 		return;

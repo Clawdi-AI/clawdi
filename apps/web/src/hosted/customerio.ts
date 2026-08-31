@@ -56,7 +56,7 @@ export function createHostedCustomerIOController(
 	load: CustomerIOLoader = loadCustomerIO,
 ) {
 	let client: LoadedCustomerIO | null = null;
-	let identifiedAs: string | null = null;
+	let identifiedAs: string | null | undefined;
 	let identityQueue: Promise<void> = Promise.resolve();
 
 	function customerIOClient(): LoadedCustomerIO | null {
@@ -69,7 +69,7 @@ export function createHostedCustomerIOController(
 		const ready = loaded.ready.catch((error: unknown) => {
 			if (client?.analytics === loaded.analytics) {
 				client = null;
-				identifiedAs = null;
+				identifiedAs = undefined;
 			}
 			throw error;
 		});
