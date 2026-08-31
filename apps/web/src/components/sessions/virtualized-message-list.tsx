@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import {
 	buildSessionTimelineRows,
@@ -14,6 +14,7 @@ const DASHBOARD_SCROLL_CONTAINER_ID = "dashboard-scroll-container";
 
 interface VirtualizedSessionTimelineListProps extends SessionTimelineListProps {
 	totalItemCount: number;
+	windowStartOffset: number;
 	onAtBottomChange?: (atBottom: boolean) => void;
 	highlightScrollRequestKey?: string | null;
 	latestScrollRequestId?: number;
@@ -39,10 +40,16 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		? rows.findIndex((row) => row.rowKey === props.highlightedMessageKey)
 		: -1;
 	const initialHighlightedRowIndex = props.highlightScrollRequestKey ? highlightedRowIndex : -1;
-	const handledScrollRequestRef = useRef<string | null>(
-		initialHighlightedRowIndex >= 0 ? (props.highlightScrollRequestKey ?? null) : null,
-	);
-	const handledLatestScrollRequestRef = useRef(props.latestScrollRequestId ?? 0);
+	const handledScrollRequestRef = useRef<string | null>(null);
+	const issuedLatestScrollRequestRef = useRef(props.latestScrollRequestId ?? 0);
+	const activeLatestScrollRef = useRef<{
+		requestId: number;
+		reachedBottom: boolean;
+		windowKey: string | null;
+	} | null>(null);
+	const [readyWindowKey, setReadyWindowKey] = useState<string | null>(null);
+	const [atBottomWindowKey, setAtBottomWindowKey] = useState<string | null>(null);
+	const [measuredList, setMeasuredList] = useState({ windowKey: null as string | null, height: 0 });
 	// `firstItemIndex` is React Virtuoso's documented inverse-scrolling
 	// contract. It decreases by exactly the number of visual rows prepended,
 	// preserving the viewport while older pages load above the conversation.
@@ -59,14 +66,19 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		return () => window.removeEventListener("resize", resolveScrollParent);
 	}, []);
 
-	useEffect(() => {
+	const windowKey = scrollParent
+		? `${scrollParent === window ? "window" : "container"}:${props.windowStartOffset}`
+		: null;
+	const scrollToHighlight = useCallback(() => {
 		const requestKey = props.highlightScrollRequestKey;
 		if (!requestKey) {
 			handledScrollRequestRef.current = null;
 			return;
 		}
 		const virtuoso = virtuosoRef.current;
-		if (!scrollParent || highlightedRowIndex < 0 || !virtuoso) return;
+		if (!scrollParent || highlightedRowIndex < 0 || !virtuoso || readyWindowKey !== windowKey) {
+			return;
+		}
 		if (handledScrollRequestRef.current === requestKey) return;
 		handledScrollRequestRef.current = requestKey;
 		virtuoso.scrollToIndex({
@@ -74,30 +86,106 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 			align: "center",
 			behavior: "smooth",
 		});
-	}, [highlightedRowIndex, props.highlightScrollRequestKey, scrollParent]);
+	}, [
+		highlightedRowIndex,
+		props.highlightScrollRequestKey,
+		readyWindowKey,
+		scrollParent,
+		windowKey,
+	]);
+	useEffect(scrollToHighlight, [scrollToHighlight]);
 
-	useEffect(() => {
+	const syncPageBottom = useCallback(() => {
+		const activeRequest = activeLatestScrollRef.current;
+		if (
+			!scrollParent ||
+			!activeRequest ||
+			activeRequest.requestId !== (props.latestScrollRequestId ?? 0) ||
+			!activeRequest.reachedBottom ||
+			activeRequest.windowKey !== windowKey ||
+			props.windowStartOffset !== 0 ||
+			atBottomWindowKey !== windowKey ||
+			measuredList.windowKey !== windowKey
+		) {
+			return;
+		}
+		const scrollHeight =
+			scrollParent instanceof HTMLElement
+				? scrollParent.scrollHeight
+				: document.documentElement.scrollHeight;
+		// Keep the shared page scroller aligned while Virtuoso settles dynamic
+		// row heights. Scrolling up clears the bottom state and stops following.
+		scrollParent.scrollTo({ top: scrollHeight, behavior: "auto" });
+	}, [
+		atBottomWindowKey,
+		measuredList,
+		props.latestScrollRequestId,
+		props.windowStartOffset,
+		scrollParent,
+		windowKey,
+	]);
+	useEffect(syncPageBottom, [syncPageBottom]);
+
+	const requestLatestScroll = useCallback(() => {
 		const requestId = props.latestScrollRequestId ?? 0;
 		const virtuoso = virtuosoRef.current;
 		if (
 			!scrollParent ||
 			!virtuoso ||
 			rows.length === 0 ||
-			handledLatestScrollRequestRef.current === requestId
+			props.windowStartOffset !== 0 ||
+			readyWindowKey !== windowKey ||
+			issuedLatestScrollRequestRef.current === requestId
 		) {
 			return;
 		}
-		handledLatestScrollRequestRef.current = requestId;
+		issuedLatestScrollRequestRef.current = requestId;
+		activeLatestScrollRef.current = { requestId, reachedBottom: false, windowKey };
 		virtuoso.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
-	}, [props.latestScrollRequestId, rows.length, scrollParent]);
+	}, [
+		props.latestScrollRequestId,
+		props.windowStartOffset,
+		readyWindowKey,
+		rows.length,
+		scrollParent,
+		windowKey,
+	]);
+	useEffect(requestLatestScroll, [requestLatestScroll]);
+
+	const handleAtBottomChange = useCallback(
+		(atBottom: boolean) => {
+			const activeRequest = activeLatestScrollRef.current;
+			if (
+				activeRequest?.requestId === (props.latestScrollRequestId ?? 0) &&
+				activeRequest.windowKey === windowKey
+			) {
+				if (atBottom) activeRequest.reachedBottom = true;
+				else if (activeRequest.reachedBottom) activeLatestScrollRef.current = null;
+			}
+			setAtBottomWindowKey(atBottom ? windowKey : null);
+			props.onAtBottomChange?.(atBottom);
+		},
+		[props.latestScrollRequestId, props.onAtBottomChange, windowKey],
+	);
+	const handleTotalListHeightChanged = useCallback(
+		(height: number) => {
+			setMeasuredList({ windowKey, height });
+		},
+		[windowKey],
+	);
+	const handleRangeChanged = useCallback(() => {
+		setReadyWindowKey(windowKey);
+	}, [windowKey]);
 
 	if (!scrollParent) return <div aria-hidden className="h-px" />;
 	const usesWindowScroll = scrollParent === window;
+	// A different first-page offset is a discontinuous server window, not a
+	// prepend. Remount Virtuoso so the new window can apply its initial anchor.
 
 	return (
 		<div data-testid="virtualized-session-timeline">
 			<Virtuoso
-				key={usesWindowScroll ? "window" : "container"}
+				key={windowKey}
 				ref={virtuosoRef}
 				{...(usesWindowScroll
 					? { useWindowScroll: true }
@@ -107,7 +195,9 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 				computeItemKey={(_index, row) => row.rowKey}
 				defaultItemHeight={96}
 				increaseViewportBy={{ top: 600, bottom: 900 }}
-				atBottomStateChange={props.onAtBottomChange}
+				atBottomStateChange={handleAtBottomChange}
+				totalListHeightChanged={handleTotalListHeightChanged}
+				rangeChanged={handleRangeChanged}
 				initialTopMostItemIndex={
 					initialHighlightedRowIndex >= 0
 						? { index: initialHighlightedRowIndex, align: "center" }
