@@ -38,6 +38,7 @@ interface AuthenticationOperation {
 export class DesktopCliService {
 	private authentication: AuthenticationOperation | null = null;
 	private cliPath: string | null = null;
+	private nativeIdentity: Promise<NativeIdentity> | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = this.cli();
@@ -83,13 +84,20 @@ export class DesktopCliService {
 
 	async dashboardState(): Promise<DesktopDashboardState> {
 		const cli = this.cli();
-		const [auth, daemon, result] = await Promise.all([
+		const [identity, auth, daemon, result] = await Promise.all([
+			this.identity(cli),
 			this.authState(cli).catch(() => ({ authenticated: false as const, user: null })),
 			this.doctorState(cli).catch(() => ({ installed: false, running: false })),
 			this.runJsonValue(cli, ["session", "list", "--all-agents", "--limit", "200", "--json"]),
 		]);
 		if (!Array.isArray(result)) throw new Error("Clawdi returned invalid local session data.");
-		return { auth, daemon, sessions: result.map(parseLocalSession) };
+		return {
+			platform: desktopPlatform(),
+			cli: { status: "ready", version: identity.version },
+			auth,
+			daemon,
+			sessions: result.map(parseLocalSession),
+		};
 	}
 
 	async readLocalSession(
@@ -194,6 +202,18 @@ export class DesktopCliService {
 	}
 
 	private async identity(cli: string): Promise<NativeIdentity> {
+		if (this.nativeIdentity) return this.nativeIdentity;
+		const loading = this.readIdentity(cli);
+		this.nativeIdentity = loading;
+		try {
+			return await loading;
+		} catch (error) {
+			if (this.nativeIdentity === loading) this.nativeIdentity = null;
+			throw error;
+		}
+	}
+
+	private async readIdentity(cli: string): Promise<NativeIdentity> {
 		let result: CommandResult;
 		try {
 			result = await this.run(cli, ["update", "--native-identity"], { timeoutMs: 20_000 });

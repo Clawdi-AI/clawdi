@@ -84,9 +84,7 @@ export interface DesktopLocalSessionDetail {
 	messages: DesktopLocalSessionMessage[];
 }
 
-export interface DesktopDashboardState {
-	auth: DesktopBootstrapState["auth"];
-	daemon: DesktopBootstrapState["daemon"];
+export interface DesktopDashboardState extends DesktopBootstrapState {
 	sessions: DesktopLocalSession[];
 }
 

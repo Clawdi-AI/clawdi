@@ -25,11 +25,11 @@ import {
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 
-const CONNECT_SCHEME = "clawdi-app";
-const CONNECT_HOST = "connect";
-const CONNECT_RENDERER_URL = `${CONNECT_SCHEME}://${CONNECT_HOST}/renderer.html`;
-const DASHBOARD_URL = `${CONNECT_RENDERER_URL}?surface=dashboard`;
-const CONNECT_ASSETS = new Map([
+const APP_SCHEME = "clawdi-app";
+const APP_HOST = "connect";
+const CONNECT_URL = `${APP_SCHEME}://${APP_HOST}/renderer.html`;
+const DASHBOARD_URL = `${CONNECT_URL}?surface=dashboard`;
+const APP_ASSETS = new Map([
 	["/renderer.html", "renderer.html"],
 	["/connect-renderer.js", "connect-renderer.js"],
 	["/connect-renderer.css", "connect-renderer.css"],
@@ -47,9 +47,14 @@ let quitting = false;
 
 class DesktopConnectError extends Error {}
 
+function runAsync(label: string, operation: Promise<unknown>): void {
+	void operation.catch((error) => console.error(`Could not ${label}`, error));
+}
+
+app.enableSandbox();
 protocol.registerSchemesAsPrivileged([
 	{
-		scheme: CONNECT_SCHEME,
+		scheme: APP_SCHEME,
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
@@ -57,52 +62,47 @@ protocol.registerSchemesAsPrivileged([
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
+	const applicationStarted = app.whenReady().then(startApplication);
 	app.on("window-all-closed", () => undefined);
-	app.on("second-instance", () => void showAvailableWindow());
-	void app
-		.whenReady()
-		.then(startApplication)
-		.catch((error) => {
-			console.error("Could not start Clawdi", error);
-			dialog.showErrorBox("Clawdi couldn't start", "Reinstall Clawdi and try again.");
-			app.quit();
-		});
+	app.on("second-instance", () =>
+		runAsync("show the existing window", applicationStarted.then(showAvailableWindow)),
+	);
+	void applicationStarted.catch((error) => {
+		console.error("Could not start Clawdi", error);
+		dialog.showErrorBox("Clawdi couldn't start", "Reinstall Clawdi and try again.");
+		app.quit();
+	});
 }
 
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
-	registerLocalProtocol(session.defaultSession);
+	registerAppProtocol(session.defaultSession);
 	registerIpc();
 	configurePermissions();
 	createApplicationMenu();
 	createTray();
 	app.on("before-quit", () => {
 		quitting = true;
-		void cli.cancelAuthentication();
+		runAsync("cancel sign-in", cli.cancelAuthentication());
 	});
 
 	if (installationState().requiresMove) {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
 	} else {
-		try {
-			setTrayState(await cli.bootstrapState());
-		} catch (error) {
-			console.error("Could not inspect the local runtime", error);
-			setTrayState(null);
-		}
-		if (!startHidden) await openDashboard();
+		if (startHidden) runAsync("refresh background sync status", refreshTrayState());
+		else await openDashboard();
 	}
 
-	app.on("activate", () => void showAvailableWindow());
+	app.on("activate", () => runAsync("show the active window", showAvailableWindow()));
 }
 
-function registerLocalProtocol(targetSession: Session): void {
-	targetSession.protocol.handle(CONNECT_SCHEME, (request) => {
+function registerAppProtocol(targetSession: Session): void {
+	targetSession.protocol.handle(APP_SCHEME, (request) => {
 		const url = new URL(request.url);
-		const asset = url.host === CONNECT_HOST ? CONNECT_ASSETS.get(url.pathname) : null;
+		const asset = url.host === APP_HOST ? APP_ASSETS.get(url.pathname) : null;
 		if (request.method !== "GET" || !asset) return new Response(null, { status: 404 });
 		return net.fetch(pathToFileURL(join(app.getAppPath(), "dist", asset)).toString());
 	});
@@ -144,7 +144,7 @@ function registerIpc(): void {
 		safeConnectAction(event, "connect the selected Agents", async () => {
 			assertSafeDaemonMutation();
 			const result = await cli.connectAgents(readAgentTypes(rawAgentTypes));
-			void refreshTrayState();
+			runAsync("refresh background sync status", refreshTrayState());
 			return result;
 		}),
 	);
@@ -159,7 +159,11 @@ function registerIpc(): void {
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.dashboardState, (event) =>
-		safeDashboardAction(event, "read local dashboard data", () => cli.dashboardState()),
+		safeDashboardAction(event, "read local dashboard data", async () => {
+			const state = await cli.dashboardState();
+			setTrayState(state);
+			return state;
+		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.readLocalSession, (event, agent: unknown, sessionId: unknown) =>
 		safeDashboardAction(event, "read the local session", () => {
@@ -228,7 +232,7 @@ function assertConnectSender(event: IpcMainInvokeEvent): void {
 	if (!senderFrame || senderFrame !== event.sender.mainFrame)
 		throw new Error("Unexpected Connect Agent frame.");
 	const senderUrl = senderFrame.url;
-	if (senderUrl !== CONNECT_RENDERER_URL) {
+	if (senderUrl !== CONNECT_URL) {
 		throw new Error("Unexpected Connect Agent URL.");
 	}
 }
@@ -250,6 +254,28 @@ function configurePermissions(): void {
 	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
 		callback(false);
 	});
+	session.defaultSession.on("will-download", (event) => event.preventDefault());
+}
+
+function hardenLocalWindow(window: BrowserWindow, allowedUrl: string, label: string): void {
+	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	const preventUnexpectedNavigation = (event: Electron.Event, url: string) => {
+		if (url !== allowedUrl) event.preventDefault();
+	};
+	window.webContents.on("will-navigate", preventUnexpectedNavigation);
+	window.webContents.on("will-redirect", preventUnexpectedNavigation);
+	window.webContents.on(
+		"did-fail-load",
+		(_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+			if (quitting || !isMainFrame || window.isDestroyed()) return;
+			console.error(`${label} failed to load: ${errorDescription} (${errorCode})`);
+		},
+	);
+	window.webContents.on("render-process-gone", (_event, details) => {
+		if (quitting || window.isDestroyed()) return;
+		console.error(`${label} renderer exited: ${details.reason}`);
+		window.webContents.reload();
+	});
 }
 
 function createApplicationMenu(): void {
@@ -268,10 +294,12 @@ function createApplicationMenu(): void {
 	const windowMenu: MenuItemConstructorOptions = {
 		label: "Window",
 		submenu: [
+			{ role: "close" },
 			{ role: "minimize" },
 			{ role: "zoom" },
-			{ type: "separator" },
-			{ role: process.platform === "darwin" ? "front" : "close" },
+			...(process.platform === "darwin"
+				? ([{ type: "separator" }, { role: "front" }] satisfies MenuItemConstructorOptions[])
+				: []),
 		],
 	};
 	const template: MenuItemConstructorOptions[] = [editMenu, windowMenu];
@@ -310,26 +338,11 @@ async function createMainWindow(): Promise<void> {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
+			spellcheck: false,
 		},
 	});
 	mainWindow = window;
-
-	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-	window.webContents.on("will-navigate", (event, url) => {
-		if (url !== DASHBOARD_URL) event.preventDefault();
-	});
-	window.webContents.on(
-		"did-fail-load",
-		(_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
-			if (quitting || !isMainFrame || mainWindow !== window) return;
-			console.error(`Local dashboard failed to load: ${errorDescription} (${errorCode})`);
-		},
-	);
-	window.webContents.on("render-process-gone", (_event, details) => {
-		if (quitting || mainWindow !== window) return;
-		console.error(`Dashboard renderer exited: ${details.reason}`);
-		window.webContents.reload();
-	});
+	hardenLocalWindow(window, DASHBOARD_URL, "Dashboard");
 	window.on("close", (event) => {
 		if (quitting) return;
 		event.preventDefault();
@@ -368,19 +381,17 @@ async function showConnectWindow(): Promise<void> {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
+			spellcheck: false,
 		},
 	});
 	connectWindow = window;
-	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-	window.webContents.on("will-navigate", (event, url) => {
-		if (url !== CONNECT_RENDERER_URL) event.preventDefault();
-	});
+	hardenLocalWindow(window, CONNECT_URL, "Connect Agent");
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
-		void cli.cancelAuthentication();
+		runAsync("cancel sign-in", cli.cancelAuthentication());
 		if (connectWindow === window) connectWindow = null;
 	});
-	await window.loadURL(CONNECT_RENDERER_URL);
+	await window.loadURL(CONNECT_URL);
 }
 
 function createTray(): void {
@@ -391,7 +402,7 @@ function createTray(): void {
 	tray = new Tray(trayIcon);
 	tray.setToolTip("Clawdi");
 	renderTrayMenu();
-	tray.on("click", () => void showAvailableWindow());
+	tray.on("click", () => runAsync("show Clawdi", showAvailableWindow()));
 }
 
 function renderTrayMenu(): void {
@@ -405,12 +416,24 @@ function renderTrayMenu(): void {
 		{
 			label: recoveryLabel,
 			click: () =>
-				void (trayState?.daemon.installed ? restartBackgroundSync() : showConnectWindow()),
+				runAsync(
+					"repair background sync",
+					trayState?.daemon.installed ? restartBackgroundSync() : showConnectWindow(),
+				),
 		},
-		{ label: "Refresh Status", click: () => void refreshTrayState() },
+		{
+			label: "Refresh Status",
+			click: () => runAsync("refresh background sync status", refreshTrayState()),
+		},
 		{ type: "separator" },
-		{ label: "Open Clawdi", click: showAvailableWindow },
-		{ label: "Connect Agent…", click: () => void showConnectWindow() },
+		{
+			label: "Open Clawdi",
+			click: () => runAsync("show Clawdi", showAvailableWindow()),
+		},
+		{
+			label: "Connect Agent…",
+			click: () => runAsync("open Connect Agent", showConnectWindow()),
+		},
 	];
 
 	if (process.platform === "darwin") {
@@ -422,7 +445,7 @@ function renderTrayMenu(): void {
 				label: "Open Clawdi at Login",
 				checked: loginItem?.openAtLogin === true,
 				enabled: app.isPackaged && loginItem !== null,
-				click: (item) => void setLaunchAtLogin(item.checked),
+				click: (item) => runAsync("change the login item", setLaunchAtLogin(item.checked)),
 			},
 		);
 		if (!loginItem) {
@@ -493,7 +516,7 @@ async function restartBackgroundSync(): Promise<void> {
 	try {
 		await cli.restartDaemon();
 		await refreshTrayState();
-		setTimeout(() => void refreshTrayState(), 2_000).unref();
+		setTimeout(() => runAsync("refresh background sync status", refreshTrayState()), 2_000).unref();
 	} catch (error) {
 		console.error("Could not restart background sync", error);
 		setTrayState(null);
