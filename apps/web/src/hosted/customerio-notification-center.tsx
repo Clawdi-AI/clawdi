@@ -7,7 +7,11 @@ import { NotificationCenter } from "@/components/notification-center";
 import type { InboxNotification } from "@/components/notification-center.logic";
 import { useHostedProductAccessProfileQuery } from "@/hosted/access/product-access";
 import type { HostedCustomerIOIdentity, InboxMessage } from "@/hosted/customerio";
-import { getHostedCustomerIOInbox, resolveHostedNotificationUrl } from "@/hosted/customerio";
+import {
+	getHostedCustomerIOInbox,
+	isCanonicalHostedCustomerId,
+	resolveHostedNotificationUrl,
+} from "@/hosted/customerio";
 import { useDashboardAuth } from "@/lib/auth-client";
 
 type CustomerIOInboxItem = InboxNotification & {
@@ -26,13 +30,10 @@ export function CustomerIONotificationCenter() {
 	const inboxRef = useRef<InboxAPI | null>(null);
 
 	const customerId = profile.data?.id ?? null;
-	const clerkId = profile.data?.clerk_id ?? null;
-	const email = profile.data?.email ?? null;
-	const name = profile.data?.name ?? null;
 	const identity = useMemo<HostedCustomerIOIdentity | null>(() => {
-		if (!isSignedIn || !customerId || !clerkId || !email) return null;
-		return { customerId, clerkId, email, name };
-	}, [clerkId, customerId, email, isSignedIn, name]);
+		if (!isSignedIn || !isCanonicalHostedCustomerId(customerId)) return null;
+		return { customerId };
+	}, [customerId, isSignedIn]);
 	const identityLoading = Boolean(isSignedIn && profile.isLoading);
 	const identityError =
 		isSignedIn && profile.error ? new Error("hosted_identity_unavailable") : null;

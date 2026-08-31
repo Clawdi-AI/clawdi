@@ -7,9 +7,6 @@ import { env } from "@/lib/env";
 
 export type HostedCustomerIOIdentity = {
 	customerId: string;
-	clerkId: string;
-	email: string;
-	name: string | null;
 };
 
 export type CustomerIORegion = "us" | "eu";
@@ -20,7 +17,7 @@ type CustomerIOBrowserSettings = {
 };
 
 type CustomerIOAnalytics = {
-	identify: (customerId: string, traits: Record<string, string | undefined>) => unknown;
+	identify: (customerId: string) => unknown;
 	reset: () => unknown;
 	inbox: (topic: string) => InboxAPI;
 };
@@ -37,6 +34,10 @@ type CustomerIOLoader = (
 
 const V2_INBOX_TOPIC = "clawdi_v2";
 const CUSTOMERIO_EU_CDN_URL = "https://cdp-eu.customer.io";
+
+export function isCanonicalHostedCustomerId(value: string | null | undefined): value is string {
+	return Boolean(value?.startsWith("usr_") && value.length > 4);
+}
 
 export function customerIOBrowserSettings(
 	writeKey: string,
@@ -77,6 +78,9 @@ export function createHostedCustomerIOController(
 	}
 
 	async function applyIdentity(identity: HostedCustomerIOIdentity | null): Promise<void> {
+		if (identity && !isCanonicalHostedCustomerId(identity.customerId)) {
+			throw new Error("Customer.io identity requires a canonical customer ID");
+		}
 		const current = customerIOClient();
 		if (!current) return;
 
@@ -86,21 +90,10 @@ export function createHostedCustomerIOController(
 			identifiedAs = null;
 			return;
 		}
+		if (identifiedAs === identity.customerId) return;
 
-		const identityKey = [
-			identity.customerId,
-			identity.clerkId,
-			identity.email,
-			identity.name ?? "",
-		].join("\n");
-		if (identifiedAs === identityKey) return;
-
-		await current.analytics.identify(identity.customerId, {
-			clerk_id: identity.clerkId,
-			email: identity.email,
-			name: identity.name ?? undefined,
-		});
-		identifiedAs = identityKey;
+		await current.analytics.identify(identity.customerId);
+		identifiedAs = identity.customerId;
 	}
 
 	function syncIdentity(identity: HostedCustomerIOIdentity | null): Promise<void> {

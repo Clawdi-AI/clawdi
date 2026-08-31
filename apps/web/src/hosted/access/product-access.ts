@@ -15,11 +15,11 @@ import {
 	hostedProductAccessRetry,
 } from "@/hosted/access/product-access-request";
 import { ApiError } from "@/lib/api-errors";
-import { useAuthToken } from "@/lib/auth-client";
+import { useDashboardAuth } from "@/lib/auth-client";
 import type { ProductAccess } from "@/lib/product-access";
 
 export const hostedProductAccessKeys = {
-	me: ["hosted-product-access", "me"] as const,
+	me: (userId: string) => ["hosted-product-access", "me", userId] as const,
 };
 
 async function fetchHostedProductAccessProfile(
@@ -46,10 +46,10 @@ async function fetchHostedProductAccessProfile(
 }
 
 export function useHostedProductAccessProfileQuery() {
-	const { getToken } = useAuthToken();
-	const enabled = isDeployApiConfigured();
+	const { getToken, isSignedIn, userId } = useDashboardAuth();
+	const enabled = isDeployApiConfigured() && Boolean(isSignedIn && userId);
 	return useQuery({
-		queryKey: hostedProductAccessKeys.me,
+		queryKey: hostedProductAccessKeys.me(userId ?? "signed-out"),
 		queryFn: () => fetchHostedProductAccessProfile(getToken),
 		enabled,
 		retry: hostedProductAccessRetry,
