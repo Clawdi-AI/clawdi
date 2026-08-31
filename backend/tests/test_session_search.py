@@ -227,6 +227,56 @@ async def test_relevance_ties_prefer_recent_activity(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_filtered_search_pagination_preserves_exact_total_and_empty_pages(
+    client: httpx.AsyncClient,
+) -> None:
+    env_id = await _register_env(client)
+    now = datetime.now(UTC)
+    for local_id, age, model in (
+        ("newer-filtered-match", 1, "target-model"),
+        ("older-filtered-match", 2, "target-model"),
+        ("excluded-model-match", 3, "other-model"),
+    ):
+        activity_at = now - timedelta(hours=age)
+        await _push_session(
+            client,
+            env_id,
+            local_session_id=local_id,
+            summary="shared pagination needle",
+            model=model,
+            started_at=activity_at,
+            last_activity_at=activity_at,
+        )
+
+    params = {
+        "q": "shared pagination needle",
+        "model": "target-model",
+        "sort": "relevance",
+        "page_size": 1,
+    }
+    first = (await client.get("/v1/sessions", params=params)).json()
+    assert first["total"] == 2
+    assert [item["local_session_id"] for item in first["items"]] == ["newer-filtered-match"]
+
+    second = (await client.get("/v1/sessions", params={**params, "page": 2})).json()
+    assert second["total"] == 2
+    assert [item["local_session_id"] for item in second["items"]] == ["older-filtered-match"]
+
+    empty_page = (await client.get("/v1/sessions", params={**params, "page": 3})).json()
+    assert empty_page["total"] == 2
+    assert empty_page["items"] == []
+
+    no_matches = (
+        await client.get(
+            "/v1/sessions",
+            params={**params, "q": "missing pagination phrase"},
+        )
+    ).json()
+    assert no_matches["total"] == 0
+    assert no_matches["items"] == []
+
+
+@pytest.mark.asyncio
 async def test_snapshot_message_search_tracks_current_content_and_escapes_wildcards(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
