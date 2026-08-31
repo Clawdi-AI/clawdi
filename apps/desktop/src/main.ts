@@ -30,6 +30,7 @@ import { DesktopCliError, DesktopCliService } from "./native-cli";
 const DEFAULT_WEB_URL = "https://cloud.clawdi.ai";
 const CONNECT_SCHEME = "clawdi-app";
 const CONNECT_HOST = "connect";
+const DASHBOARD_PARTITION = "clawdi-dashboard";
 const CONNECT_RENDERER_URL = `${CONNECT_SCHEME}://${CONNECT_HOST}/renderer.html`;
 const DASHBOARD_FAILURE_URL = `${CONNECT_RENDERER_URL}?surface=dashboard-failure`;
 const DASHBOARD_LOAD_TIMEOUT_MS = 30_000;
@@ -72,9 +73,11 @@ async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
+	const dashboardSession = session.fromPartition(DASHBOARD_PARTITION);
 	registerLocalProtocol(session.defaultSession);
+	registerLocalProtocol(dashboardSession);
 	registerIpc();
-	configurePermissions();
+	configurePermissions(dashboardSession);
 	createApplicationMenu();
 	createTray();
 	app.on("before-quit", () => {
@@ -251,7 +254,7 @@ function readAgentTypes(value: unknown): DesktopAgentType[] {
 	return agentTypes;
 }
 
-function configurePermissions(): void {
+function configurePermissions(dashboardSession: Session): void {
 	const dashboardUrl = new URL(desktopWebUrl());
 	const dashboardOrigin = dashboardUrl.origin;
 	const loopbackDashboard =
@@ -280,27 +283,28 @@ function configurePermissions(): void {
 			(webContents === null || webContents === mainWindow?.webContents)
 		);
 	};
-	session.defaultSession.setPermissionCheckHandler(
-		(webContents, permission, requestingOrigin, details) =>
+	session.defaultSession.setPermissionCheckHandler(() => false);
+	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+		callback(false);
+	});
+	dashboardSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+		allowsDashboardPermission(
+			webContents,
+			permission,
+			requestingOrigin,
+			details.embeddingOrigin ?? requestingOrigin,
+		),
+	);
+	dashboardSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+		callback(
 			allowsDashboardPermission(
 				webContents,
 				permission,
-				requestingOrigin,
-				details.embeddingOrigin ?? requestingOrigin,
+				details.requestingUrl,
+				webContents.getURL(),
 			),
-	);
-	session.defaultSession.setPermissionRequestHandler(
-		(webContents, permission, callback, details) => {
-			callback(
-				allowsDashboardPermission(
-					webContents,
-					permission,
-					details.requestingUrl,
-					webContents.getURL(),
-				),
-			);
-		},
-	);
+		);
+	});
 }
 
 function createApplicationMenu(): void {
@@ -358,6 +362,7 @@ async function createMainWindow(initialUrl: string, timeoutMs?: number): Promise
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
 			preload,
+			partition: DASHBOARD_PARTITION,
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
