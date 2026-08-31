@@ -112,6 +112,7 @@ export default function SessionDetailPage({
 }) {
 	return (
 		<SessionDetailContent
+			key={sessionId}
 			sessionId={sessionId}
 			searchAnchor={searchAnchor}
 			searchQuery={searchQuery}
@@ -414,11 +415,10 @@ export function SessionDetailContent({
 
 	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 	const searchActive = Boolean(effectiveSearchQuery);
-	const isSearchUpdating =
-		searchActive &&
-		(effectiveSearchQuery !== debouncedSearchQuery ||
-			(isContentFetching && !isFetchingNextPage) ||
-			isContentLoading);
+	const isSearchDebouncing = effectiveSearchQuery !== (debouncedSearchQuery ?? "");
+	const isTimelineTransitioning =
+		isSearchDebouncing || isContentPlaceholderData || (isContentFetching && !isFetchingNextPage);
+	const isSearchUpdating = searchActive && (isTimelineTransitioning || isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
 		if (searchableTimeline) {
 			rememberedSearchQueryRef.current = normalizedSearchQuery;
@@ -699,7 +699,10 @@ export function SessionDetailContent({
 			    where the newest message is at the bottom of a long
 			    list. In desc mode the newest is already at the top,
 			    so there's nothing to jump to. */}
-			{direction === "asc" && timelineItems && timelineItems.length > 20 ? (
+			{direction === "asc" &&
+			timelineItems &&
+			timelineItems.length > 20 &&
+			!isTimelineTransitioning ? (
 				<JumpToBottomButton onJump={() => setLatestScrollRequestId((requestId) => requestId + 1)} />
 			) : null}
 		</div>
