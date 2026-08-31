@@ -252,22 +252,37 @@ function readAgentTypes(value: unknown): DesktopAgentType[] {
 }
 
 function configurePermissions(): void {
-	const dashboardOrigin = new URL(desktopWebUrl()).origin;
-	const allowsClipboardWrite = (
+	const dashboardUrl = new URL(desktopWebUrl());
+	const dashboardOrigin = dashboardUrl.origin;
+	const loopbackDashboard =
+		dashboardUrl.hostname === "127.0.0.1" || dashboardUrl.hostname === "localhost";
+	const allowsDashboardPermission = (
 		webContents: Electron.WebContents | null,
 		permission: string,
 		requestingUrl: string,
 		embeddingUrl: string,
-	) =>
-		permission === "clipboard-sanitized-write" &&
-		webContents !== null &&
-		webContents === mainWindow?.webContents &&
-		urlOrigin(webContents.getURL()) === dashboardOrigin &&
-		urlOrigin(requestingUrl) === dashboardOrigin &&
-		urlOrigin(embeddingUrl) === dashboardOrigin;
+	) => {
+		if (
+			urlOrigin(requestingUrl) !== dashboardOrigin ||
+			urlOrigin(embeddingUrl) !== dashboardOrigin
+		) {
+			return false;
+		}
+		if (permission === "clipboard-sanitized-write") {
+			return (
+				webContents === mainWindow?.webContents &&
+				urlOrigin(webContents.getURL()) === dashboardOrigin
+			);
+		}
+		return (
+			loopbackDashboard &&
+			(permission === "loopback-network" || permission === "local-network-access") &&
+			(webContents === null || webContents === mainWindow?.webContents)
+		);
+	};
 	session.defaultSession.setPermissionCheckHandler(
 		(webContents, permission, requestingOrigin, details) =>
-			allowsClipboardWrite(
+			allowsDashboardPermission(
 				webContents,
 				permission,
 				requestingOrigin,
@@ -277,7 +292,12 @@ function configurePermissions(): void {
 	session.defaultSession.setPermissionRequestHandler(
 		(webContents, permission, callback, details) => {
 			callback(
-				allowsClipboardWrite(webContents, permission, details.requestingUrl, webContents.getURL()),
+				allowsDashboardPermission(
+					webContents,
+					permission,
+					details.requestingUrl,
+					webContents.getURL(),
+				),
 			);
 		},
 	);

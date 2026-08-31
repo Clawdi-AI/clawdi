@@ -23,10 +23,6 @@ const output = [];
 const dashboardSmoke = dashboardUrl ? await startDashboardServer(dashboardUrl, output) : null;
 const desktopArgs = [`--user-data-dir=${join(runtimeRoot, "electron-data")}`];
 if (surface === "install") desktopArgs.push("--remote-debugging-port=0");
-else {
-	// The smoke server is loopback-only; production loads a public HTTPS origin.
-	desktopArgs.push("--disable-features=LocalNetworkAccessChecks");
-}
 const desktop = spawn(executablePath, desktopArgs, {
 	env: {
 		...process.env,
