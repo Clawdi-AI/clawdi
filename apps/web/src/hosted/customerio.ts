@@ -6,61 +6,140 @@ import {
 import { env } from "@/lib/env";
 
 export type HostedCustomerIOIdentity = {
+	customerId: string;
+	clerkId: string;
 	email: string;
-	userId: string;
 	name: string | null;
 };
 
-let analytics: AnalyticsBrowser | null = null;
-let analyticsReady: Promise<void> | null = null;
-let identifiedAs: string | null = null;
+export type CustomerIORegion = "us" | "eu";
+
+type CustomerIOBrowserSettings = {
+	writeKey: string;
+	cdnURL?: string;
+};
+
+type CustomerIOAnalytics = {
+	identify: (customerId: string, traits: Record<string, string | undefined>) => unknown;
+	reset: () => unknown;
+	inbox: (topic: string) => InboxAPI;
+};
+
+type LoadedCustomerIO = {
+	analytics: CustomerIOAnalytics;
+	ready: Promise<void>;
+};
+
+type CustomerIOLoader = (
+	settings: CustomerIOBrowserSettings,
+	options: { initialPageview: false },
+) => LoadedCustomerIO;
+
 const V2_INBOX_TOPIC = "clawdi_v2";
+const CUSTOMERIO_EU_CDN_URL = "https://cdp-eu.customer.io";
 
-function customerIOClient(): { analytics: AnalyticsBrowser; ready: Promise<void> } | null {
-	const writeKey = env.VITE_CUSTOMERIO_CDP_WRITE_KEY;
-	if (!writeKey) return null;
+export function customerIOBrowserSettings(
+	writeKey: string,
+	region: CustomerIORegion,
+): CustomerIOBrowserSettings {
+	return region === "eu" ? { writeKey, cdnURL: CUSTOMERIO_EU_CDN_URL } : { writeKey };
+}
 
-	if (!analytics || !analyticsReady) {
-		analytics = AnalyticsBrowser.load({ writeKey }, { initialPageview: true });
-		analyticsReady = analytics.then(() => undefined);
+const loadCustomerIO: CustomerIOLoader = (settings, options) => {
+	const analytics = AnalyticsBrowser.load(settings, options);
+	return { analytics, ready: analytics.then(() => undefined) };
+};
+
+export function createHostedCustomerIOController(
+	config: { writeKey?: string; region: CustomerIORegion },
+	load: CustomerIOLoader = loadCustomerIO,
+) {
+	let client: LoadedCustomerIO | null = null;
+	let identifiedAs: string | null = null;
+	let identityQueue: Promise<void> = Promise.resolve();
+
+	function customerIOClient(): LoadedCustomerIO | null {
+		if (!config.writeKey) return null;
+		if (client) return client;
+
+		const loaded = load(customerIOBrowserSettings(config.writeKey, config.region), {
+			initialPageview: false,
+		});
+		const ready = loaded.ready.catch((error: unknown) => {
+			if (client?.analytics === loaded.analytics) {
+				client = null;
+				identifiedAs = null;
+			}
+			throw error;
+		});
+		client = { analytics: loaded.analytics, ready };
+		return client;
 	}
 
-	return { analytics, ready: analyticsReady };
-}
+	async function applyIdentity(identity: HostedCustomerIOIdentity | null): Promise<void> {
+		const current = customerIOClient();
+		if (!current) return;
 
-export async function syncHostedCustomerIOIdentity(
-	identity: HostedCustomerIOIdentity | null,
-): Promise<void> {
-	const client = customerIOClient();
-	if (!client) return;
+		await current.ready;
+		if (!identity) {
+			if (identifiedAs !== null) await current.analytics.reset();
+			identifiedAs = null;
+			return;
+		}
 
-	await client.ready;
-	if (!identity) {
-		if (identifiedAs !== null) await client.analytics.reset();
-		identifiedAs = null;
-		return;
+		const identityKey = [
+			identity.customerId,
+			identity.clerkId,
+			identity.email,
+			identity.name ?? "",
+		].join("\n");
+		if (identifiedAs === identityKey) return;
+
+		await current.analytics.identify(identity.customerId, {
+			clerk_id: identity.clerkId,
+			email: identity.email,
+			name: identity.name ?? undefined,
+		});
+		identifiedAs = identityKey;
 	}
 
-	const identityKey = `${identity.email}\n${identity.userId}\n${identity.name ?? ""}`;
-	if (identifiedAs === identityKey) return;
+	function syncIdentity(identity: HostedCustomerIOIdentity | null): Promise<void> {
+		const operation = identityQueue.then(() => applyIdentity(identity));
+		identityQueue = operation.catch(() => undefined);
+		return operation;
+	}
 
-	await client.analytics.identify(identity.email, {
-		clerk_user_id: identity.userId,
-		email: identity.email,
-		name: identity.name ?? undefined,
-	});
-	identifiedAs = identityKey;
+	async function getInbox(identity: HostedCustomerIOIdentity): Promise<InboxAPI | null> {
+		await syncIdentity(identity);
+		const current = customerIOClient();
+		if (!current) return null;
+		await current.ready;
+		return current.analytics.inbox(V2_INBOX_TOPIC);
+	}
+
+	return { getInbox, syncIdentity };
 }
 
-export async function getHostedCustomerIOInbox(
-	identity: HostedCustomerIOIdentity,
-): Promise<InboxAPI | null> {
-	const client = customerIOClient();
-	if (!client) return null;
-
-	await syncHostedCustomerIOIdentity(identity);
-	await client.ready;
-	return client.analytics.inbox(V2_INBOX_TOPIC);
+export function resolveHostedNotificationUrl(
+	value: string,
+	origin: string,
+): { kind: "same-origin" | "external"; url: URL } | null {
+	try {
+		const base = new URL(origin);
+		const url = new URL(value, base);
+		if (url.origin === base.origin) return { kind: "same-origin", url };
+		return url.protocol === "https:" ? { kind: "external", url } : null;
+	} catch {
+		return null;
+	}
 }
+
+const hostedCustomerIO = createHostedCustomerIOController({
+	writeKey: env.VITE_CUSTOMERIO_CDP_WRITE_KEY,
+	region: env.VITE_CUSTOMERIO_CDP_REGION,
+});
+
+export const syncHostedCustomerIOIdentity = hostedCustomerIO.syncIdentity;
+export const getHostedCustomerIOInbox = hostedCustomerIO.getInbox;
 
 export type { InboxMessage };

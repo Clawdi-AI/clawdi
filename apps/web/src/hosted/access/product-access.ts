@@ -45,16 +45,21 @@ async function fetchHostedProductAccessProfile(
 	return result.data;
 }
 
-export function useHostedProductAccessQuery(): Omit<ProductAccess, "legacyDashboardUrl"> {
+export function useHostedProductAccessProfileQuery() {
 	const { getToken } = useAuthToken();
 	const enabled = isDeployApiConfigured();
-	const query = useQuery({
+	return useQuery({
 		queryKey: hostedProductAccessKeys.me,
 		queryFn: () => fetchHostedProductAccessProfile(getToken),
 		enabled,
 		retry: hostedProductAccessRetry,
 		staleTime: 60_000,
 	});
+}
+
+export function useHostedProductAccessQuery(): Omit<ProductAccess, "legacyDashboardUrl"> {
+	const enabled = isDeployApiConfigured();
+	const query = useHostedProductAccessProfileQuery();
 	const access = useMemo(() => hostedProductAccessFromProfile(query.data), [query.data]);
 	const status = hostedProductAccessStatus({
 		enabled,

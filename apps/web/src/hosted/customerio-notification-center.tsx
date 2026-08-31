@@ -5,9 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { NotificationCenter } from "@/components/notification-center";
 import type { InboxNotification } from "@/components/notification-center.logic";
+import { useHostedProductAccessProfileQuery } from "@/hosted/access/product-access";
 import type { HostedCustomerIOIdentity, InboxMessage } from "@/hosted/customerio";
-import { getHostedCustomerIOInbox } from "@/hosted/customerio";
-import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
+import { getHostedCustomerIOInbox, resolveHostedNotificationUrl } from "@/hosted/customerio";
+import { useDashboardAuth } from "@/lib/auth-client";
 
 type CustomerIOInboxItem = InboxNotification & {
 	actionUrl: string | null;
@@ -15,8 +16,8 @@ type CustomerIOInboxItem = InboxNotification & {
 };
 
 export function CustomerIONotificationCenter() {
-	const { isSignedIn, userId } = useDashboardAuth();
-	const { user, isLoaded } = useCurrentUser();
+	const { isSignedIn } = useDashboardAuth();
+	const profile = useHostedProductAccessProfileQuery();
 	const [messages, setMessages] = useState<InboxMessage[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
@@ -24,11 +25,17 @@ export function CustomerIONotificationCenter() {
 	const [retryKey, setRetryKey] = useState(0);
 	const inboxRef = useRef<InboxAPI | null>(null);
 
+	const customerId = profile.data?.id ?? null;
+	const clerkId = profile.data?.clerk_id ?? null;
+	const email = profile.data?.email ?? null;
+	const name = profile.data?.name ?? null;
 	const identity = useMemo<HostedCustomerIOIdentity | null>(() => {
-		const email = user?.primaryEmailAddress?.emailAddress;
-		if (!isSignedIn || !isLoaded || !userId || !email) return null;
-		return { email, name: user.fullName, userId };
-	}, [isLoaded, isSignedIn, user, userId]);
+		if (!isSignedIn || !customerId || !clerkId || !email) return null;
+		return { customerId, clerkId, email, name };
+	}, [clerkId, customerId, email, isSignedIn, name]);
+	const identityLoading = Boolean(isSignedIn && profile.isLoading);
+	const identityError =
+		isSignedIn && profile.error ? new Error("hosted_identity_unavailable") : null;
 
 	useEffect(() => {
 		let active = true;
@@ -78,6 +85,11 @@ export function CustomerIONotificationCenter() {
 		setMessages(await inbox.messages());
 	}
 
+	function retryInbox() {
+		setRetryKey((key) => key + 1);
+		if (profile.error) void profile.refetch();
+	}
+
 	async function runMessageAction(
 		notification: InboxNotification,
 		action: (item: CustomerIOInboxItem) => Promise<void>,
@@ -99,10 +111,10 @@ export function CustomerIONotificationCenter() {
 		<div data-hosted="true" className="contents">
 			<NotificationCenter
 				inboxNotifications={items}
-				inboxLoading={loading}
-				inboxError={error}
+				inboxLoading={loading || identityLoading}
+				inboxError={error ?? identityError}
 				busyInboxId={busyId}
-				onRetryInbox={() => setRetryKey((key) => key + 1)}
+				onRetryInbox={retryInbox}
 				onMarkInboxOpened={(notification) =>
 					void runMessageAction(notification, (item) => item.message.markOpened())
 				}
@@ -183,22 +195,16 @@ function badgeForMessageType(type: string): string {
 }
 
 function openNotificationUrl(value: string) {
-	let url: URL;
-	try {
-		url = new URL(value, window.location.origin);
-	} catch {
+	const target = resolveHostedNotificationUrl(value, window.location.origin);
+	if (!target) {
 		toast.error("This notification link is invalid");
 		return;
 	}
-	if (url.protocol !== "https:" && url.protocol !== "http:") {
-		toast.error("This notification link is invalid");
+	if (target.kind === "same-origin") {
+		window.location.assign(target.url);
 		return;
 	}
-	if (url.origin === window.location.origin) {
-		window.location.assign(url);
-		return;
-	}
-	window.open(url, "_blank", "noopener,noreferrer");
+	window.open(target.url, "_blank", "noopener,noreferrer");
 }
 
 export default CustomerIONotificationCenter;
