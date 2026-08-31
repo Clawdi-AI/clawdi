@@ -33,6 +33,7 @@ export function useAuthToken() {
 export function useDashboardAuth() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return {
+			isLoaded: true,
 			isSignedIn: true,
 			userId: DEV_USER.id,
 			getToken: async () => DEV_AUTH_BEARER,
@@ -62,5 +63,16 @@ export function useAuthActions() {
 			},
 		};
 	}
-	return useClerk();
+	const clerk = useClerk();
+	return {
+		...clerk,
+		signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+			if (!window.clawdiDesktop) {
+				await clerk.signOut({ redirectUrl });
+				return;
+			}
+			await window.clawdiDesktop.signOut();
+			if (redirectUrl) window.location.replace(redirectUrl);
+		},
+	};
 }

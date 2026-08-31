@@ -1,12 +1,12 @@
-import type { ClawdiDesktopShellBridge, DesktopAgentType } from "@clawdi/shared/desktop";
+import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
 import { contextBridge, ipcRenderer } from "electron";
 import { DESKTOP_IPC } from "./ipc";
 
 const bridge: ClawdiDesktopShellBridge = {
-	getDashboardState: () => ipcRenderer.invoke(DESKTOP_IPC.dashboardState),
-	readLocalSession: (agent: DesktopAgentType, sessionId: string) =>
-		ipcRenderer.invoke(DESKTOP_IPC.readLocalSession, agent, sessionId),
+	signIn: () => ipcRenderer.invoke(DESKTOP_IPC.signIn),
+	signOut: () => ipcRenderer.invoke(DESKTOP_IPC.signOut),
 	openConnectWizard: () => ipcRenderer.invoke(DESKTOP_IPC.openConnectWizard),
+	retryDashboard: () => ipcRenderer.invoke(DESKTOP_IPC.retryDashboard),
 };
 
 contextBridge.exposeInMainWorld("clawdiDesktop", bridge);

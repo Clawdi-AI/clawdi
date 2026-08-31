@@ -6,8 +6,9 @@ export const DESKTOP_IPC = {
 	installationState: "clawdi:installation-state",
 	connectAgents: "clawdi:connect-agents",
 	moveToApplicationsFolder: "clawdi:move-to-applications-folder",
+	signIn: "clawdi:sign-in",
+	signOut: "clawdi:sign-out",
 	openConnectWizard: "clawdi:open-connect-wizard",
 	openDashboard: "clawdi:open-dashboard",
-	dashboardState: "clawdi:dashboard-state",
-	readLocalSession: "clawdi:read-local-session",
+	retryDashboard: "clawdi:retry-dashboard",
 } as const;

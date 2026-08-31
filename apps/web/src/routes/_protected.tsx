@@ -2,7 +2,11 @@ import { auth } from "@clerk/tanstack-react-start/server";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
+import { LoaderCircle } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
+import { useDashboardAuth } from "@/lib/auth-client";
+import { useDesktopBridge } from "@/lib/desktop";
 import { env } from "@/lib/env";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
@@ -14,6 +18,10 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 
 export const Route = createFileRoute("/_protected")({
 	beforeLoad: async ({ location }) => {
+		// The packaged renderer has no TanStack server. Its Clerk session is
+		// established by the native OAuth handoff before this route loads, and
+		// Cloud API authorization remains the data-plane boundary.
+		if (typeof window !== "undefined" && window.clawdiDesktop) return;
 		const { userId } = await getAuthState();
 		if (!userId) {
 			throw redirect({
@@ -26,6 +34,26 @@ export const Route = createFileRoute("/_protected")({
 });
 
 function ProtectedLayout() {
+	const desktopBridge = useDesktopBridge();
+	const { isLoaded, isSignedIn } = useDashboardAuth();
+	const recoveryStarted = useRef(false);
+
+	useEffect(() => {
+		if (!desktopBridge || !isLoaded || isSignedIn || recoveryStarted.current) return;
+		recoveryStarted.current = true;
+		void desktopBridge.retryDashboard().catch(() => {
+			recoveryStarted.current = false;
+		});
+	}, [desktopBridge, isLoaded, isSignedIn]);
+
+	if (desktopBridge && (!isLoaded || !isSignedIn)) {
+		return (
+			<main className="flex min-h-dvh items-center justify-center bg-background">
+				<LoaderCircle className="size-6 animate-spin text-muted-foreground" />
+			</main>
+		);
+	}
+
 	return (
 		<AccountSuspensionBoundary>
 			<Outlet />

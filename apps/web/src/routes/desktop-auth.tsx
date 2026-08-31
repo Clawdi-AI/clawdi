@@ -22,7 +22,7 @@ function DesktopAuthPage() {
 
 	function recover() {
 		if (desktopBridge) {
-			void desktopBridge.openConnectWizard().catch(() => setFailed(true));
+			void desktopBridge.retryDashboard().catch(() => setFailed(true));
 			return;
 		}
 		window.location.replace("/sign-in");
@@ -67,7 +67,7 @@ function DesktopAuthPage() {
 				{failed ? (
 					<>
 						<h1 className="text-lg font-semibold">Desktop sign-in expired</h1>
-						<Button onClick={recover}>{desktopBridge ? "Return to Clawdi" : "Sign in"}</Button>
+						<Button onClick={recover}>{desktopBridge ? "Try again" : "Sign in"}</Button>
 					</>
 				) : (
 					<>

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
-import { AGENT_TYPES, type AgentType, adapterRegistry } from "../adapters/registry";
+import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
 import { isLoggedIn } from "../lib/config";
@@ -26,7 +26,6 @@ interface SessionListOpts {
 interface ListedSession {
 	id: string;
 	agent: AgentType;
-	agent_name: string;
 	project: string | null;
 	started_at: string;
 	ended_at: string | null;
@@ -37,11 +36,11 @@ interface ListedSession {
 }
 
 export async function sessionList(opts: SessionListOpts) {
-	// Local history does not depend on cloud registration. With no explicit
-	// agent, scan every adapter and let adapters without data return empty.
-	const targetTypes = opts.agent
-		? await resolveTargetAgentTypes(opts.agent, opts.allAgents === true)
-		: [...AGENT_TYPES];
+	// Default to "all registered agents" when neither flag is given. This
+	// command is informational — restricting to a single prompted adapter
+	// would hide history the user wants to see.
+	const wantAllAgents = opts.allAgents || !opts.agent;
+	const targetTypes = await resolveTargetAgentTypes(opts.agent, wantAllAgents);
 	if (targetTypes.length === 0) {
 		// resolveTargetAgentTypes already printed the explanation
 		process.exitCode = 1;
@@ -82,7 +81,17 @@ export async function sessionList(opts: SessionListOpts) {
 			// longer filter sessions by session-time (only by file mtime,
 			// internally as a perf hint).
 			if (since && s.startedAt < since) continue;
-			collected.push(listedSession(s, agentType));
+			collected.push({
+				id: s.localSessionId,
+				agent: agentType,
+				project: s.projectPath,
+				started_at: s.startedAt.toISOString(),
+				ended_at: s.endedAt?.toISOString() ?? null,
+				message_count: s.messageCount,
+				duration_seconds: s.durationSeconds,
+				model: s.model,
+				summary: s.summary,
+			});
 		}
 	}
 
@@ -140,50 +149,6 @@ export async function sessionList(opts: SessionListOpts) {
 	console.log(
 		chalk.gray("Push with: ") + chalk.cyan("clawdi push --modules sessions --all-agents --all"),
 	);
-}
-
-export async function sessionReadLocal(
-	sessionId: string,
-	opts: { agent: string; json?: boolean },
-): Promise<void> {
-	if (!AGENT_TYPES.includes(opts.agent as AgentType)) {
-		throw new Error(`Unknown agent type: ${opts.agent}`);
-	}
-	const agent = opts.agent as AgentType;
-	const sessions = adapterForType(agent)?.sessions;
-	if (!sessions) throw new Error(`${adapterRegistry[agent].displayName} has no local sessions.`);
-	const local = await sessions.resolve(sessionId);
-	if (!local) throw new Error("Local session not found.");
-	const payload = {
-		schema_version: "clawdi.desktopLocalSession.v1",
-		session: listedSession(local, agent),
-		messages: local.messages.map((message) => ({
-			role: message.role,
-			content: message.content,
-			model: message.model ?? null,
-			timestamp: message.timestamp ?? null,
-		})),
-	};
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(payload));
-		return;
-	}
-	console.log(JSON.stringify(payload, null, 2));
-}
-
-function listedSession(session: RawSession, agent: AgentType): ListedSession {
-	return {
-		id: session.localSessionId,
-		agent,
-		agent_name: adapterRegistry[agent].displayName,
-		project: session.projectPath,
-		started_at: session.startedAt.toISOString(),
-		ended_at: session.endedAt?.toISOString() ?? null,
-		message_count: session.messageCount,
-		duration_seconds: session.durationSeconds,
-		model: session.model,
-		summary: session.summary,
-	};
 }
 
 function prettyPath(abs: string, home: string): string {

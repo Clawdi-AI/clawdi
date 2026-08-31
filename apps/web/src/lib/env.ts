@@ -75,6 +75,10 @@ export const env = createEnv({
 			.string()
 			.optional()
 			.transform((v) => v === "true"),
+		VITE_CLAWDI_DESKTOP_BUILD: z
+			.string()
+			.optional()
+			.transform((v) => v === "true"),
 
 		// Local-only browser testing bypass. When true in local dev, the
 		// dashboard skips Clerk route protection and sends a fixed dev bearer

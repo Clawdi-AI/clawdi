@@ -55,37 +55,12 @@ export interface DesktopAuthenticationCancellationResult {
 	status: "cancelled" | "not-active";
 }
 
+export interface DesktopShellAuthenticationResult {
+	status: "authenticated" | "cancelled";
+}
+
 export interface DesktopMoveToApplicationsResult {
 	status: "cancelled" | "not-required" | "relaunching";
-}
-
-export interface DesktopLocalSession {
-	id: string;
-	agent: DesktopAgentType;
-	agentName: string;
-	project: string | null;
-	startedAt: string;
-	endedAt: string | null;
-	messageCount: number;
-	durationSeconds: number | null;
-	model: string | null;
-	summary: string | null;
-}
-
-export interface DesktopLocalSessionMessage {
-	role: "user" | "assistant";
-	content: string;
-	model: string | null;
-	timestamp: string | null;
-}
-
-export interface DesktopLocalSessionDetail {
-	session: DesktopLocalSession;
-	messages: DesktopLocalSessionMessage[];
-}
-
-export interface DesktopDashboardState extends DesktopBootstrapState {
-	sessions: DesktopLocalSession[];
 }
 
 export interface ClawdiDesktopConnectBridge {
@@ -100,7 +75,8 @@ export interface ClawdiDesktopConnectBridge {
 }
 
 export interface ClawdiDesktopShellBridge {
-	getDashboardState(): Promise<DesktopDashboardState>;
-	readLocalSession(agent: DesktopAgentType, sessionId: string): Promise<DesktopLocalSessionDetail>;
+	signIn(): Promise<DesktopShellAuthenticationResult>;
+	signOut(): Promise<void>;
 	openConnectWizard(): Promise<void>;
+	retryDashboard(): Promise<void>;
 }

@@ -24,6 +24,7 @@ import {
 import { startClerkOAuthLoopback } from "../lib/clerk-oauth-loopback";
 import {
 	type ClerkOAuthAuth,
+	clearAuth,
 	getAuth,
 	getConfig,
 	getPendingAuth,
@@ -449,17 +450,57 @@ export async function authLoginDesktop(): Promise<void> {
 export async function authDesktopSessionMachine(): Promise<void> {
 	const auth = getAuth();
 	if (!isClerkOAuthAuth(auth)) {
-		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in again from Clawdi Desktop.");
+		printDesktopSessionReauthentication();
+		return;
 	}
 
-	const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
+	const payload = await requestDesktopSessionTicket();
+	if (!payload) return;
 
 	console.log(
 		JSON.stringify({
 			schemaVersion: "clawdi.desktopSession.v1",
+			status: "authenticated",
 			ticket: payload.ticket,
 			expiresIn: payload.expires_in,
 		}),
+	);
+}
+
+async function requestDesktopSessionTicket() {
+	try {
+		const result = await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket");
+		if (result.response.status === 401 && !isAccountSuspendedProblem(result.error)) {
+			clearAuth();
+			printDesktopSessionReauthentication();
+			return null;
+		}
+		return unwrap(result);
+	} catch (error) {
+		// Terminal refresh failures clear the stored grant before the API
+		// request starts. Preserve network failures, but turn a confirmed lost
+		// credential into the same machine state as an endpoint-level 401.
+		if (getAuth()) throw error;
+		printDesktopSessionReauthentication();
+		return null;
+	}
+}
+
+function printDesktopSessionReauthentication(): void {
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.desktopSession.v1",
+			status: "reauth_required",
+		}),
+	);
+}
+
+function isAccountSuspendedProblem(value: unknown): boolean {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"code" in value &&
+		value.code === "account_suspended"
 	);
 }
 

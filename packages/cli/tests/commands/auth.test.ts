@@ -2,12 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authLogin, browserOpenCommand, finishOAuthLogin } from "../../src/commands/auth";
+import {
+	authDesktopSessionMachine,
+	authLogin,
+	browserOpenCommand,
+	finishOAuthLogin,
+} from "../../src/commands/auth";
 import {
 	clearAuth,
 	getAuth,
 	getPendingAuth,
 	type PendingAuth,
+	setAuth,
 	setPendingAuth,
 } from "../../src/lib/config";
 import { addToken } from "../../src/share/tokens";
@@ -163,6 +169,114 @@ describe("authLogin authentication boundary", () => {
 			"/v1/cli/auth/oauth/config",
 			"/.well-known/oauth-authorization-server",
 		]);
+	});
+});
+
+describe("desktop session authentication boundary", () => {
+	function setDesktopAuth(expired = false): void {
+		setAuth({
+			authType: "clerk_oauth",
+			apiKey: oauthAccessToken(),
+			refreshToken: "desktop-refresh-token",
+			accessTokenExpiresAt: new Date(Date.now() + (expired ? -60_000 : 60 * 60_000)).toISOString(),
+			issuer: "https://clerk.example.test",
+			clientId: "clawdi-cli",
+			audience: "clawdi-api",
+			authorizedParties: ["https://accounts.clawdi.test"],
+			tokenEndpoint: "https://clerk.example.test/oauth/token",
+			scopes: ["openid", "profile", "email", "offline_access"],
+			subject: "oauth-user",
+			userId: "cloud-user",
+			endpointBinding: {
+				version: 1,
+				cloudApiOrigin: "https://api.test",
+				hostedApiOrigin: "http://localhost:50021",
+			},
+		});
+	}
+
+	it("clears a rejected grant and returns a machine-readable reauthentication state", async () => {
+		setDesktopAuth();
+		const output: string[] = [];
+		const previousLog = console.log;
+		console.log = (...values: unknown[]) => output.push(values.map(String).join(" "));
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-ticket",
+				response: () => new Response('{"detail":"Invalid OAuth grant"}', { status: 401 }),
+			},
+		]);
+
+		try {
+			await authDesktopSessionMachine();
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+
+		expect(getAuth()).toBeNull();
+		expect(JSON.parse(output.at(-1) ?? "{}")).toEqual({
+			schemaVersion: "clawdi.desktopSession.v1",
+			status: "reauth_required",
+		});
+	});
+
+	it("returns reauthentication when a terminal refresh failure clears the grant", async () => {
+		setDesktopAuth(true);
+		const output: string[] = [];
+		const previousLog = console.log;
+		console.log = (...values: unknown[]) => output.push(values.map(String).join(" "));
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/oauth/token",
+				response: () => new Response('{"error":"invalid_grant"}', { status: 400 }),
+			},
+		]);
+
+		try {
+			await authDesktopSessionMachine();
+		} finally {
+			restore();
+			console.log = previousLog;
+		}
+
+		expect(getAuth()).toBeNull();
+		expect(captured.map((request) => request.path)).toEqual(["/oauth/token"]);
+		expect(JSON.parse(output.at(-1) ?? "{}")).toEqual({
+			schemaVersion: "clawdi.desktopSession.v1",
+			status: "reauth_required",
+		});
+	});
+
+	it("preserves a suspended account for the dedicated suspension surface", async () => {
+		setDesktopAuth();
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-ticket",
+				response: () =>
+					new Response(
+						JSON.stringify({
+							type: "urn:clawdi:problem:account-suspended",
+							title: "Account suspended",
+							status: 401,
+							detail: "Account is suspended",
+							code: "account_suspended",
+						}),
+						{ status: 401, headers: { "content-type": "application/problem+json" } },
+					),
+			},
+		]);
+
+		try {
+			await expect(authDesktopSessionMachine()).rejects.toThrow("Account is suspended");
+		} finally {
+			restore();
+		}
+
+		expect(getAuth()).not.toBeNull();
 	});
 });
 

@@ -1094,7 +1094,7 @@ sessionCmd
 	.command("list")
 	.description("List local agent sessions (use before `clawdi push` to preview)")
 	.option("--agent <type>", `Single agent (${AGENT_TYPE_HELP_LABEL})`)
-	.option("--all-agents", "List sessions from every supported local agent (default)")
+	.option("--all-agents", "List sessions from every registered agent (default)")
 	.option("--project <path>", "Restrict to one project path")
 	.option("--all", "List sessions from all projects (default when --project not set)")
 	.option("--since <date>", "Only list sessions started after this date")
@@ -1111,16 +1111,6 @@ Examples:
 	.action(async (opts) => {
 		const { sessionList } = await import("./commands/session.js");
 		await sessionList(opts);
-	});
-
-sessionCmd
-	.command("read-local <session-id>", { hidden: true })
-	.description("Read one local session for the desktop app")
-	.requiredOption("--agent <type>", "Local agent type")
-	.option("--json", "Output as JSON")
-	.action(async (sessionId, opts: { agent: string; json?: boolean }) => {
-		const { sessionReadLocal } = await import("./commands/session.js");
-		await sessionReadLocal(sessionId, opts);
 	});
 
 sessionCmd

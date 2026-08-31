@@ -40,7 +40,7 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	if (surface === "dashboard") await verifyLocalDashboard(context);
+	if (surface === "dashboard") await verifyPackagedDashboard(context);
 	else await verifyInstallGate(context, desktop, output);
 } catch (error) {
 	failure = error;
@@ -74,14 +74,12 @@ async function verifyInstallGate(context, desktop, output) {
 	);
 }
 
-async function verifyLocalDashboard(context) {
+async function verifyPackagedDashboard(context) {
 	const window = await waitForWindow(context, "dashboard", 30_000);
-	await window.getByRole("heading", { name: "Local sessions" }).waitFor({ timeout: 20_000 });
-	const session = window.getByRole("button", { name: /Fix local-first dashboard/ });
-	await session.waitFor({ state: "visible", timeout: 20_000 });
-	await session.click();
-	await window.getByText("Keep the dashboard on this Mac.").waitFor({ timeout: 20_000 });
-	await window.getByText("Local session rendering is ready.").waitFor({ timeout: 20_000 });
+	await window.getByRole("heading", { name: "Sign in to Clawdi" }).waitFor({ timeout: 20_000 });
+	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
+	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
+	assert.deepEqual(bridgeMethods, ["openConnectWizard", "retryDashboard", "signIn", "signOut"]);
 }
 
 async function waitForWindow(context, surface, timeout) {
@@ -90,10 +88,8 @@ async function waitForWindow(context, surface, timeout) {
 		const window = context.pages().find((page) => {
 			try {
 				const url = new URL(page.url());
-				return (
-					url.protocol === "clawdi-app:" &&
-					(surface === null || url.searchParams.get("surface") === surface)
-				);
+				if (surface === "dashboard") return url.origin === "https://cloud.clawdi.ai";
+				return url.protocol === "clawdi-app:";
 			} catch {
 				return false;
 			}

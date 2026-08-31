@@ -25,7 +25,7 @@ if (env.VITE_SENTRY_DSN) {
 	requestMiddleware.push(sentryGlobalRequestMiddleware);
 }
 
-if (!env.VITE_DEV_AUTH_BYPASS) {
+if (!env.VITE_DEV_AUTH_BYPASS && !env.VITE_CLAWDI_DESKTOP_BUILD) {
 	const clerkRequestMiddleware = getClerkRequestMiddleware();
 	if (clerkRequestMiddleware) requestMiddleware.push(clerkRequestMiddleware);
 }
