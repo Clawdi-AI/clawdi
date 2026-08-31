@@ -92,6 +92,22 @@ export function resolveCurrentCliResourceRoot(): string {
 	return resolveCurrentCliLayout().resourceRoot;
 }
 
+export function isMacApplicationBundleExecutable(executablePath: string): boolean {
+	const nativeDirectory = dirname(executablePath);
+	const resourcesDirectory = dirname(nativeDirectory);
+	const contentsDirectory = dirname(resourcesDirectory);
+	const applicationDirectory = dirname(contentsDirectory);
+	const applicationName = basename(applicationDirectory);
+	return (
+		basename(executablePath) === "clawdi" &&
+		basename(nativeDirectory) === "native" &&
+		basename(resourcesDirectory) === "Resources" &&
+		basename(contentsDirectory) === "Contents" &&
+		applicationName.length > ".app".length &&
+		applicationName.endsWith(".app")
+	);
+}
+
 function currentCliRuntime(): CurrentCliRuntime {
 	return {
 		execPath: process.execPath,

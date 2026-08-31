@@ -118,7 +118,7 @@ describe("installer.install (macOS plist)", () => {
 		}
 	});
 
-	it("captures CLAWDI_AUTH_TOKEN + API_URL into the plist EnvironmentVariables", async () => {
+	it("captures daemon credentials, endpoint, and update ownership", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;
 
@@ -134,8 +134,10 @@ describe("installer.install (macOS plist)", () => {
 
 		const oldToken = process.env.CLAWDI_AUTH_TOKEN;
 		const oldApiUrl = process.env.CLAWDI_API_URL;
+		const oldNoAutoUpdate = process.env.CLAWDI_NO_AUTO_UPDATE;
 		process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_capture_token_value";
 		process.env.CLAWDI_API_URL = "https://example.test/api";
+		process.env.CLAWDI_NO_AUTO_UPDATE = "1";
 
 		try {
 			const { install } = await import("./installer");
@@ -149,12 +151,15 @@ describe("installer.install (macOS plist)", () => {
 			expect(content).toContain("clawdi_test_capture_token_value");
 			expect(content).toContain("<key>CLAWDI_API_URL</key>");
 			expect(content).toContain("https://example.test/api");
+			expect(content).toContain("<key>CLAWDI_NO_AUTO_UPDATE</key>");
 		} finally {
 			process.env.PATH = oldPath;
 			if (oldToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
 			else process.env.CLAWDI_AUTH_TOKEN = oldToken;
 			if (oldApiUrl === undefined) delete process.env.CLAWDI_API_URL;
 			else process.env.CLAWDI_API_URL = oldApiUrl;
+			if (oldNoAutoUpdate === undefined) delete process.env.CLAWDI_NO_AUTO_UPDATE;
+			else process.env.CLAWDI_NO_AUTO_UPDATE = oldNoAutoUpdate;
 		}
 	});
 

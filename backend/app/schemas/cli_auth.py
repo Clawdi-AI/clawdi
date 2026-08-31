@@ -79,3 +79,10 @@ class OAuthRevokeRequest(BaseModel):
 
 class OAuthRevokeResponse(BaseModel):
     status: Literal["revoked"]
+
+
+class DesktopSessionTicketResponse(BaseModel):
+    """Short-lived, one-use Clerk ticket for the first-party desktop shell."""
+
+    ticket: str
+    expires_in: int

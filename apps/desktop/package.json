@@ -1,0 +1,73 @@
+{
+	"name": "@clawdi/desktop",
+	"version": "0.1.0",
+	"description": "Clawdi desktop client",
+	"author": "Clawdi",
+	"private": true,
+	"type": "module",
+	"main": "dist/main.js",
+	"scripts": {
+		"dev": "bun run scripts/dev.ts",
+		"build": "bun run scripts/build.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "../../scripts/test.sh desktop",
+		"test:internal": "bun test src",
+		"prepare:native": "bun run scripts/prepare-native.ts",
+		"package:mac": "bun run build && CLAWDI_NATIVE_TARGET=darwin-arm64 bun run prepare:native && electron-builder --mac dmg --arm64"
+	},
+	"dependencies": {
+		"@clawdi/shared": "workspace:*"
+	},
+	"devDependencies": {
+		"@electron/fuses": "^2.1.3",
+		"@playwright/test": "^1.62.1",
+		"@types/bun": "^1.4.0",
+		"@types/node": "^26.2.0",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"electron": "44.0.0",
+		"electron-builder": "26.15.3",
+		"lucide-react": "catalog:",
+		"react": "catalog:",
+		"react-dom": "catalog:",
+		"typescript": "catalog:"
+	},
+	"build": {
+		"appId": "ai.clawdi.desktop",
+		"productName": "Clawdi",
+		"asar": true,
+		"directories": {
+			"output": "release"
+		},
+		"afterPack": "apps/desktop/scripts/after-pack.mjs",
+		"files": [
+			"dist/**/*",
+			"package.json"
+		],
+		"extraMetadata": {
+			"clawdiWebUrl": "https://cloud.clawdi.ai"
+		},
+		"extraResources": [
+			{
+				"from": "resources/native",
+				"to": "native"
+			},
+			{
+				"from": "../web/public/clawdi-logo-transparent.png",
+				"to": "clawdi-logo.png"
+			}
+		],
+		"mac": {
+			"category": "public.app-category.developer-tools",
+			"icon": "../web/public/clawdi-logo-transparent.png",
+			"target": [
+				{
+					"target": "dmg",
+					"arch": [
+						"arm64"
+					]
+				}
+			]
+		}
+	}
+}

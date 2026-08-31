@@ -1,11 +1,21 @@
 import { createServer, type Server } from "node:http";
 
-function callbackResponse(status: "accepted" | "rejected"): string {
+type OAuthReturnTarget = "desktop" | "terminal";
+
+function callbackResponse(
+	status: "accepted" | "rejected",
+	returnTarget: OAuthReturnTarget,
+): string {
 	const accepted = status === "accepted";
 	const title = accepted ? "Login complete" : "Login not completed";
-	const description = accepted
-		? "You’re signed in. Close this window and return to your terminal."
-		: "Sign-in wasn’t completed. Return to your terminal and run the login command again.";
+	const description =
+		returnTarget === "desktop"
+			? accepted
+				? "You’re signed in. Return to Clawdi to continue."
+				: "Sign-in wasn’t completed. Return to Clawdi and try again."
+			: accepted
+				? "You’re signed in. Close this window and return to your terminal."
+				: "Sign-in wasn’t completed. Return to your terminal and run the login command again.";
 	const icon = accepted ? '<path d="m7.5 12.5 3 3 6-7"/>' : '<path d="m8.5 8.5 7 7m0-7-7 7"/>';
 	const role = accepted ? "status" : "alert";
 
@@ -45,9 +55,6 @@ h1{margin:0;font-size:25px;font-weight:680;line-height:1.22;letter-spacing:-.025
 </html>`;
 }
 
-const CALLBACK_RESPONSE = callbackResponse("accepted");
-const CALLBACK_REJECTED_RESPONSE = callbackResponse("rejected");
-
 export type ClerkOAuthLoopback = {
 	callbackUrl: Promise<string>;
 	close(): Promise<void>;
@@ -81,6 +88,7 @@ function close(server: Server): Promise<void> {
 export async function startClerkOAuthLoopback(
 	redirectUri: string,
 	expectedState: string,
+	opts: { returnTarget?: OAuthReturnTarget } = {},
 ): Promise<ClerkOAuthLoopback> {
 	const redirect = new URL(redirectUri);
 	const port = Number.parseInt(redirect.port, 10);
@@ -103,6 +111,9 @@ export async function startClerkOAuthLoopback(
 		rejectCallback = reject;
 	});
 	let settled = false;
+	const returnTarget = opts.returnTarget ?? "terminal";
+	const callbackAcceptedResponse = callbackResponse("accepted", returnTarget);
+	const callbackRejectedResponse = callbackResponse("rejected", returnTarget);
 	const server = createServer((request, response) => {
 		const requestUrl = new URL(request.url ?? "/", redirect);
 		if (request.method !== "GET" || requestUrl.pathname !== redirect.pathname) {
@@ -122,7 +133,7 @@ export async function startClerkOAuthLoopback(
 			"Referrer-Policy": "no-referrer",
 			"X-Content-Type-Options": "nosniff",
 		});
-		response.end(status === 200 ? CALLBACK_RESPONSE : CALLBACK_REJECTED_RESPONSE);
+		response.end(status === 200 ? callbackAcceptedResponse : callbackRejectedResponse);
 		if (!callbackAccepted) return;
 		if (!settled) {
 			settled = true;

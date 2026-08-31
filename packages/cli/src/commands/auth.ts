@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { readJson } from "../lib/api-client";
+import { ApiClient, readJson, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -179,14 +179,15 @@ export async function finishOAuthLogin(
 	pending: PendingAuth,
 	callbackUrl: string,
 	expectedCredential: StoredCredentialIdentity,
+	opts: { quiet?: boolean } = {},
 ): Promise<boolean> {
-	const spinner = p.spinner();
-	spinner.start("Exchanging the authorization code...");
+	const spinner = opts.quiet ? null : p.spinner();
+	spinner?.start("Exchanging the authorization code...");
 	let auth: ClerkOAuthAuth;
 	try {
 		auth = await exchangeClerkOAuthCode(pending, callbackUrl);
 	} catch (error) {
-		spinner.stop(chalk.red("Authorization failed."));
+		spinner?.stop(chalk.red("Authorization failed."));
 		if (
 			error instanceof ClerkOAuthError &&
 			!["invalid_oauth_callback", "oauth_network_error"].includes(error.code)
@@ -203,23 +204,27 @@ export async function finishOAuthLogin(
 			pending,
 		});
 	} catch (error) {
-		spinner.stop(chalk.red("Cloud rejected the OAuth session."));
+		spinner?.stop(chalk.red("Cloud rejected the OAuth session."));
 		throw error;
 	}
 	if (verification.kind === "cloud_unverified") {
-		spinner.stop(chalk.yellow("Logged in; Cloud profile verification is temporarily unavailable."));
-		p.log.message(
-			chalk.gray(
-				"The Clerk grant is saved, but Cloud has not verified it. Run `clawdi auth status` and retry a Cloud command when service recovers.",
-			),
+		spinner?.stop(
+			chalk.yellow("Logged in; Cloud profile verification is temporarily unavailable."),
 		);
-		postLoginHint();
+		if (!opts.quiet) {
+			p.log.message(
+				chalk.gray(
+					"The Clerk grant is saved, but Cloud has not verified it. Run `clawdi auth status` and retry a Cloud command when service recovers.",
+				),
+			);
+			postLoginHint();
+		}
 		return true;
 	}
 
 	const me = verification.user;
-	spinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	postLoginHint();
+	spinner?.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+	if (!opts.quiet) postLoginHint();
 	return true;
 }
 
@@ -395,6 +400,67 @@ export async function authComplete() {
 	} catch (error) {
 		reportOAuthError(error);
 	}
+}
+
+export async function authLoginDesktop(): Promise<void> {
+	const existing = getAuth();
+	if (isClerkOAuthAuth(existing)) {
+		console.log(
+			JSON.stringify({
+				schemaVersion: "clawdi.desktopLogin.v1",
+				status: "authenticated",
+				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
+			}),
+		);
+		return;
+	}
+
+	const config = getConfig();
+	const expectedCredential = captureStoredCredentialIdentity();
+	const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
+	let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | null = null;
+	try {
+		loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state, {
+			returnTarget: "desktop",
+		});
+		openInBrowser(pending.authorizationUrl);
+		const callbackUrl = await waitForLoopbackCallback(pending, loopback.callbackUrl);
+		await finishOAuthLogin(pending, callbackUrl, expectedCredential, { quiet: true });
+	} catch (error) {
+		if (error instanceof ClerkOAuthError && error.code === "oauth_login_expired") {
+			await clearPendingClerkOAuthLogin(pending);
+		}
+		throw error;
+	} finally {
+		await loopback?.close();
+	}
+
+	const auth = getAuth();
+	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.desktopLogin.v1",
+			status: "authenticated",
+			user: { id: auth.userId, ...(auth.email ? { email: auth.email } : {}) },
+		}),
+	);
+}
+
+export async function authDesktopSessionMachine(): Promise<void> {
+	const auth = getAuth();
+	if (!isClerkOAuthAuth(auth)) {
+		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in again from Clawdi Desktop.");
+	}
+
+	const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
+
+	console.log(
+		JSON.stringify({
+			schemaVersion: "clawdi.desktopSession.v1",
+			ticket: payload.ticket,
+			expiresIn: payload.expires_in,
+		}),
+	);
 }
 
 export async function authLogout() {

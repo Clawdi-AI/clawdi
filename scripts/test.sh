@@ -12,7 +12,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|shared|sidecar|web|backend] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend] [suite args...]"
 }
 
 compose() {
@@ -21,7 +21,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|shared|sidecar|web)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -133,6 +133,14 @@ cli_tests() {
 	bun run --cwd packages/cli test:internal "$@"
 }
 
+desktop_typecheck() {
+	bun run --cwd apps/desktop typecheck
+}
+
+desktop_tests() {
+	bun run --cwd apps/desktop test:internal
+}
+
 shared_typecheck() {
 	bun run --cwd packages/shared typecheck
 }
@@ -174,6 +182,7 @@ backend_tests() {
 run_js() {
 	install_js
 	workspace_typecheck
+	desktop_tests
 	web_tests
 	shared_tests
 	sidecar_tests
@@ -184,6 +193,12 @@ run_cli() {
 	install_js
 	cli_typecheck
 	cli_tests "$@"
+}
+
+run_desktop() {
+	install_js
+	desktop_typecheck
+	desktop_tests
 }
 
 run_shared() {
@@ -219,6 +234,7 @@ run_ci() {
 	install_js
 	workspace_typecheck
 	runner_contract_tests
+	desktop_tests
 	web_tests src/hosted/oss-clean.test.ts
 	web_build
 	shared_tests
@@ -251,6 +267,13 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		desktop)
+			if [[ $# -gt 0 ]]; then
+				echo "Suite 'desktop' does not accept extra arguments" >&2
+				exit 2
+			fi
+			run_desktop
 			;;
 		shared)
 			if [[ $# -gt 0 ]]; then

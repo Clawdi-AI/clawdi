@@ -138,12 +138,20 @@ authCmd
 	.description("Sign in once with Clerk OAuth Authorization Code + PKCE")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
 	.option("--no-open", "Print the authorization URL and securely paste the callback")
+	.addOption(new Option("--desktop").hideHelp())
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --no-open\n  $ clawdi auth login --manual",
 	)
-	.action(async (opts: { manual?: boolean; open?: boolean }) => {
-		const { authLogin } = await import("./commands/auth.js");
+	.action(async (opts: { manual?: boolean; open?: boolean; desktop?: boolean }) => {
+		const { authLogin, authLoginDesktop } = await import("./commands/auth.js");
+		if (opts.desktop) {
+			if (opts.manual || opts.open === false) {
+				throw new Error("Desktop sign-in does not accept interactive login options.");
+			}
+			await authLoginDesktop();
+			return;
+		}
 		await authLogin(opts);
 	});
 
@@ -153,6 +161,15 @@ authCmd
 	.action(async () => {
 		const { authComplete } = await import("./commands/auth.js");
 		await authComplete();
+	});
+
+authCmd
+	.command("desktop-session", { hidden: true })
+	.description("Create a short-lived desktop dashboard session")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async () => {
+		const { authDesktopSessionMachine } = await import("./commands/auth.js");
+		await authDesktopSessionMachine();
 	});
 
 authCmd
@@ -1556,6 +1573,16 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+
+agentCmd
+	.command("detect")
+	.description("Detect supported local agents without changing them")
+	.option("--json", "Emit machine-readable JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { agentDetectCommand } = await import("./commands/agent-detect.js");
+		await agentDetectCommand(opts);
+	});
+
 const agentCredentialsCmd = agentCmd
 	.command("credentials")
 	.description("Sync local CLI credential profiles");
