@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -53,6 +54,7 @@ let dashboardWindowOpening: Promise<void> | null = null;
 let dashboardFailureOpening: Promise<void> | null = null;
 let dashboardSession: Session | null = null;
 let dashboardAccountId: string | null = null;
+const dashboardPopups = new Set<BrowserWindow>();
 let quitting = false;
 
 class DesktopConnectError extends Error {}
@@ -125,6 +127,7 @@ function registerDashboardProtocol(targetSession: Session): void {
 	const assets = readDashboardAssets();
 	const index = assets.get("/index.html");
 	if (!index) throw new Error("The packaged Dashboard is missing its SPA shell.");
+	const indexHtml = readFileSync(index, "utf8");
 
 	targetSession.protocol.handle("https", async (request) => {
 		const url = new URL(request.url);
@@ -134,8 +137,10 @@ function registerDashboardProtocol(targetSession: Session): void {
 		}
 
 		const asset = assets.get(url.pathname);
+		if (asset === index || (!asset && isDocumentRequest(request))) {
+			return dashboardDocumentResponse(indexHtml, request.method);
+		}
 		if (asset) return localAssetResponse(asset, request.method);
-		if (isDocumentRequest(request)) return localAssetResponse(index, request.method);
 		return new Response(null, { status: 404 });
 	});
 }
@@ -172,6 +177,32 @@ async function localAssetResponse(path: string, method: string): Promise<Respons
 		statusText: response.statusText,
 		headers: response.headers,
 	});
+}
+
+function dashboardDocumentResponse(indexHtml: string, method: string): Response {
+	const nonce = randomBytes(18).toString("base64");
+	const html = indexHtml.replace(/<script\b(?![^>]*\bnonce=)/gi, `<script nonce="${nonce}"`);
+	const headers = {
+		"Content-Type": "text/html; charset=utf-8",
+		"Content-Security-Policy": [
+			"default-src 'self'",
+			"base-uri 'self'",
+			"object-src 'none'",
+			"frame-ancestors 'none'",
+			`script-src 'self' 'nonce-${nonce}' https://clerk.clawdi.ai https://js.stripe.com`,
+			"script-src-attr 'none'",
+			"style-src 'self' 'unsafe-inline'",
+			"font-src 'self' data:",
+			"img-src 'self' data: blob: https:",
+			"connect-src 'self' https: wss:",
+			"frame-src https:",
+			"worker-src 'self' blob:",
+			"form-action 'self' https:",
+		].join("; "),
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+		"X-Content-Type-Options": "nosniff",
+	};
+	return new Response(method === "HEAD" ? null : html, { headers });
 }
 
 function forwardNetworkRequest(targetSession: Session, request: Request): Promise<Response> {
@@ -410,7 +441,17 @@ function createApplicationMenu(): void {
 				: []),
 		],
 	};
-	const template: MenuItemConstructorOptions[] = [editMenu, windowMenu];
+	const viewMenu: MenuItemConstructorOptions = {
+		label: "View",
+		submenu: [
+			{ role: "resetZoom" },
+			{ role: "zoomIn" },
+			{ role: "zoomOut" },
+			{ type: "separator" },
+			{ role: "togglefullscreen" },
+		],
+	};
+	const template: MenuItemConstructorOptions[] = [editMenu, viewMenu, windowMenu];
 	if (process.platform === "darwin") {
 		template.unshift({
 			label: app.name,
@@ -471,7 +512,11 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 		if (isSafeExternalUrl(url)) runAsync("open the external link", shell.openExternal(url));
 		return { action: "deny" };
 	});
-	window.webContents.on("did-create-window", (child) => hardenDashboardPopup(child));
+	window.webContents.on("did-create-window", (child) => {
+		dashboardPopups.add(child);
+		child.once("closed", () => dashboardPopups.delete(child));
+		hardenDashboardPopup(child);
+	});
 	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
 		if (url === DASHBOARD_FAILURE_URL || urlOrigin(url) === DASHBOARD_ORIGIN) return;
 		event.preventDefault();
@@ -499,7 +544,7 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 	window.webContents.on("render-process-gone", (_event, details) => {
 		if (quitting || window.isDestroyed() || mainWindow !== window) return;
 		console.error(`Dashboard renderer exited: ${details.reason}`);
-		runAsync("recover the dashboard renderer", showDashboardFailure(true));
+		runAsync("recover the dashboard renderer", showDashboardFailure(true, window.isVisible()));
 	});
 	window.on("close", (event) => {
 		if (quitting) return;
@@ -520,6 +565,10 @@ function hardenDashboardPopup(window: BrowserWindow): void {
 	};
 	window.webContents.on("will-navigate", preventUnsafeNavigation);
 	window.webContents.on("will-redirect", preventUnsafeNavigation);
+	window.webContents.on("render-process-gone", (_event, details) => {
+		console.error(`Dashboard child renderer exited: ${details.reason}`);
+		if (!window.isDestroyed()) window.destroy();
+	});
 }
 
 async function showConnectWindow(): Promise<void> {
@@ -909,7 +958,7 @@ async function showDashboardSignIn(): Promise<void> {
 	await presentMainWindow(window);
 }
 
-async function showDashboardFailure(forceReload = false): Promise<void> {
+async function showDashboardFailure(forceReload = false, present = true): Promise<void> {
 	if (dashboardFailureOpening && !forceReload) return dashboardFailureOpening;
 	const opening = (async () => {
 		let window = mainWindow;
@@ -920,7 +969,7 @@ async function showDashboardFailure(forceReload = false): Promise<void> {
 			await window.loadURL(DASHBOARD_FAILURE_URL);
 		}
 		if (!window || window.isDestroyed()) throw new Error("Dashboard recovery window was closed");
-		await presentMainWindow(window);
+		if (present) await presentMainWindow(window);
 	})();
 	dashboardFailureOpening = opening;
 	try {
@@ -982,7 +1031,11 @@ function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promis
 
 async function clearDashboardSession(): Promise<void> {
 	dashboardAccountId = null;
-	if (dashboardSession) await dashboardSession.clearStorageData({ storages: ["cookies"] });
+	for (const popup of dashboardPopups) {
+		if (!popup.isDestroyed()) popup.destroy();
+	}
+	dashboardPopups.clear();
+	if (dashboardSession) await dashboardSession.clearData();
 }
 
 async function loadWindowUrl(window: BrowserWindow, url: string): Promise<void> {

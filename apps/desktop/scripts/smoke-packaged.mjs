@@ -78,6 +78,17 @@ async function verifyPackagedDashboard(context) {
 	const window = await waitForWindow(context, "dashboard", 30_000);
 	await window.getByRole("heading", { name: "Sign in to Clawdi" }).waitFor({ timeout: 20_000 });
 	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
+	const documentSecurity = await window.evaluate(async () => {
+		const response = await fetch("/index.html", { method: "HEAD", cache: "no-store" });
+		return {
+			csp: response.headers.get("content-security-policy"),
+			inlineScriptsHaveNonces: [...document.scripts]
+				.filter((script) => !script.src)
+				.every((script) => script.nonce.length > 0),
+		};
+	});
+	assert.match(documentSecurity.csp ?? "", /script-src[^;]*'nonce-[^']+'/);
+	assert.equal(documentSecurity.inlineScriptsHaveNonces, true);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
 	assert.deepEqual(bridgeMethods, ["openConnectWizard", "retryDashboard", "signIn", "signOut"]);
 }

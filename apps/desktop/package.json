@@ -25,7 +25,7 @@
 		"@types/node": "^26.2.0",
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
-		"electron": "44.0.0",
+		"electron": "44.1.0",
 		"electron-builder": "26.15.3",
 		"lucide-react": "catalog:",
 		"react": "catalog:",
