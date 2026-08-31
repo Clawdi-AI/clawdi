@@ -112,7 +112,6 @@ export const PROVIDER_PRESETS = [
 		api_mode: "openai_chat",
 		catalog: [
 			{ id: "glm-5.3", alias: "GLM-5.3" },
-			{ id: "glm-5.3-flash", alias: "GLM-5.3-Flash" },
 			{ id: "glm-5.2", alias: "GLM-5.2" },
 		],
 		api_key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",

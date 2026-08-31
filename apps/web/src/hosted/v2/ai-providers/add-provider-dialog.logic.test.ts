@@ -397,7 +397,6 @@ describe("derivedProviderFields", () => {
 		const zhipu = testPreset("zhipu-glm");
 		expect(zhipu.catalog.map((model) => [model.id, model.alias, model.context_window])).toEqual([
 			["glm-5.3", "GLM-5.3", undefined],
-			["glm-5.3-flash", "GLM-5.3-Flash", undefined],
 			["glm-5.2", "GLM-5.2", undefined],
 		]);
 		expect(testPreset("minimax").catalog.map((model) => [model.id, model.context_window])).toEqual([
