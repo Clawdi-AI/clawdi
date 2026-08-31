@@ -18,6 +18,8 @@ interface VirtualizedSessionTimelineListProps extends SessionTimelineListProps {
 	hasMoreItems: boolean;
 	isLoadingMore: boolean;
 	onLoadMore: () => void;
+	highlightScrollRequestKey?: string | null;
+	latestScrollRequestId?: number;
 }
 
 /**
@@ -40,6 +42,11 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	const highlightedRowIndex = props.highlightedMessageKey
 		? rows.findIndex((row) => row.rowKey === props.highlightedMessageKey)
 		: -1;
+	const initialHighlightedRowIndex = props.highlightScrollRequestKey ? highlightedRowIndex : -1;
+	const handledScrollRequestRef = useRef<string | null>(
+		initialHighlightedRowIndex >= 0 ? (props.highlightScrollRequestKey ?? null) : null,
+	);
+	const handledLatestScrollRequestRef = useRef(props.latestScrollRequestId ?? 0);
 	// `firstItemIndex` is React Virtuoso's documented inverse-scrolling
 	// contract. It decreases by exactly the number of visual rows prepended,
 	// preserving the viewport while older pages load above the conversation.
@@ -58,16 +65,36 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	}, []);
 
 	useEffect(() => {
-		if (!scrollParent || highlightedRowIndex < 0) return;
-		const frame = requestAnimationFrame(() => {
-			virtuosoRef.current?.scrollToIndex({
-				index: highlightedRowIndex,
-				align: "center",
-				behavior: "smooth",
-			});
+		const requestKey = props.highlightScrollRequestKey;
+		if (!requestKey) {
+			handledScrollRequestRef.current = null;
+			return;
+		}
+		const virtuoso = virtuosoRef.current;
+		if (!scrollParent || highlightedRowIndex < 0 || !virtuoso) return;
+		if (handledScrollRequestRef.current === requestKey) return;
+		handledScrollRequestRef.current = requestKey;
+		virtuoso.scrollToIndex({
+			index: highlightedRowIndex,
+			align: "center",
+			behavior: "smooth",
 		});
-		return () => cancelAnimationFrame(frame);
-	}, [highlightedRowIndex, scrollParent]);
+	}, [highlightedRowIndex, props.highlightScrollRequestKey, scrollParent]);
+
+	useEffect(() => {
+		const requestId = props.latestScrollRequestId ?? 0;
+		const virtuoso = virtuosoRef.current;
+		if (
+			!scrollParent ||
+			!virtuoso ||
+			rows.length === 0 ||
+			handledLatestScrollRequestRef.current === requestId
+		) {
+			return;
+		}
+		handledLatestScrollRequestRef.current = requestId;
+		virtuoso.scrollToIndex({ index: rows.length - 1, align: "end", behavior: "smooth" });
+	}, [props.latestScrollRequestId, rows.length, scrollParent]);
 
 	if (!scrollParent) return <div aria-hidden className="h-px" />;
 	const usesWindowScroll = scrollParent === window;
@@ -91,8 +118,8 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 						: undefined
 				}
 				initialTopMostItemIndex={
-					highlightedRowIndex >= 0
-						? { index: highlightedRowIndex, align: "center" }
+					initialHighlightedRowIndex >= 0
+						? { index: initialHighlightedRowIndex, align: "center" }
 						: props.direction === "asc"
 							? { index: rows.length - 1, align: "end" }
 							: 0
@@ -104,7 +131,6 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 						userAvatar={props.userAvatar}
 						userName={props.userName}
 						highlightedMessageKey={props.highlightedMessageKey}
-						highlightedMessageRef={props.highlightedMessageRef}
 						highlightQuery={props.highlightQuery}
 						deferOffscreenRendering={false}
 					/>

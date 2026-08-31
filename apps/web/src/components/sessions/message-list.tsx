@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, ChevronRight, CircleX, Terminal, Wrench } from "lucide-react";
-import { type Ref, useState } from "react";
+import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Markdown } from "@/components/markdown";
@@ -89,7 +89,6 @@ function MessageBlock({
 	agentType,
 	isGroupStart,
 	isHighlighted,
-	highlightedRef,
 	highlightQuery,
 	deferOffscreenRendering,
 }: {
@@ -106,7 +105,6 @@ function MessageBlock({
 	 */
 	isGroupStart: boolean;
 	isHighlighted?: boolean;
-	highlightedRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
 	deferOffscreenRendering: boolean;
 }) {
@@ -117,7 +115,6 @@ function MessageBlock({
 		// `group` lives on the whole row so the continuation-row hover
 		// timestamp reveals from a hover anywhere on the message.
 		<div
-			ref={isHighlighted ? highlightedRef : undefined}
 			data-search-match={isHighlighted ? "true" : undefined}
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
@@ -488,7 +485,6 @@ export interface SessionTimelineListProps {
 	userAvatar?: string;
 	userName: string;
 	highlightedMessageKey?: string | null;
-	highlightedMessageRef?: Ref<HTMLDivElement>;
 	highlightQuery?: string;
 }
 
@@ -582,7 +578,6 @@ export function SessionTimelineRowView({
 	userAvatar,
 	userName,
 	highlightedMessageKey,
-	highlightedMessageRef,
 	highlightQuery,
 	deferOffscreenRendering,
 }: Omit<SessionTimelineListProps, "items" | "itemKeys"> & {
@@ -602,7 +597,6 @@ export function SessionTimelineRowView({
 						agentType={agentType}
 						isGroupStart={row.isGroupStart}
 						isHighlighted={isHighlighted}
-						highlightedRef={isHighlighted ? highlightedMessageRef : undefined}
 						highlightQuery={highlightQuery}
 						deferOffscreenRendering={deferOffscreenRendering}
 					/>
@@ -635,7 +629,6 @@ export function SessionTimelineList(props: SessionTimelineListProps) {
 					userAvatar={props.userAvatar}
 					userName={props.userName}
 					highlightedMessageKey={props.highlightedMessageKey}
-					highlightedMessageRef={props.highlightedMessageRef}
 					highlightQuery={props.highlightQuery}
 					deferOffscreenRendering
 				/>

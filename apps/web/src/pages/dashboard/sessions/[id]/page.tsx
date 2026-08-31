@@ -42,6 +42,7 @@ import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Separator } from "@/components/ui/separator";
+import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
@@ -67,6 +68,9 @@ import {
 import {
 	type SessionSearchAnchor,
 	type SessionTimelineView,
+	sessionTimelineCategories,
+	sessionTimelineIncludesMessages,
+	sessionTimelineViewFromCategories,
 	sessionTimelineViewLink,
 } from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
@@ -212,8 +216,11 @@ export function SessionDetailContent({
 	// Layout effects run before the messages query subscribes, so a stored
 	// "desc" swaps the presentation before paint without a second fetch.
 	const [direction, setDirection] = useState<SessionMessageDirection>("asc");
+	const [latestScrollRequestId, setLatestScrollRequestId] = useState(0);
 	const normalizedSearchQuery = searchQuery?.trim() ?? "";
 	const rememberedSearchQueryRef = useRef(normalizedSearchQuery);
+	const timelineCategories = sessionTimelineCategories(timelineView);
+	const searchableTimeline = sessionTimelineIncludesMessages(timelineView);
 	const effectiveSearchQuery = isSearchQueryReady(normalizedSearchQuery)
 		? normalizedSearchQuery
 		: "";
@@ -250,6 +257,7 @@ export function SessionDetailContent({
 		hasNextPage,
 		isFetchingNextPage,
 		isFetching: isContentFetching,
+		isPlaceholderData: isContentPlaceholderData,
 	} = useInfiniteQuery({
 		queryKey: [
 			"session-messages",
@@ -272,7 +280,8 @@ export function SessionDetailContent({
 							offset: pageParam,
 							limit: SESSION_MESSAGE_PAGE_SIZE,
 							direction: SESSION_MESSAGE_API_DIRECTION,
-							view: timelineView,
+							view: "all",
+							...(timelineView === "all" ? {} : { include: timelineCategories }),
 							...(pageParam === 0 && searchAnchor
 								? {
 										anchor_kind: searchAnchor.kind,
@@ -327,33 +336,33 @@ export function SessionDetailContent({
 	const anchorOffset = pagesData?.pages[0]?.anchor_offset;
 	const highlightedMessageKey =
 		typeof anchorOffset === "number" ? `${SESSION_MESSAGE_API_DIRECTION}:${anchorOffset}` : null;
-	const highlightedMessageRef = useRef<HTMLDivElement | null>(null);
-	const handledAnchorRef = useRef<string | null>(null);
+	const notifiedStaleAnchorRef = useRef<string | null>(null);
 	const searchNavigation = pagesData?.pages[0]?.search_navigation;
 	const resolvedSearchAnchor = searchNavigation?.current ?? searchAnchor;
 	const anchorIdentity = resolvedSearchAnchor
 		? `${resolvedSearchAnchor.kind}:${resolvedSearchAnchor.position}:${resolvedSearchAnchor.revision}`
 		: null;
+	const highlightScrollRequestKey =
+		!isContentPlaceholderData && anchorIdentity && highlightedMessageKey
+			? JSON.stringify([
+					anchorIdentity,
+					highlightedMessageKey,
+					debouncedSearchQuery ?? null,
+					timelineView,
+				])
+			: null;
 
 	useEffect(() => {
-		if (!anchorIdentity || !pagesData) return;
-		if (highlightedMessageKey) {
-			const handled = `resolved:${highlightedMessageKey}:${anchorIdentity}`;
-			if (handledAnchorRef.current === handled) return;
-			handledAnchorRef.current = handled;
-			const frame = requestAnimationFrame(() => {
-				highlightedMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-			});
-			return () => cancelAnimationFrame(frame);
+		if (!anchorIdentity || !pagesData || isContentPlaceholderData || highlightedMessageKey) {
+			return;
 		}
-		const handled = `stale:${anchorIdentity}`;
-		if (handledAnchorRef.current !== handled) {
-			handledAnchorRef.current = handled;
+		if (notifiedStaleAnchorRef.current !== anchorIdentity) {
+			notifiedStaleAnchorRef.current = anchorIdentity;
 			toast.info("Search result changed", {
 				description: "This Session has newer content, so the conversation opened normally.",
 			});
 		}
-	}, [anchorIdentity, highlightedMessageKey, pagesData]);
+	}, [anchorIdentity, highlightedMessageKey, isContentPlaceholderData, pagesData]);
 
 	// Hooks must run on every render in the same order — this includes the
 	// breadcrumb title hook. Compute the title (nullable while loading) and
@@ -411,13 +420,12 @@ export function SessionDetailContent({
 			(isContentFetching && !isFetchingNextPage) ||
 			isContentLoading);
 	const updateTimelineView = (selected: SessionTimelineView) => {
-		if (timelineView !== "tools") {
+		if (searchableTimeline) {
 			rememberedSearchQueryRef.current = normalizedSearchQuery;
 		}
-		const retainedSearchQuery =
-			selected === "tools"
-				? undefined
-				: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
+		const retainedSearchQuery = !sessionTimelineIncludesMessages(selected)
+			? undefined
+			: normalizedSearchQuery || rememberedSearchQueryRef.current || undefined;
 		if (agentId) {
 			const search = {
 				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
@@ -541,10 +549,10 @@ export function SessionDetailContent({
 					<div
 						className={cn(
 							"grid min-w-0 gap-2 md:items-center",
-							timelineView === "tools" ? "md:grid-cols-1" : "md:grid-cols-[minmax(16rem,1fr)_auto]",
+							searchableTimeline ? "md:grid-cols-[minmax(16rem,1fr)_auto]" : "md:grid-cols-1",
 						)}
 					>
-						{timelineView === "tools" ? null : (
+						{searchableTimeline ? (
 							<SessionSearchNavigation
 								sessionId={sessionId}
 								agentId={agentId}
@@ -557,25 +565,19 @@ export function SessionDetailContent({
 								className="md:max-w-xl"
 								maxLength={SEARCH_QUERY_MAX_LENGTH}
 							/>
-						)}
+						) : null}
 						<div
 							className={cn(
 								"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
-								timelineView === "tools" && "md:justify-self-end",
+								!searchableTimeline && "md:justify-self-end",
 							)}
 						>
 							<ToggleGroup
-								value={[timelineView]}
+								multiple
+								value={timelineCategories}
 								onValueChange={(values) => {
-									const selected = values[0];
-									if (
-										selected === "all" ||
-										selected === "user" ||
-										selected === "assistant" ||
-										selected === "tools"
-									) {
-										updateTimelineView(selected);
-									}
+									const selected = sessionTimelineViewFromCategories(values);
+									if (selected) updateTimelineView(selected);
 								}}
 								variant="outline"
 								size="sm"
@@ -583,9 +585,6 @@ export function SessionDetailContent({
 								aria-label="Timeline view"
 								className="min-w-0"
 							>
-								<ToggleGroupItem value="all" aria-label="All activity" title="All activity">
-									<MessageSquare /> <span className="hidden sm:inline">All</span>
-								</ToggleGroupItem>
 								<ToggleGroupItem value="user" aria-label="Your messages" title="Your messages">
 									<UserRound /> <span className="hidden sm:inline">You</span>
 								</ToggleGroupItem>
@@ -656,13 +655,14 @@ export function SessionDetailContent({
 							userAvatar={user?.imageUrl}
 							userName={user?.fullName || "You"}
 							highlightedMessageKey={highlightedMessageKey}
-							highlightedMessageRef={highlightedMessageRef}
+							highlightScrollRequestKey={highlightScrollRequestKey}
 							highlightQuery={debouncedSearchQuery}
 							direction={direction}
 							totalItemCount={totalItems}
 							hasMoreItems={Boolean(hasNextPage)}
 							isLoadingMore={isFetchingNextPage}
 							onLoadMore={loadMoreMessages}
+							latestScrollRequestId={latestScrollRequestId}
 						/>
 						{direction === "desc" && hasNextPage ? (
 							<LoadMoreControl
@@ -700,7 +700,7 @@ export function SessionDetailContent({
 			    list. In desc mode the newest is already at the top,
 			    so there's nothing to jump to. */}
 			{direction === "asc" && timelineItems && timelineItems.length > 20 ? (
-				<JumpToBottomButton />
+				<JumpToBottomButton onJump={() => setLatestScrollRequestId((requestId) => requestId + 1)} />
 			) : null}
 		</div>
 	);
@@ -711,20 +711,16 @@ export function SessionDetailContent({
  * comment threads — when you've scrolled up in a long conversation,
  * the latest message becomes hard to find.
  *
- * Scroll source: the dashboard's actual scroll container is
- * `SidebarInset` (with `overflow-y-auto`), NOT `window`. Listening
- * on `window` made the button invisible and `window.scrollTo`
- * scrolled the wrong target. We walk up the DOM looking for the
- * nearest scrollable ancestor at mount time, then bind there.
+ * Visibility follows the dashboard's actual scroll container. The button
+ * emits a request; Virtuoso remains the sole owner of scroll positioning.
  */
-function JumpToBottomButton() {
+function JumpToBottomButton({ onJump }: { onJump: () => void }) {
+	const { state: sidebarState } = useSidebar();
 	const [visible, setVisible] = useState(false);
-	const scrollerRef = useRef<HTMLElement | Window | null>(null);
 	const anchorRef = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
 		const scroller = findScrollableContainer(anchorRef.current?.parentElement ?? null);
-		scrollerRef.current = scroller;
 
 		const onScroll = () => {
 			let scrollBottom: number;
@@ -741,16 +737,6 @@ function JumpToBottomButton() {
 		return () => scroller.removeEventListener("scroll", onScroll);
 	}, []);
 
-	const onJump = () => {
-		const scroller = scrollerRef.current;
-		if (!scroller) return;
-		if (scroller instanceof Window) {
-			window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
-		} else {
-			scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-		}
-	};
-
 	return (
 		<>
 			{/* Anchor used at mount to locate the scrollable ancestor.
@@ -758,16 +744,25 @@ function JumpToBottomButton() {
 			    at a valid node for the lifetime of the component. */}
 			<div ref={anchorRef} aria-hidden className="hidden" />
 			{visible ? (
-				<Button
-					type="button"
-					variant="secondary"
-					size="sm"
-					className="fixed bottom-6 right-6 z-20 shadow-md"
-					onClick={onJump}
+				<div
+					className={cn(
+						"pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center md:right-2",
+						sidebarState === "expanded"
+							? "md:left-[calc(var(--clawdi-rail-width)+var(--sidebar-width))]"
+							: "md:left-[calc(var(--clawdi-rail-width)+var(--spacing)*2)]",
+					)}
 				>
-					<ArrowDown className="size-4" />
-					Jump to latest
-				</Button>
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						className="pointer-events-auto shadow-md"
+						onClick={onJump}
+					>
+						<ArrowDown className="size-4" />
+						Jump to latest
+					</Button>
+				</div>
 			) : null}
 		</>
 	);

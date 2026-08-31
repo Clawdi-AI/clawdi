@@ -695,6 +695,20 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     assert "private chain of thought" not in latest_timeline.text
     assert "opaque" not in latest_timeline.text
 
+    conversation_only = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params=[("view", "tools"), ("include", "user"), ("include", "assistant")],
+    )
+    assert conversation_only.status_code == 200, conversation_only.text
+    assert [item["position"] for item in conversation_only.json()["items"]] == [1, 4, 6]
+
+    agent_and_tools = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params=[("include", "assistant"), ("include", "tools")],
+    )
+    assert agent_and_tools.status_code == 200, agent_and_tools.text
+    assert [item["position"] for item in agent_and_tools.json()["items"]] == [2, 3, 4, 6]
+
     # The committed generation now spans three immutable chunks. The read path
     # must use the new event head after both appends instead of serving the
     # two-message projection cached before them.
@@ -753,12 +767,14 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     }
     event_navigation = await client.get(
         f"/v1/sessions/{session.id}/messages",
-        params={
-            "anchor_kind": "event_seq",
-            "anchor_position": 4,
-            "anchor_revision": f"events:{second_head}",
-            "search_query": "answer",
-        },
+        params=[
+            ("include", "assistant"),
+            ("include", "tools"),
+            ("anchor_kind", "event_seq"),
+            ("anchor_position", "4"),
+            ("anchor_revision", f"events:{second_head}"),
+            ("search_query", "answer"),
+        ],
     )
     assert event_navigation.status_code == 200, event_navigation.text
     assert event_navigation.json()["search_navigation"] == {
