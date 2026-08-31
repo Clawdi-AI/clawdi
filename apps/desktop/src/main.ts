@@ -32,7 +32,7 @@ const CONNECT_SCHEME = "clawdi-app";
 const CONNECT_HOST = "connect";
 const CONNECT_RENDERER_URL = `${CONNECT_SCHEME}://${CONNECT_HOST}/renderer.html`;
 const DASHBOARD_FAILURE_URL = `${CONNECT_RENDERER_URL}?surface=dashboard-failure`;
-const DASHBOARD_PARTITION = "persist:clawdi-dashboard";
+const DASHBOARD_LOAD_TIMEOUT_MS = 30_000;
 const ERR_ABORTED = -3;
 const CONNECT_ASSETS = new Map([
 	["/renderer.html", "renderer.html"],
@@ -72,11 +72,9 @@ async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
-	const dashboardSession = session.fromPartition(DASHBOARD_PARTITION);
 	registerLocalProtocol(session.defaultSession);
-	registerLocalProtocol(dashboardSession);
 	registerIpc();
-	configurePermissions(dashboardSession);
+	configurePermissions();
 	createApplicationMenu();
 	createTray();
 	app.on("before-quit", () => {
@@ -84,20 +82,25 @@ async function startApplication(): Promise<void> {
 		void cli.cancelAuthentication();
 	});
 
-	try {
-		const state = await cli.bootstrapState();
-		setTrayState(state);
-		if (!startHidden) {
-			if (state.auth.authenticated && state.daemon.running) {
-				await loadDashboardWithRecovery();
-			} else {
-				await showConnectWindow();
-			}
-		}
-	} catch (error) {
-		console.error("Could not open the dashboard", error);
+	if (installationState().requiresMove) {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
+	} else {
+		try {
+			const state = await cli.bootstrapState();
+			setTrayState(state);
+			if (!startHidden) {
+				if (state.auth.authenticated && state.daemon.running) {
+					await loadDashboardWithRecovery();
+				} else {
+					await showConnectWindow();
+				}
+			}
+		} catch (error) {
+			console.error("Could not open the dashboard", error);
+			setTrayState(null);
+			if (!startHidden) await showConnectWindow();
+		}
 	}
 
 	app.on("activate", () => void showAvailableWindow());
@@ -115,6 +118,7 @@ function registerLocalProtocol(targetSession: Session): void {
 function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.bootstrapState, (event) =>
 		safeConnectAction(event, "prepare the local runtime", async () => {
+			assertRuntimeLocation();
 			const state = await cli.bootstrapState();
 			setTrayState(state);
 			return state;
@@ -124,10 +128,14 @@ function registerIpc(): void {
 		safeConnectAction(event, "check the app location", async () => installationState()),
 	);
 	ipcMain.handle(DESKTOP_IPC.detectAgents, (event) =>
-		safeConnectAction(event, "inspect local Agents", () => cli.detectAgents()),
+		safeConnectAction(event, "inspect local Agents", () => {
+			assertRuntimeLocation();
+			return cli.detectAgents();
+		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
+			assertRuntimeLocation();
 			if ((await cli.authenticate()) === "cancelled") return { status: "cancelled" as const };
 			const state = await cli.bootstrapState();
 			setTrayState(state);
@@ -152,6 +160,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
+			assertRuntimeLocation();
 			await loadDashboardWithRecovery();
 			connectWindow?.hide();
 		}),
@@ -242,12 +251,7 @@ function readAgentTypes(value: unknown): DesktopAgentType[] {
 	return agentTypes;
 }
 
-function configurePermissions(dashboardSession: Session): void {
-	session.defaultSession.setPermissionCheckHandler(() => false);
-	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-		callback(false);
-	});
-
+function configurePermissions(): void {
 	const dashboardOrigin = new URL(desktopWebUrl()).origin;
 	const allowsClipboardWrite = (
 		webContents: Electron.WebContents | null,
@@ -261,19 +265,22 @@ function configurePermissions(dashboardSession: Session): void {
 		urlOrigin(webContents.getURL()) === dashboardOrigin &&
 		urlOrigin(requestingUrl) === dashboardOrigin &&
 		urlOrigin(embeddingUrl) === dashboardOrigin;
-	dashboardSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
-		allowsClipboardWrite(
-			webContents,
-			permission,
-			requestingOrigin,
-			details.embeddingOrigin ?? requestingOrigin,
-		),
+	session.defaultSession.setPermissionCheckHandler(
+		(webContents, permission, requestingOrigin, details) =>
+			allowsClipboardWrite(
+				webContents,
+				permission,
+				requestingOrigin,
+				details.embeddingOrigin ?? requestingOrigin,
+			),
 	);
-	dashboardSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-		callback(
-			allowsClipboardWrite(webContents, permission, details.requestingUrl, webContents.getURL()),
-		);
-	});
+	session.defaultSession.setPermissionRequestHandler(
+		(webContents, permission, callback, details) => {
+			callback(
+				allowsClipboardWrite(webContents, permission, details.requestingUrl, webContents.getURL()),
+			);
+		},
+	);
 }
 
 function createApplicationMenu(): void {
@@ -318,7 +325,7 @@ function createApplicationMenu(): void {
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createMainWindow(initialUrl: string): Promise<void> {
+async function createMainWindow(initialUrl: string, timeoutMs?: number): Promise<void> {
 	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "shell-preload.cjs");
 	const icon = desktopIcon();
 	const window = new BrowserWindow({
@@ -331,7 +338,6 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
 			preload,
-			partition: DASHBOARD_PARTITION,
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
@@ -386,7 +392,7 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 		if (mainWindow === window) mainWindow = null;
 	});
 
-	await window.loadURL(initialUrl);
+	await loadWindowUrl(window, initialUrl, timeoutMs);
 }
 
 async function showConnectWindow(): Promise<void> {
@@ -508,6 +514,10 @@ function setTrayState(state: DesktopBootstrapState | null): void {
 
 async function refreshTrayState(): Promise<void> {
 	if (trayStateRefresh) return trayStateRefresh;
+	if (installationState().requiresMove) {
+		setTrayState(null);
+		return;
+	}
 	trayStateChecking = true;
 	renderTrayMenu();
 	const refresh = (async () => {
@@ -601,6 +611,11 @@ function installationState(): DesktopInstallationState {
 	return {
 		requiresMove: process.platform === "darwin" && app.isPackaged && !app.isInApplicationsFolder(),
 	};
+}
+
+function assertRuntimeLocation(): void {
+	if (!installationState().requiresMove) return;
+	throw new DesktopConnectError("Move Clawdi to Applications before starting its local runtime.");
 }
 
 function assertSafeDaemonMutation(): void {
@@ -752,8 +767,47 @@ async function prepareDashboardSession(): Promise<void> {
 	const ticket = await cli.createDashboardSession();
 	const url = new URL("/desktop-auth", desktopWebUrl());
 	url.hash = new URLSearchParams({ ticket }).toString();
-	if (mainWindow) await mainWindow.loadURL(url.toString());
-	else await createMainWindow(url.toString());
+	const window = mainWindow;
+	if (!window || window.isDestroyed()) {
+		await createMainWindow(url.toString(), DASHBOARD_LOAD_TIMEOUT_MS);
+	} else {
+		await loadWindowUrl(window, url.toString(), DASHBOARD_LOAD_TIMEOUT_MS);
+	}
+}
+
+async function loadWindowUrl(
+	window: BrowserWindow,
+	url: string,
+	timeoutMs?: number,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const loading = window.loadURL(url);
+		if (timeoutMs === undefined) await loading;
+		else {
+			await Promise.race([
+				loading,
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(() => reject(new Error("Dashboard load timed out")), timeoutMs);
+				}),
+			]);
+		}
+	} catch (error) {
+		if (!isExpectedDashboardRedirect(error, url)) throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function isExpectedDashboardRedirect(error: unknown, requestedUrl: string): boolean {
+	const requestedOrigin = urlOrigin(requestedUrl);
+	if (requestedOrigin !== urlOrigin(desktopWebUrl()) || !isRecord(error)) return false;
+	return (
+		error.code === "ERR_ABORTED" &&
+		error.errno === ERR_ABORTED &&
+		typeof error.url === "string" &&
+		urlOrigin(error.url) === requestedOrigin
+	);
 }
 
 function desktopWebUrl(): string {
@@ -809,4 +863,8 @@ function urlOrigin(raw: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

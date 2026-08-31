@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
-const [executablePath, runtimeRoot] = process.argv.slice(2);
-if (!executablePath || !runtimeRoot) {
-	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root>");
+const [executablePath, runtimeRoot, surface = "install", rawDashboardUrl] = process.argv.slice(2);
+if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
+	throw new Error(
+		"usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard] [dashboard-url]",
+	);
 }
+const dashboardUrl = surface === "dashboard" ? readDashboardUrl(rawDashboardUrl) : null;
 
 const home = join(runtimeRoot, "home");
 const clawdiHome = join(runtimeRoot, "state");
@@ -16,24 +20,62 @@ mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 
 const output = [];
-const desktop = spawn(executablePath, ["--remote-debugging-port=0"], {
-	env: { ...process.env, HOME: home, CLAWDI_HOME: clawdiHome },
+const dashboardSmoke = dashboardUrl ? await startDashboardServer(dashboardUrl, output) : null;
+const desktopArgs = [`--user-data-dir=${join(runtimeRoot, "electron-data")}`];
+if (surface === "install") desktopArgs.push("--remote-debugging-port=0");
+else {
+	desktopArgs.push(
+		`--log-net-log=${join(runtimeRoot, "net-log.json")}`,
+		"--net-log-capture-mode=Everything",
+		"--no-proxy-server",
+	);
+}
+const desktop = spawn(executablePath, desktopArgs, {
+	env: {
+		...process.env,
+		HOME: home,
+		CLAWDI_HOME: clawdiHome,
+		CLAWDI_DESKTOP_SMOKE_LOG_FILE: join(runtimeRoot, "native-cli.log"),
+		ELECTRON_ENABLE_LOGGING: "1",
+	},
 	stdio: ["ignore", "pipe", "pipe"],
 });
 desktop.stdout.on("data", (chunk) => output.push(chunk.toString()));
 desktop.stderr.on("data", (chunk) => output.push(chunk.toString()));
 
 let browser;
+let failure;
 try {
-	const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
-	browser = await chromium.connectOverCDP(endpoint);
-	const context = browser.contexts()[0];
-	if (!context) throw new Error("Packaged app did not create a browser context.");
-	const window = await waitForConnectWindow(context, 30_000);
-	const signIn = window.getByRole("heading", { name: "Sign in to Clawdi" });
+	if (surface === "dashboard") {
+		await waitForDashboardReady(dashboardSmoke, desktop, 45_000);
+	} else {
+		const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
+		browser = await chromium.connectOverCDP(endpoint);
+		const context = browser.contexts()[0];
+		if (!context) throw new Error("Packaged app did not create a browser context.");
+		await verifyInstallGate(context, desktop, output);
+	}
+} catch (error) {
+	failure = error;
+} finally {
+	await browser?.close().catch(() => undefined);
+	await stopProcess(desktop);
+	await closeServer(dashboardSmoke?.server);
+}
+if (failure) {
+	throw new Error(
+		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, runtimeRoot, dashboardUrl)}`,
+	);
+}
+
+async function verifyInstallGate(context, desktop, output) {
+	const window = await waitForWindow(context, 30_000);
+	const moveToApplications = window.getByRole("heading", {
+		name: "Move Clawdi to Applications",
+	});
 	const failure = window.getByRole("heading", { name: "Couldn't finish setup" });
 	await Promise.race([
-		signIn.waitFor({ state: "visible", timeout: 20_000 }),
+		moveToApplications.waitFor({ state: "visible", timeout: 20_000 }),
 		failure.waitFor({ state: "visible", timeout: 20_000 }).then(async () => {
 			throw new Error(`Packaged setup failed:\n${await window.locator("body").innerText()}`);
 		}),
@@ -44,18 +86,14 @@ try {
 		desktop.exitCode === null && desktop.signalCode === null,
 		`Desktop exited when Connect Agent closed.\n${output.join("")}`,
 	);
-} finally {
-	await browser?.close().catch(() => undefined);
-	await stopProcess(desktop);
 }
 
-async function waitForConnectWindow(context, timeout) {
+async function waitForWindow(context, timeout) {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		const window = context.pages().find((page) => {
 			try {
-				const url = new URL(page.url());
-				return url.protocol === "clawdi-app:" && url.pathname === "/renderer.html";
+				return new URL(page.url()).protocol === "clawdi-app:";
 			} catch {
 				return false;
 			}
@@ -64,11 +102,162 @@ async function waitForConnectWindow(context, timeout) {
 		await delay(100);
 	}
 	throw new Error(
-		`Packaged app did not open Connect Agent. Pages: ${context
+		`Packaged app did not open the expected window. Pages: ${context
 			.pages()
 			.map((page) => page.url())
 			.join(", ")}`,
 	);
+}
+
+function readDashboardUrl(raw) {
+	const url = new URL(raw);
+	if (
+		url.protocol !== "http:" ||
+		url.hostname !== "127.0.0.1" ||
+		!url.port ||
+		url.pathname !== "/" ||
+		url.username ||
+		url.password
+	) {
+		throw new Error("dashboard-url must be an HTTP 127.0.0.1 origin.");
+	}
+	return url;
+}
+
+async function startDashboardServer(url, output) {
+	let signalReady;
+	const ready = new Promise((resolve) => {
+		signalReady = resolve;
+	});
+	const server = createServer((request, response) => {
+		const requestUrl = new URL(request.url ?? "/", url);
+		output.push(`Dashboard request: ${requestUrl.pathname}\n`);
+		let body;
+		if (requestUrl.pathname === "/desktop-auth") {
+			body = '<!doctype html><title>Signing in</title><script src="/redirect.js"></script>';
+		} else if (requestUrl.pathname === "/redirect.js") {
+			response
+				.writeHead(200, {
+					"Cache-Control": "no-store",
+					"Content-Type": "text/javascript; charset=utf-8",
+				})
+				.end('location.replace("/");');
+			return;
+		} else if (requestUrl.pathname === "/") {
+			body =
+				'<!doctype html><title>Dashboard</title><h1>Dashboard ready</h1><script src="/ready.js"></script>';
+		} else if (requestUrl.pathname === "/ready.js") {
+			response
+				.writeHead(200, {
+					"Cache-Control": "no-store",
+					"Content-Type": "text/javascript; charset=utf-8",
+				})
+				.end(
+					'if (document.querySelector("h1")?.textContent === "Dashboard ready") fetch("/ready", { method: "POST" });',
+				);
+			return;
+		} else if (request.method === "POST" && requestUrl.pathname === "/ready") {
+			response.writeHead(204).end();
+			signalReady();
+			return;
+		} else {
+			response.writeHead(404).end();
+			return;
+		}
+		response
+			.writeHead(200, {
+				"Cache-Control": "no-store",
+				"Content-Type": "text/html; charset=utf-8",
+			})
+			.end(body);
+	});
+	await new Promise((resolve, reject) => {
+		const onError = (error) => reject(error);
+		server.once("error", onError);
+		server.listen(Number(url.port), url.hostname, () => {
+			server.off("error", onError);
+			resolve();
+		});
+	});
+	return { ready, server };
+}
+
+async function waitForDashboardReady(smoke, desktop, timeout) {
+	if (!smoke) throw new Error("Dashboard smoke server is not running.");
+	let timer;
+	try {
+		await Promise.race([
+			smoke.ready,
+			once(desktop, "exit").then(([code, signal]) => {
+				throw new Error(`Packaged app exited (code=${code}, signal=${signal}).`);
+			}),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error("Timed out loading the dashboard.")), timeout);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function diagnostics(output, runtimeRoot, dashboardUrl) {
+	let cliLog = "<no CLI calls>";
+	try {
+		cliLog = readFileSync(join(runtimeRoot, "native-cli.log"), "utf8").trim() || cliLog;
+	} catch {}
+	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliLog}\nNetwork events:\n${networkDiagnostics(runtimeRoot, dashboardUrl)}`;
+}
+
+function networkDiagnostics(runtimeRoot, dashboardUrl) {
+	if (!dashboardUrl) return "<not captured>";
+	try {
+		const log = JSON.parse(readFileSync(join(runtimeRoot, "net-log.json"), "utf8"));
+		const eventTypes = new Map(
+			Object.entries(log.constants?.logEventTypes ?? {}).map(([name, value]) => [value, name]),
+		);
+		const needle = dashboardUrl.origin;
+		const allEvents = Array.isArray(log.events) ? log.events : [];
+		const sourceIds = new Set(
+			allEvents
+				.filter((event) => JSON.stringify(event.params ?? {}).includes(needle))
+				.map((event) => event.source?.id)
+				.filter((id) => typeof id === "number"),
+		);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const event of allEvents) {
+				if (!sourceIds.has(event.source?.id)) continue;
+				for (const id of dependencyIds(event.params)) {
+					if (sourceIds.has(id)) continue;
+					sourceIds.add(id);
+					changed = true;
+				}
+			}
+		}
+		const events = allEvents
+			.filter((event) => sourceIds.has(event.source?.id))
+			.slice(-80)
+			.map((event) => ({
+				type: eventTypes.get(event.type) ?? event.type,
+				phase: event.phase,
+				source: event.source,
+				params: event.params,
+			}));
+		return events.length > 0 ? JSON.stringify(events, null, 2) : `<no events for ${needle}>`;
+	} catch (error) {
+		return `<could not read net log: ${error.message}>`;
+	}
+}
+
+function dependencyIds(value) {
+	const ids = [];
+	if (!value || typeof value !== "object") return ids;
+	if (value.source_dependency && typeof value.source_dependency.id === "number") {
+		ids.push(value.source_dependency.id);
+	}
+	for (const child of Object.values(value)) ids.push(...dependencyIds(child));
+	return ids;
 }
 
 function waitForDevToolsEndpoint(child, logs, timeout) {
@@ -119,6 +308,11 @@ async function stopProcess(child) {
 	if (await Promise.race([exited, delay(5_000).then(() => false)])) return;
 	child.kill("SIGKILL");
 	await exited;
+}
+
+async function closeServer(server) {
+	if (!server) return;
+	await new Promise((resolve) => server.close(resolve));
 }
 
 function delay(milliseconds) {

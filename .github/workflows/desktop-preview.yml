@@ -34,17 +34,20 @@ jobs:
           bun run --cwd apps/desktop test:internal
           bun x biome ci apps/desktop packages/shared/src/desktop.ts
 
-      - name: Build unsigned preview DMG
+      - name: Build ad-hoc signed preview DMG
         run: |
           bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
-          bun x electron-builder \
+          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
             --projectDir apps/desktop \
             --mac dmg \
-            --arm64
+            --arm64 \
+            --config.mac.identity=- \
+            --config.mac.hardenedRuntime=false
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
           test "${#dmg[@]}" -eq 1
+          dmg_path="$PWD/${dmg[0]}"
           mount="$RUNNER_TEMP/clawdi-dmg"
           runtime_home="$RUNNER_TEMP/clawdi-runtime"
           mkdir -p "$mount" "$runtime_home/home" "$runtime_home/state"
@@ -57,6 +60,9 @@ jobs:
           cli="$runtime_home/Clawdi.app/Contents/Resources/native/clawdi"
           test -x "$cli"
           file "$cli" | grep -q "arm64"
+          codesign --verify --deep --strict --verbose=2 "$runtime_home/Clawdi.app"
+          codesign --verify --strict --verbose=2 "$cli"
+          codesign -dv --verbose=4 "$runtime_home/Clawdi.app" 2>&1 | grep -q '^Signature=adhoc$'
           HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
             "$cli" update --native-identity
           HOME="$runtime_home/home" CLAWDI_HOME="$runtime_home/state" \
@@ -65,13 +71,52 @@ jobs:
             "$cli" daemon doctor --json
           node ../scripts/smoke-packaged.mjs \
             "$runtime_home/Clawdi.app/Contents/MacOS/Clawdi" \
-            "$runtime_home/app"
+            "$runtime_home/install-smoke" \
+            install
+          cd "$GITHUB_WORKSPACE"
+          smoke_web_url="http://127.0.0.1:17891"
+          smoke_output="$RUNNER_TEMP/clawdi-smoke-build"
+          native_cli="apps/desktop/resources/native/clawdi"
+          production_cli="$RUNNER_TEMP/clawdi-production-cli"
+          cp "$native_cli" "$production_cli"
+          cp apps/desktop/scripts/fake-native-smoke.sh "$native_cli"
+          chmod +x "$native_cli"
+          trap 'cp "$production_cli" "$native_cli"' EXIT
+          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
+            --projectDir apps/desktop \
+            --mac dir \
+            --arm64 \
+            --config.directories.output="$smoke_output" \
+            --config.extraMetadata.clawdiWebUrl="$smoke_web_url" \
+            --config.mac.identity=- \
+            --config.mac.hardenedRuntime=false
+          cp "$production_cli" "$native_cli"
+          trap - EXIT
+          dashboard_app="$runtime_home/Applications/Clawdi.app"
+          mkdir -p "$(dirname "$dashboard_app")"
+          ditto "$smoke_output/mac-arm64/Clawdi.app" "$dashboard_app"
+          codesign --verify --deep --strict --verbose=2 "$dashboard_app"
+          metadata_dir="$RUNNER_TEMP/clawdi-smoke-metadata"
+          mkdir -p "$metadata_dir"
+          (
+            cd "$metadata_dir"
+            bun x @electron/asar extract-file \
+              "$dashboard_app/Contents/Resources/app.asar" \
+              package.json
+            test "$(node -p 'require("./package.json").clawdiWebUrl')" = "$smoke_web_url"
+          )
+          node apps/desktop/scripts/smoke-packaged.mjs \
+            "$dashboard_app/Contents/MacOS/Clawdi" \
+            "$runtime_home/dashboard-smoke" \
+            dashboard \
+            "$smoke_web_url"
+          cd "$(dirname "$dmg_path")"
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 
-      - name: Upload unsigned preview
+      - name: Upload ad-hoc signed preview
         uses: actions/upload-artifact@v7
         with:
-          name: clawdi-macos-arm64-unsigned-preview
+          name: clawdi-macos-arm64-ad-hoc-preview
           path: |
             apps/desktop/release/Clawdi-*.dmg
             apps/desktop/release/Clawdi-*.dmg.sha256

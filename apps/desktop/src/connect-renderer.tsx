@@ -4,7 +4,6 @@ import type {
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopDetectedAgent,
-	DesktopInstallationState,
 } from "@clawdi/shared/desktop";
 import {
 	ArrowRight,
@@ -31,6 +30,7 @@ declare global {
 
 type Stage =
 	| "loading"
+	| "install"
 	| "authenticate"
 	| "authenticating"
 	| "select"
@@ -42,9 +42,6 @@ type Stage =
 function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	const [stage, setStage] = useState<Stage>("loading");
 	const [bootstrap, setBootstrap] = useState<DesktopBootstrapState | null>(null);
-	const [installation, setInstallation] = useState<DesktopInstallationState>({
-		requiresMove: false,
-	});
 	const [agents, setAgents] = useState<DesktopDetectedAgent[]>([]);
 	const [selected, setSelected] = useState<Set<DesktopAgentType>>(new Set());
 	const [failure, setFailure] = useState<string | null>(null);
@@ -59,12 +56,8 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("loading");
 		setFailure(null);
 		try {
-			const [detected, location] = await Promise.all([
-				bridge.detectAgents(),
-				bridge.getInstallationState(),
-			]);
+			const detected = await bridge.detectAgents();
 			setAgents(detected);
-			setInstallation(location);
 			setSelected(
 				new Set(
 					detected
@@ -82,6 +75,11 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("loading");
 		setFailure(null);
 		try {
+			const location = await bridge.getInstallationState();
+			if (location.requiresMove) {
+				setStage("install");
+				return;
+			}
 			const state = await bridge.getBootstrapState();
 			setBootstrap(state);
 			if (!state.auth.authenticated) {
@@ -147,12 +145,11 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			const result = await bridge.moveToApplicationsFolder();
 			if (result.status === "cancelled") {
-				setStage("select");
+				setStage("install");
 				return;
 			}
 			if (result.status === "not-required") {
-				setInstallation({ requiresMove: false });
-				await connect();
+				await load();
 			}
 		} catch (error) {
 			fail(error);
@@ -182,6 +179,32 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 			<section className="content">
 				{stage === "loading" ? (
 					<Centered icon={<LoaderCircle className="spin" />} title="Checking this Mac" />
+				) : null}
+
+				{stage === "install" ? (
+					<div className="stack">
+						<div className="notice install-notice">
+							<span className="icon-tile">
+								<FolderInput />
+							</span>
+							<div>
+								<h2>Move Clawdi to Applications</h2>
+								<p>
+									Clawdi must run from Applications so macOS can safely start its bundled runtime
+									and background sync.
+								</p>
+							</div>
+						</div>
+						<footer className="actions">
+							<button
+								className="button primary"
+								type="button"
+								onClick={() => void moveToApplications()}
+							>
+								Move to Applications <ArrowRight />
+							</button>
+						</footer>
+					</div>
 				) : null}
 
 				{stage === "authenticate" ? (
@@ -233,7 +256,6 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						selected={selected}
 						account={bootstrap?.auth.user?.email}
 						daemonReady={bootstrap?.daemon.running === true}
-						requiresMove={installation.requiresMove}
 						onToggle={(type, checked) => {
 							setSelected((current) => {
 								const next = new Set(current);
@@ -244,7 +266,6 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						}}
 						onRefresh={() => void loadAgents()}
 						onConnect={() => void connect()}
-						onMoveToApplications={() => void moveToApplications()}
 						onOpenDashboard={() => void openDashboard()}
 					/>
 				) : null}
@@ -307,22 +328,18 @@ function AgentSelection({
 	selected,
 	account,
 	daemonReady,
-	requiresMove,
 	onToggle,
 	onRefresh,
 	onConnect,
-	onMoveToApplications,
 	onOpenDashboard,
 }: {
 	agents: DesktopDetectedAgent[];
 	selected: ReadonlySet<DesktopAgentType>;
 	account?: string;
 	daemonReady: boolean;
-	requiresMove: boolean;
 	onToggle(type: DesktopAgentType, checked: boolean): void;
 	onRefresh(): void;
 	onConnect(): void;
-	onMoveToApplications(): void;
 	onOpenDashboard(): void;
 }) {
 	const found = useMemo(
@@ -375,45 +392,17 @@ function AgentSelection({
 				})}
 			</div>
 
-			{requiresMove && shouldConnect ? (
-				<div className="notice install-notice">
-					<span className="icon-tile">
-						<FolderInput />
-					</span>
-					<div>
-						<h2>Move Clawdi to Applications</h2>
-						<p>
-							Background sync must be installed from Applications so macOS always starts the correct
-							bundled runtime.
-						</p>
-					</div>
-				</div>
-			) : null}
-
 			<footer className="actions">
-				{requiresMove && shouldConnect ? (
-					<button className="button secondary" type="button" onClick={onOpenDashboard}>
-						Open dashboard
-					</button>
-				) : null}
 				<button
 					className="button primary"
 					type="button"
-					onClick={
-						requiresMove && shouldConnect
-							? onMoveToApplications
-							: shouldConnect
-								? onConnect
-								: onOpenDashboard
-					}
+					onClick={shouldConnect ? onConnect : onOpenDashboard}
 				>
-					{requiresMove && shouldConnect
-						? "Move to Applications"
-						: selected.size > 0
-							? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
-							: canRepairDaemon
-								? "Start background sync"
-								: "Open dashboard"}
+					{selected.size > 0
+						? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+						: canRepairDaemon
+							? "Start background sync"
+							: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>
