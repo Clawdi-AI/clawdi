@@ -343,7 +343,6 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK",
-	"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_ENV_VARS_SDK",
 	"OPENCLAW_AGENT_DIR",
 	"OPENCLAW_STATE_DIR",
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
@@ -1058,40 +1057,6 @@ function hostedCliManifestResponse(
 	};
 }
 
-function fakeManagedOpenClawProviderPluginCommands(): string {
-	return `
-state_dir="\${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
-plugin_root="$state_dir/extensions/clawdi-managed-provider"
-if [ "$*" = "plugins install --help" ] || [ "$*" = "plugins enable --help" ]; then
-  printf '%s\n' '--accept-capabilities'
-  exit 0
-fi
-if [ "$*" = "plugins inspect clawdi-managed-provider --json" ]; then
-  test -f "$plugin_root/openclaw.plugin.json" || exit 1
-  test -f "$plugin_root/.source-path" || exit 1
-  enabled=false
-  status=disabled
-  if [ -f "$plugin_root/.enabled" ]; then enabled=true; status=loaded; fi
-  source_path="$(cat "$plugin_root/.source-path")"
-  printf '{"plugin":{"id":"clawdi-managed-provider","source":"%s/index.js","origin":"global","status":"%s","version":"1.0.0","enabled":%s},"install":{"source":"path","sourcePath":"%s","installPath":"%s","version":"1.0.0"}}\\n' "$plugin_root" "$status" "$enabled" "$source_path" "$plugin_root"
-  exit 0
-fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ] && [ "\${4:-}" = "--force" ] && [ "\${5:-}" = "--accept-capabilities" ]; then
-  rm -rf "$plugin_root"
-  mkdir -p "$(dirname "$plugin_root")" "$state_dir/state"
-  cp -R "$3" "$plugin_root"
-  printf '%s\\n' "$3" > "$plugin_root/.source-path"
-  printf '%s\\n' installed > "$state_dir/state/openclaw.sqlite"
-  exit 0
-fi
-if [ "$*" = "plugins enable clawdi-managed-provider --accept-capabilities" ]; then
-  test -f "$plugin_root/openclaw.plugin.json"
-  touch "$plugin_root/.enabled"
-  exit 0
-fi
-`;
-}
-
 function fakeOpenClawConfigSchemaCommand(): string {
 	return `if [ "$*" = "config schema" ]; then
   printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
@@ -1149,7 +1114,6 @@ if [ "$*" = "gateway install --force --json" ]; then
   printf '{"ok":true}\n'
   exit 0
 fi
-${fakeManagedOpenClawProviderPluginCommands()}
 ${fakeOpenClawConfigPatchCommand(configPath)}
 exit 0
 `,
@@ -1195,7 +1159,6 @@ fi
 if [ "\${1:-}" = "plugins" ] && grep -q 'legacyInvalidConfig' '${configPath}' 2>/dev/null; then
   exit 1
 fi
-${fakeManagedOpenClawProviderPluginCommands()}
 ${fakeOpenClawConfigSchemaCommand()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then cat >/dev/null; fi
 exit 0
@@ -1873,28 +1836,7 @@ function writeHermesDashboardPython(home: string, compatible: boolean): string {
 
 function writeFakeOpenClawProviderAuthSdk(directory: string, callsPath: string): string {
 	const sdkPath = join(directory, "fake-openclaw-provider-auth.mjs");
-	const providerEnvVarsSdkPath = join(directory, "fake-openclaw-provider-env-vars.mjs");
 	mkdirSync(directory, { recursive: true });
-	process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_ENV_VARS_SDK = providerEnvVarsSdkPath;
-	writeFileSync(
-		providerEnvVarsSdkPath,
-		`import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-export function listKnownProviderAuthEnvVarNames() {
-  const stateDir = process.env.OPENCLAW_STATE_DIR || join(process.env.HOME, ".openclaw");
-  const manifestPath = join(
-    stateDir,
-    "extensions",
-    "clawdi-managed-provider",
-    "openclaw.plugin.json",
-  );
-  if (!existsSync(manifestPath)) return [];
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const provider = manifest.setup?.providers?.find((entry) => entry?.id === "clawdi");
-  return Array.isArray(provider?.envVars) ? provider.envVars : [];
-}
-`,
-	);
 	writeFileSync(
 		sdkPath,
 		`import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -3313,7 +3255,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 	});
 
-	it("pins OpenClaw context and repairs config before installing the managed provider plugin", () => {
+		it("pins OpenClaw context and repairs config before provider projection", () => {
 		const home = join(root, "invalid-openclaw-config", "home", "clawdi");
 		const state = join(root, "invalid-openclaw-config", "var", "lib", "clawdi");
 		const run = join(root, "invalid-openclaw-config", "run", "clawdi");
@@ -3342,15 +3284,10 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const convergence = convergeRuntimeManifest(loaded, paths);
 
 		expect(convergence.installErrors).toEqual([]);
-		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
-		const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
-		const installIndex = commands.findIndex(
-			(command) =>
-				command.startsWith("plugins install ") &&
-				command.endsWith(" --force --accept-capabilities"),
-		);
-		expect(installIndex, commands.join(" | ")).toBeGreaterThan(-1);
-		expect(doctorIndex).toBeLessThan(installIndex);
+			const commands = readFileSync(commandLog, "utf8").trim().split("\n");
+			const doctorIndex = commands.indexOf("doctor --fix --non-interactive");
+			expect(doctorIndex, commands.join(" | ")).toBeGreaterThan(-1);
+			expect(commands.some((command) => command.startsWith("plugins "))).toBe(false);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).not.toHaveProperty("legacyInvalidConfig");
 		expect(statSync(openClawTmp).mode & 0o777).toBe(0o700);
 
@@ -6982,7 +6919,6 @@ if [ "\${1:-}" = "--version" ]; then
   exit 0
 fi
 ${fakeOpenClawConfigSchemaCommand()}
-${fakeManagedOpenClawProviderPluginCommands()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >/dev/null
   exit 0

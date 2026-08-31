@@ -20,7 +20,6 @@ import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
 
-export const CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID = "clawdi-managed-provider";
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
@@ -198,7 +197,8 @@ function resolveSdkExports(
 	const startPaths = [location.commandPath, location.appRoot];
 	const resolve = (path: Parameters<typeof resolveOpenClawSdkExport>[2]) =>
 		resolveOpenClawSdkExport(home, startPaths, path);
-	const testOverride = (name: "PROVIDER_AUTH" | "PROVIDER_ENV_VARS") => {
+	const testOverride = () => {
+		const name = "PROVIDER_AUTH";
 		const variable = `CLAWDI_RUNTIME_TEST_OPENCLAW_${name}_SDK`;
 		const value = process.env[variable]?.trim();
 		if (value && process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
@@ -209,9 +209,7 @@ function resolveSdkExports(
 	return {
 		configMutation: resolve(OPENCLAW_SDK_EXPORT_PATHS.configMutation),
 		deviceBootstrap: resolve(OPENCLAW_SDK_EXPORT_PATHS.deviceBootstrap),
-		providerAuth: testOverride("PROVIDER_AUTH") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerAuth),
-		providerEnvVars:
-			testOverride("PROVIDER_ENV_VARS") ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerEnvVars),
+		providerAuth: testOverride() ?? resolve(OPENCLAW_SDK_EXPORT_PATHS.providerAuth),
 	};
 }
 
@@ -219,9 +217,6 @@ export function createOpenClawHostedContext(manifest: RuntimeManifest, home: str
 	const stateRoot = join(home, ".openclaw");
 	const statePath = (...parts: string[]) => join(stateRoot, ...parts);
 	const configPath = statePath("openclaw.json");
-	const database = statePath("state", "openclaw.sqlite");
-	const sourceDir = statePath("managed-sources", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
-	const installDir = statePath("extensions", CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID);
 	const sdk = resolveSdkExports(home);
 	return {
 		home,
@@ -231,16 +226,6 @@ export function createOpenClawHostedContext(manifest: RuntimeManifest, home: str
 		agentDirs: {
 			main: statePath("agents", "main", "agent"),
 			managed: [] as string[],
-		},
-		providerPlugin: {
-			sourceDir,
-			installDir,
-			mutationTargets: [
-				configPath,
-				sourceDir,
-				installDir,
-				...["", "-wal", "-shm"].map((suffix) => database + suffix),
-			],
 		},
 		sdk,
 		requireSdkExport(name: keyof typeof sdk): string {

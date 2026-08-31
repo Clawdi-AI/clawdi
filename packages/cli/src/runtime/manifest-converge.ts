@@ -75,6 +75,7 @@ import {
 	ensureHostedCodexCli,
 	previewHostedAiProviderProjectionRevision,
 } from "./manifest-providers";
+import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 import {
 	removeStaleRuntimeRunConfigs,
@@ -91,7 +92,6 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
-import { ensureManagedOpenClawProviderPlugin } from "./openclaw-managed-provider-plugin";
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
@@ -492,20 +492,18 @@ function prepareRuntimeApplyDependencies(
 		}
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		const managedOpenClawObservation = state.observations.get("openclaw");
+		if (managedOpenClawObservation?.commandPath) {
+			removeLegacyManagedOpenClawProviderPlugin({
+				home: openClawContext.home,
+				stateRoot: openClawContext.stateRoot,
+				commandPath: managedOpenClawObservation.commandPath,
+			});
+		}
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
 			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
 				openClawContext,
 				runtimeProbeRevision(context, "openclaw"),
 			);
-			if (!managedOpenClawObservation.commandPath) {
-				throw new Error("OpenClaw managed provider plugin requires an installed runtime");
-			}
-			ensureManagedOpenClawProviderPlugin({
-				context: openClawContext,
-				commandPath: managedOpenClawObservation.commandPath,
-				revision: runtimeProbeRevision(context, "openclaw"),
-				refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
-			});
 		}
 		if (opts.preparedHostedAgentPlugins) {
 			const commands = hostedAgentPluginCommands(projectionHome);

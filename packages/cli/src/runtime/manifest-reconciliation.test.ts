@@ -750,20 +750,6 @@ EOF
 	  "agents list --json")
 	    printf '[{"id":"main","workspace":"%s"}]\n' "$HOME/.openclaw/workspace"
 	    ;;
-	  "plugins install --help"|"plugins enable --help")
-	    printf '%s\n' '--accept-capabilities'
-	    ;;
-	  "plugins inspect clawdi-managed-provider --json")
-	    test -f "$HOME/.openclaw/extensions/clawdi-managed-provider/openclaw.plugin.json" || exit 1
-	    printf '{"plugin":{"id":"clawdi-managed-provider","name":"Clawdi Managed Provider Metadata","source":"%s/.openclaw/extensions/clawdi-managed-provider/index.js","origin":"global","status":"loaded","version":"1.0.0","enabled":true},"mcpServers":[],"diagnostics":[],"install":{"source":"path","sourcePath":"%s/.openclaw/managed-sources/clawdi-managed-provider","installPath":"%s/.openclaw/extensions/clawdi-managed-provider"}}\n' "$HOME" "$HOME" "$HOME"
-	    ;;
-	  "plugins install "*" --force --accept-capabilities")
-	    rm -rf "$HOME/.openclaw/extensions/clawdi-managed-provider"
-	    mkdir -p "$HOME/.openclaw/extensions"
-	    cp -R "$3" "$HOME/.openclaw/extensions/clawdi-managed-provider"
-	    ;;
-	  "plugins enable clawdi-managed-provider --accept-capabilities")
-	    ;;
 	  "skills install "*)
 	    source_dir="$3"
 	    skill_id="$7"
@@ -804,7 +790,6 @@ function writeFakeOpenClawConfigMutationSdk(
 				"./plugin-sdk/config-mutation": "./config-mutation.mjs",
 				"./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs",
 				"./plugin-sdk/provider-auth": "./provider-auth.mjs",
-				"./plugin-sdk/provider-env-vars": "./provider-env-vars.mjs",
 			},
 		}),
 	);
@@ -845,10 +830,6 @@ export const updateAuthProfileStoreWithLock = async () => ({});
 export const listProfilesForProvider = () => [];
 export const removeProviderAuthProfilesWithLock = async () => ({});
 `,
-	);
-	writeFileSync(
-		join(packageRoot, "provider-env-vars.mjs"),
-		`${logImport("provider-env-vars")}export const listKnownProviderAuthEnvVarNames = () => ["CLAWDI_AI_API_KEY"];\n`,
 	);
 	return configPath;
 }
@@ -2703,28 +2684,20 @@ describe("runtime manifest reconciliation invariants", () => {
 				readFileSync(commandLog, "utf8")
 					.trim()
 					.split("\n")
-					.filter(
-						(command) =>
-							command === "agents list --json" ||
-							command === "plugins inspect clawdi-managed-provider --json",
-					),
+						.filter((command) => command === "agents list --json"),
 			);
 		const sdkCounts = () => callCounts(readFileSync(sdkLog, "utf8").trim().split("\n"));
 
 		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
 		const firstHotspots = hotspotCounts();
 		const firstSdkCalls = sdkCounts();
-		for (const hotspot of [
-			"agents list --json",
-			"plugins inspect clawdi-managed-provider --json",
-		]) {
+			for (const hotspot of ["agents list --json"]) {
 			expect(firstHotspots[hotspot]).toBeGreaterThan(0);
 		}
 		for (const sdk of [
 			"device-bootstrap",
 			"provider-auth",
-			"config-mutation",
-			"provider-env-vars",
+				"config-mutation",
 		]) {
 			expect(firstSdkCalls[sdk]).toBeGreaterThan(0);
 		}
@@ -2753,35 +2726,14 @@ describe("runtime manifest reconciliation invariants", () => {
 			firstSdkCalls["config-mutation"] ?? 0,
 		);
 
-		const managedProviderInstallDir = join(
-			paths.userHome,
-			".openclaw",
-			"extensions",
-			"clawdi-managed-provider",
-		);
-		rmSync(managedProviderInstallDir, { recursive: true });
-		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
-		expect(existsSync(managedProviderInstallDir)).toBe(false);
-		expect(hotspotCounts()).toEqual(firstHotspots);
-		expect(
-			converge(manifestFor("https://provider.example.test/v1", 1), {
-				refreshCachedRuntimeProbes: true,
-			}).installErrors,
-		).toEqual([]);
-		expect(existsSync(join(managedProviderInstallDir, "openclaw.plugin.json"))).toBe(true);
-		const selfHealedHotspots = hotspotCounts();
-		expect(selfHealedHotspots["plugins inspect clawdi-managed-provider --json"]).toBeGreaterThan(
-			firstHotspots["plugins inspect clawdi-managed-provider --json"] ?? 0,
-		);
-
-		const rosterConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+			const rosterConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 		const agents = rosterConfig.agents as Record<string, unknown>;
 		agents.list = [{ id: "research", agentDir: join(paths.userHome, "research-agent") }];
 		writeFileSync(configPath, `${JSON.stringify(rosterConfig, null, 2)}\n`);
 		const beforeRosterChange = sdkCounts();
 		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
-		expect(hotspotCounts()["agents list --json"]).toBeGreaterThan(
-			selfHealedHotspots["agents list --json"] ?? 0,
+				expect(hotspotCounts()["agents list --json"]).toBeGreaterThan(
+					firstHotspots["agents list --json"] ?? 0,
 		);
 		const afterRosterChange = sdkCounts();
 		expect(afterRosterChange["provider-auth"]).toBeGreaterThan(
@@ -2792,11 +2744,8 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(converge(manifestFor("https://provider-v2.example.test/v1", 2)).installErrors).toEqual(
 			[],
 		);
-		const revisedHotspots = hotspotCounts();
-		expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
-		expect(revisedHotspots["plugins inspect clawdi-managed-provider --json"]).toBeGreaterThan(
-			firstHotspots["plugins inspect clawdi-managed-provider --json"] ?? 0,
-		);
+			const revisedHotspots = hotspotCounts();
+			expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
 		const revisedSdkCalls = sdkCounts();
 		for (const [sdk, count] of Object.entries(firstSdkCalls)) {
 			expect(revisedSdkCalls[sdk]).toBeGreaterThan(count);

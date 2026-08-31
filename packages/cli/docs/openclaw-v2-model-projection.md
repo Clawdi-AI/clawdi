@@ -52,24 +52,17 @@ not written into the provider patch.
 The normalized `clawdi` provider is reserved for this managed projection. Its
 `CLAWDI_AI_API_KEY` environment SecretRef is the sole API-key authority.
 OpenClaw serializes that SecretRef id as a marker in generated `models.json`,
-and doctor scans that catalog independently of explicit provider auth. Before
-provider projection, Hosted v2 installs and enables a credential-free,
-Clawdi-owned OpenClaw plugin whose setup metadata declares:
-
-```json
-{
-  "setup": {
-    "providers": [{ "id": "clawdi", "envVars": ["CLAWDI_AI_API_KEY"] }]
-  }
-}
-```
-
-Convergence verifies the effective marker through the public provider-env-vars
-SDK and fails closed before projection or cleanup if it is absent. Explicit
-`auth: "api-key"` controls execution precedence but does not replace this
-doctor prevention. Hosted v2 uses OpenClaw's official installer without a
-version argument; audited packages remain compatibility evidence rather than
-install pins. No legacy Hosted plugin participates in this contract.
+and doctor scans that catalog independently of explicit provider auth. The
+supported `2026.7.1-2` and `2026.8.1` packages are tested with the native env
+projection, an explicit Doctor repair, and post-repair auth-store inspection;
+no provider metadata plugin participates in the current contract. Explicit
+`auth: "api-key"` controls execution precedence. A historical beta workaround
+installed `clawdi-managed-provider` only to declare this env marker as metadata.
+Convergence removes a verified Clawdi-owned legacy installation through
+OpenClaw's official uninstall command and refuses to remove a foreign plugin
+with the same id. `2026.7.1-2` may still report the generated marker as a
+non-blocking `secrets audit` finding, without affecting Doctor or runtime
+authentication.
 
 During every proven managed v2 `clawdi` env projection, convergence uses the
 public config-mutation SDK to remove normalized `clawdi` entries from
