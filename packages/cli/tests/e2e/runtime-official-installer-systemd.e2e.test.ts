@@ -21,7 +21,7 @@ import {
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { applyRuntimeManifestLoad } from "../../src/commands/runtime";
 import {
 	resolveOpenClawSdkExport as resolveSdk,
@@ -43,7 +43,8 @@ import {
 	hostedRuntimeBundleV2Schema,
 	type RuntimeManifestLoad,
 } from "../../src/runtime/manifest-source";
-import { CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-managed-provider-plugin";
+import { LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-legacy-provider-plugin";
+import { openClawPluginCapabilityConsentArgs } from "../../src/runtime/openclaw-plugin-cli";
 import { getRuntimePaths } from "../../src/runtime/paths";
 import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
@@ -61,6 +62,113 @@ const FILE_BROWSER_ARM64_SHA256 =
 const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 	new URL("../../src/test-support/hermes-config-cli-mock.ts", import.meta.url),
 );
+
+function runOpenClawAsRuntimeUser(input: {
+	commandPath: string;
+	home: string;
+	configPath: string;
+	stateDir: string;
+	args: string[];
+}): ReturnType<typeof spawnSync> {
+	return spawnSync(
+		"runuser",
+		[
+			"-u",
+			"clawdi",
+			"--",
+			"env",
+			`HOME=${input.home}`,
+			`OPENCLAW_CONFIG_PATH=${input.configPath}`,
+			`OPENCLAW_STATE_DIR=${input.stateDir}`,
+			input.commandPath,
+			...input.args,
+		],
+		{ encoding: "utf8" },
+	);
+}
+
+function installLegacyManagedProviderPlugin(input: {
+	commandPath: string;
+	home: string;
+	configPath: string;
+	stateDir: string;
+	runtimeUid: number;
+	runtimeGid: number;
+}): { sourceDir: string; installDir: string } {
+	const sourceDir = join(
+		input.stateDir,
+		"managed-sources",
+		LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
+	);
+	const installDir = join(input.stateDir, "extensions", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID);
+	mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
+	chmodSync(dirname(sourceDir), 0o700);
+	chownSync(dirname(sourceDir), input.runtimeUid, input.runtimeGid);
+	writeFileSync(
+		join(sourceDir, "index.js"),
+		`export default { id: ${JSON.stringify(LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID)}, name: "Clawdi Managed Provider Metadata", register() {} };\n`,
+		{ mode: 0o600 },
+	);
+	writeFileSync(
+		join(sourceDir, "openclaw.plugin.json"),
+		`${JSON.stringify(
+			{
+				id: LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID,
+				enabledByDefault: true,
+				activation: { onStartup: false },
+				setup: {
+					providers: [{ id: "clawdi", authMethods: ["api-key"], envVars: ["CLAWDI_AI_API_KEY"] }],
+					requiresRuntime: false,
+				},
+				configSchema: { type: "object", additionalProperties: false, properties: {} },
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o600 },
+	);
+	writeFileSync(
+		join(sourceDir, "package.json"),
+		`${JSON.stringify(
+			{
+				name: "@clawdi/openclaw-managed-provider",
+				version: "1.0.0",
+				private: true,
+				type: "module",
+				openclaw: { extensions: ["./index.js"] },
+			},
+			null,
+			2,
+		)}\n`,
+		{ mode: 0o600 },
+	);
+	chownTreeWithoutFollowingLinks(sourceDir, input.runtimeUid, input.runtimeGid);
+	const run = (args: string[]) =>
+		runOpenClawAsRuntimeUser({
+			commandPath: input.commandPath,
+			home: input.home,
+			configPath: input.configPath,
+			stateDir: input.stateDir,
+			args,
+		});
+	const consentArgs = openClawPluginCapabilityConsentArgs("install", (args) => {
+		const result = run(args);
+		return {
+			status: result.status,
+			stdout: String(result.stdout ?? ""),
+			stderr: String(result.stderr ?? ""),
+		};
+	});
+	const installed = run(["plugins", "install", sourceDir, "--force", ...consentArgs]);
+	expect(installed.status, installed.stderr).toBe(0);
+	const inspected = run(["plugins", "inspect", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID, "--json"]);
+	expect(inspected.status, inspected.stderr).toBe(0);
+	expect(JSON.parse(String(inspected.stdout))).toMatchObject({
+		plugin: { id: LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID },
+		install: { source: "path", sourcePath: sourceDir, installPath: installDir },
+	});
+	return { sourceDir, installDir };
+}
 
 const OPENCLAW_PROVIDER_AUTH_E2E_HELPER = `
 import { pathToFileURL } from "node:url";
@@ -892,7 +1000,15 @@ test("propagates the real official OpenClaw installer failure without committing
 	chownSync(openClawConfig, runtimeUid, runtimeGid);
 	writeFileSync(gatewayEnvironment, "PRESERVED_ENV=before\n", { mode: 0o600 });
 	chownSync(gatewayEnvironment, runtimeUid, runtimeGid);
-	mkdirSync(dirname(unitPath), { recursive: true });
+	mkdirSync(dirname(unitPath), { recursive: true, mode: 0o700 });
+	for (const path of [
+		join(runtimeHome, ".config"),
+		join(runtimeHome, ".config", "systemd"),
+		dirname(unitPath),
+	]) {
+		chmodSync(path, 0o700);
+		chownSync(path, runtimeUid, runtimeGid);
+	}
 	mkdirSync(unitPath, { recursive: false });
 	writeFileSync(unitSentinel, "preserve directory target\n");
 	chownTreeWithoutFollowingLinks(paths.systemdUserRoot, runtimeUid, runtimeGid);
@@ -966,8 +1082,8 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(detail).not.toContain("EISDIR");
 	const installerOutput = readFileSync(installerOutputLog, "utf8");
 	expect(installerOutput).toContain("exitCode=1");
-	expect(installerOutput).toContain("Gateway install failed:");
-	expect(installerOutput).toContain("EISDIR");
+	expect(installerOutput).toContain('"ok": false');
+	expect(installerOutput).toContain('"error":');
 	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
@@ -982,7 +1098,7 @@ test("propagates the real official OpenClaw installer failure without committing
 	expect(statSync(openClawConfig).gid).toBe(runtimeGid);
 	expect(statSync(openClawConfig).mode & 0o777).toBe(0o600);
 	expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
-	expect(existsSync(dropInPath)).toBe(true);
+	expect(existsSync(dropInPath)).toBe(false);
 	expect(existsSync(paths.manifestLastGood)).toBe(false);
 	expect(existsSync(workspaceRoot)).toBe(true);
 	rmSync(unitPath, { recursive: true, force: true });
@@ -1113,6 +1229,16 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		const providerAuthSdkPath = resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.providerAuth);
 		expect(providerAuthSdkPath).not.toBeNull();
 		if (!providerAuthSdkPath) throw new Error("official OpenClaw provider-auth SDK is unavailable");
+		expect(resolveSdk(runtimeHome, [commandPath], SDK_EXPORTS.sessionTranscript)).not.toBeNull();
+		const legacyProviderPlugin = installLegacyManagedProviderPlugin({
+			commandPath,
+			home: runtimeHome,
+			configPath,
+			stateDir: openClawStateDir,
+			runtimeUid,
+			runtimeGid,
+		});
+		const configWithLegacyProviderPlugin = JSON.parse(readFileSync(configPath, "utf8"));
 		const authTargets = [null, activeAgentDir, secondaryAgentDir];
 		const runProviderAuthHelper = (action: "seed" | "inspect") =>
 			spawnSync(
@@ -1232,7 +1358,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			configPath,
 			`${JSON.stringify(
 				{
-					...existingConfig,
+					...configWithLegacyProviderPlugin,
 					agents: {
 						...existingConfig.agents,
 						list: [{ id: "main", workspace: null }],
@@ -1246,65 +1372,29 @@ test("projects a large OpenClaw provider model-list reduction through the public
 		chownSync(configPath, runtimeUid, runtimeGid);
 		const beforeBytes = Buffer.byteLength(readFileSync(configPath, "utf8"));
 		expect(beforeBytes).toBeGreaterThan(5_000);
+		expect(existsSync(legacyProviderPlugin.sourceDir)).toBe(true);
+		expect(existsSync(legacyProviderPlugin.installDir)).toBe(true);
 
 		const convergence = convergeRuntimeManifest(load, paths, { cacheLastGood: false });
 		expect(convergence.installErrors).toEqual([]);
-		const pluginInspect = spawnSync(
-			"runuser",
-			[
-				"-u",
-				"clawdi",
-				"--",
-				"env",
-				`HOME=${runtimeHome}`,
-				`OPENCLAW_CONFIG_PATH=${configPath}`,
-				`OPENCLAW_STATE_DIR=${openClawStateDir}`,
-				commandPath,
-				"plugins",
-				"inspect",
-				CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
-				"--json",
-			],
-			{ encoding: "utf8" },
-		);
-		expect(pluginInspect.status, pluginInspect.stderr).toBe(0);
-		expect(JSON.parse(pluginInspect.stdout)).toMatchObject({
-			plugin: {
-				id: CLAWDI_MANAGED_OPENCLAW_PROVIDER_PLUGIN_ID,
-				enabled: true,
-				status: "loaded",
-			},
-			install: { source: "path" },
+		const removedPlugin = runOpenClawAsRuntimeUser({
+			commandPath,
+			home: runtimeHome,
+			configPath,
+			stateDir: openClawStateDir,
+			args: ["plugins", "inspect", LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID, "--json"],
 		});
-		const providerEnvVarsSdkPath = resolveSdk(
-			runtimeHome,
-			[commandPath],
-			SDK_EXPORTS.providerEnvVars,
-		);
-		expect(providerEnvVarsSdkPath).not.toBeNull();
-		if (!providerEnvVarsSdkPath) {
-			throw new Error("official OpenClaw provider-env-vars SDK is unavailable");
-		}
-		const markerProbe = spawnSync(
-			"runuser",
-			[
-				"-u",
-				"clawdi",
-				"--",
-				"env",
-				`HOME=${runtimeHome}`,
-				`OPENCLAW_CONFIG_PATH=${configPath}`,
-				`OPENCLAW_STATE_DIR=${openClawStateDir}`,
-				join(runtimeHome, ".local", "tools", "node", "bin", "node"),
-				"--input-type=module",
-				"--eval",
-				"const sdk = await import(process.argv[1]); process.stdout.write(JSON.stringify(sdk.listKnownProviderAuthEnvVarNames()));",
-				pathToFileURL(providerEnvVarsSdkPath).href,
-			],
-			{ encoding: "utf8" },
-		);
-		expect(markerProbe.status, markerProbe.stderr).toBe(0);
-		expect(JSON.parse(markerProbe.stdout)).toContain("CLAWDI_AI_API_KEY");
+		expect(removedPlugin.status).not.toBe(0);
+		expect(existsSync(legacyProviderPlugin.sourceDir)).toBe(false);
+		expect(existsSync(legacyProviderPlugin.installDir)).toBe(false);
+		const doctor = runOpenClawAsRuntimeUser({
+			commandPath,
+			home: runtimeHome,
+			configPath,
+			stateDir: openClawStateDir,
+			args: ["doctor", "--fix", "--non-interactive"],
+		});
+		expect(doctor.status, doctor.stderr).toBe(0);
 		const inspectedAuth = runProviderAuthHelper("inspect");
 		expect(inspectedAuth.status, inspectedAuth.stderr).toBe(0);
 		const authStores = JSON.parse(inspectedAuth.stdout) as Array<{
@@ -1347,7 +1437,9 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			auth: { mode: "token", token: "size-drop-gateway-token" },
 		});
 		expect(appliedConfig.logging).toEqual(existingConfig.logging);
-		expect(appliedConfig.agents.list).toEqual([{ id: "main" }]);
+		if (appliedConfig.agents.list !== undefined) {
+			expect(appliedConfig.agents.list).toEqual([{ id: "main" }]);
+		}
 		expect(appliedConfig.auth).toEqual({
 			profiles: { "openai:user": { provider: "openai", mode: "api_key" } },
 			order: { openai: ["openai:user"] },

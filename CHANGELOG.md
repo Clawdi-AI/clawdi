@@ -31,6 +31,24 @@ database migration, CI, and implementation details.
   transcripts remain fully searchable without exceeding PostgreSQL full-text
   limits; results and match navigation still point to the original message.
 
+## Clawdi CLI v0.14.33
+
+Package: `clawdi@0.14.33`
+
+### Changed
+
+- Hosted OpenClaw now negotiates native plugin capabilities across the supported
+  `2026.7.1-2` and `2026.8.1` releases.
+- Hosted OpenClaw uses its native environment-backed provider authentication
+  without the historical `clawdi-managed-provider` metadata plugin. Existing
+  Clawdi-owned installations are removed automatically during convergence.
+
+### Fixed
+
+- OpenClaw session sync now scans sessions in bounded batches, skips unchanged
+  transcripts by revision, and uses the release-appropriate native transcript
+  API or JSONL fallback without breaking incremental updates.
+
 ## Clawdi CLI v0.14.32
 
 Package: `clawdi@0.14.32`

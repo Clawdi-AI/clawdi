@@ -24,11 +24,11 @@ RUN groupadd --gid 10001 clawdi \
 	&& useradd --uid 10001 --gid 10001 --create-home --home-dir /home/clawdi --shell /bin/bash clawdi
 
 # `openclaw --version` identifies this published package as official source
-# commit 0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c. npm omits gitHead, so the
+# commit ea806575e6450e4d1efdfc72c19f04be982a1b9b. npm omits gitHead, so the
 # registry integrity and the CLI's own commit identity are both verified.
-ARG OPENCLAW_VERSION=2026.7.1-2
-ARG OPENCLAW_COMMIT=0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c
-ARG OPENCLAW_INTEGRITY=sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==
+ARG OPENCLAW_VERSION=2026.8.1
+ARG OPENCLAW_COMMIT=ea806575e6450e4d1efdfc72c19f04be982a1b9b
+ARG OPENCLAW_INTEGRITY=sha512-bSaFeaDFnQH/bU1vgKMac6eHkHHPHG0C/uwduXGI3eIS3lyiYSwmDU5ehhBUUhlPeV85tL5/KVwmoH48nX1tWw==
 ARG OPENCLAW_NODE_VERSION=24.15.0
 RUN npm pack "openclaw@${OPENCLAW_VERSION}" --pack-destination /tmp --silent >/dev/null \
 	&& OPENCLAW_TARBALL="/tmp/openclaw-${OPENCLAW_VERSION}.tgz" \

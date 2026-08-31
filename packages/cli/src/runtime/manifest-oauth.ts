@@ -17,7 +17,6 @@ import {
 	OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS,
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	OPENCLAW_PROVIDER_AUTH_MUTATION_EXPORTS,
-	OPENCLAW_PROVIDER_ENV_VARS_EXPORTS,
 	oauthCredentialFingerprint,
 	openClawSdkFunctionGuard,
 } from "../lib/codex-oauth-native-store";
@@ -249,11 +248,9 @@ const OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE = `
 import { pathToFileURL } from "node:url";
 const providerAuth = await import(pathToFileURL(process.argv[1]).href);
 const configMutation = await import(pathToFileURL(process.argv[2]).href);
-const providerEnvVars = await import(pathToFileURL(process.argv[3]).href);
 if (
   ${openClawSdkFunctionGuard("providerAuth", OPENCLAW_PROVIDER_AUTH_CLEANUP_EXPORTS)} ||
-  ${openClawSdkFunctionGuard("configMutation", OPENCLAW_CONFIG_MUTATION_EXPORTS)} ||
-  ${openClawSdkFunctionGuard("providerEnvVars", OPENCLAW_PROVIDER_ENV_VARS_EXPORTS)}
+  ${openClawSdkFunctionGuard("configMutation", OPENCLAW_CONFIG_MUTATION_EXPORTS)}
 ) {
   throw new Error("required public OpenClaw auth cleanup exports are missing");
 }
@@ -288,7 +285,6 @@ function requireOpenClawManagedProviderAuthCleanupCapability(context: OpenClawHo
 			OPENCLAW_MANAGED_PROVIDER_AUTH_CLEANUP_CAPABILITY_PROBE,
 			providerAuthSdkPath,
 			configMutationSdkPath,
-			context.requireSdkExport("providerEnvVars"),
 		],
 		context.home,
 		context.home,
@@ -314,7 +310,6 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 		input.revision,
 		runtimeFileCurrentRevision(input.context.sdk.providerAuth ?? ""),
 		runtimeFileCurrentRevision(input.context.sdk.configMutation ?? ""),
-		runtimeFileCurrentRevision(input.context.sdk.providerEnvVars ?? ""),
 	].join("\0");
 	if (openClawProviderAuthCapabilityRevisions.get(input.context.home) === capabilityRevision) {
 		return;

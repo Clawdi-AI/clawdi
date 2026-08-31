@@ -47,6 +47,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 	readonly hermesScanPolicies = new Map<string, boolean>();
 	failLiveHermesScanPolicy = false;
 	failLiveEnableVersion: string | null = null;
+	supportsOpenClawAgentPlugins = true;
 	openClawMcpServersOverride: Array<{
 		name: string;
 		hasStdioTransport: boolean;
@@ -164,6 +165,18 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			return { status: 70, stdout: "", stderr: "unsafe state root" };
 		}
 		const args = input.args;
+		if (
+			runtime === "openclaw" &&
+			args[0] === "plugins" &&
+			(args[1] === "install" || args[1] === "enable") &&
+			args[2] === "--help"
+		) {
+			return {
+				status: 0,
+				stdout: this.supportsOpenClawAgentPlugins ? "--accept-capabilities\n" : "",
+				stderr: "",
+			};
+		}
 		if (
 			runtime === "hermes" &&
 			args.join("\0") ===
@@ -313,6 +326,7 @@ class FakeNativeRunner implements HostedAgentPluginCommandRunner {
 			(call) =>
 				call.home === this.liveHome &&
 				call.command !== "git" &&
+				call.args[2] !== "--help" &&
 				!["list", "inspect"].includes(call.args[1] ?? ""),
 		);
 	}
@@ -483,6 +497,10 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 				nativeId: "acme-tools",
 			},
 		});
+		expect(runner.liveMutations().map((call) => call.args)).toEqual([
+			["plugins", "install", expect.any(String), "--force", "--accept-capabilities"],
+			["plugins", "enable", "acme-tools", "--accept-capabilities"],
+		]);
 		const liveMutations = runner.liveMutations().length;
 		const repeat = prepareTransaction(
 			desiredState("openclaw", desired, { runtime: "openclaw", plugin: desired }),
@@ -490,6 +508,17 @@ describe("Hosted Agent Plugin native reconciliation", () => {
 		);
 		repeat.apply();
 		expect(runner.liveMutations()).toHaveLength(liveMutations);
+	});
+
+	test("rejects unsupported OpenClaw Agent Plugins before native mutation", () => {
+		const runner = new FakeNativeRunner();
+		runner.supportsOpenClawAgentPlugins = false;
+		const desired = plugin("acme.tools", "1.2.3", "0".repeat(64));
+		const transaction = prepareTransaction(desiredState("openclaw", desired), runner);
+
+		expect(() => transaction.apply()).toThrow("does not support Hosted Agent Plugins");
+		expect(runner.liveMutations()).toEqual([]);
+		expect(runner.get("openclaw", desired.name)).toBeUndefined();
 	});
 
 	test("validates runtime-reported package support after live installation", () => {

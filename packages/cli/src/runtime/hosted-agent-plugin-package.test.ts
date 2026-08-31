@@ -750,6 +750,13 @@ describe("Hosted Agent Plugin package preparation", () => {
 			const runner: HostedAgentPluginCommandRunner = {
 				run(input) {
 					calls.push(input.args);
+					if (
+						runtime === "openclaw" &&
+						(input.args[1] === "install" || input.args[1] === "enable") &&
+						input.args[2] === "--help"
+					) {
+						return { status: 0, stdout: "--accept-capabilities\n", stderr: "" };
+					}
 					if (input.args[1] === "list") {
 						if (!existsSync(installRoot)) {
 							return {

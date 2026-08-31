@@ -52,6 +52,102 @@ async function horizontalBounds(locator: Locator) {
 	});
 }
 
+test("commits Session search keys atomically before prefetching", async ({ page }) => {
+	type ListRequest = { q: string | null; sort: string | null; page: string | null };
+	const requests: ListRequest[] = [];
+	let heldQuery: string | null | undefined;
+	let heldRequestStarted: (() => void) | undefined;
+	let releaseHeldRequest: (() => void) | undefined;
+	let heldRequestGate = Promise.resolve();
+
+	function holdPageOne(query: string | null) {
+		heldQuery = query;
+		const started = new Promise<void>((resolve) => {
+			heldRequestStarted = resolve;
+		});
+		heldRequestGate = new Promise<void>((resolve) => {
+			releaseHeldRequest = resolve;
+		});
+		return {
+			started,
+			release: () => {
+				heldQuery = undefined;
+				releaseHeldRequest?.();
+			},
+		};
+	}
+
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") return fulfillJson(route, []);
+		if (url.pathname === "/v1/sessions") {
+			const request = {
+				q: url.searchParams.get("q"),
+				sort: url.searchParams.get("sort"),
+				page: url.searchParams.get("page"),
+			};
+			requests.push(request);
+			if (request.page === "1" && request.q === heldQuery) {
+				heldRequestStarted?.();
+				await heldRequestGate;
+			}
+			return fulfillJson(route, {
+				items: [],
+				total: 51,
+				page: Number(request.page),
+				page_size: 25,
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto("/sessions?q=initial%20needle&sort=relevance&page=2");
+	const search = page.getByPlaceholder("Search sessions and messages…");
+	await expect(search).toHaveValue("initial needle");
+	await expect
+		.poll(() => requests.some((request) => request.q === "initial needle" && request.page === "3"))
+		.toBe(true);
+
+	requests.length = 0;
+	const clearRequest = holdPageOne(null);
+	await search.fill("");
+	await expect(page).toHaveURL(
+		(url) => !url.searchParams.has("q") && !url.searchParams.has("sort"),
+	);
+	await clearRequest.started;
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
+	);
+	expect(requests).toEqual([{ q: null, sort: "last_activity_at", page: "1" }]);
+	clearRequest.release();
+	await expect
+		.poll(() => requests.some((request) => request.q === null && request.page === "2"))
+		.toBe(true);
+
+	requests.length = 0;
+	const searchRequest = holdPageOne("fresh needle");
+	await search.fill("fresh needle");
+	await expect(page).toHaveURL(
+		(url) =>
+			url.searchParams.get("q") === "fresh needle" && url.searchParams.get("sort") === "relevance",
+	);
+	await searchRequest.started;
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
+	);
+	expect(requests).toEqual([{ q: "fresh needle", sort: "relevance", page: "1" }]);
+	searchRequest.release();
+	await expect
+		.poll(() => requests.some((request) => request.q === "fresh needle" && request.page === "2"))
+		.toBe(true);
+});
+
 test("opens a global Session body match at the exact message", async ({ page }) => {
 	const query = "global palette anchor";
 	await page.route("**/v1/**", async (route) => {

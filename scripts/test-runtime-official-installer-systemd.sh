@@ -8,12 +8,30 @@ image="clawdi-runtime-official-installer-systemd-test:local-$$"
 container="clawdi-runtime-official-installer-systemd-test-$$"
 
 cleanup() {
+	local status=$?
+	if [[ "$status" -ne 0 ]]; then
+		docker exec "$container" bash -lc '
+			while IFS= read -r -d "" log; do
+				printf "\n===== %s =====\n" "$log"
+				cat "$log"
+			done < <(find /tmp /var/lib -type f -path "*/installer-logs/*.log" -print0 2>/dev/null)
+		' || true
+	fi
 	docker rm -f "$container" >/dev/null 2>&1 || true
 	docker image rm "$image" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-docker build --quiet --file "$fixture" --tag "$image" "$(dirname -- "$fixture")" >/dev/null
+build_args=()
+for name in OPENCLAW_VERSION OPENCLAW_COMMIT OPENCLAW_INTEGRITY; do
+	value_name="CLAWDI_TEST_${name}"
+	if [[ -n "${!value_name:-}" ]]; then
+		build_args+=(--build-arg "${name}=${!value_name}")
+	fi
+done
+
+docker build --quiet "${build_args[@]}" --file "$fixture" --tag "$image" \
+	"$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
 	--name "$container" \
 	--tmpfs /run \

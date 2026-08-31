@@ -252,22 +252,18 @@ and
 `clawdi` is the reserved provider for the Hosted v2 managed projection, and its
 environment SecretRef is the sole API-key authority. OpenClaw model generation
 serializes the SecretRef id as the literal `CLAWDI_AI_API_KEY` marker in
-`models.json`. Without provider metadata declaring that env name, OpenClaw
-doctor treats the marker as credential material and allocates
-`clawdi:default`. Doctor's collection and allocation are independent of
-execution precedence in
-[`doctor-model-catalog-credentials.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/commands/doctor-model-catalog-credentials.ts#L54-L76).
-OpenClaw builds its known env markers from discovered plugin metadata through
-[`provider-env-vars.ts`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/src/secrets/provider-env-vars.ts#L198-L220),
-and installed plugins may declare
-`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]`. Hosted
-v2 convergence materializes a credential-free, Clawdi-owned metadata plugin and
-uses OpenClaw's official local plugin install/enable lifecycle before provider
-projection or cleanup. It then verifies `CLAWDI_AI_API_KEY` through the public
-`openclaw/plugin-sdk/provider-env-vars` export and fails closed if the marker is
-not registered. Explicit `auth: "api-key"` remains necessary for execution
-precedence but is not the doctor prevention mechanism. Commit `8f382a2` is
-source provenance for this contract, not a Hosted install pin.
+`models.json`. The supported `2026.7.1-2` and `2026.8.1` packages are exercised
+with this native env-backed projection, including an explicit Doctor repair and
+post-repair auth-store inspection. No provider metadata plugin participates in
+the current contract. A historical beta workaround installed
+`clawdi-managed-provider` only to register the env name as metadata; convergence
+now removes a verified Clawdi-owned legacy installation with OpenClaw's official
+uninstall command. An unrelated plugin with the same id is never removed.
+Explicit `auth: "api-key"` remains necessary for execution precedence, and the
+historical `clawdi` auth-profile cleanup remains in place for deployments that
+were previously affected. `2026.7.1-2` may report the generated env marker as a
+non-blocking `secrets audit` finding; Doctor and runtime authentication remain
+functional.
 
 When the accepted Hosted v2 manifest proves that exact managed projection,
 root-owned convergence uses OpenClaw's public config-mutation and provider-auth
