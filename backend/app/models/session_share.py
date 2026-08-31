@@ -34,9 +34,9 @@ class SessionShare(Base, TimestampMixin):
         ),
         CheckConstraint(
             "(source_protocol = 'snapshot-v1' AND snapshot_file_key IS NOT NULL "
-            "AND event_generation_id IS NULL) OR "
+            "AND event_generation_id IS NULL AND event_count IS NULL) OR "
             "(source_protocol = 'events-v1' AND snapshot_file_key IS NULL "
-            "AND event_generation_id IS NOT NULL)",
+            "AND event_generation_id IS NOT NULL AND event_count > 0)",
             name="ck_session_shares_source_reference",
         ),
         Index(
@@ -76,6 +76,7 @@ class SessionShare(Base, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("session_event_generations.id", ondelete="CASCADE"),
     )
+    event_count: Mapped[int | None] = mapped_column(Integer)
     snapshot_file_key: Mapped[str | None] = mapped_column(Text)
     public_metadata: Mapped[dict[str, JsonValue]] = mapped_column(JSONB, nullable=False)
 

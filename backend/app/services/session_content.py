@@ -161,8 +161,8 @@ async def load_session_content_projection(
             session.event_generation_id,
             file_store,
             db,
-            expected_count=session.event_count,
-            expected_head_hash=session.event_head_hash or EMPTY_EVENT_HEAD,
+            event_count=session.event_count,
+            event_head_hash=session.event_head_hash or EMPTY_EVENT_HEAD,
         )
 
     if not session.file_key:
@@ -218,10 +218,10 @@ async def load_event_generation_projection(
     file_store: _FileStoreLike,
     db: AsyncSession,
     *,
-    expected_count: int | None = None,
-    expected_head_hash: str | None = None,
+    event_count: int,
+    event_head_hash: str,
 ) -> SessionContentProjection:
-    """Load the safe projection for one immutable committed event generation."""
+    """Load the safe projection for one immutable prefix of a committed generation."""
     generation = (
         await db.execute(
             select(SessionEventGeneration).where(SessionEventGeneration.id == generation_id)
@@ -229,24 +229,15 @@ async def load_event_generation_projection(
     ).scalar_one_or_none()
     if generation is None or generation.status != "committed":
         raise SessionContentMissing("session event generation is unavailable")
-    final_count = expected_count if expected_count is not None else generation.final_count
-    final_head_hash = expected_head_hash or generation.final_head_hash
-    if (
-        expected_count is not None
-        and expected_count != generation.final_count
-        or expected_head_hash is not None
-        and expected_head_hash != generation.final_head_hash
-    ):
-        raise SessionContentInvalid("session event generation metadata does not match")
 
-    cache_key = (f"events-v1:{generation.id}", final_head_hash)
+    cache_key = (f"events-v1:{generation.id}:{event_count}", event_head_hash)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
     events = await _load_event_generation_events(
         generation.id,
-        final_count=final_count,
-        final_head_hash=final_head_hash,
+        final_count=event_count,
+        final_head_hash=event_head_hash,
         file_store=file_store,
         db=db,
     )
@@ -290,7 +281,10 @@ async def _load_event_generation_events(
         (
             await db.execute(
                 select(SessionEventChunk)
-                .where(SessionEventChunk.generation_id == generation_id)
+                .where(
+                    SessionEventChunk.generation_id == generation_id,
+                    SessionEventChunk.start_seq < final_count,
+                )
                 .order_by(SessionEventChunk.start_seq)
             )
         ).scalars()
@@ -299,7 +293,11 @@ async def _load_event_generation_events(
     next_seq = 0
     head = EMPTY_EVENT_HEAD
     for chunk in chunks:
-        if chunk.start_seq != next_seq or chunk.base_head_hash != head:
+        if (
+            chunk.start_seq != next_seq
+            or chunk.base_head_hash != head
+            or chunk.end_seq >= final_count
+        ):
             raise SessionContentInvalid("events-v1 chunk index is not continuous")
         try:
             data = await file_store.get(chunk.file_key)

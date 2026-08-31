@@ -125,12 +125,14 @@ async def create_session_share(
     source_protocol = session.content_protocol
     source_revision: str
     event_generation_id: UUID | None = None
+    event_count: int | None = None
     snapshot_file_key: str | None = None
     if source_protocol == "events-v1":
-        if session.event_generation_id is None:
+        if session.event_generation_id is None or session.event_head_hash is None:
             raise SessionContentMissing("session event generation is unavailable")
         event_generation_id = session.event_generation_id
-        source_revision = str(event_generation_id)
+        event_count = session.event_count
+        source_revision = session.event_head_hash
     else:
         if not session.file_key or not session.content_hash:
             raise SessionContentMissing("session snapshot is unavailable")
@@ -196,6 +198,7 @@ async def create_session_share(
         source_protocol=source_protocol,
         source_revision=source_revision,
         event_generation_id=event_generation_id,
+        event_count=event_count,
         snapshot_file_key=snapshot_file_key,
         public_metadata=metadata,
     )
@@ -211,12 +214,14 @@ async def load_session_share_view(
     share: SessionShare,
 ) -> SessionShareView:
     if share.source_protocol == "events-v1":
-        if share.event_generation_id is None:
-            raise SessionContentInvalid("Session share has no event generation")
+        if share.event_generation_id is None or share.event_count is None:
+            raise SessionContentInvalid("Session share has no event revision")
         projection = await load_event_generation_projection(
             share.event_generation_id,
             file_store,
             db,
+            event_count=share.event_count,
+            event_head_hash=share.source_revision,
         )
     else:
         if share.snapshot_file_key is None:

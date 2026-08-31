@@ -110,8 +110,9 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
                 scope="session",
                 end_position=0,
                 source_protocol="events-v1",
-                source_revision=str(shared.id),
+                source_revision=shared.final_head_hash,
                 event_generation_id=shared.id,
+                event_count=shared.final_count,
                 public_metadata={
                     "title": "Shared generation",
                     "agent_type": None,

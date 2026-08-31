@@ -41,6 +41,7 @@ def upgrade() -> None:
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("session_event_generations.id", ondelete="CASCADE"),
         ),
+        sa.Column("event_count", sa.Integer()),
         sa.Column("snapshot_file_key", sa.Text()),
         sa.Column("public_metadata", sa.dialects.postgresql.JSONB(), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True)),
@@ -75,9 +76,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "(source_protocol = 'snapshot-v1' AND snapshot_file_key IS NOT NULL "
-            "AND event_generation_id IS NULL) OR "
+            "AND event_generation_id IS NULL AND event_count IS NULL) OR "
             "(source_protocol = 'events-v1' AND snapshot_file_key IS NULL "
-            "AND event_generation_id IS NOT NULL)",
+            "AND event_generation_id IS NOT NULL AND event_count > 0)",
             name="ck_session_shares_source_reference",
         ),
     )
