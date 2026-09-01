@@ -113,6 +113,33 @@ describe("auth persistence", () => {
 		expect(isLoggedIn()).toBe(false);
 	});
 
+	it("preserves Agent registrations for the same account without exposing them to another", async () => {
+		const { clearAuth, setAuth } = await import("../src/lib/config");
+		const { getEnvIdByAgent, listRegisteredAgentTypes } = await import("../src/lib/select-adapter");
+		const envDir = join(fakeHome, ".clawdi", "environments");
+		const envPath = join(envDir, "codex.json");
+		mkdirSync(envDir, { recursive: true });
+		writeFileSync(envPath, JSON.stringify({ id: "env-codex", agentType: "codex" }));
+
+		setAuth({ apiKey: "account-a-key", userId: "account-a" });
+		expect(listRegisteredAgentTypes()).toEqual(["codex"]);
+		clearAuth();
+		expect(listRegisteredAgentTypes()).toEqual([]);
+		expect(JSON.parse(readFileSync(envPath, "utf8"))).toEqual({
+			id: "env-codex",
+			agentType: "codex",
+			userId: "account-a",
+		});
+
+		setAuth({ apiKey: "account-a-key-2", userId: "account-a" });
+		expect(getEnvIdByAgent("codex")).toBe("env-codex");
+		expect(listRegisteredAgentTypes()).toEqual(["codex"]);
+
+		setAuth({ apiKey: "account-b-key", userId: "account-b" });
+		expect(getEnvIdByAgent("codex")).toBeNull();
+		expect(listRegisteredAgentTypes()).toEqual([]);
+	});
+
 	it("writes auth.json with mode 0o600", async () => {
 		const { setAuth } = await import("../src/lib/config");
 		setAuth({ apiKey: "secret" });

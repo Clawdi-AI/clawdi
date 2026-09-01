@@ -1583,6 +1583,21 @@ agentCmd
 		await agentDetectCommand(opts);
 	});
 
+agentCmd
+	.command("reconnect [agent-id]")
+	.description("Recover a local Agent binding without creating a new cloud identity")
+	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
+	.option("-y, --yes", "Skip confirmation when the target is unambiguous")
+	.option("--no-daemon", "Skip installing/starting background sync daemons")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi agent reconnect --agent codex\n  $ clawdi agent reconnect <agent-id>\n  $ clawdi agent reconnect <agent-id> --no-daemon",
+	)
+	.action(async (agentId: string | undefined, opts) => {
+		const { agentReconnect } = await import("./commands/agent-reconnect.js");
+		await agentReconnect(agentId, opts);
+	});
+
 const agentCredentialsCmd = agentCmd
 	.command("credentials")
 	.description("Sync local CLI credential profiles");

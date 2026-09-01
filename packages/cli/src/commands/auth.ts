@@ -470,8 +470,8 @@ export async function authLogout() {
 	}
 
 	// Warn about running daemons before clearing creds. `clearAuth`
-	// deletes auth.json + ~/.clawdi/environments/*, but launchd /
-	// systemd units installed by `clawdi daemon install` keep
+	// deletes auth.json, but launchd / systemd units installed by
+	// `clawdi daemon install` keep
 	// running with the API key cached in their unit env. They'll
 	// keep posting heartbeats to the cloud (with a now-revoked
 	// token, getting 401s in a tight loop) until the user
@@ -505,7 +505,7 @@ export async function authLogout() {
 			"The local credential was removed. If remote OAuth revocation was unavailable, revoke the Clawdi OAuth application in your Clerk account if needed.",
 		);
 	}
-	p.log.success("Logged out. Credentials and cached environments removed.");
+	p.log.success("Logged out. Credentials removed; account-bound Agent registrations preserved.");
 }
 
 type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-auth-token" | "none";
