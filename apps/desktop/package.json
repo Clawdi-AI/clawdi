@@ -41,6 +41,7 @@
 		"productName": "Clawdi",
 		"asar": true,
 		"directories": {
+			"buildResources": "build",
 			"output": "release"
 		},
 		"afterPack": "apps/desktop/scripts/after-pack.mjs",
@@ -72,8 +73,6 @@
 		"mac": {
 			"category": "public.app-category.developer-tools",
 			"icon": "../web/public/clawdi-logo-transparent.png",
-			"entitlements": "build/entitlements.mac.plist",
-			"entitlementsInherit": "build/entitlements.mac.inherit.plist",
 			"hardenedRuntime": true,
 			"target": [
 				{
