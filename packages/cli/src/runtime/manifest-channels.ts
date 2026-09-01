@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import type { z } from "zod";
-import { isValidSemver } from "../lib/semver";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { isValidSemver } from "../lib/semver";
 import { type HermesConfigTransaction, reconcileHermesConfigValue } from "./hermes-config";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import {
@@ -23,8 +23,8 @@ import type { RuntimeManifest } from "./manifest-contract";
 import {
 	type RuntimeInstallObservation,
 	runtimeCommandCurrentRevision,
-	runtimeFileCurrentRevision,
 	runtimeCommandVersion,
+	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
