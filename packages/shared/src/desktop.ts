@@ -55,6 +55,10 @@ export interface DesktopAuthenticationCancellationResult {
 	status: "cancelled" | "not-active";
 }
 
+export interface DesktopShellAuthenticationResult {
+	status: "authenticated" | "cancelled";
+}
+
 export interface DesktopMoveToApplicationsResult {
 	status: "cancelled" | "not-required" | "relaunching";
 }
@@ -71,6 +75,8 @@ export interface ClawdiDesktopConnectBridge {
 }
 
 export interface ClawdiDesktopShellBridge {
+	signIn(): Promise<DesktopShellAuthenticationResult>;
+	signOut(): Promise<void>;
 	openConnectWizard(): Promise<void>;
 	retryDashboard(): Promise<void>;
 }

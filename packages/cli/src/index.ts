@@ -139,21 +139,25 @@ authCmd
 	.option("--manual", "Skip the browser flow and paste an API key instead")
 	.option("--no-open", "Print the authorization URL and securely paste the callback")
 	.addOption(new Option("--desktop").hideHelp())
+	.addOption(new Option("--force").hideHelp())
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --no-open\n  $ clawdi auth login --manual",
 	)
-	.action(async (opts: { manual?: boolean; open?: boolean; desktop?: boolean }) => {
-		const { authLogin, authLoginDesktop } = await import("./commands/auth.js");
-		if (opts.desktop) {
-			if (opts.manual || opts.open === false) {
-				throw new Error("Desktop sign-in does not accept interactive login options.");
+	.action(
+		async (opts: { manual?: boolean; open?: boolean; desktop?: boolean; force?: boolean }) => {
+			const { authLogin, authLoginDesktop } = await import("./commands/auth.js");
+			if (opts.desktop) {
+				if (opts.manual || opts.open === false) {
+					throw new Error("Desktop sign-in does not accept interactive login options.");
+				}
+				await authLoginDesktop({ force: opts.force });
+				return;
 			}
-			await authLoginDesktop();
-			return;
-		}
-		await authLogin(opts);
-	});
+			if (opts.force) throw new Error("--force is only available for Desktop sign-in.");
+			await authLogin(opts);
+		},
+	);
 
 authCmd
 	.command("complete")

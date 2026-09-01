@@ -35,18 +35,20 @@ releases.
 
 ## Desktop Release Blocker
 
-Desktop auto-update is not a released surface yet. `apps/desktop/package.json`
-has no publish provider, `desktop-preview.yml` uploads only an unsigned DMG PR
-artifact, and the calendar release workflow does not publish a Developer ID
-signed and notarized Desktop ZIP with update metadata. Until one trusted feed
-contract owns those immutable artifacts, Desktop must not call an updater or
-show a Check for Updates command; the bundled CLI also remains ineligible for
-self-update.
+Desktop has a GitHub Releases update contract and a local signed-release build
+command, but no repository workflow is authorized to use Developer ID signing
+or notarization credentials and publish the resulting artifacts. Preview builds
+are ad-hoc signed, carry `clawdiUpdateChannel=disabled`, and never enter the
+stable updater feed. The bundled CLI also remains ineligible for self-update.
 
-Enabling updates requires one reviewed release change to define the trusted
-provider/feed, attach the signed ZIP and matching update metadata to the same
-release commit, and verify signing, notarization, version, and checksums before
-publication. Unsigned preview artifacts must remain outside that feed.
+Before stable Desktop updates can operate, a reviewed release workflow must run
+`bun run --cwd apps/desktop package:mac:release`, verify the signed and notarized
+DMG, ZIP, `latest-mac.yml`, version, and checksums, then attach the immutable ZIP
+and matching metadata to the calendar GitHub Release marked latest. Every later
+calendar release marked latest must publish valid Desktop metadata and its
+matching ZIP; CLI releases already use `--latest=false`. Until that
+owner-controlled job and credential provider exist, do not publish a build with
+`clawdiUpdateChannel=stable`.
 
 ## Pre-Merge Checklist
 

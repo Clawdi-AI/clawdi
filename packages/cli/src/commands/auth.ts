@@ -402,9 +402,9 @@ export async function authComplete() {
 	}
 }
 
-export async function authLoginDesktop(): Promise<void> {
+export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<void> {
 	const existing = getAuth();
-	if (isClerkOAuthAuth(existing)) {
+	if (isClerkOAuthAuth(existing) && !opts.force) {
 		console.log(
 			JSON.stringify({
 				schemaVersion: "clawdi.desktopLogin.v1",

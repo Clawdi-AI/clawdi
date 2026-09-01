@@ -18,6 +18,12 @@ const DEFAULT_API_ERROR_NORMALIZER: ApiErrorNormalizer = {
 /** Send the user back through Clerk, returning to wherever they are now. */
 function reauthenticate() {
 	if (typeof window === "undefined") return;
+	if (window.clawdiDesktop) {
+		void window.clawdiDesktop.signIn().catch(() => {
+			window.location.href = "/sign-in";
+		});
+		return;
+	}
 	const redirect = encodeURIComponent(window.location.pathname + window.location.search);
 	window.location.href = `/sign-in?redirect_url=${redirect}`;
 }

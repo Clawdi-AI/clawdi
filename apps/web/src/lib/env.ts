@@ -76,6 +76,13 @@ export const env = createEnv({
 			.optional()
 			.transform((v) => v === "true"),
 
+		// Packaged Electron SPA. This changes auth/bootstrap behavior but does
+		// not grant the renderer any native capabilities by itself.
+		VITE_CLAWDI_DESKTOP_BUILD: z
+			.string()
+			.optional()
+			.transform((v) => v === "true"),
+
 		// Local-only browser testing bypass. When true in local dev, the
 		// dashboard skips Clerk route protection and sends a fixed dev bearer
 		// token to the local backend. Backend-side `DEV_AUTH_BYPASS=true`

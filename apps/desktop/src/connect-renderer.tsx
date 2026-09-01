@@ -12,14 +12,15 @@ import {
 	CircleCheckBig,
 	FolderInput,
 	LoaderCircle,
+	LogIn,
 	RefreshCw,
 	ShieldCheck,
-	TerminalSquare,
 	TriangleAlert,
 	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { AgentBrandIcon } from "./agent-brand-icon";
 import "./connect-renderer.css";
 
 declare global {
@@ -31,6 +32,7 @@ declare global {
 
 type Stage =
 	| "loading"
+	| "install"
 	| "authenticate"
 	| "authenticating"
 	| "select"
@@ -59,12 +61,8 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("loading");
 		setFailure(null);
 		try {
-			const [detected, location] = await Promise.all([
-				bridge.detectAgents(),
-				bridge.getInstallationState(),
-			]);
+			const detected = await bridge.detectAgents();
 			setAgents(detected);
-			setInstallation(location);
 			setSelected(
 				new Set(
 					detected
@@ -82,6 +80,12 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("loading");
 		setFailure(null);
 		try {
+			const location = await bridge.getInstallationState();
+			setInstallation(location);
+			if (location.requiresMove) {
+				setStage("install");
+				return;
+			}
 			const state = await bridge.getBootstrapState();
 			setBootstrap(state);
 			if (!state.auth.authenticated) {
@@ -147,12 +151,12 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			const result = await bridge.moveToApplicationsFolder();
 			if (result.status === "cancelled") {
-				setStage("select");
+				setStage("install");
 				return;
 			}
 			if (result.status === "not-required") {
 				setInstallation({ requiresMove: false });
-				await connect();
+				await load();
 			}
 		} catch (error) {
 			fail(error);
@@ -171,17 +175,43 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		<main className="app-shell">
 			<header className="titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
 					<h1>Connect Agent</h1>
-					<p>Clawdi Desktop</p>
 				</div>
 			</header>
 
 			<section className="content">
 				{stage === "loading" ? (
 					<Centered icon={<LoaderCircle className="spin" />} title="Checking this Mac" />
+				) : null}
+
+				{stage === "install" ? (
+					<div className="stack">
+						<div className="notice install-notice">
+							<span className="icon-tile">
+								<FolderInput />
+							</span>
+							<div>
+								<h2>Move Clawdi to Applications</h2>
+								<p>
+									Clawdi must run from Applications so macOS can safely start its bundled runtime
+									and background sync.
+								</p>
+							</div>
+						</div>
+						<footer className="actions">
+							<button
+								className="button primary"
+								type="button"
+								onClick={() => void moveToApplications()}
+							>
+								Move to Applications <ArrowRight />
+							</button>
+						</footer>
+					</div>
 				) : null}
 
 				{stage === "authenticate" ? (
@@ -354,9 +384,7 @@ function AgentSelection({
 								disabled={!available}
 								onChange={(event) => onToggle(agent.type, event.currentTarget.checked)}
 							/>
-							<span className="agent-icon" aria-hidden="true">
-								<TerminalSquare />
-							</span>
+							<AgentBrandIcon type={agent.type} />
 							<span className="agent-copy">
 								<strong>{agent.displayName}</strong>
 								<small>
@@ -422,14 +450,14 @@ function AgentSelection({
 }
 
 function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
-	const [pending, setPending] = useState<"retry" | "connect" | null>(null);
+	const [pending, setPending] = useState<"retry" | "reauth" | null>(null);
 	const [failed, setFailed] = useState(false);
 
-	async function run(action: "retry" | "connect") {
+	async function run(action: "retry" | "reauth") {
 		setPending(action);
 		setFailed(false);
 		try {
-			await (action === "retry" ? bridge.retryDashboard() : bridge.openConnectWizard());
+			await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
 		} catch {
 			setFailed(true);
 		} finally {
@@ -441,11 +469,11 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 		<main className="app-shell">
 			<header className="titlebar dashboard-titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
-					<h1>Clawdi</h1>
-					<p>Desktop</p>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
+					<h1>Dashboard</h1>
 				</div>
 			</header>
 			<section className="content failure-content">
@@ -464,9 +492,9 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 							className="button secondary"
 							type="button"
 							disabled={pending !== null}
-							onClick={() => void run("connect")}
+							onClick={() => void run("reauth")}
 						>
-							<TerminalSquare /> Connect Agent
+							<LogIn /> Sign in again
 						</button>
 						<button
 							className="button primary"
