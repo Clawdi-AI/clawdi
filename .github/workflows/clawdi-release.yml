@@ -28,7 +28,8 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    # This job uses the GitHub CLI provided by GitHub-hosted runner images.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:

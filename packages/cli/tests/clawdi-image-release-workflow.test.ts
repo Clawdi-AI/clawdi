@@ -22,6 +22,7 @@ interface WorkflowJob {
 	name?: string;
 	needs?: string;
 	outputs?: Record<string, string>;
+	"runs-on"?: string;
 	steps?: WorkflowStep[];
 }
 
@@ -48,6 +49,11 @@ const imageReleaseSource = readFileSync(
 	"utf8",
 );
 const imageRelease = parse(imageReleaseSource) as WorkflowDocument;
+const clawdiReleaseSource = readFileSync(
+	resolve(import.meta.dir, "../../../.github/workflows/clawdi-release.yml"),
+	"utf8",
+);
+const clawdiRelease = parse(clawdiReleaseSource) as WorkflowDocument;
 const cliPublishSource = readFileSync(
 	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
 	"utf8",
@@ -90,6 +96,15 @@ const releaseClassifierSource = readFileSync(
 );
 
 describe("backend image release workflow contract", () => {
+	test("keeps manual GitHub releases on the runner that supplies GitHub CLI", () => {
+		const releaseJob = clawdiRelease.jobs.release;
+		const createRelease = releaseJob?.steps?.find((step) => step.name === "Create Clawdi release");
+
+		expect(releaseJob?.["runs-on"]).toBe("ubuntu-latest");
+		expect(createRelease?.run).toContain('gh release view "$TAG"');
+		expect(createRelease?.run).toContain(`gh "${"$"}{args[@]}"`);
+	});
+
 	test("routes changes through the bounded git fallback", () => {
 		const steps = backendCi.jobs.changes?.steps ?? [];
 
