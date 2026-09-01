@@ -10,7 +10,7 @@ export const Route = createFileRoute("/s/$id")({
 	loader: async ({ abortController, params }) => {
 		if (!UUID_RE.test(params.id)) throw notFound();
 		const result = await getPublicShareData({
-			data: { sessionId: params.id },
+			data: { shareId: params.id },
 			signal: abortController.signal,
 		});
 		if (result.kind === "not-found") throw notFound();

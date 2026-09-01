@@ -43,6 +43,7 @@ from app.core.query_utils import (
 )
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
+from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
@@ -66,11 +67,16 @@ from app.services.secret_detection import find_likely_secret, secret_memory_warn
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
+    SessionContentUnavailable,
     load_session_messages,
     session_has_uploaded_content,
 )
-from app.services.session_export import session_to_markdown
+from app.services.session_export import session_share_to_markdown, session_to_markdown
 from app.services.session_search import session_search_matches
+from app.services.session_shares import (
+    load_session_share_view,
+    session_share_metadata,
+)
 from app.services.vault_crypto import decrypt
 
 logger = logging.getLogger(__name__)
@@ -817,6 +823,39 @@ async def _tool_session_read(
             "reference must be a session UUID or a Clawdi share URL",
         ) from None
     if match:
+        share = (
+            await db.execute(select(SessionShare).where(SessionShare.id == parsed_id))
+        ).scalar_one_or_none()
+        if share is not None:
+            if share.revoked_at is not None:
+                raise HTTPException(status.HTTP_410_GONE, "Session share has been revoked")
+            try:
+                view = await load_session_share_view(db, file_store, share)
+                title, agent_type, model, started_at, message_count = session_share_metadata(share)
+            except SessionContentMissing:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Session share content not found"
+                ) from None
+            except SessionContentUnavailable:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Session storage is temporarily unavailable. Please retry.",
+                ) from None
+            except SessionContentInvalid:
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+                ) from None
+            return _tool_text(
+                session_share_to_markdown(
+                    share_id=share.id,
+                    title=title,
+                    agent_type=agent_type,
+                    model=model,
+                    started_at=started_at.isoformat(),
+                    message_count=message_count,
+                    messages=view.messages,
+                )
+            )
         if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth):
             # No owner-bypass for env-bound agent keys: a share URL for a
             # same-user session in another environment must not sidestep
@@ -844,6 +883,11 @@ async def _tool_session_read(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"

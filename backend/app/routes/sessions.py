@@ -23,10 +23,11 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, tuple_, update
+from sqlalchemy import case, func, or_, select, text, true, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.auth import (
     AuthContext,
@@ -54,6 +55,7 @@ from app.models.session_permission import (
     PERMISSION_KINDS,
     SessionPermission,
 )
+from app.models.session_share import SessionShare
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
     HostedRuntimePlatformMcpServer,
@@ -129,6 +131,7 @@ from app.services.runtime_source_revision import (
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
+    SessionContentUnavailable,
     load_session_content_projection,
     load_session_messages,
     session_has_uploaded_content,
@@ -2573,9 +2576,17 @@ async def list_sessions(
     # toggle). The partial unique index on
     # `session_permissions(session_id, kind, COALESCE(...)) WHERE revoked_at
     # IS NULL` makes this lookup index-only.
-    is_shared_subq = _link_is_shared_subq()
+    is_shared_subq = _session_is_shared_subq()
 
-    search_matches = session_search_matches(auth.user_id, q) if q else None
+    if q:
+        search_match_rows = session_search_matches(auth.user_id, q)
+        search_matches = (
+            select(*search_match_rows.c)
+            .cte("materialized_session_search_matches")
+            .prefix_with("MATERIALIZED")
+        )
+    else:
+        search_matches = None
 
     base = select(
         Session,
@@ -2668,8 +2679,6 @@ async def list_sessions(
             AgentEnvironment,
             Session.environment_id == AgentEnvironment.id,
         ).where(agent_filter)
-    total = (await db.execute(select(func.count()).select_from(count_base.subquery()))).scalar_one()
-
     # Resolve sort column. `relevance` is special — only valid when
     # `q` is present (else fall back to the date default so the empty-
     # search experience doesn't break). The relevance expression
@@ -2682,6 +2691,8 @@ async def list_sessions(
             sort_col = search_matches.c.score
     else:
         sort_col = _SESSION_SORT_COLUMNS[sort]
+    if search_matches is not None:
+        base = base.add_columns(sort_col.label("page_sort_value"))
     # Relevance ties are common because visible-message matches receive a
     # constant score. Prefer recent Sessions before the stable UUID tiebreaker,
     # matching the MCP search contract.
@@ -2696,7 +2707,52 @@ async def list_sessions(
     order_columns.append(Session.id.asc())
     ordered = base.order_by(*order_columns)
 
-    rows = (await db.execute(ordered.limit(page_size).offset((page - 1) * page_size))).all()
+    page_query = ordered.limit(page_size).offset((page - 1) * page_size)
+    if search_matches is None:
+        # Keep the common no-search path as two simple index-friendly queries.
+        total = (
+            await db.execute(select(func.count()).select_from(count_base.subquery()))
+        ).scalar_one()
+        rows = (await db.execute(page_query)).all()
+    else:
+        # The count and page both consume the materialized search CTE in one
+        # statement, so PostgreSQL evaluates the expensive search only once.
+        page_rows = page_query.cte("session_page")
+        total_row = (
+            select(func.count().label("total"))
+            .select_from(count_base.subquery())
+            .cte("session_total")
+        )
+        page_session = aliased(Session, page_rows)
+        page_order_columns = [
+            page_rows.c.page_sort_value.asc()
+            if order == "asc"
+            else page_rows.c.page_sort_value.desc()
+        ]
+        if sort == "relevance":
+            page_order_columns.append(page_rows.c.last_activity_at.desc())
+        page_order_columns.append(page_rows.c.id.asc())
+        result_rows = (
+            await db.execute(
+                select(
+                    page_session,
+                    page_rows.c.agent_type,
+                    page_rows.c.display_name,
+                    page_rows.c.default_name,
+                    page_rows.c.machine_name,
+                    page_rows.c.is_shared,
+                    page_rows.c.content,
+                    page_rows.c.role,
+                    page_rows.c.position,
+                    page_rows.c.content_revision,
+                    total_row.c.total,
+                )
+                .select_from(total_row.outerjoin(page_rows, true()))
+                .order_by(*page_order_columns)
+            )
+        ).all()
+        total = result_rows[0].total
+        rows = [row[:-1] for row in result_rows if row[0] is not None]
 
     items: list[SessionListItemResponse] = []
     for row in rows:
@@ -2751,7 +2807,7 @@ async def get_session_detail(
     db: AsyncSession = Depends(get_session),
 ) -> SessionDetailResponse:
     bound_env = _bound_env_id(auth)
-    is_shared_subq = _link_is_shared_subq()
+    is_shared_subq = _session_is_shared_subq()
     stmt = (
         select(
             Session,
@@ -2816,10 +2872,25 @@ async def delete_session(
             )
         ).scalars()
     )
+    share_file_keys = list(
+        (
+            await db.execute(
+                select(SessionShare.snapshot_file_key)
+                .where(
+                    SessionShare.session_id == session.id,
+                    SessionShare.snapshot_file_key.is_not(None),
+                )
+                .distinct()
+            )
+        ).scalars()
+    )
     try:
         await file_store.delete(session.file_key or _session_content_key(session))
         for file_key in event_file_keys:
             await file_store.delete(file_key)
+        for file_key in share_file_keys:
+            if file_key is not None:
+                await file_store.delete(file_key)
     except Exception:
         log.exception("session_content_delete_failed session_id=%s", session.id)
         await db.rollback()
@@ -3004,6 +3075,11 @@ async def get_session_content(
         raw = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3083,6 +3159,11 @@ async def get_session_messages(
         projection = await load_session_content_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3265,6 +3346,11 @@ async def extract_session_memories(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3357,6 +3443,11 @@ async def export_owned_session_markdown(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -3617,14 +3708,14 @@ def _related_refs_response(
 # --- Permission helpers ----------------------------------------------------
 
 
-def _link_is_shared_subq():
+def _session_is_shared_subq():
     """Correlated EXISTS used in list/detail queries to compute
     `Session.is_shared`. True when an active `kind='link'` permission
     row exists for the session. Index-only via the partial unique
     index on `session_permissions(session_id, kind, COALESCE(...))
     WHERE revoked_at IS NULL`.
     """
-    return (
+    legacy_link = (
         select(1)
         .where(
             SessionPermission.session_id == Session.id,
@@ -3633,8 +3724,17 @@ def _link_is_shared_subq():
         )
         .correlate(Session)
         .exists()
-        .label("is_shared")
     )
+    frozen_share = (
+        select(1)
+        .where(
+            SessionShare.session_id == Session.id,
+            SessionShare.revoked_at.is_(None),
+        )
+        .correlate(Session)
+        .exists()
+    )
+    return or_(legacy_link, frozen_share).label("is_shared")
 
 
 def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:

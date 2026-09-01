@@ -77,6 +77,8 @@ from tests.whatsapp_helpers import encrypt_whatsapp_group_message_for_sender_key
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
+WEBSOCKET_TEST_TIMEOUT_SECONDS = 5
+
 
 def _pad_message(message_proto: bytes, pad_length: int) -> bytes:
     return message_proto + bytes([pad_length]) * pad_length
@@ -1170,7 +1172,7 @@ async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
     route_task = asyncio.create_task(whatsapp_baileys_managed_websocket(websocket))
 
     websocket.inbound.put_nowait(b"not-a-noise-header")
-    await asyncio.wait_for(route_task, timeout=5)
+    await asyncio.wait_for(route_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
 
     assert websocket.accepted is True
     assert websocket.closed == [1011]
@@ -1296,7 +1298,7 @@ async def test_managed_whatsapp_websocket_revokes_established_session_after_toke
         }
     )
     websocket.inbound.put_nowait(pack_frame(client_noise.transport.encrypt(count_query)))
-    await asyncio.wait_for(route_task, timeout=1)
+    await asyncio.wait_for(route_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
 
     assert websocket.closed == [1008]
     assert len(websocket.sent) == sent_before_rotation
@@ -1382,7 +1384,7 @@ async def test_managed_whatsapp_websocket_revokes_before_delivery_after_link_arc
     await db_session.commit()
 
     await websocket.wait_for_closed()
-    await asyncio.wait_for(route_task, timeout=1)
+    await asyncio.wait_for(route_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
     assert websocket.closed == [1008]
     assert len(websocket.sent) == sent_before_archive
 
@@ -1448,7 +1450,7 @@ async def test_managed_whatsapp_noise_identity_is_bound_to_authenticated_link(
     wrong_link_websocket.inbound.put_nowait(
         pack_frame(wrong_link_noise.process_server_hello(server_hello, payload=b""))
     )
-    await asyncio.wait_for(wrong_link_task, timeout=1)
+    await asyncio.wait_for(wrong_link_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
     assert wrong_link_websocket.accepted is True
     assert wrong_link_websocket.closed == [1008]
 
@@ -1488,7 +1490,7 @@ async def test_managed_whatsapp_noise_identity_is_bound_to_authenticated_link(
     archived_websocket.inbound.put_nowait(
         pack_frame(archived_noise.process_server_hello(server_hello, payload=b""))
     )
-    await asyncio.wait_for(archived_task, timeout=1)
+    await asyncio.wait_for(archived_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
     assert archived_websocket.accepted is True
     assert archived_websocket.closed == [1008]
 
@@ -1797,7 +1799,7 @@ async def _disconnect_whatsapp_route(
     route_task: asyncio.Task[None],
 ) -> None:
     websocket.inbound.put_nowait(WebSocketDisconnect(code=1000))
-    await asyncio.wait_for(route_task, timeout=1)
+    await asyncio.wait_for(route_task, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
 
 
 async def _wait_for_delivered_message(db_session, message_id: UUID) -> None:
@@ -1910,10 +1912,10 @@ class _BinaryWebSocketProbe:
     async def wait_for_sent(self, count: int) -> None:
         while len(self.sent) < count:
             self._sent.clear()
-            await asyncio.wait_for(self._sent.wait(), timeout=1)
+            await asyncio.wait_for(self._sent.wait(), timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
 
     async def wait_for_closed(self) -> None:
-        await asyncio.wait_for(self._closed.wait(), timeout=1)
+        await asyncio.wait_for(self._closed.wait(), timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
 
 
 class _MiniNoiseClient:

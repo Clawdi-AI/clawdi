@@ -5,10 +5,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.session import Session, SessionEventChunk, SessionEventGeneration
+from app.models.session_share import SessionShare
 from app.services.file_store import FileStore, get_file_store
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,10 @@ class SessionEventRetentionWorker:
                     .join(Session, Session.id == SessionEventGeneration.session_id)
                     .where(
                         SessionEventGeneration.id.is_distinct_from(Session.event_generation_id),
+                        ~exists().where(
+                            SessionShare.event_generation_id == SessionEventGeneration.id,
+                            SessionShare.revoked_at.is_(None),
+                        ),
                         or_(
                             and_(
                                 SessionEventGeneration.status == "staging",

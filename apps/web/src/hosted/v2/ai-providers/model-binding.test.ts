@@ -123,8 +123,8 @@ describe("model binding", () => {
 			{
 				...managedMetadata,
 				description: "Variable cost for long, detailed work.",
-				id: "glm-5.2",
-				display_name: "GLM-5.2",
+				id: "z-ai/glm-5.3",
+				display_name: "GLM-5.3",
 				provider_id: "redpill",
 				is_default: false,
 				is_featured: true,
@@ -164,8 +164,8 @@ describe("model binding", () => {
 					description: "Higher cost for complex work.",
 				},
 				{
-					value: "glm-5.2",
-					label: "GLM-5.2",
+					value: "z-ai/glm-5.3",
+					label: "GLM-5.3",
 					iconId: "zai",
 					description: "Variable cost for long, detailed work.",
 				},

@@ -44,6 +44,7 @@ from app.services.file_store import get_file_store
 from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
+    SessionContentUnavailable,
     load_session_messages,
     session_has_uploaded_content,
     slice_session_items,
@@ -59,7 +60,9 @@ log = logging.getLogger(__name__)
 
 file_store = get_file_store()
 PUBLIC_SESSION_EXPORT_CACHE_CONTROL = "no-store"
-_PUBLIC_SESSION_EXPORT_PATH = re.compile(r"^/(?:v1|api)/public/sessions/[^/]+/export\.(?:md|json)$")
+_PUBLIC_SESSION_EXPORT_PATH = re.compile(
+    r"^/(?:v1|api)/public/(?:sessions|session-shares)/[^/]+/export\.(?:md|json)$"
+)
 
 
 def is_public_session_export_path(path: str) -> bool:
@@ -172,6 +175,11 @@ async def get_shared_session_messages(
         raw = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -214,6 +222,11 @@ async def export_shared_session_markdown(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
@@ -259,6 +272,11 @@ async def export_shared_session_json(
         messages = await load_session_messages(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
     except SessionContentInvalid:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"

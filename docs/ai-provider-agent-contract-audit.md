@@ -143,19 +143,17 @@ Verified upstream behavior:
   boundary used for auth profiles.
 
 OpenClaw doctor scans generated model catalogs independently of provider
-execution precedence. A historical Clawdi projection serialized the literal
-SecretRef marker `CLAWDI_AI_API_KEY` into `models.json`; doctor did not
-recognize it as non-secret and persisted it as the first `clawdi:default`
-API-key profile. OpenClaw reads known env markers from installed plugin setup
-metadata. Hosted v2 therefore installs and enables a credential-free,
-Clawdi-owned metadata plugin declaring
-`setup.providers: [{ id: "clawdi", envVars: ["CLAWDI_AI_API_KEY"] }]` before
-provider projection and cleanup. Convergence verifies the effective marker via
-the public provider-env-vars SDK and fails closed if OpenClaw did not register
-it. This contract does not depend on a legacy plugin. The audited `8f382a2`
-source is provenance evidence. Hosted v2 uses OpenClaw's official installer
-without a version argument, while convergence capability-gates the public SDK
-surface it consumes.
+execution precedence. A historical beta workaround installed the
+credential-free `clawdi-managed-provider` plugin to register the literal
+SecretRef marker `CLAWDI_AI_API_KEY` as provider metadata. The current Hosted v2
+contract does not require that plugin: the supported `2026.7.1-2` and `2026.8.1`
+packages are verified with the native env-backed projection, an explicit Doctor
+repair, and post-repair auth-store inspection. Convergence uses OpenClaw's
+official uninstall command only when the legacy source and install paths prove
+that the plugin is Clawdi-owned; an unrelated plugin with the same id fails
+closed. Historical `clawdi` auth-profile cleanup remains for previously affected
+deployments. `2026.7.1-2` can emit a non-blocking `secrets audit` finding for the
+generated env marker, but Doctor and runtime authentication remain functional.
 
 Hosted v2 convergence:
 
@@ -165,9 +163,8 @@ Hosted v2 convergence:
   environment-backed `apiKey` references;
 - treats the managed `clawdi` provider as reserved and its environment
   SecretRef as the only API-key authority;
-- installs and verifies the credential-free provider metadata before writing
-  the generated model catalog, preventing doctor from treating the SecretRef
-  marker as credential material;
+- removes a verified Clawdi-owned legacy provider metadata plugin and leaves
+  foreign installations untouched;
 - only when the accepted v2 bundle proves that managed projection, atomically
   removes normalized `clawdi` config auth profiles/order and uses the public
   provider-auth helper to remove normalized `clawdi` stored profiles plus

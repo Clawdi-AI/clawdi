@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HermesAdapter } from "../adapters/hermes";
+import { OpenClawAdapter } from "../adapters/openclaw";
 import {
 	pollSessionPaths,
 	SESSION_IDLE_POLL_INTERVAL_MS,
@@ -597,6 +598,43 @@ test("Hermes WAL commits change the production watch signature while state.db st
 		database.close();
 		if (previousHermesHome === undefined) delete process.env.HERMES_HOME;
 		else process.env.HERMES_HOME = previousHermesHome;
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("OpenClaw WAL commits change the production watch signature while its database stays fixed", async () => {
+	const root = mkdtempSync(join(tmpdir(), "clawdi-openclaw-wal-watch-"));
+	const previousHome = process.env.HOME;
+	const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+	const stateRoot = join(root, ".openclaw");
+	const agentRoot = join(stateRoot, "agents", "main");
+	const databasePath = join(agentRoot, "agent", "openclaw-agent.sqlite");
+	process.env.HOME = root;
+	process.env.OPENCLAW_STATE_DIR = stateRoot;
+	mkdirSync(join(agentRoot, "sessions"), { recursive: true });
+	mkdirSync(join(agentRoot, "agent"), { recursive: true });
+	const database = new Database(databasePath);
+	try {
+		database.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0");
+		database.exec("CREATE TABLE session_writes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+		database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		const paths = new OpenClawAdapter().sessions.watchPaths();
+		expect(paths).toContain(databasePath);
+		expect(paths).toContain(`${databasePath}-wal`);
+		expect(paths).toContain(`${databasePath}-journal`);
+		const mainBefore = await sessionPathSignature(databasePath);
+		const walBefore = await sessionPathSignature(`${databasePath}-wal`);
+
+		database.exec("INSERT INTO session_writes (body) VALUES ('committed in wal')");
+
+		expect(await sessionPathSignature(databasePath)).toBe(mainBefore);
+		expect(await sessionPathSignature(`${databasePath}-wal`)).not.toBe(walBefore);
+	} finally {
+		database.close();
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		if (previousStateDir === undefined) delete process.env.OPENCLAW_STATE_DIR;
+		else process.env.OPENCLAW_STATE_DIR = previousStateDir;
 		rmSync(root, { recursive: true, force: true });
 	}
 });

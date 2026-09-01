@@ -1,296 +1,368 @@
 "use client";
 
+import type { components } from "@clawdi/shared/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Copy, Link2, Share2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, Copy, Link2, Share2, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { sessionDetailQueryKey } from "@/lib/session-queries";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
-/**
- * Owner-side share controls — Notion-style cluster:
- *
- *   [Share ▾]  [🔗]
- *
- * The Share button opens an inline popover with the visibility toggle
- * and per-format URLs. The chain-link icon next to it copies the
- * canonical URL directly — `/s/{session_id}` exists permanently per
- * Notion / Drive convention, so the icon needs zero backend interaction
- * to do its job.
- *
- * Sessions default to Private. Toggling "Public Access" on creates a
- * `kind='link'` permission row; toggling off revokes it. Visiting the
- * URL when private requires sign-in (server-side gate, see
- * `/s/[id]/page.tsx`).
- */
-export function SessionShareControls({
-	sessionId,
-	isShared,
-}: {
-	sessionId: string;
-	isShared: boolean;
-}) {
+export type SessionShareTarget =
+	| { scope: "session" }
+	| { scope: "through" | "response"; position: number };
+
+type SessionShareItem = components["schemas"]["SessionShareResponse"];
+type SessionPermission = components["schemas"]["SessionPermissionResponse"];
+
+export function SessionShareButton({ onClick }: { onClick: () => void }) {
 	return (
-		<div className="flex items-center gap-1">
-			<SharePopover sessionId={sessionId} isShared={isShared} />
-			<CopyLinkButton sessionId={sessionId} />
-		</div>
+		<Button variant="outline" size="sm" className="h-8" onClick={onClick}>
+			<Share2 />
+			Share
+		</Button>
 	);
 }
 
-function buildShareUrl(sessionId: string): string {
-	const origin = typeof window !== "undefined" ? window.location.origin : "";
-	return `${origin}/s/${sessionId}`;
-}
-
-function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: boolean }) {
+export function SessionShareDialog({
+	sessionId,
+	target,
+	open,
+	onOpenChange,
+}: {
+	sessionId: string;
+	target: SessionShareTarget;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}) {
 	const api = useApi();
-	const qc = useQueryClient();
-	const [open, setOpen] = useState(false);
-
-	// Fetch when popover opens OR when the parent already knows the
-	// session has an active link permission (so the toggle reflects
-	// state immediately on first open without a Loading flash).
-	const permsQuery = useQuery({
-		queryKey: ["session-permissions", sessionId],
+	const queryClient = useQueryClient();
+	const [createdShareId, setCreatedShareId] = useState<string | null>(null);
+	const sharesKey = ["session-shares", sessionId] as const;
+	const sharesQuery = useQuery({
+		queryKey: sharesKey,
+		queryFn: async () =>
+			unwrap(
+				await api.GET("/v1/sessions/{session_id}/shares", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
+		enabled: open,
+	});
+	const permissionsKey = ["session-permissions", sessionId] as const;
+	const permissionsQuery = useQuery({
+		queryKey: permissionsKey,
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/sessions/{session_id}/permissions", {
 					params: { path: { session_id: sessionId } },
 				}),
 			),
-		enabled: open || isShared,
+		enabled: open && target.scope === "session",
 	});
 
-	const linkPermission = permsQuery.data?.permissions.find((p) => p.kind === "link") ?? null;
-	const sharedNow = linkPermission !== null;
-
-	function invalidate() {
-		qc.invalidateQueries({ queryKey: ["session-permissions", sessionId] });
-		qc.invalidateQueries({ queryKey: sessionDetailQueryKey(sessionId) });
-		qc.invalidateQueries({ queryKey: ["get", "/v1/sessions"] });
-	}
-
-	// Optimistic toggle: flip the cached link permission immediately so the
-	// switch responds on click; roll back on error. The snapshot/rollback
-	// pair guards against the enable/disable racing a slow network.
-	type PermsCache = { permissions: Array<{ kind: string }> } | undefined;
-	const permsKey = ["session-permissions", sessionId] as const;
-
-	function optimisticSet(shared: boolean) {
-		const previous = qc.getQueryData<PermsCache>(permsKey);
-		qc.setQueryData<PermsCache>(permsKey, (old) => {
-			const others = (old?.permissions ?? []).filter((p) => p.kind !== "link");
-			return { permissions: shared ? [...others, { kind: "link" }] : others };
+	const refreshShares = () => {
+		void queryClient.invalidateQueries({ queryKey: sharesKey });
+		void queryClient.invalidateQueries({ queryKey: permissionsKey });
+		void queryClient.invalidateQueries({
+			queryKey: sessionDetailQueryKey(sessionId),
 		});
-		return previous;
-	}
-
-	const enableMutation = useMutation({
+		void queryClient.invalidateQueries({ queryKey: ["get", "/v1/sessions"] });
+	};
+	const createShare = useMutation({
 		mutationFn: async () =>
 			unwrap(
-				await api.POST("/v1/sessions/{session_id}/permissions", {
+				await api.POST("/v1/sessions/{session_id}/shares", {
 					params: { path: { session_id: sessionId } },
-					body: { kind: "link" },
+					body: target,
 				}),
 			),
-		onMutate: async () => {
-			await qc.cancelQueries({ queryKey: permsKey });
-			return { previous: optimisticSet(true) };
+		onSuccess: (share) => {
+			setCreatedShareId(share.id);
+			queryClient.setQueryData<{ shares: SessionShareItem[] }>(sharesKey, (current) => ({
+				shares: [share, ...(current?.shares.filter((item) => item.id !== share.id) ?? [])],
+			}));
+			refreshShares();
+			toast.success("Share link created");
 		},
-		onSuccess: () => {
-			invalidate();
-			toast.success("Public access enabled");
-		},
-		onError: (err, _vars, ctx) => {
-			qc.setQueryData(permsKey, ctx?.previous);
-			toast.error(errorMessage(err));
-		},
+		onError: (error) => toast.error(errorMessage(error)),
 	});
 
-	const disableMutation = useMutation({
-		mutationFn: async () => {
-			const res = await api.DELETE("/v1/sessions/{session_id}/permissions", {
-				params: { path: { session_id: sessionId }, query: { kind: "link" } },
-			});
-			if (res.error !== undefined) {
-				throw new ApiError(res.response.status, JSON.stringify(res.error));
-			}
-		},
-		onMutate: async () => {
-			await qc.cancelQueries({ queryKey: permsKey });
-			return { previous: optimisticSet(false) };
-		},
-		onSuccess: () => {
-			invalidate();
-			toast.success("Public access disabled");
-		},
-		onError: (err, _vars, ctx) => {
-			qc.setQueryData(permsKey, ctx?.previous);
-			toast.error(errorMessage(err));
-		},
+	const title =
+		target.scope === "response"
+			? "Share this response"
+			: target.scope === "through"
+				? "Share conversation to here"
+				: "Share session";
+	const description =
+		target.scope === "response"
+			? "Create a link containing only this Agent response."
+			: target.scope === "through"
+				? "Create a link containing the conversation through this message."
+				: "Create a snapshot of the current conversation. Future messages won’t be added.";
+	const shares = sharesQuery.data?.shares ?? [];
+	const matchingShares = shares.filter((share) => {
+		if (share.scope !== target.scope) return false;
+		return target.scope === "session" || share.end_position === target.position;
 	});
-
-	const pending = enableMutation.isPending || disableMutation.isPending;
-
-	function onToggle(next: boolean) {
-		if (next) enableMutation.mutate();
-		else disableMutation.mutate();
-	}
-
-	const url = buildShareUrl(sessionId);
+	const otherShares =
+		target.scope === "session" ? shares.filter((share) => share.scope !== "session") : [];
+	const legacyLink =
+		target.scope === "session"
+			? permissionsQuery.data?.permissions.find(
+					(permission: SessionPermission) => permission.kind === "link",
+				)
+			: undefined;
+	const isLoading =
+		sharesQuery.isLoading || (target.scope === "session" && permissionsQuery.isLoading);
+	const loadError =
+		sharesQuery.error ?? (target.scope === "session" ? permissionsQuery.error : null);
+	const legacyUrl = typeof window === "undefined" ? "" : `${window.location.origin}/s/${sessionId}`;
+	const revokeShare = async (shareId: string) => {
+		const result = await api.DELETE("/v1/session-shares/{share_id}", {
+			params: { path: { share_id: shareId } },
+		});
+		if (result.error !== undefined) {
+			throw new ApiError(result.response.status, JSON.stringify(result.error));
+		}
+	};
+	const revokeLegacyLink = async () => {
+		const result = await api.DELETE("/v1/sessions/{session_id}/permissions", {
+			params: {
+				path: { session_id: sessionId },
+				query: { kind: "link" },
+			},
+		});
+		if (result.error !== undefined) {
+			throw new ApiError(result.response.status, JSON.stringify(result.error));
+		}
+	};
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger
-				render={<Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5" />}
-			>
-				<Share2 className={cn("size-3.5", sharedNow ? "text-success" : "text-muted-foreground")} />
-				Share
-				<ChevronDown className="size-3 text-muted-foreground" />
-			</PopoverTrigger>
-			<PopoverContent align="end" className="w-96 p-0">
-				<div className="flex items-start justify-between gap-3 px-3 py-3">
-					<div className="min-w-0 flex-1 space-y-0.5">
-						<Label htmlFor="share-toggle" className="text-sm font-medium">
-							Public access
-						</Label>
-						<p className="text-xs text-muted-foreground">
-							{sharedNow
-								? "Anyone with the link can view this session."
-								: "Only you can view this session."}
-						</p>
-					</div>
-					<Switch
-						id="share-toggle"
-						checked={sharedNow}
-						disabled={pending}
-						onCheckedChange={onToggle}
-					/>
-				</div>
+		<Dialog
+			open={open}
+			onOpenChange={onOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) setCreatedShareId(null);
+			}}
+		>
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+				<DialogHeader>
+					<DialogTitle>{title}</DialogTitle>
+					<DialogDescription>{description}</DialogDescription>
+				</DialogHeader>
 
-				{/* URL row is always shown — the URL exists regardless of
-				    public-access state. Copying it for personal reference
-				    is fine even when the link won't work for anyone else. */}
-				<div className="space-y-3 border-t px-3 py-3">
-					<PrimaryCopy url={url} />
-					{sharedNow ? (
-						<div className="space-y-1.5">
-							<div className="text-xs text-muted-foreground">Agent formats</div>
-							<div className="flex gap-2">
-								<SecondaryCopy url={`${url}.md`} label="Markdown" />
-								<SecondaryCopy url={`${url}.json`} label="JSON" />
+				<div className="space-y-3">
+					{isLoading ? (
+						<div className="flex min-h-16 items-center justify-center text-muted-foreground">
+							<Spinner className="size-4" />
+						</div>
+					) : loadError ? (
+						<ApiErrorPanel
+							error={loadError}
+							title="Couldn't load share links"
+							onRetry={() => {
+								void sharesQuery.refetch();
+								if (target.scope === "session") void permissionsQuery.refetch();
+							}}
+						/>
+					) : matchingShares.length > 0 ? (
+						<div className="space-y-2">
+							{matchingShares.map((share) => (
+								<ShareLinkRow
+									key={share.id}
+									url={share.share_url}
+									label={shareLabel(share)}
+									detail={shareDetail(share)}
+									autoFocus={share.id === createdShareId}
+									onRevoke={() => revokeShare(share.id)}
+									onRevoked={refreshShares}
+								/>
+							))}
+						</div>
+					) : (
+						<div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+							No snapshot has been created for this view yet.
+						</div>
+					)}
+
+					{legacyLink ? (
+						<div className="border-t pt-3">
+							<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
+							<ShareLinkRow
+								url={legacyUrl}
+								label="Live Session link"
+								detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
+								onRevoke={revokeLegacyLink}
+								onRevoked={refreshShares}
+							/>
+						</div>
+					) : null}
+
+					{otherShares.length > 0 ? (
+						<div className="border-t pt-3">
+							<p className="mb-2 text-xs font-medium text-muted-foreground">Other active links</p>
+							<div className="space-y-2">
+								{otherShares.map((share) => (
+									<ShareLinkRow
+										key={share.id}
+										url={share.share_url}
+										label={shareLabel(share)}
+										detail={shareDetail(share)}
+										onRevoke={() => revokeShare(share.id)}
+										onRevoked={refreshShares}
+										compact
+									/>
+								))}
 							</div>
 						</div>
 					) : null}
 				</div>
 
-				{linkPermission ? (
-					<div className="border-t px-3 py-2">
-						<div className="text-xs text-muted-foreground">
-							Shared {relativeTime(linkPermission.created_at)}
-						</div>
-					</div>
-				) : null}
-
-				{permsQuery.isLoading && open && !linkPermission ? (
-					<div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-						<Spinner className="size-3" /> Loading…
-					</div>
-				) : null}
-			</PopoverContent>
-		</Popover>
+				<DialogFooter>
+					<Button
+						onClick={() => createShare.mutate()}
+						disabled={createShare.isPending || isLoading || Boolean(loadError)}
+					>
+						{createShare.isPending ? <Spinner className="size-4" /> : <Link2 />}
+						{matchingShares.length > 0 ? "Create new snapshot" : "Create link"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
-function CopyLinkButton({ sessionId }: { sessionId: string }) {
-	const url = buildShareUrl(sessionId);
-	const { copied, copy } = useCopyToClipboard(url, "Link");
-	return (
-		<Button
-			variant="outline"
-			size="icon"
-			className={cn("size-8", copied && "text-success")}
-			onClick={copy}
-			aria-label="Copy share link"
-			title="Copy share link"
-		>
-			{copied ? <Check className="size-3.5" /> : <Link2 className="size-3.5" />}
-		</Button>
-	);
+function shareLabel(share: SessionShareItem): string {
+	if (share.scope === "session") return "Full Session snapshot";
+	if (share.scope === "response") return "Single response snapshot";
+	return `Conversation through message ${share.message_count}`;
 }
 
-function useCopyToClipboard(url: string, label: string) {
-	const [copied, setCopied] = useState(false);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+function shareDetail(share: SessionShareItem): string {
+	return `Created ${relativeTime(share.created_at)} · ${share.message_count} message${share.message_count === 1 ? "" : "s"}`;
+}
 
-	useEffect(
-		() => () => {
-			if (timerRef.current) clearTimeout(timerRef.current);
+function ShareLinkRow({
+	url,
+	label,
+	detail,
+	onRevoke,
+	onRevoked,
+	autoFocus = false,
+	compact = false,
+}: {
+	url: string;
+	label: string;
+	detail: string;
+	onRevoke: () => Promise<void>;
+	onRevoked: () => void;
+	autoFocus?: boolean;
+	compact?: boolean;
+}) {
+	const { copied, copy } = useCopyToClipboard({ success: "Share link copied" });
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [revokeSucceeded, setRevokeSucceeded] = useState(false);
+	const revoke = useMutation({
+		mutationFn: onRevoke,
+		onSuccess: () => {
+			setRevokeSucceeded(true);
+			setConfirmOpen(false);
+			toast.success("Share link turned off");
 		},
-		[],
-	);
-
-	async function copy() {
-		try {
-			await navigator.clipboard.writeText(url);
-			setCopied(true);
-			if (timerRef.current) clearTimeout(timerRef.current);
-			timerRef.current = setTimeout(() => setCopied(false), 1500);
-			toast.success(`${label} Copied`);
-		} catch (e) {
-			toast.error(errorMessage(e));
-		}
-	}
-
-	return { copied, copy };
-}
-
-function PrimaryCopy({ url }: { url: string }) {
-	const { copied, copy } = useCopyToClipboard(url, "Link");
+		onError: (error) => toast.error(errorMessage(error)),
+	});
 	return (
-		<div className="flex items-center gap-2">
-			<Input
-				readOnly
-				value={url}
-				name="session-share-url"
-				aria-label="Session share URL"
-				autoComplete="off"
-				spellCheck={false}
-				className="h-8 font-mono text-xs"
-				onFocus={(e) => e.currentTarget.select()}
-			/>
-			<Button
-				variant="outline"
-				size="sm"
-				className={cn("h-8 shrink-0 gap-1.5", copied && "text-success")}
-				onClick={copy}
+		<div className={cn("rounded-lg border p-3", compact && "p-2.5")}>
+			<div className="mb-2 flex items-center justify-between gap-3">
+				<div className="min-w-0">
+					<p className="truncate text-sm font-medium">{label}</p>
+					<p className="text-xs text-muted-foreground">{detail}</p>
+				</div>
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					className="text-muted-foreground hover:text-destructive"
+					onClick={() => setConfirmOpen(true)}
+					aria-label="Turn off share link"
+				>
+					<Trash2 />
+				</Button>
+			</div>
+			<div className="flex gap-2">
+				<Input
+					readOnly
+					value={url}
+					aria-label="Session share URL"
+					className="h-8 min-w-0 font-mono text-xs"
+					onFocus={(event) => event.currentTarget.select()}
+				/>
+				<Button
+					variant="outline"
+					size="sm"
+					className={cn("h-8 shrink-0", copied && "text-success")}
+					onClick={() => copy(url)}
+					autoFocus={autoFocus}
+				>
+					{copied ? <Check /> : <Copy />}
+					Copy
+				</Button>
+			</div>
+
+			<AlertDialog
+				open={confirmOpen}
+				onOpenChange={setConfirmOpen}
+				onOpenChangeComplete={(nextOpen) => {
+					if (!nextOpen && revokeSucceeded) {
+						setRevokeSucceeded(false);
+						onRevoked();
+					}
+				}}
 			>
-				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-				Copy
-			</Button>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
+						<AlertDialogDescription>
+							Anyone using this link will immediately lose access. The original Session stays
+							unchanged.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={revoke.isPending}
+							onClick={() => revoke.mutate()}
+						>
+							Turn off link
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
-	);
-}
-
-function SecondaryCopy({ url, label }: { url: string; label: string }) {
-	const { copied, copy } = useCopyToClipboard(url, label);
-	return (
-		<Button
-			variant="outline"
-			size="sm"
-			className={cn("h-7 flex-1 gap-1.5 text-xs", copied && "text-success")}
-			onClick={copy}
-		>
-			{copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-			{label}
-		</Button>
 	);
 }

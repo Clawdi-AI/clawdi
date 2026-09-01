@@ -111,9 +111,8 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://open.bigmodel.cn/api/paas/v4",
 		api_mode: "openai_chat",
 		catalog: [
+			{ id: "glm-5.3", alias: "GLM-5.3" },
 			{ id: "glm-5.2", alias: "GLM-5.2" },
-			{ id: "glm-5.1", alias: "GLM-5.1" },
-			{ id: "glm-4.7", alias: "GLM-4.7" },
 		],
 		api_key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
 		region_variants: [

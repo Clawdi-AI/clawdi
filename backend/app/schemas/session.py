@@ -590,8 +590,8 @@ class SessionPermissionResponse(BaseModel):
 
 class SessionPermissionsResponse(BaseModel):
     """`GET /v1/sessions/{id}/permissions` — active permissions for a
-    session, newest-first. Drives the share popover state and (in the
-    future) the "people with access" list.
+    session, newest-first. Preserves legacy live-link management and can
+    later support a "people with access" list.
     """
 
     permissions: list[SessionPermissionResponse]
@@ -600,8 +600,8 @@ class SessionPermissionsResponse(BaseModel):
 class SessionPermissionCreate(BaseModel):
     """`POST /v1/sessions/{id}/permissions` body.
 
-    For today's "Public access" toggle the body is just
-    `{"kind": "link"}`. Future invite-by-email sends `{"kind": "email",
+    Legacy live-link access uses `{"kind": "link"}`. Future
+    invite-by-email sends `{"kind": "email",
     "email": "alice@x.com"}`; future direct user grant sends
     `{"kind": "user", "user_id": "..."}`.
     """
@@ -611,6 +611,47 @@ class SessionPermissionCreate(BaseModel):
     email: str | None = None
     # Optional in the request body — server defaults to 'viewer'.
     role: Literal["viewer"] | None = None
+
+
+class SessionShareCreate(BaseModel):
+    """Create an immutable public snapshot of all or part of a Session."""
+
+    scope: Literal["session", "through", "response"] = "session"
+    position: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_scope_position(self) -> Self:
+        if self.scope == "session" and self.position is not None:
+            raise ValueError("session scope must not include a position")
+        if self.scope != "session" and self.position is None:
+            raise ValueError(f"{self.scope} scope requires a position")
+        return self
+
+
+class SessionShareResponse(BaseModel):
+    id: str
+    session_id: str
+    scope: Literal["session", "through", "response"]
+    start_position: int | None
+    end_position: int
+    message_count: int
+    share_url: str
+    created_at: datetime
+
+
+class SessionSharesResponse(BaseModel):
+    shares: list[SessionShareResponse]
+
+
+class PublicSessionShareResponse(BaseModel):
+    id: str
+    title: str
+    agent_type: str | None
+    model: str | None
+    started_at: datetime
+    created_at: datetime
+    message_count: int
+    scope: Literal["session", "through", "response"]
 
 
 class SessionUploadResponse(BaseModel):
@@ -641,6 +682,11 @@ class SessionMessageResponse(BaseModel):
     content: str
     model: str | None = None
     timestamp: datetime | None = None
+
+
+class PublicSessionShareExportResponse(PublicSessionShareResponse):
+    messages: list[SessionMessageResponse]
+    share_url: str
 
 
 class SessionTimelineMessageResponse(SessionMessageResponse):

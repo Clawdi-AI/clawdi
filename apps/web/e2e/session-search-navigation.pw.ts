@@ -52,6 +52,109 @@ async function horizontalBounds(locator: Locator) {
 	});
 }
 
+async function verticalBounds(locator: Locator) {
+	return locator.evaluate((element) => {
+		const bounds = element.getBoundingClientRect();
+		return { y: bounds.y, height: bounds.height };
+	});
+}
+
+test("commits Session search keys atomically before prefetching", async ({ page }) => {
+	type ListRequest = { q: string | null; sort: string | null; page: string | null };
+	const requests: ListRequest[] = [];
+	let heldQuery: string | null | undefined;
+	let heldRequestStarted: (() => void) | undefined;
+	let releaseHeldRequest: (() => void) | undefined;
+	let heldRequestGate = Promise.resolve();
+
+	function holdPageOne(query: string | null) {
+		heldQuery = query;
+		const started = new Promise<void>((resolve) => {
+			heldRequestStarted = resolve;
+		});
+		heldRequestGate = new Promise<void>((resolve) => {
+			releaseHeldRequest = resolve;
+		});
+		return {
+			started,
+			release: () => {
+				heldQuery = undefined;
+				releaseHeldRequest?.();
+			},
+		};
+	}
+
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") return fulfillJson(route, []);
+		if (url.pathname === "/v1/sessions") {
+			const request = {
+				q: url.searchParams.get("q"),
+				sort: url.searchParams.get("sort"),
+				page: url.searchParams.get("page"),
+			};
+			requests.push(request);
+			if (request.page === "1" && request.q === heldQuery) {
+				heldRequestStarted?.();
+				await heldRequestGate;
+			}
+			return fulfillJson(route, {
+				items: [],
+				total: 51,
+				page: Number(request.page),
+				page_size: 25,
+			});
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto("/sessions?q=initial%20needle&sort=relevance&page=2");
+	const search = page.getByPlaceholder("Search sessions and messages…");
+	await expect(search).toHaveValue("initial needle");
+	await expect
+		.poll(() => requests.some((request) => request.q === "initial needle" && request.page === "3"))
+		.toBe(true);
+
+	requests.length = 0;
+	const clearRequest = holdPageOne(null);
+	await search.fill("");
+	await expect(page).toHaveURL(
+		(url) => !url.searchParams.has("q") && !url.searchParams.has("sort"),
+	);
+	await clearRequest.started;
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
+	);
+	expect(requests).toEqual([{ q: null, sort: "last_activity_at", page: "1" }]);
+	clearRequest.release();
+	await expect
+		.poll(() => requests.some((request) => request.q === null && request.page === "2"))
+		.toBe(true);
+
+	requests.length = 0;
+	const searchRequest = holdPageOne("fresh needle");
+	await search.fill("fresh needle");
+	await expect(page).toHaveURL(
+		(url) =>
+			url.searchParams.get("q") === "fresh needle" && url.searchParams.get("sort") === "relevance",
+	);
+	await searchRequest.started;
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
+	);
+	expect(requests).toEqual([{ q: "fresh needle", sort: "relevance", page: "1" }]);
+	searchRequest.release();
+	await expect
+		.poll(() => requests.some((request) => request.q === "fresh needle" && request.page === "2"))
+		.toBe(true);
+});
+
 test("opens a global Session body match at the exact message", async ({ page }) => {
 	const query = "global palette anchor";
 	await page.route("**/v1/**", async (route) => {
@@ -415,12 +518,14 @@ test("filters session activity and expands paired tool details", async ({ page }
 	await expect(toolActivity).toBeVisible();
 	await expect(page.getByRole("button", { name: /search.*Error/ })).toBeVisible();
 	await expect(page.getByText("Final answer after reading the file")).not.toBeVisible();
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeChecked();
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeDisabled();
 	await toolActivity.click();
 	await expect(page.locator("pre").filter({ hasText: '"path": "README.md"' })).toBeVisible();
 	await page.getByRole("tab", { name: "Output" }).click();
 	await expect(page.getByText("Repository instructions", { exact: true })).toBeVisible();
 
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,tools");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).toBeVisible();
@@ -429,18 +534,15 @@ test("filters session activity and expands paired tool details", async ({ page }
 		(url) => url.searchParams.get("matchQuery") === "Read the repository",
 	);
 
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => {
 		return url.searchParams.get("timelineView") === "tools" && !url.searchParams.has("matchQuery");
 	});
 	await expect(page.getByRole("textbox", { name: "Search messages" })).not.toBeVisible();
-	await expect(page.getByRole("button", { name: "Tools activity" })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
+	await expect(page.getByRole("checkbox", { name: "Tools" })).toBeChecked();
 	await expect(toolActivity).toBeVisible();
 
-	await page.getByRole("button", { name: "Agent messages" }).click();
+	await page.getByRole("checkbox", { name: "Agent" }).click();
 	const restoredSearch = page.getByRole("textbox", { name: "Search messages" });
 	await expect(restoredSearch).toHaveValue("Read the repository");
 	await expect(page).toHaveURL((url) => {
@@ -449,7 +551,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 			url.searchParams.get("timelineView") === "assistant,tools"
 		);
 	});
-	await page.getByRole("button", { name: "Tools activity" }).click();
+	await page.getByRole("checkbox", { name: "Tools" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "assistant");
 	await expect(toolActivity).not.toBeVisible();
 	await restoredSearch.fill("Final answer");
@@ -464,7 +566,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 		"Final answer after reading the file",
 	);
 	await expect(page.getByText("1 / 1")).toBeVisible();
-	await page.getByRole("button", { name: "Your messages" }).click();
+	await page.getByRole("checkbox", { name: "You" }).click();
 	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,assistant");
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).not.toBeVisible();
@@ -498,6 +600,14 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const searchAnchorOffset = searchWindowOffset + 49;
 	const requestedOffsets = new Set<number>();
 	const requestedSearchOffsets = new Set<number>();
+	let latestPageRequestCount = 0;
+	const waitForTimelineLayout = () =>
+		page.evaluate(
+			() =>
+				new Promise<void>((resolve) => {
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+				}),
+		);
 
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -527,6 +637,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 			const isSearchPagination = offset >= searchWindowOffset;
 			if (!url.searchParams.has("search_query") && !isSearchPagination) {
 				requestedOffsets.add(offset);
+				if (offset === 0) latestPageRequestCount += 1;
 				return fulfillJson(route, {
 					items: browseTimeline.slice(offset, offset + 100),
 					total: browseTimeline.length,
@@ -562,9 +673,24 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	const sessionContextHeader = page.getByTestId("session-context-header");
+	await expect(sessionContextHeader).toBeInViewport();
+	await expect(sessionContextHeader).toContainText("Long virtualized session");
+	await expect(sessionContextHeader).toContainText("2000 messages");
+	const [contextBounds, siteHeaderBounds] = await Promise.all([
+		verticalBounds(sessionContextHeader),
+		verticalBounds(page.locator("header").first()),
+	]);
+	expect(Math.abs(contextBounds.y - (siteHeaderBounds.y + siteHeaderBounds.height))).toBeLessThan(
+		2,
+	);
+	const loadEarlier = page.getByRole("button", { name: /^Load earlier/ });
+	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+	await waitForTimelineLayout();
+	expect(requestedOffsets.size).toBe(1);
 	for (let attempt = 0; attempt < 8 && requestedOffsets.size < 5; attempt++) {
 		const requestCount = requestedOffsets.size;
-		await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+		await loadEarlier.click();
 		await expect.poll(() => requestedOffsets.size).toBeGreaterThan(requestCount);
 	}
 	expect([...requestedOffsets].sort((left, right) => left - right)).toEqual([
@@ -581,6 +707,14 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	).toBeLessThan(2);
 	await jumpToLatest.click();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect
+		.poll(() =>
+			scrollContainer.evaluate(
+				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+			),
+		)
+		.toBeLessThan(2);
+	await expect(jumpToLatest).not.toBeVisible();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
 	);
@@ -593,35 +727,57 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 		matchRevision: targetAnchor.revision,
 		matchQuery: query,
 	});
-	await page.goto(`/sessions/${SESSION_ID}?${search}`);
+	const searchUrl = `/sessions/${SESSION_ID}?${search}`;
+	await page.goto(searchUrl);
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Current ${query} result stays mounted`);
 	await expect(current.locator("mark")).toHaveText(["virtualized needle"]);
+	await expect(current).toBeInViewport();
+	await waitForTimelineLayout();
 	expect(await mountedRows.count()).toBeLessThan(80);
+
+	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
+	await waitForTimelineLayout();
+	await expect(current).not.toBeInViewport();
+	if (!requestedSearchOffsets.has(1550)) {
+		await loadEarlier.press("Enter");
+	}
+	await expect.poll(() => requestedSearchOffsets.has(1550)).toBe(true);
+	await expect(page.getByRole("button", { name: /^Load earlier \(\d+\/2000\)$/ })).toBeVisible();
+	await expect
+		.poll(async () => {
+			const before = await scrollContainer.evaluate((element) => element.scrollTop);
+			await waitForTimelineLayout();
+			const after = await scrollContainer.evaluate((element) => element.scrollTop);
+			return Math.abs(after - before);
+		})
+		.toBeLessThan(2);
+	await expect(current).not.toBeInViewport();
+	const latestRequestsBeforeJump = latestPageRequestCount;
+	await expect(jumpToLatest).toBeVisible();
+	await jumpToLatest.click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/sessions/${SESSION_ID}` &&
+			!url.searchParams.has("matchKind") &&
+			!url.searchParams.has("matchPosition") &&
+			!url.searchParams.has("matchRevision") &&
+			!url.searchParams.has("matchQuery")
+		);
+	});
+	await expect.poll(() => latestPageRequestCount).toBeGreaterThan(latestRequestsBeforeJump);
+	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	await expect
+		.poll(() =>
+			scrollContainer.evaluate(
+				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+			),
+		)
+		.toBeLessThan(2);
+	await expect(jumpToLatest).not.toBeVisible();
 
 	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(searchUrl);
 	await expect(current).toBeVisible();
 	expect(await mountedRows.count()).toBeLessThan(80);
-
-	await page.setViewportSize({ width: 1280, height: 900 });
-	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
-	await page.getByRole("button", { name: "Load earlier (100/2000)" }).click();
-	await expect.poll(() => requestedSearchOffsets.has(1550)).toBe(true);
-	await expect(page.getByRole("button", { name: "Load earlier (200/2000)" })).toBeVisible();
-	const stableScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-	await page.evaluate(
-		() =>
-			new Promise<void>((resolve) => {
-				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-			}),
-	);
-	const settledScrollTop = await scrollContainer.evaluate((element) => element.scrollTop);
-	expect(Math.abs(settledScrollTop - stableScrollTop)).toBeLessThan(2);
-	const currentMatchInViewport = await current.evaluateAll((elements) =>
-		elements.some((element) => {
-			const bounds = element.getBoundingClientRect();
-			return bounds.bottom > 0 && bounds.top < window.innerHeight;
-		}),
-	);
-	expect(currentMatchInViewport).toBe(false);
 });

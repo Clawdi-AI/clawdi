@@ -25,6 +25,7 @@ const COMPLETION_ONLY = [
 	"components/memories/memories-surface.tsx",
 	"components/projects/create-project-dialog.tsx",
 	"components/projects/project-actions.tsx",
+	"components/sessions/share-controls.tsx",
 	"components/skills/create-skill-dialog.tsx",
 	"components/skills/send-skill-dialog.tsx",
 	"components/ui/confirm-action.tsx",

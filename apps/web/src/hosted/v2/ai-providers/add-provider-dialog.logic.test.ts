@@ -395,7 +395,10 @@ describe("derivedProviderFields", () => {
 		expect(testPreset("groq").catalog.map((model) => model.id)).toEqual(["openai/gpt-oss-120b"]);
 
 		const zhipu = testPreset("zhipu-glm");
-		expect(zhipu.catalog.every((model) => model.context_window === undefined)).toBe(true);
+		expect(zhipu.catalog.map((model) => [model.id, model.alias, model.context_window])).toEqual([
+			["glm-5.3", "GLM-5.3", undefined],
+			["glm-5.2", "GLM-5.2", undefined],
+		]);
 		expect(testPreset("minimax").catalog.map((model) => [model.id, model.context_window])).toEqual([
 			["MiniMax-M3", 1_000_000],
 			["MiniMax-M2.7", 204_800],

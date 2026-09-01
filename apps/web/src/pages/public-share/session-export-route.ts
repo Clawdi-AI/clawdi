@@ -8,8 +8,8 @@ import { env } from "@/lib/env";
  * Visitor-facing URL is `/s/{id}.md` (and `.json`); TanStack Start routes
  * those extension paths directly to this handler.
  *
- * `id` is always a session UUID — matches the backend's canonical
- * `/v1/public/sessions/{session_id}` route.
+ * `id` is a frozen share UUID. A 404 falls back to the legacy Session UUID
+ * route so links created before immutable shares remain valid.
  *
  * **Anonymous-only proxy**: no Clerk token is forwarded to the backend.
  * TanStack Start may still run Clerk request middleware for browser state,
@@ -18,8 +18,8 @@ import { env } from "@/lib/env";
  * "export my session" path goes through the dashboard's owner-auth
  * `/v1/sessions/{id}/export.md` instead.
  *
- * Behavior: 200 when the session has an active `kind='link'` permission,
- * 401 otherwise (backend status passed through verbatim).
+ * Backend status codes pass through verbatim, including 410 for revoked
+ * frozen links and the legacy route's authorization responses.
  */
 
 const ALLOWED_FORMATS = new Set(["md", "json"]);
@@ -56,25 +56,45 @@ export async function GET(
 	{ id, format }: { id: string; format: string },
 ): Promise<Response> {
 	if (!ALLOWED_FORMATS.has(format)) {
-		return new Response("Not found", { status: 404, headers: NO_STORE_HEADERS });
+		return new Response("Not found", {
+			status: 404,
+			headers: NO_STORE_HEADERS,
+		});
 	}
 	if (!UUID_RE.test(id)) {
-		return new Response("Not found", { status: 404, headers: NO_STORE_HEADERS });
+		return new Response("Not found", {
+			status: 404,
+			headers: NO_STORE_HEADERS,
+		});
 	}
 
 	const api = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
-	const result =
+	const frozen =
 		format === "md"
-			? await api.GET("/v1/public/sessions/{session_id}/export.md", {
-					params: { path: { session_id: id } },
+			? await api.GET("/v1/public/session-shares/{share_id}/export.md", {
+					params: { path: { share_id: id } },
 					parseAs: "text",
 					cache: "no-store",
 				})
-			: await api.GET("/v1/public/sessions/{session_id}/export.json", {
-					params: { path: { session_id: id } },
+			: await api.GET("/v1/public/session-shares/{share_id}/export.json", {
+					params: { path: { share_id: id } },
 					parseAs: "text",
 					cache: "no-store",
 				});
+	const result =
+		frozen.error === undefined || frozen.response.status !== 404
+			? frozen
+			: format === "md"
+				? await api.GET("/v1/public/sessions/{session_id}/export.md", {
+						params: { path: { session_id: id } },
+						parseAs: "text",
+						cache: "no-store",
+					})
+				: await api.GET("/v1/public/sessions/{session_id}/export.json", {
+						params: { path: { session_id: id } },
+						parseAs: "text",
+						cache: "no-store",
+					});
 
 	if (result.error !== undefined) {
 		return new Response(publicSessionExportErrorMessage(result.response.status), {

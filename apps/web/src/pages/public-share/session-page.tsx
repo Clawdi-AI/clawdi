@@ -1,49 +1,18 @@
 import { Link } from "@tanstack/react-router";
-import { Clock, Hash, MessageSquare, Zap } from "lucide-react";
+import { Clock, MessageSquare } from "lucide-react";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { SessionTimelineList } from "@/components/sessions/message-list";
-import { SessionSidebar } from "@/components/sessions/session-sidebar";
+import { PublicSessionTimeline } from "@/components/sessions/public-session-timeline";
 import { ShareHeaderUser } from "@/components/share/header-user";
 import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import { TimeTooltip } from "@/components/time-tooltip";
-import { formatDuration } from "@/lib/format";
-import { formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
 import type { PublicShareResult } from "./session-page.functions";
-
-/**
- * Public share page for a Clawdi session.
- *
- * SSR-capable route component — must work for curl, link unfurlers, and
- * agents that don't run JavaScript. The route loader owns server data so
- * initial hydration reuses dehydrated data without rerunning the loader fetch.
- * Mirrors the dashboard `/sessions/[id]` layout
- * (DetailTitle / DetailMeta / SessionSidebar / DetailStats / message
- * stream) so a visitor's view of a session looks the same as the owner's
- * — minus owner-only chrome (no visibility toggle, no breadcrumb, no
- * direction toggle, no infinite-pagination — first page is enough for
- * the visit-then-leave use case). Read-only share affordances (copy
- * link, copy Markdown/JSON URLs) live in `PublicShareControls`.
- *
- * Auth: optional. JWT is forwarded so the backend can identify the
- * session owner — owner sees the same view as a visitor (no extra
- * banner / chrome — owners who want full controls go to the dashboard
- * `/sessions/{id}` instead).
- *
- * URL: `/s/{session_id}` (UUID). Backend `/v1/public/sessions/{id}` is
- * the canonical route.
- *
- * Status responses from the backend get a dedicated view:
- *   200 → render session
- *   401 → `<SignInToView />` (anon visitor, session is private)
- *   403 → `<NoAccess />` (signed in, no grant)
- *   404 → `notFound()` (session doesn't exist)
- */
 
 type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;
 
@@ -56,70 +25,38 @@ export default function PublicSharePage({
 }) {
 	if (result.kind === "unauthorized") return <SignInToView shareUrl={`/s/${id}`} />;
 	if (result.kind === "forbidden") return <NoAccess />;
+	if (result.kind === "expired") {
+		return (
+			<>
+				<ShareHeader />
+				<ExpiredShare />
+			</>
+		);
+	}
 
 	const { share, messagesPage } = result;
-
-	const summaryText = formatSessionSummary(share.summary) || `Session ${share.id.slice(0, 8)}`;
-	const totalTokens = (share.input_tokens ?? 0) + (share.output_tokens ?? 0);
-	const mdUrl = `/s/${share.id}.md`;
-	const jsonUrl = `/s/${share.id}.json`;
-	const truncated = messagesPage.total > messagesPage.items.length;
-	const showLastActivity =
-		share.last_activity_at !== null &&
-		Math.abs(new Date(share.last_activity_at).getTime() - new Date(share.started_at).getTime()) >
-			5 * 60_000;
+	const scopeLabel =
+		share.scope === "response"
+			? "Shared response"
+			: share.scope === "through"
+				? "Shared conversation excerpt"
+				: "Shared conversation";
 
 	return (
 		<>
 			<ShareHeader />
-			{/* `w-full` pins this div to the body's cross-axis width even
-			    though it's a flex item with `mx-auto`. Without it,
-			    `mx-auto` (= `margin-inline: auto`) absorbs the cross-axis
-			    free space and the item shrinks to fit its **content** —
-			    which lets a `<pre>` rendered by `<Markdown>` push the
-			    wrapper past the viewport and trigger page-level horizontal
-			    scroll on narrow screens. `w-full` (`width: 100%`) restores
-			    the "fill body, capped at max-w-4xl, then centered"
-			    behavior that the visual design already assumed. */}
 			<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-5 px-4 py-6 lg:px-6`}>
-				{/* Below `sm` (640px), controls drop under the title block —
-				    a long summary then claims the full row instead of fighting
-				    two icon buttons for ~80px on a 320px screen. Reverts to
-				    the original side-by-side at `sm:` and up. */}
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div className="min-w-0 flex-1 space-y-2">
-						<DetailTitle>{summaryText}</DetailTitle>
+						<DetailTitle>{share.title}</DetailTitle>
 						<DetailMeta>
 							<AgentInline machineName={null} type={share.agent_type} />
-							{share.project_path ? (
-								<>
-									<span>·</span>
-									{/* `truncate` alone (= `white-space:nowrap`) lets the
-									    span grow to its content inside a `flex-wrap`
-									    parent — `max-w-full` caps it at the row's
-									    content box and `min-w-0` breaks the flex
-									    `min-width:auto` default so the ellipsis can
-									    actually engage. */}
-									<span
-										className="min-w-0 max-w-full truncate font-mono"
-										title={share.project_path}
-									>
-										{share.project_path}
-									</span>
-								</>
-							) : null}
 							<span>·</span>
 							<TimeTooltip value={share.started_at}>
 								<span>Started {relativeTime(share.started_at)}</span>
 							</TimeTooltip>
-							{showLastActivity ? (
-								<>
-									<span>·</span>
-									<TimeTooltip value={share.last_activity_at}>
-										<span>Last activity {relativeTime(share.last_activity_at)}</span>
-									</TimeTooltip>
-								</>
-							) : null}
+							<span>·</span>
+							<span>{scopeLabel}</span>
 						</DetailMeta>
 					</div>
 					<div className="sm:shrink-0">
@@ -127,50 +64,22 @@ export default function PublicSharePage({
 					</div>
 				</div>
 
-				<SessionSidebar relatedRefs={share.related_refs} />
-
 				<DetailStats>
 					<ModelBadge modelId={share.model} />
 					<Stat icon={MessageSquare} label={`${share.message_count} messages`} />
-					<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
-					{share.duration_seconds ? (
-						<Stat icon={Clock} label={formatDuration(share.duration_seconds)} />
-					) : null}
-					<Stat icon={Hash} label={share.id.slice(0, 8)} title={share.id} />
+					<Stat icon={Clock} label={`Shared ${relativeTime(share.created_at)}`} />
 				</DetailStats>
 
 				{messagesPage.items.length === 0 ? (
-					<p className="text-sm text-muted-foreground">This session has no readable content.</p>
+					<p className="text-sm text-muted-foreground">This share has no readable content.</p>
 				) : (
-					<div>
-						<SessionTimelineList
-							items={messagesPage.items}
-							agentType={share.agent_type}
-							userAvatar={share.owner_avatar_url ?? undefined}
-							userName={share.owner_name || "User"}
-						/>
-					</div>
+					<PublicSessionTimeline
+						shareId={share.id}
+						source={share.source}
+						initialPage={messagesPage}
+						agentType={share.agent_type}
+					/>
 				)}
-
-				{truncated ? (
-					// `wrap-anywhere` breaks the long `/s/{uuid}.md|json` URLs at
-					// any character — without it browsers treat the URL as one
-					// atomic word and push the page wider than the viewport at
-					// the `sm` breakpoint (where the available width is still
-					// only ~640px). Same trick we use in `MessageBlock` bodies.
-					<p className="text-xs text-muted-foreground wrap-anywhere">
-						Showing first {messagesPage.items.length} of {messagesPage.total} messages. Fetch the
-						full conversation via{" "}
-						<Link to={mdUrl} className="underline">
-							{mdUrl}
-						</Link>{" "}
-						or{" "}
-						<Link to={jsonUrl} className="underline">
-							{jsonUrl}
-						</Link>
-						.
-					</p>
-				) : null}
 
 				<footer className="border-t pt-4 text-xs text-muted-foreground">
 					Shared via{" "}
@@ -183,20 +92,25 @@ export default function PublicSharePage({
 	);
 }
 
-/**
- * Top header bar for the public share page. Logo + product name on the
- * left edge (matches Notion / Amp / Linear: brand chrome lives at the
- * viewport edge, not aligned to the centered content column, and
- * clicking it goes home). User avatar + menu on the right edge — same
- * affordance the dashboard sidebar's bottom button provides, so theme
- * + sign-out are one click away wherever the user lands.
- */
+function ExpiredShare() {
+	return (
+		<div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center px-6 text-center">
+			<div className="text-xs uppercase tracking-wide text-muted-foreground">Link turned off</div>
+			<h1 className="mt-2 text-2xl font-semibold tracking-tight">
+				This Session share is no longer available
+			</h1>
+			<p className="mt-3 text-sm text-muted-foreground">
+				The owner revoked this link. Ask them to create a new share if you still need access.
+			</p>
+			<Link to="/" className="mt-6 text-sm font-medium underline-offset-4 hover:underline">
+				Go to Clawdi
+			</Link>
+		</div>
+	);
+}
+
 function ShareHeader() {
 	return (
-		// sticky + opaque background — long sessions can scroll many
-		// screen-heights, and the brand chrome needs to stay visible so
-		// visitors keep their bearings and can click home from anywhere.
-		// Matches Notion / Linear / GitHub Gist / ChatGPT share pages.
 		<header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
 			<div className="flex items-center justify-between px-4 py-3 lg:px-6">
 				<Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">

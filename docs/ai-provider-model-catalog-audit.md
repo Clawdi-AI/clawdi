@@ -4,8 +4,9 @@ This audit covers the Core Web provider types and presets in
 `packages/shared/src/ai-provider.ts` and
 `apps/web/src/hosted/v2/ai-providers/provider-presets.ts`.
 
-- Baseline (merge-base with `origin/main`): `ddeaa439`
-- Access date for every source below: `2026-07-31`
+- Original full-audit baseline: `ddeaa439`
+- Original full-audit access date: `2026-07-31`; Z.AI/Zhipu GLM was
+  rechecked on `2026-08-31`.
 - Scope: public first-party documentation and public first-party catalog source
   only; no authenticated or inference APIs were called.
 - Selection rule: keep a small set of current general or agent-oriented models,
@@ -28,7 +29,7 @@ This audit covers the Core Web provider types and presets in
 | Kimi Code | Rolling `kimi-for-coding` is the all-member default; fixed `k3-256k` and tier-dependent `k3` follow. Context is omitted: the product table says only “256k only” for `k3-256k`, while `k3` varies by membership, so neither establishes an exact catalog integer. | `https://api.kimi.com/coding/`; Anthropic-compatible Messages; API key; [Kimi Code console](https://www.kimi.com/code/console). Kimi Code membership keys are distinct from Kimi Platform keys. | `k3` and `k3-256k` require Moderato or higher, so neither is safe as the persisted default for every member. The rolling alias uses a generic display name and omits context metadata. |
 | Kimi API | `kimi-k3`; context omitted because the official model table says only “1M-token context window” | China: `https://api.moonshot.cn/v1` and [.com keys](https://platform.kimi.com/console/api-keys). Global: `https://api.moonshot.ai/v1` and [.ai keys](https://platform.kimi.ai/console/api-keys). OpenAI-compatible Chat Completions with Bearer keys. | The specific older `kimi-k2-*` entries in the deprecated table were discontinued 2026-05-25, but that does not mean every K2-generation model is retired: K2.5, K2.6, and K2.7 remain in the current model list. `kimi-latest` retired 2026-01-28; the concise preset offers K3. |
 | Qwen on Alibaba Cloud Model Studio | `qwen3.7-plus` (1,000,000), `qwen3.7-max` (1,000,000) | China (Beijing): `https://dashscope.aliyuncs.com/compatible-mode/v1` and the region-bound `cn-beijing` key page. Singapore: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` and the Regions page's [generic region-selecting key entry](https://bailian.console.alibabacloud.com/?apiKey=1#/api-key). OpenAI-compatible Chat Completions with Bearer keys; keys cannot cross regions. | Both retained model pages explicitly contain Beijing and Singapore sections and exact integer context limits, so one shared catalog is valid. `qwen3-coder-next` is removed under the same imminent-shutdown rule as Gemini 2.5 Pro because it is scheduled to go offline on 2026-10-10 and the preset retains two current alternatives. |
-| Z.AI / Zhipu GLM | `glm-5.2`, `glm-5.1`, `glm-4.7`; context omitted because the matrices use 1M/200K shorthand | China: `https://open.bigmodel.cn/api/paas/v4` and [Zhipu keys](https://bigmodel.cn/usercenter/proj-mgmt/apikeys). Global: `https://api.z.ai/api/paas/v4` and [Z.AI keys](https://z.ai/manage-apikey/apikey-list). OpenAI-compatible Chat Completions with Bearer keys. | Current CN and global model matrices contain all three. Published retirement entries affect older GLM families, not this set. |
+| Z.AI / Zhipu GLM | `glm-5.3`, `glm-5.3-flash`, retained `glm-5.2`; context omitted because the matrices use 1M shorthand | China: `https://open.bigmodel.cn/api/paas/v4` and [Zhipu keys](https://bigmodel.cn/usercenter/proj-mgmt/apikeys). Global: `https://api.z.ai/api/paas/v4` and [Z.AI keys](https://z.ai/manage-apikey/apikey-list). OpenAI-compatible Chat Completions with Bearer keys. | Current CN and global model matrices contain all three. GLM-5.2 remains listed and is retained as the previous stable option. |
 | StepFun | `step-3.7-flash`; context omitted because the model page says only 256K | Global: `https://api.stepfun.ai/v1` and [.ai keys](https://platform.stepfun.ai/interface-key). China: `https://api.stepfun.com/v1` and [.com keys](https://platform.stepfun.com/interface-key). OpenAI-compatible Chat Completions with Bearer keys. | Current global and China documentation both present Step 3.7 Flash as the flagship multimodal reasoning model. No dated retirement notice for it was found. |
 | MiniMax | `MiniMax-M3` (1,000,000), `MiniMax-M2.7` (204,800), retained `MiniMax-M2` (204,800) | Global: `https://api.minimax.io/v1` and [.io keys](https://platform.minimax.io/user-center/basic-information/interface-key). China: `https://api.minimaxi.com/v1` and [.com keys](https://platform.minimaxi.com/user-center/basic-information/interface-key). OpenAI-compatible Chat Completions with Bearer API keys; keys and endpoints are region-bound. | All three remain in the official OpenAI-compatible Supported Models table, and no M2 deprecation or retirement notice was found. |
 | Together AI | `MiniMaxAI/MiniMax-M3` (524,288), `zai-org/GLM-5.2` (262,144) | `https://api.together.ai/v1`; OpenAI-compatible Chat Completions; project-scoped Bearer API key; [project API keys](https://api.together.ai/settings/projects/~current/api-keys) | Both IDs are current serverless chat models and absent from scheduled deprecations. Legacy organization keys are deprecated, so the acquisition link now opens project keys. |
@@ -111,11 +112,13 @@ This audit covers the Core Web provider types and presets in
 ### Z.AI, StepFun, and MiniMax
 
 - [Zhipu model overview](https://docs.bigmodel.cn/cn/guide/start/model-overview.md)
+- [Zhipu GLM-5.3](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3.md)
+- [Zhipu GLM-5.3-Flash](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash.md)
 - [GLM-5.2](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.2.md)
-- [GLM-5.1](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.1.md)
-- [GLM-4.7](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7.md)
 - [Zhipu OpenAI compatibility](https://docs.bigmodel.cn/cn/guide/develop/openai/introduction.md)
 - [Z.AI model overview](https://docs.z.ai/guides/overview/overview.md)
+- [Z.AI GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3.md)
+- [Z.AI GLM-5.3-Flash](https://docs.z.ai/guides/vlm/glm-5.3-flash.md)
 - [Z.AI GLM-5.2](https://docs.z.ai/guides/llm/glm-5.2.md)
 - [StepFun Step 3.7 Flash](https://platform.stepfun.ai/docs/en/guides/models/step-3.7-flash.md)
 - [StepFun global quickstart](https://platform.stepfun.ai/docs/en/quickstart.md)

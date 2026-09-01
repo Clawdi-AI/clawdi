@@ -103,9 +103,15 @@ function SessionsListInner() {
 		{ clearOnDefault: true, history: "replace" },
 	);
 
-	const debouncedSearch = useDebouncedValue(params.q, 250);
+	const searchRequest = useMemo(
+		() => ({ query: params.q, sort: params.sort, order: params.order, page: params.page }),
+		[params.order, params.page, params.q, params.sort],
+	);
+	const debouncedSearchRequest = useDebouncedValue(searchRequest, 250);
+	const isSearchRequestPending = params.q !== debouncedSearchRequest.query;
+	const requestSearchState = isSearchRequestPending ? debouncedSearchRequest : searchRequest;
 	const draftSearchQuery = params.q.trim();
-	const debouncedSearchQuery = debouncedSearch.trim();
+	const debouncedSearchQuery = requestSearchState.query.trim();
 	const searchQuery = isSearchQueryReady(debouncedSearchQuery) ? debouncedSearchQuery : "";
 	const draftSearchLength = searchQueryLength(draftSearchQuery);
 	const searchQueryError =
@@ -136,11 +142,11 @@ function SessionsListInner() {
 
 	const sessionQuery = useMemo<SessionListQuery>(
 		() => ({
-			page: params.page,
+			page: requestSearchState.page,
 			page_size: params.pageSize,
 			q: searchQuery || undefined,
-			sort: params.sort,
-			order: params.order,
+			sort: requestSearchState.sort,
+			order: requestSearchState.order,
 			agent: params.agent || undefined,
 			has_pr: params.has_pr,
 			automated: params.automated,
@@ -150,14 +156,14 @@ function SessionsListInner() {
 			params.agent,
 			params.automated,
 			params.has_pr,
-			params.order,
-			params.page,
 			params.pageSize,
-			params.sort,
+			requestSearchState.order,
+			requestSearchState.page,
+			requestSearchState.sort,
 		],
 	);
 
-	const { data, isLoading, isFetching, error, refetch } = useQuery({
+	const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useQuery({
 		...sessionListQueryOptions($api, sessionQuery),
 		// Keep the previous page visible while search, filters, or pagination
 		// move to a new query key.
@@ -206,14 +212,36 @@ function SessionsListInner() {
 	const pageCount = Math.max(1, Math.ceil(total / params.pageSize));
 	const isListUpdating =
 		data !== undefined &&
-		((isSearchQueryReady(draftSearchQuery) && draftSearchQuery !== searchQuery) || isFetching);
+		((isSearchQueryReady(draftSearchQuery) && draftSearchQuery !== searchQuery) ||
+			params.order !== requestSearchState.order ||
+			params.page !== requestSearchState.page ||
+			params.sort !== requestSearchState.sort ||
+			isFetching);
 
 	useEffect(() => {
-		if (!data || params.page >= pageCount) return;
+		if (
+			!data ||
+			isSearchRequestPending ||
+			isPlaceholderData ||
+			isFetching ||
+			requestSearchState.page >= pageCount
+		) {
+			return;
+		}
 		void queryClient.prefetchQuery(
-			sessionListQueryOptions($api, { ...sessionQuery, page: params.page + 1 }),
+			sessionListQueryOptions($api, { ...sessionQuery, page: requestSearchState.page + 1 }),
 		);
-	}, [$api, data, pageCount, params.page, queryClient, sessionQuery]);
+	}, [
+		$api,
+		data,
+		isFetching,
+		isPlaceholderData,
+		isSearchRequestPending,
+		pageCount,
+		queryClient,
+		requestSearchState.page,
+		sessionQuery,
+	]);
 
 	const groupable = params.sort === "last_activity_at" || params.sort === "started_at";
 
@@ -326,6 +354,7 @@ function SessionsListInner() {
 									has_pr: null,
 									automated: null,
 									page: 1,
+									sort: params.sort === "relevance" ? "last_activity_at" : params.sort,
 								})
 							}
 						>
