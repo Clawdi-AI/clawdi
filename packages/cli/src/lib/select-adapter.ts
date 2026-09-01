@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
@@ -9,12 +9,42 @@ import {
 	getAdapterEntry,
 } from "../adapters/registry";
 import { readJson } from "./api-client";
-import { getClawdiDir } from "./config";
+import { getAuth, getClawdiDir, readRecoverablePrivateJson } from "./config";
+
+interface LocalEnvironmentRegistration {
+	id: string;
+	userId?: string;
+}
+
+function readEnvironmentRegistration(
+	agentType: string,
+	currentUserId: string | undefined,
+): LocalEnvironmentRegistration | null {
+	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
+	const value = readRecoverablePrivateJson<unknown>(envPath);
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+	const record = value as Record<string, unknown>;
+	if (typeof record.id !== "string" || !record.id.trim()) return null;
+	if (record.agentType !== undefined && record.agentType !== agentType) return null;
+	if (
+		record.userId !== undefined &&
+		(typeof record.userId !== "string" ||
+			!record.userId.trim() ||
+			record.userId !== record.userId.trim())
+	) {
+		return null;
+	}
+	if (record.userId && (!currentUserId || record.userId !== currentUserId)) return null;
+	return {
+		id: record.id,
+		...(typeof record.userId === "string" ? { userId: record.userId } : {}),
+	};
+}
 
 export function getEnvIdByAgent(agentType: string): string | null {
-	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
-	if (!existsSync(envPath)) return null;
-	return JSON.parse(readFileSync(envPath, "utf-8")).id;
+	const auth = getAuth();
+	if (!auth) return null;
+	return readEnvironmentRegistration(agentType, auth.userId?.trim())?.id ?? null;
 }
 
 /** Ask the cloud which project this caller's next write would land
@@ -96,12 +126,12 @@ export function adapterForType(agentType: AgentType): AgentAdapter | null {
 export function listRegisteredAgentTypes(): AgentType[] {
 	const envDir = join(getClawdiDir(), "environments");
 	if (!existsSync(envDir)) return [];
-	const types: AgentType[] = [];
-	const files = new Set(readdirSync(envDir));
-	for (const entry of allAdapterEntries()) {
-		if (files.has(entry.envFileName)) types.push(entry.agentType);
-	}
-	return types;
+	const auth = getAuth();
+	if (!auth) return [];
+	const currentUserId = auth.userId?.trim();
+	return allAdapterEntries()
+		.filter((entry) => readEnvironmentRegistration(entry.agentType, currentUserId) !== null)
+		.map((entry) => entry.agentType);
 }
 
 /**

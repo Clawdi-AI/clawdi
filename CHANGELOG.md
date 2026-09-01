@@ -34,6 +34,28 @@ database migration, CI, and implementation details.
   transcripts remain fully searchable without exceeding PostgreSQL full-text
   limits; results and match navigation still point to the original message.
 
+## Clawdi CLI v0.14.35
+
+Package: `clawdi@0.14.35`
+
+### Added
+
+- Connected Agents now use a stable local installation identity instead of
+  deriving identity from the hostname, platform, and architecture.
+- `clawdi agent reconnect` can restore a lost local binding to an existing
+  Connected Agent without creating a second Cloud identity.
+
+### Changed
+
+- Logging out preserves local Agent registrations with an account binding, so
+  signing back into the same account remains stable without exposing those
+  registrations after an account switch.
+
+### Fixed
+
+- Damaged installation identity state now fails safely instead of silently
+  rotating identity and risking a duplicate Agent registration.
+
 ## Clawdi CLI v0.14.34
 
 Package: `clawdi@0.14.34`
