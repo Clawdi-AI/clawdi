@@ -15,7 +15,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailBackLink } from "@/components/detail/back-link";
-import { DetailMeta, DetailNotFound, DetailPanel, DetailStats } from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
@@ -476,159 +476,167 @@ export function SessionDetailContent({
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<DetailBackLink href={sessionsHref} label="Sessions" />
-			<PageHeader
-				title={summaryText}
-				status={
-					<DetailMeta>
-						<AgentInline
-							name={detailAgentIdentity?.name ?? null}
-							displayName={detailAgentIdentity?.display_name ?? null}
-							defaultName={detailAgentIdentity?.default_name ?? null}
-							machineName={detailAgentIdentity?.machine_name ?? null}
-							type={detailAgentIdentity?.agent_type ?? null}
-						/>
-						{session.project_path ? (
-							<>
-								<span>·</span>
-								<span className="truncate font-mono">{session.project_path}</span>
-							</>
-						) : null}
-						<span>·</span>
-						<TimeTooltip value={session.started_at}>
-							<span>Started {relativeTime(session.started_at)}</span>
-						</TimeTooltip>
-						{/* Surface "last activity" only when meaningfully
-					    different from started_at (long-running sessions).
-					    Threshold of 5 minutes — short sessions render
-					    near-identical relative-time strings ("3h ago" /
-					    "3h ago") which adds noise without information.
-					    Above 5 minutes the relative bucket usually
-					    diverges (e.g. "3h ago" vs "2h ago" or "yesterday"
-					    vs "today") and the second stamp earns its space. */}
-						{Math.abs(
-							new Date(session.last_activity_at).getTime() - new Date(session.started_at).getTime(),
-						) >
-						5 * 60_000 ? (
-							<>
-								<span>·</span>
-								<TimeTooltip value={session.last_activity_at}>
-									<span>Last activity {relativeTime(session.last_activity_at)}</span>
-								</TimeTooltip>
-							</>
-						) : null}
-					</DetailMeta>
-				}
-				actions={
-					<div className="flex items-center gap-2">
-						<SessionShareButton onClick={() => openShare({ scope: "session" })} />
-						<ConfirmAction
-							title="Permanently delete this cloud Session?"
-							description={
-								<>
-									<p>
-										This permanently deletes the cloud Session, its history, and all sharing access.
-									</p>
-									<p>Local agent files remain untouched, but this Session will never sync again.</p>
-									<p>
-										Extracted account-level Memories remain, with this Session&apos;s provenance
-										removed.
-									</p>
-								</>
-							}
-							confirmLabel="Permanently delete"
-							destructive
-							onConfirm={onDelete}
-						>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={deleteSession.isPending}
-								className="w-fit shrink-0 text-destructive hover:text-destructive"
-							>
-								<Trash2 />
-								Delete
-							</Button>
-						</ConfirmAction>
-					</div>
-				}
-			/>
-
-			<SessionSidebar relatedRefs={session.related_refs} />
-
-			<DetailStats>
-				<ModelBadge modelId={session.model} />
-				<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
-				<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
-				{session.duration_seconds ? (
-					<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
-				) : null}
-				<Stat
-					icon={Hash}
-					label={session.local_session_id.slice(0, 8)}
-					title={session.local_session_id}
-				/>
-			</DetailStats>
-
-			{session.has_content ? (
-				<div className="sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6">
-					<div
-						className={cn(
-							"grid min-w-0 gap-2 md:items-center",
-							searchableTimeline ? "md:grid-cols-[minmax(16rem,1fr)_auto]" : "md:grid-cols-1",
-						)}
-					>
-						{searchableTimeline ? (
-							<SessionSearchNavigation
-								sessionId={sessionId}
-								agentId={agentId}
-								query={normalizedSearchQuery}
-								timelineView={timelineView}
-								navigation={searchNavigation}
-								returnTo={returnTo}
-								isSearching={isSearchUpdating}
-								hasSearchError={searchActive && isContentError}
-								className="md:max-w-xl"
-								maxLength={SEARCH_QUERY_MAX_LENGTH}
+			{/* Keep context visible when the timeline opens at its latest message. */}
+			<div
+				data-testid="session-context-header"
+				className="sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6"
+			>
+				<PageHeader
+					className="gap-2 sm:items-center"
+					title={summaryText}
+					status={
+						<DetailMeta>
+							<AgentInline
+								name={detailAgentIdentity?.name ?? null}
+								displayName={detailAgentIdentity?.display_name ?? null}
+								defaultName={detailAgentIdentity?.default_name ?? null}
+								machineName={detailAgentIdentity?.machine_name ?? null}
+								type={detailAgentIdentity?.agent_type ?? null}
 							/>
-						) : null}
+							{session.project_path ? (
+								<>
+									<span>·</span>
+									<span className="truncate font-mono">{session.project_path}</span>
+								</>
+							) : null}
+							<span>·</span>
+							<TimeTooltip value={session.started_at}>
+								<span>Started {relativeTime(session.started_at)}</span>
+							</TimeTooltip>
+							{/* Surface "last activity" only when meaningfully
+						    different from started_at (long-running sessions).
+						    Threshold of 5 minutes — short sessions render
+						    near-identical relative-time strings ("3h ago" /
+						    "3h ago") which adds noise without information.
+						    Above 5 minutes the relative bucket usually
+						    diverges (e.g. "3h ago" vs "2h ago" or "yesterday"
+						    vs "today") and the second stamp earns its space. */}
+							{Math.abs(
+								new Date(session.last_activity_at).getTime() -
+									new Date(session.started_at).getTime(),
+							) >
+							5 * 60_000 ? (
+								<>
+									<span>·</span>
+									<TimeTooltip value={session.last_activity_at}>
+										<span>Last activity {relativeTime(session.last_activity_at)}</span>
+									</TimeTooltip>
+								</>
+							) : null}
+							<ModelBadge modelId={session.model} />
+							<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
+							<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
+							{session.duration_seconds ? (
+								<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
+							) : null}
+							<Stat
+								icon={Hash}
+								label={session.local_session_id.slice(0, 8)}
+								title={session.local_session_id}
+							/>
+						</DetailMeta>
+					}
+					actions={
+						<div className="flex items-center gap-2">
+							<SessionShareButton onClick={() => openShare({ scope: "session" })} />
+							<ConfirmAction
+								title="Permanently delete this cloud Session?"
+								description={
+									<>
+										<p>
+											This permanently deletes the cloud Session, its history, and all sharing
+											access.
+										</p>
+										<p>
+											Local agent files remain untouched, but this Session will never sync again.
+										</p>
+										<p>
+											Extracted account-level Memories remain, with this Session&apos;s provenance
+											removed.
+										</p>
+									</>
+								}
+								confirmLabel="Permanently delete"
+								destructive
+								onConfirm={onDelete}
+							>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={deleteSession.isPending}
+									className="w-fit shrink-0 text-destructive hover:text-destructive"
+								>
+									<Trash2 />
+									Delete
+								</Button>
+							</ConfirmAction>
+						</div>
+					}
+				/>
+
+				{session.has_content ? (
+					<div className="mt-2 border-t pt-2">
 						<div
 							className={cn(
-								"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
-								!searchableTimeline && "md:justify-self-end",
+								"grid min-w-0 gap-2 md:items-center",
+								searchableTimeline ? "md:grid-cols-[minmax(16rem,1fr)_auto]" : "md:grid-cols-1",
 							)}
 						>
-							<fieldset className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-								<legend className="sr-only">Show in timeline</legend>
-								{TIMELINE_FILTERS.map(({ category, label }) => {
-									const checked = timelineCategories.includes(category);
-									const disabled = checked && timelineCategories.length === 1;
-									const id = `timeline-filter-${category}`;
-									return (
-										<div key={category} className="flex items-center gap-1.5">
-											<Checkbox
-												id={id}
-												checked={checked}
-												disabled={disabled}
-												onCheckedChange={(value) =>
-													updateTimelineCategory(category, value === true)
-												}
-											/>
-											<Label htmlFor={id} className="cursor-pointer text-xs font-normal">
-												{label}
-											</Label>
-										</div>
-									);
-								})}
-							</fieldset>
-							{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
-								<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-									{loadedCount} of {totalItems}
-								</span>
+							{searchableTimeline ? (
+								<SessionSearchNavigation
+									sessionId={sessionId}
+									agentId={agentId}
+									query={normalizedSearchQuery}
+									timelineView={timelineView}
+									navigation={searchNavigation}
+									returnTo={returnTo}
+									isSearching={isSearchUpdating}
+									hasSearchError={searchActive && isContentError}
+									className="md:max-w-xl"
+									maxLength={SEARCH_QUERY_MAX_LENGTH}
+								/>
 							) : null}
+							<div
+								className={cn(
+									"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
+									!searchableTimeline && "md:justify-self-end",
+								)}
+							>
+								<fieldset className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+									<legend className="sr-only">Show in timeline</legend>
+									{TIMELINE_FILTERS.map(({ category, label }) => {
+										const checked = timelineCategories.includes(category);
+										const disabled = checked && timelineCategories.length === 1;
+										const id = `timeline-filter-${category}`;
+										return (
+											<div key={category} className="flex items-center gap-1.5">
+												<Checkbox
+													id={id}
+													checked={checked}
+													disabled={disabled}
+													onCheckedChange={(value) =>
+														updateTimelineCategory(category, value === true)
+													}
+												/>
+												<Label htmlFor={id} className="cursor-pointer text-xs font-normal">
+													{label}
+												</Label>
+											</div>
+										);
+									})}
+								</fieldset>
+								{!searchActive && loadedCount > 0 && loadedCount < totalItems ? (
+									<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+										{loadedCount} of {totalItems}
+									</span>
+								) : null}
+							</div>
 						</div>
 					</div>
-				</div>
-			) : null}
+				) : null}
+			</div>
+
+			<SessionSidebar relatedRefs={session.related_refs} />
 
 			{/* Timeline */}
 			{session.has_content ? (

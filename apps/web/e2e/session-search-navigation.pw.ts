@@ -52,6 +52,13 @@ async function horizontalBounds(locator: Locator) {
 	});
 }
 
+async function verticalBounds(locator: Locator) {
+	return locator.evaluate((element) => {
+		const bounds = element.getBoundingClientRect();
+		return { y: bounds.y, height: bounds.height };
+	});
+}
+
 test("commits Session search keys atomically before prefetching", async ({ page }) => {
 	type ListRequest = { q: string | null; sort: string | null; page: string | null };
 	const requests: ListRequest[] = [];
@@ -666,6 +673,17 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
+	const sessionContextHeader = page.getByTestId("session-context-header");
+	await expect(sessionContextHeader).toBeInViewport();
+	await expect(sessionContextHeader).toContainText("Long virtualized session");
+	await expect(sessionContextHeader).toContainText("2000 messages");
+	const [contextBounds, siteHeaderBounds] = await Promise.all([
+		verticalBounds(sessionContextHeader),
+		verticalBounds(page.locator("header").first()),
+	]);
+	expect(Math.abs(contextBounds.y - (siteHeaderBounds.y + siteHeaderBounds.height))).toBeLessThan(
+		2,
+	);
 	const loadEarlier = page.getByRole("button", { name: /^Load earlier/ });
 	await scrollContainer.evaluate((element) => element.scrollTo({ top: 0 }));
 	await waitForTimelineLayout();
