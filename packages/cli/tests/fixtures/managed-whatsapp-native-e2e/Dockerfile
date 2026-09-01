@@ -87,7 +87,7 @@ RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
 		HOME=/opt/stock/openclaw-home \
 		NPM_CONFIG_CACHE=/var/cache/npm \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins install \
-			--force clawhub:@openclaw/whatsapp; do \
+			--force "clawhub:@openclaw/whatsapp@${OPENCLAW_VERSION}"; do \
 		if [ "${OPENCLAW_PLUGIN_INSTALL_ATTEMPT}" -ge 5 ]; then exit 1; fi; \
 		sleep "$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT * 3))"; \
 		OPENCLAW_PLUGIN_INSTALL_ATTEMPT="$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT + 1))"; \
