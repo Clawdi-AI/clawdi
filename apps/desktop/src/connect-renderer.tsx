@@ -168,11 +168,11 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		<main className="app-shell">
 			<header className="titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
 					<h1>Connect Agent</h1>
-					<p>Clawdi Desktop</p>
 				</div>
 			</header>
 
@@ -355,7 +355,13 @@ function AgentSelection({
 					<h2>{found > 0 ? `Found ${found} Agent${found === 1 ? "" : "s"}` : "No Agents found"}</h2>
 					<p>{account ? `Connecting to ${account}` : "Select the Agents to connect."}</p>
 				</div>
-				<button className="icon-button" type="button" onClick={onRefresh} title="Scan again">
+				<button
+					className="icon-button"
+					type="button"
+					onClick={onRefresh}
+					title="Scan again"
+					aria-label="Scan again"
+				>
 					<RefreshCw />
 				</button>
 			</div>
@@ -430,11 +436,11 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 		<main className="app-shell">
 			<header className="titlebar dashboard-titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
-					<h1>Clawdi</h1>
-					<p>Dashboard</p>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
+					<h1>Dashboard</h1>
 				</div>
 			</header>
 			<section className="content failure-content">

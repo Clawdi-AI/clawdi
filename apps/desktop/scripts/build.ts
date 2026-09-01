@@ -24,6 +24,7 @@ await bundle("shell-preload.ts", "shell-preload.cjs", "node", "cjs");
 await bundle("connect-preload.ts", "connect-preload.cjs", "node", "cjs");
 await bundle("connect-renderer.tsx", "connect-renderer.js", "browser", "esm");
 cpSync(join(sourceRoot, "renderer.html"), join(outputRoot, "renderer.html"));
+cpSync(join(webRoot, "public", "clawdi-logo-transparent.png"), join(outputRoot, "clawdi-logo.png"));
 
 async function buildWebApp(): Promise<void> {
 	const webBuild = Bun.spawn(["bun", "run", "build"], {

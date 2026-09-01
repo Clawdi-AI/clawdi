@@ -41,6 +41,7 @@ const APP_ASSETS = new Map([
 	["/renderer.html", "renderer.html"],
 	["/connect-renderer.js", "connect-renderer.js"],
 	["/connect-renderer.css", "connect-renderer.css"],
+	["/clawdi-logo.png", "clawdi-logo.png"],
 ]);
 const cli = new DesktopCliService();
 let mainWindow: BrowserWindow | null = null;
@@ -481,6 +482,7 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 		minHeight: 640,
 		show: false,
 		backgroundColor: "#ffffff",
+		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
 			preload,
@@ -583,8 +585,8 @@ async function showConnectWindow(): Promise<void> {
 	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "connect-preload.cjs");
 	const icon = desktopIcon();
 	const window = new BrowserWindow({
-		width: 560,
-		height: 680,
+		width: 580,
+		height: 720,
 		minWidth: 480,
 		minHeight: 560,
 		show: false,

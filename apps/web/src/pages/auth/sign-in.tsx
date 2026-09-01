@@ -4,6 +4,7 @@ import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
 import { SignIn } from "@clerk/tanstack-react-start";
 import { LoaderCircle, LogIn } from "lucide-react";
 import { useState } from "react";
+import { DesktopWindowDragRegion } from "@/components/desktop-window-drag-region";
 import { Button } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
 import { env } from "@/lib/env";
@@ -42,6 +43,7 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center p-6">
+			<DesktopWindowDragRegion />
 			<div className="flex max-w-sm flex-col items-center gap-4 text-center">
 				<div className="space-y-1.5">
 					<h1 className="text-lg font-semibold">Sign in to Clawdi</h1>

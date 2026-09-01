@@ -4,6 +4,7 @@ import { useAuth, useSignIn } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { DesktopWindowDragRegion } from "@/components/desktop-window-drag-region";
 import { Button } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
 import { routeHeadTitle } from "@/lib/document-title";
@@ -63,6 +64,7 @@ function DesktopAuthPage() {
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
+			{desktopBridge ? <DesktopWindowDragRegion /> : null}
 			<div className="flex max-w-sm flex-col items-center gap-4 text-center">
 				{failed ? (
 					<>
