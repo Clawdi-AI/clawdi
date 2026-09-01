@@ -173,9 +173,7 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             except ValueError as exc:
-                raise ValueError(
-                    "runtime activity timestamps must be ISO 8601"
-                ) from exc
+                raise ValueError("runtime activity timestamps must be ISO 8601") from exc
         else:
             raise ValueError("runtime activity timestamps must be ISO 8601 strings")
         if parsed.tzinfo is None:
@@ -188,15 +186,9 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
             raise ValueError("enabledRuntimes must be unique")
         if self.enabled_runtimes != sorted(self.enabled_runtimes):
             raise ValueError("enabledRuntimes must be sorted")
-        if (
-            self.classification == "known_last_user_input"
-            and self.last_user_input_at is None
-        ):
+        if self.classification == "known_last_user_input" and self.last_user_input_at is None:
             raise ValueError("known activity requires lastUserInputAt")
-        if (
-            self.classification == "known_no_user_input"
-            and self.last_user_input_at is not None
-        ):
+        if self.classification == "known_no_user_input" and self.last_user_input_at is not None:
             raise ValueError("known empty activity cannot include lastUserInputAt")
         if self.classification != "unknown" and self.complete_at is None:
             raise ValueError("known activity requires completeAt")
@@ -206,10 +198,7 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
             raise ValueError("known activity cannot include error")
         if self.complete_at is not None and self.complete_at > self.observed_at:
             raise ValueError("completeAt cannot be later than observedAt")
-        if (
-            self.last_user_input_at is not None
-            and self.last_user_input_at > self.observed_at
-        ):
+        if self.last_user_input_at is not None and self.last_user_input_at > self.observed_at:
             raise ValueError("lastUserInputAt cannot be later than observedAt")
         return self
 
