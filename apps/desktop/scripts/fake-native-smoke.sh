@@ -20,7 +20,8 @@ case "$1 ${2:-}" in
 		printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v1","ticket":"smoke-ticket","expiresIn":60}'
 		;;
 	"daemon doctor")
-		printf '%s\n' '{"singleton_unit_installed":true,"agents":[{"heartbeat":{"status":"live"}}]}'
+		# An authenticated Desktop must still open Dashboard when sync is intentionally stopped.
+		printf '%s\n' '{"singleton_unit_installed":false,"agents":[]}'
 		;;
 	"agent detect")
 		printf '%s\n' '{"agents":[{"type":"codex","displayName":"Codex","detected":true,"registered":true,"version":"1.0.0","inspection":"complete"}]}'

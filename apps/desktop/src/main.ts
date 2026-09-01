@@ -58,10 +58,11 @@ let trayState: DesktopBootstrapState | null = null;
 let trayStateChecking = true;
 let trayStateRefresh: Promise<void> | null = null;
 let availableWindowOpening: Promise<void> | null = null;
-let dashboardWindowOpening: Promise<void> | null = null;
+let dashboardWindowOpening: Promise<DashboardLoadResult> | null = null;
 let dashboardFailureOpening: Promise<void> | null = null;
 let dashboardSession: Session | null = null;
 let dashboardAccountId: string | null = null;
+let restoreMainWindowAfterConnect = false;
 let updateController: DesktopUpdateController | null = null;
 let updateState: DesktopUpdateState = { status: "disabled", reason: "development" };
 let updatePromptedVersion: string | null = null;
@@ -69,6 +70,8 @@ let activeCriticalOperations = 0;
 let quitting = false;
 
 class DesktopConnectError extends Error {}
+
+type DashboardLoadResult = "opened" | "connect-required" | "failed";
 
 function runAsync(label: string, operation: Promise<unknown>): void {
 	void operation.catch((error) => console.error(`Could not ${label}`, error));
@@ -423,16 +426,19 @@ function registerIpc(): void {
 		safeConnectAction(event, "open the dashboard", async () => {
 			assertRuntimeLocation();
 			const window = connectWindow;
-			await loadDashboardWithRecovery();
+			const result = await loadDashboardWithRecovery();
+			if (result === "connect-required") return;
+			restoreMainWindowAfterConnect = false;
 			if (window && !window.isDestroyed()) window.destroy();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const state = await cli.bootstrapState();
-			const status = state.auth.authenticated ? "authenticated" : await authenticateAndResumeSync();
-			if (status === "authenticated") await loadDashboardWithRecovery(true);
+			const status = await authenticateAndResumeSync(true);
+			if (status === "authenticated" && (await loadDashboardWithRecovery(true)) !== "opened") {
+				throw new Error("Dashboard sign-in did not complete.");
+			}
 			return { status };
 		}),
 	);
@@ -442,6 +448,7 @@ function registerIpc(): void {
 				await cli.cancelAuthentication();
 				await cli.logout();
 			});
+			restoreMainWindowAfterConnect = false;
 			if (connectWindow && !connectWindow.isDestroyed()) connectWindow.destroy();
 			await clearDashboardSession();
 			setTrayState(trayState ? { ...trayState, auth: { authenticated: false, user: null } } : null);
@@ -450,12 +457,18 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
 		safeDashboardAction(event, "open Connect Agent", async () => {
+			const shouldRestore = mainWindow?.isVisible() === true;
 			await showConnectWindow();
+			restoreMainWindowAfterConnect ||= shouldRestore;
 			mainWindow?.hide();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.retryDashboard, (event) =>
-		safeDashboardAction(event, "reconnect the dashboard", () => loadDashboardWithRecovery(true)),
+		safeDashboardAction(event, "reconnect the dashboard", async () => {
+			if ((await loadDashboardWithRecovery(true)) === "failed") {
+				throw new Error("Dashboard reconnection failed.");
+			}
+		}),
 	);
 }
 
@@ -779,8 +792,13 @@ async function showConnectWindow(): Promise<void> {
 	hardenLocalWindow(window, CONNECT_URL, "Connect Agent");
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
+		const shouldRestore = restoreMainWindowAfterConnect;
+		restoreMainWindowAfterConnect = false;
 		runAsync("cancel sign-in", cli.cancelAuthentication());
 		if (connectWindow === window) connectWindow = null;
+		if (shouldRestore && !quitting) {
+			runAsync("restore the dashboard", showMainWindow());
+		}
 	});
 	await window.loadURL(CONNECT_URL);
 }
@@ -1063,12 +1081,17 @@ async function promptToMove(detail: string): Promise<void> {
 }
 
 async function showAvailableWindow(): Promise<void> {
-	if (mainWindow) {
-		await showMainWindow();
-		return;
-	}
 	if (connectWindow) {
 		await showConnectWindow();
+		return;
+	}
+	if (mainWindow) {
+		if (trayState && shouldOpenConnectWizard(trayState)) {
+			mainWindow.hide();
+			await showConnectWindow();
+		} else {
+			await showMainWindow();
+		}
 		return;
 	}
 	if (availableWindowOpening) return availableWindowOpening;
@@ -1105,7 +1128,9 @@ async function showMainWindow(): Promise<void> {
 	await presentMainWindow(window);
 }
 
-async function loadDashboardWithRecovery(forceAuthentication = false): Promise<void> {
+async function loadDashboardWithRecovery(
+	forceAuthentication = false,
+): Promise<DashboardLoadResult> {
 	if (dashboardWindowOpening) return dashboardWindowOpening;
 	const opening = (async () => {
 		try {
@@ -1114,8 +1139,13 @@ async function loadDashboardWithRecovery(forceAuthentication = false): Promise<v
 			if (!state.auth.authenticated || !state.auth.user) {
 				await clearDashboardSession();
 				if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-				await showConnectWindow();
-				return;
+				if (connectWindow && !connectWindow.isDestroyed()) {
+					connectWindow.webContents.reload();
+					await showConnectWindow();
+				} else {
+					await showConnectWindow();
+				}
+				return "connect-required" as const;
 			}
 
 			const window = mainWindow;
@@ -1128,21 +1158,23 @@ async function loadDashboardWithRecovery(forceAuthentication = false): Promise<v
 				isDashboardContentUrl(currentUrl)
 			) {
 				await presentMainWindow(window);
-				return;
+				return "opened" as const;
 			}
 
 			await prepareDashboardSession(state.auth.user.id, forceAuthentication);
 			const readyWindow = mainWindow;
 			if (!readyWindow || readyWindow.isDestroyed()) throw new Error("Dashboard window was closed");
 			await presentMainWindow(readyWindow);
+			return "opened" as const;
 		} catch (error) {
 			console.error("Could not open the dashboard", error);
 			await showDashboardFailure();
+			return "failed" as const;
 		}
 	})();
 	dashboardWindowOpening = opening;
 	try {
-		await opening;
+		return await opening;
 	} finally {
 		if (dashboardWindowOpening === opening) dashboardWindowOpening = null;
 	}
@@ -1170,7 +1202,7 @@ async function showDashboardFailure(forceReload = false, present = true): Promis
 }
 
 function shouldOpenConnectWizard(state: DesktopBootstrapState): boolean {
-	return !state.auth.authenticated || !state.daemon.running;
+	return !state.auth.authenticated || !state.auth.user;
 }
 
 async function presentMainWindow(window: BrowserWindow): Promise<void> {

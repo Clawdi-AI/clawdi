@@ -26,18 +26,18 @@ export default function SignInPage() {
 }
 
 function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
-	const [opening, setOpening] = useState(false);
+	const [opening, setOpening] = useState<"retry" | "sign-in" | null>(null);
 	const [failed, setFailed] = useState(false);
 
-	async function signIn() {
-		setOpening(true);
+	async function reconnect(action: "retry" | "sign-in") {
+		setOpening(action);
 		setFailed(false);
 		try {
-			await bridge.signIn();
+			await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
 		} catch {
 			setFailed(true);
 		} finally {
-			setOpening(false);
+			setOpening(null);
 		}
 	}
 
@@ -48,17 +48,26 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 				<div className="space-y-1.5">
 					<h1 className="text-lg font-semibold">Reconnect Clawdi</h1>
 					<p className="text-sm text-muted-foreground">
-						Clawdi will restore the Dashboard from your local sign-in. If that sign-in expired, your
-						browser opens for secure authorization.
+						Clawdi will first restore the Dashboard from your local sign-in. If it has expired, you
+						can sign in again securely in your browser.
 					</p>
-					{failed ? (
-						<p className="text-sm text-destructive">Sign-in couldn't be started. Try again.</p>
-					) : null}
+					{failed ? <p className="text-sm text-destructive">Clawdi couldn't reconnect.</p> : null}
 				</div>
-				<Button disabled={opening} onClick={() => void signIn()}>
-					{opening ? <LoaderCircle className="animate-spin" /> : <LogIn />}
-					{opening ? "Reconnecting…" : "Reconnect"}
-				</Button>
+				<div className="flex items-center gap-2">
+					{failed ? (
+						<Button
+							disabled={opening !== null}
+							onClick={() => void reconnect("sign-in")}
+							variant="outline"
+						>
+							<LogIn /> Sign in again
+						</Button>
+					) : null}
+					<Button disabled={opening !== null} onClick={() => void reconnect("retry")}>
+						{opening === "retry" ? <LoaderCircle className="animate-spin" /> : <LogIn />}
+						{opening === "retry" ? "Reconnecting…" : "Reconnect"}
+					</Button>
+				</div>
 			</div>
 		</main>
 	);
