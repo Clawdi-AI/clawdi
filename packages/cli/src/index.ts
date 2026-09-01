@@ -1594,6 +1594,7 @@ agentCmd
 	.option("-y, --yes", "Skip confirmation when the target is unambiguous")
 	.option("--confirm-takeover", "Confirm disconnecting a recently active installation")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
+	.addOption(new Option("--desktop-list").hideHelp())
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi agent reconnect --agent codex\n  $ clawdi agent reconnect <agent-id>\n  $ clawdi agent reconnect <agent-id> --no-daemon",

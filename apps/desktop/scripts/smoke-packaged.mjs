@@ -25,6 +25,7 @@ const desktop = spawn(
 			...process.env,
 			HOME: home,
 			CLAWDI_HOME: clawdiHome,
+			CLAWDI_DESKTOP_SMOKE_SURFACE: surface,
 			CLAWDI_DESKTOP_SMOKE_LOG_FILE: cliLog,
 			ELECTRON_ENABLE_LOGGING: "1",
 		},
@@ -78,7 +79,10 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 
 async function verifyPackagedDashboard(context, output) {
 	const window = await waitForWindow(context, "dashboard", 30_000);
-	await window.getByRole("heading", { name: "Sign in to Clawdi" }).waitFor({ timeout: 20_000 });
+	await Promise.race([
+		window.getByRole("heading", { name: "Signing in to Clawdi" }).waitFor({ timeout: 20_000 }),
+		window.getByRole("heading", { name: "Desktop sign-in expired" }).waitFor({ timeout: 20_000 }),
+	]);
 	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
 	const documentSecurity = await window.evaluate(async () => {
 		const [index, missing] = await Promise.all([

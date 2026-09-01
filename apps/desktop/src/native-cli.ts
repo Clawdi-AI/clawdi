@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopConnectResult,
 	DesktopDetectedAgent,
+	DesktopReconnectCandidate,
 } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import { app } from "electron";
@@ -114,25 +116,52 @@ export class DesktopCliService {
 		return result.agents.map(parseDetectedAgent);
 	}
 
-	async connectAgents(agentTypes: readonly DesktopAgentType[]): Promise<DesktopConnectResult> {
-		const requested = [...new Set(agentTypes)];
-		if (requested.length === 0 || requested.some((type) => !isDesktopAgentType(type))) {
+	async listReconnectableAgents(): Promise<DesktopReconnectCandidate[]> {
+		const result = await this.runJson(this.cli(), ["agent", "reconnect", "--desktop-list"]);
+		if (
+			result.schemaVersion !== "clawdi.agentReconnectCandidates.v1" ||
+			!Array.isArray(result.agents)
+		) {
+			throw new Error("Clawdi returned invalid reconnect data.");
+		}
+		return result.agents.map(parseReconnectCandidate);
+	}
+
+	async connectAgents(
+		connections: readonly DesktopAgentConnection[],
+	): Promise<DesktopConnectResult> {
+		const requested = [...connections];
+		const requestedTypes = new Set(requested.map((connection) => connection.type));
+		if (
+			requested.length === 0 ||
+			requestedTypes.size !== requested.length ||
+			requested.some((connection) => !isDesktopAgentType(connection.type))
+		) {
 			throw new Error("Choose at least one supported Agent.");
 		}
 
 		const cli = this.cli();
 		const detected = await this.detectAgents();
 		const available = new Map(detected.map((agent) => [agent.type, agent]));
-		for (const type of requested) {
+		for (const { type, reconnectAgentId } of requested) {
 			const agent = available.get(type);
 			if (!agent?.detected && !agent?.registered) {
 				throw new Error(`${displayNameFor(type)} is no longer available on this Mac.`);
 			}
+			if (reconnectAgentId && agent.registered) {
+				throw new Error(`${displayNameFor(type)} is already connected on this Mac.`);
+			}
 		}
 
 		const connected: DesktopAgentType[] = [];
-		for (const type of requested) {
-			if (!available.get(type)?.registered) {
+		for (const { type, reconnectAgentId } of requested) {
+			if (reconnectAgentId) {
+				await this.run(
+					cli,
+					["agent", "reconnect", reconnectAgentId, "--agent", type, "--yes", "--no-daemon"],
+					{ timeoutMs: 3 * 60_000 },
+				);
+			} else if (!available.get(type)?.registered) {
 				await this.run(cli, ["setup", "--agent", type, "--yes", "--no-daemon"], {
 					timeoutMs: 3 * 60_000,
 				});
@@ -145,6 +174,10 @@ export class DesktopCliService {
 
 	async restartDaemon(): Promise<void> {
 		await this.run(this.cli(), ["daemon", "restart"]);
+	}
+
+	async stopDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
 	}
 
 	private async performAuthentication(
@@ -309,6 +342,20 @@ function parseDetectedAgent(value: unknown): DesktopDetectedAgent {
 		version: readString(value.version),
 		inspection,
 	};
+}
+
+function parseReconnectCandidate(value: unknown): DesktopReconnectCandidate {
+	if (!isRecord(value) || !isDesktopAgentType(value.type)) {
+		throw new Error("Clawdi returned an unsupported reconnect candidate.");
+	}
+	const id = readString(value.id);
+	const displayName = readString(value.displayName);
+	const name = readString(value.name);
+	const machineName = readString(value.machineName);
+	if (!id || !displayName || !name || !machineName) {
+		throw new Error("Clawdi returned invalid reconnect data.");
+	}
+	return { id, type: value.type, displayName, name, machineName };
 }
 
 function displayNameFor(type: DesktopAgentType): string {

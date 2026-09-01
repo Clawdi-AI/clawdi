@@ -3,6 +3,7 @@ export const DESKTOP_IPC = {
 	authenticate: "clawdi:authenticate",
 	cancelAuthentication: "clawdi:cancel-authentication",
 	detectAgents: "clawdi:detect-agents",
+	listReconnectableAgents: "clawdi:list-reconnectable-agents",
 	installationState: "clawdi:installation-state",
 	connectAgents: "clawdi:connect-agents",
 	moveToApplicationsFolder: "clawdi:move-to-applications-folder",

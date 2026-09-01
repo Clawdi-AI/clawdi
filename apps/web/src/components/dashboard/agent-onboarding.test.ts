@@ -47,11 +47,14 @@ describe("dashboard agent onboarding", () => {
 		expect(onboardingSource).toContain("Deploy another Agent on Clawdi");
 		expect(onboardingSource).toContain("Connect an Agent on your machine");
 		expect(onboardingSource).toContain("<AddAgentDialog");
-		expect(onboardingSource).toContain("onClick={() => setConnectOpen(true)}");
+		expect(onboardingSource).toContain("onClick={connectAgent}");
+		expect(onboardingSource).toContain("desktopBridge.openConnectWizard()");
 		expect(onboardingSource).not.toContain("AddAgentSetup");
 		expect(dialogSource).toContain("<AddAgentSetup />");
 		expect(newAgentSource).toContain("<AddAgentDialog");
 		expect(dashboardSource).toContain("<AddAgentDialog");
+		expect(newAgentSource).toContain("desktopBridge.openConnectWizard()");
+		expect(dashboardSource).toContain("desktopBridge.openConnectWizard()");
 		expect(onboardingSource).not.toContain("showHostedFirstAgentChoice");
 		expect(onboardingSource).not.toContain("Deploy a hosted agent");
 	});

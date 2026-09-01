@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
+	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopInstallationState,
@@ -130,10 +131,13 @@ async function startApplication(): Promise<void> {
 	if (installationState().requiresMove) {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
-	} else if (startHidden) {
-		runAsync("refresh background sync status", refreshTrayState());
 	} else {
-		await loadDashboardWithRecovery();
+		const state = await cli.bootstrapState();
+		setTrayState(state);
+		if (!startHidden) {
+			if (shouldOpenConnectWizard(state)) await showConnectWindow();
+			else await loadDashboardWithRecovery();
+		}
 	}
 
 	app.on("activate", () => runAsync("show the active window", showAvailableWindow()));
@@ -378,6 +382,12 @@ function registerIpc(): void {
 			return cli.detectAgents();
 		}),
 	);
+	ipcMain.handle(DESKTOP_IPC.listReconnectableAgents, (event) =>
+		safeConnectAction(event, "find reconnectable Agents", () => {
+			assertRuntimeLocation();
+			return cli.listReconnectableAgents();
+		}),
+	);
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
@@ -394,11 +404,11 @@ function registerIpc(): void {
 			status: await cli.cancelAuthentication(),
 		})),
 	);
-	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawAgentTypes: unknown) =>
+	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawConnections: unknown) =>
 		safeConnectAction(event, "connect the selected Agents", async () => {
 			assertSafeDaemonMutation();
 			const result = await withCriticalOperation(() =>
-				cli.connectAgents(readAgentTypes(rawAgentTypes)),
+				cli.connectAgents(readAgentConnections(rawConnections)),
 			);
 			runAsync("refresh background sync status", refreshTrayState());
 			return result;
@@ -420,10 +430,9 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const status = await authenticateAndResumeSync(true);
-			if (status === "authenticated") {
-				runAsync("open the signed-in dashboard", loadDashboardWithRecovery(true));
-			}
+			const state = await cli.bootstrapState();
+			const status = state.auth.authenticated ? "authenticated" : await authenticateAndResumeSync();
+			if (status === "authenticated") await loadDashboardWithRecovery(true);
 			return { status };
 		}),
 	);
@@ -530,16 +539,34 @@ function assertConnectSender(event: IpcMainInvokeEvent): void {
 	}
 }
 
-function readAgentTypes(value: unknown): DesktopAgentType[] {
+function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 	if (!Array.isArray(value) || value.length === 0) {
 		throw new Error("Choose at least one supported Agent.");
 	}
-	const agentTypes: DesktopAgentType[] = [];
-	for (const type of value) {
-		if (!isDesktopAgentType(type)) throw new Error("Choose at least one supported Agent.");
-		agentTypes.push(type);
+	const connections: DesktopAgentConnection[] = [];
+	const types = new Set<DesktopAgentType>();
+	for (const item of value) {
+		if (!isRecord(item) || !isDesktopAgentType(item.type) || types.has(item.type)) {
+			throw new Error("Choose each supported Agent once.");
+		}
+		const reconnectAgentId = item.reconnectAgentId;
+		if (
+			reconnectAgentId !== undefined &&
+			(typeof reconnectAgentId !== "string" ||
+				!reconnectAgentId.trim() ||
+				reconnectAgentId.length > 256)
+		) {
+			throw new Error("Choose a valid Agent to reconnect.");
+		}
+		types.add(item.type);
+		connections.push({
+			type: item.type,
+			...(typeof reconnectAgentId === "string"
+				? { reconnectAgentId: reconnectAgentId.trim() }
+				: {}),
+		});
 	}
-	return agentTypes;
+	return connections;
 }
 
 function configurePermissions(dashboardSession: Session): void {
@@ -779,12 +806,22 @@ function renderTrayMenu(): void {
 		{ label: status, enabled: false },
 		{
 			label: recoveryLabel,
+			enabled: activeCriticalOperations === 0,
 			click: () =>
 				runAsync(
 					"repair background sync",
 					trayState?.daemon.installed ? restartBackgroundSync() : showConnectWindow(),
 				),
 		},
+		...(trayState?.daemon.installed
+			? ([
+					{
+						label: "Stop Background Sync",
+						enabled: activeCriticalOperations === 0,
+						click: () => runAsync("stop background sync", stopBackgroundSync()),
+					},
+				] satisfies MenuItemConstructorOptions[])
+			: []),
 		{
 			label: "Refresh Status",
 			click: () => runAsync("refresh background sync status", refreshTrayState()),
@@ -894,6 +931,23 @@ async function restartBackgroundSync(): Promise<void> {
 			cancelId: 1,
 		});
 		if (choice.response === 0) await showConnectWindow();
+	}
+}
+
+async function stopBackgroundSync(): Promise<void> {
+	trayStateChecking = true;
+	renderTrayMenu();
+	try {
+		await withCriticalOperation(() => cli.stopDaemon());
+		await refreshTrayState();
+	} catch (error) {
+		console.error("Could not stop background sync", error);
+		await refreshTrayState();
+		await dialog.showMessageBox({
+			type: "warning",
+			message: "Background sync could not be stopped",
+			detail: "Try again, or open Connect Agent to inspect the local setup.",
+		});
 	}
 }
 
@@ -1033,6 +1087,12 @@ async function showWindowFromTrayState(): Promise<void> {
 		await showConnectWindow();
 		return;
 	}
+	const state = await cli.bootstrapState();
+	setTrayState(state);
+	if (shouldOpenConnectWizard(state)) {
+		await showConnectWindow();
+		return;
+	}
 	await loadDashboardWithRecovery();
 }
 
@@ -1053,7 +1113,8 @@ async function loadDashboardWithRecovery(forceAuthentication = false): Promise<v
 			setTrayState(state);
 			if (!state.auth.authenticated || !state.auth.user) {
 				await clearDashboardSession();
-				await showDashboardSignIn();
+				if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+				await showConnectWindow();
 				return;
 			}
 
@@ -1087,18 +1148,6 @@ async function loadDashboardWithRecovery(forceAuthentication = false): Promise<v
 	}
 }
 
-async function showDashboardSignIn(): Promise<void> {
-	let window = mainWindow;
-	if (!window || window.isDestroyed()) {
-		await createMainWindow(DASHBOARD_SIGN_IN_URL);
-		window = mainWindow;
-	} else if (window.webContents.getURL() !== DASHBOARD_SIGN_IN_URL) {
-		await loadWindowUrl(window, DASHBOARD_SIGN_IN_URL);
-	}
-	if (!window || window.isDestroyed()) throw new Error("Dashboard window was closed");
-	await presentMainWindow(window);
-}
-
 async function showDashboardFailure(forceReload = false, present = true): Promise<void> {
 	if (dashboardFailureOpening && !forceReload) return dashboardFailureOpening;
 	const opening = (async () => {
@@ -1118,6 +1167,10 @@ async function showDashboardFailure(forceReload = false, present = true): Promis
 	} finally {
 		if (dashboardFailureOpening === opening) dashboardFailureOpening = null;
 	}
+}
+
+function shouldOpenConnectWizard(state: DesktopBootstrapState): boolean {
+	return !state.auth.authenticated || !state.daemon.running;
 }
 
 async function presentMainWindow(window: BrowserWindow): Promise<void> {

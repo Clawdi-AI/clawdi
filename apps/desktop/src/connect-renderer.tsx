@@ -1,10 +1,12 @@
 import type {
 	ClawdiDesktopConnectBridge,
 	ClawdiDesktopShellBridge,
+	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopDetectedAgent,
 	DesktopInstallationState,
+	DesktopReconnectCandidate,
 } from "@clawdi/shared/desktop";
 import {
 	ArrowRight,
@@ -15,6 +17,7 @@ import {
 	LogIn,
 	RefreshCw,
 	ShieldCheck,
+	Sparkles,
 	TriangleAlert,
 	X,
 } from "lucide-react";
@@ -33,7 +36,7 @@ declare global {
 type Stage =
 	| "loading"
 	| "install"
-	| "authenticate"
+	| "welcome"
 	| "authenticating"
 	| "select"
 	| "moving"
@@ -48,7 +51,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		requiresMove: false,
 	});
 	const [agents, setAgents] = useState<DesktopDetectedAgent[]>([]);
+	const [reconnectCandidates, setReconnectCandidates] = useState<DesktopReconnectCandidate[]>([]);
 	const [selected, setSelected] = useState<Set<DesktopAgentType>>(new Set());
+	const [connectionModes, setConnectionModes] = useState<Map<DesktopAgentType, string>>(new Map());
 	const [failure, setFailure] = useState<string | null>(null);
 	const [cancellingAuth, setCancellingAuth] = useState(false);
 
@@ -57,24 +62,39 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("error");
 	}, []);
 
+	const applyAgentChoices = useCallback(
+		(detected: DesktopDetectedAgent[], candidates: DesktopReconnectCandidate[]) => {
+			setAgents(detected);
+			setReconnectCandidates(candidates);
+			const available = detected.filter((agent) => agent.detected && !agent.registered);
+			setSelected(new Set(available.map((agent) => agent.type)));
+			setConnectionModes(
+				new Map(
+					available.flatMap((agent) =>
+						candidates.some((candidate) => candidate.type === agent.type)
+							? []
+							: [[agent.type, "new"]],
+					),
+				),
+			);
+		},
+		[],
+	);
+
 	const loadAgents = useCallback(async () => {
 		setStage("loading");
 		setFailure(null);
 		try {
-			const detected = await bridge.detectAgents();
-			setAgents(detected);
-			setSelected(
-				new Set(
-					detected
-						.filter((agent) => agent.detected && !agent.registered)
-						.map((agent) => agent.type),
-				),
-			);
+			const [detected, candidates] = await Promise.all([
+				bridge.detectAgents(),
+				bridge.listReconnectableAgents(),
+			]);
+			applyAgentChoices(detected, candidates);
 			setStage("select");
 		} catch (error) {
 			fail(error);
 		}
-	}, [bridge, fail]);
+	}, [applyAgentChoices, bridge, fail]);
 
 	const load = useCallback(async () => {
 		setStage("loading");
@@ -86,17 +106,21 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 				setStage("install");
 				return;
 			}
+			const detected = await bridge.detectAgents();
+			setAgents(detected);
 			const state = await bridge.getBootstrapState();
 			setBootstrap(state);
 			if (!state.auth.authenticated) {
-				setStage("authenticate");
+				setStage("welcome");
 				return;
 			}
-			await loadAgents();
+			const candidates = await bridge.listReconnectableAgents();
+			applyAgentChoices(detected, candidates);
+			setStage("select");
 		} catch (error) {
 			fail(error);
 		}
-	}, [bridge, fail, loadAgents]);
+	}, [applyAgentChoices, bridge, fail]);
 
 	useEffect(() => {
 		void load();
@@ -108,7 +132,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			const result = await bridge.authenticate();
 			if (result.status === "cancelled") {
-				setStage("authenticate");
+				setStage("welcome");
 				return;
 			}
 			setBootstrap(result.state);
@@ -130,11 +154,18 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	}
 
 	async function connect() {
-		const requested =
+		const requestedTypes =
 			selected.size > 0
 				? [...selected]
 				: agents.filter((agent) => agent.registered).map((agent) => agent.type);
-		if (requested.length === 0) return;
+		if (requestedTypes.length === 0) return;
+		const requested: DesktopAgentConnection[] = requestedTypes.map((type) => {
+			const mode = connectionModes.get(type);
+			if (selected.has(type) && !mode) {
+				throw new Error("Choose whether to reconnect or create a new Agent.");
+			}
+			return { type, ...(mode && mode !== "new" ? { reconnectAgentId: mode } : {}) };
+		});
 		setStage("connecting");
 		setFailure(null);
 		try {
@@ -214,26 +245,8 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 					</div>
 				) : null}
 
-				{stage === "authenticate" ? (
-					<div className="stack">
-						<div className="notice">
-							<span className="icon-tile">
-								<ShieldCheck />
-							</span>
-							<div>
-								<h2>Sign in to Clawdi</h2>
-								<p>
-									Clawdi opens your default browser for secure authorization, then returns here
-									automatically.
-								</p>
-							</div>
-						</div>
-						<footer className="actions">
-							<button className="button primary" type="button" onClick={() => void authenticate()}>
-								Continue in browser <ArrowRight />
-							</button>
-						</footer>
-					</div>
+				{stage === "welcome" ? (
+					<Welcome agents={agents} onContinue={() => void authenticate()} />
 				) : null}
 
 				{stage === "authenticating" ? (
@@ -260,7 +273,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 				{stage === "select" ? (
 					<AgentSelection
 						agents={agents}
+						reconnectCandidates={reconnectCandidates}
 						selected={selected}
+						connectionModes={connectionModes}
 						account={bootstrap?.auth.user?.email}
 						daemonReady={bootstrap?.daemon.running === true}
 						requiresMove={installation.requiresMove}
@@ -273,6 +288,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 							});
 						}}
 						onRefresh={() => void loadAgents()}
+						onConnectionModeChange={(type, mode) => {
+							setConnectionModes((current) => new Map(current).set(type, mode));
+						}}
 						onConnect={() => void connect()}
 						onMoveToApplications={() => void moveToApplications()}
 						onOpenDashboard={() => void openDashboard()}
@@ -332,25 +350,80 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	);
 }
 
+function Welcome({ agents, onContinue }: { agents: DesktopDetectedAgent[]; onContinue(): void }) {
+	const detected = agents.filter((agent) => agent.detected);
+	return (
+		<div className="stack welcome-step">
+			<div className="welcome-hero">
+				<span className="status-icon welcome-icon">
+					<Sparkles />
+				</span>
+				<h2>Welcome to Clawdi</h2>
+				<p>
+					{detected.length > 0
+						? `We found ${detected.length} supported Agent${detected.length === 1 ? "" : "s"} on this Mac. Sign in to connect or recover them.`
+						: "Sign in to Clawdi, then connect a supported Agent whenever it is available on this Mac."}
+				</p>
+			</div>
+			{detected.length > 0 ? (
+				<ul className="welcome-agents" aria-label="Agents found on this Mac">
+					{detected.map((agent) => (
+						<li className="welcome-agent" key={agent.type}>
+							<AgentBrandIcon type={agent.type} />
+							<span>
+								<strong>{agent.displayName}</strong>
+								<small>{agent.version ?? "Local data found"}</small>
+							</span>
+						</li>
+					))}
+				</ul>
+			) : null}
+			<div className="notice welcome-security">
+				<span className="icon-tile">
+					<ShieldCheck />
+				</span>
+				<div>
+					<h2>One secure sign-in</h2>
+					<p>
+						Clawdi opens your browser for authorization. The bundled CLI keeps the local credential
+						used by both sync and this app.
+					</p>
+				</div>
+			</div>
+			<footer className="actions">
+				<button className="button primary" type="button" onClick={onContinue}>
+					Sign in to continue <ArrowRight />
+				</button>
+			</footer>
+		</div>
+	);
+}
+
 function AgentSelection({
 	agents,
+	reconnectCandidates,
 	selected,
+	connectionModes,
 	account,
 	daemonReady,
 	requiresMove,
 	onToggle,
 	onRefresh,
+	onConnectionModeChange,
 	onConnect,
 	onMoveToApplications,
 	onOpenDashboard,
 }: {
 	agents: DesktopDetectedAgent[];
+	reconnectCandidates: DesktopReconnectCandidate[];
 	selected: ReadonlySet<DesktopAgentType>;
+	connectionModes: ReadonlyMap<DesktopAgentType, string>;
 	account?: string;
 	daemonReady: boolean;
 	requiresMove: boolean;
 	onToggle(type: DesktopAgentType, checked: boolean): void;
 	onRefresh(): void;
+	onConnectionModeChange(type: DesktopAgentType, mode: string): void;
 	onConnect(): void;
 	onMoveToApplications(): void;
 	onOpenDashboard(): void;
@@ -361,6 +434,7 @@ function AgentSelection({
 	);
 	const canRepairDaemon = !daemonReady && agents.some((agent) => agent.registered);
 	const shouldConnect = selected.size > 0 || canRepairDaemon;
+	const connectionChoiceRequired = [...selected].some((type) => !connectionModes.has(type));
 	return (
 		<div className="stack">
 			<div className="section-heading">
@@ -368,7 +442,13 @@ function AgentSelection({
 					<h2>{found > 0 ? `Found ${found} Agent${found === 1 ? "" : "s"}` : "No Agents found"}</h2>
 					<p>{account ? `Connecting to ${account}` : "Select the Agents to connect."}</p>
 				</div>
-				<button className="icon-button" type="button" onClick={onRefresh} title="Scan again">
+				<button
+					aria-label="Scan again"
+					className="icon-button"
+					type="button"
+					onClick={onRefresh}
+					title="Scan again"
+				>
 					<RefreshCw />
 				</button>
 			</div>
@@ -376,10 +456,14 @@ function AgentSelection({
 			<div className="agent-list">
 				{agents.map((agent) => {
 					const available = agent.detected && !agent.registered;
+					const candidates = reconnectCandidates.filter(
+						(candidate) => candidate.type === agent.type,
+					);
 					return (
-						<label className={`agent-row${available ? "" : " unavailable"}`} key={agent.type}>
+						<div className={`agent-row${available ? "" : " unavailable"}`} key={agent.type}>
 							<input
 								type="checkbox"
+								aria-label={`Connect ${agent.displayName}`}
 								checked={agent.registered || selected.has(agent.type)}
 								disabled={!available}
 								onChange={(event) => onToggle(agent.type, event.currentTarget.checked)}
@@ -390,15 +474,36 @@ function AgentSelection({
 								<small>
 									{agent.registered
 										? "Already connected"
-										: agent.detected
-											? (agent.version ?? "Local data found")
-											: agent.inspection === "failed"
-												? "Couldn't inspect"
-												: "Not installed"}
+										: candidates.length > 0
+											? "Previous connection found"
+											: agent.detected
+												? (agent.version ?? "Local data found")
+												: agent.inspection === "failed"
+													? "Couldn't inspect"
+													: "Not installed"}
 								</small>
+								{available && selected.has(agent.type) && candidates.length > 0 ? (
+									<select
+										aria-label={`Connection for ${agent.displayName}`}
+										value={connectionModes.get(agent.type) ?? ""}
+										onChange={(event) =>
+											onConnectionModeChange(agent.type, event.currentTarget.value)
+										}
+									>
+										<option value="" disabled>
+											Choose how to connect…
+										</option>
+										<option value="new">Connect as a new Agent</option>
+										{candidates.map((candidate) => (
+											<option value={candidate.id} key={candidate.id}>
+												Reconnect to {candidate.name} · {candidate.machineName}
+											</option>
+										))}
+									</select>
+								) : null}
 							</span>
 							{agent.registered ? <Check className="row-check" /> : null}
-						</label>
+						</div>
 					);
 				})}
 			</div>
@@ -427,6 +532,7 @@ function AgentSelection({
 				<button
 					className="button primary"
 					type="button"
+					disabled={connectionChoiceRequired}
 					onClick={
 						requiresMove && shouldConnect
 							? onMoveToApplications
@@ -435,13 +541,15 @@ function AgentSelection({
 								: onOpenDashboard
 					}
 				>
-					{requiresMove && shouldConnect
-						? "Move to Applications"
-						: selected.size > 0
-							? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
-							: canRepairDaemon
-								? "Start background sync"
-								: "Open dashboard"}
+					{connectionChoiceRequired
+						? "Choose how to connect"
+						: requiresMove && shouldConnect
+							? "Move to Applications"
+							: selected.size > 0
+								? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+								: canRepairDaemon
+									? "Start background sync"
+									: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>
