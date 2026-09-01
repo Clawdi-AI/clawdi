@@ -29,7 +29,7 @@
 		"@dnd-kit/utilities": "^3.2.2",
 		"@fontsource/geist-mono": "^5.3.0",
 		"@fontsource/geist-sans": "^5.3.0",
-		"@lobehub/icons": "5.16.0",
+		"@lobehub/icons": "catalog:",
 		"@sentry/tanstackstart-react": "^10.70.0",
 		"@stripe/react-stripe-js": "^6.8.2",
 		"@stripe/stripe-js": "^9.14.0",

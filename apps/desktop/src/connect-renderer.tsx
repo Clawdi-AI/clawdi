@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { AgentBrandIcon } from "./agent-brand-icon";
 import "./connect-renderer.css";
 
 declare global {
@@ -377,9 +378,7 @@ function AgentSelection({
 								disabled={!available}
 								onChange={(event) => onToggle(agent.type, event.currentTarget.checked)}
 							/>
-							<span className="agent-icon" aria-hidden="true">
-								<TerminalSquare />
-							</span>
+							<AgentBrandIcon type={agent.type} />
 							<span className="agent-copy">
 								<strong>{agent.displayName}</strong>
 								<small>

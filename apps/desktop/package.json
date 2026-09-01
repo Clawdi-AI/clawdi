@@ -16,7 +16,8 @@
 		"package:mac": "bun run build && CLAWDI_NATIVE_TARGET=darwin-arm64 bun run prepare:native && electron-builder --mac dmg --arm64"
 	},
 	"dependencies": {
-		"@clawdi/shared": "workspace:*"
+		"@clawdi/shared": "workspace:*",
+		"@lobehub/icons": "catalog:"
 	},
 	"devDependencies": {
 		"@electron/fuses": "^2.1.3",

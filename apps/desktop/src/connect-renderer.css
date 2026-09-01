@@ -96,8 +96,7 @@ button {
 }
 
 .icon-tile svg,
-.status-icon svg,
-.agent-icon svg {
+.status-icon svg {
 	width: 18px;
 	height: 18px;
 }
@@ -349,9 +348,26 @@ input:focus-visible {
 .agent-icon {
 	width: 34px;
 	height: 34px;
+	overflow: hidden;
+	border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
 	border-radius: 9px;
-	background: var(--muted);
-	color: var(--muted-foreground);
+	background: color-mix(in oklch, var(--muted) 45%, transparent);
+	color: var(--foreground);
+}
+
+.agent-icon svg {
+	display: block;
+}
+
+.agent-icon-white {
+	background: white;
+	color: black;
+}
+
+.agent-icon-black {
+	border-color: black;
+	background: black;
+	color: white;
 }
 
 .agent-copy {
