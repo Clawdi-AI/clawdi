@@ -52,6 +52,10 @@ type GatewayFrame = dict[str, JsonValue]
 _GATEWAY_JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
+class _GatewayReconnect(RuntimeError):
+    """Discord requested an immediate reconnect so the session can resume."""
+
+
 class _GatewayConnection(Protocol):
     """The WebSocket operations required by one Discord Gateway session."""
 
@@ -92,6 +96,9 @@ class _GatewayState:
     session_id: str | None = None
     resume_gateway_url: str | None = None
     account_revision: str | None = None
+    # Preserve this marker when INVALID_SESSION clears the resume fields so
+    # the outer loop still resets backoff after an established connection.
+    session_established: bool = False
 
     def can_resume(self) -> bool:
         return self.sequence is not None and bool(self.session_id) and bool(self.resume_gateway_url)
@@ -191,6 +198,10 @@ class DiscordGatewayWorker:
                 backoff_seconds = self._reconnect_initial_seconds
             except asyncio.CancelledError:
                 raise
+            except _GatewayReconnect:
+                state.session_established = False
+                backoff_seconds = self._reconnect_initial_seconds
+                continue
             except ConnectionClosed as exc:
                 close_code = discord_gateway_close_code(exc)
                 if close_code in _SESSION_RESET_CLOSE_CODES:
@@ -208,6 +219,9 @@ class DiscordGatewayWorker:
             except Exception as exc:
                 # Gateway workers must reconnect after transport and protocol faults.
                 log.exception("discord gateway account %s failed: %s", account_id, exc)
+            if state.session_established:
+                state.session_established = False
+                backoff_seconds = self._reconnect_initial_seconds
             await _sleep_until_stop(stop, backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, self._reconnect_max_seconds)
 
@@ -275,6 +289,7 @@ class DiscordGatewayWorker:
         resume: bool,
     ) -> None:
         state.heartbeat_acknowledged = True
+        state.session_established = False
         async with self._connect_factory(
             uri,
             ping_interval=None,
@@ -333,6 +348,8 @@ class DiscordGatewayWorker:
         op = frame.get("op")
         if op == 0:
             _update_gateway_session_state(state, frame)
+            if frame.get("t") in {"READY", "RESUMED"}:
+                state.session_established = True
             await record_discord_gateway_dispatch(
                 self._sessionmaker,
                 account_id,
@@ -347,7 +364,7 @@ class DiscordGatewayWorker:
         elif op == 1:
             await _send_heartbeat(websocket, state)
         elif op == 7:
-            raise RuntimeError("discord requested reconnect")
+            raise _GatewayReconnect
         elif op == 9:
             if frame.get("d") is not True:
                 state.clear_session()
