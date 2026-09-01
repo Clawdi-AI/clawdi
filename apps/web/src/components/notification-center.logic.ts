@@ -5,16 +5,21 @@ type Schemas = components["schemas"];
 export type ProjectInvitationNotification = Schemas["InvitationResponse"];
 export type AcceptInvitationResponse = Schemas["InvitationAcceptResponse"];
 
-export type InboxNotification = {
+export type AccountNotification = {
 	id: string;
 	title: string;
 	description: string;
-	badge: string;
-	sentAt: Date;
-	opened: boolean;
+	category: string;
+	createdAt: Date;
+	read: boolean;
 	actionLabel?: string;
+	actionUrl?: string;
 	severity: "info" | "warning" | "destructive";
 };
+
+export type NotificationCenterView = "all" | "unread";
+
+const NOTIFICATION_ACTION_ORIGINS = new Set(["https://cloud.clawdi.ai", "https://www.clawdi.ai"]);
 
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access
@@ -29,35 +34,57 @@ export const NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS = [
 
 export function getPendingNotificationCount(
 	notifications: readonly ProjectInvitationNotification[] | null | undefined,
-	inboxNotifications: readonly InboxNotification[] = [],
+	accountUnreadCount = 0,
 ): number {
-	return (
-		(notifications?.length ?? 0) +
-		inboxNotifications.filter((notification) => !notification.opened).length
-	);
+	return (notifications?.length ?? 0) + accountUnreadCount;
+}
+
+export function filterAccountNotifications(
+	notifications: readonly AccountNotification[],
+	view: NotificationCenterView,
+): readonly AccountNotification[] {
+	return view === "unread"
+		? notifications.filter((notification) => !notification.read)
+		: notifications;
+}
+
+export function resolveNotificationUrl(
+	value: string,
+	origin: string,
+): { kind: "same-origin" | "external"; url: URL } | null {
+	try {
+		const base = new URL(origin);
+		const url = new URL(value, base);
+		if (url.origin === base.origin) return { kind: "same-origin", url };
+		return NOTIFICATION_ACTION_ORIGINS.has(url.origin) ? { kind: "external", url } : null;
+	} catch {
+		return null;
+	}
 }
 
 export function getNotificationCenterTriggerLabel(count: number): string {
-	if (count === 1) return "Notification Center, 1 Pending Notification";
-	if (count > 1) return `Notification Center, ${count} Pending Notifications`;
-	return "Notification Center";
+	if (count === 1) return "Notifications, 1 new item";
+	if (count > 1) return `Notifications, ${count} new items`;
+	return "Notifications";
 }
 
-export function getNotificationCenterTitle(count: number): string {
-	if (count === 1) return "1 Pending Notification";
-	if (count > 1) return `${count} Pending Notifications`;
-	return "Notification Center";
-}
-
-export function getNotificationCenterEmptyCopy(): { title: string; description: string } {
-	return {
-		title: "No Pending Notifications",
-		description: "Project invitations and account updates will appear here.",
-	};
+export function getNotificationCenterEmptyCopy(view: NotificationCenterView): {
+	title: string;
+	description: string;
+} {
+	return view === "unread"
+		? {
+				title: "You're all caught up",
+				description: "New account updates and project invitations will appear here.",
+			}
+		: {
+				title: "No notifications yet",
+				description: "Account updates and project invitations will appear here.",
+			};
 }
 
 export function getNotificationCenterDescription(): string {
-	return "Account updates and project invitations.";
+	return "Account activity and project invitations.";
 }
 
 export function getProjectInvitationAccessCopy(): string {

@@ -108,6 +108,7 @@ export async function stubCloudApi(page: Page) {
 		if (path === "/v1/agents") return fulfillJson(route, [cloudAgent()]);
 		if (path === `/v1/agents/${CLOUD_AGENT_ID}`) return fulfillJson(route, cloudAgent());
 		if (path === "/v1/projects") return fulfillJson(route, []);
+		if (path === "/v1/me/invitations") return fulfillJson(route, []);
 		if (path === "/v1/projects/default") return fulfillJson(route, { project_id: "proj_e2e" });
 		if (path === "/v1/sessions") return fulfillJson(route, emptyPage);
 		if (path === "/v1/auth/keys") return fulfillJson(route, []);

@@ -8,10 +8,10 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
-const HostedCustomerIONotificationCenter = IS_HOSTED_BUILD
+const HostedNotificationCenter = IS_HOSTED_BUILD
 	? lazy(() =>
-			import("@/hosted/customerio-notification-center").then((module) => ({
-				default: module.CustomerIONotificationCenter,
+			import("@/hosted/notification-center").then((module) => ({
+				default: module.HostedNotificationCenter,
 			})),
 		)
 	: null;
@@ -34,9 +34,9 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				{HostedCustomerIONotificationCenter ? (
+				{HostedNotificationCenter ? (
 					<Suspense fallback={<NotificationCenter />}>
-						<HostedCustomerIONotificationCenter />
+						<HostedNotificationCenter />
 					</Suspense>
 				) : (
 					<NotificationCenter />
