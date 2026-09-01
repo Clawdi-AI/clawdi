@@ -38,6 +38,18 @@ export const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 export const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const NON_TRANSACTIONAL_SYSTEM_UNITS = new Set([RUNTIME_WATCH_SYSTEM_UNIT]);
 
+export function shouldRecoverFailedSystemdUnit(input: {
+	activeState: string;
+	changed: boolean;
+	pendingActivation: boolean;
+	recoverFailedUnits: boolean;
+}): boolean {
+	return (
+		input.activeState === "failed" &&
+		(input.recoverFailedUnits || input.changed || input.pendingActivation)
+	);
+}
+
 export function readSystemdUnitSnapshot(
 	paths: ReturnType<typeof getRuntimePaths>,
 ): SystemdUnitSnapshot {
@@ -214,7 +226,14 @@ export function applySystemdRuntimeUpdate(
 		const state = requiredSystemdUnitState(systemStates, "system", unit);
 		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (!systemdUnitEnabled(state)) enableSystemUnits.push(unit);
-		if (state.activeState === "failed" && recoverFailedUnits) {
+		if (
+			shouldRecoverFailedSystemdUnit({
+				activeState: state.activeState,
+				changed: system.added.includes(unit) || system.changed.includes(unit),
+				pendingActivation: pendingSystemActivation.has(unit),
+				recoverFailedUnits,
+			})
+		) {
 			resetFailedSystemUnits.push(unit);
 			startSystemUnits.push(unit);
 			systemUnitsChanged.add(unit);
@@ -256,14 +275,17 @@ export function applySystemdRuntimeUpdate(
 	for (const unit of user.present) {
 		const state = requiredSystemdUnitState(userStates, "user", unit);
 		if (!systemdUnitEnabled(state)) enableUserUnits.push(unit);
-		if (state.activeState === "failed" && recoverFailedUnits) {
+		const recoverFailedUserUnit = shouldRecoverFailedSystemdUnit({
+			activeState: state.activeState,
+			changed: user.added.includes(unit) || user.changed.includes(unit),
+			pendingActivation: pendingUserActivation.has(unit),
+			recoverFailedUnits,
+		});
+		if (recoverFailedUserUnit) {
 			resetFailedUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
-		if (
-			state.activeState === "inactive" ||
-			(state.activeState === "failed" && recoverFailedUnits)
-		) {
+		if (state.activeState === "inactive" || recoverFailedUserUnit) {
 			startUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 			continue;

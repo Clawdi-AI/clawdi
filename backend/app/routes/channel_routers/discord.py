@@ -1318,6 +1318,11 @@ async def discord_agent_gateway(
                     for removed_channel_id in set(deferred_channels) - set(channels):
                         deferred_channels.pop(removed_channel_id, None)
                     event_type = optional_str(payload.get("t"))
+                    event_data = payload.get("d")
+                    interaction_is_deliverable = event_type != "INTERACTION_CREATE" or (
+                        isinstance(event_data, dict)
+                        and optional_str(event_data.get("token")) is not None
+                    )
                     lifecycle = bool(
                         event_type and event_type.startswith(("GUILD_", "CHANNEL_", "THREAD_"))
                     )
@@ -1407,7 +1412,9 @@ async def discord_agent_gateway(
                         message=message,
                         send=(
                             send_message
-                            if authorized and (lifecycle or projected is not None)
+                            if interaction_is_deliverable
+                            and authorized
+                            and (lifecycle or projected is not None)
                             else None
                         ),
                     )

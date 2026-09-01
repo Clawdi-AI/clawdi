@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
+import { shouldRecoverFailedSystemdUnit } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const roots: string[] = [];
@@ -43,5 +44,37 @@ describe("managed runtime systemd unit classification", () => {
 	test("returns no units for a missing root", () => {
 		const root = join(tmpdir(), `clawdi-systemd-missing-${crypto.randomUUID()}`);
 		expect(managedRuntimeSystemdUnitEntries(root)).toEqual([]);
+	});
+});
+
+describe("failed runtime systemd unit recovery", () => {
+	test("recovers a failed unit when the current activation changed it", () => {
+		expect(
+			shouldRecoverFailedSystemdUnit({
+				activeState: "failed",
+				changed: true,
+				pendingActivation: false,
+				recoverFailedUnits: false,
+			}),
+		).toBe(true);
+		expect(
+			shouldRecoverFailedSystemdUnit({
+				activeState: "failed",
+				changed: false,
+				pendingActivation: true,
+				recoverFailedUnits: false,
+			}),
+		).toBe(true);
+	});
+
+	test("leaves an unchanged failed unit for the scheduled recovery pass", () => {
+		expect(
+			shouldRecoverFailedSystemdUnit({
+				activeState: "failed",
+				changed: false,
+				pendingActivation: false,
+				recoverFailedUnits: false,
+			}),
+		).toBe(false);
 	});
 });
