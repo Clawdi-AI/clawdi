@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import type { z } from "zod";
+import { isValidSemver } from "../lib/semver";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { type HermesConfigTransaction, reconcileHermesConfigValue } from "./hermes-config";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
@@ -23,6 +24,7 @@ import {
 	type RuntimeInstallObservation,
 	runtimeCommandCurrentRevision,
 	runtimeFileCurrentRevision,
+	runtimeCommandVersion,
 } from "./manifest-install";
 import { openClawConfigPatchIsApplied } from "./manifest-providers";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
@@ -590,7 +592,7 @@ function installOpenClawChannelPlugins(input: {
 	workspaceRoot: string;
 }): void {
 	for (const channel of Object.keys(input.channels).sort()) {
-		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
+		const specs = openClawExternalChannelPluginSpecs(channel, input);
 		if (!specs) continue;
 		const isCurrent = () =>
 			channelPluginIsCurrent({
@@ -606,6 +608,19 @@ function installOpenClawChannelPlugins(input: {
 			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
 		}
 	}
+}
+function openClawExternalChannelPluginSpecs(
+	channel: string,
+	input: { commandPath: string; home: string; workspaceRoot: string },
+): readonly string[] | null {
+	if (channel !== "whatsapp") return OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel] ?? null;
+	const version = normalizeOpenClawRuntimeVersion(
+		runtimeCommandVersion(input.commandPath, input.home, input.workspaceRoot) ?? "",
+	);
+	if (!version) {
+		throw new Error("OpenClaw runtime version could not be determined for the WhatsApp plugin");
+	}
+	return [`clawhub:${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`];
 }
 function runPluginInstallWithFallback(
 	commandPath: string,
@@ -679,7 +694,9 @@ function channelPluginIsCurrent(input: {
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
 		if (
 			plugin.id !== input.channel ||
-			!input.specs.some((spec) => openClawPluginInstallMatchesSpec(install, spec)) ||
+			!input.specs.some((spec) =>
+				openClawPluginInstallMatchesSpec(install, spec, plugin.version),
+			) ||
 			plugin.status !== "loaded" ||
 			!plugin.enabled ||
 			!version ||
@@ -695,15 +712,43 @@ function channelPluginIsCurrent(input: {
 function openClawPluginInstallMatchesSpec(
 	install: z.infer<typeof openClawPluginInspectSchema>["install"],
 	spec: string,
+	pluginVersion?: string,
 ): boolean {
+	const clawHubSpec = /^clawhub:(.+)@([^@]+)$/.exec(spec);
+	if (clawHubSpec) {
+		const [, expectedPackage, expectedVersion] = clawHubSpec;
+		if (
+			install.source !== "clawhub" ||
+			install.clawhubPackage !== expectedPackage ||
+			!expectedVersion
+		) {
+			return false;
+		}
+		const installedVersions = [pluginVersion, install.resolvedVersion, install.version].filter(
+			(value): value is string => Boolean(value),
+		);
+		return (
+			installedVersions.length > 0 &&
+			installedVersions.every((version) => version === expectedVersion)
+		);
+	}
 	const recordedSpecs = [install.spec, install.resolvedSpec];
 	if (install.source === "clawhub" && install.clawhubPackage) {
 		recordedSpecs.push(`clawhub:${install.clawhubPackage}`);
 	}
 	return recordedSpecs.includes(spec);
 }
+const OPENCLAW_RUNTIME_VERSION_RE =
+	/(?:^|[^\d])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:$|[^\dA-Za-z-])/;
+const OPENCLAW_WHATSAPP_PLUGIN_PACKAGE = "@openclaw/whatsapp";
+
+export function normalizeOpenClawRuntimeVersion(output: string): string | null {
+	const version = OPENCLAW_RUNTIME_VERSION_RE.exec(output)?.[1];
+	if (!version) return null;
+	const normalized = version.replace(/-\d+$/, "");
+	return isValidSemver(normalized) ? normalized : null;
+}
 export const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
-	whatsapp: ["clawhub:@openclaw/whatsapp"],
 };
 const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;
