@@ -46,10 +46,10 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 			<DesktopWindowDragRegion />
 			<div className="flex max-w-sm flex-col items-center gap-4 text-center">
 				<div className="space-y-1.5">
-					<h1 className="text-lg font-semibold">Sign in to Clawdi</h1>
+					<h1 className="text-lg font-semibold">Reconnect Clawdi</h1>
 					<p className="text-sm text-muted-foreground">
-						Continue securely in your browser. Clawdi uses the same account for the app, Agents, and
-						background sync.
+						Clawdi will restore the Dashboard from your local sign-in. If that sign-in expired, your
+						browser opens for secure authorization.
 					</p>
 					{failed ? (
 						<p className="text-sm text-destructive">Sign-in couldn't be started. Try again.</p>
@@ -57,7 +57,7 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 				</div>
 				<Button disabled={opening} onClick={() => void signIn()}>
 					{opening ? <LoaderCircle className="animate-spin" /> : <LogIn />}
-					{opening ? "Opening browser…" : "Sign in"}
+					{opening ? "Reconnecting…" : "Reconnect"}
 				</Button>
 			</div>
 		</main>

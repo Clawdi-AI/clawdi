@@ -22,6 +22,19 @@ export interface DesktopDetectedAgent {
 	inspection: "complete" | "failed";
 }
 
+export interface DesktopReconnectCandidate {
+	id: string;
+	type: DesktopAgentType;
+	displayName: string;
+	name: string;
+	machineName: string;
+}
+
+export interface DesktopAgentConnection {
+	type: DesktopAgentType;
+	reconnectAgentId?: string;
+}
+
 export interface DesktopBootstrapState {
 	platform: "darwin" | "linux" | "win32";
 	cli: {
@@ -69,7 +82,8 @@ export interface ClawdiDesktopConnectBridge {
 	authenticate(): Promise<DesktopAuthenticationResult>;
 	cancelAuthentication(): Promise<DesktopAuthenticationCancellationResult>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
-	connectAgents(agentTypes: DesktopAgentType[]): Promise<DesktopConnectResult>;
+	listReconnectableAgents(): Promise<DesktopReconnectCandidate[]>;
+	connectAgents(connections: DesktopAgentConnection[]): Promise<DesktopConnectResult>;
 	moveToApplicationsFolder(): Promise<DesktopMoveToApplicationsResult>;
 	openDashboard(): Promise<void>;
 }

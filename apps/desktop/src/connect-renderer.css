@@ -38,11 +38,13 @@ body {
 }
 
 button,
-input {
+input,
+select {
 	font: inherit;
 }
 
-button {
+button,
+select {
 	-webkit-app-region: no-drag;
 }
 
@@ -53,17 +55,14 @@ button {
 .titlebar {
 	display: flex;
 	align-items: center;
+	justify-content: center;
 	gap: 12px;
 	height: 86px;
-	padding: 18px 28px 14px 86px;
+	padding: 18px 86px 14px;
 	border-bottom: 1px solid var(--border);
 	background: color-mix(in oklch, var(--surface) 82%, transparent);
 	backdrop-filter: blur(18px) saturate(1.15);
 	-webkit-app-region: drag;
-}
-
-.dashboard-titlebar {
-	padding-left: 28px;
 }
 
 .brand-mark,
@@ -272,6 +271,77 @@ input:focus-visible {
 	max-width: 350px;
 }
 
+.welcome-step {
+	gap: 16px;
+}
+
+.welcome-hero {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 10px 24px 2px;
+	text-align: center;
+}
+
+.welcome-hero p {
+	max-width: 390px;
+	margin-top: 7px;
+	color: var(--muted-foreground);
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+
+.welcome-icon {
+	margin-bottom: 13px;
+}
+
+.welcome-agents {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.welcome-agent {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--surface);
+}
+
+.welcome-agent > span:last-child {
+	display: grid;
+	min-width: 0;
+	gap: 2px;
+}
+
+.welcome-agent strong,
+.welcome-agent small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.welcome-agent strong {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.welcome-agent small {
+	color: var(--muted-foreground);
+	font-size: 10.5px;
+}
+
+.welcome-security {
+	box-shadow: none;
+}
+
 .status-icon {
 	width: 46px;
 	height: 46px;
@@ -392,6 +462,18 @@ input:focus-visible {
 .agent-copy small {
 	color: var(--muted-foreground);
 	font-size: 11px;
+}
+
+.agent-copy select {
+	width: min(100%, 300px);
+	height: 28px;
+	margin-top: 3px;
+	padding: 0 28px 0 9px;
+	border: 1px solid var(--input);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--foreground);
+	font-size: 10.5px;
 }
 
 .row-check {
