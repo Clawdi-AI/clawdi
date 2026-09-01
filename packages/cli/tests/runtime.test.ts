@@ -1238,21 +1238,24 @@ function openClawDiscordPluginInspectFixture(pluginSource: string): Record<strin
 	};
 }
 
-function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<string, unknown> {
+function openClawWhatsAppPluginInspectFixture(
+	pluginSource: string,
+	version = "2026.7.1",
+): Record<string, unknown> {
 	return {
 		plugin: {
 			id: "whatsapp",
 			source: pluginSource,
 			origin: "global",
 			status: "loaded",
-			version: "2026.7.1",
+			version,
 			enabled: true,
 		},
 		install: {
 			source: "clawhub",
 			clawhubPackage: "@openclaw/whatsapp",
 			installPath: dirname(pluginSource),
-			version: "2026.7.1",
+			version,
 			integrity: "sha256-test",
 			npmIntegrity: "sha512-test",
 			clawpackSha256: "sha256-test-clawpack",
@@ -9738,6 +9741,7 @@ exit 64
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-delete-patch.jsonl");
+		const openclawPluginInstalls = join(root, "openclaw-whatsapp-plugin-installs.txt");
 		const openclawPluginSource = join(
 			home,
 			".openclaw",
@@ -9758,10 +9762,11 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   exit 0
 fi
 if [ "\${1:-}" = "--version" ]; then
-  printf 'openclaw 2026.7.1\\n'
+  printf 'openclaw 2026.7.1-2\\n'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force" ]; then
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
   exit 0
@@ -9796,6 +9801,7 @@ exit 0
 		};
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const unchangedConvergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 		const removed: RuntimeManifestLoad = {
 			...loaded,
 			manifest: {
@@ -9807,20 +9813,103 @@ exit 0
 		const removedConvergence = convergeRuntimeManifest(removed, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
+		expect(unchangedConvergence.installErrors).toEqual([]);
 		expect(removedConvergence.installErrors).toEqual([]);
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+			"plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force\n",
+		);
 		const patches = readFileSync(openclawPatch, "utf-8")
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
 			.map((entry) => JSON.parse(entry))
 			.filter((patch) => Object.hasOwn(patch, "channels"));
-		expect(patches).toHaveLength(2);
+		expect(patches).toHaveLength(3);
 		expect(patches[0].channels.whatsapp.accounts).toHaveProperty("clawdi_whatsapp");
 		expect(patches[0].channels.whatsapp.accounts.clawdi_whatsapp.authDir).toBe(
 			join(home, ".openclaw", "credentials", "whatsapp"),
 		);
 		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
-		expect(patches[1].channels.whatsapp).toBeNull();
-		expect(patches[1].session).toEqual({ dmScope: null });
+		expect(patches[2].channels.whatsapp).toBeNull();
+		expect(patches[2].session).toEqual({ dmScope: null });
+	});
+
+	it("reinstalls OpenClaw WhatsApp when the installed version differs", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".local", "bin", "openclaw");
+		const openclawPluginSource = join(
+			home,
+			".openclaw",
+			"extensions",
+			"whatsapp",
+			"dist",
+			"index.js",
+		);
+		const openclawPluginInstalls = join(root, "openclaw-whatsapp-plugin-installs.txt");
+		const installedMarker = join(root, "whatsapp-plugin-reinstalled");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(dirname(openclawPluginSource), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(openclawPluginSource, "export const whatsappPlugin = true;\n");
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw 2026.7.1-2\\n'
+  exit 0
+fi
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >/dev/null
+  exit 0
+fi
+if [ "$*" = "plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force" ]; then
+  printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
+  touch '${installedMarker}'
+  exit 0
+fi
+if [ "$*" = "plugins inspect whatsapp --json" ]; then
+  if [ -f '${installedMarker}' ]; then
+    printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource))}'
+  else
+    printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource, "2026.8.2"))}'
+  fi
+  exit 0
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 10);
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			channels: {
+				whatsapp: {
+					enabled: true,
+					defaultAccount: "clawdi_whatsapp",
+					accounts: {
+						clawdi_whatsapp: {
+							enabled: true,
+							authDir: join(home, ".openclaw", "credentials", "whatsapp"),
+						},
+					},
+				},
+			},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+			"plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force\n",
+		);
 	});
 
 	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
