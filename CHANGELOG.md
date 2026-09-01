@@ -36,6 +36,7 @@ database migration, CI, and implementation details.
 - Session search now indexes very large messages in bounded chunks, so long
   transcripts remain fully searchable without exceeding PostgreSQL full-text
   limits; results and match navigation still point to the original message.
+- Managed OpenClaw WhatsApp now installs the exact plugin version compatible with the runtime.
 
 ## Clawdi CLI v0.14.35
 

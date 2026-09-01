@@ -75,7 +75,7 @@ const HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS = 30_000;
 const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 const runtimeCommandRevisions = new Map<
 	string,
-	{ executableRevision: string; commandRevision: string }
+	{ executableRevision: string; commandRevision: string; version: string }
 >();
 const hermesDashboardCapabilityRevisions = new Map<string, string>();
 function runtimeInstallTimeoutMs(): number {
@@ -479,6 +479,15 @@ export function runtimeCommandCurrentRevision(
 	const cacheKey = `${command}\0${home}\0${cwd}`;
 	const cached = runtimeCommandRevisions.get(cacheKey);
 	if (cached?.executableRevision === executableRevision) return cached.commandRevision;
+	runtimeCommandVersion(command, home, cwd);
+	return runtimeCommandRevisions.get(cacheKey)?.commandRevision ?? null;
+}
+export function runtimeCommandVersion(command: string, home: string, cwd: string): string | null {
+	const executableRevision = runtimeFileCurrentRevision(command);
+	if (!executableRevision) return null;
+	const cacheKey = `${command}\0${home}\0${cwd}`;
+	const cached = runtimeCommandRevisions.get(cacheKey);
+	if (cached?.executableRevision === executableRevision) return cached.version;
 	try {
 		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
 			timeoutMs: 10_000,
@@ -503,8 +512,8 @@ export function runtimeCommandCurrentRevision(
 			executableRevision,
 			version,
 		});
-		runtimeCommandRevisions.set(cacheKey, { executableRevision, commandRevision });
-		return commandRevision;
+		runtimeCommandRevisions.set(cacheKey, { executableRevision, commandRevision, version });
+		return version;
 	} catch (error) {
 		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
 		return null;

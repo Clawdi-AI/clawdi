@@ -13,7 +13,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { materializeHostedChannelCredentials } from "./manifest-channels";
+import {
+	materializeHostedChannelCredentials,
+	normalizeOpenClawRuntimeVersion,
+} from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
@@ -97,6 +100,19 @@ function credsJson(secret = "managed-secret", credentialId?: string): string {
 		},
 	});
 }
+
+describe("OpenClaw runtime version normalization", () => {
+	test.each([
+		["openclaw 2026.7.1-2", "2026.7.1"],
+		["openclaw 2026.7.1-beta.3", "2026.7.1-beta.3"],
+	])("normalizes %s to %s", (output, expected) => {
+		expect(normalizeOpenClawRuntimeVersion(output)).toBe(expected);
+	});
+
+	test("rejects output without a valid semver", () => {
+		expect(normalizeOpenClawRuntimeVersion("openclaw development build")).toBeNull();
+	});
+});
 
 describe("managed WhatsApp auth directories", () => {
 	test("materializes ownership in creds.json and removes stale managed auth", () => {
