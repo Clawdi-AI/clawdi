@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktopReleaseBuilderArgs, readDesktopReleaseConfiguration } from "./release-contract";
 
@@ -10,6 +10,7 @@ const packageJson = JSON.parse(
 describe("Desktop release contract", () => {
 	test("keeps preview metadata disabled and configures GitHub update artifacts", () => {
 		const build = packageJson.build as {
+			directories?: { buildResources?: string };
 			extraMetadata?: Record<string, unknown>;
 			publish?: Array<Record<string, unknown>>;
 			mac?: {
@@ -22,6 +23,7 @@ describe("Desktop release contract", () => {
 		const dependencies = packageJson.dependencies as Record<string, unknown>;
 		expect(dependencies["electron-updater"]).toBe("6.8.9");
 		expect(build.extraMetadata?.clawdiUpdateChannel).toBe("disabled");
+		expect(build.directories?.buildResources).toBe("build");
 		expect(build.publish).toEqual([
 			{
 				provider: "github",
@@ -31,8 +33,12 @@ describe("Desktop release contract", () => {
 			},
 		]);
 		expect(build.mac?.hardenedRuntime).toBe(true);
-		expect(build.mac?.entitlements).toBe("build/entitlements.mac.plist");
-		expect(build.mac?.entitlementsInherit).toBe("build/entitlements.mac.inherit.plist");
+		expect(build.mac?.entitlements).toBeUndefined();
+		expect(build.mac?.entitlementsInherit).toBeUndefined();
+		expect(existsSync(join(import.meta.dir, "..", "build", "entitlements.mac.plist"))).toBe(true);
+		expect(existsSync(join(import.meta.dir, "..", "build", "entitlements.mac.inherit.plist"))).toBe(
+			true,
+		);
 		expect(build.mac?.target?.map((target) => target.target)).toEqual(["dmg", "zip"]);
 	});
 
