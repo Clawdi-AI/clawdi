@@ -89,8 +89,8 @@ export function HostedNotificationCenter() {
 		return [...unique.values()];
 	}, [notifications.data?.pages]);
 
-	async function refreshNotifications() {
-		await queryClient.invalidateQueries({ queryKey });
+	function refreshNotifications() {
+		void queryClient.invalidateQueries({ queryKey });
 	}
 
 	const updateNotification = useMutation({
