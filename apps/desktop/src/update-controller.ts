@@ -8,6 +8,7 @@ import {
 } from "./update-state";
 
 const AUTOMATIC_CHECK_DELAY_MS = 30_000;
+const AUTOMATIC_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const { autoUpdater } = electronUpdater;
 
 export interface DesktopUpdateControllerOptions {
@@ -20,7 +21,8 @@ export interface DesktopUpdateControllerOptions {
 export class DesktopUpdateController {
 	private readonly updater: AppUpdater;
 	private state: DesktopUpdateState;
-	private automaticCheck: ReturnType<typeof setTimeout> | null = null;
+	private initialCheck: ReturnType<typeof setTimeout> | null = null;
+	private periodicCheck: ReturnType<typeof setInterval> | null = null;
 
 	constructor(private readonly options: DesktopUpdateControllerOptions) {
 		this.updater = options.updater ?? autoUpdater;
@@ -51,11 +53,16 @@ export class DesktopUpdateController {
 			console.error("Desktop update failed", error);
 			this.transition({ type: "error" });
 		});
-		this.automaticCheck = setTimeout(() => {
-			this.automaticCheck = null;
+		this.initialCheck = setTimeout(() => {
+			this.initialCheck = null;
 			void this.checkForUpdates();
 		}, AUTOMATIC_CHECK_DELAY_MS);
-		this.automaticCheck.unref();
+		this.initialCheck.unref();
+		this.periodicCheck = setInterval(
+			() => void this.checkForUpdates(),
+			AUTOMATIC_CHECK_INTERVAL_MS,
+		);
+		this.periodicCheck.unref();
 	}
 
 	getState(): DesktopUpdateState {
@@ -81,8 +88,10 @@ export class DesktopUpdateController {
 	}
 
 	stop(): void {
-		if (this.automaticCheck) clearTimeout(this.automaticCheck);
-		this.automaticCheck = null;
+		if (this.initialCheck) clearTimeout(this.initialCheck);
+		if (this.periodicCheck) clearInterval(this.periodicCheck);
+		this.initialCheck = null;
+		this.periodicCheck = null;
 	}
 
 	private transition(event: DesktopUpdateEvent): void {

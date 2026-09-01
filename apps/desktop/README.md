@@ -18,16 +18,18 @@ explicit restart or when the user quits Clawdi.
 
 ## Signed release package
 
-Set an explicit stable `CLAWDI_DESKTOP_VERSION`, a standard electron-builder
-Developer ID signing identity, and one of electron-builder's supported Apple
-notarization credential tuples. Then run:
+Set an explicit stable `CLAWDI_DESKTOP_VERSION`, the expected
+`CLAWDI_DESKTOP_TEAM_ID`, a standard electron-builder Developer ID signing
+identity, and one of electron-builder's supported Apple notarization credential
+tuples. Then run:
 
 ```bash
 bun run --cwd apps/desktop package:mac:release
 ```
 
-The command never publishes. It requires signing and notarization, builds DMG
-and ZIP artifacts, and verifies `latest-mac.yml`. A release owner must attach
+The command never publishes. It requires signing and notarization, verifies the
+app and bundled CLI signatures, exercises the bundled CLI identity check, builds
+DMG and ZIP artifacts, and verifies the ZIP checksum in `latest-mac.yml`. A release owner must attach
 the signed DMG, signed ZIP, and metadata to the repository's latest calendar
 GitHub Release before the stable update channel can be enabled operationally.
 Every later release marked latest must keep valid Desktop metadata and its

@@ -79,6 +79,7 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 
 async function verifyPackagedDashboard(context, output) {
 	const window = await waitForWindow(context, "dashboard", 30_000);
+	await window.waitForFunction(() => globalThis.Clerk?.loaded === true, null, { timeout: 20_000 });
 	await Promise.race([
 		window.getByRole("heading", { name: "Signing in to Clawdi" }).waitFor({ timeout: 20_000 }),
 		window.getByRole("heading", { name: "Desktop sign-in expired" }).waitFor({ timeout: 20_000 }),
@@ -89,6 +90,17 @@ async function verifyPackagedDashboard(context, output) {
 			fetch("/index.html", { method: "HEAD", cache: "no-store" }),
 			fetch("/assets/not-packaged.js", { cache: "no-store" }),
 		]);
+		const resourceUrls = performance
+			.getEntriesByType("resource")
+			.map((entry) => new URL(entry.name));
+		const localAssetStatuses = await Promise.all(
+			[...new Set(resourceUrls)]
+				.filter((url) => url.origin === location.origin && url.pathname.startsWith("/assets/"))
+				.map(async (url) => ({
+					url: url.href,
+					status: (await fetch(url, { method: "HEAD" })).status,
+				})),
+		);
 		return {
 			csp: index.headers.get("content-security-policy"),
 			missingStatus: missing.status,
@@ -98,14 +110,21 @@ async function verifyPackagedDashboard(context, output) {
 			scriptUrls: [...document.scripts]
 				.filter((script) => script.src)
 				.map((script) => new URL(script.src)),
-			resourceUrls: performance.getEntriesByType("resource").map((entry) => new URL(entry.name)),
-			clerkGlobalPresent: Boolean(globalThis.Clerk),
+			resourceUrls,
+			localAssetStatuses,
+			clerkLoaded: globalThis.Clerk?.loaded === true,
 		};
 	});
 	assert.match(documentSecurity.csp ?? "", /script-src[^;]*'nonce-[^']+'/);
 	assert.doesNotMatch(documentSecurity.csp ?? "", /script-src[^;]*https:/);
 	assert.equal(documentSecurity.inlineScriptsHaveNonces, true);
 	assert.equal(documentSecurity.missingStatus, 404);
+	assert.equal(documentSecurity.clerkLoaded, true);
+	assert.deepEqual(
+		documentSecurity.localAssetStatuses.filter((asset) => asset.status !== 200),
+		[],
+		"The packaged Dashboard requested a local asset that was not bundled.",
+	);
 	assert.deepEqual(
 		[...new Set(documentSecurity.scriptUrls.map((url) => url.origin))],
 		["https://cloud.clawdi.ai"],
@@ -114,7 +133,6 @@ async function verifyPackagedDashboard(context, output) {
 		documentSecurity.resourceUrls.some((url) => url.pathname === "/assets/clerk.browser.js"),
 		"The packaged Dashboard did not load its bundled Clerk runtime.",
 	);
-	assert.equal(documentSecurity.clerkGlobalPresent, true);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
 	assert.deepEqual(bridgeMethods, ["openConnectWizard", "retryDashboard", "signIn", "signOut"]);
 	const updateSkipReason =

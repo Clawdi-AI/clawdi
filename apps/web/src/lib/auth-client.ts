@@ -96,9 +96,8 @@ export function useAuthActions() {
 	const desktopBridge = typeof window === "undefined" ? undefined : window.clawdiDesktop;
 	if (desktopBridge) {
 		return {
-			signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+			signOut: async () => {
 				await desktopBridge.signOut();
-				if (redirectUrl) window.location.replace(redirectUrl);
 			},
 		};
 	}

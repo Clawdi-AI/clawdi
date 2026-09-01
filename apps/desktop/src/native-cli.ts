@@ -27,11 +27,13 @@ interface NativeIdentity {
 	target: string;
 }
 
-type AuthenticationStatus = "authenticated" | "cancelled";
+type AuthenticationResult =
+	| { status: "authenticated"; user: { id: string; email?: string } }
+	| { status: "cancelled" };
 
 interface AuthenticationOperation {
 	controller: AbortController;
-	completion: Promise<AuthenticationStatus>;
+	completion: Promise<AuthenticationResult>;
 }
 
 export class DesktopCliService {
@@ -54,7 +56,11 @@ export class DesktopCliService {
 		};
 	}
 
-	async authenticate(force = false): Promise<AuthenticationStatus> {
+	async getAuthState(): Promise<DesktopBootstrapState["auth"]> {
+		return this.authState(this.cli());
+	}
+
+	async authenticate(force = false): Promise<AuthenticationResult> {
 		if (this.authentication) return this.authentication.completion;
 
 		const controller = new AbortController();
@@ -75,7 +81,7 @@ export class DesktopCliService {
 		if (!operation) return "not-active";
 		operation.controller.abort();
 		try {
-			return (await operation.completion) === "cancelled" ? "cancelled" : "not-active";
+			return (await operation.completion).status === "cancelled" ? "cancelled" : "not-active";
 		} catch {
 			return "not-active";
 		}
@@ -94,18 +100,15 @@ export class DesktopCliService {
 
 	async logout(): Promise<void> {
 		const cli = this.cli();
-		try {
-			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
-		} catch (error) {
-			console.error("Could not stop background sync during sign out", error);
-		}
+		await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
 		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
 	}
 
-	async resumeBackgroundSync(): Promise<void> {
+	async resumeBackgroundSync(): Promise<boolean> {
 		const registered = (await this.detectAgents()).filter((agent) => agent.registered);
-		if (registered.length === 0) return;
+		if (registered.length === 0) return false;
 		await this.run(this.cli(), ["daemon", "install"], { timeoutMs: 60_000 });
+		return true;
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
@@ -183,7 +186,7 @@ export class DesktopCliService {
 	private async performAuthentication(
 		signal: AbortSignal,
 		force: boolean,
-	): Promise<AuthenticationStatus> {
+	): Promise<AuthenticationResult> {
 		try {
 			const args = ["auth", "login", "--desktop"];
 			if (force) args.push("--force");
@@ -191,12 +194,19 @@ export class DesktopCliService {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
 			});
-			if (readString(result.status) !== "authenticated") {
+			const user = isRecord(result.user) ? result.user : null;
+			const id = user ? readString(user.id) : null;
+			const email = user ? readString(user.email) : null;
+			if (
+				result.schemaVersion !== "clawdi.desktopLogin.v1" ||
+				readString(result.status) !== "authenticated" ||
+				!id
+			) {
 				throw new Error("Clawdi returned an invalid sign-in result.");
 			}
-			return "authenticated";
+			return { status: "authenticated", user: { id, ...(email ? { email } : {}) } };
 		} catch (error) {
-			if (error instanceof CommandCancelledError) return "cancelled";
+			if (error instanceof CommandCancelledError) return { status: "cancelled" };
 			throw error;
 		}
 	}

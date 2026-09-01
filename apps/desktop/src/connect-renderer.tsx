@@ -435,6 +435,12 @@ function AgentSelection({
 	const canRepairDaemon = !daemonReady && agents.some((agent) => agent.registered);
 	const shouldConnect = selected.size > 0 || canRepairDaemon;
 	const connectionChoiceRequired = [...selected].some((type) => !connectionModes.has(type));
+	const reconnectSelections = [...selected].flatMap((type) => {
+		const candidateId = connectionModes.get(type);
+		if (!candidateId || candidateId === "new") return [];
+		const candidate = reconnectCandidates.find((item) => item.id === candidateId);
+		return candidate ? [candidate] : [];
+	});
 	return (
 		<div className="stack">
 			<div className="section-heading">
@@ -508,6 +514,26 @@ function AgentSelection({
 				})}
 			</div>
 
+			{reconnectSelections.length > 0 ? (
+				<div className="notice reconnect-notice">
+					<span className="icon-tile">
+						<TriangleAlert />
+					</span>
+					<div>
+						<h2>Reconnect an existing Agent</h2>
+						<p>
+							{reconnectSelections
+								.map(
+									(candidate) =>
+										`${candidate.name} will replace its binding to ${candidate.machineName}`,
+								)
+								.join(". ")}
+							. Stop background sync on the previous Mac before continuing.
+						</p>
+					</div>
+				</div>
+			) : null}
+
 			{requiresMove && shouldConnect ? (
 				<div className="notice install-notice">
 					<span className="icon-tile">
@@ -545,11 +571,15 @@ function AgentSelection({
 						? "Choose how to connect"
 						: requiresMove && shouldConnect
 							? "Move to Applications"
-							: selected.size > 0
-								? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
-								: canRepairDaemon
-									? "Start background sync"
-									: "Open dashboard"}
+							: reconnectSelections.length > 0
+								? reconnectSelections.length === selected.size
+									? `Reconnect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+									: `Connect ${selected.size} Agents · ${reconnectSelections.length} reconnect`
+								: selected.size > 0
+									? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+									: canRepairDaemon
+										? "Start background sync"
+										: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>

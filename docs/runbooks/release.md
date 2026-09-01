@@ -43,7 +43,7 @@ stable updater feed. The bundled CLI also remains ineligible for self-update.
 
 Before stable Desktop updates can operate, a reviewed release workflow must run
 `bun run --cwd apps/desktop package:mac:release`, verify the signed and notarized
-DMG, ZIP, `latest-mac.yml`, version, and checksums, then attach the immutable ZIP
+DMG, ZIP, `latest-mac.yml`, version, Team ID, bundled CLI identity, and checksums, then attach the immutable ZIP
 and matching metadata to the calendar GitHub Release marked latest. Every later
 calendar release marked latest must publish valid Desktop metadata and its
 matching ZIP; CLI releases already use `--latest=false`. Until that

@@ -332,6 +332,7 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { env } from "@/lib/env";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatShortDate } from "@/lib/format";
 import {
@@ -2107,7 +2108,9 @@ function RuntimeUiAccessDialog({
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
 				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: "Allow pop-ups, then try again.",
+				description: env.VITE_CLAWDI_DESKTOP_BUILD
+					? `Opening ${label} in a separate window is not supported in Clawdi Desktop yet. Use the browser Dashboard.`
+					: "Allow pop-ups, then try again.",
 			});
 			return;
 		}
@@ -2351,7 +2354,9 @@ function TerminalTab({
 		if (!popup) {
 			toast.error("Couldn't open Terminal", {
 				id: TERMINAL_WINDOW_LAUNCH_TOAST_ID,
-				description: "Allow pop-ups, then try again.",
+				description: env.VITE_CLAWDI_DESKTOP_BUILD
+					? "Opening Terminal in a separate window is not supported in Clawdi Desktop yet. Use the browser Dashboard."
+					: "Allow pop-ups, then try again.",
 			});
 			return;
 		}

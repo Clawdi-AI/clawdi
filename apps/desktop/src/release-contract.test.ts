@@ -12,7 +12,12 @@ describe("Desktop release contract", () => {
 		const build = packageJson.build as {
 			extraMetadata?: Record<string, unknown>;
 			publish?: Array<Record<string, unknown>>;
-			mac?: { hardenedRuntime?: boolean; target?: Array<{ target?: string }> };
+			mac?: {
+				entitlements?: string;
+				entitlementsInherit?: string;
+				hardenedRuntime?: boolean;
+				target?: Array<{ target?: string }>;
+			};
 		};
 		const dependencies = packageJson.dependencies as Record<string, unknown>;
 		expect(dependencies["electron-updater"]).toBe("6.8.9");
@@ -26,6 +31,8 @@ describe("Desktop release contract", () => {
 			},
 		]);
 		expect(build.mac?.hardenedRuntime).toBe(true);
+		expect(build.mac?.entitlements).toBe("build/entitlements.mac.plist");
+		expect(build.mac?.entitlementsInherit).toBe("build/entitlements.mac.inherit.plist");
 		expect(build.mac?.target?.map((target) => target.target)).toEqual(["dmg", "zip"]);
 	});
 
@@ -35,6 +42,7 @@ describe("Desktop release contract", () => {
 			readDesktopReleaseConfiguration(
 				{
 					CLAWDI_DESKTOP_VERSION: "1.2.3",
+					CLAWDI_DESKTOP_TEAM_ID: "ABC1234567",
 					CSC_NAME: "Developer ID Application: Clawdi, Inc.",
 					APPLE_API_KEY: "/private/AuthKey.p8",
 					APPLE_API_KEY_ID: "KEY123",
@@ -42,7 +50,7 @@ describe("Desktop release contract", () => {
 				},
 				"darwin",
 			),
-		).toEqual({ version: "1.2.3", notarizationMode: "api-key" });
+		).toEqual({ version: "1.2.3", teamId: "ABC1234567", notarizationMode: "api-key" });
 	});
 
 	test("builds both updater artifacts without publishing", () => {
