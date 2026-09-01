@@ -1,22 +1,32 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import {
-	BellRing,
+	Bell,
 	Check,
 	CheckCircle2,
+	CircleAlert,
 	ExternalLink,
-	InboxIcon,
+	FolderInput,
 	MailOpen,
+	MoreHorizontal,
+	RefreshCw,
 	Trash2,
 	XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
 	Popover,
 	PopoverContent,
@@ -27,6 +37,7 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
@@ -34,42 +45,45 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
+	type AccountNotification,
+	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
-	getNotificationCenterTitle,
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
-	type InboxNotification,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
+	type NotificationCenterView,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
-export function NotificationCenter({
-	inboxNotifications = [],
-	inboxLoading = false,
-	inboxError = null,
-	busyInboxId,
-	onRetryInbox,
-	onMarkInboxOpened,
-	onDeleteInbox,
-	onOpenInboxAction,
-}: {
-	inboxNotifications?: readonly InboxNotification[];
-	inboxLoading?: boolean;
-	inboxError?: Error | null;
-	busyInboxId?: string;
-	onRetryInbox?: () => void;
-	onMarkInboxOpened?: (notification: InboxNotification) => void;
-	onDeleteInbox?: (notification: InboxNotification) => void;
-	onOpenInboxAction?: (notification: InboxNotification) => void;
-}) {
+export type AccountNotificationSource = {
+	items: readonly AccountNotification[];
+	unreadCount: number;
+	hasMore: boolean;
+	loading: boolean;
+	loadingMore: boolean;
+	error: Error | null;
+	busyId?: string;
+	actionsDisabled: boolean;
+	markingAllRead: boolean;
+	onRetry: () => void;
+	onLoadMore: () => void;
+	onMarkAllRead: () => void;
+	onMarkRead: (notification: AccountNotification) => void;
+	onMarkUnread: (notification: AccountNotification) => void;
+	onDelete: (notification: AccountNotification) => void;
+	onOpenAction: (notification: AccountNotification) => void;
+};
+
+export function NotificationCenter({ account }: { account?: AccountNotificationSource }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const api = useApi();
 	const $api = useOpenApi();
 	const [open, setOpen] = useState(false);
+	const [view, setView] = useState<NotificationCenterView>("all");
 
 	function refetchMembershipDerived() {
 		for (const queryKey of NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS) {
@@ -81,9 +95,7 @@ export function NotificationCenter({
 		"get",
 		"/v1/me/invitations",
 		{},
-		{
-			refetchOnWindowFocus: true,
-		},
+		{ refetchOnWindowFocus: true },
 	);
 
 	const accept = useMutation({
@@ -110,11 +122,11 @@ export function NotificationCenter({
 				},
 			});
 		},
-		onError: (e) => {
+		onError: (error) => {
 			toast.error(
-				e instanceof ApiError && e.status === 410
+				error instanceof ApiError && error.status === 410
 					? "This invitation was canceled. Ask the owner to send a new one."
-					: normalizeApiError(e),
+					: normalizeApiError(error),
 			);
 		},
 	});
@@ -131,16 +143,16 @@ export function NotificationCenter({
 			refetchMembershipDerived();
 			toast.success("Invitation declined");
 		},
-		onError: (e) => {
+		onError: (error) => {
 			toast.error("Couldn't decline invitation", {
-				description: normalizeApiError(e),
+				description: normalizeApiError(error),
 			});
 		},
 	});
 
-	const items = invitations.data ?? [];
-	const count = getPendingNotificationCount(items, inboxNotifications);
-	const triggerLabel = getNotificationCenterTriggerLabel(count);
+	const invitationItems = invitations.data ?? [];
+	const attentionCount = getPendingNotificationCount(invitationItems, account?.unreadCount);
+	const triggerLabel = getNotificationCenterTriggerLabel(attentionCount);
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -150,330 +162,475 @@ export function NotificationCenter({
 						type="button"
 						variant="ghost"
 						size="icon-sm"
-						className={cn("relative", count > 0 && "text-foreground")}
+						className={cn("relative", attentionCount > 0 && "text-foreground")}
 						aria-label={triggerLabel}
 						title={triggerLabel}
 					/>
 				}
 			>
-				<InboxIcon className="size-4" />
-				{count > 0 ? (
-					<Badge className="-right-1 -top-1 absolute h-4 min-w-4 rounded-full px-1 text-3xs leading-none">
-						{count > 99 ? "99+" : count}
-					</Badge>
+				<Bell className="size-4" />
+				{attentionCount > 0 ? (
+					<span
+						aria-hidden="true"
+						className="-right-1 -top-1 absolute flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-semibold text-[9px] text-destructive-foreground leading-none ring-2 ring-background"
+					>
+						{attentionCount > 9 ? "9+" : attentionCount}
+					</span>
 				) : null}
 			</PopoverTrigger>
-			<PopoverContent align="end" className="w-[min(calc(100vw-2rem),26rem)] p-0">
-				<PopoverHeader className="px-4 py-3">
-					<div className="flex items-center justify-between gap-3">
-						<PopoverTitle>{getNotificationCenterTitle(count)}</PopoverTitle>
-						{count > 0 ? <Badge variant="secondary">{count} Pending</Badge> : null}
-					</div>
-					<PopoverDescription>{getNotificationCenterDescription()}</PopoverDescription>
-				</PopoverHeader>
-				<Separator />
-				<NotificationCenterContent
-					invitations={items}
-					inboxNotifications={inboxNotifications}
-					invitationsLoading={invitations.isLoading}
-					invitationsError={
-						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
-					}
-					inboxLoading={inboxLoading}
-					inboxError={inboxError}
-					onRetryInvitations={() => invitations.refetch()}
-					onRetryInbox={onRetryInbox}
-					acceptInvitation={(invitation) =>
-						accept.mutate({ id: invitation.id, projectName: invitation.project_name })
-					}
-					declineInvitation={(invitation) => decline.mutate(invitation.id)}
-					acceptingId={accept.isPending ? accept.variables?.id : undefined}
-					decliningId={decline.isPending ? decline.variables : undefined}
-					busyInboxId={busyInboxId}
-					onMarkInboxOpened={onMarkInboxOpened}
-					onDeleteInbox={onDeleteInbox}
-					onOpenInboxAction={(notification) => {
-						setOpen(false);
-						onOpenInboxAction?.(notification);
-					}}
-				/>
-				{items.length > 0 ? (
-					<>
-						<Separator />
-						<div className="flex items-center justify-between gap-3 px-4 py-3">
-							<p className="text-xs text-muted-foreground">
-								Accepted invites appear under Shared Projects.
-							</p>
-							<Button
-								render={<Link to="/projects" />}
-								nativeButton={false}
-								variant="ghost"
-								size="sm"
-								onClick={() => setOpen(false)}
-							>
-								View Accepted Invites
-							</Button>
+			<PopoverContent
+				align="end"
+				sideOffset={8}
+				className="w-[min(calc(100vw-1rem),28rem)] gap-0 overflow-hidden p-0"
+			>
+				<PopoverHeader className="gap-2 px-4 pt-4 pb-3">
+					<div className="flex items-start justify-between gap-3">
+						<div className="min-w-0">
+							<PopoverTitle className="text-base">Notifications</PopoverTitle>
+							<PopoverDescription className="mt-0.5 text-xs">
+								{getNotificationCenterDescription()}
+							</PopoverDescription>
 						</div>
-					</>
-				) : null}
+						{account && account.unreadCount > 0 ? (
+							<Button
+								type="button"
+								variant="ghost"
+								size="xs"
+								disabled={account.actionsDisabled}
+								onClick={account.onMarkAllRead}
+							>
+								{account.markingAllRead ? <Spinner /> : <Check />}
+								Mark all read
+							</Button>
+						) : null}
+					</div>
+				</PopoverHeader>
+
+				<Tabs
+					value={view}
+					onValueChange={(value) => {
+						if (value === "all" || value === "unread") setView(value);
+					}}
+					className="gap-0"
+				>
+					<div className="px-4">
+						<TabsList variant="line" aria-label="Notification filters" className="h-9 w-full">
+							<TabsTrigger value="all" className="justify-start">
+								All
+							</TabsTrigger>
+							<TabsTrigger value="unread" className="justify-start">
+								Unread <TabCount>{attentionCount}</TabCount>
+							</TabsTrigger>
+						</TabsList>
+					</div>
+					<Separator />
+
+					{(["all", "unread"] as const).map((tab) => (
+						<TabsContent key={tab} value={tab} className="min-h-0">
+							<NotificationCenterContent
+								view={tab}
+								invitations={invitationItems}
+								account={account}
+								invitationsLoading={invitations.isLoading}
+								invitationsError={
+									shouldBlockQueryError(invitations.error, invitations.data)
+										? invitations.error
+										: null
+								}
+								onRetryInvitations={() => invitations.refetch()}
+								acceptInvitation={(invitation) =>
+									accept.mutate({ id: invitation.id, projectName: invitation.project_name })
+								}
+								declineInvitation={(invitation) => decline.mutate(invitation.id)}
+								acceptingId={accept.isPending ? accept.variables?.id : undefined}
+								decliningId={decline.isPending ? decline.variables : undefined}
+								onOpenAccountAction={() => setOpen(false)}
+							/>
+						</TabsContent>
+					))}
+				</Tabs>
 			</PopoverContent>
 		</Popover>
 	);
 }
 
-function NotificationCenterContent({
-	invitations,
-	inboxNotifications,
-	invitationsLoading,
-	invitationsError,
-	inboxLoading,
-	inboxError,
-	onRetryInvitations,
-	onRetryInbox,
-	acceptInvitation,
-	declineInvitation,
-	acceptingId,
-	decliningId,
-	busyInboxId,
-	onMarkInboxOpened,
-	onDeleteInbox,
-	onOpenInboxAction,
-}: {
+function TabCount({ children }: { children: number }) {
+	return (
+		<span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground leading-none">
+			{children > 99 ? "99+" : children}
+		</span>
+	);
+}
+
+type NotificationCenterContentProps = {
+	view: NotificationCenterView;
 	invitations: ProjectInvitationNotification[];
-	inboxNotifications: readonly InboxNotification[];
+	account?: AccountNotificationSource;
 	invitationsLoading: boolean;
 	invitationsError: Error | null;
-	inboxLoading: boolean;
-	inboxError: Error | null;
 	onRetryInvitations: () => void;
-	onRetryInbox?: () => void;
 	acceptInvitation: (invitation: ProjectInvitationNotification) => void;
 	declineInvitation: (invitation: ProjectInvitationNotification) => void;
 	acceptingId?: string;
 	decliningId?: string;
-	busyInboxId?: string;
-	onMarkInboxOpened?: (notification: InboxNotification) => void;
-	onDeleteInbox?: (notification: InboxNotification) => void;
-	onOpenInboxAction: (notification: InboxNotification) => void;
-}) {
-	const hasNotifications = inboxNotifications.length > 0 || invitations.length > 0;
-	const isLoading = invitationsLoading || inboxLoading;
+	onOpenAccountAction: () => void;
+};
 
-	if (isLoading && !hasNotifications) {
-		return (
-			<div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-				<Spinner className="size-3.5" />
-				Loading Notifications…
-			</div>
-		);
-	}
-
-	if ((invitationsError || inboxError) && !hasNotifications) {
-		return (
-			<div className="space-y-3 px-4 py-4">
-				<div className="space-y-1">
-					<div className="text-sm font-medium">Couldn&apos;t Load Notifications</div>
-					<p className="text-xs text-muted-foreground">Please try again.</p>
-				</div>
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={() => {
-						onRetryInvitations();
-						onRetryInbox?.();
-					}}
-				>
-					Retry
-				</Button>
-			</div>
-		);
-	}
-
-	if (!hasNotifications) {
-		const empty = getNotificationCenterEmptyCopy();
-		return (
-			<div className="flex items-start gap-3 px-4 py-5">
-				<IconChip size="sm" tint="bg-muted text-muted-foreground">
-					<MailOpen className="size-4 text-muted-foreground" />
-				</IconChip>
-				<div className="space-y-1">
-					<div className="text-sm font-medium">{empty.title}</div>
-					<p className="text-xs text-muted-foreground">{empty.description}</p>
-				</div>
-			</div>
-		);
-	}
+function NotificationCenterContent({
+	view,
+	invitations,
+	account,
+	invitationsLoading,
+	invitationsError,
+	onRetryInvitations,
+	acceptInvitation,
+	declineInvitation,
+	acceptingId,
+	decliningId,
+	onOpenAccountAction,
+}: NotificationCenterContentProps) {
+	const accountNotifications = filterAccountNotifications(account?.items ?? [], view);
+	const hasVisibleNotifications = accountNotifications.length > 0 || invitations.length > 0;
+	const hasSourceStatus =
+		Boolean(account?.loading) || invitationsLoading || Boolean(account?.error || invitationsError);
+	const canLoadMoreAccount = Boolean(account?.hasMore);
 
 	return (
-		<ul className="max-h-[26rem] divide-y overflow-y-auto">
-			{inboxNotifications.map((notification) => (
-				<li key={notification.id}>
-					<div className="flex items-start gap-3 px-4 py-3">
-						<IconChip
-							size="sm"
-							tint={
-								notification.severity === "destructive"
-									? "bg-destructive/10 text-destructive"
-									: notification.severity === "warning"
-										? "bg-warning/10 text-warning-foreground"
-										: undefined
-							}
-						>
-							<BellRing />
-						</IconChip>
-						<div className="min-w-0 flex-1 space-y-2">
-							<div className="flex min-w-0 items-start justify-between gap-3">
-								<div className="min-w-0">
-									<div className="text-sm font-medium">{notification.title}</div>
-									<div className="mt-0.5 text-xs text-muted-foreground">
-										{formatNotificationDate(notification.sentAt)}
-									</div>
-								</div>
-								<div className="flex shrink-0 items-center gap-1">
-									{!notification.opened ? <Badge variant="secondary">Unread</Badge> : null}
-									<Badge variant="outline">{notification.badge}</Badge>
-								</div>
-							</div>
-							<p className="text-xs text-muted-foreground">{notification.description}</p>
-							<div className="flex items-center justify-end gap-1.5">
-								{!notification.opened && onMarkInboxOpened ? (
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon-sm"
-										title="Mark as read"
-										aria-label="Mark as read"
-										disabled={busyInboxId === notification.id}
-										onClick={() => onMarkInboxOpened(notification)}
-									>
-										<Check />
-									</Button>
-								) : null}
-								{onDeleteInbox ? (
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon-sm"
-										title="Delete notification"
-										aria-label="Delete notification"
-										disabled={busyInboxId === notification.id}
-										onClick={() => onDeleteInbox(notification)}
-									>
-										<Trash2 />
-									</Button>
-								) : null}
-								{notification.actionLabel ? (
-									<Button
-										size="sm"
-										disabled={busyInboxId === notification.id}
-										onClick={() => onOpenInboxAction(notification)}
-									>
-										<ExternalLink />
-										{notification.actionLabel}
-									</Button>
-								) : null}
-							</div>
-						</div>
-					</div>
-				</li>
-			))}
-			{inboxLoading && inboxNotifications.length === 0 ? (
-				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
-					<Spinner className="size-3.5" />
-					Loading Account Updates…
-				</li>
-			) : inboxError ? (
-				<li className="space-y-3 px-4 py-4">
-					<div className="space-y-1">
-						<div className="text-sm font-medium">Account Updates Unavailable</div>
-						<p className="text-xs text-muted-foreground">Please try again.</p>
-					</div>
-					{onRetryInbox ? (
-						<Button size="sm" variant="outline" onClick={onRetryInbox}>
-							Retry
-						</Button>
-					) : null}
-				</li>
+		<div className="max-h-[min(34rem,calc(100vh-10rem))] overflow-y-auto overscroll-contain">
+			{accountNotifications.length > 0 ? (
+				<NotificationSection title="Account updates">
+					{accountNotifications.map((notification) => (
+						<AccountNotificationRow
+							key={notification.id}
+							notification={notification}
+							busy={account?.busyId === notification.id}
+							disabled={Boolean(account?.actionsDisabled)}
+							onMarkRead={account?.onMarkRead}
+							onMarkUnread={account?.onMarkUnread}
+							onDelete={account?.onDelete}
+							onOpenAction={(item) => {
+								onOpenAccountAction();
+								account?.onOpenAction(item);
+							}}
+						/>
+					))}
+				</NotificationSection>
 			) : null}
-			{invitationsLoading ? (
-				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
-					<Spinner className="size-3.5" />
-					Loading Invitations…
-				</li>
-			) : invitationsError ? (
-				<li className="space-y-3 px-4 py-4">
-					<div className="space-y-1">
-						<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
-						<p className="text-xs text-muted-foreground">{normalizeApiError(invitationsError)}</p>
-					</div>
-					<Button size="sm" variant="outline" onClick={onRetryInvitations}>
-						Retry
-					</Button>
-				</li>
-			) : null}
-			{invitations.map((invitation) => {
-				const accepting = acceptingId === invitation.id;
-				const declining = decliningId === invitation.id;
-				const busy = accepting || declining;
 
-				return (
-					<li key={invitation.id}>
-						<div className="space-y-3 px-4 py-3">
-							<div className="min-w-0 space-y-1">
-								<div className="flex min-w-0 items-start justify-between gap-3">
-									<div className="min-w-0">
-										<div className="truncate text-sm font-medium">{invitation.project_name}</div>
-										<div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-											<span>
-												From {invitation.owner_display}{" "}
-												<span className="font-mono">@{invitation.owner_handle}</span>
-											</span>
-											<span aria-hidden="true">·</span>
-											<span>{formatInvitationDate(invitation.created_at)}</span>
-										</div>
-									</div>
-									<div className="flex shrink-0 flex-col items-end gap-1">
-										<Badge variant="secondary">Project Invite</Badge>
-										<Badge variant="outline">Viewer</Badge>
-									</div>
-								</div>
-								<p className="text-xs text-muted-foreground">{getProjectInvitationAccessCopy()}</p>
-							</div>
-							<div className="flex justify-end gap-1.5">
-								<Button
-									size="sm"
-									variant="ghost"
-									onClick={() => declineInvitation(invitation)}
-									disabled={busy}
-								>
-									<XCircle className="size-3.5" />
-									{declining ? "Declining…" : "Decline"}
-								</Button>
-								<Button size="sm" onClick={() => acceptInvitation(invitation)} disabled={busy}>
-									<CheckCircle2 className="size-3.5" />
-									{accepting ? "Joining…" : "Accept"}
-								</Button>
-							</div>
-						</div>
-					</li>
-				);
-			})}
-		</ul>
+			{account?.loading && accountNotifications.length === 0 ? (
+				<SourceLoading label="Loading account updates…" />
+			) : null}
+			{account?.error ? (
+				<SourceError
+					title="Account updates unavailable"
+					description="We couldn't load account updates. Check your connection and try again."
+					onRetry={account.onRetry}
+				/>
+			) : null}
+
+			{invitations.length > 0 ? (
+				<NotificationSection title="Project invitations">
+					{invitations.map((invitation) => (
+						<ProjectInvitationRow
+							key={invitation.id}
+							invitation={invitation}
+							accepting={acceptingId === invitation.id}
+							declining={decliningId === invitation.id}
+							onAccept={acceptInvitation}
+							onDecline={declineInvitation}
+						/>
+					))}
+				</NotificationSection>
+			) : null}
+
+			{invitationsLoading && invitations.length === 0 ? (
+				<SourceLoading label="Loading project invitations…" />
+			) : null}
+			{invitationsError ? (
+				<SourceError
+					title="Project invitations unavailable"
+					description={normalizeApiError(invitationsError)}
+					onRetry={onRetryInvitations}
+				/>
+			) : null}
+
+			{!hasVisibleNotifications && !hasSourceStatus && !canLoadMoreAccount ? (
+				<EmptyState view={view} />
+			) : null}
+
+			{canLoadMoreAccount ? (
+				<div className="border-t px-4 py-3 text-center">
+					<Button
+						type="button"
+						variant="ghost"
+						size="xs"
+						disabled={account?.loadingMore}
+						onClick={account?.onLoadMore}
+					>
+						{account?.loadingMore ? <Spinner /> : <RefreshCw />}
+						Load earlier
+					</Button>
+				</div>
+			) : null}
+		</div>
 	);
 }
 
-function formatInvitationDate(createdAt: string): string {
-	return new Date(createdAt).toLocaleDateString(undefined, {
-		month: "short",
-		day: "numeric",
-	});
+function NotificationSection({ title, children }: { title: string; children: ReactNode }) {
+	return (
+		<section aria-label={title}>
+			<div className="sticky top-0 z-10 border-b bg-popover/95 px-4 py-2 text-xs backdrop-blur-sm supports-backdrop-filter:bg-popover/85">
+				<span className="font-medium text-muted-foreground">{title}</span>
+			</div>
+			<ul className="divide-y">{children}</ul>
+		</section>
+	);
 }
 
-function formatNotificationDate(sentAt: Date): string {
-	return sentAt.toLocaleString(undefined, {
+type AccountNotificationRowProps = {
+	notification: AccountNotification;
+	busy: boolean;
+	disabled: boolean;
+	onMarkRead?: (notification: AccountNotification) => void;
+	onMarkUnread?: (notification: AccountNotification) => void;
+	onDelete?: (notification: AccountNotification) => void;
+	onOpenAction: (notification: AccountNotification) => void;
+};
+
+function AccountNotificationRow({
+	notification,
+	busy,
+	disabled,
+	onMarkRead,
+	onMarkUnread,
+	onDelete,
+	onOpenAction,
+}: AccountNotificationRowProps) {
+	return (
+		<li
+			className={cn(
+				"group relative px-4 py-3.5 transition-colors",
+				!notification.read && "bg-muted/35",
+			)}
+		>
+			{!notification.read ? (
+				<span
+					aria-hidden="true"
+					className="absolute top-5 left-1.5 size-1.5 rounded-full bg-primary"
+				/>
+			) : null}
+			<div className="flex items-start gap-3">
+				<IconChip size="sm" tint={notificationIconTint(notification.severity)}>
+					<Bell />
+				</IconChip>
+				<div className="min-w-0 flex-1">
+					<div className="flex min-w-0 items-start justify-between gap-3">
+						<div className="min-w-0">
+							<div className={cn("text-sm", notification.read ? "font-medium" : "font-semibold")}>
+								{notification.title}
+								{!notification.read ? <span className="sr-only"> (unread)</span> : null}
+							</div>
+							<time
+								dateTime={notification.createdAt.toISOString()}
+								title={notification.createdAt.toLocaleString()}
+								className="mt-0.5 block text-xs text-muted-foreground"
+							>
+								{formatRelativeDate(notification.createdAt)}
+							</time>
+						</div>
+						<div className="flex shrink-0 items-center gap-1">
+							<Badge variant="outline">{notification.category}</Badge>
+							<DropdownMenu>
+								<DropdownMenuTrigger
+									render={
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon-xs"
+											disabled={disabled}
+											aria-label={`More actions for ${notification.title}`}
+										/>
+									}
+								>
+									{busy ? <Spinner /> : <MoreHorizontal />}
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end" className="w-44">
+									{notification.read ? (
+										<DropdownMenuItem onClick={() => onMarkUnread?.(notification)}>
+											<RefreshCw />
+											Mark as unread
+										</DropdownMenuItem>
+									) : (
+										<DropdownMenuItem onClick={() => onMarkRead?.(notification)}>
+											<Check />
+											Mark as read
+										</DropdownMenuItem>
+									)}
+									<DropdownMenuSeparator />
+									<DropdownMenuItem variant="destructive" onClick={() => onDelete?.(notification)}>
+										<Trash2 />
+										Remove
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</div>
+					</div>
+					<p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+						{notification.description}
+					</p>
+					{notification.actionLabel && notification.actionUrl ? (
+						<div className="mt-3">
+							<Button
+								type="button"
+								variant="outline"
+								size="xs"
+								disabled={disabled}
+								onClick={() => onOpenAction(notification)}
+							>
+								<ExternalLink />
+								{notification.actionLabel}
+							</Button>
+						</div>
+					) : null}
+				</div>
+			</div>
+		</li>
+	);
+}
+
+function ProjectInvitationRow({
+	invitation,
+	accepting,
+	declining,
+	onAccept,
+	onDecline,
+}: {
+	invitation: ProjectInvitationNotification;
+	accepting: boolean;
+	declining: boolean;
+	onAccept: (invitation: ProjectInvitationNotification) => void;
+	onDecline: (invitation: ProjectInvitationNotification) => void;
+}) {
+	const busy = accepting || declining;
+	return (
+		<li className="px-4 py-3.5">
+			<div className="flex items-start gap-3">
+				<IconChip size="sm">
+					<FolderInput />
+				</IconChip>
+				<div className="min-w-0 flex-1">
+					<div className="flex min-w-0 items-start justify-between gap-3">
+						<div className="min-w-0">
+							<div className="truncate text-sm font-semibold">{invitation.project_name}</div>
+							<div className="mt-0.5 text-xs text-muted-foreground">
+								From {invitation.owner_display}{" "}
+								<span className="font-mono">@{invitation.owner_handle}</span>
+								<span aria-hidden="true"> · </span>
+								{formatRelativeDate(new Date(invitation.created_at))}
+							</div>
+						</div>
+						<Badge variant="secondary">Viewer</Badge>
+					</div>
+					<p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+						{getProjectInvitationAccessCopy()}
+					</p>
+					<div className="mt-3 flex justify-end gap-1.5">
+						<Button
+							type="button"
+							size="xs"
+							variant="ghost"
+							onClick={() => onDecline(invitation)}
+							disabled={busy}
+						>
+							<XCircle />
+							{declining ? "Declining…" : "Decline"}
+						</Button>
+						<Button type="button" size="xs" onClick={() => onAccept(invitation)} disabled={busy}>
+							<CheckCircle2 />
+							{accepting ? "Joining…" : "Accept"}
+						</Button>
+					</div>
+				</div>
+			</div>
+		</li>
+	);
+}
+
+function SourceLoading({ label }: { label: string }) {
+	return (
+		<div
+			className="flex items-center gap-2 border-b px-4 py-4 text-xs text-muted-foreground"
+			role="status"
+		>
+			<Spinner className="size-3.5" />
+			{label}
+		</div>
+	);
+}
+
+function SourceError({
+	title,
+	description,
+	onRetry,
+}: {
+	title: string;
+	description: string;
+	onRetry?: () => void;
+}) {
+	return (
+		<div className="flex items-start gap-3 border-b px-4 py-4" role="status">
+			<IconChip size="sm" tint="bg-muted text-muted-foreground">
+				<CircleAlert />
+			</IconChip>
+			<div className="min-w-0 flex-1">
+				<div className="text-sm font-medium">{title}</div>
+				<p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">{description}</p>
+				{onRetry ? (
+					<Button type="button" size="xs" variant="outline" className="mt-2.5" onClick={onRetry}>
+						<RefreshCw />
+						Retry
+					</Button>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+function EmptyState({ view }: { view: NotificationCenterView }) {
+	const empty = getNotificationCenterEmptyCopy(view);
+	return (
+		<div className="flex min-h-48 flex-col items-center justify-center px-8 py-10 text-center">
+			<div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+				<MailOpen className="size-4" />
+			</div>
+			<div className="mt-3 text-sm font-medium">{empty.title}</div>
+			<p className="mt-1 max-w-64 text-xs text-muted-foreground leading-relaxed">
+				{empty.description}
+			</p>
+		</div>
+	);
+}
+
+function notificationIconTint(severity: AccountNotification["severity"]): string | undefined {
+	if (severity === "destructive") return "bg-destructive/10 text-destructive";
+	if (severity === "warning") return "bg-warning/10 text-warning-foreground";
+	return undefined;
+}
+
+function formatRelativeDate(value: Date): string {
+	const seconds = Math.round((value.getTime() - Date.now()) / 1_000);
+	const absoluteSeconds = Math.abs(seconds);
+	if (absoluteSeconds < 45) return "Now";
+
+	const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+	if (absoluteSeconds < 60 * 60) return formatter.format(Math.round(seconds / 60), "minute");
+	if (absoluteSeconds < 60 * 60 * 24) return formatter.format(Math.round(seconds / 3_600), "hour");
+	if (absoluteSeconds < 60 * 60 * 24 * 7)
+		return formatter.format(Math.round(seconds / 86_400), "day");
+
+	return value.toLocaleDateString(undefined, {
 		month: "short",
 		day: "numeric",
-		hour: "numeric",
-		minute: "2-digit",
+		...(value.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
 	});
 }

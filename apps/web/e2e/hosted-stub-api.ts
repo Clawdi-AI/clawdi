@@ -15,6 +15,7 @@ type ReusableSubscriptionsResponse =
 type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
 type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
 type PlanChangeOperation = DeployComponents["schemas"]["LongRunningOperation"];
+type AccountNotification = DeployComponents["schemas"]["AccountNotificationResponse"];
 
 function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
 	switch (changeKind) {
@@ -789,6 +790,7 @@ export type HostedApiStubOptions = {
 	deleteRequests?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
+	accountNotifications?: readonly AccountNotification[];
 	fixPaymentRequests?: string[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
@@ -824,6 +826,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 export async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
 	const plans = options.plans ?? [];
+	let accountNotifications = [...(options.accountNotifications ?? [])];
 	let currentWallet = options.walletState ?? walletState;
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
@@ -838,6 +841,40 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 				r,
 				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
 			);
+		}
+		if (p === "/v1/me/notifications" && method === "GET") {
+			return fulfillJson(r, {
+				items: accountNotifications,
+				unread_count: accountNotifications.filter((item) => item.read_at == null).length,
+				next_cursor: null,
+			});
+		}
+		if (p === "/v1/me/notifications/read-all" && method === "POST") {
+			const readAt = new Date().toISOString();
+			const unreadCount = accountNotifications.filter((item) => item.read_at == null).length;
+			accountNotifications = accountNotifications.map((item) => ({
+				...item,
+				read_at: item.read_at ?? readAt,
+			}));
+			return fulfillJson(r, { updated_count: unreadCount });
+		}
+		const notificationMatch = p.match(/^\/v1\/me\/notifications\/([^/]+)$/);
+		if (notificationMatch && method === "PATCH") {
+			const notificationId = decodeURIComponent(notificationMatch[1] ?? "");
+			const body = JSON.parse(r.request().postData() ?? "{}") as { read?: boolean };
+			const index = accountNotifications.findIndex((item) => item.id === notificationId);
+			if (index === -1) return fulfillJson(r, { detail: "Notification not found" }, 404);
+			const updated = {
+				...accountNotifications[index],
+				read_at: body.read ? new Date().toISOString() : null,
+			};
+			accountNotifications[index] = updated;
+			return fulfillJson(r, updated);
+		}
+		if (notificationMatch && method === "DELETE") {
+			const notificationId = decodeURIComponent(notificationMatch[1] ?? "");
+			accountNotifications = accountNotifications.filter((item) => item.id !== notificationId);
+			return r.fulfill({ status: 204, body: "" });
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
 		if (p === "/v2/subscriptions" && r.request().method() === "GET") {
@@ -1162,6 +1199,7 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
 		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
 		if (p === "/v1/connectors") return fulfillJson(r, []);
+		if (p === "/v1/me/invitations") return fulfillJson(r, []);
 		if (p === "/v1/projects") return fulfillJson(r, []);
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);

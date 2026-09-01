@@ -1,27 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type AccountNotification,
+	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
-	getNotificationCenterTitle,
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
-	type InboxNotification,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
+	resolveNotificationUrl,
 } from "./notification-center.logic";
 
 const walletNotification = {
 	id: "wallet-low-balance",
-	title: "Your Wallet balance is running low",
-	description: "Top up before Wallet-backed services are interrupted.",
-	badge: "Wallet",
-	sentAt: new Date("2026-05-15T08:00:00Z"),
-	opened: false,
+	title: "Your wallet balance is down to $1.25",
+	description: "Top up before paid requests begin to fail.",
+	category: "Wallet",
+	createdAt: new Date("2026-05-15T08:00:00Z"),
+	read: false,
 	actionLabel: "Top up",
+	actionUrl: "https://cloud.clawdi.ai/?settings=billing-wallet#billing",
 	severity: "warning",
-} satisfies InboxNotification;
+} satisfies AccountNotification;
 
 const invitation = {
 	id: "inv_1",
@@ -41,33 +43,43 @@ describe("notification center logic", () => {
 		expect(getPendingNotificationCount(undefined)).toBe(0);
 		expect(getPendingNotificationCount([])).toBe(0);
 		expect(getPendingNotificationCount([invitation])).toBe(1);
-		expect(getPendingNotificationCount([invitation], [walletNotification])).toBe(2);
-		expect(
-			getPendingNotificationCount([invitation], [{ ...walletNotification, opened: true }]),
-		).toBe(1);
+		expect(getPendingNotificationCount([invitation], 1)).toBe(2);
 		expect(getPendingNotificationCount([invitation, { ...invitation, id: "inv_2" }])).toBe(2);
 
-		expect(getNotificationCenterTriggerLabel(0)).toBe("Notification Center");
-		expect(getNotificationCenterTriggerLabel(1)).toBe(
-			"Notification Center, 1 Pending Notification",
-		);
-		expect(getNotificationCenterTriggerLabel(2)).toBe(
-			"Notification Center, 2 Pending Notifications",
-		);
+		expect(getNotificationCenterTriggerLabel(0)).toBe("Notifications");
+		expect(getNotificationCenterTriggerLabel(1)).toBe("Notifications, 1 new item");
+		expect(getNotificationCenterTriggerLabel(2)).toBe("Notifications, 2 new items");
 	});
 
-	test("formats notification title and empty copy without Skills-specific language", () => {
-		expect(getNotificationCenterTitle(0)).toBe("Notification Center");
-		expect(getNotificationCenterTitle(1)).toBe("1 Pending Notification");
-		expect(getNotificationCenterTitle(3)).toBe("3 Pending Notifications");
+	test("filters history into all and unread views", () => {
+		const readNotification = { ...walletNotification, id: "read", read: true };
+		expect(filterAccountNotifications([walletNotification, readNotification], "all")).toHaveLength(
+			2,
+		);
+		expect(filterAccountNotifications([walletNotification, readNotification], "unread")).toEqual([
+			walletNotification,
+		]);
 
-		const empty = getNotificationCenterEmptyCopy();
-		expect(empty.title).toBe("No Pending Notifications");
-		expect(empty.description).toContain("Project invitations");
-		expect(empty.description).toContain("account updates");
-		expect(empty.description).not.toContain("Skills");
-		expect(getNotificationCenterDescription()).toContain("Account updates");
+		const allEmpty = getNotificationCenterEmptyCopy("all");
+		expect(allEmpty.title).toBe("No notifications yet");
+		expect(allEmpty.description).toContain("project invitations");
+		const unreadEmpty = getNotificationCenterEmptyCopy("unread");
+		expect(unreadEmpty.title).toBe("You're all caught up");
+		expect(unreadEmpty.description).toContain("account updates");
+		expect(getNotificationCenterDescription()).toContain("Account activity");
 		expect(getNotificationCenterDescription()).toContain("project invitations");
+	});
+
+	test("accepts same-origin and HTTPS notification actions only", () => {
+		const relative = resolveNotificationUrl("/deploy", "https://cloud.clawdi.ai");
+		expect(relative?.kind).toBe("same-origin");
+		expect(relative?.url.href).toBe("https://cloud.clawdi.ai/deploy");
+		expect(
+			resolveNotificationUrl("https://www.clawdi.ai/dashboard", "https://cloud.clawdi.ai")?.kind,
+		).toBe("external");
+		expect(resolveNotificationUrl("https://example.com", "https://cloud.clawdi.ai")).toBeNull();
+		expect(resolveNotificationUrl("http://example.com", "https://cloud.clawdi.ai")).toBeNull();
+		expect(resolveNotificationUrl("javascript:alert(1)", "https://cloud.clawdi.ai")).toBeNull();
 	});
 
 	test("keeps project invitation invariants as the first notification type", () => {

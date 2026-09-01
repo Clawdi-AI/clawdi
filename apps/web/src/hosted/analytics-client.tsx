@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useHostedProductAccessProfileQuery } from "@/hosted/access/product-access";
 import {
 	buildHostedPersonProperties,
 	resolveHostedAuthIdentityAction,
@@ -16,7 +15,6 @@ import "@/hosted/mava.css";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");
-const loadHostedCustomerIO = () => import("@/hosted/customerio");
 
 export function HostedAnalyticsClient() {
 	const [mounted, setMounted] = useState(false);
@@ -32,7 +30,6 @@ export function HostedAnalyticsClient() {
 function HostedAnalyticsIdentity() {
 	const { isSignedIn, userId } = useDashboardAuth();
 	const { user, isLoaded: isUserLoaded } = useCurrentUser();
-	const hostedProfile = useHostedProductAccessProfileQuery();
 	const identifiedUserIdRef = useRef<string | null>(null);
 	const mavaControllerRef = useRef<MavaIdentityController | null>(null);
 	if (mavaControllerRef.current === null) {
@@ -83,22 +80,6 @@ function HostedAnalyticsIdentity() {
 			mod.enrichHostedUser(personProperties);
 		});
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
-
-	const customerId = hostedProfile.data?.id ?? null;
-	useEffect(() => {
-		let active = true;
-		void loadHostedCustomerIO()
-			.then((mod) => {
-				if (!active) return;
-				return mod.syncHostedCustomerIOIdentity(
-					isSignedIn && mod.isCanonicalHostedCustomerId(customerId) ? { customerId } : null,
-				);
-			})
-			.catch(() => console.warn("Customer.io identity sync failed"));
-		return () => {
-			active = false;
-		};
-	}, [customerId, isSignedIn]);
 
 	useEffect(() => {
 		if (!isSignedIn || !userLoaded) return;
