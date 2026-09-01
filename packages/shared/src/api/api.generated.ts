@@ -1092,6 +1092,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/rebind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebind Agent
+         * @description Reconnect one local installation to an existing Agent identity.
+         */
+        post: operations["rebind_agent_v1_agents__agent_id__rebind_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/environments": {
         parameters: {
             query?: never;
@@ -11411,6 +11431,8 @@ export interface operations {
             query?: {
                 /** @description Return only the caller's Agents linked to this exact Project. */
                 project_id?: string | null;
+                /** @description Return only Connected Agents eligible for explicit local rebind. */
+                reconnectable?: boolean;
             };
             header?: never;
             path?: never;
@@ -11450,6 +11472,41 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rebind_agent_v1_agents__agent_id__rebind_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
             cookie?: never;
         };
         requestBody: {
