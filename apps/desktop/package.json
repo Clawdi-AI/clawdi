@@ -33,7 +33,8 @@
 		"lucide-react": "catalog:",
 		"react": "catalog:",
 		"react-dom": "catalog:",
-		"typescript": "catalog:"
+		"typescript": "catalog:",
+		"yaml": "^2.9.0"
 	},
 	"build": {
 		"appId": "ai.clawdi.desktop",
@@ -71,6 +72,8 @@
 		"mac": {
 			"category": "public.app-category.developer-tools",
 			"icon": "../web/public/clawdi-logo-transparent.png",
+			"entitlements": "build/entitlements.mac.plist",
+			"entitlementsInherit": "build/entitlements.mac.inherit.plist",
 			"hardenedRuntime": true,
 			"target": [
 				{

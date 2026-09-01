@@ -66,7 +66,26 @@ export function ConnectorConnectAction({
 			setCredentialsOpen(true);
 			return;
 		}
-		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
+		const desktop = typeof window !== "undefined" && Boolean(window.clawdiDesktop);
+		const popup =
+			typeof window !== "undefined" && !desktop ? window.open("about:blank", "_blank") : null;
+		if (desktop) {
+			inflightRef.current = true;
+			const redirectUrl = new URL(redirectHref ?? window.location.href, window.location.origin)
+				.href;
+			void connect
+				.execute(redirectUrl)
+				.then((result) => window.open(result.connect_url, "_blank", "noopener"))
+				.catch(() => {
+					toast.error("Couldn't start connection", {
+						description: "Try again. If the problem persists, contact support.",
+					});
+				})
+				.finally(() => {
+					inflightRef.current = false;
+				});
+			return;
+		}
 		if (!popup) {
 			toast.error("Popup blocked", { description: "Allow popups for this site to continue." });
 			return;

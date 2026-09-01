@@ -4,6 +4,7 @@ import { AlertCircle, LogIn, type LucideIcon, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { env } from "@/lib/env";
 
 export interface ApiErrorNormalizer {
 	isAuthError: (error: unknown) => boolean;
@@ -15,11 +16,11 @@ const DEFAULT_API_ERROR_NORMALIZER: ApiErrorNormalizer = {
 	normalizeError: normalizeApiError,
 };
 
-/** Send the user back through Clerk, returning to wherever they are now. */
+/** Restore Desktop auth from the CLI before asking for a new browser sign-in. */
 function reauthenticate() {
 	if (typeof window === "undefined") return;
 	if (window.clawdiDesktop) {
-		void window.clawdiDesktop.signIn().catch(() => {
+		void window.clawdiDesktop.retryDashboard().catch(() => {
 			window.location.href = "/sign-in";
 		});
 		return;
@@ -52,7 +53,7 @@ export function ApiErrorPanel({
 				<div className="flex flex-wrap gap-2">
 					{expired ? (
 						<Button size="sm" onClick={reauthenticate}>
-							<LogIn /> Sign in again
+							<LogIn /> {env.VITE_CLAWDI_DESKTOP_BUILD ? "Reconnect" : "Sign in again"}
 						</Button>
 					) : null}
 					{onRetry ? (

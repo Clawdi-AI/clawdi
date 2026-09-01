@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { sentryTanstackStart } from "@sentry/tanstackstart-react/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -8,19 +9,23 @@ import { nitro } from "nitro/vite";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const require = createRequire(import.meta.url);
-const DESKTOP_CLERK_ASSET = "assets/clerk.browser.js";
-const clerkBrowserBundle = require.resolve("@clerk/clerk-js/dist/clerk.browser.js");
+const clerkBrowserDist = dirname(require.resolve("@clerk/clerk-js"));
 
 function desktopClerkAssetPlugin(): Plugin {
 	return {
 		name: "clawdi-desktop-clerk-asset",
 		apply: "build",
 		buildStart() {
-			this.emitFile({
-				type: "asset",
-				fileName: DESKTOP_CLERK_ASSET,
-				source: readFileSync(clerkBrowserBundle),
-			});
+			const browserAssets = readdirSync(clerkBrowserDist).filter(
+				(name) => name === "clerk.browser.js" || name.includes("_clerk.browser_"),
+			);
+			for (const file of browserAssets) {
+				this.emitFile({
+					type: "asset",
+					fileName: `assets/${file}`,
+					source: readFileSync(join(clerkBrowserDist, file)),
+				});
+			}
 		},
 	};
 }

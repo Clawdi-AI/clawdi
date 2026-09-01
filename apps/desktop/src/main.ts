@@ -72,6 +72,9 @@ let quitting = false;
 class DesktopConnectError extends Error {}
 
 type DashboardLoadResult = "opened" | "connect-required" | "failed";
+type DesktopAuthenticationFlowResult =
+	| { status: "cancelled" }
+	| { status: "authenticated"; accountChanged: boolean; backgroundSyncReady: boolean };
 
 function runAsync(label: string, operation: Promise<unknown>): void {
 	void operation.catch((error) => console.error(`Could not ${label}`, error));
@@ -121,7 +124,7 @@ async function startApplication(): Promise<void> {
 				dialog.showMessageBox({
 					type: "info",
 					message: "Clawdi is finishing a local operation",
-					detail: "Wait for sign-in or Agent setup to finish, then quit Clawdi.",
+					detail: "Wait for Agent or background sync changes to finish, then quit Clawdi.",
 				}),
 			);
 			return;
@@ -394,7 +397,7 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			if ((await authenticateAndResumeSync()) === "cancelled") {
+			if ((await authenticateAndResumeSync()).status === "cancelled") {
 				return { status: "cancelled" as const };
 			}
 			const state = await cli.bootstrapState();
@@ -418,9 +421,7 @@ function registerIpc(): void {
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.moveToApplicationsFolder, (event) =>
-		safeConnectAction(event, "move Clawdi to Applications", () =>
-			withCriticalOperation(async () => moveToApplicationsFolder()),
-		),
+		safeConnectAction(event, "move Clawdi to Applications", async () => moveToApplicationsFolder()),
 	);
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
@@ -435,11 +436,16 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const status = await authenticateAndResumeSync(true);
-			if (status === "authenticated" && (await loadDashboardWithRecovery(true)) !== "opened") {
+			const result = await authenticateAndResumeSync(true);
+			if (result.status === "cancelled") return result;
+			if (result.accountChanged && !result.backgroundSyncReady) {
+				await showConnectRequired();
+				return { status: "authenticated" as const };
+			}
+			if ((await loadDashboardWithRecovery(true)) !== "opened") {
 				throw new Error("Dashboard sign-in did not complete.");
 			}
-			return { status };
+			return { status: "authenticated" as const };
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.signOut, (event) =>
@@ -452,7 +458,8 @@ function registerIpc(): void {
 			if (connectWindow && !connectWindow.isDestroyed()) connectWindow.destroy();
 			await clearDashboardSession();
 			setTrayState(trayState ? { ...trayState, auth: { authenticated: false, user: null } } : null);
-			runAsync("refresh background sync status after sign out", refreshTrayState());
+			if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+			await showConnectWindow();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
@@ -472,17 +479,24 @@ function registerIpc(): void {
 	);
 }
 
-async function authenticateAndResumeSync(force = false): Promise<"authenticated" | "cancelled"> {
-	return withCriticalOperation(async () => {
-		const status = await cli.authenticate(force);
-		if (status !== "authenticated") return status;
-		try {
-			await cli.resumeBackgroundSync();
-		} catch (error) {
-			console.error("Could not resume background sync after sign in", error);
-		}
-		return status;
-	});
+async function authenticateAndResumeSync(force = false): Promise<DesktopAuthenticationFlowResult> {
+	const previousAccountId = force ? (await cli.getAuthState()).user?.id : undefined;
+	const authentication = await cli.authenticate(force);
+	if (authentication.status === "cancelled") return authentication;
+
+	const accountChanged = Boolean(previousAccountId && previousAccountId !== authentication.user.id);
+	// A forced browser sign-in can replace the CLI credential even when the
+	// account id is unchanged. Restart the daemon boundary so it never keeps an
+	// in-memory credential from before the completed OAuth flow.
+	if (force) await withCriticalOperation(() => cli.stopDaemon());
+
+	let backgroundSyncReady = false;
+	try {
+		backgroundSyncReady = await withCriticalOperation(() => cli.resumeBackgroundSync());
+	} catch (error) {
+		console.error("Could not resume background sync after sign in", error);
+	}
+	return { status: "authenticated", accountChanged, backgroundSyncReady };
 }
 
 async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
@@ -1090,7 +1104,7 @@ async function showAvailableWindow(): Promise<void> {
 			mainWindow.hide();
 			await showConnectWindow();
 		} else {
-			await showMainWindow();
+			await loadDashboardWithRecovery();
 		}
 		return;
 	}
@@ -1137,14 +1151,7 @@ async function loadDashboardWithRecovery(
 			const state = await cli.bootstrapState();
 			setTrayState(state);
 			if (!state.auth.authenticated || !state.auth.user) {
-				await clearDashboardSession();
-				if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-				if (connectWindow && !connectWindow.isDestroyed()) {
-					connectWindow.webContents.reload();
-					await showConnectWindow();
-				} else {
-					await showConnectWindow();
-				}
+				await showConnectRequired();
 				return "connect-required" as const;
 			}
 
@@ -1168,6 +1175,18 @@ async function loadDashboardWithRecovery(
 			return "opened" as const;
 		} catch (error) {
 			console.error("Could not open the dashboard", error);
+			try {
+				const auth = await cli.getAuthState();
+				if (!auth.authenticated || !auth.user) {
+					setTrayState(
+						trayState ? { ...trayState, auth, daemon: { installed: false, running: false } } : null,
+					);
+					await showConnectRequired();
+					return "connect-required" as const;
+				}
+			} catch (authError) {
+				console.error("Could not re-check the local sign-in state", authError);
+			}
 			await showDashboardFailure();
 			return "failed" as const;
 		}
@@ -1218,30 +1237,35 @@ async function prepareDashboardSession(
 	accountId: string,
 	forceAuthentication: boolean,
 ): Promise<void> {
-	await withCriticalOperation(async () => {
-		if (forceAuthentication || (dashboardAccountId && dashboardAccountId !== accountId)) {
-			await clearDashboardSession();
-		}
-		let window = mainWindow;
-		if (!window || window.isDestroyed()) {
-			await createMainWindow(DASHBOARD_SIGN_IN_URL);
-			window = mainWindow;
-		}
-		if (!window || window.isDestroyed()) throw new Error("Dashboard window was closed");
+	if (forceAuthentication || (dashboardAccountId && dashboardAccountId !== accountId)) {
+		await clearDashboardSession();
+	}
+	let window = mainWindow;
+	if (!window || window.isDestroyed()) {
+		await createMainWindow(DASHBOARD_SIGN_IN_URL);
+		window = mainWindow;
+	}
+	if (!window || window.isDestroyed()) throw new Error("Dashboard window was closed");
 
-		const ticket = await cli.createDashboardSession();
-		const url = new URL("/desktop-auth", DASHBOARD_ORIGIN);
-		url.hash = new URLSearchParams({ ticket }).toString();
-		const ready = waitForDashboardReady(window, DASHBOARD_LOAD_TIMEOUT_MS);
-		try {
-			await loadWindowUrl(window, url.toString());
-			await ready;
-		} catch (error) {
-			void ready.catch(() => undefined);
-			throw error;
-		}
-		dashboardAccountId = accountId;
-	});
+	const ticket = await cli.createDashboardSession();
+	const url = new URL("/desktop-auth", DASHBOARD_ORIGIN);
+	url.hash = new URLSearchParams({ ticket }).toString();
+	const ready = waitForDashboardReady(window, DASHBOARD_LOAD_TIMEOUT_MS);
+	try {
+		await loadWindowUrl(window, url.toString());
+		await ready;
+	} catch (error) {
+		void ready.catch(() => undefined);
+		throw error;
+	}
+	dashboardAccountId = accountId;
+}
+
+async function showConnectRequired(): Promise<void> {
+	await clearDashboardSession();
+	if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+	if (connectWindow && !connectWindow.isDestroyed()) connectWindow.webContents.reload();
+	await showConnectWindow();
 }
 
 function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promise<void> {

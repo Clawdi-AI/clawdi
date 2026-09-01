@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { openSecureRuntimeWindow } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useAuthToken } from "@/lib/auth-client";
+import { env } from "@/lib/env";
 import { toastError } from "@/lib/toast";
 
 export type FilesGrantBootstrapState = "pending" | "ready" | "error";
@@ -62,7 +63,9 @@ export function useOpenFilesInNewWindow(url: string, deploymentId: string): () =
 		if (!popup) {
 			toastError("Couldn't open Files", {
 				id: "files-window-launch",
-				description: "Allow pop-ups for Clawdi, then try again.",
+				description: env.VITE_CLAWDI_DESKTOP_BUILD
+					? "Opening Files in a separate window is not supported in Clawdi Desktop yet. Use the browser Dashboard."
+					: "Allow pop-ups for Clawdi, then try again.",
 			});
 			return;
 		}

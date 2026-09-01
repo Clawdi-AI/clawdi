@@ -1,5 +1,6 @@
 export interface DesktopReleaseConfiguration {
 	version: string;
+	teamId: string;
 	notarizationMode: "api-key" | "apple-id" | "keychain-profile";
 }
 
@@ -20,6 +21,10 @@ export function readDesktopReleaseConfiguration(
 			"A Developer ID signing identity is required through CSC_NAME or CSC_LINK with CSC_KEY_PASSWORD.",
 		);
 	}
+	const teamId = env.CLAWDI_DESKTOP_TEAM_ID?.trim() ?? "";
+	if (!/^[A-Z0-9]{10}$/.test(teamId)) {
+		throw new Error("CLAWDI_DESKTOP_TEAM_ID must be the 10-character Developer ID Team ID.");
+	}
 
 	const notarizationMode = readNotarizationMode(env);
 	if (!notarizationMode) {
@@ -27,7 +32,7 @@ export function readDesktopReleaseConfiguration(
 			"Apple notarization requires APPLE_API_KEY/API_KEY_ID/API_ISSUER, APPLE_ID/APP_SPECIFIC_PASSWORD/TEAM_ID, or APPLE_KEYCHAIN_PROFILE.",
 		);
 	}
-	return { version, notarizationMode };
+	return { version, teamId, notarizationMode };
 }
 
 export function desktopReleaseBuilderArgs(version: string): string[] {

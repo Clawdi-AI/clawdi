@@ -223,6 +223,15 @@ h1 {
 	border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
 }
 
+.reconnect-notice {
+	border-color: color-mix(in oklch, var(--destructive) 24%, var(--border));
+}
+
+.reconnect-notice .icon-tile {
+	background: var(--destructive-muted);
+	color: var(--destructive);
+}
+
 .button,
 .icon-button {
 	display: inline-flex;

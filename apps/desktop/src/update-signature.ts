@@ -8,6 +8,7 @@ export async function readMacCodeSignature(
 	const appBundle = resolve(dirname(executablePath), "..", "..");
 	let output: string;
 	try {
+		await codesign(["--verify", "--deep", "--strict", appBundle]);
 		output = await codesignDetails(appBundle);
 	} catch {
 		return null;
@@ -23,10 +24,14 @@ export async function readMacCodeSignature(
 }
 
 function codesignDetails(appBundle: string): Promise<string> {
+	return codesign(["-dv", "--verbose=4", appBundle]);
+}
+
+function codesign(args: string[]): Promise<string> {
 	return new Promise((resolvePromise, reject) => {
 		execFile(
 			"codesign",
-			["-dv", "--verbose=4", appBundle],
+			args,
 			{ encoding: "utf8", timeout: 15_000, windowsHide: true },
 			(error, stdout, stderr) => {
 				if (error) reject(error);
