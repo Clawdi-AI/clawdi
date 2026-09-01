@@ -238,7 +238,9 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			if ((await cli.authenticate()) === "cancelled") return { status: "cancelled" as const };
+			if ((await authenticateAndResumeSync()) === "cancelled") {
+				return { status: "cancelled" as const };
+			}
 			const state = await cli.bootstrapState();
 			setTrayState(state);
 			return { status: "authenticated" as const, state };
@@ -263,14 +265,15 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.openDashboard, (event) =>
 		safeConnectAction(event, "open the dashboard", async () => {
 			assertRuntimeLocation();
+			const window = connectWindow;
 			await openDashboard();
-			connectWindow?.hide();
+			if (window && !window.isDestroyed()) window.destroy();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const status = await cli.authenticate();
+			const status = await authenticateAndResumeSync();
 			if (status === "authenticated") {
 				runAsync("open the signed-in dashboard", loadDashboardWithRecovery(true));
 			}
@@ -279,7 +282,9 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.signOut, (event) =>
 		safeDashboardAction(event, "sign out", async () => {
+			await cli.cancelAuthentication();
 			await cli.logout();
+			if (connectWindow && !connectWindow.isDestroyed()) connectWindow.destroy();
 			await clearDashboardSession();
 			setTrayState(trayState ? { ...trayState, auth: { authenticated: false, user: null } } : null);
 			runAsync("refresh background sync status after sign out", refreshTrayState());
@@ -296,6 +301,17 @@ function registerIpc(): void {
 			mainWindow?.hide();
 		}),
 	);
+}
+
+async function authenticateAndResumeSync(): Promise<"authenticated" | "cancelled"> {
+	const status = await cli.authenticate();
+	if (status !== "authenticated") return status;
+	try {
+		await cli.resumeBackgroundSync();
+	} catch (error) {
+		console.error("Could not resume background sync after sign in", error);
+	}
+	return status;
 }
 
 async function safeConnectAction<T>(

@@ -103,7 +103,19 @@ export class DesktopCliService {
 	}
 
 	async logout(): Promise<void> {
-		await this.run(this.cli(), ["auth", "logout"], { timeoutMs: 30_000 });
+		const cli = this.cli();
+		try {
+			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
+		} catch (error) {
+			console.error("Could not stop background sync during sign out", error);
+		}
+		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+	}
+
+	async resumeBackgroundSync(): Promise<void> {
+		const registered = (await this.detectAgents()).filter((agent) => agent.registered);
+		if (registered.length === 0) return;
+		await this.run(this.cli(), ["daemon", "install"], { timeoutMs: 60_000 });
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
