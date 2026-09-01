@@ -170,6 +170,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			content: "world",
 			model: "claude-opus-4-7",
 		});
+		expect(s.realUserInputAt).toBe("2026-04-20T10:00:00.000Z");
 	});
 
 	it("uploads thinking while keeping the message projection visible-only", async () => {
@@ -277,6 +278,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			"SDK question",
 			"SDK answer",
 		]);
+		expect(sessions[0]?.realUserInputAt).toBe("2026-04-15T10:00:00.000Z");
 	});
 
 	it("falls back to OpenClaw's public Gateway transcript projection", async () => {
@@ -302,6 +304,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			"kept question",
 			"kept answer",
 		]);
+		expect(sessions[0]?.realUserInputAt).toBe("2026-04-15T10:00:00.000Z");
 		expect(adapter.sessions.watchPaths()).toContain(sqlitePath);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-wal`);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-journal`);
