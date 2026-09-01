@@ -81,6 +81,15 @@ codes, and error bodies remain unchanged. New optional response fields such as
 `name`, `default_name`, and `explicit_identity` are additive safe fields for old
 clients.
 
+If a self-managed installation loses both its local Agent cache and its
+installation id, the CLI must not infer identity from a hostname, display
+name, or recent activity. An account-level OAuth CLI may explicitly rebind a
+server-confirmed Connected Agent to a newly generated installation id. The
+operation preserves `AgentEnvironment.id`, rotates the machine-derived
+`registration_key`, and rebuilds the local cache. Explicit hosted identities
+and historical rows without positive Connected-origin evidence are not
+eligible for this recovery path.
+
 First-party hosted control planes register through the admin API.
 `/v1/admin/agents` accepts `agent_id` for agent-first callers.
 `/v1/admin/environments` remains intact for those control planes until that
