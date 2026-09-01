@@ -1,61 +1,131 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
-const [executablePath, runtimeRoot] = process.argv.slice(2);
-if (!executablePath || !runtimeRoot) {
-	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root>");
+const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
+if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
+	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
 }
 
 const home = join(runtimeRoot, "home");
 const clawdiHome = join(runtimeRoot, "state");
+const cliLog = join(runtimeRoot, "native-cli.log");
 mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 
 const output = [];
-const desktop = spawn(executablePath, ["--remote-debugging-port=0"], {
-	env: { ...process.env, HOME: home, CLAWDI_HOME: clawdiHome },
-	stdio: ["ignore", "pipe", "pipe"],
-});
+const desktop = spawn(
+	executablePath,
+	[`--user-data-dir=${join(runtimeRoot, "electron-data")}`, "--remote-debugging-port=0"],
+	{
+		env: {
+			...process.env,
+			HOME: home,
+			CLAWDI_HOME: clawdiHome,
+			CLAWDI_DESKTOP_SMOKE_LOG_FILE: cliLog,
+			ELECTRON_ENABLE_LOGGING: "1",
+		},
+		stdio: ["ignore", "pipe", "pipe"],
+	},
+);
 desktop.stdout.on("data", (chunk) => output.push(chunk.toString()));
 desktop.stderr.on("data", (chunk) => output.push(chunk.toString()));
 
 let browser;
+let failure;
 try {
 	const endpoint = await waitForDevToolsEndpoint(desktop, output, 30_000);
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	const window = await waitForConnectWindow(context, 30_000);
-	const signIn = window.getByRole("heading", { name: "Sign in to Clawdi" });
+	if (surface === "dashboard") await verifyPackagedDashboard(context, output);
+	else await verifyInstallGate(context, desktop, output, cliLog);
+} catch (error) {
+	failure = error;
+} finally {
+	await browser?.close().catch(() => undefined);
+	await stopProcess(desktop);
+}
+if (failure) {
+	throw new Error(
+		`${failure instanceof Error ? failure.message : String(failure)}\n${diagnostics(output, cliLog)}`,
+	);
+}
+
+async function verifyInstallGate(context, desktop, output, cliLog) {
+	const window = await waitForWindow(context, null, 30_000);
+	const moveToApplications = window.getByRole("heading", {
+		name: "Move Clawdi to Applications",
+	});
 	const failure = window.getByRole("heading", { name: "Couldn't finish setup" });
 	await Promise.race([
-		signIn.waitFor({ state: "visible", timeout: 20_000 }),
+		moveToApplications.waitFor({ state: "visible", timeout: 20_000 }),
 		failure.waitFor({ state: "visible", timeout: 20_000 }).then(async () => {
 			throw new Error(`Packaged setup failed:\n${await window.locator("body").innerText()}`);
 		}),
 	]);
+	assert.equal(existsSync(cliLog), false, "The install gate started the bundled CLI.");
 	await window.close();
 	await delay(500);
 	assert.ok(
 		desktop.exitCode === null && desktop.signalCode === null,
 		`Desktop exited when Connect Agent closed.\n${output.join("")}`,
 	);
-} finally {
-	await browser?.close().catch(() => undefined);
-	await stopProcess(desktop);
 }
 
-async function waitForConnectWindow(context, timeout) {
+async function verifyPackagedDashboard(context, output) {
+	const window = await waitForWindow(context, "dashboard", 30_000);
+	await window.getByRole("heading", { name: "Sign in to Clawdi" }).waitFor({ timeout: 20_000 });
+	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
+	const documentSecurity = await window.evaluate(async () => {
+		const [index, missing] = await Promise.all([
+			fetch("/index.html", { method: "HEAD", cache: "no-store" }),
+			fetch("/assets/not-packaged.js", { cache: "no-store" }),
+		]);
+		return {
+			csp: index.headers.get("content-security-policy"),
+			missingStatus: missing.status,
+			inlineScriptsHaveNonces: [...document.scripts]
+				.filter((script) => !script.src)
+				.every((script) => script.nonce.length > 0),
+			scriptUrls: [...document.scripts]
+				.filter((script) => script.src)
+				.map((script) => new URL(script.src)),
+			resourceUrls: performance.getEntriesByType("resource").map((entry) => new URL(entry.name)),
+			clerkGlobalPresent: Boolean(globalThis.Clerk),
+		};
+	});
+	assert.match(documentSecurity.csp ?? "", /script-src[^;]*'nonce-[^']+'/);
+	assert.doesNotMatch(documentSecurity.csp ?? "", /script-src[^;]*https:/);
+	assert.equal(documentSecurity.inlineScriptsHaveNonces, true);
+	assert.equal(documentSecurity.missingStatus, 404);
+	assert.deepEqual(
+		[...new Set(documentSecurity.scriptUrls.map((url) => url.origin))],
+		["https://cloud.clawdi.ai"],
+	);
+	assert.ok(
+		documentSecurity.resourceUrls.some((url) => url.pathname === "/assets/clerk.browser.js"),
+		"The packaged Dashboard did not load its bundled Clerk runtime.",
+	);
+	assert.equal(documentSecurity.clerkGlobalPresent, true);
+	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
+	assert.deepEqual(bridgeMethods, ["openConnectWizard", "retryDashboard", "signIn", "signOut"]);
+	const updateSkipReason =
+		process.platform === "darwin" ? "disabled-by-metadata" : "unsupported-platform";
+	assert.match(output.join(""), new RegExp(`Desktop updates disabled: ${updateSkipReason}`));
+}
+
+async function waitForWindow(context, surface, timeout) {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		const window = context.pages().find((page) => {
 			try {
 				const url = new URL(page.url());
-				return url.protocol === "clawdi-app:" && url.pathname === "/renderer.html";
+				if (surface === "dashboard") return url.origin === "https://cloud.clawdi.ai";
+				return url.protocol === "clawdi-app:";
 			} catch {
 				return false;
 			}
@@ -64,11 +134,19 @@ async function waitForConnectWindow(context, timeout) {
 		await delay(100);
 	}
 	throw new Error(
-		`Packaged app did not open Connect Agent. Pages: ${context
+		`Packaged app did not open the expected window. Pages: ${context
 			.pages()
 			.map((page) => page.url())
 			.join(", ")}`,
 	);
+}
+
+function diagnostics(output, cliLog) {
+	let cliCalls = "<no CLI calls>";
+	try {
+		cliCalls = readFileSync(cliLog, "utf8").trim() || cliCalls;
+	} catch {}
+	return `Electron output:\n${output.join("")}\nCLI calls:\n${cliCalls}`;
 }
 
 function waitForDevToolsEndpoint(child, logs, timeout) {

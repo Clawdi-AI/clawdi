@@ -4,6 +4,7 @@ import { useAuth, useSignIn } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { DesktopWindowDragRegion } from "@/components/desktop-window-drag-region";
 import { Button } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
 import { routeHeadTitle } from "@/lib/document-title";
@@ -22,7 +23,7 @@ function DesktopAuthPage() {
 
 	function recover() {
 		if (desktopBridge) {
-			void desktopBridge.openConnectWizard().catch(() => setFailed(true));
+			void desktopBridge.signIn().catch(() => setFailed(true));
 			return;
 		}
 		window.location.replace("/sign-in");
@@ -63,11 +64,12 @@ function DesktopAuthPage() {
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
+			{desktopBridge ? <DesktopWindowDragRegion /> : null}
 			<div className="flex max-w-sm flex-col items-center gap-4 text-center">
 				{failed ? (
 					<>
 						<h1 className="text-lg font-semibold">Desktop sign-in expired</h1>
-						<Button onClick={recover}>{desktopBridge ? "Return to Clawdi" : "Sign in"}</Button>
+						<Button onClick={recover}>{desktopBridge ? "Try again" : "Sign in"}</Button>
 					</>
 				) : (
 					<>

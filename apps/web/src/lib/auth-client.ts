@@ -92,7 +92,22 @@ export function useAuthActions() {
 			},
 		};
 	}
-	return useClerk();
+	const clerk = useClerk();
+	const desktopBridge = typeof window === "undefined" ? undefined : window.clawdiDesktop;
+	if (desktopBridge) {
+		return {
+			signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+				await desktopBridge.signOut();
+				if (redirectUrl) window.location.replace(redirectUrl);
+			},
+		};
+	}
+	return {
+		...clerk,
+		signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+			await clerk.signOut({ redirectUrl });
+		},
+	};
 }
 
 // Unlike useAuth's SSR snapshot, a SessionResource is usable only after the

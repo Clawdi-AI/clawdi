@@ -35,6 +35,7 @@ interface AuthenticationOperation {
 export class DesktopCliService {
 	private authentication: AuthenticationOperation | null = null;
 	private cliPath: string | null = null;
+	private nativeIdentity: Promise<NativeIdentity> | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = this.cli();
@@ -51,13 +52,13 @@ export class DesktopCliService {
 		};
 	}
 
-	async authenticate(): Promise<AuthenticationStatus> {
+	async authenticate(force = false): Promise<AuthenticationStatus> {
 		if (this.authentication) return this.authentication.completion;
 
 		const controller = new AbortController();
 		const operation: AuthenticationOperation = {
 			controller,
-			completion: this.performAuthentication(controller.signal),
+			completion: this.performAuthentication(controller.signal, force),
 		};
 		this.authentication = operation;
 		try {
@@ -87,6 +88,22 @@ export class DesktopCliService {
 			throw new Error("Clawdi returned an invalid desktop sign-in session.");
 		}
 		return ticket;
+	}
+
+	async logout(): Promise<void> {
+		const cli = this.cli();
+		try {
+			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
+		} catch (error) {
+			console.error("Could not stop background sync during sign out", error);
+		}
+		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+	}
+
+	async resumeBackgroundSync(): Promise<void> {
+		const registered = (await this.detectAgents()).filter((agent) => agent.registered);
+		if (registered.length === 0) return;
+		await this.run(this.cli(), ["daemon", "install"], { timeoutMs: 60_000 });
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
@@ -130,9 +147,14 @@ export class DesktopCliService {
 		await this.run(this.cli(), ["daemon", "restart"]);
 	}
 
-	private async performAuthentication(signal: AbortSignal): Promise<AuthenticationStatus> {
+	private async performAuthentication(
+		signal: AbortSignal,
+		force: boolean,
+	): Promise<AuthenticationStatus> {
 		try {
-			const result = await this.runJson(this.cli(), ["auth", "login", "--desktop"], {
+			const args = ["auth", "login", "--desktop"];
+			if (force) args.push("--force");
+			const result = await this.runJson(this.cli(), args, {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
 			});
@@ -169,6 +191,18 @@ export class DesktopCliService {
 	}
 
 	private async identity(cli: string): Promise<NativeIdentity> {
+		if (this.nativeIdentity) return this.nativeIdentity;
+		const loading = this.readIdentity(cli);
+		this.nativeIdentity = loading;
+		try {
+			return await loading;
+		} catch (error) {
+			if (this.nativeIdentity === loading) this.nativeIdentity = null;
+			throw error;
+		}
+	}
+
+	private async readIdentity(cli: string): Promise<NativeIdentity> {
 		let result: CommandResult;
 		try {
 			result = await this.run(cli, ["update", "--native-identity"], { timeoutMs: 20_000 });
