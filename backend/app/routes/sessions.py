@@ -23,7 +23,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, field_validator
-from sqlalchemy import case, func, or_, select, text, true, tuple_, update
+from sqlalchemy import case, exists, func, or_, select, text, true, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +34,7 @@ from app.core.auth import (
     get_auth,
     is_connected_agent_principal,
     require_any_scope,
+    require_oauth_cli_auth,
     require_scope,
     require_web_auth,
 )
@@ -347,6 +348,109 @@ async def register_agent(
     return await _register_agent_identity(body, auth, db)
 
 
+@router.post("/agents/{agent_id}/rebind")
+async def rebind_agent(
+    agent_id: UUID,
+    body: EnvironmentCreate,
+    auth: AuthContext = Depends(require_oauth_cli_auth),
+    db: AsyncSession = Depends(get_session),
+) -> EnvironmentCreatedResponse:
+    """Reconnect one local installation to an existing Agent identity."""
+
+    if not is_connected_agent_principal(auth):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This endpoint requires an account-level CLI identity",
+        )
+
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    hosted_state = await db.get(HostedRuntimeState, env.id)
+    environment_bound_key_id = await db.scalar(
+        select(ApiKey.id).where(ApiKey.environment_id == env.id).limit(1)
+    )
+    if (
+        env.registration_key is None
+        or env.connected_agent_registered_at is None
+        or hosted_state is not None
+        or environment_bound_key_id is not None
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "agent_not_reconnectable",
+                "message": "Only an existing Connected Agent can be rebound by a local CLI.",
+            },
+        )
+    if env.agent_type != body.agent_type:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The local Agent type does not match the selected Agent",
+        )
+
+    registration_key = local_machine_registration_key(body.machine_id, body.agent_type)
+    conflict = await db.scalar(
+        select(AgentEnvironment.id).where(
+            AgentEnvironment.user_id == auth.user_id,
+            AgentEnvironment.registration_key == registration_key,
+            AgentEnvironment.id != agent_id,
+        )
+    )
+    if conflict is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "agent_rebind_conflict",
+                "message": "This installation is already connected to another Agent.",
+                "conflicting_agent_id": str(conflict),
+            },
+        )
+
+    now = datetime.now(UTC)
+    env.machine_id = body.machine_id
+    env.machine_name = body.machine_name
+    env.agent_version = body.agent_version
+    env.os = body.os
+    env.adapter_modules = body.adapter_modules
+    env.registration_key = registration_key
+    env.connected_agent_registered_at = now
+    env.last_seen_at = now
+    env.last_sync_at = None
+    env.last_sync_error = None
+    env.last_revision_seen = None
+    env.queue_depth_high_water_since_start = 0
+    env.dropped_count_since_start = 0
+    env.project_skill_reconcile_version = None
+    env.project_skill_reconcile_observed_at = None
+    rebound_id = env.id
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Another Agent claimed this installation while it was being rebound",
+        ) from None
+    log.info(
+        "connected_agent_rebound user_id=%s agent_id=%s agent_type=%s",
+        auth.user_id,
+        rebound_id,
+        env.agent_type,
+    )
+    return EnvironmentCreatedResponse(id=str(rebound_id))
+
+
 @router.post("/environments", deprecated=True)
 async def register_environment(
     body: EnvironmentCreate,
@@ -365,6 +469,7 @@ async def _list_agent_identities(
     *,
     agent_response: Literal[True],
     project_id: UUID | None = None,
+    reconnectable_only: bool = False,
 ) -> list[AgentResponse] | Response: ...
 
 
@@ -377,6 +482,7 @@ async def _list_agent_identities(
     *,
     agent_response: Literal[False],
     project_id: UUID | None = None,
+    reconnectable_only: bool = False,
 ) -> list[EnvironmentResponse] | Response: ...
 
 
@@ -388,6 +494,7 @@ async def _list_agent_identities(
     *,
     agent_response: bool,
     project_id: UUID | None = None,
+    reconnectable_only: bool = False,
 ) -> list[AgentResponse] | list[EnvironmentResponse] | Response:
     # Bound api_keys (deploy keys) only see their own env.
     # Returning every env of the user would let a leaked deploy
@@ -412,6 +519,15 @@ async def _list_agent_identities(
             AgentProjectBinding,
             AgentProjectBinding.agent_id == AgentEnvironment.id,
         ).where(AgentProjectBinding.project_id == project_id)
+    if reconnectable_only:
+        has_hosted_state = exists().where(HostedRuntimeState.environment_id == AgentEnvironment.id)
+        has_environment_bound_key = exists().where(ApiKey.environment_id == AgentEnvironment.id)
+        stmt = stmt.where(
+            AgentEnvironment.registration_key.is_not(None),
+            AgentEnvironment.connected_agent_registered_at.is_not(None),
+            ~has_hosted_state,
+            ~has_environment_bound_key,
+        )
     result = await db.execute(stmt)
     envs = result.scalars().all()
     hosted_deployment_ids: dict[UUID, str] = {}
@@ -446,9 +562,15 @@ async def list_agents(
         default=None,
         description="Return only the caller's Agents linked to this exact Project.",
     ),
+    reconnectable: bool = Query(
+        default=False,
+        description="Return only Connected Agents eligible for explicit local rebind.",
+    ),
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
+    if reconnectable:
+        await require_oauth_cli_auth(auth)
     return await _list_agent_identities(
         request,
         response,
@@ -456,6 +578,7 @@ async def list_agents(
         db,
         agent_response=True,
         project_id=project_id,
+        reconnectable_only=reconnectable,
     )
 
 

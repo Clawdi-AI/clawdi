@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 import httpx
@@ -36,6 +36,26 @@ async def _register_agent(client: httpx.AsyncClient, machine_id: str | None = No
     response = await client.post("/v1/agents", json=_agent_body(machine_id or uuid.uuid4().hex))
     assert response.status_code == 200, response.text
     return response.json()["id"]
+
+
+def _set_oauth_cli_auth(seed_user: User):
+    async def _oauth_cli_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            oauth_cli=True,
+            oauth_access_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+    previous = app.dependency_overrides.get(get_auth)
+    app.dependency_overrides[get_auth] = _oauth_cli_auth
+
+    def restore() -> None:
+        if previous is None:
+            app.dependency_overrides.pop(get_auth, None)
+        else:
+            app.dependency_overrides[get_auth] = previous
+
+    return restore
 
 
 def _assert_same_response(left: httpx.Response, right: httpx.Response) -> None:
@@ -76,6 +96,126 @@ def _assert_agent_list_response_matches_environment(
         for item in environment_response.json()
     ] == agent_response.json()
     assert all(not _DEPRECATED_HOSTED_FIELDS.intersection(item) for item in agent_response.json())
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_rebind_preserves_agent_identity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.models.session import AgentEnvironment
+    from app.services.agent_environments import local_machine_registration_key
+
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    try:
+        agent_id = await _register_agent(client, "lost-installation")
+        stale_env = await db_session.get(AgentEnvironment, uuid.UUID(agent_id))
+        assert stale_env is not None
+        stale_env.last_sync_at = datetime.now(UTC) - timedelta(hours=1)
+        stale_env.last_sync_error = "old installation failed"
+        stale_env.last_revision_seen = 17
+        stale_env.queue_depth_high_water_since_start = 9
+        stale_env.dropped_count_since_start = 3
+        stale_env.project_skill_reconcile_version = 1
+        stale_env.project_skill_reconcile_observed_at = datetime.now(UTC) - timedelta(hours=1)
+        await db_session.commit()
+        candidates = await client.get("/v1/agents", params={"reconnectable": "true"})
+        body = _agent_body("replacement-installation")
+        body["machine_name"] = "Recovered Laptop"
+        response = await client.post(f"/v1/agents/{agent_id}/rebind", json=body)
+    finally:
+        restore_auth()
+
+    assert candidates.status_code == 200, candidates.text
+    assert [agent["id"] for agent in candidates.json()] == [agent_id]
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": agent_id}
+    env = await db_session.get(AgentEnvironment, uuid.UUID(agent_id))
+    assert env is not None
+    assert env.machine_id == "replacement-installation"
+    assert env.machine_name == "Recovered Laptop"
+    assert env.registration_key == local_machine_registration_key(
+        "replacement-installation", "codex"
+    )
+    assert env.last_sync_at is None
+    assert env.last_sync_error is None
+    assert env.last_revision_seen is None
+    assert env.queue_depth_high_water_since_start == 0
+    assert env.dropped_count_since_start == 0
+    assert env.project_skill_reconcile_version is None
+    assert env.project_skill_reconcile_observed_at is None
+
+    repeated = await client.post("/v1/agents", json=_agent_body("replacement-installation"))
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == {"id": agent_id}
+
+
+@pytest.mark.asyncio
+async def test_agent_rebind_requires_oauth_cli_auth(
+    client: httpx.AsyncClient,
+    seed_user: User,
+):
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    try:
+        agent_id = await _register_agent(client)
+    finally:
+        restore_auth()
+
+    response = await client.post(
+        f"/v1/agents/{agent_id}/rebind",
+        json=_agent_body("replacement-installation"),
+    )
+    candidates = await client.get("/v1/agents", params={"reconnectable": "true"})
+
+    assert response.status_code == 403
+    assert candidates.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_agent_rebind_refuses_an_installation_identity_conflict(
+    client: httpx.AsyncClient,
+    seed_user: User,
+):
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    try:
+        target_id = await _register_agent(client, "lost-installation")
+        conflicting_id = await _register_agent(client, "replacement-installation")
+        response = await client.post(
+            f"/v1/agents/{target_id}/rebind",
+            json=_agent_body("replacement-installation"),
+        )
+    finally:
+        restore_auth()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "agent_rebind_conflict",
+        "message": "This installation is already connected to another Agent.",
+        "conflicting_agent_id": conflicting_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_rebind_rejects_ambiguous_legacy_identity(
+    client: httpx.AsyncClient,
+    seed_user: User,
+):
+    agent_id = await _register_agent(client, "legacy-installation")
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    try:
+        candidates = await client.get("/v1/agents", params={"reconnectable": "true"})
+        response = await client.post(
+            f"/v1/agents/{agent_id}/rebind",
+            json=_agent_body("replacement-installation"),
+        )
+    finally:
+        restore_auth()
+
+    assert candidates.status_code == 200, candidates.text
+    assert candidates.json() == []
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "agent_not_reconnectable"
 
 
 @pytest.mark.asyncio
