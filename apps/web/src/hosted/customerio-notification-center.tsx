@@ -7,7 +7,11 @@ import { NotificationCenter } from "@/components/notification-center";
 import type { InboxNotification } from "@/components/notification-center.logic";
 import { useHostedProductAccessProfileQuery } from "@/hosted/access/product-access";
 import type { HostedCustomerIOIdentity, InboxMessage } from "@/hosted/customerio";
-import { getHostedCustomerIOInbox, resolveHostedNotificationUrl } from "@/hosted/customerio";
+import {
+	getHostedCustomerIOInbox,
+	isCanonicalHostedCustomerId,
+	resolveHostedNotificationUrl,
+} from "@/hosted/customerio";
 import { useDashboardAuth } from "@/lib/auth-client";
 
 type CustomerIOInboxItem = InboxNotification & {
@@ -26,13 +30,10 @@ export function CustomerIONotificationCenter() {
 	const inboxRef = useRef<InboxAPI | null>(null);
 
 	const customerId = profile.data?.id ?? null;
-	const clerkId = profile.data?.clerk_id ?? null;
-	const email = profile.data?.email ?? null;
-	const name = profile.data?.name ?? null;
 	const identity = useMemo<HostedCustomerIOIdentity | null>(() => {
-		if (!isSignedIn || !customerId || !clerkId || !email) return null;
-		return { customerId, clerkId, email, name };
-	}, [clerkId, customerId, email, isSignedIn, name]);
+		if (!isSignedIn || !isCanonicalHostedCustomerId(customerId)) return null;
+		return { customerId };
+	}, [customerId, isSignedIn]);
 	const identityLoading = Boolean(isSignedIn && profile.isLoading);
 	const identityError =
 		isSignedIn && profile.error ? new Error("hosted_identity_unavailable") : null;
@@ -123,9 +124,22 @@ export function CustomerIONotificationCenter() {
 				}
 				onOpenInboxAction={(notification) =>
 					void runMessageAction(notification, async (item) => {
-						if (!item.opened) await item.message.markOpened();
+						const target = item.actionUrl
+							? resolveHostedNotificationUrl(item.actionUrl, window.location.origin)
+							: null;
+						// External tabs must open during the click task or popup blockers may reject them.
+						if (!item.opened && target?.kind !== "external") {
+							await item.message.markOpened();
+						}
 						item.message.trackClick(item.actionLabel);
-						if (item.actionUrl) openNotificationUrl(item.actionUrl);
+						if (!target) {
+							toast.error("This notification link is invalid");
+							return;
+						}
+						openNotificationTarget(target);
+						if (!item.opened && target.kind === "external") {
+							await item.message.markOpened();
+						}
 					})
 				}
 			/>
@@ -194,12 +208,9 @@ function badgeForMessageType(type: string): string {
 	return "Update";
 }
 
-function openNotificationUrl(value: string) {
-	const target = resolveHostedNotificationUrl(value, window.location.origin);
-	if (!target) {
-		toast.error("This notification link is invalid");
-		return;
-	}
+function openNotificationTarget(
+	target: NonNullable<ReturnType<typeof resolveHostedNotificationUrl>>,
+) {
 	if (target.kind === "same-origin") {
 		window.location.assign(target.url);
 		return;

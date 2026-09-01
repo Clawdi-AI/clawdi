@@ -17,16 +17,11 @@ const {
 
 const identity: HostedCustomerIOIdentity = {
 	customerId: "usr_K8fJ3pQm",
-	clerkId: "user_clerk_123",
-	email: "user@example.com",
-	name: "Test User",
 };
 
 function analyticsDouble() {
 	return {
-		identify: mock(
-			async (_customerId: string, _traits: Record<string, string | undefined>) => undefined,
-		),
+		identify: mock(async (_customerId: string) => undefined),
 		reset: mock(async () => undefined),
 		inbox: () => {
 			throw new Error("inbox is not used by this test");
@@ -63,7 +58,7 @@ describe("Customer.io browser configuration", () => {
 		expect(load.mock.calls[0]?.[1]).toEqual({ initialPageview: false });
 	});
 
-	test("identifies the canonical profile once for equal primitive values", async () => {
+	test("identifies only the canonical profile ID without browser-owned traits", async () => {
 		const analytics = analyticsDouble();
 		const controller = createHostedCustomerIOController(
 			{ writeKey: "write_key", region: "us" },
@@ -74,11 +69,35 @@ describe("Customer.io browser configuration", () => {
 		await controller.syncIdentity({ ...identity });
 
 		expect(analytics.identify).toHaveBeenCalledTimes(1);
-		expect(analytics.identify).toHaveBeenCalledWith("usr_K8fJ3pQm", {
-			clerk_id: "user_clerk_123",
-			email: "user@example.com",
-			name: "Test User",
-		});
+		expect(analytics.identify).toHaveBeenCalledWith("usr_K8fJ3pQm");
+	});
+
+	test("clears a persisted SDK identity on the first anonymous sync", async () => {
+		const analytics = analyticsDouble();
+		const controller = createHostedCustomerIOController(
+			{ writeKey: "write_key", region: "us" },
+			() => ({ analytics, ready: Promise.resolve() }),
+		);
+
+		await controller.syncIdentity(null);
+		await controller.syncIdentity(null);
+
+		expect(analytics.reset).toHaveBeenCalledTimes(1);
+	});
+
+	test("rejects non-canonical profile IDs before calling the SDK", async () => {
+		const analytics = analyticsDouble();
+		const load = mock(() => ({ analytics, ready: Promise.resolve() }));
+		const controller = createHostedCustomerIOController(
+			{ writeKey: "write_key", region: "us" },
+			load,
+		);
+
+		await expect(controller.syncIdentity({ customerId: "user_clerk_123" })).rejects.toThrow(
+			"canonical customer ID",
+		);
+		expect(load).not.toHaveBeenCalled();
+		expect(analytics.identify).not.toHaveBeenCalled();
 	});
 
 	test("serializes logout and account switches behind an older identify", async () => {
@@ -109,10 +128,7 @@ describe("Customer.io browser configuration", () => {
 			() => ({ analytics, ready: Promise.resolve() }),
 		);
 		const nextIdentity = {
-			...identity,
 			customerId: "usr_next",
-			clerkId: "user_clerk_next",
-			email: "next@example.com",
 		};
 
 		const first = controller.syncIdentity(identity);

@@ -59,9 +59,6 @@ function HostedAnalyticsIdentity() {
 			void loadHostedPostHog().then((mod) => {
 				mod.resetHostedPostHog();
 			});
-			void loadHostedCustomerIO()
-				.then((mod) => mod.syncHostedCustomerIOIdentity(null))
-				.catch(() => console.warn("Customer.io identity reset failed"));
 		}
 	}, [isSignedIn, userId]);
 
@@ -88,22 +85,20 @@ function HostedAnalyticsIdentity() {
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
 
 	const customerId = hostedProfile.data?.id ?? null;
-	const customerClerkId = hostedProfile.data?.clerk_id ?? null;
-	const customerEmail = hostedProfile.data?.email ?? null;
-	const customerName = hostedProfile.data?.name ?? null;
 	useEffect(() => {
-		if (!isSignedIn || !customerId || !customerClerkId || !customerEmail) return;
+		let active = true;
 		void loadHostedCustomerIO()
-			.then((mod) =>
-				mod.syncHostedCustomerIOIdentity({
-					customerId,
-					clerkId: customerClerkId,
-					email: customerEmail,
-					name: customerName,
-				}),
-			)
+			.then((mod) => {
+				if (!active) return;
+				return mod.syncHostedCustomerIOIdentity(
+					isSignedIn && mod.isCanonicalHostedCustomerId(customerId) ? { customerId } : null,
+				);
+			})
 			.catch(() => console.warn("Customer.io identity sync failed"));
-	}, [customerClerkId, customerEmail, customerId, customerName, isSignedIn]);
+		return () => {
+			active = false;
+		};
+	}, [customerId, isSignedIn]);
 
 	useEffect(() => {
 		if (!isSignedIn || !userLoaded) return;
