@@ -1,10 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { lazy, type ReactNode, Suspense } from "react";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+const HostedCustomerIONotificationCenter = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/customerio-notification-center").then((module) => ({
+				default: module.CustomerIONotificationCenter,
+			})),
+		)
+	: null;
 
 /**
  * Dashboard chrome — the header bar above SidebarInset content.
@@ -24,7 +34,13 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				<NotificationCenter />
+				{HostedCustomerIONotificationCenter ? (
+					<Suspense fallback={<NotificationCenter />}>
+						<HostedCustomerIONotificationCenter />
+					</Suspense>
+				) : (
+					<NotificationCenter />
+				)}
 			</div>
 		</header>
 	);

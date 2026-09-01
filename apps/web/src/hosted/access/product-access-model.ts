@@ -1,8 +1,12 @@
 import type { DeployComponents } from "@clawdi/shared/api";
 
 type HostedProductCapabilities = Partial<DeployComponents["schemas"]["V1UserProductCapabilities"]>;
+type HostedUserIdentity = Pick<
+	DeployComponents["schemas"]["V1UserResponse"],
+	"id" | "clerk_id" | "email" | "name"
+>;
 
-export interface HostedProductAccessProfile {
+export interface HostedProductAccessProfile extends Partial<HostedUserIdentity> {
 	capabilities?: HostedProductCapabilities | null;
 }
 

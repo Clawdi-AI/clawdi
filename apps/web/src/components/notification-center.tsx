@@ -2,7 +2,16 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
+import {
+	BellRing,
+	Check,
+	CheckCircle2,
+	ExternalLink,
+	InboxIcon,
+	MailOpen,
+	Trash2,
+	XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { IconChip } from "@/components/icon-chip";
@@ -26,16 +35,36 @@ import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
 	getAcceptedProjectInvitationToastCopy,
+	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTitle,
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
+	type InboxNotification,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
-export function NotificationCenter() {
+export function NotificationCenter({
+	inboxNotifications = [],
+	inboxLoading = false,
+	inboxError = null,
+	busyInboxId,
+	onRetryInbox,
+	onMarkInboxOpened,
+	onDeleteInbox,
+	onOpenInboxAction,
+}: {
+	inboxNotifications?: readonly InboxNotification[];
+	inboxLoading?: boolean;
+	inboxError?: Error | null;
+	busyInboxId?: string;
+	onRetryInbox?: () => void;
+	onMarkInboxOpened?: (notification: InboxNotification) => void;
+	onDeleteInbox?: (notification: InboxNotification) => void;
+	onOpenInboxAction?: (notification: InboxNotification) => void;
+}) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const api = useApi();
@@ -110,7 +139,7 @@ export function NotificationCenter() {
 	});
 
 	const items = invitations.data ?? [];
-	const count = getPendingNotificationCount(items);
+	const count = getPendingNotificationCount(items, inboxNotifications);
 	const triggerLabel = getNotificationCenterTriggerLabel(count);
 
 	return (
@@ -140,38 +169,53 @@ export function NotificationCenter() {
 						<PopoverTitle>{getNotificationCenterTitle(count)}</PopoverTitle>
 						{count > 0 ? <Badge variant="secondary">{count} Pending</Badge> : null}
 					</div>
-					<PopoverDescription>{getProjectInvitationAccessCopy()}</PopoverDescription>
+					<PopoverDescription>{getNotificationCenterDescription()}</PopoverDescription>
 				</PopoverHeader>
 				<Separator />
 				<NotificationCenterContent
 					invitations={items}
-					isLoading={invitations.isLoading}
-					error={
+					inboxNotifications={inboxNotifications}
+					invitationsLoading={invitations.isLoading}
+					invitationsError={
 						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
 					}
-					onRetry={() => invitations.refetch()}
+					inboxLoading={inboxLoading}
+					inboxError={inboxError}
+					onRetryInvitations={() => invitations.refetch()}
+					onRetryInbox={onRetryInbox}
 					acceptInvitation={(invitation) =>
 						accept.mutate({ id: invitation.id, projectName: invitation.project_name })
 					}
 					declineInvitation={(invitation) => decline.mutate(invitation.id)}
 					acceptingId={accept.isPending ? accept.variables?.id : undefined}
 					decliningId={decline.isPending ? decline.variables : undefined}
+					busyInboxId={busyInboxId}
+					onMarkInboxOpened={onMarkInboxOpened}
+					onDeleteInbox={onDeleteInbox}
+					onOpenInboxAction={(notification) => {
+						setOpen(false);
+						onOpenInboxAction?.(notification);
+					}}
 				/>
-				<Separator />
-				<div className="flex items-center justify-between gap-3 px-4 py-3">
-					<p className="text-xs text-muted-foreground">
-						Accepted invites appear under Shared Projects.
-					</p>
-					<Button
-						render={<Link to="/projects" />}
-						nativeButton={false}
-						variant="ghost"
-						size="sm"
-						onClick={() => setOpen(false)}
-					>
-						View Accepted Invites
-					</Button>
-				</div>
+				{items.length > 0 ? (
+					<>
+						<Separator />
+						<div className="flex items-center justify-between gap-3 px-4 py-3">
+							<p className="text-xs text-muted-foreground">
+								Accepted invites appear under Shared Projects.
+							</p>
+							<Button
+								render={<Link to="/projects" />}
+								nativeButton={false}
+								variant="ghost"
+								size="sm"
+								onClick={() => setOpen(false)}
+							>
+								View Accepted Invites
+							</Button>
+						</div>
+					</>
+				) : null}
 			</PopoverContent>
 		</Popover>
 	);
@@ -179,47 +223,73 @@ export function NotificationCenter() {
 
 function NotificationCenterContent({
 	invitations,
-	isLoading,
-	error,
-	onRetry,
+	inboxNotifications,
+	invitationsLoading,
+	invitationsError,
+	inboxLoading,
+	inboxError,
+	onRetryInvitations,
+	onRetryInbox,
 	acceptInvitation,
 	declineInvitation,
 	acceptingId,
 	decliningId,
+	busyInboxId,
+	onMarkInboxOpened,
+	onDeleteInbox,
+	onOpenInboxAction,
 }: {
 	invitations: ProjectInvitationNotification[];
-	isLoading: boolean;
-	error: Error | null;
-	onRetry: () => void;
+	inboxNotifications: readonly InboxNotification[];
+	invitationsLoading: boolean;
+	invitationsError: Error | null;
+	inboxLoading: boolean;
+	inboxError: Error | null;
+	onRetryInvitations: () => void;
+	onRetryInbox?: () => void;
 	acceptInvitation: (invitation: ProjectInvitationNotification) => void;
 	declineInvitation: (invitation: ProjectInvitationNotification) => void;
 	acceptingId?: string;
 	decliningId?: string;
+	busyInboxId?: string;
+	onMarkInboxOpened?: (notification: InboxNotification) => void;
+	onDeleteInbox?: (notification: InboxNotification) => void;
+	onOpenInboxAction: (notification: InboxNotification) => void;
 }) {
-	if (isLoading) {
+	const hasNotifications = inboxNotifications.length > 0 || invitations.length > 0;
+	const isLoading = invitationsLoading || inboxLoading;
+
+	if (isLoading && !hasNotifications) {
 		return (
 			<div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
 				<Spinner className="size-3.5" />
-				Loading Invitations…
+				Loading Notifications…
 			</div>
 		);
 	}
 
-	if (error) {
+	if ((invitationsError || inboxError) && !hasNotifications) {
 		return (
 			<div className="space-y-3 px-4 py-4">
 				<div className="space-y-1">
-					<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
-					<p className="text-xs text-muted-foreground">{normalizeApiError(error)}</p>
+					<div className="text-sm font-medium">Couldn&apos;t Load Notifications</div>
+					<p className="text-xs text-muted-foreground">Please try again.</p>
 				</div>
-				<Button size="sm" variant="outline" onClick={onRetry}>
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => {
+						onRetryInvitations();
+						onRetryInbox?.();
+					}}
+				>
 					Retry
 				</Button>
 			</div>
 		);
 	}
 
-	if (invitations.length === 0) {
+	if (!hasNotifications) {
 		const empty = getNotificationCenterEmptyCopy();
 		return (
 			<div className="flex items-start gap-3 px-4 py-5">
@@ -235,8 +305,113 @@ function NotificationCenterContent({
 	}
 
 	return (
-		<ul className="max-h-[26rem] overflow-y-auto">
-			{invitations.map((invitation, index) => {
+		<ul className="max-h-[26rem] divide-y overflow-y-auto">
+			{inboxNotifications.map((notification) => (
+				<li key={notification.id}>
+					<div className="flex items-start gap-3 px-4 py-3">
+						<IconChip
+							size="sm"
+							tint={
+								notification.severity === "destructive"
+									? "bg-destructive/10 text-destructive"
+									: notification.severity === "warning"
+										? "bg-warning/10 text-warning-foreground"
+										: undefined
+							}
+						>
+							<BellRing />
+						</IconChip>
+						<div className="min-w-0 flex-1 space-y-2">
+							<div className="flex min-w-0 items-start justify-between gap-3">
+								<div className="min-w-0">
+									<div className="text-sm font-medium">{notification.title}</div>
+									<div className="mt-0.5 text-xs text-muted-foreground">
+										{formatNotificationDate(notification.sentAt)}
+									</div>
+								</div>
+								<div className="flex shrink-0 items-center gap-1">
+									{!notification.opened ? <Badge variant="secondary">Unread</Badge> : null}
+									<Badge variant="outline">{notification.badge}</Badge>
+								</div>
+							</div>
+							<p className="text-xs text-muted-foreground">{notification.description}</p>
+							<div className="flex items-center justify-end gap-1.5">
+								{!notification.opened && onMarkInboxOpened ? (
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-sm"
+										title="Mark as read"
+										aria-label="Mark as read"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onMarkInboxOpened(notification)}
+									>
+										<Check />
+									</Button>
+								) : null}
+								{onDeleteInbox ? (
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-sm"
+										title="Delete notification"
+										aria-label="Delete notification"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onDeleteInbox(notification)}
+									>
+										<Trash2 />
+									</Button>
+								) : null}
+								{notification.actionLabel ? (
+									<Button
+										size="sm"
+										disabled={busyInboxId === notification.id}
+										onClick={() => onOpenInboxAction(notification)}
+									>
+										<ExternalLink />
+										{notification.actionLabel}
+									</Button>
+								) : null}
+							</div>
+						</div>
+					</div>
+				</li>
+			))}
+			{inboxLoading && inboxNotifications.length === 0 ? (
+				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+					<Spinner className="size-3.5" />
+					Loading Account Updates…
+				</li>
+			) : inboxError ? (
+				<li className="space-y-3 px-4 py-4">
+					<div className="space-y-1">
+						<div className="text-sm font-medium">Account Updates Unavailable</div>
+						<p className="text-xs text-muted-foreground">Please try again.</p>
+					</div>
+					{onRetryInbox ? (
+						<Button size="sm" variant="outline" onClick={onRetryInbox}>
+							Retry
+						</Button>
+					) : null}
+				</li>
+			) : null}
+			{invitationsLoading ? (
+				<li className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
+					<Spinner className="size-3.5" />
+					Loading Invitations…
+				</li>
+			) : invitationsError ? (
+				<li className="space-y-3 px-4 py-4">
+					<div className="space-y-1">
+						<div className="text-sm font-medium">Couldn&apos;t Load Invitations</div>
+						<p className="text-xs text-muted-foreground">{normalizeApiError(invitationsError)}</p>
+					</div>
+					<Button size="sm" variant="outline" onClick={onRetryInvitations}>
+						Retry
+					</Button>
+				</li>
+			) : null}
+			{invitations.map((invitation) => {
 				const accepting = acceptingId === invitation.id;
 				const declining = decliningId === invitation.id;
 				const busy = accepting || declining;
@@ -262,10 +437,7 @@ function NotificationCenterContent({
 										<Badge variant="outline">Viewer</Badge>
 									</div>
 								</div>
-								<p className="text-xs text-muted-foreground">
-									Open the Project after accepting to review shared resources. Adding it to an agent
-									is a separate step.
-								</p>
+								<p className="text-xs text-muted-foreground">{getProjectInvitationAccessCopy()}</p>
 							</div>
 							<div className="flex justify-end gap-1.5">
 								<Button
@@ -283,7 +455,6 @@ function NotificationCenterContent({
 								</Button>
 							</div>
 						</div>
-						{index < invitations.length - 1 ? <Separator /> : null}
 					</li>
 				);
 			})}
@@ -295,5 +466,14 @@ function formatInvitationDate(createdAt: string): string {
 	return new Date(createdAt).toLocaleDateString(undefined, {
 		month: "short",
 		day: "numeric",
+	});
+}
+
+function formatNotificationDate(sentAt: Date): string {
+	return sentAt.toLocaleString(undefined, {
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
 	});
 }
