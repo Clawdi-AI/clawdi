@@ -482,7 +482,7 @@ export function SessionDetailContent({
 				className="sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6"
 			>
 				<PageHeader
-					className="gap-2 sm:items-center"
+					className="gap-2"
 					title={summaryText}
 					status={
 						<DetailMeta>
@@ -575,7 +575,7 @@ export function SessionDetailContent({
 				/>
 
 				{session.has_content ? (
-					<div className="mt-2 border-t pt-2">
+					<div className="mt-2">
 						<div
 							className={cn(
 								"grid min-w-0 gap-2 md:items-center",
