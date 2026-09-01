@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
@@ -13,9 +12,11 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { getAuth } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
+import { writeEnvironmentRegistration } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
+import { getOrCreateMachineId } from "../lib/machine-identity";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
@@ -31,24 +32,25 @@ import {
 	uninstall as uninstallDaemonService,
 } from "../serve/installer";
 
-interface SetupOpts {
-	agent?: string;
+export interface LocalAgentSetupOpts {
 	yes?: boolean;
 	/** Commander sets this to false for --no-daemon. Undefined means default-on. */
 	daemon?: boolean;
 }
 
+interface SetupOpts extends LocalAgentSetupOpts {
+	agent?: string;
+}
+
 export async function setup(opts: SetupOpts) {
-	if (!isLoggedIn()) {
+	const auth = getAuth();
+	if (!auth) {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
 		process.exitCode = 1;
 		return;
 	}
 
-	const machineId = createHash("sha256")
-		.update(`${hostname()}-${process.platform}-${process.arch}`)
-		.digest("hex")
-		.slice(0, 16);
+	const machineId = getOrCreateMachineId();
 	const machineName = hostname();
 	const api = new ApiClient();
 
@@ -61,13 +63,21 @@ export async function setup(opts: SetupOpts) {
 		}
 		const type = opts.agent as AgentType;
 		const adapter = adapterRegistry[type].create();
-		if (!(await registerEnv(api, adapter, await adapter.getVersion(), machineId, machineName))) {
+		if (
+			!(await registerEnv(
+				api,
+				adapter,
+				await adapter.getVersion(),
+				machineId,
+				machineName,
+				auth.userId,
+			))
+		) {
 			process.exitCode = 1;
 			return;
 		}
-		await adapterRegistry[type].mcpLifecycle?.register();
-		if (adapter.skills) await installBuiltinSkill(type);
-		if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents();
+		await reconcileAgentIntegrations(adapter);
+		await maybeInstallDaemons(opts);
 		return;
 	}
 
@@ -129,17 +139,14 @@ export async function setup(opts: SetupOpts) {
 	let registeredCount = 0;
 	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
-		if (!(await registerEnv(api, adapter, version, machineId, machineName))) {
+		if (!(await registerEnv(api, adapter, version, machineId, machineName, auth.userId))) {
 			failedCount += 1;
 			continue;
 		}
 		registeredCount += 1;
-		await adapterRegistry[adapter.agentType].mcpLifecycle?.register();
-		if (adapter.skills) await installBuiltinSkill(adapter.agentType);
+		await reconcileAgentIntegrations(adapter);
 	}
-	if (registeredCount > 0 && (await shouldInstallDaemons(opts))) {
-		installDaemonsForRegisteredAgents();
-	}
+	if (registeredCount > 0) await maybeInstallDaemons(opts);
 	if (failedCount > 0) process.exitCode = 1;
 }
 
@@ -149,6 +156,7 @@ async function registerEnv(
 	agentVersion: string | null,
 	machineId: string,
 	machineName: string,
+	userId?: string,
 ): Promise<boolean> {
 	const agentType = adapter.agentType;
 	try {
@@ -165,13 +173,13 @@ async function registerEnv(
 			}),
 		);
 
-		const envDir = join(getClawdiDir(), "environments");
-		mkdirSync(envDir, { recursive: true });
-		writeFileSync(
-			join(envDir, `${agentType}.json`),
-			`${JSON.stringify({ id: env.id, agentType, machineId, machineName }, null, 2)}\n`,
-			{ mode: 0o600 },
-		);
+		writeEnvironmentRegistration({
+			id: env.id,
+			agentType,
+			machineId,
+			machineName,
+			...(userId ? { userId } : {}),
+		});
 
 		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
 		return true;
@@ -234,6 +242,15 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 		return false;
 	}
 	return result === true;
+}
+
+export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise<void> {
+	await adapterRegistry[adapter.agentType].mcpLifecycle?.register();
+	if (adapter.skills) await installBuiltinSkill(adapter.agentType);
+}
+
+export async function maybeInstallDaemons(opts: LocalAgentSetupOpts): Promise<void> {
+	if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents();
 }
 
 function installDaemonsForRegisteredAgents() {

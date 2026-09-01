@@ -200,7 +200,13 @@ describe("setup daemon install", () => {
 
 		await setup({ agent: "codex", yes: true, daemon: false });
 
-		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(true);
+		const registrationPath = join(home, ".clawdi", "environments", "codex.json");
+		expect(existsSync(registrationPath)).toBe(true);
+		expect(JSON.parse(readFileSync(registrationPath, "utf8"))).toMatchObject({
+			id: "env-codex",
+			agentType: "codex",
+			userId: "u1",
+		});
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
 	});

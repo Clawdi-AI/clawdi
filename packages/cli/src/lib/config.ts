@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { normalizeCloudApiBaseUrl, normalizeHostedDeployApiBaseUrl } from "./api-origin";
@@ -216,16 +216,28 @@ export function setAuth(auth: ClawdiAuth) {
 }
 
 export function clearAuth() {
+	const ownerUserId = getStoredAuth()?.userId?.trim();
+	if (ownerUserId) bindCachedEnvironmentsToUser(ownerUserId);
 	const p = authFile();
 	if (existsSync(p)) {
 		unlinkSync(p);
 	}
-	// Drop cached environment ids too — they belong to the user that just
-	// logged out. Surviving across an account switch is exactly how a stale
-	// env_id ends up in the next user's session uploads.
+}
+
+function bindCachedEnvironmentsToUser(userId: string): void {
 	const envDir = join(clawdiDir(), "environments");
-	if (existsSync(envDir)) {
-		rmSync(envDir, { recursive: true, force: true });
+	if (!existsSync(envDir)) return;
+	for (const fileName of readdirSync(envDir)) {
+		if (!fileName.endsWith(".json")) continue;
+		const path = join(envDir, fileName);
+		const value = readRecoverablePrivateJson<unknown>(path);
+		if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+		const registration = value as Record<string, unknown>;
+		if (typeof registration.id !== "string" || typeof registration.agentType !== "string") {
+			continue;
+		}
+		if (typeof registration.userId === "string") continue;
+		writeJson(path, { ...registration, userId });
 	}
 }
 

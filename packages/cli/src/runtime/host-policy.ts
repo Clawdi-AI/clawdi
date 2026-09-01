@@ -46,6 +46,10 @@ function hostedPolicy(): HostPolicy {
 		deniedCommands: [
 			{ command: "setup", reason: "runtime setup is managed by clawdi runtime init" },
 			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
+			{
+				command: "agent reconnect",
+				reason: "Connected Agent identity is managed outside hosted runtimes",
+			},
 			{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
 		],
 		managedState: [paths.serviceStateRoot, paths.runRoot],

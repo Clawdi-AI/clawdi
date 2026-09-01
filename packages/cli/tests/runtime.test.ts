@@ -2434,6 +2434,9 @@ describe("host policy", () => {
 		expect(deniedCommandReason(result.policy, "setup")).toBe(
 			"runtime setup is managed by clawdi runtime init",
 		);
+		expect(deniedCommandReason(result.policy, "agent reconnect")).toBe(
+			"Connected Agent identity is managed outside hosted runtimes",
+		);
 		expect(deniedCommandReason(result.policy, "update")).toBe(
 			"CLI updates are managed by the hosted runtime installation",
 		);
