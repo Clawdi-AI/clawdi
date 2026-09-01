@@ -52,8 +52,23 @@ jobs:
           dmg_path="$PWD/${dmg[0]}"
           mount="$RUNNER_TEMP/clawdi-dmg"
           runtime_home="$RUNNER_TEMP/clawdi-runtime"
+          attach_plist="$RUNNER_TEMP/clawdi-dmg-attach.plist"
           mkdir -p "$mount" "$runtime_home/home" "$runtime_home/state"
-          device=$(hdiutil attach -nobrowse -readonly -mountpoint "$mount" "${dmg[0]}" | sed -n '1s/[[:space:]].*//p')
+          trap 'hdiutil detach -force "$mount" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" -plist "${dmg[0]}" > "$attach_plist"
+          device=$(python3 - "$attach_plist" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as source:
+              entities = plistlib.load(source).get("system-entities", [])
+          device = next((entry.get("dev-entry") for entry in entities if entry.get("dev-entry")), None)
+          if not device:
+              raise SystemExit("hdiutil did not report an attached device")
+          print(device)
+          PY
+          )
+          rm -f "$attach_plist"
           test -n "$device"
           trap 'hdiutil detach -force "$device" >/dev/null 2>&1 || true' EXIT
           ditto "$mount/Clawdi.app" "$runtime_home/Clawdi.app"
