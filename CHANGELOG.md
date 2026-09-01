@@ -26,10 +26,24 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Managed Discord reconnects now discard expired interaction events after their
+  short-lived response tokens have been scrubbed, instead of repeatedly
+  crashing upgraded clients before later messages can be delivered.
 - Session detail search now preserves spaces while typing multi-word queries.
 - Session search now indexes very large messages in bounded chunks, so long
   transcripts remain fully searchable without exceeding PostgreSQL full-text
   limits; results and match navigation still point to the original message.
+
+## Clawdi CLI v0.14.34
+
+Package: `clawdi@0.14.34`
+
+### Fixed
+
+- Hosted runtime reconciliation now restarts a failed systemd service when the
+  current transaction changed that service or still needs to activate its
+  latest definition. This lets managed environment drop-ins recover after an
+  official runtime installer replaces the base unit.
 
 ## Clawdi CLI v0.14.33
 

@@ -16056,6 +16056,99 @@ async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_af
 
 
 @pytest.mark.asyncio
+async def test_discord_gateway_drops_scrubbed_interaction_and_delivers_next_message(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_discord_gateway_sessions(monkeypatch)
+    channel_id = "scrubbed-interaction-channel"
+    guild_id = "scrubbed-interaction-guild"
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-scrubbed-interaction-{uuid4().hex}",
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).scalar_one()
+    common = {
+        "account_id": account_id,
+        "bot_agent_link_id": UUID(created["agent_link_id"]),
+        "binding_id": binding.id,
+        "user_id": binding.user_id,
+        "direction": MESSAGE_DIRECTION_INBOUND,
+        "external_chat_id": binding.external_chat_id,
+    }
+    scrubbed = ChannelMessage(
+        **common,
+        provider_message_id="scrubbed-interaction",
+        payload={
+            "t": "INTERACTION_CREATE",
+            "d": {
+                "id": "scrubbed-interaction",
+                "application_id": DISCORD_TEST_APPLICATION_ID,
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "data": {"name": "expired"},
+            },
+        },
+    )
+    valid = ChannelMessage(
+        **common,
+        provider_message_id="message-after-scrubbed-interaction",
+        text="still deliver this",
+        payload={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "message-after-scrubbed-interaction",
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "content": "still deliver this",
+                "author": {"id": "scrubbed-interaction-user"},
+            },
+        },
+    )
+    db_session.add_all([scrubbed, valid])
+    await db_session.commit()
+
+    async def fake_provider_request(*, account, method: str, path: str, **_kwargs):
+        assert path == f"channels/{channel_id}"
+        return shared_router.DiscordProviderResult(
+            content=json.dumps(
+                {"id": channel_id, "guild_id": guild_id, "type": 0, "name": "scrubbed"}
+            ).encode(),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(discord_router, "request_discord_provider", fake_provider_request)
+    _install_discord_gateway_test_session_factory(monkeypatch)
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            assert websocket.receive_json()["t"] == "READY"
+            assert websocket.receive_json()["t"] == "GUILD_CREATE"
+            assert websocket.receive_json()["t"] == "CHANNEL_CREATE"
+            dispatch = websocket.receive_json()
+            assert dispatch["t"] == "MESSAGE_CREATE"
+            assert dispatch["d"]["id"] == "message-after-scrubbed-interaction"
+            websocket.send_json({"op": 1, "d": dispatch["s"]})
+            assert websocket.receive_json() == {"op": 11, "d": None}
+
+    await db_session.refresh(scrubbed)
+    await db_session.refresh(valid)
+    assert scrubbed.delivered_at is not None
+    assert valid.delivered_at is not None
+
+
+@pytest.mark.asyncio
 async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
