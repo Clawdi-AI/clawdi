@@ -26,6 +26,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Managed Discord connections now reset reconnect backoff after a successful
+  Gateway session and resume immediately when Discord requests a reconnect,
+  avoiding minute-long offline windows after earlier transient failures.
 - Managed Discord reconnects now discard expired interaction events after their
   short-lived response tokens have been scrubbed, instead of repeatedly
   crashing upgraded clients before later messages can be delivered.
