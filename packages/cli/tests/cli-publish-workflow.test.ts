@@ -36,7 +36,10 @@ const manifestContract = readFileSync(
 );
 const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
-) as { publishConfig?: { access?: string; tag?: unknown } };
+) as {
+	publishConfig?: { access?: string; tag?: unknown };
+	scripts?: Record<string, string>;
+};
 
 describe("CLI publish workflow contract", () => {
 	test("keeps current-run release decisions inside the protected publish topology", () => {
@@ -143,8 +146,12 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
 		expect(workflow).toContain("run: bun run typecheck");
-		expect(workflow).toContain("- name: Test (ephemeral internal suite)");
-		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1 packages/cli");
+		const testStep = build.steps?.find((step) => step.name === "Test (ephemeral internal suite)");
+		expect(testStep).toMatchObject({
+			"timeout-minutes": 20,
+			run: "bun run --cwd packages/cli test:internal",
+		});
+		expect(cliPackage.scripts?.["test:internal"]).toContain("--timeout=30000");
 		expect(workflow).toContain("- name: Native lifecycle (ephemeral internal suite)");
 		expect(workflow.indexOf("- name: Test")).toBeLessThan(
 			workflow.indexOf("- name: Build package and native release matrix"),
