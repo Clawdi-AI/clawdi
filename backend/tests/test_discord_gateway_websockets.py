@@ -306,6 +306,129 @@ async def test_transient_discord_gateway_failures_use_bounded_exponential_backof
     assert delays == [1, 2, 4, 4, 1]
 
 
+@pytest.mark.parametrize("event_type", ["READY", "RESUMED"])
+@pytest.mark.asyncio
+async def test_established_discord_gateway_sessions_reset_reconnect_backoff(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
+) -> None:
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(engine, expire_on_commit=False),
+        lock_engine=engine,
+        reconnect_initial_seconds=1,
+        reconnect_max_seconds=4,
+    )
+    stop = asyncio.Event()
+    attempts = 0
+    delays: list[float] = []
+
+    class NoopGatewayConnection:
+        async def send(self, _message: str) -> None:
+            return None
+
+    async def record_dispatch(*_args, **_kwargs) -> bool:
+        return False
+
+    async def run_account(_account_id, _stop, state):
+        nonlocal attempts
+        attempts += 1
+        if attempts in {1, 2}:
+            raise OSError("temporary DNS failure")
+        if attempts == 3:
+            frame = {
+                "op": 0,
+                "t": event_type,
+                "s": 3,
+                "d": (
+                    {
+                        "session_id": "session-1",
+                        "resume_gateway_url": "wss://gateway.discord.gg/resume",
+                    }
+                    if event_type == "READY"
+                    else None
+                ),
+            }
+            await worker._handle_gateway_frame(
+                uuid4(),
+                _gateway_json(frame),
+                state,
+                NoopGatewayConnection(),
+            )
+            raise OSError("disconnect after established session")
+        if attempts == 5:
+            stop.set()
+            return True
+        raise AssertionError(f"unexpected attempt {attempts}")
+
+    async def record_delay(_stop, timeout_seconds: float) -> None:
+        delays.append(timeout_seconds)
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    monkeypatch.setattr(discord_gateway_worker_module, "_sleep_until_stop", record_delay)
+    monkeypatch.setattr(
+        discord_gateway_worker_module,
+        "record_discord_gateway_dispatch",
+        record_dispatch,
+    )
+
+    await worker._run_account_forever(uuid4(), stop)
+
+    assert delays == [1, 2, 1, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_discord_reconnect_opcode_retries_immediately_with_resume_state(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(engine, expire_on_commit=False),
+        lock_engine=engine,
+        reconnect_initial_seconds=1,
+        reconnect_max_seconds=4,
+    )
+    stop = asyncio.Event()
+    attempts = 0
+    delays: list[tuple[int, float]] = []
+
+    class NoopGatewayConnection:
+        async def send(self, _message: str) -> None:
+            return None
+
+    async def run_account(_account_id, _stop, state):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            state.session_established = True
+            state.session_id = "session-1"
+            state.resume_gateway_url = "wss://gateway.discord.gg/resume"
+            state.sequence = 3
+            await worker._handle_gateway_frame(
+                uuid4(),
+                _gateway_json({"op": 7, "d": None}),
+                state,
+                NoopGatewayConnection(),
+            )
+        if attempts == 2:
+            assert state.can_resume()
+            assert state.session_established is False
+            stop.set()
+            return True
+        raise AssertionError(f"unexpected attempt {attempts}")
+
+    async def record_delay(_stop, timeout_seconds: float) -> None:
+        delays.append((attempts, timeout_seconds))
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    monkeypatch.setattr(discord_gateway_worker_module, "_sleep_until_stop", record_delay)
+
+    await worker._run_account_forever(uuid4(), stop)
+
+    assert attempts == 2
+    assert delays == [(2, 1)]
+
+
 @pytest.mark.parametrize("resume", [False, True], ids=["identify", "resume"])
 @pytest.mark.asyncio
 async def test_real_websockets_discord_gateway_transport_contract(
