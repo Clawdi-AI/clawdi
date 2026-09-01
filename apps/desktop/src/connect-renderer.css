@@ -22,10 +22,17 @@
 	box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+	height: 100%;
+}
+
 body {
 	margin: 0;
 	min-width: 480px;
 	min-height: 560px;
+	overflow: hidden;
 	background:
 		radial-gradient(
 			circle at 82% -12%,
@@ -49,7 +56,10 @@ select {
 }
 
 .app-shell {
-	min-height: 100vh;
+	display: grid;
+	height: 100%;
+	min-height: 0;
+	grid-template-rows: 86px minmax(0, 1fr);
 }
 
 .titlebar {
@@ -124,12 +134,19 @@ h1 {
 }
 
 .content {
+	min-height: 0;
+	overflow-y: auto;
 	padding: 30px;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
 }
 
 .failure-content {
+	display: grid;
+	width: 100%;
 	max-width: 480px;
-	margin: 10vh auto 0;
+	margin: 0 auto;
+	align-items: center;
 }
 
 .failure-actions {
@@ -138,6 +155,8 @@ h1 {
 
 .stack {
 	display: grid;
+	min-height: 100%;
+	align-content: start;
 	gap: 20px;
 }
 
@@ -197,6 +216,7 @@ h1 {
 	display: flex;
 	justify-content: flex-end;
 	gap: 9px;
+	margin-top: auto;
 }
 
 .install-notice {
@@ -247,7 +267,8 @@ h1 {
 
 .button:focus-visible,
 .icon-button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
 	outline: 2px solid color-mix(in oklch, var(--primary) 55%, transparent);
 	outline-offset: 2px;
 }
@@ -369,6 +390,16 @@ input:focus-visible {
 	align-items: flex-start;
 	justify-content: space-between;
 	gap: 16px;
+}
+
+.section-heading > div {
+	min-width: 0;
+}
+
+.section-heading p {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .icon-button {

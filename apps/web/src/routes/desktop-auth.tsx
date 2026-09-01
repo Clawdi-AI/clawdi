@@ -20,10 +20,18 @@ function DesktopAuthPage() {
 	const desktopBridge = useDesktopBridge();
 	const attempted = useRef(false);
 	const [failed, setFailed] = useState(false);
+	const [recovering, setRecovering] = useState<"retry" | "sign-in" | null>(null);
 
-	function recover() {
+	async function recover(action: "retry" | "sign-in") {
 		if (desktopBridge) {
-			void desktopBridge.signIn().catch(() => setFailed(true));
+			setRecovering(action);
+			try {
+				await (action === "retry" ? desktopBridge.retryDashboard() : desktopBridge.signIn());
+			} catch {
+				setFailed(true);
+			} finally {
+				setRecovering(null);
+			}
 			return;
 		}
 		window.location.replace("/sign-in");
@@ -69,7 +77,22 @@ function DesktopAuthPage() {
 				{failed ? (
 					<>
 						<h1 className="text-lg font-semibold">Desktop sign-in expired</h1>
-						<Button onClick={recover}>{desktopBridge ? "Try again" : "Sign in"}</Button>
+						{desktopBridge ? (
+							<div className="flex items-center gap-2">
+								<Button
+									disabled={recovering !== null}
+									onClick={() => void recover("sign-in")}
+									variant="outline"
+								>
+									Sign in again
+								</Button>
+								<Button disabled={recovering !== null} onClick={() => void recover("retry")}>
+									{recovering === "retry" ? "Retrying…" : "Try again"}
+								</Button>
+							</div>
+						) : (
+							<Button onClick={() => void recover("sign-in")}>Sign in</Button>
+						)}
 					</>
 				) : (
 					<>
