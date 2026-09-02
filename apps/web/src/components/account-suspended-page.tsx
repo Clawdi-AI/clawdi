@@ -24,10 +24,10 @@ export function AccountSuspendedPage({
 					<ShieldOff className="size-5" aria-hidden="true" />
 				</div>
 				<h1 id="account-suspended-title" className="mt-5 text-xl font-semibold">
-					Account deactivated
+					Account suspended
 				</h1>
 				<p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-					Your account has been deactivated and can no longer access Clawdi.
+					Your account has been suspended due to a violation of the Clawdi User Agreement.
 				</p>
 				<p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
 					Contact support if you believe this is a mistake or need help.
