@@ -93,20 +93,24 @@ function readManagedSystemdUnits(
 function changedSystemdUnits(
 	before: Map<string, string>,
 	after: Map<string, string>,
+	invalidated: readonly string[] = [],
 ): { added: string[]; changed: string[]; removed: string[]; present: string[] } {
-	const added: string[] = [];
-	const changed: string[] = [];
+	const added = new Set<string>();
+	const changed = new Set<string>();
 	const removed: string[] = [];
 	for (const [name, contents] of after) {
-		if (!before.has(name)) added.push(name);
-		else if (before.get(name) !== contents) changed.push(name);
+		if (!before.has(name)) added.add(name);
+		else if (before.get(name) !== contents) changed.add(name);
+	}
+	for (const name of invalidated) {
+		if (before.has(name) && after.has(name)) changed.add(name);
 	}
 	for (const name of before.keys()) {
 		if (!after.has(name)) removed.push(name);
 	}
 	return {
-		added: added.sort(),
-		changed: changed.sort(),
+		added: [...added].sort(),
+		changed: [...changed].sort(),
 		removed: removed.sort(),
 		present: [...after.keys()].sort(),
 	};
@@ -131,6 +135,7 @@ export function applySystemdRuntimeUpdate(
 	opts: {
 		recoverFailedUnits?: boolean;
 		restartChangedUnits?: boolean;
+		invalidatedUserUnits?: readonly string[];
 		activationScope?: {
 			systemUnits: readonly string[];
 			userUnits: readonly string[];
@@ -144,7 +149,7 @@ export function applySystemdRuntimeUpdate(
 	userUnitsChanged: string[];
 } {
 	const allSystem = changedSystemdUnits(before.system, after.system);
-	const allUser = changedSystemdUnits(before.user, after.user);
+	const allUser = changedSystemdUnits(before.user, after.user, opts.invalidatedUserUnits);
 	const filterChanges = (
 		changes: ReturnType<typeof changedSystemdUnits>,
 		units: Iterable<string>,

@@ -47,6 +47,7 @@ type RuntimeSystemdApplyResult = {
 interface RuntimeSystemdApplySignal {
 	staleSystemUnits: string[];
 	staleUserUnits: string[];
+	invalidatedUserUnits: string[];
 }
 export interface RuntimeSystemdApplyHooks {
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;

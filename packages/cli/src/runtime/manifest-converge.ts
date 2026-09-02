@@ -1038,6 +1038,7 @@ function activateRuntimeServices(
 		const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 			staleSystemUnits: [],
 			staleUserUnits: [],
+			invalidatedUserUnits: [],
 		});
 		if (!prerequisite.applied) {
 			throw new Error("transparent-egress system prerequisites did not reach readiness");
@@ -1067,6 +1068,7 @@ function activateRuntimeServices(
 		const activation = opts.systemdApply.activate({
 			staleSystemUnits: state.staleSystemdFiles.systemUnits,
 			staleUserUnits: state.staleSystemdFiles.userUnits,
+			invalidatedUserUnits: officialServicePlan.pending.map((item) => item.unitName),
 		});
 		if (!activation.applied) {
 			throw new Error("systemd runtime services did not reach required readiness");
