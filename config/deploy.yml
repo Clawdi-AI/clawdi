@@ -50,17 +50,16 @@ servers:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>
     options:
-      memory: 6g # two embedding-model workers (~1.6G resident each) + launch-load headroom
+      memory: 6g # local embedding model + launch-load headroom
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
       # tini as PID 1 reaps orphaned subprocesses (zombie prevention).
       init: true
     env:
       clear:
-        # Discord Resume replay and provider rate-limit smoothing are
-        # process-local; PostgreSQL inbox state and upstream 429s stay authoritative.
-        WEB_CONCURRENCY: 2
-        # Each uvicorn worker owns its SQLAlchemy pool. Two 10+10 pools keep
-        # the web role at the previous 40-connection theoretical maximum.
+        # Each uvicorn worker loads its own local embedding model, so the
+        # production web role must stay single-process on this host.
+        WEB_CONCURRENCY: 1
+        # Keep the single worker's SQLAlchemy pool bounded at 10+10.
         DB_POOL_SIZE: 10
         DB_MAX_OVERFLOW: 10
         PROMETHEUS_MULTIPROC_DIR: /tmp/clawdi-prometheus-multiproc
