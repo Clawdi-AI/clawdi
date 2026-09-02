@@ -7152,6 +7152,14 @@ exit 64
 				testBundleEtag("etag-recovered"),
 			);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
+
+			const refreshFailure = await runOnce(() => {
+				throw new TypeError("fetch failed");
+			}, "error");
+			expect(refreshFailure.healthImpact).toBe("resource_projection");
+			expect(readRuntimeAppliedState(getRuntimePaths())?.etag).toBe(
+				testBundleEtag("etag-recovered"),
+			);
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;

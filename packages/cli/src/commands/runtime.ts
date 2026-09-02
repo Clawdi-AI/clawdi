@@ -1099,6 +1099,7 @@ function runtimeWatchEventForOutcome(
 			mode: outcome.failure.mode,
 			activeGeneration: outcome.failure.activeGeneration ?? null,
 			rejectedGeneration: outcome.failure.rejectedGeneration ?? null,
+			healthImpact: "resource_projection",
 			...(outcome.failure.etag ? { etag: outcome.failure.etag } : {}),
 		});
 	}
