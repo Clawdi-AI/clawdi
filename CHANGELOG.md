@@ -26,6 +26,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Hosted runtime reconciliation now reloads user systemd services after an
+  official runtime installer replaces their unit definitions, even when the
+  restored managed drop-in is byte-for-byte unchanged.
 - Managed Discord connections now reset reconnect backoff after a successful
   Gateway session and resume immediately when Discord requests a reconnect,
   avoiding minute-long offline windows after earlier transient failures.

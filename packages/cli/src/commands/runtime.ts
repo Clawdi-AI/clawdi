@@ -1336,7 +1336,7 @@ async function applyRuntimeDesiredState(
 						);
 					}
 				},
-				activate: ({ staleSystemUnits, staleUserUnits }) => {
+				activate: ({ staleSystemUnits, staleUserUnits, invalidatedUserUnits }) => {
 					// Official installers run after the prerequisite phase and add their
 					// base units, so final reconciliation must observe a fresh rendered state.
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -1353,6 +1353,7 @@ async function applyRuntimeDesiredState(
 							{
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								restartChangedUnits: load.source === "last-good-cache",
+								invalidatedUserUnits,
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],

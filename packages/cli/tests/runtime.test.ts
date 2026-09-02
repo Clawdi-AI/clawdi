@@ -5944,6 +5944,44 @@ cp '${sdkSource}' '${sdkTarget}'
 		}
 	});
 
+	it("reapplies an invalidated user unit when its rendered snapshot is unchanged", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-invalidation.log");
+		const systemctlStateRoot = join(root, "systemctl-invalidation-state");
+		const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
+		const snapshot = readSystemdUnitSnapshot(paths);
+		const unit = "openclaw-gateway.service";
+
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+		});
+		seedFakeSystemdSnapshotProcesses(paths, systemctlStateRoot, snapshot);
+		writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "failed"), "\n");
+		writeFileSync(fakeSystemdStatePath(systemctlStateRoot, "user", unit, "reload"), "\n");
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+
+		const activation = applySystemdRuntimeUpdate(paths, snapshot, snapshot, {
+			recoverFailedUnits: false,
+			invalidatedUserUnits: [unit],
+		});
+
+		expect(activation).toMatchObject({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [unit],
+		});
+		const calls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+		expect(calls).toContain("--user daemon-reload");
+		expect(calls).toContain(`--user reset-failed ${unit}`);
+		expect(calls).toContain(`--user start ${unit}`);
+	});
+
 	it("runtime watch keeps polling after SSE authentication failure", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");

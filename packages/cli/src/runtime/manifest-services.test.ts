@@ -1355,6 +1355,7 @@ esac
 
 		let prerequisiteActivations = 0;
 		let finalActivations = 0;
+		let invalidatedUserUnits: string[] = [];
 		const result = convergeRuntimeManifest(
 			{
 				manifest,
@@ -1369,8 +1370,9 @@ esac
 						prerequisiteActivations += 1;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
-					activate: () => {
+					activate: (signal) => {
 						finalActivations += 1;
+						invalidatedUserUnits = signal.invalidatedUserUnits;
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 					},
 				},
@@ -1380,6 +1382,7 @@ esac
 		expect(result.installErrors).toEqual([]);
 		expect(prerequisiteActivations).toBe(0);
 		expect(finalActivations).toBe(1);
+		expect(invalidatedUserUnits).toEqual(["hermes-gateway.service", "openclaw-gateway.service"]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-4)).toEqual([
 			"hermes drop-in absent",
 			"hermes gateway install --force",
