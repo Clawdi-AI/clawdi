@@ -166,7 +166,7 @@ def test_legacy_mcp_compatibility_routes_and_schema():
 
 @pytest.mark.asyncio
 async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeypatch):
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.config import settings
     from app.models.user import User
     from app.services.composio import verify_mcp_bridge_token
@@ -183,7 +183,7 @@ async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeyp
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
     monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
     monkeypatch.setattr(settings, "public_api_url", "https://api.example.test/")
-    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_auth_short_session] = fake_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -321,7 +321,7 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.user import User
     from app.routes import mcp_bridge
@@ -342,7 +342,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", no_connector_tools)
-    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_auth_short_session] = fake_auth
     app.dependency_overrides[get_session] = fake_session
     try:
         transport = ASGITransport(app=app)
@@ -384,7 +384,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch):
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.user import User
     from app.routes import mcp_bridge
@@ -468,7 +468,7 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_composio_session)
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", fake_connector_tools)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
-    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_auth_short_session] = fake_auth
     app.dependency_overrides[get_session] = fake_db_session
     try:
         transport = ASGITransport(app=app)
@@ -491,7 +491,7 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
             )
     finally:
         app.dependency_overrides.pop(get_session, None)
-        app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
 
     listed_tools = listed.json()["result"]["tools"]
     listed_composio_tool = next(
@@ -508,7 +508,7 @@ async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
     seed_user,
     monkeypatch,
 ):
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.models.memory import Memory
@@ -583,7 +583,7 @@ async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", no_connector_tools)
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -613,7 +613,7 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
     db_session,
     seed_user,
 ):
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.models.session import Session
@@ -684,7 +684,7 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
         )
 
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -1124,7 +1124,7 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
     """A scoped key without Connector permissions cannot list or invoke them."""
     from datetime import timedelta
 
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.routes import mcp_bridge
@@ -1166,7 +1166,7 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", fake_connector_tools)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -1199,7 +1199,7 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
             )
     finally:
         app.dependency_overrides.pop(get_session, None)
-        app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
 
     assert listed.status_code == 200, listed.text
     tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
@@ -1221,7 +1221,11 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     seed_user,
     monkeypatch,
 ):
-    from app.core.auth import AuthContext, get_auth, is_runtime_deployment_principal
+    from app.core.auth import (
+        AuthContext,
+        get_auth_short_session,
+        is_runtime_deployment_principal,
+    )
     from app.core.database import get_session
     from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
     from app.models.session import Session
@@ -1310,7 +1314,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
         "application/json",
     )
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -1397,7 +1401,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
             )
     finally:
         app.dependency_overrides.pop(get_session, None)
-        app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
         await mcp_bridge.file_store.delete(session_b_file_key)
 
     names = [tool["name"] for tool in listed.json()["result"]["tools"]]
@@ -1438,7 +1442,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
     """An env-bound agent key must not use a share URL to owner-bypass
     into same-user sessions from other environments. Own-env sessions and
     actively link-shared sessions stay readable."""
-    from app.core.auth import AuthContext, get_auth
+    from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.models.session import Session
@@ -1498,7 +1502,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
             "application/json",
         )
     app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
 
     async def read_share(ac, session_id):
         response = await ac.post(
@@ -1527,7 +1531,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
             linked = await read_share(ac, session_b.id)
     finally:
         app.dependency_overrides.pop(get_session, None)
-        app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
         for file_key in (session_a_file_key, session_b_file_key):
             await mcp_bridge.file_store.delete(file_key)
 

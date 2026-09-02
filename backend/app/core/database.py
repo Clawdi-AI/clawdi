@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import anyio
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, ExceptionContext
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
@@ -112,17 +113,18 @@ async def _close_session(session: AsyncSession) -> None:
     close_task = asyncio.create_task(session.close())
     cancellation: asyncio.CancelledError | None = None
 
-    while not close_task.done():
-        try:
-            await asyncio.shield(close_task)
-        except asyncio.CancelledError as exc:
-            cancellation = exc
-        except Exception as exc:
-            if cancellation is None:
-                raise
+    with anyio.CancelScope(shield=True):
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception as exc:
+                if cancellation is None:
+                    raise
 
-            log.exception("Database session cleanup failed during request cancellation")
-            raise cancellation from exc
+                log.exception("Database session cleanup failed during request cancellation")
+                raise cancellation from exc
 
     try:
         close_task.result()

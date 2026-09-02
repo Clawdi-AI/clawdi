@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     AuthContext,
-    get_auth,
+    get_auth_short_session,
     is_env_bound_api_key,
     is_runtime_deployment_principal,
     require_auth_scopes,
@@ -547,7 +547,7 @@ async def mcp_composio_post(request: Request) -> JsonObject:
 @router.post("/clawdi", include_in_schema=False, response_model=None)
 async def mcp_clawdi_post(
     request: Request,
-    auth: AuthContext = Depends(get_auth),
+    auth: AuthContext = Depends(get_auth_short_session),
     db: AsyncSession = Depends(get_session),
 ) -> JsonObject | list[JsonObject] | Response:
     """Agent-facing stateless MCP endpoint backed directly by Clawdi Cloud."""

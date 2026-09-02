@@ -1049,6 +1049,13 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     return auth
 
 
+async def require_user_auth_short_session(
+    auth: AuthContext = Depends(get_auth_short_session),
+) -> AuthContext:
+    """Apply the user-level gate without holding auth DB state across slow I/O."""
+    return await require_user_auth(auth)
+
+
 def require_clerk_id(auth: AuthContext) -> str:
     """Return the Clerk id required by user-scoped integrations."""
     clerk_id = auth.user.clerk_id

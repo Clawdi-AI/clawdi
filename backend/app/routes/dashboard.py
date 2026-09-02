@@ -45,6 +45,7 @@ async def get_stats(
     days: int = Query(default=365, ge=1, le=_DASHBOARD_DAYS_MAX),
 ) -> DashboardStatsResponse:
     response.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=30"
+    clerk_id = require_clerk_id(auth)
     now = datetime.now(UTC)
     since = now - timedelta(days=days)
     current_floor = now.date() - timedelta(days=1)
@@ -246,7 +247,8 @@ async def get_stats(
         if item["contribution_day"] is not None
     }
 
-    connectors_count = await _cached_connectors_count(require_clerk_id(auth))
+    await db.commit()
+    connectors_count = await _cached_connectors_count(clerk_id)
 
     return DashboardStatsResponse(
         total_sessions=int(row["total_sessions"] or 0),

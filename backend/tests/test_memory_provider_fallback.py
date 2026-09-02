@@ -189,6 +189,7 @@ async def test_get_memory_provider_uses_mem0_when_exports_and_constructor_are_us
     assert mem0_available() is True
     provider = await get_memory_provider(str(seed_user.id), db_session)
     assert isinstance(provider, Mem0Provider)
+    assert not db_session.in_transaction()
     assert constructed == ["mock-api-key"]
 
 
@@ -205,3 +206,19 @@ async def test_get_memory_provider_uses_builtin_when_no_setting(
 async def test_get_memory_provider_handles_unknown_user_id(db_session: AsyncSession) -> None:
     provider = await get_memory_provider(str(uuid.uuid4()), db_session)
     assert isinstance(provider, BuiltinProvider)
+
+
+@pytest.mark.asyncio
+async def test_builtin_search_releases_transaction_before_embedding(
+    db_session: AsyncSession,
+    seed_user: User,
+) -> None:
+    class TransactionCheckingEmbedder:
+        async def embed(self, text: str) -> list[float]:
+            del text
+            assert not db_session.in_transaction()
+            return [0.0] * 768
+
+    provider = BuiltinProvider(db_session, embedder=TransactionCheckingEmbedder())
+
+    assert await provider.search(str(seed_user.id), "lifecycle probe") == []

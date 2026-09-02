@@ -58,6 +58,7 @@ class BuiltinProvider:
     ) -> MemoryItem:
         vec: list[float] | None = None
         if self.embedder is not None:
+            await self.db.commit()
             try:
                 vec = await self.embedder.embed(content)
             except EmbeddingUpstreamError as exc:
@@ -95,6 +96,7 @@ class BuiltinProvider:
         if self.embedder is None:
             return fts_rows
 
+        await self.db.commit()
         try:
             vec_rows = await self._search_vector(user_id, query, limit, category)
         except Exception as e:
@@ -384,12 +386,14 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         # land in user_settings, so this branch is the safety net,
         # not the primary gate.
         try:
-            return Mem0Provider(api_key=api_key)
+            provider = Mem0Provider(api_key=api_key)
         except MemoryProviderUnavailableError:
             log.warning(
                 "memory_provider=mem0 but the Mem0 SDK boundary is unavailable; "
                 "falling back to builtin"
             )
             return BuiltinProvider(db, embedder=resolve_embedder())
+        await db.commit()
+        return provider
 
     return BuiltinProvider(db, embedder=resolve_embedder())
