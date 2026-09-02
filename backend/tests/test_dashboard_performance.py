@@ -246,6 +246,7 @@ async def test_dashboard_stats_matches_visible_inventory_and_one_week_started_at
 @pytest.mark.asyncio
 async def test_dashboard_stats_caches_connector_count(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     monkeypatch,
 ) -> None:
     from app.services import composio
@@ -258,6 +259,7 @@ async def test_dashboard_stats_caches_connector_count(
         _clerk_id: str,
     ) -> list[ConnectorConnectionResponse]:
         nonlocal calls
+        assert not db_session.in_transaction()
         calls += 1
         return [
             ConnectorConnectionResponse(

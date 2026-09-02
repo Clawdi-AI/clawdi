@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from httpx import ASGITransport
 from sqlalchemy import select
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, get_auth, get_auth_short_session
 from app.core.database import get_session
 from app.main import app
 from app.models.agent_project_binding import AgentProjectBinding
@@ -252,6 +252,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
     monkeypatch.setattr(mcp_bridge, "_connector_mcp_tools", no_connectors)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -480,6 +481,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
 
 
 @pytest.mark.asyncio
@@ -609,6 +611,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
     monkeypatch.setattr(mcp_bridge, "_connector_mcp_tools", colliding_connectors)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -664,3 +667,4 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)

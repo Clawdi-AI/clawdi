@@ -3,6 +3,7 @@ name = "clawdi-backend"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "anyio>=4.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "sqlalchemy[asyncio]>=2.0",
