@@ -78,6 +78,11 @@ import { snapshotSkillArchive } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
 import { shouldIgnoreUserSkill } from "../runtime/managed-skill-reservation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
+import {
+	markRuntimeUserActivityUnknown,
+	recordRuntimeUserActivityScan,
+	runtimeUserActivityNeedsMaterialization,
+} from "../runtime/user-activity-state";
 
 export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observation-producer";
 
@@ -959,15 +964,22 @@ async function prepareSessionSync(
 	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
+			const materializeActivity =
+				request.kind === "complete" &&
+				runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
 			const scan = await scanSessionModule(
 				sessions,
 				request,
-				loadFencedSessionSourceRevisions(api, opts, protocol),
+				materializeActivity ? new Map() : loadFencedSessionSourceRevisions(api, opts, protocol),
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
+			const activitySessions: RawSession[] = [];
+			let activityComplete = true;
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
+				activitySessions.push(...batch.sessions);
+				activityComplete &&= batch.activityComplete !== false;
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
@@ -996,6 +1008,12 @@ async function prepareSessionSync(
 				confirmedSourceRevisions.push(...result.confirmedSourceRevisions);
 				if (opts.abort.aborted) return;
 			}
+			recordRuntimeUserActivityScan({
+				agentType: opts.adapter.agentType,
+				sessions: activitySessions,
+				complete: scan.coverage === "complete",
+				activityComplete,
+			});
 			persistFencedSessionSourceRevisions(confirmedSourceRevisions);
 			if (scan.coverage === "complete") {
 				health.clearAbsent("push", "session:", observedResources);
@@ -1004,6 +1022,7 @@ async function prepareSessionSync(
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
 		} catch (error) {
 			if (opts.abort.aborted) return;
+			markRuntimeUserActivityUnknown(opts.adapter.agentType);
 			health.set("push", "session_scan", `session scan: ${toErrorMessage(error)}`);
 			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(error) });
 		}

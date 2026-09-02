@@ -139,6 +139,70 @@ class HostedRuntimeObservedAgentPluginsV1(RuntimeObservationRequestModel):
                 raise ValueError("Agent Plugin observation must match applied identity")
 
 
+RuntimeUserActivityClassification = Literal[
+    "known_last_user_input",
+    "known_no_user_input",
+    "unknown",
+]
+
+
+class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    classifier_version: Literal[1] = Field(alias="classifierVersion")
+    classification: RuntimeUserActivityClassification
+    last_user_input_at: datetime | None = Field(alias="lastUserInputAt")
+    observed_at: datetime = Field(alias="observedAt")
+    complete_at: datetime | None = Field(alias="completeAt")
+    enabled_runtimes: list[Literal["hermes", "openclaw"]] = Field(
+        alias="enabledRuntimes",
+        min_length=1,
+        max_length=2,
+    )
+    error: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("last_user_input_at", "observed_at", "complete_at", mode="before")
+    @classmethod
+    def validate_activity_timestamp(cls, value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("runtime activity timestamps must be ISO 8601") from exc
+        else:
+            raise ValueError("runtime activity timestamps must be ISO 8601 strings")
+        if parsed.tzinfo is None:
+            raise ValueError("runtime activity timestamps must include a timezone")
+        return parsed.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def validate_activity_state(self) -> HostedRuntimeObservedUserActivityV1:
+        if len(self.enabled_runtimes) != len(set(self.enabled_runtimes)):
+            raise ValueError("enabledRuntimes must be unique")
+        if self.enabled_runtimes != sorted(self.enabled_runtimes):
+            raise ValueError("enabledRuntimes must be sorted")
+        if self.classification == "known_last_user_input" and self.last_user_input_at is None:
+            raise ValueError("known activity requires lastUserInputAt")
+        if self.classification == "known_no_user_input" and self.last_user_input_at is not None:
+            raise ValueError("known empty activity cannot include lastUserInputAt")
+        if self.classification != "unknown" and self.complete_at is None:
+            raise ValueError("known activity requires completeAt")
+        if self.classification == "unknown" and self.error is None:
+            raise ValueError("unknown activity requires error")
+        if self.classification != "unknown" and self.error is not None:
+            raise ValueError("known activity cannot include error")
+        if self.complete_at is not None and self.complete_at > self.observed_at:
+            raise ValueError("completeAt cannot be later than observedAt")
+        if self.last_user_input_at is not None and self.last_user_input_at > self.observed_at:
+            raise ValueError("lastUserInputAt cannot be later than observedAt")
+        return self
+
+
 class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     """Strict v2 companion event; deliberately separate from the frozen v1 wire model."""
 
@@ -161,6 +225,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
     agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(
         alias="agentPlugins",
+        default=None,
+    )
+    user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(
+        alias="userActivity",
         default=None,
     )
     error: str | None = Field(default=None, max_length=4000)

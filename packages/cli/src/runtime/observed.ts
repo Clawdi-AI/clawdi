@@ -17,11 +17,12 @@ import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
 import { runtimeUserName } from "./systemd-user";
+import { readRuntimeUserActivityState, runtimeUserActivityStatePath } from "./user-activity-state";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
 export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
-	Pick<components["schemas"]["RuntimeObservationEventV2"], "agentPlugins">;
+	Pick<components["schemas"]["RuntimeObservationEventV2"], "agentPlugins" | "userActivity">;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
 type HostedRuntimeObservedProviderPayload =
@@ -86,10 +87,42 @@ export function readHostedRuntimeObserved(
 		});
 		if (agentPlugins) observed.agentPlugins = agentPlugins;
 	}
+	const userActivity = observedUserActivity(boot.status, observed.reportedAt);
+	if (userActivity) observed.userActivity = userActivity;
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;
 	return observed;
+}
+
+function observedUserActivity(
+	bootStatus: RuntimeBootStatus | undefined,
+	reportedAt: string,
+): components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null {
+	const enabledRuntimes = [...new Set(bootStatus?.enabledRuntimes ?? [])]
+		.filter(
+			(runtime): runtime is "hermes" | "openclaw" => runtime === "hermes" || runtime === "openclaw",
+		)
+		.sort();
+	if (enabledRuntimes.length === 0) return null;
+	const openclaw = enabledRuntimes.includes("openclaw")
+		? readRuntimeUserActivityState(runtimeUserActivityStatePath("openclaw"))
+		: null;
+	const unsupported = enabledRuntimes.some((runtime) => runtime !== "openclaw");
+	const classification = unsupported ? "unknown" : (openclaw?.classification ?? "unknown");
+	const error = unsupported
+		? "activity_runtime_unsupported"
+		: (openclaw?.error ?? (openclaw ? undefined : "activity_cache_missing"));
+	return {
+		schemaVersion: 1,
+		classifierVersion: 1,
+		classification,
+		lastUserInputAt: openclaw?.lastUserInputAt ?? null,
+		observedAt: openclaw?.observedAt ?? reportedAt,
+		completeAt: openclaw?.completeAt ?? null,
+		enabledRuntimes,
+		...(error ? { error } : {}),
+	};
 }
 
 function readJsonRecord(path: string): JsonRecord | null {

@@ -6329,6 +6329,37 @@ export interface components {
             /** Units */
             units: components["schemas"]["HostedRuntimeObservedSystemdUnitV1"][];
         };
+        /** HostedRuntimeObservedUserActivityV1 */
+        HostedRuntimeObservedUserActivityV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /**
+             * Classifierversion
+             * @constant
+             */
+            classifierVersion: 1;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "known_last_user_input" | "known_no_user_input" | "unknown";
+            /** Lastuserinputat */
+            lastUserInputAt: string | null;
+            /**
+             * Observedat
+             * Format: date-time
+             */
+            observedAt: string;
+            /** Completeat */
+            completeAt: string | null;
+            /** Enabledruntimes */
+            enabledRuntimes: ("hermes" | "openclaw")[];
+            /** Error */
+            error?: string | null;
+        };
         /** HostedRuntimeObservedV2 */
         HostedRuntimeObservedV2: {
             /**
@@ -7414,6 +7445,7 @@ export interface components {
                 [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
             } | null;
             agentPlugins?: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
+            userActivity?: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

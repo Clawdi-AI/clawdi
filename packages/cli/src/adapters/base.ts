@@ -116,6 +116,12 @@ export interface RawSession {
 	rawFilePath: string;
 	/** Opaque adapter revision used to avoid materializing unchanged backing content. */
 	sourceRevision?: string;
+	/**
+	 * Adapter-classified timestamp of the latest real user input in this
+	 * session. `null` means the complete materialized session contains no real
+	 * user input; `undefined` means the adapter does not provide this signal.
+	 */
+	realUserInputAt?: string | null;
 	// Set by `pushOneAgent` after collection — sha256 hex of the JSON
 	// the CLI is about to upload. Adapters do not populate this.
 	contentHash?: string;
@@ -146,6 +152,8 @@ export interface SessionScanBatch {
 	/** Every local session observed in this batch, including revision-matched sessions. */
 	observedLocalSessionIds: readonly string[];
 	dedupedCount: number;
+	/** False when the adapter could not classify activity for every inspected session. */
+	activityComplete?: boolean;
 }
 
 export interface SessionBatchScan {
