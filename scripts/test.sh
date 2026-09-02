@@ -239,7 +239,7 @@ run_ci() {
 	web_build
 	shared_tests
 	sidecar_tests
-	cli_tests tests/smoke.test.ts
+	cli_tests
 	install_backend
 	backend_tests tests/test_smoke.py
 }

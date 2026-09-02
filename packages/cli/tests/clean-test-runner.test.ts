@@ -47,7 +47,7 @@ function occurrences(source: string, value: string): number {
 }
 
 describe("client workflow contract", () => {
-	test("uses truthful change routing and verifies every client package in one job", () => {
+	test("uses truthful change routing and keeps the full CLI suite in the clean runner", () => {
 		const changesJob = section(clientWorkflow, "  changes:\n", "  # Lint");
 		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
 		const webE2eFilter = section(
@@ -108,10 +108,10 @@ describe("client workflow contract", () => {
 			"bun run --cwd apps/web test:internal",
 			"bun run --cwd packages/shared test:internal",
 			"bun run --cwd packages/whatsapp-baileys-sidecar test:internal",
-			"bun run --cwd packages/cli test:internal",
 		]) {
 			expect(verifyJob).toContain(command);
 		}
+		expect(verifyJob).not.toContain("bun run --cwd packages/cli test:internal");
 		for (const filter of [
 			"--filter=web",
 			"--filter=clawdi",
@@ -186,7 +186,7 @@ describe("clean runner suite contract", () => {
 			"uv run alembic upgrade head",
 			'uv run pytest -q "$@"',
 			"web_tests src/hosted/oss-clean.test.ts",
-			"cli_tests tests/smoke.test.ts",
+			"\tcli_tests\n",
 			"backend_tests tests/test_smoke.py",
 		]) {
 			expect(runner).toContain(command);
@@ -242,7 +242,7 @@ describe("clean runner suite contract", () => {
 });
 
 describe("clean runner workflow inputs", () => {
-	test("tracks harness inputs without broad product test triggers", () => {
+	test("tracks harness inputs and every CLI change", () => {
 		const requiredPaths = [
 			"docker/**",
 			".dockerignore",
@@ -258,10 +258,7 @@ describe("clean runner workflow inputs", () => {
 			"apps/web/tsr.config.json",
 			"apps/web/vite.config.ts",
 			"apps/web/src/hosted/oss-clean.test.ts",
-			"packages/cli/package.json",
-			"packages/cli/tsconfig.json",
-			"packages/cli/tests/clean-test-runner.test.ts",
-			"packages/cli/tests/smoke.test.ts",
+			"packages/cli/**",
 			"packages/shared/package.json",
 			"packages/shared/tsconfig.json",
 			"packages/whatsapp-baileys-sidecar/package.json",
@@ -280,7 +277,6 @@ describe("clean runner workflow inputs", () => {
 		}
 		for (const path of [
 			"apps/web/**",
-			"packages/cli/**",
 			"packages/shared/**",
 			"packages/whatsapp-baileys-sidecar/**",
 			"backend/**",

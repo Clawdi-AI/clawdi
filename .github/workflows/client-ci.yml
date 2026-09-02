@@ -145,10 +145,10 @@ jobs:
               - "patches/libsignal@6.0.0.patch"
               - ".github/workflows/client-ci.yml"
 
-  # Lint, typecheck, build, and client package tests in one job.
+  # Lint, typecheck, build, and non-CLI client package tests in one job.
   #
-  # The consolidated gate intentionally verifies all four client packages.
-  # One change signal therefore describes the work this job actually performs.
+  # The full CLI suite runs once in the hermetic clean-runner workflow. This
+  # job keeps the native lifecycle smoke and package validation close to build.
   verify:
     needs: changes
     if: >-
@@ -189,7 +189,6 @@ jobs:
           bun run --cwd apps/web test:internal
           bun run --cwd packages/shared test:internal
           bun run --cwd packages/whatsapp-baileys-sidecar test:internal
-          bun run --cwd packages/cli test:internal
 
   deploy-contract-drift:
     needs: changes
