@@ -59,9 +59,9 @@ servers:
         # Each uvicorn worker loads its own local embedding model, so the
         # production web role must stay single-process on this host.
         WEB_CONCURRENCY: 1
-        # Keep the single worker's SQLAlchemy pool bounded at 10+10.
-        DB_POOL_SIZE: 10
-        DB_MAX_OVERFLOW: 10
+        # Preserve the previous web role's aggregate 40-connection budget.
+        DB_POOL_SIZE: 20
+        DB_MAX_OVERFLOW: 20
         PROMETHEUS_MULTIPROC_DIR: /tmp/clawdi-prometheus-multiproc
   channels-worker:
     hosts:

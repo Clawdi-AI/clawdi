@@ -144,8 +144,8 @@ end
 web = config.role("web")
 expected_web_env = {
   "WEB_CONCURRENCY" => 1,
-  "DB_POOL_SIZE" => 10,
-  "DB_MAX_OVERFLOW" => 10,
+  "DB_POOL_SIZE" => 20,
+  "DB_MAX_OVERFLOW" => 20,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
 }
 unless web.specialized_env.clear == expected_web_env
@@ -153,7 +153,7 @@ unless web.specialized_env.clear == expected_web_env
 end
 raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "6g"
 web_env = web.env(web.primary_host).clear
-unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW") == [ 10, 10 ]
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW") == [ 20, 20 ]
   raise "web role database pool drifted"
 end
 channels_worker = config.role("channels-worker")
@@ -172,7 +172,7 @@ web_connections = web_env.fetch("WEB_CONCURRENCY") *
   (web_env.fetch("DB_POOL_SIZE") + web_env.fetch("DB_MAX_OVERFLOW"))
 worker_connections = channels_worker_env.fetch("DB_POOL_SIZE") +
   channels_worker_env.fetch("DB_MAX_OVERFLOW")
-raise "total database connection budget drifted" unless web_connections + worker_connections == 60
+raise "total database connection budget drifted" unless web_connections + worker_connections == 80
 
 config.accessories.each do |accessory|
   command = Kamal::Commands::Accessory.new(config, name: accessory.name).run
