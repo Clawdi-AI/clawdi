@@ -9,8 +9,10 @@ describe("AccountSuspendedPage", () => {
 			createElement(AccountSuspendedPage, { onSignOut: () => undefined }),
 		);
 
-		expect(markup).toContain("Account deactivated");
-		expect(markup).toContain("can no longer access Clawdi");
+		expect(markup).toContain("Account suspended");
+		expect(markup).toContain(
+			"Your account has been suspended due to a violation of the Clawdi User Agreement.",
+		);
 		expect(markup).toContain('href="mailto:support@clawdi.ai"');
 		expect(markup).toContain("Sign out");
 		expect(markup).not.toContain("account_suspended");
