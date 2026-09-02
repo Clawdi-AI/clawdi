@@ -37,6 +37,8 @@ database migration, CI, and implementation details.
   transcripts remain fully searchable without exceeding PostgreSQL full-text
   limits; results and match navigation still point to the original message.
 - Managed OpenClaw WhatsApp now installs the exact plugin version compatible with the runtime.
+- Hosted OpenClaw upgrades now retire the legacy Clawdi provider plugin even
+  when OpenClaw requires capability consent before it can inspect the plugin.
 
 ## Clawdi CLI v0.14.35
 
