@@ -100,7 +100,7 @@
     },
     "packages/cli": {
       "name": "clawdi",
-      "version": "0.14.37",
+      "version": "0.14.36",
       "bin": {
         "clawdi": "bin/clawdi.mjs",
       },
