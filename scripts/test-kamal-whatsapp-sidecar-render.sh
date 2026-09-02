@@ -143,7 +143,7 @@ end
 
 web = config.role("web")
 expected_web_env = {
-  "WEB_CONCURRENCY" => 2,
+  "WEB_CONCURRENCY" => 1,
   "DB_POOL_SIZE" => 10,
   "DB_MAX_OVERFLOW" => 10,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
@@ -172,7 +172,7 @@ web_connections = web_env.fetch("WEB_CONCURRENCY") *
   (web_env.fetch("DB_POOL_SIZE") + web_env.fetch("DB_MAX_OVERFLOW"))
 worker_connections = channels_worker_env.fetch("DB_POOL_SIZE") +
   channels_worker_env.fetch("DB_MAX_OVERFLOW")
-raise "total database connection budget drifted" unless web_connections + worker_connections == 80
+raise "total database connection budget drifted" unless web_connections + worker_connections == 60
 
 config.accessories.each do |accessory|
   command = Kamal::Commands::Accessory.new(config, name: accessory.name).run
