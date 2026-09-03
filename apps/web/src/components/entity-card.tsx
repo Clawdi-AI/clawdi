@@ -611,7 +611,7 @@ export function EntityChoiceCard({
 	details?: ReactNode;
 	/** Keep dense, comparable details beside the main copy when space allows. */
 	detailsPlacement?: EntityChoiceDetailsPlacement;
-	/** Trailing badge in the title row (e.g. "Default", an auth chip). */
+	/** Trailing badge in the title row (e.g. "Recommended", an auth chip). */
 	badge?: ReactNode;
 	selected?: boolean;
 	onClick?: () => void;
@@ -673,18 +673,14 @@ export function EntityChoiceCard({
 					</div>
 				) : null}
 			</div>
-			{selected ? (
-				<Check
-					className={cn(
-						"mt-0.5 size-4 shrink-0 text-primary",
-						detailsPlacement === "responsive" && "hidden @md/choice:block",
-					)}
+			{selected !== undefined ? (
+				<span
+					data-slot="entity-choice-indicator"
+					className="flex size-4 shrink-0 self-center items-center justify-center"
 					aria-hidden
-				/>
-			) : detailsPlacement === "trailing" ? (
-				<span className="size-4 shrink-0" aria-hidden />
-			) : detailsPlacement === "responsive" ? (
-				<span className="hidden size-4 shrink-0 @md/choice:block" aria-hidden />
+				>
+					{selected ? <Check className="size-4 text-primary" /> : null}
+				</span>
 			) : null}
 		</>
 	);
@@ -732,7 +728,6 @@ export function EntityAddCard({
 }) {
 	return (
 		<EntityChoiceCard
-			selected={false}
 			onClick={onClick}
 			href={href}
 			icon={
