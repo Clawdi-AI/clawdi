@@ -227,27 +227,14 @@ class _NativeToolSpec:
 _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "memory_search": _NativeToolSpec(
         description=(
-            "ALWAYS call this BEFORE answering any question that references the user's own "
-            "context — their preferences, projects, past decisions, named entities, or work "
-            "history. A missed hit costs the user's trust every subsequent turn; a call that "
-            "returns empty costs ~100ms. Bias toward calling. Works in any language — pass "
-            "the user's query through as-is.\n\n"
-            "MUST call when the user's message contains ANY of these signals (in English, "
-            "Chinese, or any other language):\n"
-            '- First-person self-reference in a question about themselves: possessives like "my", '
-            'verbs of habit like "I usually", "I prefer", "I always"\n'
-            '- Preference / habit questions, even phrased abstractly: "what do I usually use for '
-            'X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger '
-            "even when no specific entity is named\n"
-            '- Callbacks to past context: "like last time", "as I mentioned", "you know the one", '
-            '"we discussed before", "what was that X"\n'
-            "- Named entities specific to this user: their project / repo / service / team / tool "
-            "name, or a person by name\n"
-            "- Any reference to a past bug, decision, investigation, meeting, or design choice\n\n"
-            "Do NOT call for pure textbook / generic programming questions with zero "
-            'user-specific signal (e.g. "how does async/await work").\n\n'
-            "When in doubt, CALL IT. Zero results is cheap; a missed memory makes you look "
-            "amnesic."
+            "Search durable user-specific memory when the current conversation, user-provided "
+            "artifacts, workspace, and repository history do not answer a question about the "
+            "user's preferences, prior decisions, recurring patterns, or earlier project "
+            "context. Use it for explicit callbacks to missing prior context. Do not call it "
+            "solely because a project, person, repository, or tool is named, for facts the "
+            "current code answers, or for generic knowledge. Use session_search instead when "
+            "the user wants a specific past conversation; an empty Memory result alone does "
+            "not justify a Session search. Works in any language."
         ),
         input_schema={
             "type": "object",
@@ -280,28 +267,14 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "memory_add": _NativeToolSpec(
         description=(
-            "Store a durable memory so future agent sessions (same agent, or a different one) "
-            "can retrieve this context. Call this when you learn something non-obvious about "
-            "the user or their project that a future session would benefit from knowing.\n\n"
-            "MUST call when:\n"
-            '- The user explicitly asks you to remember something ("remember this", "save '
-            'this", or equivalent in any language) — always honor the request\n'
-            '- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n'
-            "- You and the user made an architecture decision together — save the decision AND "
-            "the reasoning (why this option over alternatives)\n"
-            "- The user expressed a coding / workflow preference you had to ask about — save it "
-            'so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n'
-            "- The user shared personal info (their name, their project name, their team, who "
-            "they work with) that future context would need\n\n"
-            "Do NOT save:\n"
-            "- Trivia that any agent can discover by reading the current code\n"
-            "- Generic programming knowledge (how APIs work, language features)\n"
-            '- Ephemeral conversation details ("the user asked about X today")\n'
-            "- Plaintext tokens, API keys, bearer credentials, or private keys; use Vault and "
-            "save a clawdi:// reference instead\n\n"
-            "Write the content as a standalone sentence with full context — include proper "
-            "nouns, not pronouns. A future session will read it without today's conversation. "
-            "Content language should match the user's primary language for that context."
+            "Store durable user-specific context for future agent sessions. Use it when the "
+            "user explicitly asks you to remember something, or for a durable preference, "
+            "decision, or recurring pattern that is not discoverable from the repository and "
+            "is likely to prevent future rework. Ask when persistence is unclear. Do not save "
+            "routine task completion, code facts, generic knowledge, speculation, unnecessary "
+            "personal information, or plaintext secrets. Store secrets in Vault and save only "
+            "the exact clawdi:// reference when useful. Write a standalone sentence with enough "
+            "context for a future session."
         ),
         input_schema={
             "type": "object",

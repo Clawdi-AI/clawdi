@@ -268,6 +268,13 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "vault_get",
                 "vault_resolve",
             } <= names
+            descriptions = {tool["name"]: tool["description"] for tool in listed["tools"]}
+            assert "solely because" in descriptions["memory_search"]
+            assert "Ask when persistence is unclear" in descriptions["memory_add"]
+            assert not any(
+                directive in descriptions["memory_search"] + descriptions["memory_add"]
+                for directive in ("ALWAYS call", "MUST call", "When in doubt")
+            )
 
             added = await _tool_call(
                 client,
