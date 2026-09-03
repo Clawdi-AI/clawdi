@@ -28,11 +28,14 @@ export interface DesktopReconnectCandidate {
 	displayName: string;
 	name: string;
 	machineName: string;
+	isThisMachine: boolean;
+	lastSyncAt: string | null;
 }
 
 export interface DesktopAgentConnection {
 	type: DesktopAgentType;
 	reconnectAgentId?: string;
+	confirmTakeover?: boolean;
 }
 
 export interface DesktopBootstrapState {
@@ -91,6 +94,9 @@ export interface ClawdiDesktopConnectBridge {
 export interface ClawdiDesktopShellBridge {
 	signIn(): Promise<DesktopShellAuthenticationResult>;
 	signOut(): Promise<void>;
+	openFilesWindow(url: string): Promise<boolean>;
+	openRuntimeWindow(url: string): Promise<boolean>;
+	openTerminalWindow(url: string): Promise<boolean>;
 	openConnectWizard(): Promise<void>;
 	retryDashboard(): Promise<void>;
 }

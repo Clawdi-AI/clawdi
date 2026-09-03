@@ -164,7 +164,16 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 			if (selected.has(type) && !mode) {
 				throw new Error("Choose whether to reconnect or create a new Agent.");
 			}
-			return { type, ...(mode && mode !== "new" ? { reconnectAgentId: mode } : {}) };
+			const candidate = reconnectCandidates.find((item) => item.id === mode);
+			return {
+				type,
+				...(candidate
+					? {
+							reconnectAgentId: candidate.id,
+							...(isRecentOtherMachine(candidate) ? { confirmTakeover: true } : {}),
+						}
+					: {}),
+			};
 		});
 		setStage("connecting");
 		setFailure(null);
@@ -348,6 +357,12 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 			</section>
 		</main>
 	);
+}
+
+function isRecentOtherMachine(candidate: DesktopReconnectCandidate): boolean {
+	if (candidate.isThisMachine || !candidate.lastSyncAt) return false;
+	const timestamp = Date.parse(candidate.lastSyncAt);
+	return Number.isFinite(timestamp) && Date.now() - timestamp < 5 * 60_000;
 }
 
 function Welcome({ agents, onContinue }: { agents: DesktopDetectedAgent[]; onContinue(): void }) {

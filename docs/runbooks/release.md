@@ -35,20 +35,27 @@ releases.
 
 ## Desktop Release Blocker
 
-Desktop has a GitHub Releases update contract and a local signed-release build
-command, but no repository workflow is authorized to use Developer ID signing
-or notarization credentials and publish the resulting artifacts. Preview builds
-are ad-hoc signed, carry `clawdiUpdateChannel=disabled`, and never enter the
-stable updater feed. The bundled CLI also remains ineligible for self-update.
+Desktop stable updates use an independent electron-updater generic feed. Preview
+builds are ad-hoc signed, carry `clawdiUpdateChannel=disabled`, and never enter
+that feed. The bundled CLI also remains ineligible for self-update.
 
-Before stable Desktop updates can operate, a reviewed release workflow must run
-`bun run --cwd apps/desktop package:mac:release`, verify the signed and notarized
-DMG, ZIP, `latest-mac.yml`, version, Team ID, bundled CLI identity, and checksums, then attach the immutable ZIP
-and matching metadata to the calendar GitHub Release marked latest. Every later
-calendar release marked latest must publish valid Desktop metadata and its
-matching ZIP; CLI releases already use `--latest=false`. Until that
-owner-controlled job and credential provider exist, do not publish a build with
-`clawdiUpdateChannel=stable`.
+Stable packaging requires an explicit `CLAWDI_DESKTOP_UPDATE_FEED_URL`: an
+owner-controlled strict HTTPS directory URL ending in `/`. The build embeds the
+feed URL, `stable` channel, and expected Developer ID Team ID in signed
+application metadata. Missing or invalid feed metadata fails closed. Runtime
+updates additionally require that the installed application's Developer ID Team
+matches the signed metadata; there is no hard-coded download host or GitHub
+`releases/latest` fallback.
+
+Before stable Desktop updates can operate, a reviewed credentialed workflow must
+run `bun run --cwd apps/desktop package:mac:release`, verify the app and bundled
+CLI signatures, stapler validation, Gatekeeper assessment, DMG, ZIP,
+`latest-mac.yml`, version, Team ID, and checksum, then atomically publish the
+immutable ZIP and matching `latest-mac.yml` to that generic feed. This repository
+does not currently contain that workflow or feed infrastructure. Until both are
+owner-controlled and reviewed, stable Desktop publication is blocked. The local
+packaging command never publishes and no production publication is part of this
+runbook change.
 
 ## Pre-Merge Checklist
 

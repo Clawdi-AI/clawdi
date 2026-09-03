@@ -18,6 +18,7 @@ import {
 	ipcMain,
 	Menu,
 	type MenuItemConstructorOptions,
+	type MessageBoxOptions,
 	nativeImage,
 	net,
 	protocol,
@@ -26,6 +27,21 @@ import {
 	shell,
 	Tray,
 } from "electron";
+import {
+	authenticateDesktopAccount,
+	type DesktopAuthenticationFlowResult,
+	DesktopAuthenticationTransitionError,
+	prepareDesktopStartup,
+	reconcileDesktopStartupSync,
+} from "./auth-orchestrator";
+import {
+	allowsChildClipboard,
+	allowsChildDownload,
+	type DashboardChildKind,
+	type DashboardChildState,
+	dashboardChildUrl,
+	evaluateChildNavigation,
+} from "./child-window-policy";
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { DesktopUpdateController } from "./update-controller";
@@ -62,6 +78,7 @@ let dashboardWindowOpening: Promise<DashboardLoadResult> | null = null;
 let dashboardFailureOpening: Promise<void> | null = null;
 let dashboardSession: Session | null = null;
 let dashboardAccountId: string | null = null;
+const dashboardChildWindows = new Map<BrowserWindow, DashboardChildState>();
 let restoreMainWindowAfterConnect = false;
 let updateController: DesktopUpdateController | null = null;
 let updateState: DesktopUpdateState = { status: "disabled", reason: "development" };
@@ -72,12 +89,30 @@ let quitting = false;
 class DesktopConnectError extends Error {}
 
 type DashboardLoadResult = "opened" | "connect-required" | "failed";
-type DesktopAuthenticationFlowResult =
-	| { status: "cancelled" }
-	| { status: "authenticated"; accountChanged: boolean; backgroundSyncReady: boolean };
-
 function runAsync(label: string, operation: Promise<unknown>): void {
 	void operation.catch((error) => console.error(`Could not ${label}`, error));
+}
+
+function activeDialogParent(preferred?: BrowserWindow | null): BrowserWindow | null {
+	if (preferred && !preferred.isDestroyed()) return preferred;
+	return (
+		[mainWindow, connectWindow, ...dashboardChildWindows.keys()].find(
+			(window) => window && !window.isDestroyed() && window.isVisible(),
+		) ?? null
+	);
+}
+
+function showMessageBox(
+	options: MessageBoxOptions,
+	preferred?: BrowserWindow | null,
+): ReturnType<typeof dialog.showMessageBox> {
+	const parent = activeDialogParent(preferred);
+	return parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+}
+
+function showMessageBoxSync(options: MessageBoxOptions, preferred?: BrowserWindow | null): number {
+	const parent = activeDialogParent(preferred);
+	return parent ? dialog.showMessageBoxSync(parent, options) : dialog.showMessageBoxSync(options);
 }
 
 app.enableSandbox();
@@ -113,22 +148,9 @@ async function startApplication(): Promise<void> {
 	registerDashboardProtocol(dashboardSession);
 	registerIpc();
 	configurePermissions(dashboardSession);
-	await initializeUpdates();
 	createApplicationMenu();
 	createTray();
-	app.on("before-quit", (event) => {
-		if (!quitting && activeCriticalOperations > 0) {
-			event.preventDefault();
-			runAsync(
-				"explain why Clawdi is still running",
-				dialog.showMessageBox({
-					type: "info",
-					message: "Clawdi is finishing a local operation",
-					detail: "Wait for Agent or background sync changes to finish, then quit Clawdi.",
-				}),
-			);
-			return;
-		}
+	app.on("before-quit", () => {
 		quitting = true;
 		updateController?.stop();
 		runAsync("cancel sign-in", cli.cancelAuthentication());
@@ -138,13 +160,17 @@ async function startApplication(): Promise<void> {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
 	} else {
-		const state = await cli.bootstrapState();
-		setTrayState(state);
+		const startup = await prepareDesktopStartup(cli);
+		setTrayState(startup.state);
 		if (!startHidden) {
-			if (shouldOpenConnectWizard(state)) await showConnectWindow();
+			if (startup.requiresWizard) await showConnectWindow();
 			else await loadDashboardWithRecovery();
 		}
+		if (!startup.requiresWizard) {
+			runAsync("reconcile background sync after startup", reconcileBackgroundSyncAfterStartup());
+		}
 	}
+	runAsync("initialize Desktop updates", initializeUpdates());
 
 	app.on("activate", () => runAsync("show the active window", showAvailableWindow()));
 }
@@ -252,6 +278,8 @@ function isDocumentRequest(request: Request): boolean {
 
 async function initializeUpdates(): Promise<void> {
 	const channel = readPackageMetadataField("clawdiUpdateChannel");
+	const feedUrl = readPackageMetadataField("clawdiUpdateFeedUrl");
+	const expectedTeamId = readPackageMetadataField("clawdiUpdateTeamId");
 	const shouldInspectSignature =
 		app.isPackaged && process.platform === "darwin" && process.mas !== true && channel === "stable";
 	const signature = shouldInspectSignature ? await readMacCodeSignature(process.execPath) : null;
@@ -260,6 +288,8 @@ async function initializeUpdates(): Promise<void> {
 		platform: process.platform,
 		isMacAppStore: process.mas === true,
 		channel,
+		feedUrl,
+		expectedTeamId,
 		signature,
 	});
 	if (!policy.enabled) console.info(`Desktop updates disabled: ${policy.reason}`);
@@ -325,13 +355,13 @@ async function checkForUpdatesManually(): Promise<void> {
 	if (!updateController || updateState.status === "disabled") return;
 	await updateController.checkForUpdates();
 	if (updateState.status === "idle") {
-		await dialog.showMessageBox({
+		await showMessageBox({
 			type: "info",
 			message: "Clawdi is up to date",
 			detail: `You are running Clawdi ${app.getVersion()}.`,
 		});
 	} else if (updateState.status === "error") {
-		await dialog.showMessageBox({
+		await showMessageBox({
 			type: "warning",
 			message: "Clawdi couldn't check for updates",
 			detail: "Check your connection and try again later.",
@@ -352,15 +382,19 @@ async function maybePromptForUpdate(): Promise<void> {
 	);
 	if (!parent) return;
 	updatePromptedVersion = updateState.version;
-	const choice = await dialog.showMessageBox(parent, {
-		type: "info",
-		message: `Clawdi ${updateState.version} is ready`,
-		detail: "Restart now, or quit Clawdi later, to install the signed application update.",
-		buttons: ["Restart and Install", "Later"],
-		defaultId: 0,
-		cancelId: 1,
-		noLink: true,
-	});
+	const choice = await showMessageBox(
+		{
+			type: "info",
+			message: `Clawdi ${updateState.version} is ready`,
+			detail:
+				"Choose Later to keep working, then use Restart to Install Update from the Clawdi menu.",
+			buttons: ["Restart and Install", "Later"],
+			defaultId: 0,
+			cancelId: 1,
+			noLink: true,
+		},
+		parent,
+	);
 	if (choice.response === 0) restartToInstallUpdate();
 }
 
@@ -397,7 +431,8 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			if ((await authenticateAndResumeSync()).status === "cancelled") {
+			const result = await authenticateAndResumeSync();
+			if (result.status === "cancelled") {
 				return { status: "cancelled" as const };
 			}
 			const state = await cli.bootstrapState();
@@ -429,6 +464,10 @@ function registerIpc(): void {
 			const window = connectWindow;
 			const result = await loadDashboardWithRecovery();
 			if (result === "connect-required") return;
+			runAsync(
+				"reconcile background sync after opening Dashboard",
+				reconcileBackgroundSyncAfterStartup(),
+			);
 			restoreMainWindowAfterConnect = false;
 			if (window && !window.isDestroyed()) window.destroy();
 		}),
@@ -436,10 +475,25 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const result = await authenticateAndResumeSync(true);
-			if (result.status === "cancelled") return result;
-			if (result.accountChanged && !result.backgroundSyncReady) {
-				await showConnectRequired();
+			let result: DesktopAuthenticationFlowResult;
+			try {
+				result = await authenticateAndResumeSync(true);
+			} catch (error) {
+				if (error instanceof DesktopAuthenticationTransitionError) {
+					await applyAuthenticationRecovery(error.recovery);
+				}
+				throw error;
+			}
+			if (result.status === "cancelled") {
+				await applyAuthenticationRecovery(result);
+				return { status: "cancelled" as const };
+			}
+			if (result.requiresWizard) {
+				await applyAuthenticationRecovery({
+					restoreDashboard: false,
+					requiresWizard: true,
+					needsAttention: result.needsAttention,
+				});
 				return { status: "authenticated" as const };
 			}
 			if ((await loadDashboardWithRecovery(true)) !== "opened") {
@@ -462,6 +516,9 @@ function registerIpc(): void {
 			await showConnectWindow();
 		}),
 	);
+	registerDashboardChildWindowIpc(DESKTOP_IPC.openFilesWindow, "files", "Files");
+	registerDashboardChildWindowIpc(DESKTOP_IPC.openRuntimeWindow, "runtime", "runtime UI");
+	registerDashboardChildWindowIpc(DESKTOP_IPC.openTerminalWindow, "terminal", "Terminal");
 	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
 		safeDashboardAction(event, "open Connect Agent", async () => {
 			const shouldRestore = mainWindow?.isVisible() === true;
@@ -479,24 +536,68 @@ function registerIpc(): void {
 	);
 }
 
+function registerDashboardChildWindowIpc(
+	channel: string,
+	kind: DashboardChildKind,
+	label: string,
+): void {
+	ipcMain.handle(channel, (event, rawUrl: unknown) =>
+		safeDashboardAction(event, `open ${label}`, async () => {
+			if (typeof rawUrl !== "string") throw new Error(`Invalid ${label} URL.`);
+			const url = dashboardChildUrl(rawUrl, kind, DASHBOARD_ORIGIN);
+			if (!url) {
+				throw new Error(`Invalid ${label} URL.`);
+			}
+			const child = createDashboardChildWindow({ kind, origin: url.origin });
+			try {
+				await child.loadURL(url.href);
+				return true;
+			} catch (error) {
+				if (!child.isDestroyed()) child.destroy();
+				throw error;
+			}
+		}),
+	);
+}
+
 async function authenticateAndResumeSync(force = false): Promise<DesktopAuthenticationFlowResult> {
-	const previousAccountId = force ? (await cli.getAuthState()).user?.id : undefined;
-	const authentication = await cli.authenticate(force);
-	if (authentication.status === "cancelled") return authentication;
+	return authenticateDesktopAccount(
+		{
+			bootstrapState: () => cli.bootstrapState(),
+			getAuthState: () => cli.getAuthState(),
+			authenticate: (forceAuthentication) => cli.authenticate(forceAuthentication),
+			stopDaemon: () => withCriticalOperation(() => cli.stopDaemon()),
+			restartDaemon: () => withCriticalOperation(() => cli.restartDaemon()),
+		},
+		{
+			force,
+			beforeAuthentication: force
+				? async () => {
+						await waitForDashboardOpening();
+						await clearDashboardSession();
+						mainWindow?.hide();
+					}
+				: undefined,
+		},
+	);
+}
 
-	const accountChanged = Boolean(previousAccountId && previousAccountId !== authentication.user.id);
-	// A forced browser sign-in can replace the CLI credential even when the
-	// account id is unchanged. Restart the daemon boundary so it never keeps an
-	// in-memory credential from before the completed OAuth flow.
-	if (force) await withCriticalOperation(() => cli.stopDaemon());
-
-	let backgroundSyncReady = false;
+async function applyAuthenticationRecovery(recovery: {
+	restoreDashboard: boolean;
+	requiresWizard: boolean;
+	needsAttention: boolean;
+}): Promise<void> {
 	try {
-		backgroundSyncReady = await withCriticalOperation(() => cli.resumeBackgroundSync());
+		setTrayState(await cli.bootstrapState());
 	} catch (error) {
-		console.error("Could not resume background sync after sign in", error);
+		console.error("Could not refresh state after sign-in recovery", error);
+		setTrayState(null);
 	}
-	return { status: "authenticated", accountChanged, backgroundSyncReady };
+	if (recovery.requiresWizard) {
+		await showConnectRequired();
+		return;
+	}
+	if (recovery.restoreDashboard) await loadDashboardWithRecovery(true);
 }
 
 async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
@@ -577,6 +678,7 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 			throw new Error("Choose each supported Agent once.");
 		}
 		const reconnectAgentId = item.reconnectAgentId;
+		const confirmTakeover = item.confirmTakeover;
 		if (
 			reconnectAgentId !== undefined &&
 			(typeof reconnectAgentId !== "string" ||
@@ -585,12 +687,19 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 		) {
 			throw new Error("Choose a valid Agent to reconnect.");
 		}
+		if (confirmTakeover !== undefined && typeof confirmTakeover !== "boolean") {
+			throw new Error("Choose a valid Agent takeover confirmation.");
+		}
+		if (confirmTakeover === true && typeof reconnectAgentId !== "string") {
+			throw new Error("Agent takeover confirmation requires a reconnect target.");
+		}
 		types.add(item.type);
 		connections.push({
 			type: item.type,
 			...(typeof reconnectAgentId === "string"
 				? { reconnectAgentId: reconnectAgentId.trim() }
 				: {}),
+			...(confirmTakeover === true ? { confirmTakeover: true } : {}),
 		});
 	}
 	return connections;
@@ -608,11 +717,20 @@ function configurePermissions(dashboardSession: Session): void {
 		permission: string,
 		requestingUrl: string,
 		embeddingUrl: string,
-	) =>
-		permission === "clipboard-sanitized-write" &&
-		webContents === mainWindow?.webContents &&
-		urlOrigin(requestingUrl) === DASHBOARD_ORIGIN &&
-		urlOrigin(embeddingUrl) === DASHBOARD_ORIGIN;
+	) => {
+		if (permission !== "clipboard-sanitized-write" || !webContents) return false;
+		if (webContents === mainWindow?.webContents) {
+			return (
+				urlOrigin(requestingUrl) === DASHBOARD_ORIGIN &&
+				urlOrigin(embeddingUrl) === DASHBOARD_ORIGIN
+			);
+		}
+		const owner = BrowserWindow.fromWebContents(webContents);
+		const state = owner ? dashboardChildWindows.get(owner) : undefined;
+		return Boolean(
+			state && allowsChildClipboard(state, webContents.getURL(), requestingUrl, embeddingUrl),
+		);
+	};
 	dashboardSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
 		allowsClipboardWrite(
 			webContents,
@@ -626,7 +744,13 @@ function configurePermissions(dashboardSession: Session): void {
 			allowsClipboardWrite(webContents, permission, details.requestingUrl, webContents.getURL()),
 		);
 	});
-	dashboardSession.on("will-download", (event) => event.preventDefault());
+	dashboardSession.on("will-download", (event, item, webContents) => {
+		const owner = BrowserWindow.fromWebContents(webContents);
+		const state = owner ? dashboardChildWindows.get(owner) : undefined;
+		if (!state || !allowsChildDownload(state, webContents.getURL(), item.getURL())) {
+			event.preventDefault();
+		}
+	});
 }
 
 function createApplicationMenu(): void {
@@ -707,8 +831,10 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 	});
 	mainWindow = window;
 
-	window.webContents.setWindowOpenHandler(({ url }) => {
-		if (isSafeExternalUrl(url)) runAsync("open the external link", shell.openExternal(url));
+	window.webContents.setWindowOpenHandler((details) => {
+		if (isSafeExternalUrl(details.url)) {
+			runAsync("open the external link", shell.openExternal(details.url));
+		}
 		return { action: "deny" };
 	});
 	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
@@ -746,13 +872,72 @@ async function createMainWindow(initialUrl: string): Promise<void> {
 		window.hide();
 	});
 	window.on("closed", () => {
+		closeDashboardChildWindows();
 		if (mainWindow === window) mainWindow = null;
 	});
 
 	await loadWindowUrl(window, initialUrl);
 }
 
-function hardenLocalWindow(window: BrowserWindow, allowedUrl: string, label: string): void {
+function createDashboardChildWindow(state: DashboardChildState): BrowserWindow {
+	const icon = desktopIcon();
+	const window = new BrowserWindow({
+		show: false,
+		width: 1120,
+		height: 760,
+		minWidth: 720,
+		minHeight: 480,
+		...(icon.isEmpty() ? {} : { icon }),
+		webPreferences: {
+			partition: DASHBOARD_PARTITION,
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+			spellcheck: false,
+		},
+	});
+	configureDashboardChildWindow(window, state);
+	return window;
+}
+
+function configureDashboardChildWindow(window: BrowserWindow, state: DashboardChildState): void {
+	dashboardChildWindows.set(window, state);
+	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	const guardNavigation = (event: Electron.Event, url: string) => {
+		const decision = evaluateChildNavigation(url, state);
+		if (decision.action === "allow") return;
+		event.preventDefault();
+		if (decision.action === "external") {
+			runAsync("open the child window link externally", shell.openExternal(url));
+		}
+	};
+	window.webContents.on("will-navigate", guardNavigation);
+	window.webContents.on("will-redirect", guardNavigation);
+	window.once("ready-to-show", () => {
+		if (!window.isDestroyed()) window.show();
+	});
+	window.webContents.on("render-process-gone", (_event, details) => {
+		if (quitting || window.isDestroyed()) return;
+		console.error(`Dashboard child renderer exited: ${details.reason}`);
+		window.destroy();
+	});
+	window.on("closed", () => dashboardChildWindows.delete(window));
+}
+
+function closeDashboardChildWindows(): void {
+	for (const window of dashboardChildWindows.keys()) {
+		if (!window.isDestroyed()) window.destroy();
+	}
+	dashboardChildWindows.clear();
+}
+
+function hardenLocalWindow(
+	window: BrowserWindow,
+	allowedUrl: string,
+	label: string,
+	maxRendererReloads = 0,
+): void {
+	let rendererReloads = 0;
 	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 	const preventUnexpectedNavigation = (event: Electron.Event, url: string) => {
 		if (url !== allowedUrl) event.preventDefault();
@@ -769,7 +954,22 @@ function hardenLocalWindow(window: BrowserWindow, allowedUrl: string, label: str
 	window.webContents.on("render-process-gone", (_event, details) => {
 		if (quitting || window.isDestroyed()) return;
 		console.error(`${label} renderer exited: ${details.reason}`);
-		window.webContents.reload();
+		if (rendererReloads < maxRendererReloads) {
+			rendererReloads += 1;
+			window.webContents.reload();
+			return;
+		}
+		runAsync(
+			`report the ${label} renderer failure`,
+			showMessageBox(
+				{
+					type: "warning",
+					message: `${label} could not recover`,
+					detail: "Close this window and open it again from Clawdi.",
+				},
+				window,
+			),
+		);
 	});
 }
 
@@ -803,7 +1003,7 @@ async function showConnectWindow(): Promise<void> {
 		},
 	});
 	connectWindow = window;
-	hardenLocalWindow(window, CONNECT_URL, "Connect Agent");
+	hardenLocalWindow(window, CONNECT_URL, "Connect Agent", 1);
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		const shouldRestore = restoreMainWindowAfterConnect;
@@ -848,9 +1048,9 @@ function renderTrayMenu(): void {
 		...(trayState?.daemon.installed
 			? ([
 					{
-						label: "Stop Background Sync",
+						label: "Turn Off Background Sync",
 						enabled: activeCriticalOperations === 0,
-						click: () => runAsync("stop background sync", stopBackgroundSync()),
+						click: () => runAsync("turn off background sync", turnOffBackgroundSync()),
 					},
 				] satisfies MenuItemConstructorOptions[])
 			: []),
@@ -954,7 +1154,7 @@ async function restartBackgroundSync(): Promise<void> {
 	} catch (error) {
 		console.error("Could not restart background sync", error);
 		setTrayState(null);
-		const choice = await dialog.showMessageBox({
+		const choice = await showMessageBox({
 			type: "warning",
 			message: "Background sync could not be restarted",
 			detail: "Open Connect Agent to inspect and repair the local setup.",
@@ -966,18 +1166,18 @@ async function restartBackgroundSync(): Promise<void> {
 	}
 }
 
-async function stopBackgroundSync(): Promise<void> {
+async function turnOffBackgroundSync(): Promise<void> {
 	trayStateChecking = true;
 	renderTrayMenu();
 	try {
-		await withCriticalOperation(() => cli.stopDaemon());
+		await withCriticalOperation(() => cli.uninstallDaemon());
 		await refreshTrayState();
 	} catch (error) {
-		console.error("Could not stop background sync", error);
+		console.error("Could not turn off background sync", error);
 		await refreshTrayState();
-		await dialog.showMessageBox({
+		await showMessageBox({
 			type: "warning",
-			message: "Background sync could not be stopped",
+			message: "Background sync could not be turned off",
 			detail: "Try again, or open Connect Agent to inspect the local setup.",
 		});
 	}
@@ -1021,7 +1221,7 @@ function wasOpenedAtLogin(): boolean {
 }
 
 async function showLoginItemError(): Promise<void> {
-	await dialog.showMessageBox({
+	await showMessageBox({
 		type: "warning",
 		message: "The login item could not be changed",
 		detail: "Review Clawdi in System Settings > General > Login Items and try again.",
@@ -1052,7 +1252,7 @@ function moveToApplicationsFolder(): DesktopMoveToApplicationsResult {
 		conflictHandler: (conflictType) => {
 			const running = conflictType === "existsAndRunning";
 			return (
-				dialog.showMessageBoxSync({
+				showMessageBoxSync({
 					type: "question",
 					message: running
 						? "Clawdi is already running from Applications"
@@ -1072,7 +1272,7 @@ function moveToApplicationsFolder(): DesktopMoveToApplicationsResult {
 }
 
 async function promptToMove(detail: string): Promise<void> {
-	const choice = await dialog.showMessageBox({
+	const choice = await showMessageBox({
 		type: "info",
 		message: "Move Clawdi to Applications",
 		detail: `${detail} Clawdi will reopen automatically after it moves.`,
@@ -1086,7 +1286,7 @@ async function promptToMove(detail: string): Promise<void> {
 		moveToApplicationsFolder();
 	} catch (error) {
 		console.error("Could not move Clawdi to Applications", error);
-		await dialog.showMessageBox({
+		await showMessageBox({
 			type: "warning",
 			message: "Clawdi could not be moved",
 			detail: "Move Clawdi to Applications in Finder, reopen it, and try again.",
@@ -1100,12 +1300,7 @@ async function showAvailableWindow(): Promise<void> {
 		return;
 	}
 	if (mainWindow) {
-		if (trayState && shouldOpenConnectWizard(trayState)) {
-			mainWindow.hide();
-			await showConnectWindow();
-		} else {
-			await loadDashboardWithRecovery();
-		}
+		await showWindowFromTrayState();
 		return;
 	}
 	if (availableWindowOpening) return availableWindowOpening;
@@ -1124,13 +1319,19 @@ async function showWindowFromTrayState(): Promise<void> {
 		await showConnectWindow();
 		return;
 	}
-	const state = await cli.bootstrapState();
-	setTrayState(state);
-	if (shouldOpenConnectWizard(state)) {
+	const startup = await prepareDesktopStartup(cli);
+	setTrayState(startup.state);
+	if (startup.requiresWizard) {
 		await showConnectWindow();
 		return;
 	}
 	await loadDashboardWithRecovery();
+	runAsync("reconcile background sync after opening Clawdi", reconcileBackgroundSyncAfterStartup());
+}
+
+async function reconcileBackgroundSyncAfterStartup(): Promise<void> {
+	const recovery = await reconcileDesktopStartupSync(cli);
+	setTrayState(recovery.state);
 }
 
 async function showMainWindow(): Promise<void> {
@@ -1145,7 +1346,10 @@ async function showMainWindow(): Promise<void> {
 async function loadDashboardWithRecovery(
 	forceAuthentication = false,
 ): Promise<DashboardLoadResult> {
-	if (dashboardWindowOpening) return dashboardWindowOpening;
+	if (dashboardWindowOpening) {
+		if (!forceAuthentication) return dashboardWindowOpening;
+		await waitForDashboardOpening();
+	}
 	const opening = (async () => {
 		try {
 			const state = await cli.bootstrapState();
@@ -1220,10 +1424,6 @@ async function showDashboardFailure(forceReload = false, present = true): Promis
 	}
 }
 
-function shouldOpenConnectWizard(state: DesktopBootstrapState): boolean {
-	return !state.auth.authenticated || !state.auth.user;
-}
-
 async function presentMainWindow(window: BrowserWindow): Promise<void> {
 	if (process.platform === "darwin") await app.dock?.show();
 	if (window.isDestroyed()) throw new Error("Dashboard window was closed");
@@ -1290,7 +1490,18 @@ function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promis
 
 async function clearDashboardSession(): Promise<void> {
 	dashboardAccountId = null;
+	closeDashboardChildWindows();
 	if (dashboardSession) await dashboardSession.clearData();
+}
+
+async function waitForDashboardOpening(): Promise<void> {
+	const pending = dashboardWindowOpening;
+	if (!pending) return;
+	try {
+		await pending;
+	} catch {
+		// The caller is replacing this process-scoped session; only completion matters.
+	}
 }
 
 async function loadWindowUrl(window: BrowserWindow, url: string): Promise<void> {

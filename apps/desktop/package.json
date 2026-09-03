@@ -52,14 +52,6 @@
 		"extraMetadata": {
 			"clawdiUpdateChannel": "disabled"
 		},
-		"publish": [
-			{
-				"provider": "github",
-				"owner": "Clawdi-AI",
-				"repo": "clawdi",
-				"releaseType": "release"
-			}
-		],
 		"extraResources": [
 			{
 				"from": "resources/native",

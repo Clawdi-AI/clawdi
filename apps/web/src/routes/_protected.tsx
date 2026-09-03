@@ -18,7 +18,7 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 
 export const Route = createFileRoute("/_protected")({
 	beforeLoad: async ({ location }) => {
-		if (typeof window !== "undefined" && window.clawdiDesktop) return;
+		if (typeof window !== "undefined" && env.VITE_CLAWDI_DESKTOP_BUILD) return;
 		const { userId } = await getAuthState();
 		if (!userId) {
 			throw redirect({

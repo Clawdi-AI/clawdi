@@ -301,7 +301,7 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { env } from "@/lib/env";
+import { useDesktopBridge } from "@/lib/desktop";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
@@ -1900,6 +1900,7 @@ function RuntimeUiAccessDialog({
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const reset = useResetRuntimeUiAccess();
+	const desktopBridge = useDesktopBridge();
 	const [open, setOpen] = useState(false);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -1955,20 +1956,30 @@ function RuntimeUiAccessDialog({
 		],
 	);
 
-	const openRuntime = useCallback(() => {
+	const openRuntime = useCallback(async () => {
 		if (!windowTarget) return;
+		if (desktopBridge) {
+			try {
+				if (await desktopBridge.openRuntimeWindow(windowTarget)) return;
+			} catch {
+				// Fall through to the existing user-facing launch error.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "Clawdi couldn't create the runtime window.",
+			});
+			return;
+		}
 		const popup = openSecureRuntimeWindow(window.open.bind(window), windowTarget);
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
 				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: env.VITE_CLAWDI_DESKTOP_BUILD
-					? `Opening ${label} in a separate window is not supported in Clawdi Desktop yet. Use the browser Dashboard.`
-					: "Allow pop-ups, then try again.",
+				description: "Allow pop-ups, then try again.",
 			});
 			return;
 		}
 		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [deployment.resource.id, label, windowTarget]);
+	}, [deployment.resource.id, desktopBridge, label, windowTarget]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
@@ -2204,23 +2215,39 @@ function TerminalTab({
 	const isStarting = isStartingStatus(status);
 	const label = agentName;
 	const client = useBillingClient();
+	const desktopBridge = useDesktopBridge();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("connecting");
 	const [reconnectRequest, setReconnectRequest] = useState(0);
-	const openTerminalWindow = useCallback(() => {
+	const openTerminalWindow = useCallback(async () => {
+		if (desktopBridge) {
+			try {
+				if (
+					await desktopBridge.openTerminalWindow(
+						new URL(terminalWindowHref, window.location.href).href,
+					)
+				)
+					return;
+			} catch {
+				// Fall through to the existing user-facing launch error.
+			}
+			toast.error("Couldn't open Terminal", {
+				id: TERMINAL_WINDOW_LAUNCH_TOAST_ID,
+				description: "Clawdi couldn't create the terminal window.",
+			});
+			return;
+		}
 		const popup = openSecureRuntimeWindow(window.open.bind(window), terminalWindowHref);
 		if (!popup) {
 			toast.error("Couldn't open Terminal", {
 				id: TERMINAL_WINDOW_LAUNCH_TOAST_ID,
-				description: env.VITE_CLAWDI_DESKTOP_BUILD
-					? "Opening Terminal in a separate window is not supported in Clawdi Desktop yet. Use the browser Dashboard."
-					: "Allow pop-ups, then try again.",
+				description: "Allow pop-ups, then try again.",
 			});
 			return;
 		}
 		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [deployment.resource.id, terminalWindowHref]);
+	}, [deployment.resource.id, desktopBridge, terminalWindowHref]);
 	const requestWebsocketUrl = useCallback(async () => {
 		const session = await createTerminalSession({ id: deployment.resource.id });
 		return session.websocket_url ?? "";

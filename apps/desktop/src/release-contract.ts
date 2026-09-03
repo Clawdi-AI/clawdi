@@ -1,6 +1,9 @@
+import { normalizeDesktopUpdateFeedUrl } from "./update-policy";
+
 export interface DesktopReleaseConfiguration {
 	version: string;
 	teamId: string;
+	updateFeedUrl: string;
 	notarizationMode: "api-key" | "apple-id" | "keychain-profile";
 }
 
@@ -25,6 +28,12 @@ export function readDesktopReleaseConfiguration(
 	if (!/^[A-Z0-9]{10}$/.test(teamId)) {
 		throw new Error("CLAWDI_DESKTOP_TEAM_ID must be the 10-character Developer ID Team ID.");
 	}
+	const updateFeedUrl = normalizeDesktopUpdateFeedUrl(env.CLAWDI_DESKTOP_UPDATE_FEED_URL);
+	if (!updateFeedUrl) {
+		throw new Error(
+			"CLAWDI_DESKTOP_UPDATE_FEED_URL must be an explicit strict HTTPS generic feed URL.",
+		);
+	}
 
 	const notarizationMode = readNotarizationMode(env);
 	if (!notarizationMode) {
@@ -32,10 +41,10 @@ export function readDesktopReleaseConfiguration(
 			"Apple notarization requires APPLE_API_KEY/API_KEY_ID/API_ISSUER, APPLE_ID/APP_SPECIFIC_PASSWORD/TEAM_ID, or APPLE_KEYCHAIN_PROFILE.",
 		);
 	}
-	return { version, teamId, notarizationMode };
+	return { version, teamId, updateFeedUrl, notarizationMode };
 }
 
-export function desktopReleaseBuilderArgs(version: string): string[] {
+export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
 	return [
 		"x",
 		"electron-builder",
@@ -47,8 +56,12 @@ export function desktopReleaseBuilderArgs(version: string): string[] {
 		"never",
 		"--config.forceCodeSigning=true",
 		"--config.mac.notarize=true",
-		`--config.extraMetadata.version=${version}`,
+		`--config.extraMetadata.version=${configuration.version}`,
 		"--config.extraMetadata.clawdiUpdateChannel=stable",
+		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,
+		`--config.extraMetadata.clawdiUpdateTeamId=${configuration.teamId}`,
+		"--config.publish.provider=generic",
+		`--config.publish.url=${configuration.updateFeedUrl}`,
 	];
 }
 

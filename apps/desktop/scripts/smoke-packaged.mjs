@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
+const smokeAgentId = "00000000-0000-4000-8000-000000000001";
 if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
 	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
 }
@@ -42,7 +43,7 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	if (surface === "dashboard") await verifyPackagedDashboard(context, output);
+	if (surface === "dashboard") await verifyPackagedDashboard(context);
 	else await verifyInstallGate(context, desktop, output, cliLog);
 } catch (error) {
 	failure = error;
@@ -77,7 +78,7 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 	);
 }
 
-async function verifyPackagedDashboard(context, output) {
+async function verifyPackagedDashboard(context) {
 	const window = await waitForWindow(context, "dashboard", 30_000);
 	await window.waitForFunction(() => globalThis.Clerk?.loaded === true, null, { timeout: 20_000 });
 	await Promise.race([
@@ -134,10 +135,37 @@ async function verifyPackagedDashboard(context, output) {
 		"The packaged Dashboard did not load its bundled Clerk runtime.",
 	);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
-	assert.deepEqual(bridgeMethods, ["openConnectWizard", "retryDashboard", "signIn", "signOut"]);
-	const updateSkipReason =
-		process.platform === "darwin" ? "disabled-by-metadata" : "unsupported-platform";
-	assert.match(output.join(""), new RegExp(`Desktop updates disabled: ${updateSkipReason}`));
+	assert.deepEqual(bridgeMethods, [
+		"openConnectWizard",
+		"openFilesWindow",
+		"openRuntimeWindow",
+		"openTerminalWindow",
+		"retryDashboard",
+		"signIn",
+		"signOut",
+	]);
+	const childOpened = context.waitForEvent("page", { timeout: 20_000 });
+	await window.evaluate(
+		(agentId) => window.clawdiDesktop.openTerminalWindow(`${location.origin}/terminal/${agentId}`),
+		smokeAgentId,
+	);
+	const child = await childOpened;
+	await child.waitForLoadState("domcontentloaded");
+	assert.equal(new URL(child.url()).pathname, `/terminal/${smokeAgentId}`);
+	await child.locator('main[data-mava-launcher="hidden"]').waitFor({
+		state: "visible",
+		timeout: 20_000,
+	});
+	assert.deepEqual(
+		await child.evaluate(() => ({
+			hasDesktopBridge: window.clawdiDesktop !== undefined,
+			hasOpener: window.opener !== null,
+		})),
+		{ hasDesktopBridge: false, hasOpener: false },
+	);
+	await child.close();
+	const cliCalls = readFileSync(cliLog, "utf8");
+	assert.doesNotMatch(cliCalls, /^daemon install(?:\s|$)/m);
 }
 
 async function waitForWindow(context, surface, timeout) {
