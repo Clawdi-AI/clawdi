@@ -278,12 +278,12 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             names = {tool["name"] for tool in listed["tools"]}
             assert {
                 "memory_search",
-                "memory_add",
+                "memory_create",
                 "memory_list",
                 "memory_update",
                 "memory_delete",
                 "session_list",
-                "project_current",
+                "project_current_get",
                 "project_list",
                 "project_get",
                 "vault_list",
@@ -295,16 +295,16 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             } <= names
             descriptions = {tool["name"]: tool["description"] for tool in listed["tools"]}
             assert "solely because" in descriptions["memory_search"]
-            assert "Ask when persistence is unclear" in descriptions["memory_add"]
+            assert "Ask when persistence is unclear" in descriptions["memory_create"]
             assert not any(
-                directive in descriptions["memory_search"] + descriptions["memory_add"]
+                directive in descriptions["memory_search"] + descriptions["memory_create"]
                 for directive in ("ALWAYS call", "MUST call", "When in doubt")
             )
 
             added = await _tool_call(
                 client,
                 2,
-                "memory_add",
+                "memory_create",
                 {"content": "Hosted direct parity marker is shared across the account."},
             )
             assert "Memory stored" in added["content"][0]["text"]
@@ -416,7 +416,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             assert sibling_project_sessions["isError"] is True
             assert "Project not found" in sibling_project_sessions["content"][0]["text"]
 
-            current = _tool_json(await _tool_call(client, 5, "project_current"))
+            current = _tool_json(await _tool_call(client, 5, "project_current_get"))
             projects = _tool_json(await _tool_call(client, 6, "project_list"))["projects"]
             assert current["id"] == str(env_a.default_project_id)
             assert {project["id"] for project in projects} == {

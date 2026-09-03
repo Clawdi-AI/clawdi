@@ -58,7 +58,7 @@ Quit and reopen Claude Code so it picks up the new MCP server and skill. Inside 
 /mcp
 ```
 
-You should see `clawdi · ✔ connected` in the list. Drilling into it shows the tools it exposes: `memory_search`, `memory_add`, plus any connector tools (Gmail / GitHub / etc.) you've authorized in the dashboard.
+You should see `clawdi · ✔ connected` in the list. Drilling into it shows the tools it exposes: `memory_search`, `memory_create`, plus any connector tools (Gmail / GitHub / etc.) you've authorized in the dashboard.
 
 ---
 
@@ -72,7 +72,7 @@ In a Claude Code session, ask Claude to remember something:
 You: remember that we use pnpm, not npm, in this monorepo
 ```
 
-Claude will invoke the `memory_add` tool (you'll see the call in the transcript) and store the memory in your Clawdi Cloud account. It's now readable from any other agent you connect.
+Claude will invoke the `memory_create` tool (you'll see the call in the transcript) and store the memory in your Clawdi Cloud account. It's now readable from any other agent you connect.
 
 Open a **new** Claude Code session a week later — no shared conversation state — and ask:
 
@@ -121,9 +121,9 @@ Claude: → memory_extract()
 
 You: save 1 and 3
 
-Claude: → memory_add({ content: "The user prefers pnpm over npm in the clawdi monorepo.", category: "preference" })
+Claude: → memory_create({ content: "The user prefers pnpm over npm in the clawdi monorepo.", category: "preference" })
           ✓ abc12345
-        → memory_add({ content: "All code comments in clawdi must be in English (per CLAUDE.md).", category: "pattern" })
+        → memory_create({ content: "All code comments in clawdi must be in English (per CLAUDE.md).", category: "pattern" })
           ✓ def67890
 
         Saved:
@@ -269,11 +269,11 @@ $ clawdi setup --agent claude_code
 
 # Day 1 inside Claude Code, while coding:
 You: remember I prefer rg over grep and fd over find for searching files
-Claude: → memory_add({ content: "The user prefers rg over grep and fd over find...", category: "preference" })
+Claude: → memory_create({ content: "The user prefers rg over grep and fd over find...", category: "preference" })
         ✓ Memory stored (abc12345)
 
 You: also remember we chose Clerk for auth because the team already had an account
-Claude: → memory_add({ content: "We chose Clerk for auth because the team already had an account", category: "decision" })
+Claude: → memory_create({ content: "We chose Clerk for auth because the team already had an account", category: "decision" })
         ✓ Memory stored (def67890)
 
 # ... lots of work, quit Claude Code ...

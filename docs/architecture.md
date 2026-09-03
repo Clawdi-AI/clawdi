@@ -336,8 +336,10 @@ exists; agents or users add memories explicitly.
 
 The backend MCP endpoint is `POST /v1/mcp/clawdi`, a stateless JSON-RPC surface
 authenticated with a Clawdi API key. It is the single runtime authority for
-native tool schemas, scope gating, calls, and connector dispatch. Native tools
-cover Memory search/list/add/exact update/delete, Session search/list/read,
+native tool schemas, scope gating, calls, and connector dispatch. Clawdi-owned
+tool names use singular `<resource>[_<subresource>]_<action>` identifiers;
+connector-provided names remain unchanged. Native tools cover Memory
+search/list/create/exact update/delete, Session search/list/get,
 read-only Project metadata, Vault metadata/references, explicit single-reference
 Vault plaintext resolution, narrow Vault writes, and credential-free connector
 account identity.
@@ -349,7 +351,7 @@ native tool, including one hidden by scope.
 metadata and provenance. Built-in memory updates clear a stale embedding when
 re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
-as Session search/read and supports bounded time, Agent, and visible Project
+as Session search/get and supports bounded time, Agent, and visible Project
 filters. `connector_account_list` exposes only connection IDs, toolkit names,
 statuses, and allowlisted display labels; raw provider `data`, `state`, tokens,
 and credentials never enter the MCP result.

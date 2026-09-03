@@ -117,7 +117,7 @@ class _MemorySearchArguments(_ToolArguments):
     limit: StrictInt = Field(default=10, ge=1, le=50)
 
 
-class _MemoryAddArguments(_ToolArguments):
+class _MemoryCreateArguments(_ToolArguments):
     content: StrictStr = Field(min_length=1, max_length=20_000)
     category: Literal["fact", "preference", "pattern", "decision", "context"] = "fact"
 
@@ -197,7 +197,7 @@ class _SessionListArguments(_ToolArguments):
         return self
 
 
-class _SessionReadArguments(_ToolArguments):
+class _SessionGetArguments(_ToolArguments):
     reference: StrictStr = Field(min_length=1, max_length=2_000)
 
     @field_validator("reference")
@@ -362,7 +362,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         scopes=("memories:read",),
         handler=lambda arguments, auth, db: _tool_memory_search(arguments, auth=auth, db=db),
     ),
-    "memory_add": _NativeToolSpec(
+    "memory_create": _NativeToolSpec(
         description=(
             "Store durable user-specific context for future agent sessions. Use it when the "
             "user explicitly asks you to remember something, or for a durable preference, "
@@ -400,7 +400,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "additionalProperties": False,
         },
         scopes=("memories:write",),
-        handler=lambda arguments, auth, db: _tool_memory_add(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_memory_create(arguments, auth=auth, db=db),
     ),
     "memory_list": _NativeToolSpec(
         description=(
@@ -438,7 +438,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "'extract memories', 'save what we discussed', 'remember this conversation', or "
             "any equivalent phrasing (in any language). The tool returns instructions — follow "
             "them exactly: list up to 5 candidates first, wait for the user's confirmation, "
-            "then call memory_add on the approved ones. Do not narrate your internal workflow. "
+            "then call memory_create on the approved ones. Do not narrate your internal workflow. "
             "This tool inspects your active conversation context — it does NOT read any "
             "external file or database."
         ),
@@ -455,7 +455,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "Search the user's past Clawdi sessions by keyword. Use when the user asks about "
             "prior work (e.g. 'find the auth migration session'). Returns up to N matching "
             "sessions with summary, agent, model, project, date, and message count. The "
-            "session UUID in each result can be passed back to session_read to fetch the full "
+            "session UUID in each result can be passed back to session_get to fetch the full "
             "conversation."
         ),
         input_schema={
@@ -487,13 +487,13 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "List the user's recent Clawdi sessions, optionally filtered by last activity "
             "time, Agent type, or the Agent's Project. Use session_search for keyword lookup "
-            "and session_read for transcript content."
+            "and session_get for transcript content."
         ),
         input_schema=_SessionListArguments.model_json_schema(),
         scopes=("sessions:read",),
         handler=lambda arguments, auth, db: _tool_session_list(arguments, auth=auth, db=db),
     ),
-    "session_read": _NativeToolSpec(
+    "session_get": _NativeToolSpec(
         description=(
             "Read a Clawdi session and return its content as Markdown so you can ingest the "
             "conversation as context. Use this when the user references a Clawdi share URL "
@@ -517,16 +517,16 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "additionalProperties": False,
         },
         scopes=("sessions:read",),
-        handler=lambda arguments, auth, db: _tool_session_read(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_session_get(arguments, auth=auth, db=db),
     ),
-    "project_current": _NativeToolSpec(
+    "project_current_get": _NativeToolSpec(
         description=(
             "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
             "receive only the Project bound to their authenticated environment."
         ),
         input_schema=_NoArguments.model_json_schema(),
         scopes=("projects:read",),
-        handler=lambda arguments, auth, db: _tool_project_current(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_project_current_get(arguments, auth=auth, db=db),
     ),
     "project_list": _NativeToolSpec(
         description=(
@@ -630,8 +630,8 @@ _MEMORY_EXTRACT_INSTRUCTIONS = (
     'is already saved") and stop.\n\n'
     "Otherwise, present the surviving candidates to the user as a numbered list. For each: "
     "[category] full-sentence content, using proper nouns, not pronouns.\n\n"
-    "Wait for the user's reply. Do NOT call memory_add yet.\n\n"
-    "On approval, call memory_add once per approved memory, using the category and content "
+    "Wait for the user's reply. Do NOT call memory_create yet.\n\n"
+    "On approval, call memory_create once per approved memory, using the category and content "
     "from the candidate (with any edits the user asked for). Then print a bullet summary "
     "with the stored IDs so the user can delete individual ones later.\n\n"
     "Do NOT narrate your internal workflow to the user. The user should see only the "
@@ -880,10 +880,10 @@ async def _tool_memory_search(
     return _tool_text(text)
 
 
-async def _tool_memory_add(
+async def _tool_memory_create(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_MemoryAddArguments, arguments)
+    parsed = _validate_arguments(_MemoryCreateArguments, arguments)
     finding = find_likely_secret(parsed.content)
     if finding is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, secret_memory_warning(finding))
@@ -1042,10 +1042,10 @@ async def _tool_session_list(
     return _tool_json({"sessions": sessions})
 
 
-async def _tool_session_read(
+async def _tool_session_get(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_SessionReadArguments, arguments)
+    parsed = _validate_arguments(_SessionGetArguments, arguments)
     match = _SHARE_URL_RE.search(parsed.reference)
     session_id = match.group(1) if match else parsed.reference
     try:
@@ -1160,7 +1160,7 @@ async def _visible_project_or_404(
     return project
 
 
-async def _tool_project_current(
+async def _tool_project_current_get(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     _validate_arguments(_NoArguments, arguments)

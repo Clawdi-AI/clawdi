@@ -409,7 +409,7 @@ async def test_anon_to_private_session_401s(
 async def test_owner_export_md_matches_public_format(client: httpx.AsyncClient):
     """Owner-side `/api/sessions/{id}/export.md` returns the same shape as
     the public route — same `session_export.py` serializer — so the MCP
-    `session_read` tool's UUID branch yields identical agent context to
+    `session_get` tool's UUID branch yields identical agent context to
     the share-URL branch. Only the `source` field differs
     (clawdi-session vs clawdi-shared-session).
     """

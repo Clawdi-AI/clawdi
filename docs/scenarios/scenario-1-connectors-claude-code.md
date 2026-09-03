@@ -122,7 +122,7 @@ clawdi run -- claude
           connector_list()
           connector_call(service, action, params)
           memory_search(query)
-          memory_add(content)
+          memory_create(content)
 ```
 
 ### What each component is responsible for
@@ -157,7 +157,7 @@ Claude Code:
 User: Save the fix for this connection pool bug
 
 Claude Code:
-  → calls memory_add("INGEST-142: connection pool leak, fixed by...")
+  → calls memory_create("INGEST-142: connection pool leak, fixed by...")
   → stored in Clawdi Memory (pgvector)
 
 --- later, in Cursor ---
@@ -190,7 +190,7 @@ Cursor:
 │  │                     │    │                             │  │
 │  │ LLM tool calls: ───┼──→ │  connector_call() ──────────┼──┼──→ Clawdi API
 │  │                     │    │  memory_search()  ──────────┼──┼──→ Clawdi API
-│  │                     │    │  memory_add()     ──────────┼──┼──→ Clawdi API
+│  │                     │    │  memory_create()  ──────────┼──┼──→ Clawdi API
 │  │                     │    │                             │  │
 │  │ system prompt:      │    └─────────────────────────────┘  │
 │  │  @~/.clawdi/skills/ │    (skills are local files,         │

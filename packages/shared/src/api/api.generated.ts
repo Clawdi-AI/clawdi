@@ -1557,7 +1557,7 @@ export interface paths {
          * Export Owned Session Markdown
          * @description Owner-side Markdown export — mirror of the public route.
          *
-         *     Feeds the MCP `session_read` tool's UUID branch: when the agent
+         *     Feeds the MCP `session_get` tool's UUID branch: when the agent
          *     passes a session UUID (not a share token), the tool authenticates
          *     as the owner and hits this route. The body is byte-for-byte the
          *     same shape the public `.md` export returns — same `session_export.py`

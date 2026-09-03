@@ -139,7 +139,7 @@ describe("bundled Clawdi skill connector contract", () => {
 		for (const tool of [
 			"`memory_search`",
 			"`memory_list`",
-			"`memory_add`",
+			"`memory_create`",
 			"`memory_update`",
 			"`memory_delete`",
 			"`memory_extract`",
@@ -150,7 +150,7 @@ describe("bundled Clawdi skill connector contract", () => {
 			expect(genericSkill).toContain(tool);
 		}
 		expect(hostedSkill).toContain("## Projects");
-		expect(hostedSkill).toContain("`project_current`");
+		expect(hostedSkill).toContain("`project_current_get`");
 		expect(hostedSkill).toContain("## Vault");
 		expect(hostedSkill).toContain("`vault_get`");
 		expect(hostedSkill).toContain("`vault_resolve`");

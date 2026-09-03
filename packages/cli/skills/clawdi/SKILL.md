@@ -13,7 +13,7 @@ capabilities unavailable more directly.
 Use the current conversation and user-provided artifacts first. For project facts, inspect
 the workspace, repository documentation, and local history. Use `memory_search` only for
 missing user-specific preferences, decisions, or prior context. Use `session_list`,
-`session_search`, and `session_read` only when the user asks for past conversations or
+`session_search`, and `session_get` only when the user asks for past conversations or
 transcript-level detail is necessary. Do not call Memory and Session speculatively or in parallel.
 A named entity alone does not justify a Cloud lookup, and an empty Memory result does not justify
 a Session search.
@@ -24,13 +24,13 @@ Memory is durable user-specific context shared across agents.
 
 - `memory_search` — Search durable memory by natural-language query.
 - `memory_list` — Review stored memories and their stable IDs.
-- `memory_add` — Save a durable fact, preference, pattern, decision, or project context.
+- `memory_create` — Save a durable fact, preference, pattern, decision, or project context.
 - `memory_update` — Replace one exact memory's content without changing its metadata.
 - `memory_delete` — Delete one exact memory by ID.
 - `memory_extract` — Prepare memories from the current conversation. Follow its returned
-  review-and-confirm instructions and wait for user approval before calling `memory_add`.
+  review-and-confirm instructions and wait for user approval before calling `memory_create`.
 
-Use `memory_add` for explicit "remember this" requests or durable user-specific preferences
+Use `memory_create` for explicit "remember this" requests or durable user-specific preferences
 and decisions not discoverable from the repository. Ask when persistence is unclear. Do not
 save routine task completion, code facts, speculation, or plaintext secrets; use Vault and
 remember only the exact `clawdi://` reference. List before updating or deleting unless the user
@@ -40,19 +40,19 @@ already supplied the exact memory ID; never infer which stored item to mutate.
 
 - Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
 - Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
-- Use `session_read` to read a session by UUID or Clawdi share URL.
+- Use `session_get` to read a session by UUID or Clawdi share URL.
 
-Call `session_read` when the user provides a Clawdi share URL or session UUID and wants its
+Call `session_get` when the user provides a Clawdi share URL or session UUID and wants its
 contents. For a request to open a specific unnamed past conversation, use `session_search`
 to find the UUID and then read the selected match.
 
-Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_read` is the right tool and avoids the WebFetch permission prompt.
+Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_get` is the right tool and avoids the WebFetch permission prompt.
 
 ## Projects
 
 Three read-only tools expose the caller's visible Project context:
 
-- `project_current` — Read the current or runtime-bound Project.
+- `project_current_get` — Read the current or runtime-bound Project.
 - `project_list` — List visible Projects.
 - `project_get` — Read one visible Project by UUID.
 
