@@ -1,6 +1,6 @@
 ---
 name: clawdi
-description: "Use Clawdi Cloud for missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI, then the official API or SDK; use the Clawdi connector last. Do not invoke solely because a project, person, repo, or tool is named."
+description: "Use Clawdi Cloud for missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI; otherwise choose a trusted direct MCP, safely installable official CLI, official API or SDK, or the Clawdi connector as fallback. Do not invoke solely because a project, person, repo, or tool is named."
 ---
 
 # Clawdi Cloud
@@ -93,24 +93,28 @@ available.
 
 ## Connector Routing
 
-Respect an explicit user choice. Otherwise prefer:
+Respect an explicit user choice. Otherwise inspect installed service CLIs, direct MCP tools
+already exposed by the runtime, and authorized API or SDK credentials. If an installed and
+authenticated official CLI can perform the task, use it directly. Check availability and
+authentication non-destructively and prefer structured output.
 
-1. **Official service CLI**. Use an installed and authenticated CLI directly, such as `gh`,
-   `aws`, `gcloud`, or `kubectl`. If it is missing, install the official CLI only when the
-   runtime permits package installation, the source can be verified as official, and no
-   elevation or persistent host change is required.
-2. **Official API or SDK** with a known contract and authorized credentials already available
-   to the runtime, including through an exact Vault reference. Use this path when CLI
-   installation is inappropriate or unavailable, or CLI authentication cannot complete
-   non-interactively.
-3. **Clawdi connector** only when neither direct path can perform the operation.
+Otherwise choose the lowest-setup reliable option for the task. Consult the service's official
+documentation when installation, authentication, commands, or schemas are uncertain or likely
+to have changed:
 
-Check CLI availability and authentication non-destructively and prefer structured output. Use
-only credentials already authorized for the runtime; if CLI authentication cannot complete
-non-interactively, continue to the API path. Do not scan for credentials, start an interactive
-login, invent API details, or expose secrets. Choose the path before a side effect. Advance only
-after a definite preflight failure. If a mutation's result is ambiguous, inspect it through the
-same path; never repeat it through another path.
+- Use a trusted direct MCP already configured and exposed by the runtime. Do not automatically
+  download, install, or start an unfamiliar MCP server.
+- Safely install the official CLI when the runtime permits it, the source is verified as
+  official, and no elevation or persistent host change is required.
+- Use the official API or SDK with a verified contract and credentials already authorized for
+  the runtime, including through an exact Vault reference.
+- Use the Clawdi connector when no direct option can perform the operation.
+
+Before a side effect, establish the exact service account and organization, Project, or tenant.
+Fallback must not silently change that identity. Do not scan for credentials, start an
+interactive login, invent API details, or expose secrets. Choose the path before a side effect
+and advance only after a definite preflight failure. If a mutation's result is ambiguous,
+inspect it through the same path; never repeat it through another path.
 
 ## Connector Workflow
 
