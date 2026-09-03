@@ -151,7 +151,7 @@ describe("CLI publish workflow contract", () => {
 			"timeout-minutes": 20,
 			run: "bun run --cwd packages/cli test:internal",
 		});
-		expect(cliPackage.scripts?.["test:internal"]).toContain("--timeout=30000");
+		expect(cliPackage.scripts?.["test:internal"]).toBe("bash scripts/test-internal.sh");
 		expect(workflow).toContain("- name: Native lifecycle (ephemeral internal suite)");
 		expect(workflow.indexOf("- name: Test")).toBeLessThan(
 			workflow.indexOf("- name: Build package and native release matrix"),

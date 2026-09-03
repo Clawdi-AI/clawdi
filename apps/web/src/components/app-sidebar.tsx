@@ -1445,6 +1445,7 @@ function GlobalControlButton({
 	label,
 	children,
 	onClick,
+	disabled = false,
 	active = false,
 	tooltipSide = "top",
 	showTooltip = true,
@@ -1452,6 +1453,7 @@ function GlobalControlButton({
 	label: string;
 	children: React.ReactNode;
 	onClick?: () => void;
+	disabled?: boolean;
 	active?: boolean;
 	tooltipSide?: "right" | "top";
 	showTooltip?: boolean;
@@ -1462,6 +1464,7 @@ function GlobalControlButton({
 			variant={active ? "secondary" : "ghost"}
 			size="icon-lg"
 			onClick={onClick}
+			disabled={disabled}
 			aria-label={label}
 			aria-pressed={active}
 			data-testid={`app-sidebar-${label.toLowerCase()}-button`}
@@ -1560,12 +1563,14 @@ function UserControl({
 function GlobalControls({
 	user,
 	onSearch,
+	searchDisabled,
 	onSettings,
 	settingsOpen,
 	showTooltips = true,
 }: {
 	user: ReturnType<typeof useCurrentUser>["user"];
 	onSearch: () => void;
+	searchDisabled: boolean;
 	onSettings: () => void;
 	settingsOpen: boolean;
 	showTooltips?: boolean;
@@ -1578,7 +1583,12 @@ function GlobalControls({
 				<UserControl user={user} showTooltip={showTooltips} />
 			</SidebarMenuItem>
 			<SidebarMenuItem className="ml-auto">
-				<GlobalControlButton label="Search" onClick={onSearch} showTooltip={showTooltips}>
+				<GlobalControlButton
+					label="Search"
+					onClick={onSearch}
+					disabled={searchDisabled}
+					showTooltip={showTooltips}
+				>
 					<Search />
 				</GlobalControlButton>
 			</SidebarMenuItem>
@@ -1602,6 +1612,7 @@ function GlobalControls({
 function SidebarGlobalControlsBar({
 	user,
 	onSearch,
+	searchDisabled,
 	onSettings,
 	settingsOpen,
 	showTooltips = true,
@@ -1610,6 +1621,7 @@ function SidebarGlobalControlsBar({
 }: {
 	user: ReturnType<typeof useCurrentUser>["user"];
 	onSearch: () => void;
+	searchDisabled: boolean;
 	onSettings: () => void;
 	settingsOpen: boolean;
 	showTooltips?: boolean;
@@ -1631,6 +1643,7 @@ function SidebarGlobalControlsBar({
 			<GlobalControls
 				user={user}
 				onSearch={onSearch}
+				searchDisabled={searchDisabled}
 				onSettings={onSettings}
 				settingsOpen={settingsOpen}
 				showTooltips={showTooltips}
@@ -1851,6 +1864,7 @@ export function AppSidebar({
 						<SidebarGlobalControlsBar
 							user={user}
 							onSearch={openSearch}
+							searchDisabled={!hydrated}
 							onSettings={openSettingsFromSidebar}
 							settingsOpen={settingsOpen}
 							showTooltips={false}
@@ -1863,6 +1877,7 @@ export function AppSidebar({
 				<SidebarGlobalControlsBar
 					user={user}
 					onSearch={openSearch}
+					searchDisabled={!hydrated}
 					onSettings={openSettingsFromSidebar}
 					settingsOpen={settingsOpen}
 					collapsed={sidebarState === "collapsed"}

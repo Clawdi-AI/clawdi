@@ -184,12 +184,14 @@ jobs:
           bun run --cwd packages/cli test:native-linux-lifecycle:internal
       - name: Validate CLI publish payload
         run: bun run --cwd packages/cli check:publish-manifest
-      - name: Test client packages
-        run: |
-          bun run --cwd apps/web test:internal
-          bun run --cwd packages/shared test:internal
-          bun run --cwd packages/whatsapp-baileys-sidecar test:internal
-          bun run --cwd packages/cli test:internal
+      - name: Test web
+        run: bun run --cwd apps/web test:internal
+      - name: Test shared
+        run: bun run --cwd packages/shared test:internal
+      - name: Test WhatsApp sidecar
+        run: bun run --cwd packages/whatsapp-baileys-sidecar test:internal
+      - name: Test CLI
+        run: bun run --cwd packages/cli test:internal
 
   deploy-contract-drift:
     needs: changes

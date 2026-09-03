@@ -33,7 +33,7 @@
 		"check:native-release": "bun run scripts/check-native-release.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "../../scripts/test.sh cli",
-		"test:internal": "bun test --isolate --max-concurrency=1 --timeout=30000",
+		"test:internal": "bash scripts/test-internal.sh",
 		"test:e2e": "../../scripts/test.sh cli tests/e2e",
 		"test:native-linux-lifecycle:internal": "CLAWDI_NATIVE_BINARY=${CLAWDI_NATIVE_BINARY:-dist-native/linux-x64/clawdi} bun test tests/e2e/native-installer.e2e.test.ts tests/e2e/native-daemon.e2e.test.ts",
 		"test:watch:local": "bun test --watch",

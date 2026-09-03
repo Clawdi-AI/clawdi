@@ -155,7 +155,7 @@ describe("clean runner suite contract", () => {
 		});
 		expect(cliScripts).toMatchObject({
 			test: "../../scripts/test.sh cli",
-			"test:internal": "bun test --isolate --max-concurrency=1 --timeout=30000",
+			"test:internal": "bash scripts/test-internal.sh",
 			"test:e2e": "../../scripts/test.sh cli tests/e2e",
 			"test:watch:local": "bun test --watch",
 		});
@@ -259,6 +259,7 @@ describe("clean runner workflow inputs", () => {
 			"apps/web/vite.config.ts",
 			"apps/web/src/hosted/oss-clean.test.ts",
 			"packages/cli/package.json",
+			"packages/cli/scripts/test-internal.sh",
 			"packages/cli/tsconfig.json",
 			"packages/cli/tests/clean-test-runner.test.ts",
 			"packages/cli/tests/smoke.test.ts",
