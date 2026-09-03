@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,7 +8,10 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { safeTruncate } from "../lib/sanitize";
-import { computeOpenClawRealUserActivity } from "../lib/session-activity";
+import {
+	computeOpenClawRealUserActivity,
+	isInternalOpenClawSession,
+} from "../lib/session-activity";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	projectEventsToMessages,
@@ -34,6 +37,7 @@ import type {
 	SessionBatchScan,
 	SessionScanRequest,
 	SessionScanResult,
+	SessionUserActivity,
 } from "./base";
 import {
 	listOpenClawAgentWorkspaces,
@@ -120,30 +124,6 @@ function listAgentDirs(): string[] {
 	return listAgentDirsWithCompleteness().dirs;
 }
 
-function hasUnclassifiedTranscriptFiles(classified: ReadonlySet<string>): boolean {
-	try {
-		const listing = listAgentDirsWithCompleteness();
-		if (!listing.complete) return true;
-		for (const agentRoot of listing.dirs) {
-			const directory = join(agentRoot, "sessions");
-			if (!existsSync(directory)) continue;
-			for (const entry of readdirSync(directory, { withFileTypes: true })) {
-				if (!entry.isFile()) continue;
-				if (
-					!entry.name.endsWith(".jsonl") &&
-					!entry.name.includes(".jsonl.reset.") &&
-					!entry.name.includes(".jsonl.deleted.")
-				)
-					continue;
-				if (!classified.has(resolve(directory, entry.name))) return true;
-			}
-		}
-		return false;
-	} catch {
-		return true;
-	}
-}
-
 interface SessionEntry {
 	// Real openclaw indexes key entries by composite strings like
 	// `agent:main:main` or `agent:main:telegram:group:-100…:topic:1`, with
@@ -154,6 +134,8 @@ interface SessionEntry {
 	// May be absolute (production openclaw writes the full `/data/openclaw/…`
 	// path) or relative to the agent's `sessions/` dir (older fixtures).
 	sessionFile?: string;
+	transcriptPath?: string;
+	path?: string;
 	model?: string;
 	modelProvider?: string;
 	inputTokens?: number;
@@ -179,6 +161,193 @@ interface OfficialSessionEntry extends SessionEntry {
 interface OfficialSessionInventory {
 	entries: OfficialSessionEntry[];
 	storePaths: Map<string, string>;
+	complete: boolean;
+}
+
+interface TranscriptReference {
+	internalOnly: boolean;
+	requiredExternal: boolean;
+}
+
+function canonicalTranscriptReferences(name: string): string[] {
+	if (
+		!name.endsWith(".jsonl") &&
+		!name.includes(".jsonl.reset.") &&
+		!name.includes(".jsonl.deleted.")
+	) {
+		return [];
+	}
+	const references = new Set([name]);
+	for (const marker of [".reset.", ".deleted."]) {
+		let offset = 0;
+		while (true) {
+			const index = name.indexOf(marker, offset);
+			if (index < 0) break;
+			if (index > 0) references.add(name.slice(0, index));
+			offset = index + marker.length;
+		}
+	}
+	return [...references];
+}
+
+function transcriptReferenceName(
+	sessionsRoot: string,
+	indexKey: string,
+	entry: SessionEntry,
+): string | undefined {
+	const explicit = [entry.sessionFile, entry.transcriptPath, entry.path].find(
+		(value): value is string => typeof value === "string" && value.trim().length > 0,
+	);
+	const raw = explicit?.trim() ?? `${entry.sessionId ?? indexKey}.jsonl`;
+	const name = basename(raw);
+	if (!name || name === "." || name === "..") return undefined;
+	if (!isAbsolute(raw)) {
+		const candidate = resolve(sessionsRoot, raw);
+		return isPathWithinRoots(candidate, [resolve(sessionsRoot)]) ? name : undefined;
+	}
+	const candidate = resolve(raw);
+	if (isPathWithinRoots(candidate, [resolve(sessionsRoot)])) return name;
+	return raw.startsWith("/data/openclaw/agents/") || raw.startsWith("/var/openclaw/agents/")
+		? name
+		: undefined;
+}
+
+function collectCanonicalOpenClawActivity(
+	officialInventory: OfficialSessionInventory | null,
+	classifiedPaths: ReadonlySet<string>,
+): SessionUserActivity {
+	const listing = listAgentDirsWithCompleteness();
+	let activity: SessionUserActivity = {
+		lastUserInputAt: null,
+		complete: listing.complete,
+	};
+	const visitedAgentIds = new Set<string>();
+	const officialByAgent = new Map<string, OfficialSessionEntry[]>();
+	for (const entry of officialInventory?.entries ?? []) {
+		const entries = officialByAgent.get(entry.agentId) ?? [];
+		entries.push(entry);
+		officialByAgent.set(entry.agentId, entries);
+	}
+	for (const agentRoot of listing.dirs) {
+		const agentId = basename(agentRoot);
+		const sessionsRoot = join(agentRoot, "sessions");
+		if (!existsSync(sessionsRoot)) continue;
+		visitedAgentIds.add(agentId);
+		let transcripts: Array<{ path: string; references: string[] }>;
+		try {
+			transcripts = readdirSync(sessionsRoot, { withFileTypes: true }).flatMap((entry) => {
+				if (!entry.isFile()) return [];
+				const references = canonicalTranscriptReferences(entry.name);
+				return references.length > 0
+					? [{ path: resolve(sessionsRoot, entry.name), references }]
+					: [];
+			});
+		} catch {
+			activity.complete = false;
+			continue;
+		}
+		const presentReferences = new Set(transcripts.flatMap((transcript) => transcript.references));
+		const references = new Map<string, TranscriptReference>();
+		const addReference = (identity: string, entry: SessionEntry, required: boolean): void => {
+			const name = transcriptReferenceName(sessionsRoot, identity, entry);
+			if (!name) {
+				activity.complete = false;
+				return;
+			}
+			const reference = references.get(name) ?? {
+				internalOnly: true,
+				requiredExternal: false,
+			};
+			const internal = isInternalOpenClawSession(identity, entry);
+			reference.internalOnly &&= internal;
+			reference.requiredExternal ||= required && !internal;
+			references.set(name, reference);
+		};
+		const indexPath = join(sessionsRoot, "sessions.json");
+		if (existsSync(indexPath)) {
+			try {
+				const parsed = JSON.parse(readFileSync(indexPath, "utf-8")) as unknown;
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+				for (const [key, value] of Object.entries(parsed)) {
+					if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+					const entry = value as SessionEntry;
+					if (!entry.sessionFile && !entry.sessionId && !entry.transcriptPath && !entry.path)
+						continue;
+					addReference(key, entry, officialInventory === null);
+				}
+			} catch {
+				activity.complete = false;
+			}
+		}
+		for (const entry of officialByAgent.get(agentId) ?? []) {
+			if (entry.sessionFile) addReference(entry.key, entry, true);
+		}
+		for (const transcript of transcripts) {
+			if (classifiedPaths.has(transcript.path)) continue;
+			const matches = transcript.references.flatMap((name) => {
+				const reference = references.get(name);
+				return reference ? [reference] : [];
+			});
+			if (matches.length > 0 && matches.every((reference) => reference.internalOnly)) continue;
+			activity = mergeUserActivity(activity, readOpenClawTranscriptActivity(transcript.path));
+		}
+		for (const [name, reference] of references) {
+			if (reference.requiredExternal && !presentReferences.has(name)) {
+				activity.complete = false;
+			}
+		}
+	}
+	for (const entry of officialInventory?.entries ?? []) {
+		if (
+			entry.sessionFile &&
+			!visitedAgentIds.has(entry.agentId) &&
+			!isInternalOpenClawSession(entry.key, entry)
+		) {
+			activity.complete = false;
+		}
+	}
+	return activity;
+}
+
+function readOpenClawTranscriptActivity(path: string): SessionUserActivity {
+	try {
+		const before = statSync(path, { bigint: true });
+		const content = readFileSync(path, "utf-8");
+		const after = statSync(path, { bigint: true });
+		const records = completeJsonlRecords(content);
+		const activity = computeOpenClawRealUserActivity(
+			records.map((record) => record.data),
+			"",
+		);
+		return {
+			lastUserInputAt: activity.lastUserInputAt,
+			complete:
+				activity.complete &&
+				records.length === content.split("\n").filter((line) => line.trim()).length &&
+				before.dev === after.dev &&
+				before.ino === after.ino &&
+				before.size === after.size &&
+				before.mtimeNs === after.mtimeNs,
+		};
+	} catch {
+		return { lastUserInputAt: null, complete: false };
+	}
+}
+
+function maxActivityTimestamp(left: string | null, right: string | null): string | null {
+	if (!left) return right;
+	if (!right) return left;
+	return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
+}
+
+function mergeUserActivity(
+	left: SessionUserActivity,
+	right: SessionUserActivity,
+): SessionUserActivity {
+	return {
+		lastUserInputAt: maxActivityTimestamp(left.lastUserInputAt, right.lastUserInputAt),
+		complete: left.complete && right.complete,
+	};
 }
 
 const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -209,12 +378,16 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 	]);
 	if (!payload || !Array.isArray(payload.sessions)) return null;
 
+	let complete = true;
 	const entries = payload.sessions.flatMap((value): OfficialSessionEntry[] => {
 		const row = jsonObject(value);
 		const agentId = jsonString(row?.agentId);
 		const key = jsonString(row?.key);
 		const sessionId = jsonString(row?.sessionId);
-		if (!row || !agentId || !key || !sessionId) return [];
+		if (!row || !agentId || !key || !sessionId) {
+			complete = false;
+			return [];
+		}
 		const number = (field: string) => {
 			const candidate = row[field];
 			return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
@@ -264,7 +437,7 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 			if (agentId && path) storePaths.set(agentId, path);
 		}
 	}
-	return { entries, storePaths };
+	return { entries, storePaths, complete };
 }
 
 async function readOfficialSessionMessagesFromSdk(
@@ -469,7 +642,8 @@ interface SessionCollection {
 	observedLocalSessionIds: readonly string[];
 	dedupedCount: number;
 	matchedTranscriptPaths: Set<string>;
-	activityComplete: boolean;
+	classifiedTranscriptPaths: Set<string>;
+	userActivity: SessionUserActivity;
 }
 
 function singleSessionBatch(
@@ -478,12 +652,12 @@ function singleSessionBatch(
 ): SessionBatchScan {
 	return {
 		coverage,
+		userActivity: collection.userActivity,
 		batches: (async function* () {
 			yield {
 				sessions: collection.sessions,
 				observedLocalSessionIds: collection.observedLocalSessionIds,
 				dedupedCount: collection.dedupedCount,
-				activityComplete: collection.activityComplete,
 			};
 		})(),
 	};
@@ -491,7 +665,7 @@ function singleSessionBatch(
 
 interface MaterializedOpenClawSession {
 	session: RawSession | null;
-	activityComplete: boolean;
+	userActivity: SessionUserActivity;
 }
 
 function materializeOpenClawJsonlSession(input: {
@@ -514,7 +688,11 @@ function materializeOpenClawJsonlSession(input: {
 	} = input;
 	const sessionId = entry.sessionId;
 	const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
-	if (!sessionId || !updatedAt) return { session: null, activityComplete: false };
+	const internalSession = isInternalOpenClawSession(sourceSessionKey, entry);
+	const unavailableActivity = { lastUserInputAt: null, complete: internalSession };
+	if (!sessionId || !updatedAt) {
+		return { session: null, userActivity: unavailableActivity };
+	}
 
 	let events = [] as import("./base").SessionEvent[];
 	let startedAt: Date | null = null;
@@ -529,7 +707,7 @@ function materializeOpenClawJsonlSession(input: {
 		if (entry.sessionFile) {
 			console.warn(`[openclaw] transcript missing for ${sessionId}: ${transcriptPath}`);
 		}
-		return { session: null, activityComplete: false };
+		return { session: null, userActivity: unavailableActivity };
 	} else {
 		try {
 			const transcriptContent = readFileSync(transcriptPath, "utf-8");
@@ -556,19 +734,19 @@ function materializeOpenClawJsonlSession(input: {
 			}
 			events = sequenceSessionEvents(drafts);
 		} catch {
-			return { session: null, activityComplete: false };
+			return { session: null, userActivity: unavailableActivity };
 		}
 	}
 
 	const userActivity = computeOpenClawRealUserActivity(transcriptRecords, sourceSessionKey, entry);
-	userActivity.complete &&= transcriptComplete;
+	if (!internalSession) userActivity.complete &&= transcriptComplete;
 	const messages = projectEventsToMessages(events);
-	if (messages.length === 0) return { session: null, activityComplete: userActivity.complete };
+	if (messages.length === 0) return { session: null, userActivity };
 	startedAt ??= new Date(updatedAt);
 	endedAt ??= new Date(updatedAt);
 	const firstUserContent = messages.find((message) => message.role === "user")?.content;
 	return {
-		activityComplete: userActivity.complete,
+		userActivity,
 		session: {
 			localSessionId: sessionId,
 			projectPath,
@@ -658,10 +836,20 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				undefined,
 				knownSourceRevisions,
 			);
+			collection.userActivity = mergeUserActivity(
+				collection.userActivity,
+				collectCanonicalOpenClawActivity(officialInventory, collection.classifiedTranscriptPaths),
+			);
 			return singleSessionBatch("complete", collection);
 		}
 
 		const collection = await this.collectLegacySessions(request, knownSourceRevisions);
+		if (collection.coverage === "complete") {
+			collection.userActivity = mergeUserActivity(
+				collection.userActivity,
+				collectCanonicalOpenClawActivity(null, collection.classifiedTranscriptPaths),
+			);
+		}
 		return singleSessionBatch(collection.coverage, collection);
 	}
 
@@ -754,7 +942,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				dedupedCount: 0,
 				observedLocalSessionIds: [],
 				matchedTranscriptPaths: new Set(),
-				activityComplete: agentDirectoryListing.complete,
+				classifiedTranscriptPaths: new Set(),
+				userActivity: { lastUserInputAt: null, complete: agentDirectoryListing.complete },
 			};
 		}
 
@@ -768,7 +957,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		const sessions: RawSession[] = [];
 		const observedLocalSessionIds: string[] = [];
 		const matchedTranscriptPaths = new Set<string>();
-		let activityComplete = true;
+		const classifiedTranscriptPaths = new Set<string>();
+		let userActivity: SessionUserActivity = { lastUserInputAt: null, complete: true };
 
 		for (const agentRoot of agentDirs) {
 			const sourceAgentId = basename(agentRoot);
@@ -780,7 +970,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			try {
 				index = JSON.parse(readFileSync(indexPath, "utf-8"));
 			} catch {
-				activityComplete = false;
+				userActivity.complete = false;
 				continue;
 			}
 
@@ -809,6 +999,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				matchedTranscriptPaths.add(normalizedTranscriptPath);
 				observedLocalSessionIds.push(sessionId);
 				const sourceRevision = `${sessionId}:${updatedAt}`;
+				const externalSession = !isInternalOpenClawSession(indexKey, entry);
+				if (externalSession) classifiedTranscriptPaths.add(normalizedTranscriptPath);
 				if (knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 				const materialized = materializeOpenClawJsonlSession({
@@ -820,12 +1012,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					sourceRevision,
 					transcriptPath,
 				});
-				activityComplete &&= materialized.activityComplete;
+				if (existsSync(transcriptPath)) {
+					userActivity = mergeUserActivity(userActivity, materialized.userActivity);
+				}
 				if (materialized.session) sessions.push(materialized.session);
 			}
-		}
-		if (knownSourceRevisions.size === 0 && hasUnclassifiedTranscriptFiles(matchedTranscriptPaths)) {
-			activityComplete = false;
 		}
 
 		// OpenClaw stores one session per ACP transcript with stable sessionIds
@@ -835,7 +1026,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			dedupedCount: 0,
 			observedLocalSessionIds,
 			matchedTranscriptPaths,
-			activityComplete,
+			classifiedTranscriptPaths,
+			userActivity,
 		};
 	}
 
@@ -848,12 +1040,18 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		const absFilter = opts.projectFilter ? resolve(opts.projectFilter) : null;
 		const sessions: RawSession[] = [];
 		const observedLocalSessionIds: string[] = [];
-		const matchedTranscriptPaths = new Set<string>();
-		let activityComplete = true;
+		const classifiedTranscriptPaths = new Set<string>();
+		let userActivity: SessionUserActivity = {
+			lastUserInputAt: null,
+			complete: inventory.complete,
+		};
 		for (const entry of inventory.entries) {
 			if (localSessionId !== undefined && entry.sessionId !== localSessionId) continue;
 			const updatedAt = entry.updatedAt;
-			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) continue;
+			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
+				userActivity.complete = false;
+				continue;
+			}
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
 			if (
 				absFilter &&
@@ -870,7 +1068,10 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
-				matchedTranscriptPaths.add(resolve(transcriptPath));
+				const normalizedTranscriptPath = resolve(transcriptPath);
+				if (!isInternalOpenClawSession(entry.key, entry)) {
+					classifiedTranscriptPaths.add(normalizedTranscriptPath);
+				}
 				const legacy = materializeOpenClawJsonlSession({
 					entry,
 					indexPath: join(sessionsDirForAgent, "sessions.json"),
@@ -880,13 +1081,15 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					sourceRevision,
 					transcriptPath,
 				});
-				activityComplete &&= legacy.activityComplete;
+				if (existsSync(transcriptPath)) {
+					userActivity = mergeUserActivity(userActivity, legacy.userActivity);
+				}
 				if (legacy.session) sessions.push(legacy.session);
 				continue;
 			}
 			transcript ??= readOfficialSessionMessagesFromGateway(entry);
 			if (!transcript) {
-				activityComplete = false;
+				if (!entry.sessionFile) userActivity.complete = false;
 				console.warn(
 					`[openclaw] could not read active transcript for ${entry.sessionId} through official transcript surfaces`,
 				);
@@ -929,8 +1132,10 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			}
 			const events = sequenceSessionEvents(drafts);
 			const messages = projectEventsToMessages(events);
-			const userActivity = computeOpenClawRealUserActivity(transcript, entry.key, entry);
-			activityComplete &&= userActivity.complete;
+			const sessionUserActivity = computeOpenClawRealUserActivity(transcript, entry.key, entry);
+			if (!entry.sessionFile) {
+				userActivity = mergeUserActivity(userActivity, sessionUserActivity);
+			}
 			if (messages.length === 0) continue;
 			startedAt ??= new Date(entry.sessionStartedAt ?? updatedAt);
 			endedAt ??= new Date(updatedAt);
@@ -957,18 +1162,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				events,
 				rawFilePath: storePath,
 				sourceRevision,
-				realUserInputAt: userActivity.lastUserInputAt,
+				realUserInputAt: sessionUserActivity.lastUserInputAt,
 			});
-		}
-		if (knownSourceRevisions.size === 0 && hasUnclassifiedTranscriptFiles(matchedTranscriptPaths)) {
-			activityComplete = false;
 		}
 		return {
 			sessions,
 			dedupedCount: 0,
 			observedLocalSessionIds,
-			matchedTranscriptPaths,
-			activityComplete,
+			matchedTranscriptPaths: new Set(),
+			classifiedTranscriptPaths,
+			userActivity,
 		};
 	}
 

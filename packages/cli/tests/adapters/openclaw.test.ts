@@ -312,8 +312,15 @@ describe("OpenClawAdapter.collectSessions", () => {
 
 	it("reads legacy inventory JSONL without requiring a live Gateway", async () => {
 		writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
+		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		writeFileSync(
+			join(sessionsDir, "orphan.jsonl.deleted.2026-09-01"),
+			`${JSON.stringify({ role: "user", content: "archived input", timestamp: "2026-08-19T00:00:00Z" })}\n`,
+		);
 
-		const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
 
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]).toMatchObject({
@@ -321,6 +328,10 @@ describe("OpenClawAdapter.collectSessions", () => {
 			projectPath: "/Users/fixture/project",
 			messageCount: 2,
 			sourceRevision: "oc-session-001:1776247205000",
+		});
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-19T00:00:00.000Z",
+			complete: true,
 		});
 	});
 
@@ -480,6 +491,56 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		const a = new OpenClawAdapter();
 		const { sessions } = await a.sessions.collect({ kind: "complete" });
 		expect(sessions.map((s) => s.localSessionId)).toEqual(["oc-financial-001"]);
+	});
+
+	it("classifies stale, orphaned, and internal OpenClaw archives from the canonical inventory", async () => {
+		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		const internal = join(sessionsDir, "internal.jsonl");
+		writeFileSync(
+			join(sessionsDir, "stale.jsonl.deleted.2026-09-01"),
+			`${JSON.stringify({ role: "user", content: "archived input", timestamp: "2026-08-20T00:00:00Z" })}\n`,
+		);
+		writeFileSync(
+			join(sessionsDir, "orphan.jsonl.reset.2026-09-02"),
+			`${JSON.stringify({ role: "user", content: "orphan input", timestamp: "2026-08-21T00:00:00Z" })}\n`,
+		);
+		writeFileSync(`${internal}.deleted.2026-09-03`, "{");
+		writeFileSync(internal, "{");
+		writeFileSync(
+			join(sessionsDir, "media.jsonl"),
+			`${JSON.stringify({ role: "user", content: [{ type: "image", url: "local" }], timestamp: "2026-08-24T00:00:00Z" })}\n`,
+		);
+		writeFileSync(
+			join(sessionsDir, "sessions.json"),
+			JSON.stringify({
+				main: { sessionId: "stale", updatedAt: 1776247205000 },
+				"agent:main:cron:daily": { sessionFile: internal, updatedAt: 1776247205000 },
+				media: { sessionId: "media", updatedAt: 1776247205000 },
+			}),
+		);
+
+		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-24T00:00:00.000Z",
+			complete: true,
+		});
+	});
+
+	it("keeps a trustworthy OpenClaw timestamp while an archive tail is incomplete", async () => {
+		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+		writeFileSync(
+			join(sessionsDir, "orphan.jsonl.deleted.2026-09-03"),
+			`${JSON.stringify({ role: "user", content: "known input", timestamp: "2026-08-23T00:00:00Z" })}\n{`,
+		);
+
+		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			complete: false,
+		});
 	});
 });
 

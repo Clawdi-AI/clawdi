@@ -105,24 +105,57 @@ function observedUserActivity(
 		)
 		.sort();
 	if (enabledRuntimes.length === 0) return null;
-	const openclaw = enabledRuntimes.includes("openclaw")
-		? readRuntimeUserActivityState(runtimeUserActivityStatePath("openclaw"))
-		: null;
-	const unsupported = enabledRuntimes.some((runtime) => runtime !== "openclaw");
-	const classification = unsupported ? "unknown" : (openclaw?.classification ?? "unknown");
-	const error = unsupported
-		? "activity_runtime_unsupported"
-		: (openclaw?.error ?? (openclaw ? undefined : "activity_cache_missing"));
+	const states = enabledRuntimes.map((runtime) => {
+		const state = readRuntimeUserActivityState(runtimeUserActivityStatePath(runtime));
+		return state?.agentType === runtime ? state : null;
+	});
+	const missing = states.includes(null);
+	const unknown = states.find((state) => state?.classification === "unknown");
+	const known = !missing && unknown === undefined;
+	const lastUserInputAt = maxIso(states.map((state) => state?.lastUserInputAt ?? null));
+	const observedAt = maxIso(states.map((state) => state?.observedAt ?? reportedAt)) ?? reportedAt;
+	const completeAt = minIso(states.map((state) => state?.completeAt ?? null));
+	const classification = known
+		? lastUserInputAt
+			? "known_last_user_input"
+			: "known_no_user_input"
+		: "unknown";
+	const error = known
+		? undefined
+		: (unknown?.error ?? (missing ? "activity_cache_missing" : "activity_scan_incomplete"));
 	return {
 		schemaVersion: 1,
 		classifierVersion: 1,
 		classification,
-		lastUserInputAt: openclaw?.lastUserInputAt ?? null,
-		observedAt: openclaw?.observedAt ?? reportedAt,
-		completeAt: openclaw?.completeAt ?? null,
+		lastUserInputAt,
+		observedAt,
+		completeAt,
 		enabledRuntimes,
 		...(error ? { error } : {}),
 	};
+}
+
+function maxIso(values: readonly (string | null)[]): string | null {
+	return extremeIso(values, (candidate, current) => candidate > current);
+}
+
+function minIso(values: readonly (string | null)[]): string | null {
+	return extremeIso(values, (candidate, current) => candidate < current);
+}
+
+function extremeIso(
+	values: readonly (string | null)[],
+	prefer: (candidate: number, current: number) => boolean,
+): string | null {
+	let selected: number | null = null;
+	for (const value of values) {
+		if (!value) continue;
+		const candidate = new Date(value).getTime();
+		if (!Number.isNaN(candidate) && (selected === null || prefer(candidate, selected))) {
+			selected = candidate;
+		}
+	}
+	return selected === null ? null : new Date(selected).toISOString();
 }
 
 function readJsonRecord(path: string): JsonRecord | null {

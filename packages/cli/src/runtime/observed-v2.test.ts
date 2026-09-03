@@ -7,6 +7,7 @@ import { writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
+import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
 const originalEnv = { ...process.env };
 const roots: string[] = [];
@@ -175,6 +176,30 @@ describe("hosted runtime observed v2", () => {
 		const observed = readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("ok");
 		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
+	});
+
+	test("reports durable Hermes user activity through the existing observation contract", () => {
+		const paths = healthyAppliedRuntimePaths();
+		process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
+		recordRuntimeUserActivityScan({
+			agentType: "hermes",
+			userActivity: {
+				lastUserInputAt: "2026-08-19T01:00:00.000Z",
+				complete: true,
+			},
+			complete: true,
+			observedAt: new Date("2026-08-19T02:00:00.000Z"),
+		});
+
+		expect(readHostedRuntimeObserved(paths)?.userActivity).toEqual({
+			schemaVersion: 1,
+			classifierVersion: 1,
+			classification: "known_last_user_input",
+			lastUserInputAt: "2026-08-19T01:00:00.000Z",
+			observedAt: "2026-08-19T02:00:00.000Z",
+			completeAt: "2026-08-19T02:00:00.000Z",
+			enabledRuntimes: ["hermes"],
+		});
 	});
 
 	test("reports an untyped watch apply failure as unhealthy", () => {

@@ -974,12 +974,8 @@ async function prepareSessionSync(
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
-			const activitySessions: RawSession[] = [];
-			let activityComplete = true;
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
-				activitySessions.push(...batch.sessions);
-				activityComplete &&= batch.activityComplete !== false;
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
@@ -1010,9 +1006,8 @@ async function prepareSessionSync(
 			}
 			recordRuntimeUserActivityScan({
 				agentType: opts.adapter.agentType,
-				sessions: activitySessions,
+				userActivity: scan.userActivity ?? { lastUserInputAt: null, complete: false },
 				complete: scan.coverage === "complete",
-				activityComplete,
 			});
 			persistFencedSessionSourceRevisions(confirmedSourceRevisions);
 			if (scan.coverage === "complete") {

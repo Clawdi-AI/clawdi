@@ -1,4 +1,4 @@
-import type { RawSession, SessionMessage } from "../adapters/base";
+import type { RawSession, SessionMessage, SessionUserActivity } from "../adapters/base";
 
 /**
  * Compute the "user actually used the session last" timestamp for
@@ -26,20 +26,16 @@ export function computeLastActivityIso(s: RawSession): string {
 	return s.startedAt.toISOString();
 }
 
-export interface RealUserActivity {
-	lastUserInputAt: string | null;
-	complete: boolean;
-}
-
 /** Classify OpenClaw transcript records without losing newer provenance fields. */
 export function computeOpenClawRealUserActivity(
 	records: readonly unknown[],
 	sessionKey: string,
 	sessionMetadata?: unknown,
-): RealUserActivity {
-	if (internalOpenClawSession(sessionKey, sessionMetadata))
+): SessionUserActivity {
+	if (isInternalOpenClawSession(sessionKey, sessionMetadata))
 		return { lastUserInputAt: null, complete: true };
 	let best: number | null = null;
+	let complete = true;
 	for (const value of records) {
 		const record = objectRecord(value);
 		if (!record) continue;
@@ -51,12 +47,15 @@ export function computeOpenClawRealUserActivity(
 		const timestamp = activityTimestamp(
 			message.timestamp ?? message.createdAt ?? record.timestamp ?? record.createdAt,
 		);
-		if (timestamp === null) return { lastUserInputAt: null, complete: false };
+		if (timestamp === null) {
+			complete = false;
+			continue;
+		}
 		if (best === null || timestamp > best) best = timestamp;
 	}
 	return {
 		lastUserInputAt: best === null ? null : new Date(best).toISOString(),
-		complete: true,
+		complete,
 	};
 }
 
@@ -69,7 +68,7 @@ const INTERNAL_OPENCLAW_SOURCES = new Set([
 	"system_generated",
 ]);
 
-function internalOpenClawSession(value: string, metadata: unknown): boolean {
+export function isInternalOpenClawSession(value: string, metadata: unknown): boolean {
 	const key = value.trim().toLowerCase();
 	if (
 		key.startsWith("cron:") ||
