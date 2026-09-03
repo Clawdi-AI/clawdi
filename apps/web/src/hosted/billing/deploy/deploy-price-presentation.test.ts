@@ -28,13 +28,11 @@ describe("computePricePresentation", () => {
 			primary: "$20.00/mo",
 			secondary: "Billed monthly",
 			savings: null,
-			trial: { badge: "7 days free", afterTrial: "Then $20.00/mo" },
 		});
 		expect(computePricePresentation(annual, [monthly, annual])).toEqual({
 			primary: "$200.00/yr",
 			secondary: "$16.66/mo",
 			savings: "save $40.00",
-			trial: { badge: "7 days free", afterTrial: "Then $200.00/yr" },
 		});
 	});
 
@@ -43,7 +41,6 @@ describe("computePricePresentation", () => {
 			primary: "$200.00/yr",
 			secondary: "$16.66/mo",
 			savings: null,
-			trial: { badge: "7 days free", afterTrial: "Then $200.00/yr" },
 		});
 	});
 });
@@ -51,8 +48,8 @@ describe("computePricePresentation", () => {
 describe("CTA-adjacent amount presentation", () => {
 	test("uses only a positive Stripe trial period", () => {
 		expect(cardTrialPricePresentation("$20.00/mo", 1)).toEqual({
-			badge: "1 day free",
-			afterTrial: "Then $20.00/mo",
+			label: "1-day free trial",
+			summary: "1-day free trial, then $20.00/mo",
 		});
 		expect(cardTrialPricePresentation("$20.00/mo", null)).toBeNull();
 		expect(cardTrialPricePresentation("$20.00/mo", 0)).toBeNull();
@@ -60,20 +57,17 @@ describe("CTA-adjacent amount presentation", () => {
 
 	test("uses term price for card checkout and authoritative debit for Wallet", () => {
 		expect(cardDeployAmountPresentation(monthly)).toEqual({
-			amount: "$20.00/mo",
-			badge: "7 days free",
-			caption: "Then $20.00/mo",
+			amount: "7-day free trial, then $20.00/mo",
+			caption: null,
 			detail: null,
 		});
 		expect(cardDeployAmountPresentation(annual)).toEqual({
-			amount: "$200.00/yr",
-			badge: "7 days free",
-			caption: "Then $200.00/yr · $16.66/mo",
+			amount: "7-day free trial, then $200.00/yr",
+			caption: null,
 			detail: null,
 		});
 		expect(cardDeployAmountPresentation({ ...monthly, card_trial_period_days: null })).toEqual({
 			amount: "$20.00/mo",
-			badge: null,
 			caption: "Billed monthly",
 			detail: null,
 		});
@@ -89,7 +83,6 @@ describe("CTA-adjacent amount presentation", () => {
 			}),
 		).toEqual({
 			amount: "Debit today: $100.00",
-			badge: null,
 			caption: "From Wallet · renews yearly",
 			detail: null,
 		});
@@ -102,14 +95,14 @@ describe("CTA-adjacent amount presentation", () => {
 				state: "loading",
 				walletDebit: null,
 			}),
-		).toEqual({ amount: "Debit today: —", badge: null, caption: "Getting quote…", detail: null });
+		).toEqual({ amount: "Debit today: —", caption: "Getting quote…", detail: null });
 		expect(
 			walletDeployAmountPresentation({
 				billingTermMonths: 1,
 				state: "error",
 				walletDebit: null,
 			}),
-		).toEqual({ amount: "Quote unavailable", badge: null, caption: null, detail: null });
+		).toEqual({ amount: "Quote unavailable", caption: null, detail: null });
 		expect(
 			walletDeployAmountPresentation({
 				billingTermMonths: 1,
@@ -122,7 +115,6 @@ describe("CTA-adjacent amount presentation", () => {
 			}),
 		).toEqual({
 			amount: "Debit today: $20.00",
-			badge: null,
 			caption: "From Wallet · renews monthly",
 			detail: "Available $12.50 · short $7.50",
 		});
