@@ -8,7 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { clearAccountSuspension } from "@/lib/account-suspension";
 import { useCurrentUser } from "@/lib/auth-client";
-import { createAppQueryClient } from "@/lib/query-client";
+import { createAppQueryClient, resetQueryClientForAuthChange } from "@/lib/query-client";
 
 export function Providers({ children }: { children: React.ReactNode }) {
 	const [queryClient] = useState(createAppQueryClient);
@@ -47,7 +47,9 @@ function QueryCacheAuthBoundary({
 			return;
 		}
 		if (lastAuthKey.current !== authKey) {
-			queryClient.clear();
+			void resetQueryClientForAuthChange(queryClient).catch((error: unknown) => {
+				console.error("Failed to reset dashboard data after authentication changed", error);
+			});
 			clearAccountSuspension();
 			lastAuthKey.current = authKey;
 		}
