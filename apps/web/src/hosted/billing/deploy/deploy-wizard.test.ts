@@ -134,12 +134,33 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource).toContain("sticky bottom-0 z-10");
 		expect(wizardSource).toContain("@2xl/main:flex-row");
 		expect(wizardSource).toContain("@2xl/main:w-auto");
+		expect(wizardSource).toContain("@2xl/main:w-56 @2xl/main:items-end");
+		expect(wizardSource).toContain("@2xl/main:w-40 @2xl/main:items-end");
 		expect(wizardSource).not.toContain("sm:sticky sm:bottom-0");
 	});
 
 	test("keeps concise funding copy", () => {
 		expect(wizardSource).not.toContain("hidden @3xl/main:inline-flex");
+		expect(wizardSource).toContain(
+			'description="Recurring subscription via Stripe. Manage or cancel anytime."',
+		);
+		expect(wizardSource).toContain('<Badge variant="secondary">{selectedCardTrial.label}</Badge>');
 		expect(wizardSource).toContain("Paid upfront from your Wallet balance. Renews from Wallet.");
+	});
+
+	test("summarizes runtime, AI selection, and compute without personalization", () => {
+		const summarySource = wizardSource.slice(
+			wizardSource.indexOf("const summaryLine"),
+			wizardSource.indexOf("const plansLoadError"),
+		);
+		expect(summarySource.indexOf("runtimeSummary")).toBeLessThan(
+			summarySource.indexOf("aiSummary"),
+		);
+		expect(summarySource.indexOf("aiSummary")).toBeLessThan(
+			summarySource.indexOf("selectedComputeLabel"),
+		);
+		expect(summarySource).not.toContain("LANGUAGE_OPTIONS");
+		expect(summarySource).not.toContain("timezone");
 	});
 });
 

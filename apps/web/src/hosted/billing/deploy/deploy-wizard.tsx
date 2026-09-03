@@ -1064,13 +1064,7 @@ export function DeployWizard() {
 			: compute === "performance"
 				? "Performance"
 				: "Basic";
-	const summaryLine = [
-		`${selectedComputeLabel} compute`,
-		aiSummary,
-		runtimeSummary,
-		LANGUAGE_OPTIONS.find((l) => l.code === language)?.label ?? null,
-		timezone || null,
-	]
+	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} compute`]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -1385,7 +1379,12 @@ export function DeployWizard() {
 													</IconChip>
 												}
 												title="Card subscription"
-												description={selectedCardTrial?.summary}
+												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												badge={
+													selectedCardTrial ? (
+														<Badge variant="secondary">{selectedCardTrial.label}</Badge>
+													) : null
+												}
 											/>
 											<EntityChoiceCard
 												selected={paymentMethod === "wallet"}
@@ -1540,7 +1539,7 @@ export function DeployWizard() {
 							{deployAmount ? (
 								<div
 									data-testid="deploy-amount"
-									className="flex min-w-0 flex-col @2xl/main:items-end @2xl/main:text-right"
+									className="flex min-w-0 flex-col @2xl/main:w-56 @2xl/main:items-end @2xl/main:text-right"
 									aria-live="polite"
 								>
 									<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 @2xl/main:justify-end">
@@ -1575,7 +1574,7 @@ export function DeployWizard() {
 									) : null}
 								</div>
 							) : null}
-							<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
+							<div className="flex min-w-0 flex-col gap-1 @2xl/main:w-40 @2xl/main:items-end">
 								<Button
 									type={
 										acceptedDeploymentHydrationFailed || walletTopUpAction ? "button" : "submit"
@@ -1596,7 +1595,7 @@ export function DeployWizard() {
 												? () => walletTopUp.show(walletShortfallUsd)
 												: undefined
 									}
-									className="w-full shrink-0 @2xl/main:w-auto"
+									className="w-full shrink-0"
 								>
 									{submitting ? (
 										<Spinner data-icon="inline-start" />

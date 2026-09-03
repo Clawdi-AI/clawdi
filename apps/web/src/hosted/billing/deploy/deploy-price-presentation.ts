@@ -77,7 +77,7 @@ export function cardDeployAmountPresentation(offer: BillingOffer): DeployAmountP
 	const price = `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`;
 	const trial = cardTrialPricePresentation(price, offer.card_trial_period_days);
 	if (trial) {
-		return { amount: trial.summary, caption: null, detail: null };
+		return { amount: trial.label, caption: `then ${price}`, detail: null };
 	}
 	if (offer.billing_term_months === 1) {
 		return {
