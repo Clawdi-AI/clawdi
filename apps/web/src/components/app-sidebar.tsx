@@ -1482,7 +1482,13 @@ function GlobalControlButton({
 	);
 }
 
-function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
+function HelpControl({
+	disabled = false,
+	showTooltip = true,
+}: {
+	disabled?: boolean;
+	showTooltip?: boolean;
+}) {
 	const trigger = (
 		<DropdownMenuTrigger
 			render={
@@ -1490,6 +1496,7 @@ function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 					type="button"
 					variant="ghost"
 					size="icon-lg"
+					disabled={disabled}
 					aria-label="Help"
 					data-testid="app-sidebar-help-menu-button"
 					className="rounded-lg"
@@ -1518,9 +1525,11 @@ function HelpControl({ showTooltip = true }: { showTooltip?: boolean }) {
 
 function UserControl({
 	user,
+	disabled = false,
 	showTooltip = true,
 }: {
 	user: ReturnType<typeof useCurrentUser>["user"];
+	disabled?: boolean;
 	showTooltip?: boolean;
 }) {
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
@@ -1531,6 +1540,7 @@ function UserControl({
 					type="button"
 					variant="ghost"
 					size="icon-lg"
+					disabled={disabled}
 					className="rounded-lg"
 					aria-label="User menu"
 					data-testid="app-sidebar-user-menu-button"
@@ -1562,15 +1572,15 @@ function UserControl({
 
 function GlobalControls({
 	user,
+	controlsReady,
 	onSearch,
-	searchDisabled,
 	onSettings,
 	settingsOpen,
 	showTooltips = true,
 }: {
 	user: ReturnType<typeof useCurrentUser>["user"];
+	controlsReady: boolean;
 	onSearch: () => void;
-	searchDisabled: boolean;
 	onSettings: () => void;
 	settingsOpen: boolean;
 	showTooltips?: boolean;
@@ -1580,25 +1590,26 @@ function GlobalControls({
 	return (
 		<SidebarMenu className="w-full flex-row items-center gap-1">
 			<SidebarMenuItem>
-				<UserControl user={user} showTooltip={showTooltips} />
+				<UserControl user={user} disabled={!controlsReady} showTooltip={showTooltips} />
 			</SidebarMenuItem>
 			<SidebarMenuItem className="ml-auto">
 				<GlobalControlButton
 					label="Search"
 					onClick={onSearch}
-					disabled={searchDisabled}
+					disabled={!controlsReady}
 					showTooltip={showTooltips}
 				>
 					<Search />
 				</GlobalControlButton>
 			</SidebarMenuItem>
 			<SidebarMenuItem>
-				<HelpControl showTooltip={showTooltips} />
+				<HelpControl disabled={!controlsReady} showTooltip={showTooltips} />
 			</SidebarMenuItem>
 			<SidebarMenuItem>
 				<GlobalControlButton
 					label={settingsIdentity.label}
 					onClick={onSettings}
+					disabled={!controlsReady}
 					active={settingsOpen}
 					showTooltip={showTooltips}
 				>
@@ -1611,8 +1622,8 @@ function GlobalControls({
 
 function SidebarGlobalControlsBar({
 	user,
+	controlsReady,
 	onSearch,
-	searchDisabled,
 	onSettings,
 	settingsOpen,
 	showTooltips = true,
@@ -1620,8 +1631,8 @@ function SidebarGlobalControlsBar({
 	collapsed = false,
 }: {
 	user: ReturnType<typeof useCurrentUser>["user"];
+	controlsReady: boolean;
 	onSearch: () => void;
-	searchDisabled: boolean;
 	onSettings: () => void;
 	settingsOpen: boolean;
 	showTooltips?: boolean;
@@ -1642,8 +1653,8 @@ function SidebarGlobalControlsBar({
 		>
 			<GlobalControls
 				user={user}
+				controlsReady={controlsReady}
 				onSearch={onSearch}
-				searchDisabled={searchDisabled}
 				onSettings={onSettings}
 				settingsOpen={settingsOpen}
 				showTooltips={showTooltips}
@@ -1863,8 +1874,8 @@ export function AppSidebar({
 						/>
 						<SidebarGlobalControlsBar
 							user={user}
+							controlsReady={hydrated}
 							onSearch={openSearch}
-							searchDisabled={!hydrated}
 							onSettings={openSettingsFromSidebar}
 							settingsOpen={settingsOpen}
 							showTooltips={false}
@@ -1876,8 +1887,8 @@ export function AppSidebar({
 			{!isMobile ? (
 				<SidebarGlobalControlsBar
 					user={user}
+					controlsReady={hydrated}
 					onSearch={openSearch}
-					searchDisabled={!hydrated}
 					onSettings={openSettingsFromSidebar}
 					settingsOpen={settingsOpen}
 					collapsed={sidebarState === "collapsed"}
