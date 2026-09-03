@@ -34,7 +34,7 @@ fi
 if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
   updated_at=1776247205000
   if [ -f "$HOME/.openclaw/sqlite-session-updated-at" ]; then updated_at=$(cat "$HOME/.openclaw/sqlite-session-updated-at"); fi
-  printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/agent/openclaw-agent.sqlite"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"sqlite-session-001","updatedAt":%s,"sessionStartedAt":1776247200000,"model":"gpt-5.6-sol","modelProvider":"openai","inputTokens":8,"outputTokens":5,"cacheRead":2,"label":"Active SQLite branch"}]}\n' "$HOME" "$updated_at"
+  printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/agent/openclaw-agent.sqlite"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"sqlite-session-001","updatedAt":%s,"sessionStartedAt":1776247200000,"sessionFile":"%s/.openclaw/agents/main/sessions/sqlite-session-001.jsonl","model":"gpt-5.6-sol","modelProvider":"openai","inputTokens":8,"outputTokens":5,"cacheRead":2,"label":"Active SQLite branch"}]}\n' "$HOME" "$updated_at" "$HOME"
   exit 0
 fi
 if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
@@ -335,14 +335,22 @@ describe("OpenClawAdapter.collectSessions", () => {
 		});
 	});
 
-	it("does not materialize an unchanged official transcript", async () => {
+	it("uses official current activity and only inventories archives during baseline", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsRoot = join(stateRoot, "agents", "main", "sessions");
 		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
 		const readLog = join(stateRoot, "transcript-reads.log");
 		mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
 		mkdirSync(packageRoot, { recursive: true });
 		writeFileSync(join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite"), "fixture");
 		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		const currentPath = join(sessionsRoot, "sqlite-session-001.jsonl");
+		writeFileSync(currentPath, "{");
+		const archivePath = join(sessionsRoot, "sqlite-session-001.jsonl.deleted.2026-09-01");
+		writeFileSync(
+			archivePath,
+			`${JSON.stringify({ role: "user", content: "archived input", timestamp: "2026-08-16T10:00:00Z" })}\n`,
+		);
 		writeFileSync(
 			join(packageRoot, "package.json"),
 			JSON.stringify({
@@ -372,7 +380,19 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		for await (const batch of first.batches) firstBatches.push(batch);
 		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
 		expect(revision).toBe("sqlite-session-001:1776247205000");
+		expect(first.userActivity).toEqual({
+			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			complete: true,
+		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\n");
+		rmSync(currentPath);
+		const missingCurrent = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		expect(missingCurrent.userActivity).toEqual({
+			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			complete: true,
+		});
+		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
+		writeFileSync(archivePath, "{");
 
 		const unchanged = await scanSessionModule(
 			adapter.sessions,
@@ -383,7 +403,8 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		for await (const batch of unchanged.batches) unchangedBatches.push(batch);
 		expect(unchangedBatches[0]?.sessions).toEqual([]);
 		expect(unchangedBatches[0]?.observedLocalSessionIds).toEqual(["sqlite-session-001"]);
-		expect(readFileSync(readLog, "utf8")).toBe("read\n");
+		expect(unchanged.userActivity).toEqual({ lastUserInputAt: null, complete: true });
+		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 
 		writeFileSync(join(stateRoot, "sqlite-session-updated-at"), "1776247206000");
 		const changed = await scanSessionModule(
@@ -394,7 +415,11 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		const changedBatches: SessionScanBatch[] = [];
 		for await (const batch of changed.batches) changedBatches.push(batch);
 		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe("sqlite-session-001:1776247206000");
-		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
+		expect(changed.userActivity).toEqual({
+			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			complete: true,
+		});
+		expect(readFileSync(readLog, "utf8")).toBe("read\nread\nread\n");
 	});
 
 	it("scans every agents/<id>/ subdir (issue #28)", async () => {

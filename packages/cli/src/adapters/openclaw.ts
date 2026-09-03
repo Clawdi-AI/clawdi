@@ -292,7 +292,11 @@ function collectCanonicalOpenClawActivity(
 			activity = mergeUserActivity(activity, readOpenClawTranscriptActivity(transcript.path));
 		}
 		for (const [name, reference] of references) {
-			if (reference.requiredExternal && !presentReferences.has(name)) {
+			if (
+				reference.requiredExternal &&
+				!presentReferences.has(name) &&
+				!classifiedPaths.has(resolve(sessionsRoot, name))
+			) {
 				activity.complete = false;
 			}
 		}
@@ -828,6 +832,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		request: SessionScanRequest,
 		knownSourceRevisions: ReadonlyMap<string, string>,
 	): Promise<SessionBatchScan> {
+		const materializeCanonicalActivity =
+			request.kind === "complete" && knownSourceRevisions.size === 0;
 		const officialInventory = readOfficialSessionInventory();
 		if (officialInventory) {
 			const collection = await this.collectOfficialSessionsMatching(
@@ -836,15 +842,17 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				undefined,
 				knownSourceRevisions,
 			);
-			collection.userActivity = mergeUserActivity(
-				collection.userActivity,
-				collectCanonicalOpenClawActivity(officialInventory, collection.classifiedTranscriptPaths),
-			);
+			if (materializeCanonicalActivity) {
+				collection.userActivity = mergeUserActivity(
+					collection.userActivity,
+					collectCanonicalOpenClawActivity(officialInventory, collection.classifiedTranscriptPaths),
+				);
+			}
 			return singleSessionBatch("complete", collection);
 		}
 
 		const collection = await this.collectLegacySessions(request, knownSourceRevisions);
-		if (collection.coverage === "complete") {
+		if (collection.coverage === "complete" && materializeCanonicalActivity) {
 			collection.userActivity = mergeUserActivity(
 				collection.userActivity,
 				collectCanonicalOpenClawActivity(null, collection.classifiedTranscriptPaths),
@@ -1000,7 +1008,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				observedLocalSessionIds.push(sessionId);
 				const sourceRevision = `${sessionId}:${updatedAt}`;
 				const externalSession = !isInternalOpenClawSession(indexKey, entry);
-				if (externalSession) classifiedTranscriptPaths.add(normalizedTranscriptPath);
+				if (externalSession && existsSync(transcriptPath)) {
+					classifiedTranscriptPaths.add(normalizedTranscriptPath);
+				}
 				if (knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 				const materialized = materializeOpenClawJsonlSession({
@@ -1063,13 +1073,14 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (knownSourceRevisions.get(entry.sessionId) === sourceRevision) continue;
 
 			let transcript = await readOfficialSessionMessagesFromSdk(entry);
+			transcript ??= readOfficialSessionMessagesFromGateway(entry);
 			if (transcript === null && entry.sessionFile) {
 				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
 				const normalizedTranscriptPath = resolve(transcriptPath);
-				if (!isInternalOpenClawSession(entry.key, entry)) {
+				if (!isInternalOpenClawSession(entry.key, entry) && existsSync(transcriptPath)) {
 					classifiedTranscriptPaths.add(normalizedTranscriptPath);
 				}
 				const legacy = materializeOpenClawJsonlSession({
@@ -1087,9 +1098,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				if (legacy.session) sessions.push(legacy.session);
 				continue;
 			}
-			transcript ??= readOfficialSessionMessagesFromGateway(entry);
 			if (!transcript) {
-				if (!entry.sessionFile) userActivity.complete = false;
+				userActivity.complete = false;
 				console.warn(
 					`[openclaw] could not read active transcript for ${entry.sessionId} through official transcript surfaces`,
 				);
@@ -1133,8 +1143,13 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const events = sequenceSessionEvents(drafts);
 			const messages = projectEventsToMessages(events);
 			const sessionUserActivity = computeOpenClawRealUserActivity(transcript, entry.key, entry);
-			if (!entry.sessionFile) {
-				userActivity = mergeUserActivity(userActivity, sessionUserActivity);
+			userActivity = mergeUserActivity(userActivity, sessionUserActivity);
+			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
+				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
+				const transcriptPath = isAbsolute(entry.sessionFile)
+					? entry.sessionFile
+					: join(sessionsDirForAgent, entry.sessionFile);
+				classifiedTranscriptPaths.add(resolve(transcriptPath));
 			}
 			if (messages.length === 0) continue;
 			startedAt ??= new Date(entry.sessionStartedAt ?? updatedAt);
