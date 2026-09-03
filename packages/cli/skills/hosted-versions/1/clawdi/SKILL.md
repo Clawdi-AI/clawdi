@@ -1,11 +1,26 @@
 ---
 name: clawdi
-description: "Use the user's account-wide long-term memory and past agent sessions; inspect the current Hosted Project and safe Vault metadata; use connected services such as Gmail, GitHub, Notion, Drive, and Calendar; and read Clawdi share URLs."
+description: "Use Clawdi Cloud for missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI, then the official API or SDK; use the Clawdi connector last. Do not invoke solely because a project, person, repo, or tool is named."
 ---
 
 # Clawdi Cloud
 
 Use Clawdi Cloud tools through the `clawdi` MCP server. Treat the live tool schemas as authoritative.
+
+## Hosted Boundary
+
+Third-party tool routing below applies unchanged in Hosted. Do not inspect, run, or suggest
+Clawdi host-management commands such as `clawdi setup`, `clawdi wallet`, `clawdi vault`, or
+`clawdi ai-provider`.
+
+## Context Routing
+
+Use the current conversation and user-provided artifacts first. For project facts, inspect
+the workspace, repository documentation, and local history. Use `memory_search` only for
+missing user-specific preferences, decisions, or prior context. Use `session_search` and
+`session_read` only when the user asks for a past conversation or transcript-level detail is
+necessary. Do not call Memory and Session speculatively or in parallel. A named entity alone
+does not justify a Cloud lookup, and an empty Memory result does not justify a Session search.
 
 ## Memory
 
@@ -16,21 +31,19 @@ Memory is shared across the user's Hosted agents, not isolated to the current ag
 - `memory_extract` — Prepare memories from the current conversation. Follow its returned
   review-and-confirm instructions and wait for user approval before calling `memory_add`.
 
-Search before answering questions about the user's preferences, projects, prior decisions,
-recurring workflows, or earlier bugs. Save useful non-obvious outcomes and explicit
-"remember this" requests as standalone statements with enough context for another agent.
-
-Never store plaintext tokens, API keys, bearer credentials, or private keys in memory. Store
-secrets in Vault and remember only an exact `clawdi://` reference when useful.
+Use `memory_add` for explicit "remember this" requests or durable user-specific preferences
+and decisions not discoverable from the repository. Ask when persistence is unclear. Do not
+save routine task completion, code facts, speculation, or plaintext secrets; use Vault and
+remember only the exact `clawdi://` reference.
 
 ## Sessions
 
 - Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
 - Use `session_read` to read a session by UUID or Clawdi share URL.
 
-Call `session_read` when the user provides a Clawdi share URL. When the user refers to a
-past conversation without a UUID, call `session_search` first and then read the matching
-session. Do not use a generic web fetcher for Clawdi share URLs.
+Call `session_read` when the user provides a Clawdi share URL or session UUID and wants its
+contents. Use `session_search` to locate a requested unnamed conversation. Do not use a
+generic web fetcher for Clawdi share URLs.
 
 ## Projects
 
@@ -41,7 +54,7 @@ session. Do not use a generic web fetcher for Clawdi share URLs.
 A Hosted runtime is restricted to its bound Project. Treat not-found as an access boundary
 as well as a possible unknown UUID; do not try to bypass it through another tool.
 
-## Vault Metadata
+## Vault
 
 - `vault_list` — List attached Vaults and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
@@ -56,23 +69,39 @@ The metadata tools never return plaintext secret values. Preserve exact referenc
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
-Vault mutation is not an Agent MCP capability. Ask the user to manage Vault data through an
-authorized human-facing surface; never call raw HTTP or invent an unavailable tool.
+The current MCP tool set exposes Vault metadata and resolution, not mutation. Treat live
+schemas as authoritative: if they expose a mutation tool, use it only for the exact Project,
+Vault, key, and change the user specified, and never infer an overwrite or deletion. Otherwise,
+report that the runtime does not provide the operation; do not call raw HTTP or invent a tool.
 
-## Wallet Funding
+## Connector Routing
 
-Use `clawdi wallet status --json` to inspect the authenticated Wallet balance, verified
-binding, and x402 readiness. Binding and Base USDC top-up are available only through the
-browser wallet surface; Clawdi does not store the payment private key. Ask the user to fund
-there. Command-line spending requires a future owner-only or hardware signer authority and is not
-available.
+Respect an explicit user choice. Otherwise prefer:
 
-## Connectors
+1. **Official service CLI**. Use an installed and authenticated CLI directly, such as `gh`,
+   `aws`, `gcloud`, or `kubectl`. If it is missing, install the official CLI only when the
+   runtime permits package installation, the source can be verified as official, and no
+   elevation or persistent host change is required.
+2. **Official API or SDK** with a known contract and authorized credentials already available
+   to the runtime, including through an exact Vault reference. Use this path when CLI
+   installation is inappropriate or unavailable, or CLI authentication cannot complete
+   non-interactively.
+3. **Clawdi connector** only when neither direct path can perform the operation.
 
-Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
-Treat their live names and schemas as authoritative; never assume a fixed meta-tool set.
+Check CLI availability and authentication non-destructively and prefer structured output. Use
+only credentials already authorized for the runtime; if CLI authentication cannot complete
+non-interactively, continue to the API path. Do not scan for credentials, start an interactive
+login, invent API details, or expose secrets. Choose the path before a side effect. Advance only
+after a definite preflight failure. If a mutation's result is ambiguous, inspect it through the
+same path; never repeat it through another path.
 
-1. Start each external-app workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
+## Connector Workflow
+
+When the Clawdi connector path is selected, use the Composio Tool Router meta-tools returned
+by `tools/list` on the `clawdi` MCP server. Treat their live names and schemas as
+authoritative; never assume a fixed meta-tool set.
+
+1. Start the connector workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
    `queries` and `session` schema, reuse the returned session ID throughout that workflow,
    and use only the exact toolkit and tool slugs it returns. If a required schema is absent
    or incomplete, call `COMPOSIO_GET_TOOL_SCHEMAS`; never invent fields or inputs.
