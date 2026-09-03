@@ -8,7 +8,6 @@ export async function readMacCodeSignature(
 	const appBundle = resolve(dirname(executablePath), "..", "..");
 	let output: string;
 	try {
-		await codesign(["--verify", "--deep", "--strict", appBundle]);
 		output = await codesignDetails(appBundle);
 	} catch {
 		return null;

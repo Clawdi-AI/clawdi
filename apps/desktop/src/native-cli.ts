@@ -104,13 +104,6 @@ export class DesktopCliService {
 		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
 	}
 
-	async resumeBackgroundSync(): Promise<boolean> {
-		const registered = (await this.detectAgents()).filter((agent) => agent.registered);
-		if (registered.length === 0) return false;
-		await this.run(this.cli(), ["daemon", "install"], { timeoutMs: 60_000 });
-		return true;
-	}
-
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
 		const cli = this.cli();
 		const result = await this.runJson(cli, ["agent", "detect", "--json"]);
@@ -157,13 +150,19 @@ export class DesktopCliService {
 		}
 
 		const connected: DesktopAgentType[] = [];
-		for (const { type, reconnectAgentId } of requested) {
+		for (const { type, reconnectAgentId, confirmTakeover } of requested) {
 			if (reconnectAgentId) {
-				await this.run(
-					cli,
-					["agent", "reconnect", reconnectAgentId, "--agent", type, "--yes", "--no-daemon"],
-					{ timeoutMs: 3 * 60_000 },
-				);
+				const args = [
+					"agent",
+					"reconnect",
+					reconnectAgentId,
+					"--agent",
+					type,
+					"--yes",
+					"--no-daemon",
+				];
+				if (confirmTakeover) args.push("--confirm-takeover");
+				await this.run(cli, args, { timeoutMs: 3 * 60_000 });
 			} else if (!available.get(type)?.registered) {
 				await this.run(cli, ["setup", "--agent", type, "--yes", "--no-daemon"], {
 					timeoutMs: 3 * 60_000,
@@ -180,6 +179,10 @@ export class DesktopCliService {
 	}
 
 	async stopDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "stop"], { timeoutMs: 60_000 });
+	}
+
+	async uninstallDaemon(): Promise<void> {
 		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
 	}
 
@@ -362,10 +365,26 @@ function parseReconnectCandidate(value: unknown): DesktopReconnectCandidate {
 	const displayName = readString(value.displayName);
 	const name = readString(value.name);
 	const machineName = readString(value.machineName);
-	if (!id || !displayName || !name || !machineName) {
+	const lastSyncAt = value.lastSyncAt === null ? null : readString(value.lastSyncAt);
+	if (
+		!id ||
+		!displayName ||
+		!name ||
+		!machineName ||
+		typeof value.isThisMachine !== "boolean" ||
+		(value.lastSyncAt !== null && !lastSyncAt)
+	) {
 		throw new Error("Clawdi returned invalid reconnect data.");
 	}
-	return { id, type: value.type, displayName, name, machineName };
+	return {
+		id,
+		type: value.type,
+		displayName,
+		name,
+		machineName,
+		isThisMachine: value.isThisMachine,
+		lastSyncAt,
+	};
 }
 
 function displayNameFor(type: DesktopAgentType): string {

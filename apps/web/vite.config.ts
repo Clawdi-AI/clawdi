@@ -11,15 +11,21 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 const require = createRequire(import.meta.url);
 const clerkBrowserDist = dirname(require.resolve("@clerk/clerk-js"));
 
+function clerkBrowserAssetClosure(): string[] {
+	const files = readdirSync(clerkBrowserDist);
+	const entry = "clerk.browser.js";
+	if (!files.includes(entry)) throw new Error(`Missing Clerk browser entry: ${entry}`);
+	const chunks = files.filter((name) => /_clerk\.browser_.*\.js$/.test(name));
+	if (chunks.length === 0) throw new Error("Missing Clerk browser chunks");
+	return [entry, ...chunks];
+}
+
 function desktopClerkAssetPlugin(): Plugin {
 	return {
 		name: "clawdi-desktop-clerk-asset",
 		apply: "build",
 		buildStart() {
-			const browserAssets = readdirSync(clerkBrowserDist).filter(
-				(name) => name === "clerk.browser.js" || name.includes("_clerk.browser_"),
-			);
-			for (const file of browserAssets) {
+			for (const file of clerkBrowserAssetClosure()) {
 				this.emitFile({
 					type: "asset",
 					fileName: `assets/${file}`,

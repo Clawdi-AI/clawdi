@@ -1,71 +1,54 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { desktopReleaseBuilderArgs, readDesktopReleaseConfiguration } from "./release-contract";
 
-const packageJson = JSON.parse(
-	readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"),
-) as Record<string, unknown>;
+const RELEASE_ENV = {
+	CLAWDI_DESKTOP_VERSION: "1.2.3",
+	CLAWDI_DESKTOP_TEAM_ID: "ABC1234567",
+	CLAWDI_DESKTOP_UPDATE_FEED_URL: "https://downloads.example.test/clawdi/desktop/stable/",
+	CSC_NAME: "Developer ID Application: Clawdi, Inc.",
+	APPLE_API_KEY: "/private/AuthKey.p8",
+	APPLE_API_KEY_ID: "KEY123",
+	APPLE_API_ISSUER: "issuer-id",
+} as const;
 
 describe("Desktop release contract", () => {
-	test("keeps preview metadata disabled and configures GitHub update artifacts", () => {
-		const build = packageJson.build as {
-			directories?: { buildResources?: string };
-			extraMetadata?: Record<string, unknown>;
-			publish?: Array<Record<string, unknown>>;
-			mac?: {
-				entitlements?: string;
-				entitlementsInherit?: string;
-				hardenedRuntime?: boolean;
-				target?: Array<{ target?: string }>;
-			};
-		};
-		const dependencies = packageJson.dependencies as Record<string, unknown>;
-		expect(dependencies["electron-updater"]).toBe("6.8.9");
-		expect(build.extraMetadata?.clawdiUpdateChannel).toBe("disabled");
-		expect(build.directories?.buildResources).toBe("build");
-		expect(build.publish).toEqual([
+	test("fails closed without a signed stable generic feed configuration", () => {
+		for (const env of [
+			{},
+			{ ...RELEASE_ENV, CLAWDI_DESKTOP_UPDATE_FEED_URL: "" },
+			{ ...RELEASE_ENV, CLAWDI_DESKTOP_UPDATE_FEED_URL: "http://downloads.example.test" },
 			{
-				provider: "github",
-				owner: "Clawdi-AI",
-				repo: "clawdi",
-				releaseType: "release",
+				...RELEASE_ENV,
+				CLAWDI_DESKTOP_UPDATE_FEED_URL: "https://downloads.example.test/clawdi/desktop/stable",
 			},
-		]);
-		expect(build.mac?.hardenedRuntime).toBe(true);
-		expect(build.mac?.entitlements).toBeUndefined();
-		expect(build.mac?.entitlementsInherit).toBeUndefined();
-		expect(existsSync(join(import.meta.dir, "..", "build", "entitlements.mac.plist"))).toBe(true);
-		expect(existsSync(join(import.meta.dir, "..", "build", "entitlements.mac.inherit.plist"))).toBe(
-			true,
-		);
-		expect(build.mac?.target?.map((target) => target.target)).toEqual(["dmg", "zip"]);
+			{ ...RELEASE_ENV, CLAWDI_DESKTOP_UPDATE_FEED_URL: "https://user@downloads.example.test" },
+		]) {
+			expect(() => readDesktopReleaseConfiguration(env, "darwin")).toThrow();
+		}
 	});
 
-	test("requires stable version, signing, and an official notarization credential tuple", () => {
-		expect(() => readDesktopReleaseConfiguration({}, "darwin")).toThrow();
-		expect(
-			readDesktopReleaseConfiguration(
-				{
-					CLAWDI_DESKTOP_VERSION: "1.2.3",
-					CLAWDI_DESKTOP_TEAM_ID: "ABC1234567",
-					CSC_NAME: "Developer ID Application: Clawdi, Inc.",
-					APPLE_API_KEY: "/private/AuthKey.p8",
-					APPLE_API_KEY_ID: "KEY123",
-					APPLE_API_ISSUER: "issuer-id",
-				},
-				"darwin",
-			),
-		).toEqual({ version: "1.2.3", teamId: "ABC1234567", notarizationMode: "api-key" });
+	test("accepts explicit signing, notarization, Team ID, and strict HTTPS feed inputs", () => {
+		expect(readDesktopReleaseConfiguration(RELEASE_ENV, "darwin")).toEqual({
+			version: "1.2.3",
+			teamId: "ABC1234567",
+			updateFeedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
+			notarizationMode: "api-key",
+		});
 	});
 
-	test("builds both updater artifacts without publishing", () => {
-		const args = desktopReleaseBuilderArgs("1.2.3");
+	test("embeds signed updater metadata and configures generic artifacts without publishing", () => {
+		const configuration = readDesktopReleaseConfiguration(RELEASE_ENV, "darwin");
+		const args = desktopReleaseBuilderArgs(configuration);
 		expect(args).toContain("dmg");
 		expect(args).toContain("zip");
 		expect(args).toContain("never");
 		expect(args).toContain("--config.forceCodeSigning=true");
 		expect(args).toContain("--config.mac.notarize=true");
 		expect(args).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
+		expect(args).toContain(
+			"--config.extraMetadata.clawdiUpdateFeedUrl=https://downloads.example.test/clawdi/desktop/stable/",
+		);
+		expect(args).toContain("--config.extraMetadata.clawdiUpdateTeamId=ABC1234567");
+		expect(args).toContain("--config.publish.provider=generic");
 	});
 });
