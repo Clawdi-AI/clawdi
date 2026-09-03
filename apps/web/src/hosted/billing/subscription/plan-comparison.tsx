@@ -122,7 +122,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: "Compare hosted compute plans before starting another agent."
+					: "Eligible accounts get one 7-day trial on their first Basic or Performance card subscription; one trial per account."
 			}
 		>
 			<div>
@@ -133,9 +133,9 @@ export function PlanComparison({
 							<CardTitle className="flex items-center gap-2">
 								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
 							</CardTitle>
-							<CardDescription>First active Basic agent included at no charge.</CardDescription>
+							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
-								<p className="text-xs text-muted-foreground">Each additional Basic agent</p>
+								<p className="text-xs text-muted-foreground">Basic subscription</p>
 								{basicPrice ? (
 									<>
 										<p className="text-3xl font-semibold tracking-tight tabular-nums">
@@ -169,7 +169,7 @@ export function PlanComparison({
 							</CardTitle>
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
-								<p className="text-xs text-muted-foreground">Each Performance agent</p>
+								<p className="text-xs text-muted-foreground">Performance subscription</p>
 								{performancePrice ? (
 									<>
 										<p className="text-3xl font-semibold tracking-tight tabular-nums">

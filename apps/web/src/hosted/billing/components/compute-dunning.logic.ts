@@ -117,10 +117,10 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fundingSource: fallback.funding_source,
 		recoveryTarget: { kind: "start_new", action: "start_new" },
 		description: statusUnavailable
-			? "We can’t determine whether this agent stopped or is using free compute because its current status is unavailable. Start a new subscription to restore paid compute."
+			? "We can’t determine whether this agent stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
 			: stopped
-				? "No free compute slot was available, so this agent stopped. Start a new subscription to restore paid compute."
-				: "This agent is now using free compute. Start a new subscription to restore paid compute.",
+				? "No included Basic entitlement was available, so this agent stopped. Start a new subscription to restore paid compute."
+				: "This agent is now using included Basic. Start a new subscription to restore paid compute.",
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,

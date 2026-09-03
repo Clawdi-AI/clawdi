@@ -139,7 +139,9 @@ describe("deploy wizard responsive layout", () => {
 
 	test("removes redundant payment badges and keeps concise funding copy", () => {
 		expect(wizardSource).not.toContain("hidden @3xl/main:inline-flex");
-		expect(wizardSource).toContain("Recurring subscription via Stripe. Manage or cancel anytime.");
+		expect(wizardSource).toContain(
+			"Card required. Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account.",
+		);
 		expect(wizardSource).toContain("Paid upfront from your Wallet balance. Renews from Wallet.");
 	});
 });
@@ -217,6 +219,11 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
+		expect(wizardSource).toContain(
+			"Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account.",
+		);
+		expect(agentDetailSource).toContain("an included Basic entitlement if available");
+		expect(agentDetailSource).not.toContain("falls back to free compute");
 	});
 
 	test("keeps post-acceptance waiting out of the customer flow", () => {
@@ -339,7 +346,7 @@ describe("billing-read gates", () => {
 			"shouldBlockQueryError(includedBasic.error, includedBasic.data)",
 		);
 		expect(wizardSource).toContain("includedBasic.data.available_slots > 0");
-		expect(wizardSource).toContain('title="Couldn\'t check free compute availability"');
+		expect(wizardSource).toContain('title="Couldn\'t check included Basic availability"');
 		expect(wizardSource).toContain("onRetry={() => void includedBasic.refetch()}");
 		expect(wizardSource).not.toContain("usesActiveIncludedBasicSlot");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');

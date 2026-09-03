@@ -3848,14 +3848,14 @@ function ComputeSettingsSections({
 								description: (
 									<p>
 										Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls back
-										to free compute if available; otherwise, it stops.
+										to an included Basic entitlement if available; otherwise, it stops.
 									</p>
 								),
 								confirmLabel: "Cancel at period end",
 								successDescription: (result) =>
 									result.current_period_end
-										? `Cancellation takes effect ${formatShortDate(result.current_period_end)}. The agent then falls back to free compute if available; otherwise, it stops.`
-										: "The agent falls back to free compute if available when cancellation takes effect; otherwise, it stops.",
+										? `Cancellation takes effect ${formatShortDate(result.current_period_end)}. The agent then falls back to an included Basic entitlement if available; otherwise, it stops.`
+										: "The agent falls back to an included Basic entitlement if available when cancellation takes effect; otherwise, it stops.",
 							}}
 						/>
 					}

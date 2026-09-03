@@ -602,10 +602,10 @@ export function DeployWizard() {
 		if (subscriptionSource.mode === "included") {
 			if (includedBasicAvailable === undefined) {
 				return blockingIncludedBasicError
-					? "Retry the free compute availability check above."
-					: "Checking your free compute availability.";
+					? "Retry the included Basic availability check above."
+					: "Checking included Basic availability.";
 			}
-			if (!includedBasicAvailable) return "Free compute is unavailable.";
+			if (!includedBasicAvailable) return "Included Basic is unavailable.";
 		} else {
 			if (reusableSubscriptions.isFetching) return "Checking reusable subscriptions.";
 			if (blockingReusableSubscriptionsError || reusableSubscriptionInventory === undefined) {
@@ -1255,7 +1255,7 @@ export function DeployWizard() {
 								normalizer={billingErrorNormalizer}
 								error={blockingIncludedBasicError}
 								onRetry={() => void includedBasic.refetch()}
-								title="Couldn't check free compute availability"
+								title="Couldn't check included Basic availability"
 							/>
 						) : null}
 						{subscriptionSource?.mode === "new" && plansLoadError ? (
@@ -1373,7 +1373,7 @@ export function DeployWizard() {
 													</IconChip>
 												}
 												title="Card subscription"
-												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												description="Card required. Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account."
 											/>
 											<EntityChoiceCard
 												selected={paymentMethod === "wallet"}

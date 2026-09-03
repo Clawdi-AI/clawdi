@@ -26,6 +26,7 @@ describe("SubscriptionSourcePicker", () => {
 				isLoading={false}
 				error={null}
 				onRetry={() => undefined}
+				showIncluded
 			/>,
 		);
 
@@ -36,5 +37,7 @@ describe("SubscriptionSourcePicker", () => {
 		expect(markup).toContain('aria-pressed="true"');
 		expect(markup).toContain('title="Basic">Basic</span>');
 		expect(markup).toContain("Plan price");
+		expect(markup).toContain("Use your included Basic entitlement.");
+		expect(markup).toContain("Included");
 	});
 });

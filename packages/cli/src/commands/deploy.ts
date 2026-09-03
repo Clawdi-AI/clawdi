@@ -70,6 +70,8 @@ export type DeployCommandDependencies = {
 
 type DeployAiMode = "managed" | "saved" | "unmanaged";
 type DeployPaymentMethod = "wallet" | "card";
+const HOSTED_CLI_PAID_CHECKOUT_UNAVAILABLE =
+	"This Hosted CLI authorization cannot purchase compute. No quote or payment was started; use the Web Deploy Wizard.";
 
 export type ParsedDeployOptions = {
 	runtime?: HostedDeployRuntime;
@@ -830,10 +832,7 @@ export async function runDeployFlow(
 	}
 	if (computeOptions.length === 0) {
 		if (!paidCheckoutSupported) {
-			throw new DeployInputError(
-				"paid_checkout_unavailable",
-				"This Hosted CLI authorization can create only the included free Basic agent. Paid Wallet and card checkout are not granted to CLI tokens; use the Web Deploy Wizard.",
-			);
+			throw new DeployInputError("paid_checkout_unavailable", HOSTED_CLI_PAID_CHECKOUT_UNAVAILABLE);
 		}
 		throw new PublicDeployFailure(
 			"compute_unavailable",
@@ -852,7 +851,7 @@ export async function runDeployFlow(
 	}
 	if (!computeOptions.some((option) => option.value === computePlanSlug)) {
 		const reason = !paidCheckoutSupported
-			? "This Hosted CLI authorization can create only the included free Basic agent. Paid Wallet and card checkout are not granted to CLI tokens; use the Web Deploy Wizard."
+			? HOSTED_CLI_PAID_CHECKOUT_UNAVAILABLE
 			: computePlanSlug === "compute_basic" && basicSelection.mode === "unavailable"
 				? `Basic compute is unavailable (${basicSelection.reason.replace(/_/g, " ")}).`
 				: `${planLabel(computePlanSlug)} compute is unavailable.`;
@@ -925,10 +924,7 @@ export async function runDeployFlow(
 	let payment = parsed.payment;
 	if (!includedBasic) {
 		if (!paidCheckoutSupported) {
-			throw new DeployInputError(
-				"paid_checkout_unavailable",
-				"This Hosted CLI authorization does not grant paid checkout. No quote or payment was started; use the Web Deploy Wizard.",
-			);
+			throw new DeployInputError("paid_checkout_unavailable", HOSTED_CLI_PAID_CHECKOUT_UNAVAILABLE);
 		}
 		if (interactive && !payment) {
 			const selected = await prompts.select(
