@@ -80,9 +80,9 @@ import {
 	deployWizardDraftIsDirty,
 } from "@/hosted/billing/deploy/deploy-dirty-state";
 import {
-	COMPUTE_CARD_TRIAL_ELIGIBILITY,
 	type ComputePricePresentation,
 	cardDeployAmountPresentation,
+	cardTrialPricePresentation,
 	computePricePresentation,
 	type DeployAmountPresentation,
 	walletDeployAmountPresentation,
@@ -239,28 +239,21 @@ function computeCheckoutSummary({
 }
 
 function ComputePriceBlock({
-	billingTermMonths,
 	presentation,
-	showTrial,
 	testId,
 }: {
-	billingTermMonths: number;
 	presentation: ComputePricePresentation;
-	showTrial: boolean;
 	testId: string;
 }) {
-	const trial = showTrial ? presentation.trial : null;
 	return (
 		<div data-testid={testId} className="flex min-w-0 flex-col items-end text-right tabular-nums">
-			<div className="flex flex-wrap items-center justify-end gap-1.5 leading-5">
+			<div className="flex items-baseline justify-end leading-5">
 				<span className="whitespace-nowrap text-sm font-semibold text-foreground">
 					{presentation.primary}
 				</span>
-				{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
 			</div>
 			<div className="text-xs leading-4 font-normal text-muted-foreground">
-				{trial?.afterTrial ?? presentation.secondary}
-				{trial && billingTermMonths > 1 ? <> · {presentation.secondary}</> : null}
+				{presentation.secondary}
 				{presentation.savings ? (
 					<>
 						{" "}
@@ -516,10 +509,12 @@ export function DeployWizard() {
 						tierLabel: "Basic",
 					}
 				: null;
-	const selectedCardTrial =
-		compute === "performance"
-			? (perfPricePresentation?.trial ?? null)
-			: (basicPricePresentation?.trial ?? null);
+	const selectedCardTrial = paidSelection
+		? cardTrialPricePresentation(
+				`${formatCents(paidSelection.offer.price_cents)}${billingTermSuffix(paidSelection.billingTermMonths)}`,
+				paidSelection.offer.card_trial_period_days,
+			)
+		: null;
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -1035,9 +1030,9 @@ export function DeployWizard() {
 	const runtimeSummary = runtimeDisplayName(runtime);
 	const deployAmount: DeployAmountPresentation | null =
 		subscriptionSource?.mode === "included"
-			? { amount: "Free", badge: null, caption: null, detail: null }
+			? { amount: "Free", caption: null, detail: null }
 			: selectedReusableSubscription
-				? { amount: "$0 due now", badge: null, caption: null, detail: null }
+				? { amount: "$0 due now", caption: null, detail: null }
 				: paidSelection
 					? paymentMethod === "wallet"
 						? walletDeployAmountPresentation({
@@ -1329,10 +1324,8 @@ export function DeployWizard() {
 										details={
 											basicPricePresentation ? (
 												<ComputePriceBlock
-													billingTermMonths={basicBillingTermMonths}
 													testId="basic-compute-price"
 													presentation={basicPricePresentation}
-													showTrial={paymentMethod === "card"}
 												/>
 											) : null
 										}
@@ -1369,10 +1362,8 @@ export function DeployWizard() {
 										details={
 											perfPricePresentation ? (
 												<ComputePriceBlock
-													billingTermMonths={perfBillingTermMonths}
 													testId="performance-compute-price"
 													presentation={perfPricePresentation}
-													showTrial={paymentMethod === "card"}
 												/>
 											) : null
 										}
@@ -1394,11 +1385,7 @@ export function DeployWizard() {
 													</IconChip>
 												}
 												title="Card subscription"
-												description={
-													selectedCardTrial
-														? `Card required. ${COMPUTE_CARD_TRIAL_ELIGIBILITY}`
-														: "Card required."
-												}
+												description={selectedCardTrial?.summary}
 											/>
 											<EntityChoiceCard
 												selected={paymentMethod === "wallet"}
@@ -1557,12 +1544,9 @@ export function DeployWizard() {
 									aria-live="polite"
 								>
 									<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 @2xl/main:justify-end">
-										<span className="whitespace-nowrap font-semibold tabular-nums text-foreground">
+										<span className="font-semibold tabular-nums text-foreground">
 											{deployAmount.amount}
 										</span>
-										{deployAmount.badge ? (
-											<Badge variant="secondary">{deployAmount.badge}</Badge>
-										) : null}
 										{paymentMethod === "wallet" && walletQuoteState === "error" ? (
 											<Button
 												type="button"

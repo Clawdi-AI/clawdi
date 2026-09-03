@@ -4,14 +4,13 @@ import { Check, Cpu, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
 import {
-	COMPUTE_CARD_TRIAL_ELIGIBILITY,
 	type ComputePricePresentation,
+	cardTrialPricePresentation,
 	computePricePresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -47,19 +46,21 @@ function PlanPrice({
 	offer: BillingOffer;
 	presentation: ComputePricePresentation;
 }) {
-	const { trial } = presentation;
+	const trial = cardTrialPricePresentation(
+		presentation.primary,
+		offer.card_trial_period_days,
+	);
 	return (
 		<>
-			<div className="flex flex-wrap items-center gap-2">
-				<p className="text-3xl font-semibold tracking-normal tabular-nums">
-					{presentation.primary}
-				</p>
-				{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
-			</div>
-			<p className="text-xs text-muted-foreground tabular-nums">
-				{trial?.afterTrial ?? presentation.secondary}
-				{trial && offer.billing_term_months > 1 ? <> · {presentation.secondary}</> : null}
+			<p className="text-3xl font-semibold tracking-normal tabular-nums">
+				{presentation.primary}
 			</p>
+			<p className="text-xs text-muted-foreground tabular-nums">
+				{trial?.label ?? presentation.secondary}
+			</p>
+			{trial && offer.billing_term_months > 1 ? (
+				<p className="text-xs text-muted-foreground tabular-nums">{presentation.secondary}</p>
+			) : null}
 		</>
 	);
 }
@@ -127,7 +128,6 @@ export function PlanComparison({
 	const performancePrice = performanceOffer
 		? computePricePresentation(performanceOffer, performanceOffers)
 		: null;
-	const hasCardTrial = Boolean(basicPrice?.trial || performancePrice?.trial);
 	const sharedPricingUnavailable =
 		basic !== undefined && performance !== undefined && !selectedTerm;
 
@@ -152,9 +152,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: hasCardTrial
-						? COMPUTE_CARD_TRIAL_ELIGIBILITY
-						: "Compare hosted compute plans."
+					: "Compare hosted compute plans."
 			}
 		>
 			<div>

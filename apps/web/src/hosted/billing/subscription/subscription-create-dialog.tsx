@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -33,7 +32,7 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type { ComputePlanSlug, Plan, SubscriptionSelection } from "@/hosted/billing/contracts";
 import {
-	COMPUTE_CARD_TRIAL_ELIGIBILITY,
+	cardTrialPricePresentation,
 	computePricePresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import {
@@ -148,7 +147,13 @@ export function SubscriptionCreateDialog({
 	const selectedOffer =
 		offers.find((offer) => offer.billing_term_months === billingTermMonths) ?? null;
 	const selectedPrice = selectedOffer ? computePricePresentation(selectedOffer, offers) : null;
-	const cardTrial = fundingSource === "stripe" ? (selectedPrice?.trial ?? null) : null;
+	const cardTrial =
+		fundingSource === "stripe" && selectedOffer && selectedPrice
+			? cardTrialPricePresentation(
+					selectedPrice.primary,
+					selectedOffer.card_trial_period_days,
+				)
+			: null;
 	const supportedTerm = supportedBillingTerm(billingTermMonths);
 	const newSubscriptionSelection: SubscriptionCreateSelection | null =
 		supportedTerm && selectedOffer
@@ -446,19 +451,15 @@ export function SubscriptionCreateDialog({
 										<span>
 											{computeTierLabel(planSlug)} · {billingTermLabel(billingTermMonths)}
 										</span>
-										<div className="flex flex-wrap items-center gap-2">
-											<span className="text-base font-semibold text-foreground tabular-nums">
-												{selectedPrice.primary}
-											</span>
-											{cardTrial ? <Badge variant="secondary">{cardTrial.badge}</Badge> : null}
-										</div>
+										<span className="text-base font-semibold text-foreground tabular-nums">
+											{selectedPrice.primary}
+										</span>
 										<p className="text-xs tabular-nums">
-											{cardTrial?.afterTrial ?? selectedPrice.secondary}
+											{cardTrial?.label ?? selectedPrice.secondary}
 											{cardTrial && billingTermMonths > 1 ? (
 												<> · {selectedPrice.secondary}</>
 											) : null}
 										</p>
-										{cardTrial ? <p className="text-xs">{COMPUTE_CARD_TRIAL_ELIGIBILITY}</p> : null}
 									</div>
 								) : (
 									<Alert variant="destructive">

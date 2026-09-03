@@ -13,7 +13,6 @@ import type {
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -78,13 +77,12 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 							<p className="text-xs text-muted-foreground">{summary.detail}</p>
 						</div>
 						<div className="text-left sm:text-right">
-							<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-								<p className="font-mono text-base tabular-nums">{summary.priceLabel}</p>
-								{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
-							</div>
-							<p className="text-xs text-muted-foreground tabular-nums">
-								{trial?.afterTrial ?? summary.termLabel}
+							<p className="text-sm font-medium tabular-nums sm:max-w-64">
+								{trial?.summary ?? summary.priceLabel}
 							</p>
+							{trial ? null : (
+								<p className="text-xs text-muted-foreground">{summary.termLabel}</p>
+							)}
 						</div>
 					</div>
 				</div>
