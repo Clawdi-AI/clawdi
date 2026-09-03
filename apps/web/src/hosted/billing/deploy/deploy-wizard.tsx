@@ -1178,9 +1178,6 @@ export function DeployWizard() {
 								}
 								title={authCardLabel("unmanaged")}
 								description="Deploy first, then configure model access inside the Agent."
-								badge={
-									aiAccessMode === "unmanaged" ? <Badge variant="secondary">Selected</Badge> : null
-								}
 							/>
 							{aiProviders.isLoading ? (
 								<Skeleton className="h-[74px] w-full rounded-lg" />
@@ -1212,8 +1209,6 @@ export function DeployWizard() {
 										badge={
 											issue ? (
 												<Badge variant="secondary">Unavailable</Badge>
-											) : primaryProviderChoice === provider.provider_id ? (
-												<Badge variant="secondary">Selected</Badge>
 											) : (
 												<AuthBadge auth={provider.auth} />
 											)

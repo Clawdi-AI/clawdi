@@ -270,9 +270,12 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).toContain("isManaged && hasCatalogModels");
 		expect(wizardSource).not.toContain("compactManagedModelChoices");
 		expect(agentDetailSource).not.toContain("compactManagedModelChoices");
-		expect(modelBindingPickerSource).toContain("compactManagedItems.featured.map((item, index) =>");
+		expect(modelBindingPickerSource).toContain("compactManagedItems.featured.map((item) =>");
 		expect(modelBindingPickerSource).toContain("compactManagedItems.overflow.map((item) =>");
-		expect(modelBindingPickerSource).toContain("<RadioGroup");
+		expect(modelBindingPickerSource).toContain("<EntityChoiceCard");
+		expect(modelBindingPickerSource).not.toContain("entityChoiceCardClass");
+		expect(modelBindingPickerSource).not.toContain("<RadioGroup");
+		expect(modelBindingPickerSource).not.toContain("<Check");
 		expect(modelBindingPickerSource).toContain('data-testid="managed-model-overflow"');
 		expect(modelBindingPickerSource).toContain('placeholder="More models"');
 		expect(modelBindingPickerSource).toContain("aria-labelledby=");
@@ -288,9 +291,7 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).not.toContain("Primary model");
 		expect(modelBindingPickerSource).not.toContain("Catalog model");
 		expect(modelBindingPickerSource).toContain('className="flex w-full min-w-0 flex-col gap-3"');
-		expect(modelBindingPickerSource).toContain(
-			"grid-cols-1 gap-2 @md/main:grid-cols-2 @4xl/main:grid-cols-4",
-		);
+		expect(modelBindingPickerSource).toContain("@md/main:grid-cols-2 @4xl/main:grid-cols-4");
 		expect(modelBindingPickerSource).not.toContain("max-w-2xl");
 		expect(modelBindingPickerSource).not.toContain("bg-muted/20");
 		expect(modelBindingPickerSource).not.toContain("Primary provider");
@@ -341,6 +342,10 @@ describe("deploy provider choice", () => {
 		expect(wizardSource).toContain("selectAiProviderChoice(provider.provider_id)");
 		expect(wizardSource).not.toContain("showProviderSelect");
 		expect(wizardSource).not.toContain("onPrimaryProviderChange");
+		expect(wizardSource).not.toContain(">Selected</Badge>");
+		expect(agentDetailSource).not.toContain(">Selected</Badge>");
+		expect(agentDetailSource).not.toContain(">Current</Badge>");
+		expect(agentDetailSource).not.toContain(">In use</Badge>");
 	});
 });
 

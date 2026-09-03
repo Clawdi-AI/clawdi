@@ -2392,11 +2392,6 @@ function AiProviderTab({
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 					title={MANAGED_PROVIDER_LABEL}
 					description="No setup required. Usage draws from your Wallet."
-					badge={
-						bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
-							<Badge variant="secondary">Selected</Badge>
-						) : null
-					}
 				/>
 				<EntityChoiceCard
 					onClick={() => setBindingMode("unmanaged")}
@@ -2408,7 +2403,6 @@ function AiProviderTab({
 					}
 					title={authCardLabel("unmanaged")}
 					description="Configure model access inside the agent."
-					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
 				/>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
 				{shouldBlockQueryError(providers.error, providers.data) ? (
@@ -2428,7 +2422,6 @@ function AiProviderTab({
 						icon={<ProviderIcon provider={unresolvedProviderRef(primaryProviderChoice)} />}
 						title={`Using ${providerDisplayLabel(unresolvedProviderRef(primaryProviderChoice), list)}`}
 						description={`Saved connection details couldn't be loaded. Choose ${MANAGED_PROVIDER_LABEL} to replace it.`}
-						badge={<Badge variant="secondary">In use</Badge>}
 					/>
 				) : null}
 				{list.map((p) => {
@@ -2445,13 +2438,7 @@ function AiProviderTab({
 							title={providerDisplayLabel(p)}
 							description={issue?.message ?? providerCatalogDescription(p)}
 							badge={
-								selected ? (
-									<Badge variant="secondary">Selected</Badge>
-								) : issue ? (
-									<Badge variant="secondary">Unavailable</Badge>
-								) : (
-									<AuthBadge auth={p.auth} />
-								)
+								issue ? <Badge variant="secondary">Unavailable</Badge> : <AuthBadge auth={p.auth} />
 							}
 						/>
 					);
