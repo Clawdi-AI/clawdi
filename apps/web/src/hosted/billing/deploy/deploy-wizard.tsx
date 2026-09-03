@@ -80,9 +80,11 @@ import {
 	deployWizardDraftIsDirty,
 } from "@/hosted/billing/deploy/deploy-dirty-state";
 import {
+	COMPUTE_CARD_TRIAL_ELIGIBILITY,
 	type ComputePricePresentation,
 	cardDeployAmountPresentation,
 	computePricePresentation,
+	type DeployAmountPresentation,
 	walletDeployAmountPresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import {
@@ -108,7 +110,7 @@ import {
 	isReusableSubscriptionUnavailableError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, formatCents } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	useIncludedBasicAvailability,
 	useManagedModelCatalog,
@@ -213,11 +215,13 @@ function computeCheckoutSummary({
 	plan,
 	termMonths,
 	tierLabel,
+	trialDays,
 }: {
 	offer: BillingOffer;
 	plan: Plan;
 	termMonths: number;
 	tierLabel: "Basic" | "Performance";
+	trialDays: number | null;
 }): StripeCheckoutSummary {
 	const effectiveMonthly = formatCents(offer.effective_monthly_price_cents);
 	const agentLabel =
@@ -228,27 +232,35 @@ function computeCheckoutSummary({
 				? `Per ${agentLabel}, billed monthly.`
 				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
 		planName: plan.name,
-		priceLabel: formatCents(offer.price_cents),
+		priceLabel: `${formatCents(offer.price_cents)}${billingTermSuffix(termMonths)}`,
 		termLabel: billingTermLabel(termMonths),
+		trialDays,
 	};
 }
 
 function ComputePriceBlock({
+	billingTermMonths,
 	presentation,
+	showTrial,
 	testId,
 }: {
+	billingTermMonths: number;
 	presentation: ComputePricePresentation;
+	showTrial: boolean;
 	testId: string;
 }) {
+	const trial = showTrial ? presentation.trial : null;
 	return (
 		<div data-testid={testId} className="flex min-w-0 flex-col items-end text-right tabular-nums">
-			<div className="flex items-baseline justify-end leading-5">
+			<div className="flex flex-wrap items-center justify-end gap-1.5 leading-5">
 				<span className="whitespace-nowrap text-sm font-semibold text-foreground">
 					{presentation.primary}
 				</span>
+				{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
 			</div>
 			<div className="text-xs leading-4 font-normal text-muted-foreground">
-				{presentation.secondary}
+				{trial?.afterTrial ?? presentation.secondary}
+				{trial && billingTermMonths > 1 ? <> · {presentation.secondary}</> : null}
 				{presentation.savings ? (
 					<>
 						{" "}
@@ -504,6 +516,10 @@ export function DeployWizard() {
 						tierLabel: "Basic",
 					}
 				: null;
+	const selectedCardTrial =
+		compute === "performance"
+			? (perfPricePresentation?.trial ?? null)
+			: (basicPricePresentation?.trial ?? null);
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -940,6 +956,7 @@ export function DeployWizard() {
 							plan: paidSelection.plan,
 							termMonths: paidSelection.billingTermMonths,
 							tierLabel: paidSelection.tierLabel,
+							trialDays: result.trial_period_days ?? null,
 						}),
 						tierLabel: paidSelection.tierLabel,
 					});
@@ -1016,11 +1033,11 @@ export function DeployWizard() {
 					.filter(Boolean)
 					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
-	const deployAmount =
+	const deployAmount: DeployAmountPresentation | null =
 		subscriptionSource?.mode === "included"
-			? { amount: "Free", caption: null, detail: null }
+			? { amount: "Free", badge: null, caption: null, detail: null }
 			: selectedReusableSubscription
-				? { amount: "$0 due now", caption: null, detail: null }
+				? { amount: "$0 due now", badge: null, caption: null, detail: null }
 				: paidSelection
 					? paymentMethod === "wallet"
 						? walletDeployAmountPresentation({
@@ -1312,8 +1329,10 @@ export function DeployWizard() {
 										details={
 											basicPricePresentation ? (
 												<ComputePriceBlock
+													billingTermMonths={basicBillingTermMonths}
 													testId="basic-compute-price"
 													presentation={basicPricePresentation}
+													showTrial={paymentMethod === "card"}
 												/>
 											) : null
 										}
@@ -1350,8 +1369,10 @@ export function DeployWizard() {
 										details={
 											perfPricePresentation ? (
 												<ComputePriceBlock
+													billingTermMonths={perfBillingTermMonths}
 													testId="performance-compute-price"
 													presentation={perfPricePresentation}
+													showTrial={paymentMethod === "card"}
 												/>
 											) : null
 										}
@@ -1373,7 +1394,11 @@ export function DeployWizard() {
 													</IconChip>
 												}
 												title="Card subscription"
-												description="Card required. Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account."
+												description={
+													selectedCardTrial
+														? `Card required. ${COMPUTE_CARD_TRIAL_ELIGIBILITY}`
+														: "Card required."
+												}
 											/>
 											<EntityChoiceCard
 												selected={paymentMethod === "wallet"}
@@ -1535,6 +1560,9 @@ export function DeployWizard() {
 										<span className="whitespace-nowrap font-semibold tabular-nums text-foreground">
 											{deployAmount.amount}
 										</span>
+										{deployAmount.badge ? (
+											<Badge variant="secondary">{deployAmount.badge}</Badge>
+										) : null}
 										{paymentMethod === "wallet" && walletQuoteState === "error" ? (
 											<Button
 												type="button"
