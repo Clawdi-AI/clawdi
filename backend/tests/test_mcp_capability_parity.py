@@ -290,8 +290,8 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "vault_get",
                 "vault_resolve",
                 "vault_create",
-                "vault_upsert",
-                "vault_delete_items",
+                "vault_item_upsert",
+                "vault_item_delete",
             } <= names
             descriptions = {tool["name"]: tool["description"] for tool in listed["tools"]}
             assert "solely because" in descriptions["memory_search"]
@@ -578,8 +578,8 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "vault_list",
                 "vault_resolve",
                 "vault_create",
-                "vault_upsert",
-                "vault_delete_items",
+                "vault_item_upsert",
+                "vault_item_delete",
             } <= cli_names
             cli_search = await _tool_call(
                 client,
@@ -607,8 +607,8 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "vault_list",
                 "vault_resolve",
                 "vault_create",
-                "vault_upsert",
-                "vault_delete_items",
+                "vault_item_upsert",
+                "vault_item_delete",
             } <= oauth_names
             oauth_projects = _tool_json(await _tool_call(client, 17, "project_list"))["projects"]
             oauth_project_ids = {project["id"] for project in oauth_projects}
@@ -847,7 +847,7 @@ async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_re
                 await _tool_call(
                     client,
                     2,
-                    "vault_upsert",
+                    "vault_item_upsert",
                     {
                         "project_id": str(env_a.default_project_id),
                         "vault_id": str(created_vault_id),
@@ -894,7 +894,7 @@ async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_re
             blocked_vault = await _tool_call(
                 client,
                 4,
-                "vault_upsert",
+                "vault_item_upsert",
                 {
                     "project_id": str(env_b.default_project_id),
                     "vault_id": str(other_vault.id),
@@ -908,7 +908,7 @@ async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_re
             mismatched_slug = await _tool_call(
                 client,
                 5,
-                "vault_upsert",
+                "vault_item_upsert",
                 {
                     "project_id": str(env_a.default_project_id),
                     "vault_id": str(created_vault_id),
@@ -922,7 +922,7 @@ async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_re
             shared_delete = await _tool_call(
                 client,
                 6,
-                "vault_delete_items",
+                "vault_item_delete",
                 {
                     "project_id": str(env_a.default_project_id),
                     "vault_id": str(shared_vault.id),
@@ -937,7 +937,7 @@ async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_re
                 await _tool_call(
                     client,
                     7,
-                    "vault_delete_items",
+                    "vault_item_delete",
                     {
                         "project_id": str(env_a.default_project_id),
                         "vault_id": str(created_vault_id),
@@ -1046,14 +1046,16 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             listed = await _rpc(client, 1, "tools/list", {})
             names = [tool["name"] for tool in listed["tools"]]
             assert "connector_safe" in names
-            assert "connector_accounts" in names
+            assert "connector_account_list" in names
             assert "memory_search" not in names
             assert "project_get" not in names
             assert "vault_list" not in names
             assert "vault_resolve" not in names
             assert "vault_create" not in names
 
-            accounts = _tool_json(await _tool_call(client, 11, "connector_accounts"))["accounts"]
+            accounts = _tool_json(await _tool_call(client, 11, "connector_account_list"))[
+                "accounts"
+            ]
             assert accounts == [
                 {
                     "id": "ca_github",
@@ -1112,13 +1114,13 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert "missing scope: vault:write" in missing_write["content"][0]["text"]
 
             runtime_auth.api_key.scopes = ["projects:read", "vault:write"]
-            missing_accounts = await _tool_call(client, 43, "connector_accounts")
+            missing_accounts = await _tool_call(client, 43, "connector_account_list")
             assert missing_accounts["isError"] is True
             assert "missing scope: connectors:read" in missing_accounts["content"][0]["text"]
             invalid = await _tool_call(
                 client,
                 5,
-                "vault_upsert",
+                "vault_item_upsert",
                 {"unexpected": True},
             )
             assert invalid["isError"] is True

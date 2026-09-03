@@ -144,7 +144,7 @@ describe("bundled Clawdi skill connector contract", () => {
 			"`memory_delete`",
 			"`memory_extract`",
 			"`session_list`",
-			"`connector_accounts`",
+			"`connector_account_list`",
 		]) {
 			expect(hostedSkill).toContain(tool);
 			expect(genericSkill).toContain(tool);
@@ -154,7 +154,7 @@ describe("bundled Clawdi skill connector contract", () => {
 		expect(hostedSkill).toContain("## Vault");
 		expect(hostedSkill).toContain("`vault_get`");
 		expect(hostedSkill).toContain("`vault_resolve`");
-		for (const tool of ["`vault_create`", "`vault_upsert`", "`vault_delete_items`"]) {
+		for (const tool of ["`vault_create`", "`vault_item_upsert`", "`vault_item_delete`"]) {
 			expect(hostedSkill).toContain(tool);
 			expect(genericSkill).toContain(tool);
 		}

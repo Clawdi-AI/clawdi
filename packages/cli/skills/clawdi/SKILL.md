@@ -84,8 +84,8 @@ stdio command only transports the protocol.
 Vault write tools are available for explicit user requests:
 
 - `vault_create` — Create a Vault attached to one exact owner Project.
-- `vault_upsert` — Create or replace exact fields in an attached Vault.
-- `vault_delete_items` — Delete exact fields from a single-Project Vault.
+- `vault_item_upsert` — Create or replace exact fields in an attached Vault.
+- `vault_item_delete` — Delete exact fields from a single-Project Vault.
 
 Follow the live schema and supply every required Project, Vault, section, and field identity;
 never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
@@ -122,7 +122,7 @@ to have changed:
 - Use the Clawdi connector when no direct option can perform the operation.
 
 Before a side effect, establish the exact service account and organization, Project, or tenant.
-Use `connector_accounts` when the connector is a candidate and its identity is not already clear.
+Use `connector_account_list` when the connector is a candidate and its identity is not already clear.
 Fallback must not silently change that identity. Do not scan for credentials, start an interactive
 login, invent API details, or expose secrets. Choose the path before a side effect and advance
 only after a definite preflight failure. If a mutation's result is ambiguous, inspect it through

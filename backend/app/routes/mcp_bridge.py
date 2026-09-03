@@ -285,11 +285,11 @@ class _VaultMutationIdentityArguments(_ToolArguments):
         return VaultCreate.validate_slug(value)
 
 
-class _VaultUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
+class _VaultItemUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
     pass
 
 
-class _VaultDeleteItemsArguments(_VaultMutationIdentityArguments, VaultItemDelete):
+class _VaultItemDeleteArguments(_VaultMutationIdentityArguments, VaultItemDelete):
     pass
 
 
@@ -585,27 +585,27 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         scopes=("vault:write",),
         handler=lambda arguments, auth, db: _tool_vault_create(arguments, auth=auth, db=db),
     ),
-    "vault_upsert": _NativeToolSpec(
+    "vault_item_upsert": _NativeToolSpec(
         description=(
             "Create or replace exact fields in an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, and canonical slug. Field values are plaintext "
             "inputs encrypted at rest; the response contains identifiers and counts only."
         ),
-        input_schema=_VaultUpsertArguments.model_json_schema(),
+        input_schema=_VaultItemUpsertArguments.model_json_schema(),
         scopes=("vault:write",),
-        handler=lambda arguments, auth, db: _tool_vault_upsert(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_vault_item_upsert(arguments, auth=auth, db=db),
     ),
-    "vault_delete_items": _NativeToolSpec(
+    "vault_item_delete": _NativeToolSpec(
         description=(
             "Delete exact named fields from an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, canonical slug, section, and field names. "
             "Refuses Vaults attached to multiple Projects because deletion is account-wide."
         ),
-        input_schema=_VaultDeleteItemsArguments.model_json_schema(),
+        input_schema=_VaultItemDeleteArguments.model_json_schema(),
         scopes=("vault:write",),
-        handler=lambda arguments, auth, db: _tool_vault_delete_items(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_vault_item_delete(arguments, auth=auth, db=db),
     ),
-    "connector_accounts": _NativeToolSpec(
+    "connector_account_list": _NativeToolSpec(
         description=(
             "List active Clawdi connector accounts and credential-free account, organization, "
             "or tenant labels. Use it to verify the exact service identity before selecting "
@@ -613,7 +613,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         ),
         input_schema=_NoArguments.model_json_schema(),
         scopes=("connectors:read",),
-        handler=lambda arguments, auth, db: _tool_connector_accounts(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_connector_account_list(
+            arguments, auth=auth, db=db
+        ),
     ),
 }
 
@@ -1406,10 +1408,10 @@ async def _tool_vault_create(
     )
 
 
-async def _tool_vault_upsert(
+async def _tool_vault_item_upsert(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_VaultUpsertArguments, arguments)
+    parsed = _validate_arguments(_VaultItemUpsertArguments, arguments)
     fields = await upsert_owned_vault_items(
         db,
         auth,
@@ -1429,10 +1431,10 @@ async def _tool_vault_upsert(
     )
 
 
-async def _tool_vault_delete_items(
+async def _tool_vault_item_delete(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_VaultDeleteItemsArguments, arguments)
+    parsed = _validate_arguments(_VaultItemDeleteArguments, arguments)
     try:
         deleted = await delete_owned_vault_items(
             db,
@@ -1459,7 +1461,7 @@ async def _tool_vault_delete_items(
     )
 
 
-async def _tool_connector_accounts(
+async def _tool_connector_account_list(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     _validate_arguments(_NoArguments, arguments)

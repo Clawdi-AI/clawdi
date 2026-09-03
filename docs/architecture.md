@@ -350,7 +350,7 @@ metadata and provenance. Built-in memory updates clear a stale embedding when
 re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
 as Session search/read and supports bounded time, Agent, and visible Project
-filters. `connector_accounts` exposes only connection IDs, toolkit names,
+filters. `connector_account_list` exposes only connection IDs, toolkit names,
 statuses, and allowlisted display labels; raw provider `data`, `state`, tokens,
 and credentials never enter the MCP result.
 
@@ -367,7 +367,7 @@ reference, and returns its decrypted value. Returned references use the exact ca
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
 Environment-bound callers see only attachments in their bound Agent Project.
 
-`vault_create`, `vault_upsert`, and `vault_delete_items` require `vault:write`.
+`vault_create`, `vault_item_upsert`, and `vault_item_delete` require `vault:write`.
 Every write takes an explicit owner Project; item writes also require an exact
 Vault UUID and canonical slug attached to that Project. Environment-bound keys
 may target only their bound Project. Responses contain identifiers and counts,
