@@ -29,3 +29,10 @@ export function createAppQueryClient(): QueryClient {
 		},
 	});
 }
+
+/** Clear prior-user state without detaching observers mounted during sign-in. */
+export async function resetQueryClientForAuthChange(queryClient: QueryClient): Promise<void> {
+	queryClient.getMutationCache().clear();
+	queryClient.removeQueries({ type: "inactive" });
+	await queryClient.resetQueries({ type: "active" });
+}
