@@ -672,7 +672,7 @@ async function expectSidebarNavigationGroups(
 	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 }
 
-test("sidebar shortcut preserves the desktop focus rail and the mobile trigger closes the drawer", async ({
+test("sidebar shortcut preserves the desktop focus rail and Escape closes the mobile drawer", async ({
 	page,
 }) => {
 	await stubDashboardApi(page);
@@ -711,7 +711,7 @@ test("sidebar shortcut preserves the desktop focus rail and the mobile trigger c
 	await trigger.click();
 	const drawer = page.getByRole("dialog", { name: "Sidebar" });
 	await expect(drawer).toBeVisible();
-	await drawer.getByRole("button", { name: "Close" }).click();
+	await page.keyboard.press("Escape");
 	await expect(drawer).toBeHidden();
 });
 
