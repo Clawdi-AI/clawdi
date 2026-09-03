@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
 from app.core.database import get_session
 from app.core.project import (
-    project_ids_owned_by_user,
     project_ids_readable_by_user,
     project_ids_visible_to,
     resolve_default_write_project,
@@ -48,6 +47,7 @@ from app.schemas.vault import (
     VaultResponse,
     VaultSectionsResponse,
 )
+from app.services import vault as vault_service
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.vault_crypto import decrypt, encrypt
 
@@ -64,17 +64,6 @@ class ProjectPrecedenceEntry(TypedDict):
     display: str
     binding_type: str
     priority: int
-
-
-def _ambiguous_vault_detail(
-    *, slug: str, project_id: UUID | None, exact_reference: bool = False
-) -> dict[str, str | None]:
-    return {
-        "code": "ambiguous_vault_reference_slug" if exact_reference else "ambiguous_vault_slug",
-        "message": f"Vault slug '{slug}' identifies multiple Vaults in the requested scope.",
-        "project_id": str(project_id) if project_id is not None else None,
-        "vault_slug": slug,
-    }
 
 
 # --- Vault CRUD ---
@@ -185,36 +174,13 @@ async def create_vault(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultCreatedResponse:
-    selected_project_id = project_id
-    if selected_project_id is not None:
-        await validate_project_for_caller(db, auth, selected_project_id)
-    elif not create_only:
-        # Preserve the released CLI contract: a plain POST without a Project
-        # resolves and attaches the caller's default write Project.
-        selected_project_id = await resolve_default_write_project(db, auth)
-
-    # Vaults are account-owned. `create_only=true` without a Project is the
-    # account-library create contract and deliberately leaves the Vault
-    # unattached. An explicit Project still attaches exactly that Project;
-    # plain POST retains the idempotent create-or-attach behavior used by CLI.
-    existing_result = await db.execute(
-        select(Vault).where(
-            Vault.user_id == auth.user_id,
-            Vault.slug == body.slug,
-        )
+    vault = await vault_service.create_account_vault(
+        db,
+        auth,
+        body,
+        project_id=project_id,
+        create_only=create_only,
     )
-    vault = existing_result.scalar_one_or_none()
-    if vault is not None and create_only:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Vault slug already exists")
-    if vault is None:
-        vault = Vault(user_id=auth.user_id, slug=body.slug, name=body.name)
-        db.add(vault)
-        await db.flush()
-
-    if selected_project_id is not None:
-        await _ensure_vault_attached(db, vault.id, selected_project_id)
-    await db.commit()
-    await db.refresh(vault)
     return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)
 
 
@@ -264,7 +230,13 @@ async def delete_vault(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
+    vault = await vault_service.get_vault_for_write(
+        db,
+        auth,
+        slug,
+        project_id=project_id,
+        vault_id=vault_id,
+    )
     if project_id is not None:
         await db.execute(
             delete(VaultProjectAttachment).where(
@@ -301,19 +273,6 @@ async def list_vault_sections(
     return VaultSectionsResponse(items)
 
 
-async def _load_items_by_name(
-    db: AsyncSession, vault_id: UUID, section: str
-) -> dict[str, VaultItem]:
-    """Batch-prefetch all vault items for a vault+section keyed by item_name."""
-    result = await db.execute(
-        select(VaultItem).where(
-            VaultItem.vault_id == vault_id,
-            VaultItem.section == section,
-        )
-    )
-    return {item.item_name: item for item in result.scalars().all()}
-
-
 @router.put("/{slug}/items")
 async def upsert_vault_items(
     slug: str,
@@ -323,28 +282,15 @@ async def upsert_vault_items(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsUpsertResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
-    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
-
-    for field_name, plaintext in body.fields.items():
-        ciphertext, nonce = encrypt(plaintext)
-        item = existing_by_name.get(field_name)
-        if item:
-            item.encrypted_value = ciphertext
-            item.nonce = nonce
-        else:
-            db.add(
-                VaultItem(
-                    vault_id=vault.id,
-                    section=body.section,
-                    item_name=field_name,
-                    encrypted_value=ciphertext,
-                    nonce=nonce,
-                )
-            )
-
-    await db.commit()
-    return VaultItemsUpsertResponse(status="ok", fields=len(body.fields))
+    fields = await vault_service.upsert_owned_vault_items(
+        db,
+        auth,
+        slug,
+        body,
+        project_id=project_id,
+        vault_id=vault_id,
+    )
+    return VaultItemsUpsertResponse(status="ok", fields=fields)
 
 
 @router.post("/{slug}/items/copy")
@@ -363,17 +309,28 @@ async def copy_vault_items(
     vault, put them in a named one") needs values to travel between
     vaults, but plaintext resolution stays CLI-only. So the copy happens
     entirely server-side: decrypt + re-encrypt per item, nothing
-    returned but a count. Owner-only on both ends (`_get_vault_write`),
-    so shared-project viewers can't exfiltrate by copying into a vault
-    they control.
+    returned but a count. Both Vaults must be owned by the caller, so
+    shared-project viewers can't exfiltrate by copying into a Vault they
+    control.
     """
-    source = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
-    target = await _get_vault_write(auth, body.target_slug, db, vault_id=target_vault_id)
+    source = await vault_service.get_vault_for_write(
+        db,
+        auth,
+        slug,
+        project_id=project_id,
+        vault_id=vault_id,
+    )
+    target = await vault_service.get_vault_for_write(
+        db,
+        auth,
+        body.target_slug,
+        vault_id=target_vault_id,
+    )
     if target.id == source.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Source and target are the same vault")
 
-    source_by_name = await _load_items_by_name(db, source.id, body.section)
-    target_by_name = await _load_items_by_name(db, target.id, body.section)
+    source_by_name = await vault_service.load_vault_items_by_name(db, source.id, body.section)
+    target_by_name = await vault_service.load_vault_items_by_name(db, target.id, body.section)
     copied = 0
     for field_name in body.fields:
         item = source_by_name.get(field_name)
@@ -424,32 +381,29 @@ async def delete_vault_items(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> VaultItemsDeleteResponse:
-    vault = await _get_vault_write(auth, slug, db, project_id=project_id, vault_id=vault_id)
-    existing_by_name = await _load_items_by_name(db, vault.id, body.section)
-    items_to_delete = [
-        existing_by_name[field_name] for field_name in body.fields if field_name in existing_by_name
-    ]
-
-    if items_to_delete and not global_delete:
-        project_count = await _vault_project_count(db, vault.id)
-        if project_count > 1:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "vault_item_global_delete_requires_confirmation",
-                    "message": (
-                        "This Vault is attached to multiple Projects. Deleting a key removes the "
-                        "account-level secret for every Project that uses this Vault. Pass "
-                        "global_delete=true after explicit confirmation."
-                    ),
-                    "project_count": project_count,
-                },
-            )
-
-    for item in items_to_delete:
-        await db.delete(item)
-
-    await db.commit()
+    try:
+        await vault_service.delete_owned_vault_items(
+            db,
+            auth,
+            slug,
+            body,
+            project_id=project_id,
+            vault_id=vault_id,
+            global_delete=global_delete,
+        )
+    except vault_service.VaultItemsGlobalDeleteConfirmationRequired as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "vault_item_global_delete_requires_confirmation",
+                "message": (
+                    "This Vault is attached to multiple Projects. Deleting a key removes the "
+                    "account-level secret for every Project that uses this Vault. Pass "
+                    "global_delete=true after explicit confirmation."
+                ),
+                "project_count": exc.project_count,
+            },
+        ) from None
     return VaultItemsDeleteResponse(status="deleted")
 
 
@@ -596,16 +550,6 @@ def _vault_visibility_clause(auth: AuthContext, project_ids: list[UUID], *, incl
     return project_clause
 
 
-def _vault_project_slug_alias_condition():
-    return (VaultProjectSlugAlias.vault_id == Vault.id) & (
-        VaultProjectSlugAlias.project_id == VaultProjectAttachment.project_id
-    )
-
-
-def _vault_slug_or_alias_clause(slug: str):
-    return or_(Vault.slug == slug, VaultProjectSlugAlias.slug == slug)
-
-
 async def _attached_project_ids_for_vaults(
     db: AsyncSession,
     vault_ids: list[UUID],
@@ -628,33 +572,6 @@ async def _attached_project_ids_for_vaults(
     for vault_id, project_id in rows:
         result.setdefault(vault_id, []).append(project_id)
     return result
-
-
-async def _ensure_vault_attached(
-    db: AsyncSession,
-    vault_id: UUID,
-    project_id: UUID,
-) -> None:
-    existing = (
-        await db.execute(
-            select(VaultProjectAttachment.id).where(
-                VaultProjectAttachment.vault_id == vault_id,
-                VaultProjectAttachment.project_id == project_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        db.add(VaultProjectAttachment(vault_id=vault_id, project_id=project_id))
-
-
-async def _vault_project_count(db: AsyncSession, vault_id: UUID) -> int:
-    return (
-        await db.execute(
-            select(func.count())
-            .select_from(VaultProjectAttachment)
-            .where(VaultProjectAttachment.vault_id == vault_id)
-        )
-    ).scalar_one()
 
 
 async def _project_precedence(
@@ -833,7 +750,7 @@ async def _vault_item_rows_for_exact_references(
                 Vault.id,
             )
             .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
-            .join(VaultProjectSlugAlias, _vault_project_slug_alias_condition())
+            .join(VaultProjectSlugAlias, vault_service.vault_project_slug_alias_condition())
             .where(alias_namespace_clause)
         )
     ).all()
@@ -846,7 +763,7 @@ async def _vault_item_rows_for_exact_references(
         if len(vault_ids) > 1:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                detail=_ambiguous_vault_detail(
+                detail=vault_service.ambiguous_vault_detail(
                     slug=lookup_slug, project_id=project_id, exact_reference=True
                 ),
             )
@@ -876,7 +793,7 @@ async def _vault_item_rows_for_exact_references(
             .join(VaultItem, VaultItem.vault_id == Vault.id)
             .join(
                 VaultProjectSlugAlias,
-                _vault_project_slug_alias_condition(),
+                vault_service.vault_project_slug_alias_condition(),
             )
             .where(
                 alias_namespace_clause,
@@ -907,7 +824,7 @@ def _vault_item_index(rows: list[VaultItemLookupRow]) -> VaultItemIndex:
         if existing is not None and existing[0].id != vault.id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                detail=_ambiguous_vault_detail(
+                detail=vault_service.ambiguous_vault_detail(
                     slug=lookup_slug, project_id=project_id, exact_reference=True
                 ),
             )
@@ -1382,79 +1299,6 @@ async def resolve_vault(
     return env
 
 
-async def _get_vault_write(
-    auth: AuthContext,
-    slug: str,
-    db: AsyncSession,
-    *,
-    project_id: UUID | None = None,
-    vault_id: UUID | None = None,
-) -> Vault:
-    """Fetch a vault for mutation, restricted to caller-owned projects.
-
-    Shared memberships can read vault metadata, but they never grant
-    mutation rights. Write paths therefore use vault ownership plus an
-    optional owner-only Project attachment check, while still preserving
-    Agent API key blast-radius limits.
-    """
-    if _is_env_bound(auth):
-        owned_project_ids = [await resolve_default_write_project(db, auth)]
-    else:
-        owned_project_ids = await project_ids_owned_by_user(db, auth.user_id)
-    base_q = select(Vault).where(Vault.user_id == auth.user_id, Vault.slug == slug)
-    if vault_id is not None:
-        base_q = base_q.where(Vault.id == vault_id)
-    if project_id is not None:
-        if project_id not in owned_project_ids:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-        base_q = (
-            select(Vault)
-            .join(
-                VaultProjectAttachment,
-                VaultProjectAttachment.vault_id == Vault.id,
-            )
-            .outerjoin(
-                VaultProjectSlugAlias,
-                _vault_project_slug_alias_condition(),
-            )
-            .where(
-                Vault.user_id == auth.user_id,
-                Vault.id == vault_id if vault_id is not None else true(),
-                VaultProjectAttachment.project_id == project_id,
-                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
-            )
-            .distinct()
-        )
-    elif _is_env_bound(auth):
-        base_q = (
-            select(Vault)
-            .join(
-                VaultProjectAttachment,
-                VaultProjectAttachment.vault_id == Vault.id,
-            )
-            .outerjoin(
-                VaultProjectSlugAlias,
-                _vault_project_slug_alias_condition(),
-            )
-            .where(
-                Vault.user_id == auth.user_id,
-                Vault.id == vault_id if vault_id is not None else true(),
-                VaultProjectAttachment.project_id.in_(owned_project_ids),
-                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
-            )
-            .distinct()
-        )
-    rows = (await db.execute(base_q)).scalars().all()
-    if not rows:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
-    if len(rows) > 1:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail=_ambiguous_vault_detail(slug=slug, project_id=project_id),
-        )
-    return rows[0]
-
-
 async def _get_vault(
     auth: AuthContext,
     slug: str,
@@ -1504,12 +1348,14 @@ async def _get_vault(
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .outerjoin(
                 VaultProjectSlugAlias,
-                _vault_project_slug_alias_condition(),
+                vault_service.vault_project_slug_alias_condition(),
             )
             .where(
                 VaultProjectAttachment.project_id == project_id,
                 Vault.id == vault_id if vault_id is not None else true(),
-                Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
+                Vault.slug == slug
+                if vault_id is not None
+                else vault_service.vault_slug_or_alias_clause(slug),
             )
             .distinct()
         )
@@ -1531,7 +1377,7 @@ async def _get_vault(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
-                **_ambiguous_vault_detail(slug=slug, project_id=None),
+                **vault_service.ambiguous_vault_detail(slug=slug, project_id=None),
                 "project_ids": [str(attached_project_id) for attached_project_id in project_rows],
             },
         )

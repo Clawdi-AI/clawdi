@@ -56,7 +56,7 @@ through another tool.
 
 ## Vault
 
-Two read-only MCP tools expose safe Vault metadata without secret values:
+Vault read tools expose metadata and exact references:
 
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
@@ -75,13 +75,18 @@ to an authorized runtime:
 Use the live schemas from the `clawdi` MCP server as authoritative; the local
 stdio command only transports the protocol.
 
-The current MCP tool set does not expose Vault mutation. If a live schema exposes one,
-use it only for the exact Project, Vault, key, and change the user specified; never infer
-an overwrite or deletion. Otherwise, do not use raw HTTP, daemon control RPC, or execute
-foreground Vault CLI commands on the user's behalf. Explain that a human operator must
-perform the change and provide the safest exact foreground command. Prefer `clawdi vault
-set KEY --prompt` for one value and `clawdi vault import ...` for migrations; never place
-a plaintext secret in command arguments or your response.
+Vault write tools are available for explicit user requests:
+
+- `vault_create` — Create a Vault attached to one exact owner Project.
+- `vault_upsert` — Create or replace exact fields in an attached Vault.
+- `vault_delete_items` — Delete exact fields from a single-Project Vault.
+
+Follow the live schema and supply every required Project, Vault, section, and field identity;
+never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
+them, save them to Memory, or include them in logs. Environment-bound callers may write only
+their bound Project, and field deletion is rejected when a Vault is attached to multiple
+Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
+foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
 
 ## Wallet Funding
 

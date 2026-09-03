@@ -27,6 +27,8 @@ from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
 from app.services.memory_provider import Mem0Provider
+from app.services.vault_crypto import decrypt as decrypt_vault_value
+from app.services.vault_crypto import encrypt as encrypt_vault_value
 from tests.conftest import create_env_with_project
 
 pytestmark = pytest.mark.committed_db
@@ -267,6 +269,9 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "vault_list",
                 "vault_get",
                 "vault_resolve",
+                "vault_create",
+                "vault_upsert",
+                "vault_delete_items",
             } <= names
             descriptions = {tool["name"]: tool["description"] for tool in listed["tools"]}
             assert "solely because" in descriptions["memory_search"]
@@ -460,7 +465,15 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             cli_listed = await _rpc(client, 14, "tools/list", {})
             cli_names = {tool["name"] for tool in cli_listed["tools"]}
-            assert {"memory_search", "project_list", "vault_list", "vault_resolve"} <= cli_names
+            assert {
+                "memory_search",
+                "project_list",
+                "vault_list",
+                "vault_resolve",
+                "vault_create",
+                "vault_upsert",
+                "vault_delete_items",
+            } <= cli_names
             cli_search = await _tool_call(
                 client,
                 15,
@@ -477,7 +490,15 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             oauth_listed = await _rpc(client, 16, "tools/list", {})
             oauth_names = {tool["name"] for tool in oauth_listed["tools"]}
-            assert {"memory_search", "project_list", "vault_list", "vault_resolve"} <= oauth_names
+            assert {
+                "memory_search",
+                "project_list",
+                "vault_list",
+                "vault_resolve",
+                "vault_create",
+                "vault_upsert",
+                "vault_delete_items",
+            } <= oauth_names
             oauth_projects = _tool_json(await _tool_call(client, 17, "project_list"))["projects"]
             oauth_project_ids = {project["id"] for project in oauth_projects}
             assert str(env_a.default_project_id) in oauth_project_ids
@@ -588,6 +609,255 @@ async def test_environment_bound_mem0_delete_uses_account_scope(
 
 
 @pytest.mark.asyncio
+async def test_vault_write_mcp_requires_exact_owned_bound_resources_and_never_returns_plaintext(
+    db_session,
+    seed_user,
+    monkeypatch,
+) -> None:
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-vault-write-a",
+        machine_name="MCP Vault Write A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="mcp-vault-write-b",
+        machine_name="MCP Vault Write B",
+        agent_type="hermes",
+    )
+    other_user = User(
+        clerk_id="mcp_vault_write_other",
+        email="mcp_vault_write_other@test.dev",
+        name="MCP Vault Write Other",
+    )
+    db_session.add(other_user)
+    await db_session.flush()
+    other_project = Project(
+        user_id=other_user.id,
+        slug="mcp-vault-write-other",
+        name="MCP Vault Write Other",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    other_vault = Vault(user_id=seed_user.id, slug="other-runtime", name="Other Runtime")
+    shared_vault = Vault(user_id=seed_user.id, slug="shared-runtime", name="Shared Runtime")
+    db_session.add_all([other_project, other_vault, shared_vault])
+    await db_session.flush()
+    shared_ciphertext, shared_nonce = encrypt_vault_value("shared-secret")
+    db_session.add_all(
+        [
+            VaultProjectAttachment(
+                vault_id=other_vault.id,
+                project_id=env_b.default_project_id,
+            ),
+            VaultProjectAttachment(
+                vault_id=shared_vault.id,
+                project_id=env_a.default_project_id,
+            ),
+            VaultProjectAttachment(
+                vault_id=shared_vault.id,
+                project_id=env_b.default_project_id,
+            ),
+            VaultItem(
+                vault_id=shared_vault.id,
+                section="",
+                item_name="SHARED_TOKEN",
+                encrypted_value=shared_ciphertext,
+                nonce=shared_nonce,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    active_auth = {"value": _runtime_auth(seed_user, env_a.id)}
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return active_auth["value"]
+
+    async def no_connectors(_auth: AuthContext) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(mcp_bridge, "_connector_mcp_tools", no_connectors)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    app.dependency_overrides[get_auth_short_session] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            created = _tool_json(
+                await _tool_call(
+                    client,
+                    1,
+                    "vault_create",
+                    {
+                        "project_id": str(env_a.default_project_id),
+                        "slug": "agent-created",
+                        "name": "Agent Created",
+                    },
+                )
+            )["vault"]
+            created_vault_id = uuid.UUID(created["id"])
+            assert created == {
+                "id": str(created_vault_id),
+                "slug": "agent-created",
+                "name": "Agent Created",
+                "project_id": str(env_a.default_project_id),
+            }
+
+            plaintext = "mcp-write-secret"
+            upserted = _tool_json(
+                await _tool_call(
+                    client,
+                    2,
+                    "vault_upsert",
+                    {
+                        "project_id": str(env_a.default_project_id),
+                        "vault_id": str(created_vault_id),
+                        "slug": "agent-created",
+                        "section": "runtime",
+                        "fields": {"TOKEN": plaintext},
+                    },
+                )
+            )
+            assert upserted == {
+                "status": "ok",
+                "project_id": str(env_a.default_project_id),
+                "vault_id": str(created_vault_id),
+                "slug": "agent-created",
+                "fields": 1,
+            }
+            _assert_no_vault_values(upserted)
+            assert plaintext not in json.dumps(upserted)
+            stored_item = (
+                await db_session.execute(
+                    select(VaultItem).where(
+                        VaultItem.vault_id == created_vault_id,
+                        VaultItem.section == "runtime",
+                        VaultItem.item_name == "TOKEN",
+                    )
+                )
+            ).scalar_one()
+            assert stored_item.encrypted_value != plaintext.encode()
+            assert decrypt_vault_value(stored_item.encrypted_value, stored_item.nonce) == plaintext
+
+            blocked_project = await _tool_call(
+                client,
+                3,
+                "vault_create",
+                {
+                    "project_id": str(env_b.default_project_id),
+                    "slug": "wrong-project",
+                    "name": "Wrong Project",
+                },
+            )
+            assert blocked_project["isError"] is True
+            assert "api key not bound to this project" in blocked_project["content"][0]["text"]
+
+            blocked_vault = await _tool_call(
+                client,
+                4,
+                "vault_upsert",
+                {
+                    "project_id": str(env_b.default_project_id),
+                    "vault_id": str(other_vault.id),
+                    "slug": other_vault.slug,
+                    "fields": {"TOKEN": "must-not-write"},
+                },
+            )
+            assert blocked_vault["isError"] is True
+            assert "not found" in blocked_vault["content"][0]["text"]
+
+            mismatched_slug = await _tool_call(
+                client,
+                5,
+                "vault_upsert",
+                {
+                    "project_id": str(env_a.default_project_id),
+                    "vault_id": str(created_vault_id),
+                    "slug": "different-slug",
+                    "fields": {"TOKEN": "must-not-write"},
+                },
+            )
+            assert mismatched_slug["isError"] is True
+            assert "not found" in mismatched_slug["content"][0]["text"]
+
+            shared_delete = await _tool_call(
+                client,
+                6,
+                "vault_delete_items",
+                {
+                    "project_id": str(env_a.default_project_id),
+                    "vault_id": str(shared_vault.id),
+                    "slug": shared_vault.slug,
+                    "fields": ["SHARED_TOKEN"],
+                },
+            )
+            assert shared_delete["isError"] is True
+            assert "attached to multiple Projects" in shared_delete["content"][0]["text"]
+
+            deleted = _tool_json(
+                await _tool_call(
+                    client,
+                    7,
+                    "vault_delete_items",
+                    {
+                        "project_id": str(env_a.default_project_id),
+                        "vault_id": str(created_vault_id),
+                        "slug": "agent-created",
+                        "section": "runtime",
+                        "fields": ["TOKEN"],
+                    },
+                )
+            )
+            assert deleted["fields"] == 1
+            assert (
+                await db_session.execute(
+                    select(VaultItem).where(VaultItem.vault_id == created_vault_id)
+                )
+            ).scalar_one_or_none() is None
+
+            active_auth["value"] = AuthContext(
+                user=seed_user,
+                api_key=ApiKey(user_id=seed_user.id, scopes=["vault:write"]),
+            )
+            unbound_created = _tool_json(
+                await _tool_call(
+                    client,
+                    8,
+                    "vault_create",
+                    {
+                        "project_id": str(env_b.default_project_id),
+                        "slug": "unbound-created",
+                        "name": "Unbound Created",
+                    },
+                )
+            )
+            assert unbound_created["vault"]["project_id"] == str(env_b.default_project_id)
+
+            cross_account = await _tool_call(
+                client,
+                9,
+                "vault_create",
+                {
+                    "project_id": str(other_project.id),
+                    "slug": "cross-account",
+                    "name": "Cross Account",
+                },
+            )
+            assert cross_account["isError"] is True
+            assert "project not found" in cross_account["content"][0]["text"]
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+        app.dependency_overrides.pop(get_auth_short_session, None)
+
+
+@pytest.mark.asyncio
 async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
     db_session,
     seed_user,
@@ -612,6 +882,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
         return [
             {"name": "memory_search", "inputSchema": {"type": "object"}},
             {"name": "project_get", "inputSchema": {"type": "object"}},
+            {"name": "vault_create", "inputSchema": {"type": "object"}},
             {"name": "connector_safe", "inputSchema": {"type": "object"}},
         ]
 
@@ -629,6 +900,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert "project_get" not in names
             assert "vault_list" not in names
             assert "vault_resolve" not in names
+            assert "vault_create" not in names
 
             missing_memory = await _tool_call(
                 client,
@@ -662,11 +934,24 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert missing_plaintext["isError"] is True
             assert "missing scope: vault:read" in missing_plaintext["content"][0]["text"]
 
-            runtime_auth.api_key.scopes = ["projects:read"]
+            missing_write = await _tool_call(
+                client,
+                42,
+                "vault_create",
+                {
+                    "project_id": str(env.default_project_id),
+                    "slug": "missing-write-scope",
+                    "name": "Missing Write Scope",
+                },
+            )
+            assert missing_write["isError"] is True
+            assert "missing scope: vault:write" in missing_write["content"][0]["text"]
+
+            runtime_auth.api_key.scopes = ["projects:read", "vault:write"]
             invalid = await _tool_call(
                 client,
                 5,
-                "project_list",
+                "vault_upsert",
                 {"unexpected": True},
             )
             assert invalid["isError"] is True

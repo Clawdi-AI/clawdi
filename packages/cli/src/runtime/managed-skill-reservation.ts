@@ -36,6 +36,7 @@ const LEGACY_LOCAL_SETUP_SKILL_DIGESTS = new Set([
 	"cfce9adc538b4538829a23767fc171db62e474e28fd89ef5ce494b26223d31a0",
 	"4aee715a987cad84716ca71a6e1d7da80e9c1eca103c0c41aefdee31ed77974d",
 	"a6114f592aca24f0cd556c6929980151e83f062759e484771dca87fb74ab21ca",
+	"cd0b475434932c179717641293e13496b3627d0660c7905aca3d88103bec0c7f",
 ]);
 
 export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";

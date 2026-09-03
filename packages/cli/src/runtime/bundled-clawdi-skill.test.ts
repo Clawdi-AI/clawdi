@@ -143,13 +143,15 @@ describe("bundled Clawdi skill connector contract", () => {
 		expect(hostedSkill).toContain("## Vault");
 		expect(hostedSkill).toContain("`vault_get`");
 		expect(hostedSkill).toContain("`vault_resolve`");
-		expect(section(hostedSkill, "Vault").replace(/\s+/g, " ")).toMatch(
-			/not mutation.*live schemas/i,
-		);
+		for (const tool of ["`vault_create`", "`vault_upsert`", "`vault_delete_items`"]) {
+			expect(hostedSkill).toContain(tool);
+			expect(genericSkill).toContain(tool);
+		}
+		expect(section(hostedSkill, "Vault")).toContain("runtime-bound Project");
 		expect(hostedSkill).not.toMatch(/dashboard/i);
 		expect(genericSkill).toContain("## Memory");
 		expect(genericSkill).toContain("## Vault");
-		expect(genericSkill).toContain("a human operator");
+		expect(section(genericSkill, "Vault")).toContain("foreground operator workflows");
 		expect(genericSkill).toContain("## AI Provider Management");
 		expect(genericSkill).not.toContain("## AI Provider CLI");
 	});

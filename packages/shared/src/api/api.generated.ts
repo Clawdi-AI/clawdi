@@ -2672,9 +2672,9 @@ export interface paths {
          *     vault, put them in a named one") needs values to travel between
          *     vaults, but plaintext resolution stays CLI-only. So the copy happens
          *     entirely server-side: decrypt + re-encrypt per item, nothing
-         *     returned but a count. Owner-only on both ends (`_get_vault_write`),
-         *     so shared-project viewers can't exfiltrate by copying into a vault
-         *     they control.
+         *     returned but a count. Both Vaults must be owned by the caller, so
+         *     shared-project viewers can't exfiltrate by copying into a Vault they
+         *     control.
          */
         post: operations["copy_vault_items_v1_vault__slug__items_copy_post"];
         delete?: never;

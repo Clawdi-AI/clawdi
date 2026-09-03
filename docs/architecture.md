@@ -127,8 +127,10 @@ The CLI owns local agent detection, data collection, sync, setup, MCP stdio,
 vault/env injection, and runtime convergence commands.
 
 Cloud capabilities exposed to Agents live behind the authenticated MCP API.
-Vault mutation and template injection remain foreground operator CLI workflows;
-they are not daemon control RPC or alternate Agent APIs.
+Narrow Vault create, field upsert, and exact field deletion use that authority;
+template injection, bulk import, attachment changes, credential profiles, and
+whole-Vault deletion remain foreground operator workflows rather than daemon
+control RPC or alternate Agent APIs.
 
 Adapter roots are verified in `packages/cli/src/adapters/*`:
 
@@ -336,9 +338,10 @@ The backend MCP endpoint is `POST /v1/mcp/clawdi`, a stateless JSON-RPC surface
 authenticated with a Clawdi API key. It is the single runtime authority for
 native tool schemas, scope gating, calls, and connector dispatch. Native tools
 cover memory, sessions, read-only Project metadata, Vault metadata/references,
-and explicit single-reference Vault plaintext resolution. Tools requiring unavailable scopes are omitted from
-`tools/list`, while direct calls still fail the scope check. Connector names
-can never shadow a declared native tool, including one hidden by scope.
+explicit single-reference Vault plaintext resolution, and narrow Vault writes.
+Tools requiring unavailable scopes are omitted from `tools/list`, while direct
+calls still fail the scope check. Connector names can never shadow a declared
+native tool, including one hidden by scope.
 
 For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
 stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second
@@ -352,6 +355,14 @@ reference, and returns its decrypted value. Returned references use the exact ca
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
 Environment-bound callers see only attachments in their bound Agent Project.
+
+`vault_create`, `vault_upsert`, and `vault_delete_items` require `vault:write`.
+Every write takes an explicit owner Project; item writes also require an exact
+Vault UUID and canonical slug attached to that Project. Environment-bound keys
+may target only their bound Project. Responses contain identifiers and counts,
+never plaintext values. Agent MCP deletion has no global-confirmation switch,
+so a Vault attached to multiple Projects is rejected. Attachment changes,
+credential profiles, bulk import, and whole-Vault deletion are not exposed.
 
 The safe MCP inventory API may contain only explicit user declarations whose
 provenance is supported by a user management contract. This release has no such

@@ -308,6 +308,7 @@ strict = [
     "app/services/telegram_rate_limiter.py",
     "app/services/url_security.py",
     "app/services/user_provisioning.py",
+    "app/services/vault.py",
     "app/services/vault_crypto.py",
     "app/services/whatsapp_baileys.py",
     "app/services/whatsapp_delivery_transport.py",

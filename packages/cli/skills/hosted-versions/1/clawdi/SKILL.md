@@ -69,10 +69,18 @@ The metadata tools never return plaintext secret values. Preserve exact referenc
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
-The current MCP tool set exposes Vault metadata and resolution, not mutation. Treat live
-schemas as authoritative: if they expose a mutation tool, use it only for the exact Project,
-Vault, key, and change the user specified, and never infer an overwrite or deletion. Otherwise,
-report that the runtime does not provide the operation; do not call raw HTTP or invent a tool.
+Vault write tools are available for explicit user requests:
+
+- `vault_create` — Create a Vault attached to the runtime-bound Project.
+- `vault_upsert` — Create or replace exact fields in an attached Vault.
+- `vault_delete_items` — Delete exact fields from a single-Project Vault.
+
+Follow the live schema and supply every required Project, Vault, section, and field identity;
+never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
+them, save them to Memory, or include them in logs. Hosted writes are restricted to the
+runtime-bound Project, and field deletion is rejected when a Vault is attached to multiple
+Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
+unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
 ## Connector Routing
 

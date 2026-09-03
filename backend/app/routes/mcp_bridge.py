@@ -47,6 +47,7 @@ from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
+from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.services.composio import (
     ComposioMcpUpstreamError,
     ComposioRouteError,
@@ -76,6 +77,12 @@ from app.services.session_search import session_search_matches
 from app.services.session_shares import (
     load_session_share_view,
     session_share_metadata,
+)
+from app.services.vault import (
+    VaultItemsGlobalDeleteConfirmationRequired,
+    create_account_vault,
+    delete_owned_vault_items,
+    upsert_owned_vault_items,
 )
 from app.services.vault_crypto import decrypt
 
@@ -194,6 +201,31 @@ class _VaultResolveArguments(_ToolArguments):
         if not value:
             raise ValueError("reference is required")
         return value
+
+
+class _VaultCreateArguments(_ToolArguments, VaultCreate):
+    project_id: UUID = Field(
+        description="Exact owner Project to attach the newly created Vault to."
+    )
+
+
+class _VaultMutationIdentityArguments(_ToolArguments):
+    project_id: UUID = Field(description="Exact owner Project containing the Vault attachment.")
+    vault_id: UUID = Field(description="Exact stable Vault identity.")
+    slug: StrictStr = Field(min_length=1, max_length=200, description="Canonical Vault slug.")
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, value: str) -> str:
+        return VaultCreate.validate_slug(value)
+
+
+class _VaultUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
+    pass
+
+
+class _VaultDeleteItemsArguments(_VaultMutationIdentityArguments, VaultItemDelete):
+    pass
 
 
 def _validate_arguments[ArgumentsT: _ToolArguments](
@@ -438,6 +470,36 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         input_schema=_VaultResolveArguments.model_json_schema(),
         scopes=("vault:read",),
         handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
+    ),
+    "vault_create": _NativeToolSpec(
+        description=(
+            "Create a new account-owned Vault and attach it to one explicit owner Project. "
+            "Fails if the slug already exists. Hosted runtimes may target only their bound "
+            "Project. Returns identifiers only and never returns secret values."
+        ),
+        input_schema=_VaultCreateArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_create(arguments, auth=auth, db=db),
+    ),
+    "vault_upsert": _NativeToolSpec(
+        description=(
+            "Create or replace exact fields in an attached account-owned Vault. Requires the "
+            "explicit Project UUID, Vault UUID, and canonical slug. Field values are plaintext "
+            "inputs encrypted at rest; the response contains identifiers and counts only."
+        ),
+        input_schema=_VaultUpsertArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_upsert(arguments, auth=auth, db=db),
+    ),
+    "vault_delete_items": _NativeToolSpec(
+        description=(
+            "Delete exact named fields from an attached account-owned Vault. Requires the "
+            "explicit Project UUID, Vault UUID, canonical slug, section, and field names. "
+            "Refuses Vaults attached to multiple Projects because deletion is account-wide."
+        ),
+        input_schema=_VaultDeleteItemsArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_delete_items(arguments, auth=auth, db=db),
     ),
 }
 
@@ -1121,6 +1183,82 @@ async def _tool_vault_resolve(
         {
             "reference": parsed.reference,
             "value": decrypt(encrypted_value, nonce),
+        }
+    )
+
+
+async def _tool_vault_create(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultCreateArguments, arguments)
+    vault = await create_account_vault(
+        db,
+        auth,
+        parsed,
+        project_id=parsed.project_id,
+        create_only=True,
+    )
+    return _tool_json(
+        {
+            "vault": {
+                "id": str(vault.id),
+                "slug": vault.slug,
+                "name": vault.name,
+                "project_id": str(parsed.project_id),
+            }
+        }
+    )
+
+
+async def _tool_vault_upsert(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultUpsertArguments, arguments)
+    fields = await upsert_owned_vault_items(
+        db,
+        auth,
+        parsed.slug,
+        parsed,
+        project_id=parsed.project_id,
+        vault_id=parsed.vault_id,
+    )
+    return _tool_json(
+        {
+            "status": "ok",
+            "project_id": str(parsed.project_id),
+            "vault_id": str(parsed.vault_id),
+            "slug": parsed.slug,
+            "fields": fields,
+        }
+    )
+
+
+async def _tool_vault_delete_items(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultDeleteItemsArguments, arguments)
+    try:
+        deleted = await delete_owned_vault_items(
+            db,
+            auth,
+            parsed.slug,
+            parsed,
+            project_id=parsed.project_id,
+            vault_id=parsed.vault_id,
+            global_delete=False,
+        )
+    except VaultItemsGlobalDeleteConfirmationRequired:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Vault is attached to multiple Projects; item deletion requires human confirmation",
+        ) from None
+    return _tool_json(
+        {
+            "status": "deleted",
+            "project_id": str(parsed.project_id),
+            "vault_id": str(parsed.vault_id),
+            "slug": parsed.slug,
+            "fields": deleted,
         }
     )
 
