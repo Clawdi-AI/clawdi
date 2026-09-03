@@ -62,6 +62,7 @@ from app.services.managed_ai_provider import (
     is_v2_managed_provider_id,
     managed_provider_accepted_api_modes,
     managed_provider_api_mode,
+    managed_provider_runtime_env_name,
     runtime_managed_provider_id,
     upsert_clawdi_managed_provider,
     v2_deployment_managed_provider_id,
@@ -294,6 +295,25 @@ def test_deployment_scoped_v2_provider_uses_canonical_responses_mode():
 
     assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "expected_runtime_env_name"),
+    [
+        (V1_MANAGED_AI_PROVIDER_ID, "CLAWDI_MANAGED_OPENAI_API_KEY"),
+        (V2_MANAGED_AI_PROVIDER_ID, MANAGED_AI_PROVIDER_RUNTIME_ENV),
+        (
+            f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
+            MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        ),
+        ("user-managed", None),
+    ],
+)
+def test_managed_provider_runtime_env_name_follows_provider_generation(
+    provider_id: str,
+    expected_runtime_env_name: str | None,
+):
+    assert managed_provider_runtime_env_name(provider_id) == expected_runtime_env_name
 
 
 @pytest.mark.parametrize(
@@ -2171,12 +2191,28 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "api_mode": "openai_responses",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_AI_API_KEY",
+            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
         },
     )
     assert v1_managed.status_code == 200, v1_managed.text
     assert v1_managed.json()["provider_id"] == "clawdi-managed"
     assert v1_managed.json()["api_mode"] == "openai_responses"
+
+    v1_managed_wrong_runtime_env = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "clawdi-managed",
+            "type": "custom_openai_compatible",
+            "base_url": "https://managed.example/v1",
+            "models": [{"id": "openai-codex/gpt-5.5"}],
+            "api_mode": "openai_responses",
+            "auth": {"type": "api_key", "source": "managed"},
+            "managed_by": "clawdi",
+            "runtime_env_name": "CLAWDI_AI_API_KEY",
+        },
+    )
+    assert v1_managed_wrong_runtime_env.status_code == 422
+    assert "CLAWDI_MANAGED_OPENAI_API_KEY" in v1_managed_wrong_runtime_env.text
 
     v1_managed_wrong_mode = await client.post(
         "/v1/ai-providers",
@@ -2188,7 +2224,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             "api_mode": "openai_chat",
             "auth": {"type": "api_key", "source": "managed"},
             "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_AI_API_KEY",
+            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
         },
     )
     assert v1_managed_wrong_mode.status_code == 422, v1_managed_wrong_mode.text
