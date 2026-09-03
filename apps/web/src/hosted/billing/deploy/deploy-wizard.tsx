@@ -1166,7 +1166,7 @@ export function DeployWizard() {
 								icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 								title={MANAGED_PROVIDER_LABEL}
 								description="No setup required. Usage draws from your Wallet."
-								badge={<Badge variant="secondary">Default</Badge>}
+								badge={<Badge variant="secondary">Recommended</Badge>}
 							/>
 							<EntityChoiceCard
 								selected={aiAccessMode === "unmanaged"}

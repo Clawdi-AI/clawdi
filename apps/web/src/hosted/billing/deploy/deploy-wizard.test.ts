@@ -182,7 +182,8 @@ describe("deploy wizard product copy and flow", () => {
 	});
 
 	test("makes the recommended agent software choice answerable", () => {
-		expect(wizardSource).toContain('<Badge variant="secondary">Recommended</Badge>');
+		expect(wizardSource.match(/<Badge variant="secondary">Recommended<\/Badge>/g)).toHaveLength(2);
+		expect(wizardSource).not.toContain('<Badge variant="secondary">Default</Badge>');
 		expect(wizardSource).not.toContain("Agent software can’t be changed later");
 		expect(wizardSource).not.toContain("To switch after creation");
 		expect(runtimesSource).toContain("Chat with and manage your agent in the Hermes Dashboard.");
