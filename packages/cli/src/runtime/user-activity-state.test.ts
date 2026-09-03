@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RawSession } from "../adapters/base";
 import {
 	markRuntimeUserActivityUnknown,
 	readRuntimeUserActivityState,
@@ -26,41 +25,19 @@ function statePath(): string {
 	return runtimeUserActivityStatePath("openclaw");
 }
 
-function session(realUserInputAt: string | null): RawSession {
-	return {
-		localSessionId: "session-1",
-		projectPath: null,
-		startedAt: new Date("2026-08-01T00:00:00Z"),
-		endedAt: null,
-		messageCount: 0,
-		inputTokens: 0,
-		outputTokens: 0,
-		cacheReadTokens: 0,
-		model: null,
-		modelsUsed: [],
-		durationSeconds: null,
-		summary: null,
-		messages: [],
-		rawFilePath: "/fixture",
-		realUserInputAt,
-	};
-}
-
 describe("runtime user activity state", () => {
 	test("builds one complete baseline and refreshes it from watcher deltas", () => {
 		const path = statePath();
 		recordRuntimeUserActivityScan({
 			agentType: "openclaw",
-			sessions: [session("2026-08-01T00:00:00Z")],
+			userActivity: { lastUserInputAt: "2026-08-01T00:00:00Z", complete: true },
 			complete: true,
-			activityComplete: true,
 			observedAt: new Date("2026-08-02T00:00:00Z"),
 		});
 		recordRuntimeUserActivityScan({
 			agentType: "openclaw",
-			sessions: [],
+			userActivity: { lastUserInputAt: null, complete: true },
 			complete: false,
-			activityComplete: true,
 			observedAt: new Date("2026-08-03T00:00:00Z"),
 		});
 
@@ -76,20 +53,41 @@ describe("runtime user activity state", () => {
 		const path = statePath();
 		recordRuntimeUserActivityScan({
 			agentType: "openclaw",
-			sessions: [session(null)],
+			userActivity: { lastUserInputAt: null, complete: true },
 			complete: true,
-			activityComplete: true,
 			observedAt: new Date("2026-08-02T00:00:00Z"),
 		});
 		markRuntimeUserActivityUnknown("openclaw", "fixture_failure");
 		recordRuntimeUserActivityScan({
 			agentType: "openclaw",
-			sessions: [],
+			userActivity: { lastUserInputAt: null, complete: true },
 			complete: false,
-			activityComplete: true,
 			observedAt: new Date("2026-08-03T00:00:00Z"),
 		});
 
 		expect(readRuntimeUserActivityState(path)?.classification).toBe("unknown");
+	});
+
+	test("converges after an incomplete scan without losing a trustworthy timestamp", () => {
+		const path = statePath();
+		recordRuntimeUserActivityScan({
+			agentType: "openclaw",
+			userActivity: { lastUserInputAt: "2026-08-01T00:00:00Z", complete: false },
+			complete: true,
+			observedAt: new Date("2026-08-02T00:00:00Z"),
+		});
+		recordRuntimeUserActivityScan({
+			agentType: "openclaw",
+			userActivity: { lastUserInputAt: null, complete: true },
+			complete: true,
+			observedAt: new Date("2026-08-03T00:00:00Z"),
+		});
+
+		expect(readRuntimeUserActivityState(path)).toMatchObject({
+			agentType: "openclaw",
+			classification: "known_last_user_input",
+			lastUserInputAt: "2026-08-01T00:00:00.000Z",
+			completeAt: "2026-08-03T00:00:00.000Z",
+		});
 	});
 });

@@ -152,12 +152,17 @@ export interface SessionScanBatch {
 	/** Every local session observed in this batch, including revision-matched sessions. */
 	observedLocalSessionIds: readonly string[];
 	dedupedCount: number;
-	/** False when the adapter could not classify activity for every inspected session. */
-	activityComplete?: boolean;
+}
+
+export interface SessionUserActivity {
+	lastUserInputAt: string | null;
+	complete: boolean;
 }
 
 export interface SessionBatchScan {
 	coverage: SessionScanResult["coverage"];
+	/** Runtime-wide aggregate from the canonical local inventory. */
+	userActivity?: SessionUserActivity;
 	batches: AsyncIterable<SessionScanBatch>;
 }
 

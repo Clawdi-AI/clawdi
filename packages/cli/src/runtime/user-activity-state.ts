@@ -1,15 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentType } from "../adapters/agent-types";
-import type { RawSession } from "../adapters/base";
+import type { SessionUserActivity } from "../adapters/base";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getServeStateDir } from "../serve/paths";
 
 export const RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION = 1;
 
+type SupportedRuntime = "hermes" | "openclaw";
+
 export interface RuntimeUserActivityState {
 	schemaVersion: "clawdi.runtimeUserActivity.v1";
-	agentType: "openclaw";
+	agentType: SupportedRuntime;
 	classifierVersion: 1;
 	classification: "known_last_user_input" | "known_no_user_input" | "unknown";
 	lastUserInputAt: string | null;
@@ -18,11 +20,11 @@ export interface RuntimeUserActivityState {
 	error?: string;
 }
 
-export function supportsRuntimeUserActivity(agentType: AgentType): agentType is "openclaw" {
-	return agentType === "openclaw";
+export function supportsRuntimeUserActivity(agentType: AgentType): agentType is SupportedRuntime {
+	return agentType === "hermes" || agentType === "openclaw";
 }
 
-export function runtimeUserActivityStatePath(agentType: "openclaw"): string {
+export function runtimeUserActivityStatePath(agentType: SupportedRuntime): string {
 	return join(getServeStateDir(agentType), "user-activity.json");
 }
 
@@ -33,7 +35,7 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 		const row = value as Record<string, unknown>;
 		if (
 			row.schemaVersion !== "clawdi.runtimeUserActivity.v1" ||
-			row.agentType !== "openclaw" ||
+			!isSupportedRuntime(row.agentType) ||
 			row.classifierVersion !== RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION ||
 			!isClassification(row.classification) ||
 			!isIsoTimestamp(row.observedAt) ||
@@ -55,7 +57,7 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 			return null;
 		return {
 			schemaVersion: "clawdi.runtimeUserActivity.v1",
-			agentType: "openclaw",
+			agentType: row.agentType,
 			classifierVersion: RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION,
 			classification: row.classification,
 			lastUserInputAt: row.lastUserInputAt,
@@ -71,33 +73,37 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 export function runtimeUserActivityNeedsMaterialization(agentType: AgentType): boolean {
 	if (!supportsRuntimeUserActivity(agentType)) return false;
 	const state = readRuntimeUserActivityState(runtimeUserActivityStatePath(agentType));
-	return state === null || state.classification === "unknown" || state.completeAt === null;
+	return (
+		state === null ||
+		state.agentType !== agentType ||
+		state.classification === "unknown" ||
+		state.completeAt === null
+	);
 }
 
 export function recordRuntimeUserActivityScan(input: {
 	agentType: AgentType;
-	sessions: readonly RawSession[];
+	userActivity: SessionUserActivity;
 	complete: boolean;
-	activityComplete: boolean;
 	observedAt?: Date;
 }): void {
 	if (!supportsRuntimeUserActivity(input.agentType)) return;
 	const path = runtimeUserActivityStatePath(input.agentType);
-	const previous = readRuntimeUserActivityState(path);
+	const stored = readRuntimeUserActivityState(path);
+	const previous = stored?.agentType === input.agentType ? stored : null;
 	const observedAt = maxTimestamp(
 		previous?.observedAt ?? null,
 		(input.observedAt ?? new Date()).toISOString(),
 	) as string;
 	const latest = maxTimestamp(
 		previous?.lastUserInputAt ?? null,
-		...input.sessions.map((session) => session.realUserInputAt ?? null),
+		input.userActivity.lastUserInputAt,
 	);
 	const priorBaselineKnown =
 		previous !== null && previous.classification !== "unknown" && previous.completeAt !== null;
-	const known = input.activityComplete && (input.complete || priorBaselineKnown);
+	const known = input.userActivity.complete && (input.complete || priorBaselineKnown);
 	const timestampIsValid =
 		latest === null || new Date(latest).getTime() <= new Date(observedAt).getTime();
-	const completeAt = known && timestampIsValid ? observedAt : (previous?.completeAt ?? null);
 	writeState(path, {
 		schemaVersion: "clawdi.runtimeUserActivity.v1",
 		agentType: input.agentType,
@@ -110,7 +116,7 @@ export function recordRuntimeUserActivityScan(input: {
 				: "unknown",
 		lastUserInputAt: timestampIsValid ? latest : (previous?.lastUserInputAt ?? null),
 		observedAt,
-		completeAt,
+		completeAt: known && timestampIsValid ? observedAt : (previous?.completeAt ?? null),
 		...(known && timestampIsValid
 			? {}
 			: {
@@ -125,7 +131,8 @@ export function markRuntimeUserActivityUnknown(
 ): void {
 	if (!supportsRuntimeUserActivity(agentType)) return;
 	const path = runtimeUserActivityStatePath(agentType);
-	const previous = readRuntimeUserActivityState(path);
+	const stored = readRuntimeUserActivityState(path);
+	const previous = stored?.agentType === agentType ? stored : null;
 	writeState(path, {
 		schemaVersion: "clawdi.runtimeUserActivity.v1",
 		agentType,
@@ -143,6 +150,10 @@ function writeState(path: string, state: RuntimeUserActivityState): void {
 		mode: PRIVATE_FILE_MODE,
 		dirMode: PRIVATE_DIR_MODE,
 	});
+}
+
+function isSupportedRuntime(value: unknown): value is SupportedRuntime {
+	return value === "hermes" || value === "openclaw";
 }
 
 function isClassification(value: unknown): value is RuntimeUserActivityState["classification"] {

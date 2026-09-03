@@ -27,6 +27,7 @@ import type {
 	SessionMessage,
 	SessionScanRequest,
 	SessionScanResult,
+	SessionUserActivity,
 } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
 import {
@@ -83,6 +84,10 @@ interface TableInfoRow {
 
 interface MessageRevisionRow {
 	presentation_state: string;
+}
+
+interface UserActivityRow {
+	last_user_input_at: number | string | null;
 }
 
 const MODERN_MESSAGE_CORE_COLUMNS = ["session_id", "role", "content", "timestamp"] as const;
@@ -180,6 +185,41 @@ function sessionSourceRevision(row: SessionRow, messages: MessageRevisionRow): s
 			]),
 		)
 		.digest("hex");
+}
+
+function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
+	const sessionColumns = new Set(
+		(db.prepare("PRAGMA table_info(sessions)").all() as TableInfoRow[]).map(
+			(column) => column.name,
+		),
+	);
+	const messageColumns = new Set(messageTableInfo(db).map((column) => column.name));
+	if (
+		!["id", "source", "parent_session_id"].every((column) => sessionColumns.has(column)) ||
+		!["session_id", "role", "timestamp"].every((column) => messageColumns.has(column))
+	) {
+		return { lastUserInputAt: null, complete: false };
+	}
+	try {
+		const row = db
+			.prepare(`
+				SELECT MAX(m.timestamp) AS last_user_input_at
+				FROM messages AS m
+				JOIN sessions AS s ON s.id = m.session_id
+				WHERE lower(m.role) = 'user'
+				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator')
+				  AND s.parent_session_id IS NULL
+			`)
+			.get() as UserActivityRow | undefined;
+		const timestamp = row?.last_user_input_at ?? null;
+		if (timestamp === null) return { lastUserInputAt: null, complete: true };
+		const lastUserInputAt = timestampIso(Number(timestamp));
+		return lastUserInputAt
+			? { lastUserInputAt, complete: true }
+			: { lastUserInputAt: null, complete: false };
+	} catch {
+		return { lastUserInputAt: null, complete: false };
+	}
 }
 
 function decodeHermesContent(content: string | null): unknown {
@@ -526,11 +566,17 @@ export class HermesAdapter implements AgentAdapterCore {
 		knownSourceRevisions: ReadonlyMap<string, string>,
 	): Promise<SessionBatchScan> {
 		if (!existsSync(stateDbPath())) {
-			return { coverage: "complete", batches: (async function* () {})() };
+			return {
+				coverage: "complete",
+				userActivity: { lastUserInputAt: null, complete: false },
+				batches: (async function* () {})(),
+			};
 		}
 		const db = await openReadonlySqlite(stateDbPath());
+		const activity = hermesUserActivity(db);
 		return {
 			coverage: "complete",
+			userActivity: activity,
 			batches: this.readSessionBatches(db, knownSourceRevisions),
 		};
 	}
