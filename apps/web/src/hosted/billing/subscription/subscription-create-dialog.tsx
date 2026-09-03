@@ -149,10 +149,7 @@ export function SubscriptionCreateDialog({
 	const selectedPrice = selectedOffer ? computePricePresentation(selectedOffer, offers) : null;
 	const cardTrial =
 		fundingSource === "stripe" && selectedOffer && selectedPrice
-			? cardTrialPricePresentation(
-					selectedPrice.primary,
-					selectedOffer.card_trial_period_days,
-				)
+			? cardTrialPricePresentation(selectedPrice.primary, selectedOffer.card_trial_period_days)
 			: null;
 	const supportedTerm = supportedBillingTerm(billingTermMonths);
 	const newSubscriptionSelection: SubscriptionCreateSelection | null =

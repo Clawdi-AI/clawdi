@@ -57,13 +57,13 @@ describe("CTA-adjacent amount presentation", () => {
 
 	test("uses term price for card checkout and authoritative debit for Wallet", () => {
 		expect(cardDeployAmountPresentation(monthly)).toEqual({
-			amount: "7-day free trial, then $20.00/mo",
-			caption: null,
+			amount: "7-day free trial",
+			caption: "then $20.00/mo",
 			detail: null,
 		});
 		expect(cardDeployAmountPresentation(annual)).toEqual({
-			amount: "7-day free trial, then $200.00/yr",
-			caption: null,
+			amount: "7-day free trial",
+			caption: "then $200.00/yr",
 			detail: null,
 		});
 		expect(cardDeployAmountPresentation({ ...monthly, card_trial_period_days: null })).toEqual({

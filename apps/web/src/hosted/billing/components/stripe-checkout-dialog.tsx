@@ -80,9 +80,7 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 							<p className="text-sm font-medium tabular-nums sm:max-w-64">
 								{trial?.summary ?? summary.priceLabel}
 							</p>
-							{trial ? null : (
-								<p className="text-xs text-muted-foreground">{summary.termLabel}</p>
-							)}
+							{trial ? null : <p className="text-xs text-muted-foreground">{summary.termLabel}</p>}
 						</div>
 					</div>
 				</div>

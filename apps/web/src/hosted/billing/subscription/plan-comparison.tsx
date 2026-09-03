@@ -46,15 +46,10 @@ function PlanPrice({
 	offer: BillingOffer;
 	presentation: ComputePricePresentation;
 }) {
-	const trial = cardTrialPricePresentation(
-		presentation.primary,
-		offer.card_trial_period_days,
-	);
+	const trial = cardTrialPricePresentation(presentation.primary, offer.card_trial_period_days);
 	return (
 		<>
-			<p className="text-3xl font-semibold tracking-normal tabular-nums">
-				{presentation.primary}
-			</p>
+			<p className="text-3xl font-semibold tracking-normal tabular-nums">{presentation.primary}</p>
 			<p className="text-xs text-muted-foreground tabular-nums">
 				{trial?.label ?? presentation.secondary}
 			</p>
