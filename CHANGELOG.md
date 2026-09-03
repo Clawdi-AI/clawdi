@@ -19,6 +19,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Hosted plan selection now explains the single 7-day trial shared by an
+  account's first Basic or Performance subscription, while grandfathered Basic
+  capacity is labeled Included.
 - Newest-first Session detail pages now paginate from the actual visible transcript instead of relying on separately reported message counts, including for incrementally appended event chunks.
 - Session search keeps its controls visible in long conversations, supports keyboard match navigation, shows clearer loading feedback, and gives message matches more context in result cards.
 - The public README now focuses on the two run paths, current product capabilities, quickstart, and self-hosting entry points.

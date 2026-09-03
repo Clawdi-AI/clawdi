@@ -55,9 +55,9 @@ export function SubscriptionSourcePicker({
 							</IconChip>
 						}
 						title="Basic compute"
-						description="Use your free compute entitlement."
+						description="Use your included Basic entitlement."
 						details={<span className="text-xs font-medium text-foreground">$0 due now</span>}
-						badge={<Badge variant="secondary">Free</Badge>}
+						badge={<Badge variant="secondary">Included</Badge>}
 						className="items-start p-3"
 					/>
 				) : null}
