@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
+import { setAuth } from "../lib/config";
 import { planSessionUpload, sessionFence } from "../lib/session-upload";
 import {
 	persistFencedSessionEntry,
@@ -36,6 +37,7 @@ import {
 	enqueueChangedSessionsAfterStability,
 	filterValidSkillKeysForSync,
 	heartbeatDelayMs,
+	heartbeatLoop,
 	isAuthFailure,
 	isOversizedUploadError,
 	isPermanentUploadError,
@@ -52,6 +54,7 @@ import {
 	SyncHealth,
 	skillInvalidationKey,
 	staleSkillProjectionProjectIds,
+	stopForDisconnectedAgent,
 } from "./sync-engine";
 
 function queueModules(adapter: AgentAdapter, projectId = "project-1") {
@@ -1319,6 +1322,9 @@ describe("Pi sessions-only daemon", () => {
 				const request = input instanceof Request ? input : new Request(input, init);
 				requests.push(request.clone());
 				const path = new URL(request.url).pathname;
+				if (path === "/v1/agents/agent-pi") {
+					return Response.json({ id: "agent-pi", default_project_id: "project-1" });
+				}
 				if (path === "/v1/sessions/upload-capabilities") {
 					return new Response('{"detail":"Not found"}', { status: 404 });
 				}
@@ -1361,7 +1367,7 @@ describe("Pi sessions-only daemon", () => {
 
 			const paths = requests.map((request) => new URL(request.url).pathname);
 			expect(paths).toContain("/v1/sessions/pi.fixture-session/upload");
-			expect(paths).not.toContain("/v1/agents/agent-pi");
+			expect(paths).toContain("/v1/agents/agent-pi");
 			expect(paths).not.toContain("/v1/sync/events");
 			expect(paths.some((path) => path.includes("/skills"))).toBe(false);
 		} finally {
@@ -1430,6 +1436,7 @@ describe("daemon startup Agent lookup", () => {
 			abortController: AbortController;
 			requests: Request[];
 			logs: string[];
+			root: string;
 		}) => Promise<void>,
 	): Promise<void> {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-daemon-startup-"));
@@ -1459,7 +1466,7 @@ describe("daemon startup Agent lookup", () => {
 				logs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
 				return true;
 			}) as typeof process.stderr.write;
-			await run({ abortController: new AbortController(), requests, logs });
+			await run({ abortController: new AbortController(), requests, logs, root });
 		} finally {
 			globalThis.fetch = originalFetch;
 			process.stderr.write = originalStderrWrite;
@@ -1477,6 +1484,125 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it("backfills a legacy registration only after the owning Agent lookup succeeds", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-owned", default_project_id: "project-1" }),
+			async ({ abortController, requests, root }) => {
+				delete process.env.CLAWDI_AUTH_TOKEN;
+				delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+				setAuth({
+					apiKey: "account-a-key",
+					userId: "account-a",
+					endpointBinding: { version: 1, cloudApiOrigin: "https://cloud.example.test" },
+				});
+				const environmentsDir = join(root, "home", "environments");
+				mkdirSync(environmentsDir, { recursive: true });
+				const registrationPath = join(environmentsDir, "codex.json");
+				writeFileSync(
+					registrationPath,
+					`${JSON.stringify({ id: "agent-owned", agentType: "codex", machineId: "machine-a" })}\n`,
+				);
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					requests.push(request);
+					abortController.abort();
+					return Response.json({ id: "agent-owned", default_project_id: "project-1" });
+				}) as typeof fetch;
+
+				await runSyncEngine({
+					environmentId: "agent-owned",
+					adapter: adapterRegistry.codex.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-owned");
+				expect(JSON.parse(readFileSync(registrationPath, "utf8"))).toMatchObject({
+					id: "agent-owned",
+					userId: "account-a",
+				});
+			},
+		);
+	});
+
+	it("self-stops when a legacy registration changes during ownership backfill", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-old", default_project_id: "project-1" }),
+			async ({ abortController, requests, logs, root }) => {
+				delete process.env.CLAWDI_AUTH_TOKEN;
+				delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+				setAuth({
+					apiKey: "account-a-key",
+					userId: "account-a",
+					endpointBinding: { version: 1, cloudApiOrigin: "https://cloud.example.test" },
+				});
+				const environmentsDir = join(root, "home", "environments");
+				mkdirSync(environmentsDir, { recursive: true });
+				const registrationPath = join(environmentsDir, "codex.json");
+				writeFileSync(
+					registrationPath,
+					`${JSON.stringify({ id: "agent-old", agentType: "codex", machineId: "machine-a" })}\n`,
+				);
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					requests.push(request);
+					writeFileSync(
+						registrationPath,
+						`${JSON.stringify({ id: "agent-new", agentType: "codex", machineId: "machine-a" })}\n`,
+					);
+					return Response.json({ id: "agent-old", default_project_id: "project-1" });
+				}) as typeof fetch;
+
+				await runSyncEngine({
+					environmentId: "agent-old",
+					adapter: adapterRegistry.codex.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				const registration = JSON.parse(readFileSync(registrationPath, "utf8"));
+				expect(registration).toMatchObject({ id: "agent-new" });
+				expect(Object.hasOwn(registration, "userId")).toBe(false);
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"event":"engine.agent_disconnected"');
+				expect(logs.join("")).toContain("registration changed");
+			},
+		);
+	});
+
+	it("self-stops a stale engine whose local registration points at another Agent", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-old", default_project_id: "project-1" }),
+			async ({ abortController, requests, logs, root }) => {
+				const environmentsDir = join(root, "home", "environments");
+				mkdirSync(environmentsDir, { recursive: true });
+				writeFileSync(
+					join(environmentsDir, "codex.json"),
+					`${JSON.stringify({ id: "agent-new", agentType: "codex", machineId: "machine-a" })}\n`,
+				);
+
+				await runSyncEngine({
+					environmentId: "agent-old",
+					adapter: adapterRegistry.codex.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-old");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain("registration changed");
+			},
+		);
+	});
 
 	it("maps the stable archived-Agent 403 to disconnected guidance and a no-restart stop", async () => {
 		await withStartupCase(
@@ -1506,10 +1632,53 @@ describe("daemon startup Agent lookup", () => {
 		);
 	});
 
+	it("maps a heartbeat agent_rebound to the disconnected self-stop path", async () => {
+		await withStartupCase(
+			async () =>
+				new Response('{"detail":{"code":"agent_rebound","message":"Agent moved"}}', {
+					status: 403,
+					headers: { "content-type": "application/json" },
+				}),
+			async ({ abortController, logs, requests }) => {
+				const opts = {
+					environmentId: "agent-rebound",
+					adapter: adapterRegistry.pi.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				};
+				await heartbeatLoop(
+					opts,
+					new ApiClient({ requireAuth: false, abortSignal: abortController.signal }),
+					new RetryQueue({ agentType: "pi" }),
+					abortController.signal,
+					() => ({ last_revision_seen: null, last_sync_error: null }),
+					(hint) => stopForDisconnectedAgent(opts, hint),
+				);
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-rebound/sync-heartbeat");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"event":"engine.agent_disconnected"');
+				expect(logs.join("")).not.toContain('"event":"engine.auth_failed"');
+			},
+		);
+	});
+
 	it("keeps an ambiguous 404 on a safe legacy-compatible stop path", async () => {
 		await withStartupCase(
 			async () => new Response('{"detail":"Agent not found"}', { status: 404 }),
-			async ({ abortController, requests, logs }) => {
+			async ({ abortController, requests, logs, root }) => {
+				const environmentsDir = join(root, "home", "environments");
+				mkdirSync(environmentsDir, { recursive: true });
+				const registrationPath = join(environmentsDir, "hermes.json");
+				const registration = `${JSON.stringify({
+					id: "agent-disconnected",
+					agentType: "hermes",
+					machineId: "machine-old",
+				})}\n`;
+				writeFileSync(registrationPath, registration);
 				await runSyncEngine({
 					environmentId: "agent-disconnected",
 					adapter: adapterRegistry.hermes.create(),
@@ -1520,6 +1689,7 @@ describe("daemon startup Agent lookup", () => {
 
 				expect(requests).toHaveLength(1);
 				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
+				expect(readFileSync(registrationPath, "utf8")).toBe(registration);
 				expect(process.exitCode).toBe(2);
 				expect(abortController.signal.aborted).toBe(true);
 				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');

@@ -53,6 +53,7 @@ def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
     """Clear Connected-only origin and observations during hosted registration."""
 
     agent.connected_agent_registered_at = None
+    agent.machine_fence_required = False
     agent.project_skill_reconcile_version = None
     agent.project_skill_reconcile_observed_at = None
     agent.adapter_modules = None

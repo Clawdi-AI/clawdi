@@ -48,6 +48,11 @@ import type {
 import { scanSessionModule } from "../adapters/base";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
+import { getAuth } from "../lib/config";
+import {
+	bindEnvironmentRegistrationUser,
+	readEnvironmentRegistration,
+} from "../lib/environment-registration";
 import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
@@ -108,7 +113,7 @@ export function isSkillSyncServerEvent(event: ServerEvent): event is SkillServer
 	);
 }
 
-const AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected";
+const AGENT_DISCONNECTED_ERROR_CODES = new Set(["agent_disconnected", "agent_rebound"]);
 
 function agentLookupStopHint(error: unknown): string | null {
 	if (!(error instanceof ApiError)) return null;
@@ -127,7 +132,8 @@ function agentLookupStopHint(error: unknown): string | null {
 			typeof detail === "object" &&
 			detail !== null &&
 			"code" in detail &&
-			detail.code === AGENT_DISCONNECTED_ERROR_CODE;
+			typeof detail.code === "string" &&
+			AGENT_DISCONNECTED_ERROR_CODES.has(detail.code);
 		return disconnected
 			? "This installation is disconnected. Run clawdi setup to reconnect it with retained data."
 			: null;
@@ -335,7 +341,7 @@ export async function enqueueChangedSessionsAfterStability(
 	return { enqueued, confirmedSourceRevisions };
 }
 
-interface EngineOpts {
+export interface EngineOpts {
 	environmentId: string;
 	adapter: AgentAdapter;
 	abort: AbortSignal;
@@ -347,6 +353,16 @@ interface EngineOpts {
 	/** Force the watcher into poll mode. Set by serve.ts based on
 	 * CLAWDI_SERVE_MODE=container. */
 	forcePollWatcher?: boolean;
+}
+
+export function stopForDisconnectedAgent(opts: EngineOpts, hint: string): void {
+	log.info("engine.agent_disconnected", {
+		environment_id: opts.environmentId,
+		hint,
+	});
+	process.exitCode = 2;
+	removeLaunchdDaemonSupervision(opts.adapter.agentType);
+	opts.abortController.abort();
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
@@ -379,15 +395,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	});
 
 	let lastSeenRevision: number | null = null;
-	const stopForDisconnectedAgent = (hint: string): void => {
-		log.info("engine.agent_disconnected", {
-			environment_id: opts.environmentId,
-			hint,
-		});
-		process.exitCode = 2;
-		removeLaunchdDaemonSupervision(opts.adapter.agentType);
-		opts.abortController.abort();
-	};
+	const stopDisconnectedAgent = (hint: string): void => stopForDisconnectedAgent(opts, hint);
 
 	let authFailureFired = false;
 	const triggerAuthFailureAbort = (origin: string): void => {
@@ -412,20 +420,75 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		removeLaunchdDaemonSupervision(opts.adapter.agentType);
 		opts.abortController.abort();
 	};
+	const handleStartupFailure = (error: unknown, origin: string): boolean => {
+		const stopHint = agentLookupStopHint(error);
+		if (stopHint !== null) {
+			stopDisconnectedAgent(stopHint);
+			return true;
+		}
+		if (!isAuthFailure(error)) return false;
+		log.error("engine.auth_failed", { origin });
+		process.exitCode = 2;
+		removeLaunchdDaemonSupervision(opts.adapter.agentType);
+		opts.abortController.abort();
+		return true;
+	};
+
+	const registration = readEnvironmentRegistration(opts.adapter.agentType);
+	let agentIdentity: components["schemas"]["AgentResponse"];
+	try {
+		agentIdentity = unwrap(
+			await api.GET("/v1/agents/{agent_id}", {
+				params: { path: { agent_id: opts.environmentId } },
+			}),
+		);
+	} catch (error) {
+		if (handleStartupFailure(error, "boot_agent_fetch")) return;
+		throw error;
+	}
+	if (registration && registration.id !== opts.environmentId) {
+		stopDisconnectedAgent(
+			"The local Agent registration changed while background sync was starting. Restart Clawdi after the current setup finishes.",
+		);
+		return;
+	}
+	const userId = getAuth()?.userId;
+	if (registration?.id === opts.environmentId && !registration.userId && userId) {
+		const bound = bindEnvironmentRegistrationUser(
+			opts.adapter.agentType,
+			opts.environmentId,
+			userId,
+		);
+		if (!bound) {
+			stopDisconnectedAgent(
+				"The local Agent registration changed while background sync was starting. Restart Clawdi after the current setup finishes.",
+			);
+			return;
+		}
+	}
+	if (opts.abort.aborted) return;
 
 	const common: CommonSyncRuntime = {
 		api,
 		queue,
 		health,
 		inFlightSessionHash,
-		stopForDisconnectedAgent,
+		stopForDisconnectedAgent: stopDisconnectedAgent,
 		triggerAuthFailureAbort,
+		initialDefaultProjectId: agentIdentity.default_project_id,
 		setLastSeenRevision: (revision) => {
 			lastSeenRevision = revision;
 		},
 	};
-	const sessionSync = sessions ? await prepareSessionSync(opts, sessions, common) : null;
-	const skillSync = skills ? await prepareSkillSync(opts, skills, common) : null;
+	let sessionSync: PreparedSessionSync | null;
+	let skillSync: PreparedSkillSync | null;
+	try {
+		sessionSync = sessions ? await prepareSessionSync(opts, sessions, common) : null;
+		skillSync = skills ? await prepareSkillSync(opts, skills, common) : null;
+	} catch (error) {
+		if (handleStartupFailure(error, "boot_sync_prepare")) return;
+		throw error;
+	}
 	if (opts.abort.aborted) return;
 	const moduleTasks: Promise<void>[] = [];
 	if (sessions && sessionSync) moduleTasks.push(runSessionSync(opts, sessions, sessionSync));
@@ -447,10 +510,17 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			health,
 			triggerAuthFailureAbort,
 		),
-		heartbeatLoop(opts, api, queue, opts.abort, () => ({
-			last_revision_seen: lastSeenRevision,
-			last_sync_error: health.project(),
-		})),
+		heartbeatLoop(
+			opts,
+			api,
+			queue,
+			opts.abort,
+			() => ({
+				last_revision_seen: lastSeenRevision,
+				last_sync_error: health.project(),
+			}),
+			stopDisconnectedAgent,
+		),
 	]);
 	log.info("engine.stop", {});
 }
@@ -462,6 +532,7 @@ interface CommonSyncRuntime {
 	inFlightSessionHash: Map<string, string>;
 	stopForDisconnectedAgent(hint: string): void;
 	triggerAuthFailureAbort(origin: string): void;
+	initialDefaultProjectId: string;
 	setLastSeenRevision(revision: number | null): void;
 }
 
@@ -483,7 +554,7 @@ async function prepareSkillSync(
 		api,
 		queue,
 		health: syncHealth,
-		stopForDisconnectedAgent,
+		stopForDisconnectedAgent: stopDisconnectedAgent,
 		triggerAuthFailureAbort,
 	} = common;
 
@@ -516,41 +587,7 @@ async function prepareSkillSync(
 		}
 		return projectId;
 	};
-	// Boot-time auth-failure handling: `fetchDefaultProjectId()`
-	// throws ApiError on 401/403 if the daemon was started with a
-	// revoked / forbidden key. Pre-fix this bubbled up as a
-	// generic fatal — `serve()` set process.exitCode=1, which
-	// systemd's `RestartPreventExitStatus=2` doesn't suppress, so
-	// the daemon respawned every 10s in a tight loop with no
-	// auth_revoked heartbeat for the dashboard to surface. Exit
-	// with code 2 so systemd stops respawning + log the canonical
-	// `engine.auth_failed` event so /api/health and operators see
-	// a clean reason. (No best-effort heartbeat from this point
-	// because the daemon hasn't established its project/queue state
-	// yet — there's nothing meaningful to report beyond "auth dead
-	// at boot".)
-	let defaultProjectId: string;
-	try {
-		defaultProjectId = await fetchDefaultProjectId();
-	} catch (e) {
-		const stopHint = agentLookupStopHint(e);
-		if (stopHint !== null) {
-			stopForDisconnectedAgent(stopHint);
-			return null;
-		}
-		if (isAuthFailure(e)) {
-			log.error("engine.auth_failed", { origin: "boot_project_fetch" });
-			process.exitCode = 2;
-			// Same launchd self-unload as the main auth-failure
-			// handler below — boot-time auth failure also needs
-			// supervision removal on macOS or launchd respawns
-			// the daemon every 10s.
-			removeLaunchdDaemonSupervision(opts.adapter.agentType);
-			opts.abortController.abort();
-			return null;
-		}
-		throw e;
-	}
+	let defaultProjectId = common.initialDefaultProjectId;
 	log.info("engine.project_resolved", { default_project_id: defaultProjectId });
 	for (const [skillKey, hash] of readSkillProjectionState(
 		opts.adapter.agentType,
@@ -663,7 +700,7 @@ async function prepareSkillSync(
 			} catch (e) {
 				const stopHint = agentLookupStopHint(e);
 				if (stopHint !== null) {
-					stopForDisconnectedAgent(stopHint);
+					stopDisconnectedAgent(stopHint);
 					return;
 				}
 				if (isAuthFailure(e)) {
@@ -2383,12 +2420,13 @@ function isReservedSkill(skills: SkillModule, skillKey: string): boolean {
  * "last seen" / "daemon offline" indicators — a daemon that
  * just started must show up as online within seconds, not
  * after the first 30s sleep elapses. */
-async function heartbeatLoop(
+export async function heartbeatLoop(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
+	stopForDisconnectedAgent: (hint: string) => void,
 ): Promise<void> {
 	let heartbeatFailureStreak = 0;
 	const send = async () => {
@@ -2396,23 +2434,25 @@ async function heartbeatLoop(
 		const dropped = queue.drainDroppedDelta();
 		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
-				params: { path: { agent_id: opts.environmentId } },
-				body: {
-					// Peak since boot rather than sampled current
-					// depth — see the comment on the auth-failure
-					// final heartbeat above. Backend takes max
-					// across reports, so a monotonically-rising
-					// high-water mark from the daemon makes the
-					// dashboard's `queue_depth_high_water_since_start`
-					// converge to the actual peak.
-					queue_depth: queue.highWaterMark,
-					dropped_count_delta: dropped,
-					last_revision_seen: fields.last_revision_seen,
-					last_sync_error: fields.last_sync_error,
-					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
-				},
-			});
+			unwrap(
+				await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+					params: { path: { agent_id: opts.environmentId } },
+					body: {
+						// Peak since boot rather than sampled current
+						// depth — see the comment on the auth-failure
+						// final heartbeat above. Backend takes max
+						// across reports, so a monotonically-rising
+						// high-water mark from the daemon makes the
+						// dashboard's `queue_depth_high_water_since_start`
+						// converge to the actual peak.
+						queue_depth: queue.highWaterMark,
+						dropped_count_delta: dropped,
+						last_revision_seen: fields.last_revision_seen,
+						last_sync_error: fields.last_sync_error,
+						...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
+					},
+				}),
+			);
 			heartbeatFailureStreak = 0;
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {
@@ -2421,6 +2461,11 @@ async function heartbeatLoop(
 			// count is permanently lost on every flaky-network
 			// cycle, which is precisely when drops are most likely.
 			queue.restoreDroppedDelta(dropped);
+			const stopHint = agentLookupStopHint(e);
+			if (stopHint !== null) {
+				stopForDisconnectedAgent(stopHint);
+				return;
+			}
 			heartbeatFailureStreak += 1;
 			const classification = classifyHeartbeatFailure(heartbeatFailureStreak);
 			const fields = {

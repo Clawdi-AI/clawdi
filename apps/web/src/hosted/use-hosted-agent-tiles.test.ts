@@ -77,6 +77,7 @@ function env(overrides: Partial<Env> = {}): Env {
 		id: "11111111-1111-4111-8111-111111111111",
 		name: "hosted-openclaw",
 		default_name: "hosted-openclaw",
+		machine_id: "hosted-openclaw-machine",
 		machine_name: "hosted-openclaw",
 		agent_type: "openclaw",
 		agent_version: null,

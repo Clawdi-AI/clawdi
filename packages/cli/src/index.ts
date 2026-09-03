@@ -1588,6 +1588,7 @@ agentCmd
 	.description("Recover a local Agent binding without creating a new cloud identity")
 	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
 	.option("-y, --yes", "Skip confirmation when the target is unambiguous")
+	.option("--confirm-takeover", "Confirm disconnecting a recently active installation")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
 	.addHelpText(
 		"after",

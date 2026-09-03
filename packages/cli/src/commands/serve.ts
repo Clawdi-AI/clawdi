@@ -73,6 +73,7 @@ import {
 	readHealth,
 	restart as restartService,
 	statusLines as serviceStatusLines,
+	stop as stopService,
 	uninstall as uninstallService,
 } from "../serve/installer";
 import { log, toErrorMessage } from "../serve/log";
@@ -363,6 +364,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 
 const INSTALL_ALLOWED = new Set(["host", "port", "allowRemote"]);
 const UNINSTALL_ALLOWED = new Set<string>();
+const STOP_ALLOWED = new Set<string>();
 const STATUS_ALLOWED = new Set(["agent"]);
 const DOCTOR_ALLOWED = new Set(["json"]);
 const RPC_ALLOWED = new Set(["host", "port", "token"]);
@@ -386,6 +388,17 @@ export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 	failed += cleanupLegacyDaemonUnits();
 	if (removed === 0 && failed === 0) console.log("No daemon units installed.");
 	if (failed > 0) process.exit(1);
+}
+
+export async function serveStop(opts: ServeInstallOpts): Promise<void> {
+	rejectUnsupportedOpts("stop", opts as Record<string, unknown>, STOP_ALLOWED);
+	try {
+		stopService();
+		console.log("✓ Stopped singleton daemon; service unit remains installed.");
+	} catch (e) {
+		console.error(`Stop failed: ${toErrorMessage(e)}`);
+		process.exit(1);
+	}
 }
 
 const RESTART_ALLOWED = new Set<string>();
