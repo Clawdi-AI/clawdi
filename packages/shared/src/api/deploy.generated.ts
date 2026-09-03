@@ -1111,8 +1111,6 @@ export interface components {
             memory_mib: number;
             /** Disk Gib */
             disk_gib: number;
-            /** Network Mbps */
-            network_mbps?: number | null;
         };
         /** DriftEventData */
         DriftEventData: {
@@ -2730,8 +2728,6 @@ export interface components {
             ram_gb: number;
             /** Disk Size */
             disk_size: number;
-            /** Network Mbps */
-            network_mbps: number;
             /** Offers */
             offers?: components["schemas"]["V2BillingOfferResponse"][];
             /**

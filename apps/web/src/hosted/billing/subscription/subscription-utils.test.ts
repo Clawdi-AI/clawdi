@@ -41,7 +41,6 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 		vcpu: 1,
 		ram_gb: 1,
 		disk_size: 10,
-		network_mbps: 100,
 		...rest,
 	};
 }
