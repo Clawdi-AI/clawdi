@@ -4,11 +4,16 @@ import { Check, Cpu, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type { Plan } from "@/hosted/billing/contracts";
-import { computePricePresentation } from "@/hosted/billing/deploy/deploy-price-presentation";
+import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
+import {
+	COMPUTE_CARD_TRIAL_ELIGIBILITY,
+	type ComputePricePresentation,
+	computePricePresentation,
+} from "@/hosted/billing/deploy/deploy-price-presentation";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
@@ -32,6 +37,30 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 			<Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
 			<span>{children}</span>
 		</li>
+	);
+}
+
+function PlanPrice({
+	offer,
+	presentation,
+}: {
+	offer: BillingOffer;
+	presentation: ComputePricePresentation;
+}) {
+	const { trial } = presentation;
+	return (
+		<>
+			<div className="flex flex-wrap items-center gap-2">
+				<p className="text-3xl font-semibold tracking-normal tabular-nums">
+					{presentation.primary}
+				</p>
+				{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
+			</div>
+			<p className="text-xs text-muted-foreground tabular-nums">
+				{trial?.afterTrial ?? presentation.secondary}
+				{trial && offer.billing_term_months > 1 ? <> · {presentation.secondary}</> : null}
+			</p>
+		</>
 	);
 }
 
@@ -98,6 +127,7 @@ export function PlanComparison({
 	const performancePrice = performanceOffer
 		? computePricePresentation(performanceOffer, performanceOffers)
 		: null;
+	const hasCardTrial = Boolean(basicPrice?.trial || performancePrice?.trial);
 	const sharedPricingUnavailable =
 		basic !== undefined && performance !== undefined && !selectedTerm;
 
@@ -122,7 +152,9 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: "Eligible accounts get one 7-day trial on their first Basic or Performance card subscription; one trial per account."
+					: hasCardTrial
+						? COMPUTE_CARD_TRIAL_ELIGIBILITY
+						: "Compare hosted compute plans."
 			}
 		>
 			<div>
@@ -136,13 +168,8 @@ export function PlanComparison({
 							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
 								<p className="text-xs text-muted-foreground">Basic subscription</p>
-								{basicPrice ? (
-									<>
-										<p className="text-3xl font-semibold tracking-tight tabular-nums">
-											{basicPrice.primary}
-										</p>
-										<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
-									</>
+								{basicPrice && basicOffer ? (
+									<PlanPrice offer={basicOffer} presentation={basicPrice} />
 								) : (
 									<p className="text-sm font-medium">Pricing unavailable</p>
 								)}
@@ -170,13 +197,8 @@ export function PlanComparison({
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
 								<p className="text-xs text-muted-foreground">Performance subscription</p>
-								{performancePrice ? (
-									<>
-										<p className="text-3xl font-semibold tracking-tight tabular-nums">
-											{performancePrice.primary}
-										</p>
-										<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
-									</>
+								{performancePrice && performanceOffer ? (
+									<PlanPrice offer={performanceOffer} presentation={performancePrice} />
 								) : (
 									<p className="text-sm font-medium">Pricing unavailable</p>
 								)}

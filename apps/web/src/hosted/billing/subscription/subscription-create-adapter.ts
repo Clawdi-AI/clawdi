@@ -88,7 +88,7 @@ export type SubscriptionCreateRequestView = {
 export type SubscriptionCreateOutcomeView =
 	| {
 			flowType: "checkout";
-			checkout: CheckoutOperationResult;
+			checkout: Extract<CheckoutOperationResult, { flow_type: "checkout_session" }>;
 	  }
 	| {
 			flowType: "subscription_activation";

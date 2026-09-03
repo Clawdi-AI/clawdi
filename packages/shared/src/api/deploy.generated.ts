@@ -1111,6 +1111,8 @@ export interface components {
             memory_mib: number;
             /** Disk Gib */
             disk_gib: number;
+            /** Network Mbps */
+            network_mbps?: number | null;
         };
         /** DriftEventData */
         DriftEventData: {
@@ -1702,6 +1704,8 @@ export interface components {
             effective_monthly_price_cents: number;
             /** Discount Percent */
             discount_percent: number;
+            /** Card Trial Period Days */
+            card_trial_period_days?: number | null;
         };
         V2CheckoutResponse: components["schemas"]["V2CheckoutSessionResponse"] | components["schemas"]["V2SubscriptionActivationResponse"];
         /** V2CheckoutSessionResponse */
@@ -1722,6 +1726,8 @@ export interface components {
             checkout_url: string;
             /** Client Secret */
             client_secret: string | null;
+            /** Trial Period Days */
+            trial_period_days?: number | null;
             /** Subscription Id */
             subscription_id: null;
             /** Invoice Id */
@@ -2724,6 +2730,8 @@ export interface components {
             ram_gb: number;
             /** Disk Size */
             disk_size: number;
+            /** Network Mbps */
+            network_mbps: number;
             /** Offers */
             offers?: components["schemas"]["V2BillingOfferResponse"][];
             /**
@@ -2774,6 +2782,8 @@ export interface components {
             checkout_url: "";
             /** Client Secret */
             client_secret: null;
+            /** Trial Period Days */
+            trial_period_days?: null;
             /**
              * Subscription Id
              * Format: sqid

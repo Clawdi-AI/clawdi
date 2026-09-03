@@ -11,6 +11,7 @@ function plan(priceCents: number): Plan {
 		vcpu: 2,
 		ram_gb: 4,
 		disk_size: 20,
+		network_mbps: 100,
 		offers: [
 			{
 				billing_term_months: 1,

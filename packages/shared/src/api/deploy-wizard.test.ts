@@ -55,6 +55,7 @@ function plan(
 		vcpu: 2,
 		ram_gb: 4,
 		disk_size: 20,
+		network_mbps: 100,
 		offers,
 	};
 }

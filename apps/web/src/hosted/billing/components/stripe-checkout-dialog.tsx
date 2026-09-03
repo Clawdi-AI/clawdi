@@ -13,6 +13,7 @@ import type {
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -24,6 +25,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
+import { cardTrialPricePresentation } from "@/hosted/billing/deploy/deploy-price-presentation";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
 import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
@@ -38,6 +40,7 @@ export type StripeCheckoutSummary = {
 	planName: string;
 	priceLabel: string;
 	termLabel: string;
+	trialDays: number | null;
 };
 
 type StripeCheckoutDialogProps = {
@@ -59,6 +62,7 @@ type RetainedCheckout = Pick<
 
 function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | null }) {
 	if (!summary) return null;
+	const trial = cardTrialPricePresentation(summary.priceLabel, summary.trialDays);
 
 	return (
 		<div className="rounded-lg border bg-muted/30 p-4">
@@ -74,8 +78,13 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 							<p className="text-xs text-muted-foreground">{summary.detail}</p>
 						</div>
 						<div className="text-left sm:text-right">
-							<p className="font-mono text-base tabular-nums">{summary.priceLabel}</p>
-							<p className="text-xs text-muted-foreground">{summary.termLabel}</p>
+							<div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+								<p className="font-mono text-base tabular-nums">{summary.priceLabel}</p>
+								{trial ? <Badge variant="secondary">{trial.badge}</Badge> : null}
+							</div>
+							<p className="text-xs text-muted-foreground tabular-nums">
+								{trial?.afterTrial ?? summary.termLabel}
+							</p>
 						</div>
 					</div>
 				</div>

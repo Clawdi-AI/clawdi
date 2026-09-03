@@ -122,6 +122,7 @@ describe("deploy wizard responsive layout", () => {
 		expect(agentDetailSource.match(/storageGib=\{spec\.resources\.disk_gib\}/g)).toHaveLength(1);
 		expect(wizardSource).toContain('className="whitespace-nowrap" data-testid={testId}');
 		expect(wizardSource).toMatch(/data-testid=\{`\$\{testId\}-savings`\}/);
+		expect(wizardSource.match(/showTrial=\{paymentMethod === "card"\}/g)).toHaveLength(2);
 	});
 
 	test("keeps the action bar sticky across the full form and adapts it to the main pane", () => {
@@ -137,11 +138,13 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource).not.toContain("sm:sticky sm:bottom-0");
 	});
 
-	test("removes redundant payment badges and keeps concise funding copy", () => {
+	test("keeps Stripe-authoritative trial copy out of Wallet checkout", () => {
 		expect(wizardSource).not.toContain("hidden @3xl/main:inline-flex");
-		expect(wizardSource).toContain(
-			"Card required. Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account.",
-		);
+		expect(wizardSource).toContain("selectedCardTrial");
+		expect(wizardSource).toContain("Card required.");
+		expect(wizardSource).toContain("COMPUTE_CARD_TRIAL_ELIGIBILITY");
+		expect(wizardSource).toContain("result.trial_period_days ?? null");
+		expect(wizardSource).not.toContain("one 7-day trial");
 		expect(wizardSource).toContain("Paid upfront from your Wallet balance. Renews from Wallet.");
 	});
 });
@@ -219,9 +222,8 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
-		expect(wizardSource).toContain(
-			"Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account.",
-		);
+		expect(wizardSource).toContain("COMPUTE_CARD_TRIAL_ELIGIBILITY");
+		expect(wizardSource).not.toContain("one 7-day trial");
 		expect(agentDetailSource).toContain("an included Basic entitlement if available");
 		expect(agentDetailSource).not.toContain("falls back to free compute");
 	});
