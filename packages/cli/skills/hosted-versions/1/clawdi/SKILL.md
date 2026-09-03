@@ -17,27 +17,33 @@ Clawdi host-management commands such as `clawdi setup`, `clawdi wallet`, `clawdi
 
 Use the current conversation and user-provided artifacts first. For project facts, inspect
 the workspace, repository documentation, and local history. Use `memory_search` only for
-missing user-specific preferences, decisions, or prior context. Use `session_search` and
-`session_read` only when the user asks for a past conversation or transcript-level detail is
-necessary. Do not call Memory and Session speculatively or in parallel. A named entity alone
-does not justify a Cloud lookup, and an empty Memory result does not justify a Session search.
+missing user-specific preferences, decisions, or prior context. Use `session_list`,
+`session_search`, and `session_read` only when the user asks for past conversations or
+transcript-level detail is necessary. Do not call Memory and Session speculatively or in parallel.
+A named entity alone does not justify a Cloud lookup, and an empty Memory result does not justify
+a Session search.
 
 ## Memory
 
 Memory is shared across the user's Hosted agents, not isolated to the current agent.
 
 - `memory_search` — Search durable memory by natural-language query.
+- `memory_list` — Review stored memories and their stable IDs.
 - `memory_add` — Save a durable fact, preference, pattern, decision, or project context.
+- `memory_update` — Replace one exact memory's content without changing its metadata.
+- `memory_delete` — Delete one exact memory by ID.
 - `memory_extract` — Prepare memories from the current conversation. Follow its returned
   review-and-confirm instructions and wait for user approval before calling `memory_add`.
 
 Use `memory_add` for explicit "remember this" requests or durable user-specific preferences
 and decisions not discoverable from the repository. Ask when persistence is unclear. Do not
 save routine task completion, code facts, speculation, or plaintext secrets; use Vault and
-remember only the exact `clawdi://` reference.
+remember only the exact `clawdi://` reference. List before updating or deleting unless the user
+already supplied the exact memory ID; never infer which stored item to mutate.
 
 ## Sessions
 
+- Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
 - Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
 - Use `session_read` to read a session by UUID or Clawdi share URL.
 
@@ -102,10 +108,11 @@ to have changed:
 - Use the Clawdi connector when no direct option can perform the operation.
 
 Before a side effect, establish the exact service account and organization, Project, or tenant.
-Fallback must not silently change that identity. Do not scan for credentials, start an
-interactive login, invent API details, or expose secrets. Choose the path before a side effect
-and advance only after a definite preflight failure. If a mutation's result is ambiguous,
-inspect it through the same path; never repeat it through another path.
+Use `connector_accounts` when the connector is a candidate and its identity is not already clear.
+Fallback must not silently change that identity. Do not scan for credentials, start an interactive
+login, invent API details, or expose secrets. Choose the path before a side effect and advance
+only after a definite preflight failure. If a mutation's result is ambiguous, inspect it through
+the same path; never repeat it through another path.
 
 ## Connector Workflow
 
@@ -138,7 +145,7 @@ authoritative; never assume a fixed meta-tool set.
    arguments. Batch only independent calls. Keep ordinary results inline. Set
    `sync_response_to_workbench` only when a result may be large or needs later remote
    processing; use `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL` only for large
-   responses saved remotely or remote artifacts.
-6. Preserve dependencies and returned semantics. Follow signed-file metadata, pagination
-   fields, and termination signals exactly as exposed. Select an account only when the schema
-   supports it, and use additional or future meta-tools only according to their live schemas.
+   responses saved remotely or remote artifacts. Preserve dependencies and returned semantics;
+   follow signed-file metadata, pagination fields, and termination signals exactly as exposed.
+   Select an account only when the schema supports it, and use additional or future meta-tools
+   only according to their live schemas.

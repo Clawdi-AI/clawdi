@@ -181,6 +181,9 @@ async def test_get_memory_provider_uses_mem0_when_exports_and_constructor_are_us
         def get(self, memory_id: str) -> object:
             raise AssertionError(memory_id)
 
+        def update(self, memory_id: str, **kwargs: object) -> object:
+            raise AssertionError((memory_id, kwargs))
+
         def delete(self, memory_id: str) -> object:
             raise AssertionError(memory_id)
 

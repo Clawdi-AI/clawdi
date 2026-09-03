@@ -83,6 +83,7 @@ describe("bundled Clawdi skill connector contract", () => {
 			expect(workflow).toContain("never invent fields or inputs");
 			expect(workflow).toContain("`COMPOSIO_MULTI_EXECUTE_TOOL`");
 			expect(workflow).toContain("Batch only independent calls");
+			expect(workflow).not.toMatch(/^6\./m);
 			expect(workflow).not.toMatch(
 				/dynamically registered|individual tools|already authenticated/i,
 			);
@@ -135,9 +136,19 @@ describe("bundled Clawdi skill connector contract", () => {
 
 	it("keeps Hosted guidance within its exposed capability boundary", () => {
 		expect(hostedSkill).toContain("## Memory");
-		expect(hostedSkill).toContain("`memory_search`");
-		expect(hostedSkill).toContain("`memory_add`");
-		expect(hostedSkill).toContain("`memory_extract`");
+		for (const tool of [
+			"`memory_search`",
+			"`memory_list`",
+			"`memory_add`",
+			"`memory_update`",
+			"`memory_delete`",
+			"`memory_extract`",
+			"`session_list`",
+			"`connector_accounts`",
+		]) {
+			expect(hostedSkill).toContain(tool);
+			expect(genericSkill).toContain(tool);
+		}
 		expect(hostedSkill).toContain("## Projects");
 		expect(hostedSkill).toContain("`project_current`");
 		expect(hostedSkill).toContain("## Vault");

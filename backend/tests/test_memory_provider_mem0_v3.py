@@ -48,6 +48,7 @@ class _RecordingMem0Client:
         get_all_results: list[object] | None = None,
         get_results: list[object] | None = None,
         search_error: Exception | None = None,
+        update_result: object = None,
         delete_result: object = _DEFAULT_DELETE_RESULT,
     ) -> None:
         self.add_result = add_result
@@ -55,6 +56,7 @@ class _RecordingMem0Client:
         self.get_all_results = list(get_all_results or [])
         self.get_results = list(get_results or [])
         self.search_error = search_error
+        self.update_result = update_result if update_result is not None else {"status": "updated"}
         self.delete_result = (
             {"status": "deleted"} if delete_result is _DEFAULT_DELETE_RESULT else delete_result
         )
@@ -64,6 +66,7 @@ class _RecordingMem0Client:
         self.search_calls: list[tuple[str, dict[str, object], int]] = []
         self.get_all_calls: list[tuple[dict[str, object], int, int]] = []
         self.get_calls: list[str] = []
+        self.update_calls: list[tuple[str, str]] = []
         self.delete_calls: list[str] = []
 
     def add(
@@ -105,6 +108,10 @@ class _RecordingMem0Client:
         if not self.get_results:
             raise AssertionError("unexpected Mem0 get call")
         return self.get_results.pop(0)
+
+    def update(self, memory_id: str, *, text: str) -> object:
+        self.update_calls.append((memory_id, text))
+        return self.update_result
 
     def delete(self, memory_id: str) -> object:
         self.delete_calls.append(memory_id)
@@ -261,6 +268,22 @@ async def test_mem0_delete_verifies_account_owner(monkeypatch: pytest.MonkeyPatc
     assert await provider.delete(USER_ID, "foreign") is False
     assert sdk_client.get_calls == ["owned", "foreign"]
     assert sdk_client.delete_calls == ["owned"]
+
+
+@pytest.mark.asyncio
+async def test_mem0_update_verifies_account_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk_client = _RecordingMem0Client(
+        get_results=[
+            {"id": "owned", "user_id": USER_ID},
+            {"id": "foreign", "user_id": "another-user"},
+        ]
+    )
+    provider = _provider(monkeypatch, sdk_client)
+
+    assert await provider.update(USER_ID, "owned", "Replacement") is True
+    assert await provider.update(USER_ID, "foreign", "Must not write") is False
+    assert sdk_client.get_calls == ["owned", "foreign"]
+    assert sdk_client.update_calls == [("owned", "Replacement")]
 
 
 @pytest.mark.asyncio

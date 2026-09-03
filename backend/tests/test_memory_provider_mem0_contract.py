@@ -70,6 +70,8 @@ async def test_pinned_memory_client_public_http_contract(
             payload = get_all_responses.pop(0)
         elif request.method == "GET" and path == "/v1/memories/owned-memory/":
             payload = {"id": "owned-memory", "user_id": USER_ID}
+        elif request.method == "PUT" and path == "/v1/memories/owned-memory/":
+            payload = {"status": "updated"}
         elif request.method == "DELETE" and path == "/v1/memories/owned-memory/":
             payload = {"status": "deleted"}
         else:
@@ -85,6 +87,7 @@ async def test_pinned_memory_client_public_http_contract(
         ]
         assert [item["id"] for item in await provider.list_all(USER_ID)] == ["listed-memory"]
         assert await provider.count(USER_ID) == 1
+        assert await provider.update(USER_ID, "owned-memory", "Updated memory") is True
         assert await provider.delete(USER_ID, "owned-memory") is True
 
     assert version("mem0ai") == "2.0.18"
@@ -95,6 +98,8 @@ async def test_pinned_memory_client_public_http_contract(
         ("POST", "/v3/memories/"),
         ("POST", "/v3/memories/"),
         ("GET", "/v1/memories/owned-memory/"),
+        ("PUT", "/v1/memories/owned-memory/"),
+        ("GET", "/v1/memories/owned-memory/"),
         ("DELETE", "/v1/memories/owned-memory/"),
     ]
     request_bodies = {
@@ -103,6 +108,7 @@ async def test_pinned_memory_client_public_http_contract(
     assert request_bodies["/v3/memories/add/"]["filters"] == {"user_id": USER_ID}
     assert request_bodies["/v3/memories/search/"]["filters"] == {"AND": [{"user_id": USER_ID}]}
     assert request_bodies["/v3/memories/search/"]["top_k"] == 50
+    assert request_bodies["/v1/memories/owned-memory/"] == {"text": "Updated memory"}
 
 
 @pytest.mark.asyncio

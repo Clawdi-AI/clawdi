@@ -72,6 +72,10 @@ class _Mem0DeleteResponse(RootModel[dict[str, JsonValue]]):
     """The pinned client documents delete as one JSON object, consumed for success only."""
 
 
+class _Mem0UpdateResponse(RootModel[dict[str, JsonValue]]):
+    """The pinned client documents update as one JSON object, consumed for success only."""
+
+
 def _is_exception_type(value: object) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, Exception)
 
@@ -122,6 +126,7 @@ class Mem0Provider:
             search_operation: object = client.search
             get_all_operation: object = client.get_all
             get_operation: object = client.get
+            update_operation: object = client.update
             delete_operation: object = client.delete
         except AttributeError as exc:
             raise MemoryProviderUnavailableError("Mem0 client is incompatible") from exc
@@ -132,6 +137,7 @@ class Mem0Provider:
                 search_operation,
                 get_all_operation,
                 get_operation,
+                update_operation,
                 delete_operation,
             )
         ):
@@ -140,6 +146,7 @@ class Mem0Provider:
         self._search = search_operation
         self._get_all = get_all_operation
         self._get = get_operation
+        self._update = update_operation
         self._delete = delete_operation
         self._error_type = MemoryError
         self._transient_error_types = (NetworkError, RateLimitError)
@@ -242,6 +249,19 @@ class Mem0Provider:
         _validate_response(
             _Mem0DeleteResponse,
             await self._invoke(lambda: self._delete(memory_id)),
+        )
+        return True
+
+    async def update(self, user_id: str, memory_id: str, content: str) -> bool:
+        memory = _validate_response(
+            _Mem0GetResponse,
+            await self._invoke(lambda: self._get(memory_id)),
+        )
+        if memory.user_id != user_id:
+            return False
+        _validate_response(
+            _Mem0UpdateResponse,
+            await self._invoke(lambda: self._update(memory_id, text=content)),
         )
         return True
 

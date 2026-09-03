@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
+from app.services.composio import ConnectorAccountIdentity
 from app.services.memory_provider import Mem0Provider
 from app.services.vault_crypto import decrypt as decrypt_vault_value
 from app.services.vault_crypto import encrypt as encrypt_vault_value
@@ -142,13 +143,23 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
         user_id=seed_user.id,
         environment_id=env_a.id,
         local_session_id="mcp-parity-session-a",
-        started_at=now,
+        project_path="/workspace/a",
+        started_at=now - timedelta(days=2, hours=1),
+        last_activity_at=now - timedelta(days=2),
+        summary="Older OpenClaw session",
+        model="model-a",
+        message_count=3,
     )
     session_b = Session(
         user_id=seed_user.id,
         environment_id=env_b.id,
         local_session_id="mcp-parity-session-b",
-        started_at=now,
+        project_path="/workspace/b",
+        started_at=now - timedelta(hours=2),
+        last_activity_at=now - timedelta(hours=1),
+        summary="Recent Hermes session",
+        model="model-b",
+        message_count=5,
     )
     db_session.add_all([session_a, session_b])
     await db_session.flush()
@@ -178,6 +189,11 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
     )
     db_session.add(linked_owner)
     await db_session.flush()
+    foreign_memory = Memory(
+        user_id=linked_owner.id,
+        content="Foreign memory must never be exposed.",
+        source="manual",
+    )
     linked_project = Project(
         user_id=linked_owner.id,
         slug="mcp-parity-linked",
@@ -185,7 +201,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
         kind=PROJECT_KIND_WORKSPACE,
     )
     linked_vault = Vault(user_id=linked_owner.id, slug="runtime-linked", name="Runtime Linked")
-    db_session.add_all([vault_a, vault_b, linked_project, linked_vault])
+    db_session.add_all([foreign_memory, vault_a, vault_b, linked_project, linked_vault])
     await db_session.flush()
     db_session.add_all(
         [
@@ -263,6 +279,10 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             assert {
                 "memory_search",
                 "memory_add",
+                "memory_list",
+                "memory_update",
+                "memory_delete",
+                "session_list",
                 "project_current",
                 "project_list",
                 "project_get",
@@ -314,6 +334,87 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             assert "environment A" in legacy_search["content"][0]["text"]
             assert "environment B" in legacy_search["content"][0]["text"]
+
+            listed_memories = _tool_json(await _tool_call(client, 41, "memory_list"))
+            listed_ids = {item["id"] for item in listed_memories["memories"]}
+            assert str(direct_memory.id) in listed_ids
+            assert str(foreign_memory.id) not in listed_ids
+
+            updated = _tool_json(
+                await _tool_call(
+                    client,
+                    42,
+                    "memory_update",
+                    {
+                        "memory_id": str(direct_memory.id),
+                        "content": "Hosted updated parity marker remains account-scoped.",
+                    },
+                )
+            )
+            assert updated == {"status": "updated", "memory_id": str(direct_memory.id)}
+            await db_session.refresh(direct_memory)
+            assert direct_memory.content == "Hosted updated parity marker remains account-scoped."
+
+            rejected_secret = await _tool_call(
+                client,
+                43,
+                "memory_update",
+                {
+                    "memory_id": str(direct_memory.id),
+                    "content": "API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+                },
+            )
+            assert rejected_secret["isError"] is True
+            await db_session.refresh(direct_memory)
+            assert direct_memory.content == "Hosted updated parity marker remains account-scoped."
+
+            foreign_update = await _tool_call(
+                client,
+                44,
+                "memory_update",
+                {"memory_id": str(foreign_memory.id), "content": "Must not update"},
+            )
+            assert foreign_update["isError"] is True
+            assert "Memory not found" in foreign_update["content"][0]["text"]
+
+            sessions = _tool_json(await _tool_call(client, 45, "session_list"))["sessions"]
+            assert [item["id"] for item in sessions] == [str(session_b.id), str(session_a.id)]
+            assert sessions[0]["project_id"] is None
+            assert sessions[1]["project_id"] == str(env_a.default_project_id)
+
+            recent_sessions = _tool_json(
+                await _tool_call(
+                    client,
+                    46,
+                    "session_list",
+                    {"after": (now - timedelta(days=1)).isoformat()},
+                )
+            )["sessions"]
+            assert [item["id"] for item in recent_sessions] == [str(session_b.id)]
+
+            agent_sessions = _tool_json(
+                await _tool_call(client, 47, "session_list", {"agent_type": "hermes"})
+            )["sessions"]
+            assert [item["id"] for item in agent_sessions] == [str(session_b.id)]
+
+            bound_project_sessions = _tool_json(
+                await _tool_call(
+                    client,
+                    48,
+                    "session_list",
+                    {"project_id": str(env_a.default_project_id)},
+                )
+            )["sessions"]
+            assert [item["id"] for item in bound_project_sessions] == [str(session_a.id)]
+
+            sibling_project_sessions = await _tool_call(
+                client,
+                49,
+                "session_list",
+                {"project_id": str(env_b.default_project_id)},
+            )
+            assert sibling_project_sessions["isError"] is True
+            assert "Project not found" in sibling_project_sessions["content"][0]["text"]
 
             current = _tool_json(await _tool_call(client, 5, "project_current"))
             projects = _tool_json(await _tool_call(client, 6, "project_list"))["projects"]
@@ -401,15 +502,17 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             legacy_projects = _tool_json(await _tool_call(client, 84, "project_list"))["projects"]
             assert [project["id"] for project in legacy_projects] == [str(env_a.default_project_id)]
+            legacy_sessions = _tool_json(await _tool_call(client, 85, "session_list"))["sessions"]
+            assert [item["id"] for item in legacy_sessions] == [str(session_a.id)]
 
             active_auth["value"] = _runtime_auth(seed_user, env_b.id)
             other_search = await _tool_call(
                 client,
                 9,
                 "memory_search",
-                {"query": "Hosted direct parity marker"},
+                {"query": "Hosted updated parity marker"},
             )
-            assert "shared across the account" in other_search["content"][0]["text"]
+            assert "remains account-scoped" in other_search["content"][0]["text"]
             assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 200
 
             inaccessible_project = await _tool_call(
@@ -467,6 +570,10 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             cli_names = {tool["name"] for tool in cli_listed["tools"]}
             assert {
                 "memory_search",
+                "memory_list",
+                "memory_update",
+                "memory_delete",
+                "session_list",
                 "project_list",
                 "vault_list",
                 "vault_resolve",
@@ -478,9 +585,9 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 client,
                 15,
                 "memory_search",
-                {"query": "Hosted direct parity marker"},
+                {"query": "Hosted updated parity marker"},
             )
-            assert "shared across the account" in cli_search["content"][0]["text"]
+            assert "remains account-scoped" in cli_search["content"][0]["text"]
             assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 200
 
             active_auth["value"] = AuthContext(
@@ -492,6 +599,10 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             oauth_names = {tool["name"] for tool in oauth_listed["tools"]}
             assert {
                 "memory_search",
+                "memory_list",
+                "memory_update",
+                "memory_delete",
+                "session_list",
                 "project_list",
                 "vault_list",
                 "vault_resolve",
@@ -504,8 +615,27 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             assert str(env_a.default_project_id) in oauth_project_ids
             assert str(env_b.default_project_id) in oauth_project_ids
 
+            oauth_project_sessions = _tool_json(
+                await _tool_call(
+                    client,
+                    18,
+                    "session_list",
+                    {"project_id": str(env_b.default_project_id)},
+                )
+            )["sessions"]
+            assert [item["id"] for item in oauth_project_sessions] == [str(session_b.id)]
+
             active_auth["value"] = _runtime_auth(seed_user, env_a.id)
-            assert (await client.delete(f"/v1/memories/{direct_memory.id}")).status_code == 200
+            deleted = _tool_json(
+                await _tool_call(
+                    client,
+                    19,
+                    "memory_delete",
+                    {"memory_id": str(direct_memory.id)},
+                )
+            )
+            assert deleted == {"status": "deleted", "memory_id": str(direct_memory.id)}
+            assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 404
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
@@ -535,6 +665,9 @@ async def test_environment_bound_mem0_delete_uses_account_scope(
         def get(self, requested_memory_id: str) -> dict[str, str]:
             self.get_calls.append(requested_memory_id)
             return {"id": str(memory_id), "user_id": str(seed_user.id)}
+
+        def update(self, requested_memory_id: str, *, text: str) -> object:
+            raise AssertionError((requested_memory_id, text))
 
         def delete(self, requested_memory_id: str) -> dict[str, str]:
             self.delete_calls.append(requested_memory_id)
@@ -886,7 +1019,24 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             {"name": "connector_safe", "inputSchema": {"type": "object"}},
         ]
 
+    async def connected_account_identities(_user_id: str) -> list[ConnectorAccountIdentity]:
+        return [
+            ConnectorAccountIdentity(
+                id="ca_github",
+                app_name="github",
+                status="ACTIVE",
+                account_display="octocat",
+                organization_display="clawdi-ai",
+                tenant_display="tenant-primary",
+            )
+        ]
+
     monkeypatch.setattr(mcp_bridge, "_connector_mcp_tools", colliding_connectors)
+    monkeypatch.setattr(
+        mcp_bridge,
+        "get_connected_account_identities",
+        connected_account_identities,
+    )
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
     app.dependency_overrides[get_auth_short_session] = override_auth
@@ -896,11 +1046,25 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             listed = await _rpc(client, 1, "tools/list", {})
             names = [tool["name"] for tool in listed["tools"]]
             assert "connector_safe" in names
+            assert "connector_accounts" in names
             assert "memory_search" not in names
             assert "project_get" not in names
             assert "vault_list" not in names
             assert "vault_resolve" not in names
             assert "vault_create" not in names
+
+            accounts = _tool_json(await _tool_call(client, 11, "connector_accounts"))["accounts"]
+            assert accounts == [
+                {
+                    "id": "ca_github",
+                    "app_name": "github",
+                    "status": "ACTIVE",
+                    "account_display": "octocat",
+                    "organization_display": "clawdi-ai",
+                    "tenant_display": "tenant-primary",
+                }
+            ]
+            assert not ({"data", "state", "credentials", "token"} & accounts[0].keys())
 
             missing_memory = await _tool_call(
                 client,
@@ -948,6 +1112,9 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert "missing scope: vault:write" in missing_write["content"][0]["text"]
 
             runtime_auth.api_key.scopes = ["projects:read", "vault:write"]
+            missing_accounts = await _tool_call(client, 43, "connector_accounts")
+            assert missing_accounts["isError"] is True
+            assert "missing scope: connectors:read" in missing_accounts["content"][0]["text"]
             invalid = await _tool_call(
                 client,
                 5,
