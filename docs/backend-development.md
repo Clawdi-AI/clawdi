@@ -118,9 +118,9 @@ used. Non-production counts may vary in a host-local environment with a
 different interpreter; the production `app` result is the zero-diagnostic
 invariant. Every first-party production module is clean in its owned gate.
 
-The strict-equivalent production audit reports 34 diagnostics across one
+The strict-equivalent production audit reports 38 diagnostics across one
 retained standard-mode adapter and one runtime-observation compatibility
-module with byte-frozen symbols; the other 183 production files are
+module with byte-frozen symbols; the other 207 production files are
 strict-clean. The five reviewed SDK boundary owners have these exact gates:
 
 | SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
@@ -128,7 +128,7 @@ strict-clean. The five reviewed SDK boundary owners have these exact gates:
 | `core/sentry.py` | strict / 0 | `sentry-sdk==2.68.0`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
 | `services/composio.py` | strict / 0 | `composio==0.20.0`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
 | `services/file_store_s3.py` | strict / 0 | `boto3==1.43.67`, `botocore==1.43.67`, `boto3-stubs==1.43.67`, `boto3-stubs-full==1.43.67`, and `botocore-stubs==1.43.67`; the all-in-one generated service bundle resolves the complete public `boto3.client` overload while the S3 literal overload returns the generated `S3Client`. The runtime construction call is unchanged, and the adapter validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
-| `services/memory_provider_mem0.py` | standard / 19 | Optional `mem0ai==2.0.18` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the five public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/delete results before domain conversion. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/client/main.py). |
+| `services/memory_provider_mem0.py` | standard / 23 | Optional `mem0ai==2.0.18` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the six public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/update/delete results before domain conversion. The official backend image installs the extra, while source deployments may omit it and retain builtin memory. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/client/main.py). |
 | `services/postgres_listener.py` | strict / 0 | `asyncpg==0.31.0`, `asyncpg-stubs==0.31.3`; listener callbacks accept a validated string payload only, and connection/listener failures map to `PostgresListenerError`. |
 
 The five Boto distributions use their latest common public patch, 1.43.67:
@@ -184,14 +184,14 @@ used to hide the remaining compatibility boundary. Hosted v1 product and
 deployment infrastructure are outside this repository and are not part of the
 exception.
 
-Done: `owned` reports 185 files and `strict` reports 183 files, with every
-diagnostic count equal to zero; `exceptions` reports the exact 34-diagnostic
+Done: `owned` reports 209 files and `strict` reports 207 files, with every
+diagnostic count equal to zero; `exceptions` reports the exact 38-diagnostic
 strict debt above; `inventory` reports all four areas above.
 
 ## External API import ownership and contracts
 
 `scripts/outbound_api_governance.py` mechanically parses import statements in
-all 185 production modules. It requires exact equality for the 26 third-party
+all 209 production modules. It requires exact equality for the 27 third-party
 import roots and 14 reviewed external/network import families, and confines
 SDKs with dynamic or incomplete upstream typing to five first-party boundary
 owners. A new or stale root or owner fails until it is explicitly reviewed.

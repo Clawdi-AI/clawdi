@@ -342,6 +342,11 @@ describe("backend image release workflow contract", () => {
 	});
 
 	test("matches the explicit backend Docker COPY and ignore contract", () => {
+		expect(backendDockerfile).toContain(
+			"RUN uv sync --frozen --no-dev --no-install-project --extra mem0",
+		);
+		expect(backendPackageSource).toContain('mem0 = ["mem0ai==2.0.18"]');
+
 		const baseline = calculateClawdiImageRevisions(repoRoot);
 		const ignored = calculateClawdiImageRevisions(
 			repoRoot,

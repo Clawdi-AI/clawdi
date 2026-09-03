@@ -92,7 +92,7 @@ EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS = {
     }
 }
 EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS = {
-    "app/services/memory_provider_mem0.py": 19,
+    "app/services/memory_provider_mem0.py": 23,
     **{
         path: sum(
             count
