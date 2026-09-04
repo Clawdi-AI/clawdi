@@ -146,4 +146,6 @@ kamal deploy -P --roles web --version "${DEPLOY_IMAGE_VERSION}"
 assert_database_role web "${web_pool}"
 kamal app exec --primary --roles web --reuse --raw \
 	--version "${DEPLOY_IMAGE_VERSION}" \
-	curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8000/ready
+	curl --fail --silent --show-error --max-time 10 \
+	--retry 3 --retry-all-errors --retry-max-time 30 \
+	http://127.0.0.1:8000/ready
