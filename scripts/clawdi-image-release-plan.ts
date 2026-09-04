@@ -15,6 +15,7 @@ const IMAGE_RELEASE_WORKFLOW = ".github/workflows/clawdi-image-release.yml";
 const DEPLOYMENT_FILE_INPUTS = [
 	".github/actions/setup-bun-ci/action.yml",
 	"config/deploy.yml",
+	"scripts/deploy-backend.sh",
 	"scripts/deploy-whatsapp-sidecar.sh",
 ] as const;
 
@@ -60,13 +61,19 @@ export function calculateClawdiImageRevisionsFromSnapshot(
 		],
 	]);
 	for (const path of DEPLOYMENT_FILE_INPUTS) {
-		deploymentInputs.set(path, snapshot.readText(path));
+		deploymentInputs.set(path, readOptionalSnapshotText(snapshot, path));
 	}
 	return {
 		backend: hashInputs(backendInputs),
 		deployment: hashInputs(deploymentInputs),
 		sidecar: calculateWhatsAppSidecarDeploymentRevisionFromSnapshot(snapshot),
 	};
+}
+
+function readOptionalSnapshotText(snapshot: RevisionSnapshot, path: string): string {
+	return snapshot.listFiles(dirname(path)).includes(path)
+		? snapshot.readText(path)
+		: `<missing:${path}>`;
 }
 
 function assertBackendDockerInputContract(dockerfile: string, dockerignore: string): void {

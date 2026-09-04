@@ -3504,13 +3504,29 @@ export interface paths {
         };
         /**
          * Health
-         * @description Liveness + DB connectivity probe.
-         *
-         *     Returns 200 + ``{"status": "ok"}`` on success. If the DB is unreachable
-         *     the dependency raises and FastAPI returns 500 — the right signal for a
-         *     load balancer to yank this pod out of rotation.
+         * @description Return process liveness without coupling restarts to PostgreSQL.
          */
         get: operations["health_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ready
+         * @description Return whether the API can currently acquire and query PostgreSQL.
+         */
+        get: operations["ready_ready_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -16400,6 +16416,26 @@ export interface operations {
         };
     };
     health_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    ready_ready_get: {
         parameters: {
             query?: never;
             header?: never;

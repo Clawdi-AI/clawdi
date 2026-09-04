@@ -144,8 +144,9 @@ end
 web = config.role("web")
 expected_web_env = {
   "WEB_CONCURRENCY" => 1,
-  "DB_POOL_SIZE" => 20,
-  "DB_MAX_OVERFLOW" => 20,
+  "DB_POOL_SIZE" => 10,
+  "DB_MAX_OVERFLOW" => 10,
+  "DB_POOL_TIMEOUT" => 5,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
 }
 unless web.specialized_env.clear == expected_web_env
@@ -153,16 +154,22 @@ unless web.specialized_env.clear == expected_web_env
 end
 raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "6g"
 web_env = web.env(web.primary_host).clear
-unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW") == [ 20, 20 ]
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 10, 10, 5 ]
   raise "web role database pool drifted"
 end
 channels_worker = config.role("channels-worker")
-worker_role = channels_worker.specialized_env.clear == { "CLAWDI_PROCESS_ROLE" => "channels-worker" }
+expected_channels_worker_env = {
+  "CLAWDI_PROCESS_ROLE" => "channels-worker",
+  "DB_POOL_SIZE" => 10,
+  "DB_MAX_OVERFLOW" => 10,
+  "DB_POOL_TIMEOUT" => 5,
+}
+worker_role = channels_worker.specialized_env.clear == expected_channels_worker_env
 unless worker_role && !channels_worker.running_proxy?
   raise "channels-worker role contract drifted"
 end
 channels_worker_env = channels_worker.env(channels_worker.primary_host).clear
-unless channels_worker_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW") == [ 20, 20 ]
+unless channels_worker_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 10, 10, 5 ]
   raise "channels-worker database pool drifted"
 end
 if channels_worker_env.key?("PROMETHEUS_MULTIPROC_DIR")
@@ -172,7 +179,10 @@ web_connections = web_env.fetch("WEB_CONCURRENCY") *
   (web_env.fetch("DB_POOL_SIZE") + web_env.fetch("DB_MAX_OVERFLOW"))
 worker_connections = channels_worker_env.fetch("DB_POOL_SIZE") +
   channels_worker_env.fetch("DB_MAX_OVERFLOW")
-raise "total database connection budget drifted" unless web_connections + worker_connections == 80
+steady_connections = web_connections + worker_connections
+rolling_connections = 2 * (web_connections + worker_connections)
+raise "steady database connection budget drifted" unless steady_connections == 40
+raise "rolling database connection budget drifted" unless rolling_connections == 80
 
 config.accessories.each do |accessory|
   command = Kamal::Commands::Accessory.new(config, name: accessory.name).run

@@ -150,6 +150,11 @@ db_pool_checked_out = Gauge(
     multiprocess_mode="sum",
     registry=registry,
 )
+db_pool_timeouts = Counter(
+    "clawdi_backend_db_pool_timeouts_total",
+    "Requests rejected because the backend database pool was exhausted",
+    registry=registry,
+)
 
 
 def render_metrics() -> bytes:

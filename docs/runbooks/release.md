@@ -355,9 +355,34 @@ non-primary roles. Every migration must therefore remain expand/contract
 compatible with the old API during this window. Operators must use the release
 workflow rather than running Alembic independently.
 
-The proxy `/health` gate reaches the API handler that executes database
-`SELECT 1`. The image-level Docker HEALTHCHECK calls the same local path for
-both roles. On the worker, `/health` returns failure until
+Both application roles declare independent `10 + 10` PostgreSQL pools with a
+5-second acquisition timeout. The normal steady-state budget is 40 connections.
+The production workflow rolls `channels-worker` and `web` sequentially, so a
+bounded-pool release reserves at most 60 of PostgreSQL's 100 connections and
+leaves at least 40 for migrations, operators, and transient database work.
+
+The deploy helper inspects the running roles before every release and accepts
+only the legacy `20 + 20` or bounded `10 + 10` pool contracts. Unknown or
+ambiguous runtime state fails closed. During the one-time legacy transition it
+stops the old channels worker before deploying `channels-worker`, then deploys
+`web` for the same full SHA. This keeps the transition at or below 80 reserved
+connections instead of the 120 possible with an all-role rollout:
+
+```bash
+scripts/deploy-backend.sh
+```
+
+The helper checks for at least 20 currently available ordinary PostgreSQL
+connection slots, after subtracting reserved slots, before migration and before
+each role deployment. It also verifies that each role converged to the requested
+image and bounded pool. It is the normal release path after the transition; no
+rollout flag or manual mode switch is required.
+
+The proxy `/health` gate is process liveness and deliberately does not acquire
+a PostgreSQL connection. Database-aware verification uses `/ready`, so pool
+pressure cannot turn a recoverable database slowdown into a restart loop or
+remove the only API target. The image-level Docker HEALTHCHECK calls the same
+local liveness path for both roles. On the worker, `/health` returns failure until
 `ChannelWorkerHealth.ready` is true and returns failure again while stopping,
 so Docker cannot report the worker healthy before its worker stack is ready.
 Under Docker's official [HEALTHCHECK timing
