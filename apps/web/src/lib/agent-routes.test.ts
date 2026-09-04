@@ -283,6 +283,7 @@ describe("agent routes", () => {
 			future: "kept",
 		});
 		expect(validateAgentRouteSearch({ timelineView: "unknown" })).toEqual({});
+		expect(validateAgentRouteSearch({ timelineView: "all" })).toEqual({ timelineView: "all" });
 	});
 
 	it("canonicalizes legacy tab bookmarks through one explicit mapping", () => {

@@ -80,6 +80,11 @@ describe("Session search anchors", () => {
 		expect(sessionTimelineViewLink("session-id", "all")).toEqual({
 			to: "/sessions/$id",
 			params: { id: "session-id" },
+			search: { timelineView: "all" },
+		});
+		expect(sessionTimelineViewLink("session-id", "user,assistant")).toEqual({
+			to: "/sessions/$id",
+			params: { id: "session-id" },
 			search: {},
 		});
 		expect(sessionTimelineViewLink("session-id", "assistant")).toEqual({
@@ -112,7 +117,9 @@ describe("Session search anchors", () => {
 			validateSessionDetailSearch({ timelineView: "user,assistant", matchQuery: " answer " }),
 		).toEqual({
 			matchQuery: "answer",
-			timelineView: "user,assistant",
+		});
+		expect(validateSessionDetailSearch({ timelineView: "all" })).toEqual({
+			timelineView: "all",
 		});
 		expect(sessionTimelineCategories("all")).toEqual(["user", "assistant", "tools"]);
 		expect(sessionTimelineViewFromCategories(["tools", "assistant"])).toBe("assistant,tools");

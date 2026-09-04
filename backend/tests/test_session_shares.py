@@ -265,6 +265,53 @@ async def test_session_shares_freeze_scope_and_revoke(
 
 
 @pytest.mark.asyncio
+async def test_owner_can_manage_all_active_session_links(
+    client: httpx.AsyncClient,
+) -> None:
+    session_id, _, _ = await _seed_session(client)
+    snapshot = await client.post(
+        f"/v1/sessions/{session_id}/shares",
+        json={"scope": "session"},
+    )
+    assert snapshot.status_code == 201, snapshot.text
+    live = await client.post(
+        f"/v1/sessions/{session_id}/permissions",
+        json={"kind": "link"},
+    )
+    assert live.status_code == 200, live.text
+
+    response = await client.get("/v1/session-shares", params={"page_size": 1})
+    assert response.status_code == 200, response.text
+    first_page = response.json()
+    assert first_page["total"] == 2
+    assert first_page["page"] == 1
+    assert first_page["page_size"] == 1
+
+    second_page = (
+        await client.get("/v1/session-shares", params={"page": 2, "page_size": 1})
+    ).json()
+    links = first_page["items"] + second_page["items"]
+    assert {item["kind"] for item in links} == {"snapshot", "live"}
+    assert {item["session_id"] for item in links} == {session_id}
+    assert {item["session_title"] for item in links} == {"Immutable share"}
+    assert next(item for item in links if item["kind"] == "snapshot")["share_url"].endswith(
+        f"/s/{snapshot.json()['id']}"
+    )
+    assert next(item for item in links if item["kind"] == "live")["share_url"].endswith(
+        f"/s/{session_id}"
+    )
+
+    revoked = await client.delete(
+        f"/v1/sessions/{session_id}/permissions",
+        params={"kind": "link"},
+    )
+    assert revoked.status_code == 204
+    remaining = (await client.get("/v1/session-shares")).json()
+    assert remaining["total"] == 1
+    assert remaining["items"][0]["kind"] == "snapshot"
+
+
+@pytest.mark.asyncio
 async def test_event_session_share_keeps_its_frozen_prefix_after_append(
     client: httpx.AsyncClient,
     anon_client: httpx.AsyncClient,

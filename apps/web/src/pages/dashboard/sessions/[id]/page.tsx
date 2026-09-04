@@ -58,6 +58,7 @@ import {
 	sessionDetailQueryKey,
 } from "@/lib/session-queries";
 import {
+	DEFAULT_SESSION_TIMELINE_VIEW,
 	type SessionSearchAnchor,
 	type SessionTimelineCategory,
 	type SessionTimelineView,
@@ -127,7 +128,7 @@ export function SessionDetailContent({
 	agentId,
 	searchAnchor,
 	searchQuery,
-	timelineView = "all",
+	timelineView = DEFAULT_SESSION_TIMELINE_VIEW,
 	returnTo,
 }: {
 	sessionId: string;
@@ -422,9 +423,11 @@ export function SessionDetailContent({
 	const isSearchUpdating = searchActive && (isTimelineTransitioning || isContentLoading);
 	const navigateTimelineView = (selected: SessionTimelineView, retainedSearchQuery?: string) => {
 		if (agentId) {
+			const serializedTimelineView =
+				selected === DEFAULT_SESSION_TIMELINE_VIEW ? undefined : selected;
 			const search = {
 				...(retainedSearchQuery ? { matchQuery: retainedSearchQuery } : {}),
-				...(selected === "all" ? {} : { timelineView: selected }),
+				...(serializedTimelineView ? { timelineView: serializedTimelineView } : {}),
 				...(returnTo ? { returnTo } : {}),
 			};
 			return router.navigate({
