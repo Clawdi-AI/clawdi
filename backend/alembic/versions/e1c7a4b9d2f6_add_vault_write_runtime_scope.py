@@ -1,7 +1,7 @@
 """Grant Vault writes to existing runtime credentials.
 
 Revision ID: e1c7a4b9d2f6
-Revises: b6d1e4c9f2a7
+Revises: c8f2a6d1e4b9
 Create Date: 2026-09-03 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e1c7a4b9d2f6"
-down_revision: str | Sequence[str] | None = "b6d1e4c9f2a7"
+down_revision: str | Sequence[str] | None = "c8f2a6d1e4b9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
