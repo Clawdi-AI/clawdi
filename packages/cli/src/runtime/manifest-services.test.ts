@@ -25,6 +25,11 @@ import { observeRuntimeInstall, runtimeCommandCurrentRevision } from "./manifest
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import {
+	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	prepareOfficialRuntimeServiceDependencies,
+	type RuntimeSystemdUserProgram,
+} from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
@@ -104,6 +109,80 @@ test("reuses the Hermes dashboard capability until its service revision changes"
 	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
 	expect(observe("b".repeat(64)).error).toBeNull();
 	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
+});
+
+test("reuses a Hermes dashboard build until its runtime revision changes", () => {
+	const paths = tempRuntimePaths();
+	process.env.CLAWDI_RUNTIME_USER = "root";
+	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const bin = join(paths.runRoot, "bin");
+	const npm = join(bin, "npm");
+	const log = join(paths.runRoot, "npm.log");
+	const writeCommand = (version: string) => {
+		mkdirSync(dirname(command), { recursive: true });
+		writeFileSync(command, `#!/bin/sh\nprintf '%s\\n' '${version}'\n`, { mode: 0o755 });
+	};
+	mkdirSync(join(appRoot, "web"), { recursive: true });
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(
+		npm,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${log}'
+if [ "$*" = 'run build' ]; then
+  mkdir -p ../hermes_cli/web_dist
+  printf '%s\n' '<html>dashboard</html>' > ../hermes_cli/web_dist/index.html
+fi
+`,
+		{ mode: 0o755 },
+	);
+	process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+	writeCommand("Hermes Agent v1");
+
+	const gateway: RuntimeSystemdUserProgram = {
+		programKind: "runtime",
+		runtime: "hermes",
+		service: null,
+		command,
+		args: ["gateway", "run"],
+		cwd: paths.userHome,
+		env: {},
+		resolvedSecretEnv: {},
+	};
+	const dashboard: RuntimeSystemdUserProgram = {
+		...gateway,
+		service: "dashboard",
+		args: ["dashboard", "--skip-build"],
+	};
+	const plan = {
+		pending: [{ unitName: "hermes-gateway.service", program: gateway, serviceRevision: null }],
+		serviceRevisions: {},
+	};
+	const prepare = () =>
+		prepareOfficialRuntimeServiceDependencies([gateway, dashboard], plan, paths);
+
+	expect(prepare()).toBeNull();
+	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+		"ci --include=dev --workspace web",
+		"run build",
+	]);
+	const revisionFile = join(
+		appRoot,
+		"hermes_cli",
+		"web_dist",
+		HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	);
+	const commandRevision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+	if (!commandRevision) throw new Error("Hermes command revision is missing");
+	expect(readFileSync(revisionFile, "utf8").trim()).toBe(commandRevision);
+
+	expect(prepare()).toBeNull();
+	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
+
+	writeCommand("Hermes Agent v2");
+	expect(prepare()).toBeNull();
+	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(4);
 });
 
 function convergeRuntimeManifest(
