@@ -8,7 +8,7 @@ export { cn } from "cn";
  * `Mar 15 2025` cross-year), so users can tell at-a-glance whether
  * a session was last week or last month without hovering.
  */
-export function relativeTime(dateStr: string | null | undefined): string {
+export function relativeTime(dateStr: string | null | undefined, now = new Date()): string {
 	// Defensive: callers go through this with values from API
 	// responses, and during a deploy window a cached response might
 	// be missing a field that the new frontend reads as required.
@@ -18,7 +18,7 @@ export function relativeTime(dateStr: string | null | undefined): string {
 	if (!dateStr) return "—";
 	const d = new Date(dateStr);
 	if (Number.isNaN(d.getTime())) return "—";
-	const diffMs = d.getTime() - Date.now();
+	const diffMs = d.getTime() - now.getTime();
 	const future = diffMs > 0;
 	const phrase = (value: number, unit: string) =>
 		future ? `in ${value}${unit}` : `${value}${unit} ago`;
@@ -29,7 +29,6 @@ export function relativeTime(dateStr: string | null | undefined): string {
 	if (hours < 24) return phrase(hours, "h");
 	const days = Math.floor(hours / 24);
 	if (days < 7) return phrase(days, "d");
-	const now = new Date();
 	const sameYear = d.getFullYear() === now.getFullYear();
 	if (sameYear) {
 		// "Apr 28 14:30" — short month + 24h time, locale-aware
