@@ -644,6 +644,19 @@ class SessionSharesResponse(BaseModel):
     shares: list[SessionShareResponse]
 
 
+class SessionShareListItemResponse(BaseModel):
+    """One active Session link in the owner's cross-Session inventory."""
+
+    id: str
+    kind: Literal["snapshot", "live"]
+    session_id: str
+    session_title: str
+    scope: Literal["session", "through", "response"]
+    message_count: int = Field(ge=0)
+    share_url: str
+    created_at: datetime
+
+
 class PublicSessionShareResponse(BaseModel):
     id: str
     title: str

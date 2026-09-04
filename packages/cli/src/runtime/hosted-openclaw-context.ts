@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
@@ -27,6 +27,60 @@ const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
 const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
 const openClawWorkspaces = new Map<string, { revision: string; workspace: string }>();
+const OPENCLAW_STARTUP_MIGRATION_MARKER = "OpenClaw startup migrations did not complete cleanly";
+const OPENCLAW_DEVICE_IDENTITY_CONFLICT =
+	"canonical SQLite device identity differs from the legacy identity";
+
+const OPENCLAW_ARCHIVE_LEGACY_IDENTITY_HELPER = `
+import { pathToFileURL } from "node:url";
+const sdk = await import(pathToFileURL(process.argv[1]).href);
+if (typeof sdk.archiveLegacyStateSource !== "function") {
+  throw new Error("required public migration archive export is missing");
+}
+const changes = [];
+const warnings = [];
+await sdk.archiveLegacyStateSource({
+  filePath: process.argv[2],
+  label: "device identity",
+  changes,
+  warnings,
+});
+if (warnings.length !== 0 || changes.length !== 1) {
+  throw new Error(warnings[0] ?? "legacy device identity was not archived");
+}
+process.stdout.write(JSON.stringify({ archived: true }));
+`;
+
+class OpenClawWorkspaceRosterError extends Error {
+	constructor(readonly doctorRepairRequired: boolean) {
+		super("OpenClaw official agent workspace roster is unavailable");
+		this.name = "OpenClawWorkspaceRosterError";
+	}
+}
+
+function runtimeCommandOutput(result: ReturnType<typeof spawnRuntimeUserCommand>): string {
+	return [result.stderr, result.stdout]
+		.filter((value): value is string => typeof value === "string")
+		.join("\n");
+}
+
+function openClawDoctorRepairRequired(result: ReturnType<typeof spawnRuntimeUserCommand>): boolean {
+	const output = runtimeCommandOutput(result);
+	return (
+		output.includes(OPENCLAW_STARTUP_MIGRATION_MARKER) &&
+		output.includes('Run "openclaw doctor --fix"')
+	);
+}
+
+function openClawDeviceIdentityConflict(
+	result: ReturnType<typeof spawnRuntimeUserCommand>,
+): boolean {
+	return (
+		!result.error &&
+		!result.signal &&
+		runtimeCommandOutput(result).includes(OPENCLAW_DEVICE_IDENTITY_CONFLICT)
+	);
+}
 
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
@@ -136,9 +190,8 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 			maxBufferBytes: 1024 * 1024,
 		});
 	}
-	if (result.status !== 0) {
-		throw new Error("OpenClaw official agent workspace roster is unavailable");
-	}
+	if (openClawDoctorRepairRequired(result)) throw new OpenClawWorkspaceRosterError(true);
+	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
 	openClawWorkspaces.set(home, { revision, workspace });
 	return workspace;
@@ -179,15 +232,71 @@ export function repairHostedOpenClawConfig(home: string): boolean {
 		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
 	);
 	if (!invalidConfigValidation(validation)) return false;
-	const repair = spawnRuntimeUserCommand(
-		command,
-		["doctor", "--fix", "--non-interactive"],
-		home,
-		home,
-		{ timeoutMs: OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS, maxBufferBytes: 4 * 1024 * 1024 },
-	);
-	if (repair.status !== 0) throw new Error("OpenClaw official config repair failed");
+	runHostedOpenClawDoctor(home, command);
 	return true;
+}
+
+function runHostedOpenClawDoctorCommand(home: string, command = commandPath(home)) {
+	return spawnRuntimeUserCommand(command, ["doctor", "--fix", "--non-interactive"], home, home, {
+		timeoutMs: OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS,
+		maxBufferBytes: 4 * 1024 * 1024,
+	});
+}
+
+function runHostedOpenClawDoctor(home: string, command = commandPath(home)): void {
+	const repair = runHostedOpenClawDoctorCommand(home, command);
+	if (repair.status !== 0) throw new Error("OpenClaw official repair failed");
+}
+
+function archiveHostedLegacyOpenClawIdentity(home: string, command: string): void {
+	const sdkPath = resolveOpenClawSdkExport(
+		home,
+		[command],
+		OPENCLAW_SDK_EXPORT_PATHS.doctorMigrations,
+	);
+	if (!sdkPath) {
+		throw new Error("installed OpenClaw public migration archive SDK is unavailable");
+	}
+	const result = spawnRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_ARCHIVE_LEGACY_IDENTITY_HELPER,
+			sdkPath,
+			join(home, ".openclaw", "identity", "device.json"),
+		],
+		home,
+		home,
+		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
+	);
+	if (result.status !== 0) {
+		throw new Error("OpenClaw legacy device identity archive failed");
+	}
+}
+
+export function repairHostedOpenClawStartupMigrations(home: string): boolean {
+	if (!existsSync(join(home, ".openclaw", "identity", "device.json"))) return false;
+	const command = commandPath(home);
+	const repair = runHostedOpenClawDoctorCommand(home, command);
+	if (!openClawDeviceIdentityConflict(repair)) {
+		if (repair.status !== 0) throw new Error("OpenClaw official repair failed");
+		return true;
+	}
+	archiveHostedLegacyOpenClawIdentity(home, command);
+	const verified = runHostedOpenClawDoctorCommand(home, command);
+	if (verified.status !== 0 || openClawDeviceIdentityConflict(verified)) {
+		throw new Error("OpenClaw legacy device identity retirement did not clear the conflict");
+	}
+	return true;
+}
+
+export function repairHostedOpenClawWorkspace(home: string, error: unknown): boolean {
+	if (error instanceof OpenClawWorkspaceRosterError && error.doctorRepairRequired) {
+		runHostedOpenClawDoctor(home);
+		return true;
+	}
+	return repairHostedOpenClawConfig(home);
 }
 
 function resolveSdkExports(

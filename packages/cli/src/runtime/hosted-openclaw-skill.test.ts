@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	repairHostedOpenClawConfig,
+	repairHostedOpenClawStartupMigrations,
+	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
@@ -213,6 +215,138 @@ esac
 		"agents list --json",
 	]);
 	expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual(repairedConfig);
+});
+
+test("repairs an official state migration failure before retrying the workspace roster", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-state-repair-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const repaired = join(root, "repaired");
+	const commandLog = join(root, "commands.log");
+	mkdirSync(dirname(command), { recursive: true });
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "agents list --json")
+    if test ! -f '${repaired}'; then
+      printf '%s\n' 'OpenClaw startup migrations did not complete cleanly.' 'Run "openclaw doctor --fix" against the same state/config, then restart the gateway.' >&2
+    fi
+    printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
+    ;;
+  "doctor --fix --non-interactive") touch '${repaired}' ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	chmodSync(command, 0o755);
+
+	let rosterError: unknown;
+	try {
+		resolveHostedOpenClawWorkspace(home);
+	} catch (error) {
+		rosterError = error;
+	}
+	expect(repairHostedOpenClawWorkspace(home, rosterError)).toBe(true);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
+	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
+		"agents list --json",
+		"doctor --fix --non-interactive",
+		"agents list --json",
+	]);
+});
+
+test("retires a conflicting legacy device identity without relying on gateway logs", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-identity-retirement-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const archiveSdk = join(packageRoot, "runtime-doctor-migrations.mjs");
+	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
+	const commandLog = join(root, "commands.log");
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(legacyIdentity), { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	writeFileSync(legacyIdentity, '{"version":1}\n');
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: {
+				"./plugin-sdk/runtime-doctor-migrations": "./runtime-doctor-migrations.mjs",
+			},
+		}),
+	);
+	writeFileSync(
+		archiveSdk,
+		`import { rename } from "node:fs/promises";
+export async function archiveLegacyStateSource({ filePath, changes }) {
+  const archived = filePath + ".migrated";
+  await rename(filePath, archived);
+  changes.push("archived");
+}
+`,
+	);
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "agents list --json") printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]' ;;
+  "doctor --fix --non-interactive")
+    if test -f '${legacyIdentity}'; then
+      printf '%s\n' 'Failed migrating legacy device identity: Error: canonical SQLite device identity differs from the legacy identity' >&2
+    fi
+    ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	chmodSync(command, 0o755);
+
+	expect(repairHostedOpenClawStartupMigrations(home)).toBe(true);
+	expect(existsSync(legacyIdentity)).toBe(false);
+	expect(existsSync(`${legacyIdentity}.migrated`)).toBe(true);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+		"doctor --fix --non-interactive",
+		"doctor --fix --non-interactive",
+		"agents list --json",
+	]);
+});
+
+test("does not run OpenClaw doctor when no legacy device identity exists", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-no-legacy-identity-"));
+	expect(repairHostedOpenClawStartupMigrations(join(root, "home"))).toBe(false);
+});
+
+test("does not archive the legacy identity for an unrelated doctor failure", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-unrelated-doctor-failure-"));
+	const home = join(root, "home");
+	const command = join(home, ".local", "bin", "openclaw");
+	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(legacyIdentity), { recursive: true });
+	writeFileSync(legacyIdentity, '{"version":1}\n');
+	writeFileSync(
+		command,
+		`#!/bin/sh
+printf '%s\n' 'unrelated doctor failure' >&2
+exit 1
+`,
+		{ mode: 0o755 },
+	);
+
+	expect(() => repairHostedOpenClawStartupMigrations(home)).toThrow(
+		"OpenClaw official repair failed",
+	);
+	expect(existsSync(legacyIdentity)).toBe(true);
 });
 
 test("does not repair without opt-in or a definitive invalid-config validation", () => {

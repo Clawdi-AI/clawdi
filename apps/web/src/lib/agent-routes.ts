@@ -10,7 +10,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	tab?: string;
 	project?: string;
 	vault?: string;
-	timelineView?: Exclude<SessionTimelineView, "all">;
+	timelineView?: SessionTimelineView;
 	subscription_action?: "start_new";
 };
 

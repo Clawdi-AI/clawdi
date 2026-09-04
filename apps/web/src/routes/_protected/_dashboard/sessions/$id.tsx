@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { routeHeadTitle } from "@/lib/document-title";
 import {
+	DEFAULT_SESSION_TIMELINE_VIEW,
 	sessionSearchAnchorFromSearch,
 	validateSessionDetailSearch,
 } from "@/lib/session-search-anchor";
@@ -21,7 +22,7 @@ function SessionDetailRoute() {
 			sessionId={id}
 			searchAnchor={searchAnchor}
 			searchQuery={search.matchQuery}
-			timelineView={search.timelineView ?? "all"}
+			timelineView={search.timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW}
 			returnTo={search.returnTo}
 		/>
 	);

@@ -10,13 +10,14 @@ type SessionTimelineFilteredView =
 	| "user,tools"
 	| "assistant,tools";
 export type SessionTimelineView = "all" | SessionTimelineFilteredView;
+export const DEFAULT_SESSION_TIMELINE_VIEW: SessionTimelineFilteredView = "user,assistant";
 
 export interface SessionDetailSearch {
 	matchKind?: SessionSearchAnchor["kind"];
 	matchPosition?: number;
 	matchRevision?: string;
 	matchQuery?: string;
-	timelineView?: SessionTimelineFilteredView;
+	timelineView?: SessionTimelineView;
 	returnTo?: string;
 }
 
@@ -32,8 +33,9 @@ function validPosition(value: unknown): number | undefined {
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-export function parseSessionTimelineView(value: unknown): SessionTimelineFilteredView | undefined {
+export function parseSessionTimelineView(value: unknown): SessionTimelineView | undefined {
 	if (typeof value !== "string") return undefined;
+	if (value === "all") return "all";
 	const values = value.split(",");
 	if (
 		values.length === 0 ||
@@ -44,7 +46,7 @@ export function parseSessionTimelineView(value: unknown): SessionTimelineFiltere
 		return undefined;
 	}
 	const view = sessionTimelineViewFromCategories(values);
-	return view === "all" || view === null ? undefined : view;
+	return view ?? undefined;
 }
 
 export function sessionTimelineCategories(view: SessionTimelineView): SessionTimelineCategory[] {
@@ -74,11 +76,13 @@ export function sessionTimelineIncludesMessages(view: SessionTimelineView): bool
 
 export function validateSessionDetailSearch(search: Record<string, unknown>): SessionDetailSearch {
 	const returnTo = normalizeSessionListReturnTo(search.returnTo);
-	const timelineView = parseSessionTimelineView(search.timelineView);
-	const matchQuery =
-		timelineView && !sessionTimelineIncludesMessages(timelineView)
-			? undefined
-			: normalizeSessionMatchQuery(search.matchQuery);
+	const parsedTimelineView = parseSessionTimelineView(search.timelineView);
+	const timelineView =
+		parsedTimelineView === DEFAULT_SESSION_TIMELINE_VIEW ? undefined : parsedTimelineView;
+	const effectiveTimelineView = timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW;
+	const matchQuery = !sessionTimelineIncludesMessages(effectiveTimelineView)
+		? undefined
+		: normalizeSessionMatchQuery(search.matchQuery);
 	const standalone = {
 		...(matchQuery ? { matchQuery } : {}),
 		...(timelineView ? { timelineView } : {}),
@@ -116,12 +120,13 @@ export function sessionTimelineViewLink(
 	const matchQuery = sessionTimelineIncludesMessages(view)
 		? normalizeSessionMatchQuery(options.searchQuery)
 		: undefined;
+	const timelineView = view === DEFAULT_SESSION_TIMELINE_VIEW ? undefined : view;
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
 		search: {
 			...(matchQuery ? { matchQuery } : {}),
-			...(view === "all" ? {} : { timelineView: view }),
+			...(timelineView ? { timelineView } : {}),
 			...(returnTo ? { returnTo } : {}),
 		},
 	};
@@ -133,12 +138,12 @@ export function sessionDetailSearchLink(
 	options: { returnTo?: string; timelineView?: SessionTimelineView } = {},
 ): SessionDetailLink {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	const effectiveTimelineView = options.timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW;
 	const timelineView =
-		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
-	const matchQuery =
-		!timelineView || sessionTimelineIncludesMessages(timelineView)
-			? normalizeSessionMatchQuery(query)
-			: undefined;
+		effectiveTimelineView === DEFAULT_SESSION_TIMELINE_VIEW ? undefined : effectiveTimelineView;
+	const matchQuery = sessionTimelineIncludesMessages(effectiveTimelineView)
+		? normalizeSessionMatchQuery(query)
+		: undefined;
 	return {
 		to: "/sessions/$id" as const,
 		params: { id: sessionId },
@@ -213,10 +218,11 @@ export function sessionSearchMatchLink(
 	} = {},
 ): SessionDetailLink {
 	const returnTo = normalizeSessionListReturnTo(options.returnTo);
+	const effectiveTimelineView = options.timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW;
 	const timelineView =
-		options.timelineView === "all" ? undefined : parseSessionTimelineView(options.timelineView);
-	if (timelineView && !sessionTimelineIncludesMessages(timelineView)) {
-		return sessionTimelineViewLink(sessionId, timelineView, { returnTo });
+		effectiveTimelineView === DEFAULT_SESSION_TIMELINE_VIEW ? undefined : effectiveTimelineView;
+	if (!sessionTimelineIncludesMessages(effectiveTimelineView)) {
+		return sessionTimelineViewLink(sessionId, effectiveTimelineView, { returnTo });
 	}
 	const matchQuery = normalizeSessionMatchQuery(options.searchQuery);
 	return {
