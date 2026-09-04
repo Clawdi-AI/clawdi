@@ -381,14 +381,17 @@ connection slots, after subtracting reserved slots, before migration and before
 each database-owning role deployment. It verifies that every role converged to
 the requested image, that database pools match their bounded contracts, that
 the exact embedding container serves its own UDS, and that the exact Web
-container passes `/ready`. The embedding check compares the response instance
-ID with the reused container's own hostname, so a 200 response from an old
-generation cannot satisfy the new container's health gate. If it fails, the
-helper stops before switching Web. The Web client's UDS transport does not
-retain keep-alive connections, so the next embedding request opens the
-currently published socket without retrying the POST. This helper is the only
-normal release path; no rollout flag or manual first-adoption procedure is
-required.
+container passes `/ready`. The readiness GET allows 10 seconds per attempt,
+longer than the 5-second database acquisition timeout, and uses curl's bounded
+retry support so one rollout pressure spike does not report an otherwise
+successful release as failed. No retry starts after the 30-second retry window.
+The embedding check compares the response instance ID with the reused
+container's own hostname, so a 200 response from an old generation cannot
+satisfy the new container's health gate. If it fails, the helper stops before
+switching Web. The Web client's UDS transport does not retain keep-alive
+connections, so the next embedding request opens the currently published
+socket without retrying the POST. This helper is the only normal release path;
+no rollout flag or manual first-adoption procedure is required.
 
 The proxy `/health` gate is process liveness and deliberately does not acquire
 a PostgreSQL connection. Database-aware verification uses `/ready`, so pool
