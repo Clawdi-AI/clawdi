@@ -14,6 +14,10 @@ choice — they just get working semantic search.
   and MEMORY_EMBEDDING_MODEL. `dimensions=768` is passed to the API so
   the on-disk vector column stays dimension-compatible with local mode.
 
+- "local-service" — the same local FastEmbed model hosted by one dedicated
+  process and reached over a Unix socket. This keeps the model and ONNX thread
+  pool out of each API worker.
+
 If mode is misconfigured, embedding is disabled and search falls back
 to FTS + trigram inside BuiltinProvider.
 """
@@ -23,14 +27,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Iterable
+import time
+from collections.abc import Iterable, Sequence
 from numbers import Real
 from typing import TYPE_CHECKING, Protocol
+
+import httpx
+from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
 
 from app.core.config import settings
+from app.services.metrics import embedding_duration, embedding_in_flight, embedding_rejections
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +53,18 @@ class Embedder(Protocol):
 
 class EmbeddingUpstreamError(RuntimeError):
     """Sanitized OpenAI-compatible embedding failure."""
+
+
+class EmbeddingServiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: StrictStr
+
+
+class EmbeddingServiceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    embedding: Sequence[object]
 
 
 class LocalEmbedder:
@@ -63,6 +84,8 @@ class LocalEmbedder:
     def _load_model() -> TextEmbedding:
         from fastembed import TextEmbedding
 
+        if settings.memory_embedding_threads > 0:
+            return TextEmbedding(LOCAL_MODEL_NAME, threads=settings.memory_embedding_threads)
         return TextEmbedding(LOCAL_MODEL_NAME)
 
     @classmethod
@@ -119,6 +142,113 @@ class LocalEmbedder:
             return _validate_embedding(values, provider="Local embedding provider")
 
         return await asyncio.to_thread(_embed_sync)
+
+
+class LocalServiceEmbedder:
+    """Reusable client for the dedicated local FastEmbed worker."""
+
+    _instance: LocalServiceEmbedder | None = None
+
+    def __init__(
+        self,
+        socket_path: str,
+        timeout_seconds: float,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.socket_path = socket_path
+        self.timeout_seconds = timeout_seconds
+        self._owns_client = http_client is None
+        self._client = http_client or httpx.AsyncClient(
+            base_url="http://localhost",
+            transport=httpx.AsyncHTTPTransport(
+                uds=socket_path,
+                # A pooled connection remains attached to the old listener
+                # after an atomic pathname replacement. Reconnect every POST
+                # to the currently published socket without automatic retry.
+                limits=httpx.Limits(max_keepalive_connections=0),
+                retries=0,
+                trust_env=False,
+            ),
+            timeout=httpx.Timeout(timeout_seconds),
+            trust_env=False,
+        )
+
+    @classmethod
+    def get(cls, socket_path: str, timeout_seconds: float) -> LocalServiceEmbedder:
+        instance = cls._instance
+        if instance is None:
+            instance = cls(socket_path, timeout_seconds)
+            cls._instance = instance
+        elif instance.socket_path != socket_path or instance.timeout_seconds != timeout_seconds:
+            raise RuntimeError("Local embedding service configuration changed at runtime")
+        return instance
+
+    @classmethod
+    async def close_shared(cls) -> None:
+        instance = cls._instance
+        cls._instance = None
+        if instance is not None:
+            await instance.aclose()
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def embed(self, text: str) -> list[float]:
+        backend = "local_service"
+        started = time.perf_counter()
+        outcome = "error"
+        embedding_in_flight.labels(backend=backend).inc()
+        try:
+            try:
+                response = await self._client.post(
+                    "/v1/embeddings",
+                    json=EmbeddingServiceRequest(text=text).model_dump(),
+                )
+            except httpx.HTTPError as exc:
+                outcome = "unavailable"
+                raise EmbeddingUpstreamError("Local embedding service request failed") from exc
+
+            if (
+                response.status_code == 503
+                and response.headers.get("X-Clawdi-Embedding-Rejection") == "capacity"
+            ):
+                outcome = "rejected"
+                embedding_rejections.labels(backend=backend, reason="capacity").inc()
+                raise EmbeddingUpstreamError("Local embedding service request rejected")
+
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                outcome = "unavailable" if response.status_code >= 500 else "invalid_response"
+                raise EmbeddingUpstreamError(
+                    "Local embedding service returned an invalid response"
+                ) from exc
+
+            try:
+                payload = EmbeddingServiceResponse.model_validate_json(response.content)
+            except ValidationError as exc:
+                outcome = "invalid_response"
+                raise EmbeddingUpstreamError(
+                    "Local embedding service returned an invalid response"
+                ) from exc
+
+            try:
+                result = _validate_embedding(
+                    payload.embedding,
+                    provider="Local embedding service",
+                )
+            except EmbeddingUpstreamError:
+                outcome = "invalid_response"
+                raise
+            outcome = "success"
+            return result
+        finally:
+            embedding_in_flight.labels(backend=backend).dec()
+            embedding_duration.labels(backend=backend, outcome=outcome).observe(
+                time.perf_counter() - started
+            )
 
 
 class ApiEmbedder:
@@ -182,6 +312,16 @@ def resolve_embedder() -> Embedder | None:
 
     if mode == "local":
         return LocalEmbedder.get()
+
+    if mode == "local-service":
+        try:
+            return LocalServiceEmbedder.get(
+                settings.memory_embedding_service_socket_path,
+                settings.memory_embedding_service_timeout_seconds,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.warning("Local embedding service is misconfigured; disabling embedder: %s", exc)
+            return None
 
     if mode == "api":
         if not settings.memory_embedding_api_key:

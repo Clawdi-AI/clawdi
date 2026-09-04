@@ -9,6 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import fastembed
+import httpx
 import pytest
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -18,6 +19,7 @@ from app.services.embedding import (
     ApiEmbedder,
     EmbeddingUpstreamError,
     LocalEmbedder,
+    LocalServiceEmbedder,
 )
 from app.services.memory_extraction import (
     MemoryExtractionUpstreamError,
@@ -173,6 +175,57 @@ async def test_embedding_maps_sdk_status_errors() -> None:
     with _openai_compatible_server(embedding_status=HTTPStatus.SERVICE_UNAVAILABLE) as base_url:
         embedder = ApiEmbedder("test-key", base_url, "compatible-embedding-model")
         with pytest.raises(EmbeddingUpstreamError, match="request failed"):
+            await embedder.embed("hello")
+
+
+@pytest.mark.asyncio
+async def test_local_service_embedding_validates_the_internal_protocol() -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"embedding": [0.25] * EMBEDDING_DIM})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://localhost",
+    ) as client:
+        embedder = LocalServiceEmbedder(
+            "/run/clawdi-embedding/embedding.sock",
+            5,
+            http_client=client,
+        )
+        result = await embedder.embed("hello")
+
+    assert result == [0.25] * EMBEDDING_DIM
+    assert requests == [{"text": "hello"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(
+            503,
+            headers={"X-Clawdi-Embedding-Rejection": "capacity"},
+            json={"detail": "busy"},
+        ),
+        httpx.Response(200, json={"embedding": [0.25] * (EMBEDDING_DIM - 1)}),
+    ],
+)
+async def test_local_service_embedding_maps_rejection_and_invalid_vectors(
+    response: httpx.Response,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: response),
+        base_url="http://localhost",
+    ) as client:
+        embedder = LocalServiceEmbedder(
+            "/run/clawdi-embedding/embedding.sock",
+            5,
+            http_client=client,
+        )
+        with pytest.raises(EmbeddingUpstreamError):
             await embedder.embed("hello")
 
 

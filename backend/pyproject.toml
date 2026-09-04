@@ -326,6 +326,7 @@ strict = [
     "app/workers/__init__.py",
     "app/workers/channels.py",
     "app/workers/discord_gateway.py",
+    "app/workers/embedding.py",
 ]
 
 [tool.deptry]
@@ -343,7 +344,6 @@ DEP003 = ["pydantic", "starlette"]
 # imported by name in app/. Removing them would actually
 # break the runtime, so silence the noise.
 DEP002 = [
-    "uvicorn",            # ASGI server runtime; invoked as a binary.
     "asyncpg",            # SQLAlchemy postgresql+asyncpg driver.
     "alembic",            # Migration CLI.
     "httpcore",           # Pinned transport behavior used by HTTPX request extensions.

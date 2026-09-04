@@ -71,7 +71,7 @@ from app.routes.vault import router as vault_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client
-from app.services.embedding import LocalEmbedder
+from app.services.embedding import LocalEmbedder, LocalServiceEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
 from app.services.metrics import db_pool_timeouts, observe_event_loop_lag
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
@@ -159,7 +159,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
                 try:
                     await close_channel_provider_http_client()
                 finally:
-                    await close_composio_client()
+                    try:
+                        await close_composio_client()
+                    finally:
+                        await LocalServiceEmbedder.close_shared()
 
 
 app = FastAPI(

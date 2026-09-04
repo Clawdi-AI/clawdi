@@ -70,7 +70,7 @@ active_polls = Gauge(
     "msg_router_active_polls",
     "Number of active ingress poll loops",
     ["channel"],
-    multiprocess_mode="sum",
+    multiprocess_mode="livesum",
     registry=registry,
 )
 webhook_deliveries = Counter(
@@ -147,12 +147,32 @@ db_connection_hold_duration = Histogram(
 db_pool_checked_out = Gauge(
     "clawdi_backend_db_pool_checked_out",
     "Number of backend database connections currently checked out",
-    multiprocess_mode="sum",
+    multiprocess_mode="livesum",
     registry=registry,
 )
 db_pool_timeouts = Counter(
     "clawdi_backend_db_pool_timeouts_total",
     "Requests rejected because the backend database pool was exhausted",
+    registry=registry,
+)
+embedding_in_flight = Gauge(
+    "clawdi_backend_embedding_in_flight",
+    "Embedding requests currently executing or waiting on the configured backend",
+    ["backend"],
+    multiprocess_mode="livesum",
+    registry=registry,
+)
+embedding_duration = Histogram(
+    "clawdi_backend_embedding_duration_seconds",
+    "End-to-end embedding request latency by backend and outcome",
+    ["backend", "outcome"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 15, 30),
+    registry=registry,
+)
+embedding_rejections = Counter(
+    "clawdi_backend_embedding_rejections_total",
+    "Embedding requests rejected before inference",
+    ["backend", "reason"],
     registry=registry,
 )
 

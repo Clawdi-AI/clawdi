@@ -59,6 +59,7 @@ EXPECTED_THIRD_PARTY_IMPORT_ROOTS = frozenset(
         "sentry_sdk",
         "sqlalchemy",
         "starlette",
+        "uvicorn",
         "websockets",
         "xeddsa",
         "yaml",
@@ -82,11 +83,13 @@ EXPECTED_EXTERNAL_IMPORTS: dict[str, frozenset[str]] = {
             "app/services/ai_provider_oauth_revoke_worker.py",
             "app/services/channels.py",
             "app/services/codex_oauth.py",
+            "app/services/embedding.py",
             "app/services/memory_provider_mem0.py",
             "app/services/plugin_catalog.py",
             "app/services/safe_public_http.py",
             "app/services/skill_installer.py",
             "app/services/whatsapp_native_transport.py",
+            "app/workers/embedding.py",
         }
     ),
     "fastembed": frozenset({"app/services/embedding.py"}),
@@ -96,7 +99,13 @@ EXPECTED_EXTERNAL_IMPORTS: dict[str, frozenset[str]] = {
             "app/services/memory_extraction.py",
         }
     ),
-    "socket": frozenset({"app/services/safe_public_http.py"}),
+    "socket": frozenset(
+        {
+            "app/runtime_entrypoint.py",
+            "app/services/safe_public_http.py",
+            "app/workers/embedding.py",
+        }
+    ),
     "websockets": frozenset({"app/services/discord_gateway_worker.py"}),
 }
 

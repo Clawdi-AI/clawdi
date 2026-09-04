@@ -28,8 +28,9 @@ RUN uv sync --frozen --no-dev --no-install-project --extra mem0
 
 COPY --chown=app:app backend/ /app/backend/
 
-RUN mkdir -p /data/files /home/app/.cache/fastembed \
-    && chown -R app:app /data /home/app/.cache
+RUN mkdir -p /data/files /home/app/.cache/fastembed /run/clawdi-embedding \
+    && chmod 0770 /run/clawdi-embedding \
+    && chown -R app:app /data /home/app/.cache /run/clawdi-embedding
 
 USER app
 
@@ -38,8 +39,8 @@ LABEL service="clawdi"
 
 EXPOSE 8000
 
-# Kamal uses Docker health for non-proxied roles. Both the API and channels
-# worker serve readiness-aware GET /health on this port.
+# Kamal uses Docker health for non-proxied roles. The embedding role overrides
+# this command with its Unix-socket health endpoint in config/deploy.yml.
 HEALTHCHECK --interval=5s --timeout=5s --start-period=30s --retries=8 \
     CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "4", "http://127.0.0.1:8000/health"]
 
