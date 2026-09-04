@@ -73,7 +73,7 @@ export class DeploymentRequestTerminalError extends BillingApiError {
 export type DeploymentRequestTerminalOutcome =
 	| { kind: "open_deployment"; deploymentId: string }
 	| {
-			kind: "new_attempt" | "review_agents";
+			kind: "new_attempt" | "review_agents" | "trial_ineligible";
 			title: string;
 			description: string;
 	  };
@@ -86,6 +86,14 @@ export function deploymentRequestTerminalOutcome(
 	const deploymentId = error.request.lineage_tail?.deployment_id?.trim();
 	if (deploymentId) {
 		return { kind: "open_deployment", deploymentId };
+	}
+	if (error.request.failure_code === "trial_ineligible") {
+		return {
+			kind: "trial_ineligible",
+			title: "Free trial unavailable",
+			description:
+				"This payment method isn’t eligible for a free trial. You can still deploy at the regular price.",
+		};
 	}
 	if (requestStatus === "superseded") {
 		return {

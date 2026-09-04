@@ -44,6 +44,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
+	type CheckoutReturnNavigationResult,
 	type CheckoutReturnNavigationTarget,
 	useCheckoutReturnHandler,
 } from "@/hosted/billing/checkout-return";
@@ -306,7 +307,10 @@ export function DeployWizard() {
 	const [deploymentCommitted, setDeploymentCommitted] = useState(false);
 	const acceptanceNavigatingRef = useRef(false);
 	const acceptDeployment = useCallback(
-		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
+		async (
+			target: CheckoutReturnNavigationTarget,
+			replace = false,
+		): Promise<CheckoutReturnNavigationResult> => {
 			setAcceptedDeploymentRecovery(null);
 			if (target.kind === "deployment") setDeploymentCommitted(true);
 			setSubmitting(true);
@@ -373,6 +377,8 @@ export function DeployWizard() {
 								acceptanceNavigatingRef.current = false;
 							}
 						}
+						setSubmitting(false);
+						return "handled";
 					}
 				} else {
 					setAcceptedDeploymentRecovery({ replace, target });

@@ -17,6 +17,7 @@ const MARKER_PARAMS = [
 export type CheckoutReturnNavigationTarget =
 	| { kind: "deploy_request"; deployRequestId: string }
 	| { kind: "deployment"; agentId?: string | null; deploymentId: string };
+export type CheckoutReturnNavigationResult = boolean | "handled";
 
 export function checkoutReturnWasCanceled(searchStr: string): boolean {
 	return new URLSearchParams(searchStr).get("checkout") === "cancel";
@@ -53,15 +54,22 @@ export function checkoutReturnNavigationTarget(
 
 type CheckoutReturnNavigationOwner = (
 	target: CheckoutReturnNavigationTarget,
-) => boolean | Promise<boolean>;
+) => CheckoutReturnNavigationResult | Promise<CheckoutReturnNavigationResult>;
+
+export async function checkoutReturnNavigationResult(
+	searchStr: string,
+	onNavigate: CheckoutReturnNavigationOwner,
+): Promise<CheckoutReturnNavigationResult> {
+	if (checkoutReturnWasCanceled(searchStr)) return false;
+	const target = checkoutReturnNavigationTarget(searchStr);
+	return target === null ? false : onNavigate(target);
+}
 
 export async function checkoutReturnHasNavigationOwner(
 	searchStr: string,
 	onNavigate: CheckoutReturnNavigationOwner,
 ): Promise<boolean> {
-	if (checkoutReturnWasCanceled(searchStr)) return false;
-	const target = checkoutReturnNavigationTarget(searchStr);
-	return target !== null && (await onNavigate(target));
+	return (await checkoutReturnNavigationResult(searchStr, onNavigate)) === true;
 }
 
 export function checkoutSearchAfterConsume(
@@ -88,8 +96,9 @@ export function useCheckoutReturnHandler({
 		if (!marker || handledMarkerRef.current === marker) return;
 		handledMarkerRef.current = marker;
 		const canceled = checkoutReturnWasCanceled(searchStr);
-		void checkoutReturnHasNavigationOwner(searchStr, onNavigate)
-			.then(async (owned) => {
+		void checkoutReturnNavigationResult(searchStr, onNavigate)
+			.then(async (navigationResult) => {
+				const owned = navigationResult === true;
 				let refreshFailed = false;
 				try {
 					await refreshCheckoutReturn(owned ? { includeDeployments: false } : undefined);
@@ -110,6 +119,7 @@ export function useCheckoutReturnHandler({
 					resetScroll: false,
 				});
 				if (refreshFailed) return;
+				if (navigationResult === "handled") return;
 				toast.message(canceled ? "Checkout canceled" : "Checkout status refreshed", {
 					description: canceled
 						? onCancelCopy

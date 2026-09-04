@@ -328,13 +328,19 @@ export async function refreshCheckoutReturnQueries(
 	qc: QueryClient,
 	{ includeDeployments = true }: CheckoutReturnRefreshOptions = {},
 ): Promise<HostedDeployment[] | undefined> {
-	const requiredRefreshes = [refetchExactCheckoutQuery(qc, billingKeys.wallet)];
+	const requiredRefreshes = [
+		refetchExactCheckoutQuery(qc, billingKeys.wallet),
+		refetchExactCheckoutQuery(qc, billingKeys.plans),
+		refetchExactCheckoutQuery(qc, billingKeys.subscriptions),
+	];
 	if (includeDeployments) {
 		requiredRefreshes.push(refetchExactCheckoutQuery(qc, billingKeys.deployments));
 	}
 	const results = await Promise.allSettled([
 		...requiredRefreshes,
-		qc.invalidateQueries({ queryKey: billingKeys.plans }),
+		qc.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes }),
+		qc.invalidateQueries({ queryKey: billingKeys.reusableSubscriptions }),
+		qc.invalidateQueries({ queryKey: billingKeys.includedBasicAvailability }),
 		qc.invalidateQueries({ queryKey: billingKeys.transactions }),
 		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 	]);
