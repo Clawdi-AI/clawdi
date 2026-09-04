@@ -23,7 +23,6 @@ import { parseSystemctlShow, systemctlPath } from "./systemd";
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
-const OPENCLAW_STARTUP_LOG_PROBE_TIMEOUT_MS = 10_000;
 const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
 const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
@@ -71,12 +70,6 @@ function openClawDoctorRepairRequired(result: ReturnType<typeof spawnRuntimeUser
 		output.includes(OPENCLAW_STARTUP_MIGRATION_MARKER) &&
 		output.includes('Run "openclaw doctor --fix"')
 	);
-}
-
-function openClawStartupMigrationWarning(
-	result: ReturnType<typeof spawnRuntimeUserCommand>,
-): boolean {
-	return runtimeCommandOutput(result).includes(OPENCLAW_STARTUP_MIGRATION_MARKER);
 }
 
 function openClawDeviceIdentityConflict(
@@ -255,27 +248,6 @@ function runHostedOpenClawDoctor(home: string, command = commandPath(home)): voi
 	if (repair.status !== 0) throw new Error("OpenClaw official repair failed");
 }
 
-function openClawStartupMigrationFailed(home: string): boolean {
-	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
-	if (!existsSync(legacyIdentity)) return false;
-	const journalctl = process.env.CLAWDI_JOURNALCTL_PATH?.trim() || "journalctl";
-	const result = spawnRuntimeUserCommand(
-		journalctl,
-		[
-			`--user-unit=${OPENCLAW_GATEWAY_UNIT}`,
-			"--boot=0",
-			"--no-pager",
-			"--quiet",
-			"--output=cat",
-			"--lines=500",
-		],
-		home,
-		home,
-		{ timeoutMs: OPENCLAW_STARTUP_LOG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
-	);
-	return result.status === 0 && openClawStartupMigrationWarning(result);
-}
-
 function archiveHostedLegacyOpenClawIdentity(home: string, command: string): void {
 	const sdkPath = resolveOpenClawSdkExport(
 		home,
@@ -304,7 +276,7 @@ function archiveHostedLegacyOpenClawIdentity(home: string, command: string): voi
 }
 
 export function repairHostedOpenClawStartupMigrations(home: string): boolean {
-	if (!openClawStartupMigrationFailed(home)) return false;
+	if (!existsSync(join(home, ".openclaw", "identity", "device.json"))) return false;
 	const command = commandPath(home);
 	const repair = runHostedOpenClawDoctorCommand(home, command);
 	if (!openClawDeviceIdentityConflict(repair)) {
