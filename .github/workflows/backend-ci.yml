@@ -19,10 +19,12 @@ on:
       - "patches/libsignal@6.0.0.patch"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-backend.sh"
       - "scripts/deploy-whatsapp-sidecar.sh"
       - "scripts/whatsapp-sidecar-deployment-revision.ts"
       - "scripts/clawdi-image-release-plan.ts"
       - "scripts/test-deploy-whatsapp-sidecar.sh"
+      - "scripts/test-deploy-backend.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
@@ -47,10 +49,12 @@ on:
       - "patches/libsignal@6.0.0.patch"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/deploy-backend.sh"
       - "scripts/deploy-whatsapp-sidecar.sh"
       - "scripts/whatsapp-sidecar-deployment-revision.ts"
       - "scripts/clawdi-image-release-plan.ts"
       - "scripts/test-deploy-whatsapp-sidecar.sh"
+      - "scripts/test-deploy-backend.sh"
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
@@ -121,10 +125,12 @@ jobs:
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/deploy-backend.sh"
               - "scripts/deploy-whatsapp-sidecar.sh"
               - "scripts/whatsapp-sidecar-deployment-revision.ts"
               - "scripts/clawdi-image-release-plan.ts"
               - "scripts/test-deploy-whatsapp-sidecar.sh"
+              - "scripts/test-deploy-backend.sh"
               - "config/deploy.yml"
               - "package.json"
               - "bun.lock"
@@ -274,11 +280,13 @@ jobs:
           FROM ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66
           WORKDIR /repo
           COPY config/deploy.yml config/deploy.yml
+          COPY scripts/deploy-backend.sh scripts/deploy-backend.sh
           COPY scripts/deploy-whatsapp-sidecar.sh scripts/deploy-whatsapp-sidecar.sh
+          COPY scripts/test-deploy-backend.sh scripts/test-deploy-backend.sh
           COPY scripts/test-deploy-whatsapp-sidecar.sh scripts/test-deploy-whatsapp-sidecar.sh
           COPY scripts/test-kamal-whatsapp-sidecar-render.sh scripts/test-kamal-whatsapp-sidecar-render.sh
           RUN gem install kamal -v '2.12.0' --no-document
-          RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-whatsapp-sidecar.sh
+          RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-backend.sh && scripts/test-deploy-whatsapp-sidecar.sh
           DOCKERFILE
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

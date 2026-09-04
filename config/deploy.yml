@@ -59,9 +59,11 @@ servers:
         # Each uvicorn worker loads its own local embedding model, so the
         # production web role must stay single-process on this host.
         WEB_CONCURRENCY: 1
-        # Preserve the previous web role's aggregate 40-connection budget.
-        DB_POOL_SIZE: 20
-        DB_MAX_OVERFLOW: 20
+        # One 10+10 pool leaves room for the channels worker, one overlapping
+        # web generation during rollout, and PostgreSQL operational sessions.
+        DB_POOL_SIZE: 10
+        DB_MAX_OVERFLOW: 10
+        DB_POOL_TIMEOUT: 5
         PROMETHEUS_MULTIPROC_DIR: /tmp/clawdi-prometheus-multiproc
   channels-worker:
     hosts:
@@ -74,6 +76,11 @@ servers:
     env:
       clear:
         CLAWDI_PROCESS_ROLE: channels-worker
+        # Bound the non-proxied role independently: Kamal overlaps old and new
+        # containers for this role during an ordinary rolling deployment too.
+        DB_POOL_SIZE: 10
+        DB_MAX_OVERFLOW: 10
+        DB_POOL_TIMEOUT: 5
 
 proxy:
   hosts:
@@ -317,9 +324,6 @@ env:
     PLUGIN_CATALOG_SYNC_ENABLED: "true"
     FILE_STORE_TYPE: s3
     MEMORY_EMBEDDING_MODE: local
-    DB_POOL_SIZE: 20
-    DB_MAX_OVERFLOW: 20
-    DB_POOL_TIMEOUT: 45
     FILE_STORE_S3_BUCKET: clawdi
     FILE_STORE_S3_REGION: auto
     FILE_STORE_S3_FORCE_PATH_STYLE: true

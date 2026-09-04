@@ -9,7 +9,9 @@ from __future__ import annotations
 import httpx
 import pytest
 from httpx import ASGITransport
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from app.core.database import get_session
 from app.main import app
 
 
@@ -26,6 +28,39 @@ async def test_health_endpoint(client: httpx.AsyncClient):
     r = await client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_readiness_endpoint(client: httpx.AsyncClient):
+    r = await client.get("/ready")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_liveness_survives_database_pool_exhaustion():
+    async def exhausted_session():
+        raise SQLAlchemyTimeoutError("private pool state")
+        yield
+
+    previous_overrides = dict(app.dependency_overrides)
+    app.dependency_overrides[get_session] = exhausted_session
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            health = await ac.get("/health")
+            ready = await ac.get("/ready")
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert ready.status_code == 503
+    assert ready.json() == {"detail": "Database capacity temporarily unavailable"}
+    assert ready.headers["Retry-After"] == "1"
+    assert ready.headers["Cache-Control"] == "no-store"
+    assert "private pool state" not in ready.text
 
 
 @pytest.mark.asyncio

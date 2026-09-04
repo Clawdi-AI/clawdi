@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -72,7 +73,7 @@ from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
-from app.services.metrics import observe_event_loop_lag
+from app.services.metrics import db_pool_timeouts, observe_event_loop_lag
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarClientPool
 
@@ -410,6 +411,24 @@ async def memory_provider_upstream_exception_handler(
     )
 
 
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def database_pool_timeout_exception_handler(
+    request: Request,
+    _exc: SQLAlchemyTimeoutError,
+) -> Response:
+    db_pool_timeouts.inc()
+    log.warning("database_pool_exhausted")
+    response = JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database capacity temporarily unavailable"},
+        headers={"Retry-After": "1", "Cache-Control": "no-store"},
+    )
+    return _apply_whatsapp_onboarding_cache_policy(
+        request,
+        _apply_public_session_export_cache_policy(request, response),
+    )
+
+
 @app.exception_handler(StarletteHTTPException)
 async def clawdi_http_exception_handler(
     request: Request,
@@ -449,12 +468,13 @@ def _is_whatsapp_onboarding_request(request: Request) -> bool:
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health(db: AsyncSession = Depends(get_session)) -> HealthResponse:
-    """Liveness + DB connectivity probe.
+async def health() -> HealthResponse:
+    """Return process liveness without coupling restarts to PostgreSQL."""
+    return HealthResponse(status="ok")
 
-    Returns 200 + ``{"status": "ok"}`` on success. If the DB is unreachable
-    the dependency raises and FastAPI returns 500 — the right signal for a
-    load balancer to yank this pod out of rotation.
-    """
+
+@app.get("/ready", response_model=HealthResponse)
+async def ready(db: AsyncSession = Depends(get_session)) -> HealthResponse:
+    """Return whether the API can currently acquire and query PostgreSQL."""
     await db.execute(text("SELECT 1"))
     return HealthResponse(status="ok")

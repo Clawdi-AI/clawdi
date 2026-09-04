@@ -107,7 +107,11 @@ def test_openapi_schema_advertises_only_v1_and_direct_runtime_v2():
     routes = _routes_by_path()
     assert routes["/v1/webhooks/clerk"] == {"POST"}
 
-    non_v1 = {path for path in spec["paths"] if not path.startswith("/v1/") and path != "/health"}
+    non_v1 = {
+        path
+        for path in spec["paths"]
+        if not path.startswith("/v1/") and path not in {"/health", "/ready"}
+    }
     assert non_v1
     assert all(path.startswith("/v2/runtime/") for path in non_v1)
     assert all(not path.startswith("/api/") for path in spec["paths"])

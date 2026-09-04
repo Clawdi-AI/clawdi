@@ -243,9 +243,7 @@ describe("backend image release workflow contract", () => {
 			`deploy-vps \${{ needs.build.outputs.image_tag }}`,
 		);
 		expect(deployCheckout?.with?.ref).toBe(`\${{ needs.build.outputs.image_tag }}`);
-		expect(imageReleaseSource).toContain(
-			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
-		);
+		expect(imageReleaseSource).toContain("scripts/deploy-backend.sh");
 		expect(releaseRunbook).toContain("commit-addressed OCI image tag");
 		expect(releaseRunbook).toContain("tags remain mutable");
 		expect(releaseRunbook).not.toContain("immutable OCI image tag");
@@ -324,8 +322,8 @@ describe("backend image release workflow contract", () => {
 					".github/workflows/clawdi-image-release.yml",
 					replaceOnce(
 						imageReleaseSource,
-						"kamal deploy -P --version",
-						"kamal deploy --verbose -P --version",
+						"scripts/deploy-backend.sh",
+						"scripts/deploy-backend.sh --verbose",
 					),
 				],
 			]),
@@ -445,12 +443,8 @@ describe("backend image release workflow contract", () => {
 		);
 		expect(kamalDeploy?.run).toContain("gem install kamal -v '2.12.0' --no-document");
 		expect(kamalDeploy?.run).toContain('test "$(kamal version)" = "2.12.0"');
-		expect(kamalDeploy?.run).toContain("kamal app exec --primary --roles web --raw");
-		expect(kamalDeploy?.run).toContain(`--version "\${{ needs.build.outputs.image_tag }}"`);
-		expect(kamalDeploy?.run).toContain("alembic upgrade head");
-		expect(kamalDeploy?.run).toContain(
-			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
-		);
+		expect(kamalDeploy?.run).toContain("scripts/deploy-backend.sh");
+		expect(kamalDeploy?.run).not.toContain("kamal deploy -P --version");
 		expect(imageReleaseSource).not.toContain("~> 2.12");
 		expect(imageReleaseSource).not.toContain("--lock-wait");
 		expect(deployConfigSource).toMatch(/^minimum_version: 2\.12\.0$/m);

@@ -83,9 +83,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 
 	test("prepares transparent egress before recreating the sidecar", () => {
 		const helperCall = workflow.lastIndexOf("scripts/deploy-whatsapp-sidecar.sh");
-		const appDeploy = workflow.indexOf(
-			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
-		);
+		const appDeploy = workflow.indexOf("scripts/deploy-backend.sh");
 
 		expect(helperCall).toBeGreaterThan(0);
 		expect(appDeploy).toBeGreaterThan(helperCall);
