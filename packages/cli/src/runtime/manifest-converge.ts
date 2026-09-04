@@ -20,7 +20,8 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import {
 	createOpenClawHostedContext,
-	repairHostedOpenClawConfig,
+	repairHostedOpenClawStartupMigrations,
+	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
@@ -189,10 +190,11 @@ function resolveOpenClawWorkspaceForConvergence(
 	home: string,
 	repairInvalidConfig: boolean,
 ): string {
+	if (repairInvalidConfig) repairHostedOpenClawStartupMigrations(home);
 	try {
 		return resolveHostedOpenClawWorkspace(home);
 	} catch (error) {
-		if (!repairInvalidConfig || !repairHostedOpenClawConfig(home)) throw error;
+		if (!repairInvalidConfig || !repairHostedOpenClawWorkspace(home, error)) throw error;
 		return resolveHostedOpenClawWorkspace(home);
 	}
 }

@@ -80,6 +80,7 @@ export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string
 export const OPENCLAW_SDK_EXPORT_PATHS = {
 	configMutation: "config-mutation",
 	deviceBootstrap: "device-bootstrap",
+	doctorMigrations: "runtime-doctor-migrations",
 	providerAuth: "provider-auth",
 	sessionTranscript: "session-transcript-runtime",
 } as const;

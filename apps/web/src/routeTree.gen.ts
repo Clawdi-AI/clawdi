@@ -37,6 +37,7 @@ import { Route as ProtectedDashboardProjectsIndexRouteImport } from './routes/_p
 import { Route as ProtectedDashboardProjectsIdRouteImport } from './routes/_protected/_dashboard/projects/$id'
 import { Route as ProtectedDashboardSessionsIndexRouteImport } from './routes/_protected/_dashboard/sessions/index'
 import { Route as ProtectedDashboardSessionsIdRouteImport } from './routes/_protected/_dashboard/sessions/$id'
+import { Route as ProtectedDashboardSessionsSharedRouteImport } from './routes/_protected/_dashboard/sessions/shared'
 import { Route as ProtectedDashboardSkillsIndexRouteImport } from './routes/_protected/_dashboard/skills/index'
 import { Route as ProtectedDashboardSkillsKeyRouteImport } from './routes/_protected/_dashboard/skills/$key'
 import { Route as ProtectedDashboardVaultIndexRouteImport } from './routes/_protected/_dashboard/vault/index'
@@ -211,6 +212,12 @@ const ProtectedDashboardSessionsIdRoute =
     path: '/sessions/$id',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
+const ProtectedDashboardSessionsSharedRoute =
+  ProtectedDashboardSessionsSharedRouteImport.update({
+    id: '/sessions/shared',
+    path: '/sessions/shared',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
 const ProtectedDashboardSkillsIndexRoute =
   ProtectedDashboardSkillsIndexRouteImport.update({
     id: '/skills/',
@@ -353,6 +360,7 @@ export interface FileRoutesByFullPath {
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
   '/projects/$id': typeof ProtectedDashboardProjectsIdRoute
   '/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
+  '/sessions/shared': typeof ProtectedDashboardSessionsSharedRoute
   '/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
   '/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
@@ -400,6 +408,7 @@ export interface FileRoutesByTo {
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
   '/projects/$id': typeof ProtectedDashboardProjectsIdRoute
   '/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
+  '/sessions/shared': typeof ProtectedDashboardSessionsSharedRoute
   '/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
   '/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
@@ -450,6 +459,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
   '/_protected/_dashboard/projects/$id': typeof ProtectedDashboardProjectsIdRoute
   '/_protected/_dashboard/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
+  '/_protected/_dashboard/sessions/shared': typeof ProtectedDashboardSessionsSharedRoute
   '/_protected/_dashboard/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/_protected/_dashboard/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
   '/_protected/_dashboard/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
@@ -500,6 +510,7 @@ export interface FileRouteTypes {
     | '/memories/$id'
     | '/projects/$id'
     | '/sessions/$id'
+    | '/sessions/shared'
     | '/skills/$key'
     | '/vault/$slug'
     | '/vaults/$slug'
@@ -547,6 +558,7 @@ export interface FileRouteTypes {
     | '/memories/$id'
     | '/projects/$id'
     | '/sessions/$id'
+    | '/sessions/shared'
     | '/skills/$key'
     | '/vault/$slug'
     | '/vaults/$slug'
@@ -596,6 +608,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/memories/$id'
     | '/_protected/_dashboard/projects/$id'
     | '/_protected/_dashboard/sessions/$id'
+    | '/_protected/_dashboard/sessions/shared'
     | '/_protected/_dashboard/skills/$key'
     | '/_protected/_dashboard/vault/$slug'
     | '/_protected/_dashboard/vaults/$slug'
@@ -833,6 +846,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardSessionsIdRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
+    '/_protected/_dashboard/sessions/shared': {
+      id: '/_protected/_dashboard/sessions/shared'
+      path: '/sessions/shared'
+      fullPath: '/sessions/shared'
+      preLoaderRoute: typeof ProtectedDashboardSessionsSharedRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
     '/_protected/_dashboard/skills/': {
       id: '/_protected/_dashboard/skills/'
       path: '/skills'
@@ -1048,6 +1068,7 @@ interface ProtectedDashboardRouteChildren {
   ProtectedDashboardMemoriesIdRoute: typeof ProtectedDashboardMemoriesIdRoute
   ProtectedDashboardProjectsIdRoute: typeof ProtectedDashboardProjectsIdRoute
   ProtectedDashboardSessionsIdRoute: typeof ProtectedDashboardSessionsIdRoute
+  ProtectedDashboardSessionsSharedRoute: typeof ProtectedDashboardSessionsSharedRoute
   ProtectedDashboardSkillsKeyRoute: typeof ProtectedDashboardSkillsKeyRoute
   ProtectedDashboardVaultSlugRoute: typeof ProtectedDashboardVaultSlugRoute
   ProtectedDashboardVaultsSlugRoute: typeof ProtectedDashboardVaultsSlugRoute
@@ -1072,6 +1093,7 @@ const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardMemoriesIdRoute: ProtectedDashboardMemoriesIdRoute,
   ProtectedDashboardProjectsIdRoute: ProtectedDashboardProjectsIdRoute,
   ProtectedDashboardSessionsIdRoute: ProtectedDashboardSessionsIdRoute,
+  ProtectedDashboardSessionsSharedRoute: ProtectedDashboardSessionsSharedRoute,
   ProtectedDashboardSkillsKeyRoute: ProtectedDashboardSkillsKeyRoute,
   ProtectedDashboardVaultSlugRoute: ProtectedDashboardVaultSlugRoute,
   ProtectedDashboardVaultsSlugRoute: ProtectedDashboardVaultsSlugRoute,

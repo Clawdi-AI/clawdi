@@ -567,7 +567,7 @@ test("filters session activity and expands paired tool details", async ({ page }
 	);
 	await expect(page.getByText("1 / 1")).toBeVisible();
 	await page.getByRole("checkbox", { name: "You" }).click();
-	await expect(page).toHaveURL((url) => url.searchParams.get("timelineView") === "user,assistant");
+	await expect(page).toHaveURL((url) => !url.searchParams.has("timelineView"));
 	await expect(page.getByText("Read the repository instructions", { exact: true })).toBeVisible();
 	await expect(toolActivity).not.toBeVisible();
 });
