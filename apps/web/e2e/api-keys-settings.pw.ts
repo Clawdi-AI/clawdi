@@ -46,10 +46,10 @@ function deferred() {
 async function openApiKeySettings(page: Page) {
 	await page.goto("/");
 	await expect(page.getByTestId("app-sidebar")).toBeVisible({ timeout: 15_000 });
-	await expect(async () => {
-		await page.getByTestId("app-sidebar-settings-button").click();
-		await expect(page).toHaveURL(/[?&]settings=general/, { timeout: 1_000 });
-	}).toPass({ timeout: 15_000 });
+	const settingsButton = page.getByTestId("app-sidebar-settings-button");
+	await expect(settingsButton).toBeEnabled();
+	await settingsButton.click();
+	await expect(page).toHaveURL(/[?&]settings=general/);
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible({ timeout: 15_000 });
 	await settingsDialog.getByRole("button", { name: /^API Keys/ }).click();

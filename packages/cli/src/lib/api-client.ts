@@ -4,6 +4,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
 import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
+import { readMachineId } from "./machine-identity";
 import { MAX_SAFE_RETRY_AFTER_MS, parseRetryAfter } from "./retry-after";
 import { assertValidSkillKey } from "./skill-key";
 import {
@@ -26,6 +27,17 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
+const MACHINE_ID_HEADER = "X-Clawdi-Machine-Id";
+const MACHINE_ID_MAX_LENGTH = 200;
+
+function normalizedMachineId(value: string | undefined): string | undefined {
+	if (value === undefined) return undefined;
+	const machineId = value.trim();
+	if (!machineId || machineId.length > MACHINE_ID_MAX_LENGTH) {
+		throw new Error("Connected Agent machine identity is invalid.");
+	}
+	return machineId;
+}
 // Node-compatible timers cannot safely schedule a single delay above this
 // value. Longer Retry-After waits are split into chunks without changing the
 // server-requested REST delay.
@@ -266,6 +278,7 @@ export class ApiClient {
 	private readonly client: Client<paths>;
 	private readonly abortSignal: AbortSignal | undefined;
 	private readonly requireAuth: boolean;
+	private readonly machineId: string | undefined;
 
 	/**
 	 * @param opts.requireAuth — Default true. Set false for public bootstrap
@@ -277,7 +290,13 @@ export class ApiClient {
 	 *   immediately instead of running its own retry/timeout to
 	 *   completion.
 	 */
-	constructor(opts: { requireAuth?: boolean; abortSignal?: AbortSignal } = {}) {
+	constructor(
+		opts: {
+			requireAuth?: boolean;
+			abortSignal?: AbortSignal;
+			machineId?: string;
+		} = {},
+	) {
 		const requireAuth = opts.requireAuth ?? true;
 		const config = getConfig();
 		const auth = getAuth();
@@ -292,6 +311,10 @@ export class ApiClient {
 		this.baseUrl = baseUrl;
 		this.requireAuth = requireAuth;
 		this.abortSignal = opts.abortSignal;
+		this.machineId = normalizedMachineId(
+			opts.machineId ?? (requireAuth ? (readMachineId() ?? undefined) : undefined),
+		);
+		const machineId = this.machineId;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
 			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal),
@@ -309,6 +332,7 @@ export class ApiClient {
 					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
+				if (machineId) request.headers.set(MACHINE_ID_HEADER, machineId);
 				request.headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
 				// Generate a per-request correlation ID. Backend's
 				// RequestIDMiddleware accepts the header and echoes
@@ -431,6 +455,7 @@ export class ApiClient {
 				"User-Agent": USER_AGENT,
 				"X-Request-ID": randomUUID(),
 				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
@@ -606,6 +631,7 @@ export class ApiClient {
 				"X-Request-ID": randomUUID(),
 				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 				...(extraHeaders ?? {}),
+				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			};
 			const request = new Request(`${this.baseUrl}${path}`, {
 				method,
@@ -636,6 +662,7 @@ export class ApiClient {
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
 				"X-Request-ID": randomUUID(),
+				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
@@ -662,6 +689,7 @@ export class ApiClient {
 				Authorization: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 				"X-Request-ID": randomUUID(),
+				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			},
 			body: JSON.stringify(body),
 		});
@@ -679,6 +707,7 @@ export class ApiClient {
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
 				...(extraHeaders ?? {}),
+				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);

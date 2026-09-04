@@ -30,6 +30,7 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
+from app.services.connected_agent_fence import ConnectedAgentFenceHeaders
 from app.services.file_store import FileStore, get_file_store
 from app.services.sync_events import subscribe, unsubscribe
 from app.services.tar_utils import tar_from_content
@@ -1182,6 +1183,85 @@ async def test_agent_upload_storage_io_holds_no_db_lock_and_cannot_resurrect_del
         assert surviving_rows == []
     # A race loser may leave only its immutable, unreachable object. It cannot
     # overwrite a committed identity or resurrect the deleted projection.
+    assert await file_store.exists(file_key) is True
+    await file_store.delete(file_key)
+
+
+@pytest.mark.asyncio
+async def test_agent_upload_revalidates_machine_fence_after_storage_io(
+    engine: AsyncEngine,
+    db_session: AsyncSession,
+    seed_user: User,
+    environment_project,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent_id = environment_project.origin_environment_id
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    agent.machine_id = "machine-old"
+    agent.machine_fence_required = True
+    agent.connected_agent_registered_at = datetime.now(UTC)
+    await db_session.commit()
+
+    archive = _skill_archive("rebind-race")
+    content_hash = _compute_file_tree_hash(archive, "rebind-race")
+    file_store = get_file_store()
+    file_key = skill_routes._file_key(
+        seed_user.id,
+        environment_project.id,
+        "rebind-race",
+        content_hash,
+    )
+    put_started = asyncio.Event()
+    release_put = asyncio.Event()
+    monkeypatch.setattr(
+        skill_routes,
+        "file_store",
+        _BlockingPutFileStore(
+            file_store,
+            put_started=put_started,
+            release_put=release_put,
+        ),
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def upload() -> None:
+        async with session_factory() as session:
+            await skill_routes._do_upload_skill(
+                db=session,
+                auth=_api_key_auth(seed_user),
+                project_id=environment_project.id,
+                skill_key="rebind-race",
+                data=archive,
+                content_hash=None,
+                authority=SKILL_AUTHORITY_AGENT_SYNC,
+                authority_agent_id=agent_id,
+                fence_headers=ConnectedAgentFenceHeaders(machine_id="machine-old"),
+            )
+
+    upload_task = asyncio.create_task(upload())
+    await asyncio.wait_for(put_started.wait(), timeout=2)
+    async with session_factory() as session:
+        rebound = await session.get(AgentEnvironment, agent_id, with_for_update=True)
+        assert rebound is not None
+        rebound.machine_id = "machine-new"
+        await session.commit()
+    release_put.set()
+
+    with pytest.raises(HTTPException) as upload_error:
+        await upload_task
+    assert upload_error.value.status_code == 403
+    assert upload_error.value.detail["code"] == "agent_rebound"
+
+    async with session_factory() as session:
+        surviving = await session.scalar(
+            select(Skill).where(
+                Skill.project_id == environment_project.id,
+                Skill.skill_key == "rebind-race",
+                Skill.is_active,
+            )
+        )
+        assert surviving is None
     assert await file_store.exists(file_key) is True
     await file_store.delete(file_key)
 

@@ -120,6 +120,12 @@ from app.services.agent_lifecycle import (
     active_agent_filter,
     archive_agent_and_project,
 )
+from app.services.connected_agent_fence import (
+    ConnectedAgentFenceHeaders,
+    connected_agent_fence_headers,
+    machine_header_enables_fence,
+    require_connected_agent_fence,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_provider import get_memory_provider
@@ -258,7 +264,9 @@ async def _register_agent_identity(
     body: EnvironmentCreate,
     auth: AuthContext,
     db: AsyncSession,
+    fence_headers: ConnectedAgentFenceHeaders,
 ) -> EnvironmentCreatedResponse:
+    enable_machine_fence = machine_header_enables_fence(body.machine_id, fence_headers)
     registration_key = local_machine_registration_key(body.machine_id, body.agent_type)
     # Bound deploy keys are pinned to a single env. Letting them
     # create *new* envs (and new env-local projects) would let a
@@ -326,6 +334,8 @@ async def _register_agent_identity(
         # an account-level CLI token from reclassifying that Agent identity.
         registered.env.connected_agent_registered_at = datetime.now(UTC)
         registered.env.adapter_modules = body.adapter_modules
+        if enable_machine_fence:
+            registered.env.machine_fence_required = True
     else:
         # A managed or environment-bound registration is positive evidence
         # against the Connected runtime shape; do not retain its observations.
@@ -343,9 +353,10 @@ async def register_agent(
     # session path then refuses to write — half-registered ghosts
     # in the dashboard.
     auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
-    return await _register_agent_identity(body, auth, db)
+    return await _register_agent_identity(body, auth, db, fence_headers)
 
 
 @router.post("/agents/{agent_id}/rebind")
@@ -353,6 +364,7 @@ async def rebind_agent(
     agent_id: UUID,
     body: EnvironmentCreate,
     auth: AuthContext = Depends(require_oauth_cli_auth),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
     """Reconnect one local installation to an existing Agent identity."""
@@ -398,6 +410,15 @@ async def rebind_agent(
             status.HTTP_409_CONFLICT,
             "The local Agent type does not match the selected Agent",
         )
+    if env.machine_fence_required and fence_headers.machine_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "agent_rebound",
+                "message": "This Agent requires a current machine identity to be rebound.",
+                "recovery": "Upgrade Clawdi, then run `clawdi agent reconnect` again.",
+            },
+        )
 
     registration_key = local_machine_registration_key(body.machine_id, body.agent_type)
     conflict = await db.scalar(
@@ -417,6 +438,7 @@ async def rebind_agent(
             },
         )
 
+    enable_machine_fence = machine_header_enables_fence(body.machine_id, fence_headers)
     now = datetime.now(UTC)
     env.machine_id = body.machine_id
     env.machine_name = body.machine_name
@@ -433,6 +455,8 @@ async def rebind_agent(
     env.dropped_count_since_start = 0
     env.project_skill_reconcile_version = None
     env.project_skill_reconcile_observed_at = None
+    if enable_machine_fence:
+        env.machine_fence_required = True
     rebound_id = env.id
     try:
         await db.commit()
@@ -455,9 +479,10 @@ async def rebind_agent(
 async def register_environment(
     body: EnvironmentCreate,
     auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentCreatedResponse:
-    return await _register_agent_identity(body, auth, db)
+    return await _register_agent_identity(body, auth, db, fence_headers)
 
 
 @overload
@@ -1427,6 +1452,7 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
             env.display_name, env.default_name, env.machine_name, env.agent_type
         ),
         default_name=env.default_name,
+        machine_id=env.machine_id,
         machine_name=env.machine_name,
         display_name=env.display_name,
         avatar_url=_asset_url(env.avatar_asset_key) if env.avatar_asset_key else None,
@@ -2064,6 +2090,7 @@ async def sync_heartbeat(
     # = None` and mask a real outage. `skills:write` is the daemon's
     # canonical write project (it always pushes skills), so reuse it.
     auth: AuthContext = Depends(require_scope("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Daemon writes its liveness state here every cycle. Extreme-
@@ -2081,6 +2108,13 @@ async def sync_heartbeat(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={agent_id},
+        headers=fence_headers,
+        lock=True,
+    )
 
     # If the deploy-key is bound to a specific env, refuse calls
     # for any other env. Resource-level project alone wasn't enough
@@ -2184,6 +2218,7 @@ async def batch_create_sessions(
     body: SessionBatchRequest,
     request: Request,
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionBatchResponse:
     """Ingest a batch of sessions from a CLI sync.
@@ -2246,6 +2281,13 @@ async def batch_create_sessions(
     # batch — partial accept would silently drop the user's sessions and
     # they'd never know.
     requested_env_ids = {s.environment_id for s in body.sessions}
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids=requested_env_ids,
+        headers=fence_headers,
+        lock=True,
+    )
     valid_env_ids = set(
         (
             await db.execute(
@@ -3053,6 +3095,7 @@ async def upload_session_content(
     expected_content_hash: str | None = Form(default=None, pattern=r"^[0-9a-f]{64}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
@@ -3069,6 +3112,29 @@ async def upload_session_content(
         stmt = stmt.where(Session.origin_environment_id == bound_env)
     elif environment_id is not None:
         stmt = stmt.where(Session.origin_environment_id == environment_id)
+    sessions = list((await db.execute(stmt)).scalars())
+    if not sessions:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if len(sessions) != 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "session_origin_required",
+                "message": (
+                    "More than one Agent owns this local_session_id; "
+                    "use an environment-bound credential."
+                ),
+            },
+        )
+    session = sessions[0]
+    if session.origin_environment_id is not None:
+        await require_connected_agent_fence(
+            db,
+            auth=auth,
+            agent_ids={session.origin_environment_id},
+            headers=fence_headers,
+            lock=True,
+        )
     sessions = list((await db.execute(stmt.with_for_update())).scalars())
     if not sessions:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
@@ -3429,6 +3495,7 @@ async def get_session_messages(
 async def extract_session_memories(
     local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
     auth: AuthContext = Depends(require_scope("memories:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionExtractResponse:
     """Extract memories from a session's content via the configured LLM.
@@ -3459,6 +3526,14 @@ async def extract_session_memories(
     session = (await db.execute(stmt)).scalar_one_or_none()
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if session.origin_environment_id is not None:
+        await require_connected_agent_fence(
+            db,
+            auth=auth,
+            agent_ids={session.origin_environment_id},
+            headers=fence_headers,
+            lock=True,
+        )
     if not session_has_uploaded_content(session):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

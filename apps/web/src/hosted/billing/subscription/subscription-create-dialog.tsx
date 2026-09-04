@@ -32,6 +32,10 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type { ComputePlanSlug, Plan, SubscriptionSelection } from "@/hosted/billing/contracts";
 import {
+	cardTrialPricePresentation,
+	computePricePresentation,
+} from "@/hosted/billing/deploy/deploy-price-presentation";
+import {
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	isReusableSubscriptionUnavailableError,
@@ -142,6 +146,11 @@ export function SubscriptionCreateDialog({
 	const offers = useMemo(() => offersForPlan(selectedPlan, planSlug), [planSlug, selectedPlan]);
 	const selectedOffer =
 		offers.find((offer) => offer.billing_term_months === billingTermMonths) ?? null;
+	const selectedPrice = selectedOffer ? computePricePresentation(selectedOffer, offers) : null;
+	const cardTrial =
+		fundingSource === "stripe" && selectedOffer && selectedPrice
+			? cardTrialPricePresentation(selectedPrice.primary, selectedOffer.card_trial_period_days)
+			: null;
 	const supportedTerm = supportedBillingTerm(billingTermMonths);
 	const newSubscriptionSelection: SubscriptionCreateSelection | null =
 		supportedTerm && selectedOffer
@@ -434,12 +443,21 @@ export function SubscriptionCreateDialog({
 									</ToggleGroup>
 								</div>
 
-								{selectedOffer ? (
-									<p className="text-sm text-muted-foreground">
-										{computeTierLabel(planSlug)} · {billingTermLabel(billingTermMonths)} ·{" "}
-										{formatCents(selectedOffer.price_cents)}
-										{billingTermMonths === 1 ? "/month" : "/year"}
-									</p>
+								{selectedOffer && selectedPrice ? (
+									<div className="flex flex-col gap-1 text-sm text-muted-foreground">
+										<span>
+											{computeTierLabel(planSlug)} · {billingTermLabel(billingTermMonths)}
+										</span>
+										<span className="text-base font-semibold text-foreground tabular-nums">
+											{selectedPrice.primary}
+										</span>
+										<p className="text-xs tabular-nums">
+											{cardTrial?.label ?? selectedPrice.secondary}
+											{cardTrial && billingTermMonths > 1 ? (
+												<> · {selectedPrice.secondary}</>
+											) : null}
+										</p>
+									</div>
 								) : (
 									<Alert variant="destructive">
 										<TriangleAlert aria-hidden />

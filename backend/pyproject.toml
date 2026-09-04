@@ -258,6 +258,7 @@ strict = [
     "app/services/clerk_cli_oauth_settings.py",
     "app/services/codex_oauth.py",
     "app/services/composio.py",
+    "app/services/connected_agent_fence.py",
     "app/services/discord_command_reconciliation_worker.py",
     "app/services/discord_gateway_worker.py",
     "app/services/discord_rate_limiter.py",

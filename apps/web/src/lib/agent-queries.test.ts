@@ -13,6 +13,7 @@ function agent(id: string, displayName: string): Agent {
 	return {
 		id,
 		name: displayName,
+		machine_id: `${id}-machine`,
 		machine_name: `${id}.local`,
 		display_name: displayName,
 		sort_order: 0,

@@ -3734,6 +3734,8 @@ export interface components {
             name: string;
             /** Default Name */
             default_name?: string | null;
+            /** Machine Id */
+            machine_id: string;
             /** Machine Name */
             machine_name: string;
             /** Display Name */
@@ -5675,6 +5677,8 @@ export interface components {
             name: string;
             /** Default Name */
             default_name?: string | null;
+            /** Machine Id */
+            machine_id: string;
             /** Machine Name */
             machine_name: string;
             /** Display Name */
@@ -11065,7 +11069,9 @@ export interface operations {
     stage_session_event_generation_v1_sessions__local_session_id__events_generations_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
             };
@@ -11100,7 +11106,9 @@ export interface operations {
     upload_session_event_generation_chunk_v1_sessions__local_session_id__events_generations__generation_id__chunks__start_seq__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
                 generation_id: string;
@@ -11137,7 +11145,9 @@ export interface operations {
     commit_session_event_generation_v1_sessions__local_session_id__events_generations__generation_id__commit_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
                 generation_id: string;
@@ -11173,7 +11183,9 @@ export interface operations {
     append_session_events_v1_sessions__local_session_id__events_append_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
             };
@@ -11502,7 +11514,9 @@ export interface operations {
     register_agent_v1_agents_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -11535,7 +11549,9 @@ export interface operations {
     rebind_agent_v1_agents__agent_id__rebind_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 agent_id: string;
             };
@@ -11597,7 +11613,9 @@ export interface operations {
     register_environment_v1_environments_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -12187,7 +12205,9 @@ export interface operations {
     sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 agent_id: string;
             };
@@ -12220,7 +12240,9 @@ export interface operations {
     batch_create_sessions_v1_sessions_batch_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -12369,7 +12391,9 @@ export interface operations {
     upload_session_content_v1_sessions__local_session_id__upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
             };
@@ -12477,7 +12501,9 @@ export interface operations {
     extract_session_memories_v1_sessions__local_session_id__extract_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 local_session_id: string;
             };
@@ -13136,7 +13162,9 @@ export interface operations {
             query?: {
                 environment_id?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -13240,6 +13268,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+                "X-Clawdi-Machine-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -13405,6 +13434,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+                "X-Clawdi-Machine-Id"?: string | null;
             };
             path: {
                 project_id: string;
@@ -13617,6 +13647,7 @@ export interface operations {
             };
             header?: {
                 "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+                "X-Clawdi-Machine-Id"?: string | null;
             };
             path: {
                 project_id: string;
@@ -13684,7 +13715,9 @@ export interface operations {
     upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 agent_id: string;
             };
@@ -13722,7 +13755,9 @@ export interface operations {
                 /** @description Project fence recorded when the Agent projection was claimed. Omit only for legacy clients deleting from the current Agent Project. */
                 project_id?: string | null;
             };
-            header?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path: {
                 agent_id: string;
                 skill_key: string;

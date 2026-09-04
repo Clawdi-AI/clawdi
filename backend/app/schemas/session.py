@@ -270,6 +270,7 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     default_name: str | None = None
+    machine_id: str
     machine_name: str
     display_name: str | None = None
     avatar_url: str | None = None

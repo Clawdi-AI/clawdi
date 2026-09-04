@@ -159,4 +159,54 @@ describe("Hosted deploy auth boundary", () => {
 			"https://cloud.example.test/v1/ai-providers",
 		]);
 	});
+
+	test("retries brief checkout contention with the same idempotency key", async () => {
+		const now = Date.now();
+		const token = oauthToken(Math.floor(now / 1_000) + 3_600);
+		const requests: Request[] = [];
+		const delays: number[] = [];
+		const hosted = new HostedDeployClient({
+			baseUrl: "https://deploy.example.test",
+			auth: {
+				getAccessToken: async () => ({
+					token,
+					expiresAt: new Date(now + 3_600_000).toISOString(),
+				}),
+			},
+			now: () => now,
+			sleep: async (delayMs) => {
+				delays.push(delayMs);
+			},
+			fetch: async (request) => {
+				requests.push(request.clone());
+				if (requests.length === 1) {
+					return Response.json(
+						{ detail: "A billing operation is already in progress" },
+						{ status: 409, headers: { "Retry-After": "1" } },
+					);
+				}
+				return Response.json({
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					checkout_url: "https://checkout.stripe.test/session/stable",
+				});
+			},
+		});
+
+		await hosted.checkout(
+			{
+				plan_slug: "compute_basic",
+				funding_source: "stripe",
+			},
+			"checkout-stable",
+		);
+
+		expect(delays).toEqual([1_000]);
+		expect(requests).toHaveLength(2);
+		expect(requests.map((request) => request.headers.get("Idempotency-Key"))).toEqual([
+			"checkout-stable",
+			"checkout-stable",
+		]);
+		expect(await requests[0]?.text()).toBe(await requests[1]?.text());
+	});
 });

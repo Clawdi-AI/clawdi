@@ -8,7 +8,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getAuth } from "../lib/config";
 import { writeEnvironmentRegistration } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
-import { getOrCreateMachineId } from "../lib/machine-identity";
+import { getOrCreateMachineId, readMachineId } from "../lib/machine-identity";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { type LocalAgentSetupOpts, maybeInstallDaemons, reconcileAgentIntegrations } from "./setup";
@@ -17,7 +17,11 @@ type AgentResponse = components["schemas"]["AgentResponse"];
 
 interface AgentReconnectOpts extends LocalAgentSetupOpts {
 	agent?: string;
+	desktopList?: boolean;
+	confirmTakeover?: boolean;
 }
+
+const DESKTOP_CANDIDATES_SCHEMA = "clawdi.agentReconnectCandidates.v1";
 
 export async function agentReconnect(
 	agentId: string | undefined,
@@ -46,6 +50,32 @@ export async function agentReconnect(
 		process.exitCode = 1;
 		return;
 	}
+	if (opts.desktopList) {
+		const currentMachineId = readMachineId();
+		console.log(
+			JSON.stringify({
+				schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
+				agents: agents.flatMap((agent) => {
+					const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
+						? (agent.agent_type as AgentType)
+						: null;
+					if (!type) return [];
+					return [
+						{
+							id: agent.id,
+							type,
+							displayName: adapterRegistry[type].displayName,
+							name: agent.name,
+							machineName: agent.machine_name,
+							isThisMachine: currentMachineId !== null && agent.machine_id === currentMachineId,
+							lastSyncAt: agent.last_sync_at ?? null,
+						},
+					];
+				}),
+			}),
+		);
+		return;
+	}
 
 	const candidate = await selectCandidate(agents, agentId, requestedType);
 	if (!candidate) return;
@@ -62,6 +92,27 @@ export async function agentReconnect(
 		console.log(
 			chalk.red(
 				`${adapterRegistry[agentType].displayName} is already connected locally. Run \`clawdi teardown --agent ${agentType}\` before reconnecting another identity.`,
+			),
+		);
+		process.exitCode = 1;
+		return;
+	}
+	let machineId: string;
+	let machineName: string;
+	try {
+		machineId = getOrCreateMachineId();
+		machineName = hostname();
+	} catch (error) {
+		console.log(chalk.red(`Could not prepare local Agent identity: ${errMessage(error)}`));
+		process.exitCode = 1;
+		return;
+	}
+	const recentOtherMachine =
+		candidate.machine_id !== machineId && isRecentlySynced(candidate.last_sync_at);
+	if (recentOtherMachine && opts.yes && !opts.confirmTakeover) {
+		console.log(
+			chalk.red(
+				"This Agent recently synced from another machine. Repeat with --confirm-takeover to disconnect it explicitly.",
 			),
 		);
 		process.exitCode = 1;
@@ -96,7 +147,9 @@ export async function agentReconnect(
 
 	if (!opts.yes && isInteractive()) {
 		const confirmed = await p.confirm({
-			message: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
+			message: recentOtherMachine
+				? `Take over “${candidate.name}” from the recently active machine “${candidate.machine_name}”? Its daemon will be fenced immediately.`
+				: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
 			initialValue: true,
 		});
 		if (p.isCancel(confirmed) || !confirmed) {
@@ -105,21 +158,10 @@ export async function agentReconnect(
 		}
 	}
 
-	let machineId: string;
-	let machineName: string;
-	try {
-		machineId = getOrCreateMachineId();
-		machineName = hostname();
-	} catch (error) {
-		console.log(chalk.red(`Could not prepare local Agent identity: ${errMessage(error)}`));
-		process.exitCode = 1;
-		return;
-	}
-
 	let rebound: components["schemas"]["EnvironmentCreatedResponse"];
 	try {
 		rebound = unwrap(
-			await api.POST("/v1/agents/{agent_id}/rebind", {
+			await new ApiClient({ machineId }).POST("/v1/agents/{agent_id}/rebind", {
 				params: { path: { agent_id: candidate.id } },
 				body: {
 					machine_id: machineId,
@@ -179,6 +221,12 @@ export async function agentReconnect(
 		);
 		process.exitCode = 1;
 	}
+}
+
+function isRecentlySynced(value: string | null | undefined): boolean {
+	if (!value) return false;
+	const timestamp = Date.parse(value);
+	return Number.isFinite(timestamp) && Date.now() - timestamp < 5 * 60_000;
 }
 
 function parseAgentType(value: string | undefined): AgentType | null {

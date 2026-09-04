@@ -82,7 +82,9 @@ import {
 import {
 	type ComputePricePresentation,
 	cardDeployAmountPresentation,
+	cardTrialPricePresentation,
 	computePricePresentation,
+	type DeployAmountPresentation,
 	walletDeployAmountPresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import {
@@ -108,7 +110,7 @@ import {
 	isReusableSubscriptionUnavailableError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, formatCents } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	useIncludedBasicAvailability,
 	useManagedModelCatalog,
@@ -213,11 +215,13 @@ function computeCheckoutSummary({
 	plan,
 	termMonths,
 	tierLabel,
+	trialDays,
 }: {
 	offer: BillingOffer;
 	plan: Plan;
 	termMonths: number;
 	tierLabel: "Basic" | "Performance";
+	trialDays: number | null;
 }): StripeCheckoutSummary {
 	const effectiveMonthly = formatCents(offer.effective_monthly_price_cents);
 	const agentLabel =
@@ -228,8 +232,9 @@ function computeCheckoutSummary({
 				? `Per ${agentLabel}, billed monthly.`
 				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
 		planName: plan.name,
-		priceLabel: formatCents(offer.price_cents),
+		priceLabel: `${formatCents(offer.price_cents)}${billingTermSuffix(termMonths)}`,
 		termLabel: billingTermLabel(termMonths),
+		trialDays,
 	};
 }
 
@@ -504,6 +509,12 @@ export function DeployWizard() {
 						tierLabel: "Basic",
 					}
 				: null;
+	const selectedCardTrial = paidSelection
+		? cardTrialPricePresentation(
+				`${formatCents(paidSelection.offer.price_cents)}${billingTermSuffix(paidSelection.billingTermMonths)}`,
+				paidSelection.offer.card_trial_period_days,
+			)
+		: null;
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -940,6 +951,7 @@ export function DeployWizard() {
 							plan: paidSelection.plan,
 							termMonths: paidSelection.billingTermMonths,
 							tierLabel: paidSelection.tierLabel,
+							trialDays: result.trial_period_days ?? null,
 						}),
 						tierLabel: paidSelection.tierLabel,
 					});
@@ -1016,7 +1028,7 @@ export function DeployWizard() {
 					.filter(Boolean)
 					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
-	const deployAmount =
+	const deployAmount: DeployAmountPresentation | null =
 		subscriptionSource?.mode === "included"
 			? { amount: "Free", caption: null, detail: null }
 			: selectedReusableSubscription
@@ -1052,13 +1064,7 @@ export function DeployWizard() {
 			: compute === "performance"
 				? "Performance"
 				: "Basic";
-	const summaryLine = [
-		`${selectedComputeLabel} compute`,
-		aiSummary,
-		runtimeSummary,
-		LANGUAGE_OPTIONS.find((l) => l.code === language)?.label ?? null,
-		timezone || null,
-	]
+	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} compute`]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -1160,7 +1166,7 @@ export function DeployWizard() {
 								icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 								title={MANAGED_PROVIDER_LABEL}
 								description="No setup required. Usage draws from your Wallet."
-								badge={<Badge variant="secondary">Default</Badge>}
+								badge={<Badge variant="secondary">Recommended</Badge>}
 							/>
 							<EntityChoiceCard
 								selected={aiAccessMode === "unmanaged"}
@@ -1172,9 +1178,6 @@ export function DeployWizard() {
 								}
 								title={authCardLabel("unmanaged")}
 								description="Deploy first, then configure model access inside the Agent."
-								badge={
-									aiAccessMode === "unmanaged" ? <Badge variant="secondary">Selected</Badge> : null
-								}
 							/>
 							{aiProviders.isLoading ? (
 								<Skeleton className="h-[74px] w-full rounded-lg" />
@@ -1206,8 +1209,6 @@ export function DeployWizard() {
 										badge={
 											issue ? (
 												<Badge variant="secondary">Unavailable</Badge>
-											) : primaryProviderChoice === provider.provider_id ? (
-												<Badge variant="secondary">Selected</Badge>
 											) : (
 												<AuthBadge auth={provider.auth} />
 											)
@@ -1373,7 +1374,12 @@ export function DeployWizard() {
 													</IconChip>
 												}
 												title="Card subscription"
-												description="Card required. Eligible accounts get one 7-day trial on their first Basic or Performance subscription; one trial per account."
+												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												badge={
+													selectedCardTrial ? (
+														<Badge variant="secondary">{selectedCardTrial.label}</Badge>
+													) : null
+												}
 											/>
 											<EntityChoiceCard
 												selected={paymentMethod === "wallet"}
@@ -1528,11 +1534,11 @@ export function DeployWizard() {
 							{deployAmount ? (
 								<div
 									data-testid="deploy-amount"
-									className="flex min-w-0 flex-col @2xl/main:items-end @2xl/main:text-right"
+									className="flex min-w-0 flex-col @2xl/main:w-56 @2xl/main:items-end @2xl/main:text-right"
 									aria-live="polite"
 								>
 									<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 @2xl/main:justify-end">
-										<span className="whitespace-nowrap font-semibold tabular-nums text-foreground">
+										<span className="font-semibold tabular-nums text-foreground">
 											{deployAmount.amount}
 										</span>
 										{paymentMethod === "wallet" && walletQuoteState === "error" ? (
@@ -1563,7 +1569,7 @@ export function DeployWizard() {
 									) : null}
 								</div>
 							) : null}
-							<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
+							<div className="flex min-w-0 flex-col gap-1 @2xl/main:w-40 @2xl/main:items-end">
 								<Button
 									type={
 										acceptedDeploymentHydrationFailed || walletTopUpAction ? "button" : "submit"
@@ -1584,7 +1590,7 @@ export function DeployWizard() {
 												? () => walletTopUp.show(walletShortfallUsd)
 												: undefined
 									}
-									className="w-full shrink-0 @2xl/main:w-auto"
+									className="w-full shrink-0"
 								>
 									{submitting ? (
 										<Spinner data-icon="inline-start" />

@@ -31,6 +31,11 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import ProjectSkillCapabilityReport
 from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
+from app.services.connected_agent_fence import (
+    ConnectedAgentFenceHeaders,
+    connected_agent_fence_headers,
+    require_connected_agent_fence,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
@@ -331,11 +336,19 @@ async def report_project_skill_capability(
     body: ProjectSkillCapabilityReport,
     requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
     auth: AuthContext = Depends(require_cli_auth),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Renew the short-lived Connected Project Skill reconciliation lease."""
     require_auth_scopes(auth, "skills:write")
     agent_id = _authorized_environment_id(auth, requested_environment_id)
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={agent_id},
+        headers=fence_headers,
+        lock=True,
+    )
     agent = await _connected_agent(db, auth=auth, agent_id=agent_id)
     # Compatibility observation only; desired-state reads and writes never
     # consult these fields.

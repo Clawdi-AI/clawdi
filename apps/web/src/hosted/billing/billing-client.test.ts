@@ -59,6 +59,44 @@ describe("idempotent billing transport", () => {
 		}
 	});
 
+	it("absorbs brief checkout contention with the same idempotent request", async () => {
+		const seen: Array<{ body: string; key: string | null }> = [];
+		const delays: number[] = [];
+		const transport = retryIdempotentBillingTransport(
+			async (request) => {
+				seen.push({
+					body: await request.text(),
+					key: request.headers.get("Idempotency-Key"),
+				});
+				if (seen.length === 1) throw new BillingNetworkError("timeout");
+				if (seen.length === 2) {
+					return jsonResponse({ detail: "A billing operation is already in progress" }, 409, {
+						"Retry-After": "1",
+					});
+				}
+				return new Response(null, { status: 204 });
+			},
+			async (delayMs) => {
+				delays.push(delayMs);
+			},
+		);
+		const response = await transport(
+			new Request("https://api.clawdi.ai/v2/subscription/checkout", {
+				method: "POST",
+				headers: { "Idempotency-Key": "checkout-1" },
+				body: '{"plan_slug":"compute_basic"}',
+			}),
+		);
+
+		expect(response.status).toBe(204);
+		expect(delays).toEqual([1_000]);
+		expect(seen).toEqual([
+			{ body: '{"plan_slug":"compute_basic"}', key: "checkout-1" },
+			{ body: '{"plan_slug":"compute_basic"}', key: "checkout-1" },
+			{ body: '{"plan_slug":"compute_basic"}', key: "checkout-1" },
+		]);
+	});
+
 	it("does not retry responses, aborts, or a second network failure", async () => {
 		for (const scenario of [
 			"response",
@@ -77,7 +115,7 @@ describe("idempotent billing transport", () => {
 			});
 			const path =
 				scenario === "other-endpoint"
-					? "/v2/subscription/checkout"
+					? "/v2/subscription/portal"
 					: scenario === "setup-finalize"
 						? "/v2/wallet/auto-reload/setup-intent/finalize"
 						: "/v2/wallet/topup";
@@ -140,10 +178,10 @@ describe("idempotent billing transport", () => {
 	});
 });
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", ...headers },
 	});
 }
 

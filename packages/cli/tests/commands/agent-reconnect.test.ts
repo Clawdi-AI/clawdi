@@ -59,6 +59,45 @@ afterEach(() => {
 });
 
 describe("agent reconnect", () => {
+	it("emits the stable Desktop candidate contract without mutating bindings", async () => {
+		const agentId = "00000000-0000-0000-0000-000000000123";
+		const mock = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/agents",
+				response: () =>
+					jsonResponse([
+						{
+							id: agentId,
+							name: "My Pi",
+							machine_name: "Previous Laptop",
+							agent_type: "pi",
+						},
+					]),
+			},
+		]);
+		restoreFetch = mock.restore;
+
+		await agentReconnect(undefined, { desktopList: true });
+
+		expect(JSON.parse(output.join("\n"))).toEqual({
+			schemaVersion: "clawdi.agentReconnectCandidates.v1",
+			agents: [
+				{
+					id: agentId,
+					type: "pi",
+					displayName: "Pi",
+					name: "My Pi",
+					machineName: "Previous Laptop",
+					isThisMachine: false,
+					lastSyncAt: null,
+				},
+			],
+		});
+		expect(mock.captured.some((request) => request.method === "POST")).toBe(false);
+		expect(process.exitCode).toBe(0);
+	});
+
 	it("requires explicit confirmation outside an interactive terminal", async () => {
 		const agentId = "00000000-0000-0000-0000-000000000123";
 		const mock = mockFetch([

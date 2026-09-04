@@ -113,12 +113,12 @@ from app.services.codex_oauth import (
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
-    MANAGED_AI_PROVIDER_RUNTIME_ENV,
     V2_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_IDS,
     is_v2_deployment_managed_provider_id,
     managed_provider_accepted_api_modes,
     managed_provider_api_mode,
+    managed_provider_runtime_env_name,
     runtime_managed_provider_id,
 )
 from app.services.platform_contract import (
@@ -1903,9 +1903,10 @@ def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderRespo
         )
     if body.auth.type != "api_key" or body.auth.source != "managed":
         errors.append("managed Clawdi provider must use managed api_key auth")
-    if body.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV:
+    expected_runtime_env_name = managed_provider_runtime_env_name(body.provider_id)
+    if expected_runtime_env_name is not None and body.runtime_env_name != expected_runtime_env_name:
         errors.append(
-            f"managed Clawdi provider must use runtime_env_name {MANAGED_AI_PROVIDER_RUNTIME_ENV}"
+            f"managed Clawdi provider must use runtime_env_name {expected_runtime_env_name}"
         )
     return errors
 

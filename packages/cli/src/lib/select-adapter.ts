@@ -9,42 +9,13 @@ import {
 	getAdapterEntry,
 } from "../adapters/registry";
 import { readJson } from "./api-client";
-import { getAuth, getClawdiDir, readRecoverablePrivateJson } from "./config";
-
-interface LocalEnvironmentRegistration {
-	id: string;
-	userId?: string;
-}
-
-function readEnvironmentRegistration(
-	agentType: string,
-	currentUserId: string | undefined,
-): LocalEnvironmentRegistration | null {
-	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
-	const value = readRecoverablePrivateJson<unknown>(envPath);
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-	const record = value as Record<string, unknown>;
-	if (typeof record.id !== "string" || !record.id.trim()) return null;
-	if (record.agentType !== undefined && record.agentType !== agentType) return null;
-	if (
-		record.userId !== undefined &&
-		(typeof record.userId !== "string" ||
-			!record.userId.trim() ||
-			record.userId !== record.userId.trim())
-	) {
-		return null;
-	}
-	if (record.userId && (!currentUserId || record.userId !== currentUserId)) return null;
-	return {
-		id: record.id,
-		...(typeof record.userId === "string" ? { userId: record.userId } : {}),
-	};
-}
+import { getAuth, getClawdiDir } from "./config";
+import { readEnvironmentRegistration } from "./environment-registration";
 
 export function getEnvIdByAgent(agentType: string): string | null {
 	const auth = getAuth();
 	if (!auth) return null;
-	return readEnvironmentRegistration(agentType, auth.userId?.trim())?.id ?? null;
+	return readEnvironmentRegistration(agentType)?.id ?? null;
 }
 
 /** Ask the cloud which project this caller's next write would land
@@ -128,9 +99,8 @@ export function listRegisteredAgentTypes(): AgentType[] {
 	if (!existsSync(envDir)) return [];
 	const auth = getAuth();
 	if (!auth) return [];
-	const currentUserId = auth.userId?.trim();
 	return allAdapterEntries()
-		.filter((entry) => readEnvironmentRegistration(entry.agentType, currentUserId) !== null)
+		.filter((entry) => readEnvironmentRegistration(entry.agentType) !== null)
 		.map((entry) => entry.agentType);
 }
 
