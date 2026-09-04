@@ -152,7 +152,6 @@ interface SessionEntry {
 interface OfficialSessionEntry extends SessionEntry {
 	agentId: string;
 	key: string;
-	sessionId: string;
 	spawnedCwd?: string;
 	spawnedWorkspaceDir?: string;
 	sessionStartedAt?: number;
@@ -387,11 +386,11 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 		const row = jsonObject(value);
 		const agentId = jsonString(row?.agentId);
 		const key = jsonString(row?.key);
-		const sessionId = jsonString(row?.sessionId);
-		if (!row || !agentId || !key || !sessionId) {
+		if (!row || !agentId || !key) {
 			complete = false;
 			return [];
 		}
+		const sessionId = jsonString(row.sessionId) ?? undefined;
 		const number = (field: string) => {
 			const candidate = row[field];
 			return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
@@ -447,6 +446,7 @@ function readOfficialSessionInventory(): OfficialSessionInventory | null {
 async function readOfficialSessionMessagesFromSdk(
 	entry: OfficialSessionEntry,
 ): Promise<JsonObject[] | null> {
+	if (!entry.sessionId) return null;
 	const sdkPath = resolveOpenClawSdkExport(
 		process.env.HOME ?? homedir(),
 		[],
@@ -502,7 +502,6 @@ function readOfficialSessionMessagesFromGateway(entry: OfficialSessionEntry): Js
 				limit: 1000,
 				maxChars: 500_000,
 				offset,
-				sessionId: entry.sessionId,
 				sessionKey: entry.key,
 			}),
 			"--json",
@@ -1056,7 +1055,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			complete: inventory.complete,
 		};
 		for (const entry of inventory.entries) {
-			if (localSessionId !== undefined && entry.sessionId !== localSessionId) continue;
+			const sessionId = entry.sessionId;
+			if (localSessionId !== undefined && sessionId !== localSessionId) continue;
+			if (!sessionId && isInternalOpenClawSession(entry.key, entry)) continue;
 			const updatedAt = entry.updatedAt;
 			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
 				userActivity.complete = false;
@@ -1068,13 +1069,13 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				(!projectPath || (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)))
 			)
 				continue;
-			observedLocalSessionIds.push(entry.sessionId);
-			const sourceRevision = `${entry.sessionId}:${updatedAt}`;
-			if (knownSourceRevisions.get(entry.sessionId) === sourceRevision) continue;
+			if (sessionId) observedLocalSessionIds.push(sessionId);
+			const sourceRevision = sessionId ? `${sessionId}:${updatedAt}` : null;
+			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 			let transcript = await readOfficialSessionMessagesFromSdk(entry);
 			transcript ??= readOfficialSessionMessagesFromGateway(entry);
-			if (transcript === null && entry.sessionFile) {
+			if (transcript === null && entry.sessionFile && sessionId && sourceRevision) {
 				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
@@ -1101,10 +1102,21 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (!transcript) {
 				userActivity.complete = false;
 				console.warn(
-					`[openclaw] could not read active transcript for ${entry.sessionId} through official transcript surfaces`,
+					`[openclaw] could not read active transcript for ${sessionId ?? entry.key} through official transcript surfaces`,
 				);
 				continue;
 			}
+			const sessionUserActivity = computeOpenClawRealUserActivity(transcript, entry.key, entry);
+			userActivity = mergeUserActivity(userActivity, sessionUserActivity);
+			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
+				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
+				const transcriptPath = isAbsolute(entry.sessionFile)
+					? entry.sessionFile
+					: join(sessionsDirForAgent, entry.sessionFile);
+				classifiedTranscriptPaths.add(resolve(transcriptPath));
+			}
+			if (!sessionId || !sourceRevision) continue;
+
 			const drafts: SessionEventDraft[] = [];
 			const modelsUsed = new Set<string>();
 			if (entry.model) modelsUsed.add(entry.model);
@@ -1122,7 +1134,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				drafts.push(
 					...openClawEventDrafts(
 						raw,
-						`${entry.agentId}:${entry.sessionId}`,
+						`${entry.agentId}:${sessionId}`,
 						recordSeq,
 						currentModel,
 					),
@@ -1142,15 +1154,6 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			}
 			const events = sequenceSessionEvents(drafts);
 			const messages = projectEventsToMessages(events);
-			const sessionUserActivity = computeOpenClawRealUserActivity(transcript, entry.key, entry);
-			userActivity = mergeUserActivity(userActivity, sessionUserActivity);
-			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
-				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
-				const transcriptPath = isAbsolute(entry.sessionFile)
-					? entry.sessionFile
-					: join(sessionsDirForAgent, entry.sessionFile);
-				classifiedTranscriptPaths.add(resolve(transcriptPath));
-			}
 			if (messages.length === 0) continue;
 			startedAt ??= new Date(entry.sessionStartedAt ?? updatedAt);
 			endedAt ??= new Date(updatedAt);
@@ -1159,7 +1162,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				inventory.storePaths.get(entry.agentId) ??
 				join(agentsRoot(), entry.agentId, "agent", "openclaw-agent.sqlite");
 			sessions.push({
-				localSessionId: entry.sessionId,
+				localSessionId: sessionId,
 				projectPath,
 				startedAt,
 				endedAt,

@@ -37,8 +37,19 @@ if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.opencla
   printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/agent/openclaw-agent.sqlite"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"sqlite-session-001","updatedAt":%s,"sessionStartedAt":1776247200000,"sessionFile":"%s/.openclaw/agents/main/sessions/sqlite-session-001.jsonl","model":"gpt-5.6-sol","modelProvider":"openai","inputTokens":8,"outputTokens":5,"cacheRead":2,"label":"Active SQLite branch"}]}\n' "$HOME" "$updated_at" "$HOME"
   exit 0
 fi
+if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/session-key-only-test" ]; then
+  printf '%s\n' '{"path":null,"stores":[],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","kind":"direct","updatedAt":1776247205000},{"agentId":"main","key":"agent:main:cron:daily","kind":"cron","updatedAt":1776247205000}]}'
+  exit 0
+fi
 if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
+  case "$*" in *sessionId*) exit 1 ;; esac
   printf '%s\n' '{"messages":[{"id":"active-user","role":"user","content":"kept question","timestamp":"2026-04-15T10:00:00.000Z"},{"id":"active-assistant","parentId":"active-user","role":"assistant","content":"kept answer","model":"gpt-5.6-sol","timestamp":"2026-04-15T10:00:05.000Z"}],"hasMore":false}'
+  exit 0
+fi
+if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/session-key-only-test" ]; then
+  case "$*" in *sessionId*) exit 1 ;; esac
+  case "$*" in *agent:main:cron:daily*) exit 1 ;; esac
+  printf '%s\n' '{"messages":[{"id":"key-only-user","role":"user","content":"key-only question","timestamp":"2026-04-15T10:00:00.000Z"}],"hasMore":false}'
   exit 0
 fi
 if [ "$*" = "agents list --json" ]; then
@@ -308,6 +319,23 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect(adapter.sessions.watchPaths()).toContain(sqlitePath);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-wal`);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-journal`);
+	});
+
+	it("classifies official sessionKey-only entries through Gateway history", async () => {
+		const sessionsRoot = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		rmSync(sessionsRoot, { recursive: true, force: true });
+		mkdirSync(sessionsRoot, { recursive: true });
+		writeFileSync(join(tmpHome, ".openclaw", "session-key-only-test"), "enabled");
+
+		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+
+		expect(sessions).toEqual([]);
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			complete: true,
+		});
 	});
 
 	it("reads legacy inventory JSONL without requiring a live Gateway", async () => {
