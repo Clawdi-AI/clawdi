@@ -44,8 +44,9 @@ describe("relativeTime", () => {
 	});
 
 	test("returns future minute-granularity", () => {
-		const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-		expect(relativeTime(fiveMinFromNow)).toBe("in 5m");
+		const now = new Date("2026-09-04T10:00:00Z");
+		const fiveMinFromNow = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+		expect(relativeTime(fiveMinFromNow, now)).toBe("in 5m");
 	});
 
 	test("switches to compact absolute at >=7 days (current year)", () => {
