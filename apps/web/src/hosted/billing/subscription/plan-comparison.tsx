@@ -7,8 +7,12 @@ import { SettingsSection } from "@/components/settings-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type { Plan } from "@/hosted/billing/contracts";
-import { computePricePresentation } from "@/hosted/billing/deploy/deploy-price-presentation";
+import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
+import {
+	type ComputePricePresentation,
+	cardTrialPricePresentation,
+	computePricePresentation,
+} from "@/hosted/billing/deploy/deploy-price-presentation";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
@@ -32,6 +36,27 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 			<Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
 			<span>{children}</span>
 		</li>
+	);
+}
+
+function PlanPrice({
+	offer,
+	presentation,
+}: {
+	offer: BillingOffer;
+	presentation: ComputePricePresentation;
+}) {
+	const trial = cardTrialPricePresentation(presentation.primary, offer.card_trial_period_days);
+	return (
+		<>
+			<p className="text-3xl font-semibold tracking-normal tabular-nums">{presentation.primary}</p>
+			<p className="text-xs text-muted-foreground tabular-nums">
+				{trial?.label ?? presentation.secondary}
+			</p>
+			{trial && offer.billing_term_months > 1 ? (
+				<p className="text-xs text-muted-foreground tabular-nums">{presentation.secondary}</p>
+			) : null}
+		</>
 	);
 }
 
@@ -122,7 +147,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: "Eligible accounts get one 7-day trial on their first Basic or Performance card subscription; one trial per account."
+					: "Compare hosted compute plans."
 			}
 		>
 			<div>
@@ -136,13 +161,8 @@ export function PlanComparison({
 							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
 								<p className="text-xs text-muted-foreground">Basic subscription</p>
-								{basicPrice ? (
-									<>
-										<p className="text-3xl font-semibold tracking-tight tabular-nums">
-											{basicPrice.primary}
-										</p>
-										<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
-									</>
+								{basicPrice && basicOffer ? (
+									<PlanPrice offer={basicOffer} presentation={basicPrice} />
 								) : (
 									<p className="text-sm font-medium">Pricing unavailable</p>
 								)}
@@ -170,13 +190,8 @@ export function PlanComparison({
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
 								<p className="text-xs text-muted-foreground">Performance subscription</p>
-								{performancePrice ? (
-									<>
-										<p className="text-3xl font-semibold tracking-tight tabular-nums">
-											{performancePrice.primary}
-										</p>
-										<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
-									</>
+								{performancePrice && performanceOffer ? (
+									<PlanPrice offer={performanceOffer} presentation={performancePrice} />
 								) : (
 									<p className="text-sm font-medium">Pricing unavailable</p>
 								)}

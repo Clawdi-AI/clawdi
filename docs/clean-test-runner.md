@@ -58,8 +58,8 @@ The lightweight contract test statically verifies the boundary invariants:
   explicitly internal or host-local.
 - The runner self-reinvokes, mounts source read-only, copies it before installs,
   and selects PostgreSQL only for suites that require it.
-- Full and focused commands, argument routing, workflow selection, paths, and
-  measured resources remain present without mirroring the shell dispatch.
+- Full and focused commands, argument routing, workflow selection, and measured
+  resources remain present without mirroring the shell dispatch.
 
 Routine pull requests do not dynamically invoke every public wrapper or rerun
 the full web, CLI, and backend product suites. For a core runner change,
@@ -80,13 +80,16 @@ suite` step reports the full web, shared, sidecar, CLI, and backend counts.
 
 ## Client CI gate independence
 
-Client CI uses one consolidated `verify` job for lint, build, typecheck, native
-CLI smoke, publish-manifest validation, and the internal test suites for web,
-shared, WhatsApp sidecar, and CLI. Because that job intentionally verifies all
-four packages, one aggregated `client` path-filter signal controls it. A
-separate `deploy_contract` signal controls only generated deploy-contract
-drift checks. The job has no matrix or artifact transfer, and the Turbo
-typecheck task declares no outputs.
+Client CI keeps one stable `verify` check while routing work through package
+dependency signals. Web-only changes run Web build, typecheck, and tests;
+sidecar-only changes run the sidecar equivalents. Shared changes fan out to
+Shared, Web, and CLI, while root lockfile and workspace configuration changes
+fan out to all four packages. Native CLI lifecycle and publish-manifest checks
+run only for CLI-relevant changes. When selected, the serial CLI package suite
+and native lifecycle run as two bounded concurrent branches after the native
+binary is built. A separate `deploy_contract` signal controls only generated
+deploy-contract drift checks. The job has no matrix or artifact transfer, and
+the Turbo typecheck task declares no outputs.
 
 A build-only check copied the repository into a fresh isolated runner
 workspace, installed dependencies, asserted that `apps/web/.output` and
@@ -184,5 +187,5 @@ These are sizing observations from one host, not general product benchmark
 claims. The CI efficiency claim is limited to removing duplicate suite
 execution and two repeated container dependency installs.
 
-Done: `scripts/test.sh cli tests/clean-test-runner.test.ts` reports 8 passing
+Done: `scripts/test.sh cli tests/clean-test-runner.test.ts` reports 5 passing
 contract tests through the Docker runner.

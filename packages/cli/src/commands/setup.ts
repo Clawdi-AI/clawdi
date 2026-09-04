@@ -60,7 +60,7 @@ export async function setup(opts: SetupOpts) {
 		process.exitCode = 1;
 		return;
 	}
-	const api = new ApiClient();
+	const api = new ApiClient({ machineId });
 
 	if (opts.agent) {
 		if (!AGENT_TYPES.includes(opts.agent as AgentType)) {

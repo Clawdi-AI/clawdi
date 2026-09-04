@@ -1,13 +1,11 @@
 "use client";
 
-import { Check } from "lucide-react";
 import type { ApiErrorNormalizer } from "@/components/api-error-panel";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { entityChoiceCardClass } from "@/components/entity-card";
+import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
 	Select,
 	SelectContent,
@@ -24,7 +22,6 @@ import {
 	modelPickerItems,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { cn } from "@/lib/utils";
 
 export function ModelBindingPicker({
 	idPrefix,
@@ -86,66 +83,25 @@ export function ModelBindingPicker({
 						data-testid="managed-model-controls"
 					>
 						{compactManagedItems.featured.length > 0 ? (
-							<RadioGroup
+							<fieldset
 								id={catalogInputId}
-								value={primaryModel}
-								onValueChange={(value) => {
-									if (typeof value === "string") onPrimaryModelChange(value);
-								}}
-								className="grid w-full min-w-0 grid-cols-1 gap-2 @md/main:grid-cols-2 @4xl/main:grid-cols-4"
+								className="m-0 grid w-full min-w-0 grid-cols-1 gap-2 border-0 p-0 @md/main:grid-cols-2 @4xl/main:grid-cols-4"
 								aria-labelledby={`${catalogInputId}-label`}
 								data-testid="managed-model-choices"
 							>
-								{compactManagedItems.featured.map((item, index) => {
-									const radioId = `${catalogInputId}-featured-${index}`;
-									const titleId = `${catalogInputId}-featured-${index}-title`;
-									const descriptionId = `${catalogInputId}-featured-${index}-description`;
-									const selected = primaryModel === item.value;
-									return (
-										<Label
-											key={item.value}
-											htmlFor={radioId}
-											className={entityChoiceCardClass({
-												selected,
-												interactive: true,
-												className: "cursor-pointer gap-2 px-2.5 py-2",
-											})}
-										>
-											<RadioGroupItem
-												id={radioId}
-												value={item.value}
-												aria-labelledby={titleId}
-												aria-describedby={item.description ? descriptionId : undefined}
-												className="sr-only !absolute !size-px !border-0 !p-0"
-											/>
-											<EntityIcon kind="provider" id={item.iconId} size="sm" />
-											<span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
-												<span
-													id={titleId}
-													className="min-w-0 break-words text-sm font-medium leading-snug"
-												>
-													{item.label}
-												</span>
-												{item.description ? (
-													<span
-														id={descriptionId}
-														className="line-clamp-2 min-w-0 break-words text-xs leading-snug font-normal text-muted-foreground"
-													>
-														{item.description}
-													</span>
-												) : null}
-											</span>
-											<Check
-												aria-hidden
-												className={cn(
-													"size-4 shrink-0 text-primary transition-opacity",
-													selected ? "opacity-100" : "opacity-0",
-												)}
-											/>
-										</Label>
-									);
-								})}
-							</RadioGroup>
+								{compactManagedItems.featured.map((item) => (
+									<EntityChoiceCard
+										key={item.value}
+										selected={primaryModel === item.value}
+										onClick={() => onPrimaryModelChange(item.value)}
+										icon={<EntityIcon kind="provider" id={item.iconId} size="sm" />}
+										title={item.label}
+										description={item.description}
+										variant="compact"
+										className="px-2.5 py-2"
+									/>
+								))}
+							</fieldset>
 						) : null}
 						{compactManagedItems.overflow.length > 0 ? (
 							<Select

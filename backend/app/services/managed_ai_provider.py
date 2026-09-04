@@ -151,6 +151,14 @@ def managed_provider_accepted_api_modes(provider_id: str) -> tuple[str, ...] | N
     return None
 
 
+def managed_provider_runtime_env_name(provider_id: str) -> str | None:
+    if provider_id == V1_MANAGED_AI_PROVIDER_ID:
+        return _LEGACY_MANAGED_AI_PROVIDER_RUNTIME_ENV
+    if is_v2_managed_provider_id(provider_id):
+        return MANAGED_AI_PROVIDER_RUNTIME_ENV
+    return None
+
+
 def validate_managed_provider_base_url(base_url: str) -> None:
     try:
         validate_public_https_url(base_url, label="base_url")

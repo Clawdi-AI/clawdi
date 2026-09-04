@@ -394,13 +394,17 @@ describe("runtime user command timeout", () => {
 	test("bounds synchronous runtime-user commands", () => {
 		expect(() =>
 			runRuntimeUserCommand("sleep", ["60"], "", tmpdir(), tmpdir(), {
+				runtimeUser: "root",
 				timeoutMs: 20,
 			}),
 		).toThrow();
 	});
 
 	test("reports a bounded runtime-user probe timeout", () => {
-		const result = spawnRuntimeUserCommand("sleep", ["60"], tmpdir(), tmpdir(), { timeoutMs: 20 });
+		const result = spawnRuntimeUserCommand("sleep", ["60"], tmpdir(), tmpdir(), {
+			runtimeUser: "root",
+			timeoutMs: 20,
+		});
 		expect(result.status).toBeNull();
 		expect(result.error?.message).toContain("ETIMEDOUT");
 	});

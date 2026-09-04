@@ -28,6 +28,11 @@ from app.schemas.session_events import (
     SessionEventsResponse,
     SessionUploadCapabilitiesResponse,
 )
+from app.services.connected_agent_fence import (
+    ConnectedAgentFenceHeaders,
+    connected_agent_fence_headers,
+    require_connected_agent_fence,
+)
 from app.services.file_store import get_file_store
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
@@ -67,23 +72,67 @@ async def _owned_session_by_local(
     auth: AuthContext,
     local_session_id: str,
     environment_id: UUID,
+    fence_headers: ConnectedAgentFenceHeaders | None = None,
     *,
     for_update: bool = False,
 ) -> Session:
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        if auth.api_key.environment_id != environment_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "api key bound to another environment")
+    if fence_headers is not None:
+        await require_connected_agent_fence(
+            db,
+            auth=auth,
+            agent_ids={environment_id},
+            headers=fence_headers,
+            lock=True,
+        )
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
         Session.origin_environment_id == environment_id,
     )
-    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
-        if auth.api_key.environment_id != environment_id:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "api key bound to another environment")
     if for_update:
         stmt = stmt.with_for_update()
     session = (await db.execute(stmt)).scalar_one_or_none()
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     return session
+
+
+async def _fence_event_generation_environment(
+    db: AsyncSession,
+    auth: AuthContext,
+    local_session_id: str,
+    generation_id: UUID,
+    fence_headers: ConnectedAgentFenceHeaders,
+) -> None:
+    row = (
+        await db.execute(
+            select(Session.origin_environment_id)
+            .join(SessionEventGeneration, SessionEventGeneration.session_id == Session.id)
+            .where(
+                SessionEventGeneration.id == generation_id,
+                Session.user_id == auth.user_id,
+                Session.local_session_id == local_session_id,
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+    environment_id = row.origin_environment_id
+    if environment_id is None:
+        return
+    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+        if auth.api_key.environment_id != environment_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={environment_id},
+        headers=fence_headers,
+        lock=True,
+    )
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -162,10 +211,11 @@ async def stage_session_event_generation(
     body: SessionEventGenerationCreate,
     local_session_id: str = Path(..., pattern=_LOCAL_ID_PATTERN),
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventGenerationResponse:
     session = await _owned_session_by_local(
-        db, auth, local_session_id, body.environment_id, for_update=True
+        db, auth, local_session_id, body.environment_id, fence_headers, for_update=True
     )
     existing = await db.get(SessionEventGeneration, body.generation)
     if existing is not None:
@@ -237,6 +287,7 @@ async def upload_session_event_generation_chunk(
     content_hash: str = Form(..., pattern=r"^[0-9a-f]{64}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventChunkResponse:
     data = await _read_upload(file)
@@ -248,6 +299,13 @@ async def upload_session_event_generation_chunk(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     if validated.content_hash != content_hash:
         raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk content hash mismatch")
+    await _fence_event_generation_environment(
+        db,
+        auth,
+        local_session_id,
+        generation_id,
+        fence_headers,
+    )
     generation = (
         await db.execute(
             select(SessionEventGeneration)
@@ -356,8 +414,16 @@ async def commit_session_event_generation(
     local_session_id: str = Path(..., pattern=_LOCAL_ID_PATTERN),
     generation_id: UUID = Path(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventAppendResponse:
+    await _fence_event_generation_environment(
+        db,
+        auth,
+        local_session_id,
+        generation_id,
+        fence_headers,
+    )
     generation = (
         await db.execute(
             select(SessionEventGeneration)
@@ -480,6 +546,7 @@ async def append_session_events(
     content_hash: str = Form(..., pattern=r"^[0-9a-f]{64}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventAppendResponse:
     data = await _read_upload(file)
@@ -496,7 +563,7 @@ async def append_session_events(
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Event append final hash mismatch")
     session = await _owned_session_by_local(
-        db, auth, local_session_id, environment_id, for_update=True
+        db, auth, local_session_id, environment_id, fence_headers, for_update=True
     )
     receipt = (
         await db.execute(

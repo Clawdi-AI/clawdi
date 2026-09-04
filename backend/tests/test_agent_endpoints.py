@@ -145,10 +145,221 @@ async def test_oauth_cli_rebind_preserves_agent_identity(
     assert env.dropped_count_since_start == 0
     assert env.project_skill_reconcile_version is None
     assert env.project_skill_reconcile_observed_at is None
+    assert env.machine_fence_required is False
 
     repeated = await client.post("/v1/agents", json=_agent_body("replacement-installation"))
     assert repeated.status_code == 200, repeated.text
     assert repeated.json() == {"id": agent_id}
+
+
+@pytest.mark.asyncio
+async def test_connected_agent_machine_fence_activates_and_rotates_on_rebind(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.models.session import AgentEnvironment
+
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    try:
+        legacy = await client.post("/v1/agents", json=_agent_body("legacy-machine"))
+        assert legacy.status_code == 200, legacy.text
+        legacy_id = legacy.json()["id"]
+        assert (
+            await client.post(
+                f"/v1/agents/{legacy_id}/sync-heartbeat",
+                json={"queue_depth": 0},
+            )
+        ).status_code == 204
+        legacy_wrong = await client.post(
+            f"/v1/agents/{legacy_id}/sync-heartbeat",
+            headers={"X-Clawdi-Machine-Id": "wrong-machine"},
+            json={"queue_depth": 0},
+        )
+        assert legacy_wrong.status_code == 403
+        assert legacy_wrong.json()["detail"]["code"] == "agent_rebound"
+
+        current = await client.post(
+            "/v1/agents",
+            headers={"X-Clawdi-Machine-Id": "current-machine"},
+            json=_agent_body("current-machine"),
+        )
+        assert current.status_code == 200, current.text
+        current_id = current.json()["id"]
+        env = await db_session.get(AgentEnvironment, uuid.UUID(current_id))
+        assert env is not None
+        assert env.machine_fence_required is True
+
+        for headers in ({}, {"X-Clawdi-Machine-Id": "stale-machine"}):
+            rejected = await client.post(
+                f"/v1/agents/{current_id}/sync-heartbeat",
+                headers=headers,
+                json={"queue_depth": 0},
+            )
+            assert rejected.status_code == 403
+            assert rejected.json()["detail"]["code"] == "agent_rebound"
+        assert (
+            await client.post(
+                f"/v1/agents/{current_id}/sync-heartbeat",
+                headers={"X-Clawdi-Machine-Id": "current-machine"},
+                json={"queue_depth": 0},
+            )
+        ).status_code == 204
+
+        second_body = _agent_body("current-machine")
+        second_body["agent_type"] = "claude_code"
+        second = await client.post(
+            "/v1/agents",
+            headers={"X-Clawdi-Machine-Id": "current-machine"},
+            json=second_body,
+        )
+        assert second.status_code == 200, second.text
+        batch = await client.post(
+            "/v1/sessions/batch",
+            headers={"X-Clawdi-Machine-Id": "current-machine"},
+            json={
+                "sessions": [
+                    {
+                        "environment_id": environment_id,
+                        "local_session_id": local_session_id,
+                        "started_at": datetime.now(UTC).isoformat(),
+                    }
+                    for environment_id, local_session_id in (
+                        (current_id, "current-machine-session"),
+                        (second.json()["id"], "second-agent-session"),
+                    )
+                ]
+            },
+        )
+        assert batch.status_code == 200, batch.text
+
+        missing_rebind_header = await client.post(
+            f"/v1/agents/{current_id}/rebind",
+            json=_agent_body("unheadered-replacement"),
+        )
+        assert missing_rebind_header.status_code == 403
+        assert missing_rebind_header.json()["detail"]["code"] == "agent_rebound"
+        await db_session.refresh(env)
+        assert env.machine_id == "current-machine"
+        assert env.machine_fence_required is True
+
+        rebound = await client.post(
+            f"/v1/agents/{current_id}/rebind",
+            headers={"X-Clawdi-Machine-Id": "replacement-machine"},
+            json=_agent_body("replacement-machine"),
+        )
+        assert rebound.status_code == 200, rebound.text
+        old_machine = await client.post(
+            f"/v1/agents/{current_id}/sync-heartbeat",
+            headers={"X-Clawdi-Machine-Id": "current-machine"},
+            json={"queue_depth": 0},
+        )
+        assert old_machine.status_code == 403
+        assert old_machine.json()["detail"]["code"] == "agent_rebound"
+        assert (
+            await client.post(
+                f"/v1/agents/{current_id}/sync-heartbeat",
+                headers={"X-Clawdi-Machine-Id": "replacement-machine"},
+                json={"queue_depth": 0},
+            )
+        ).status_code == 204
+    finally:
+        restore_auth()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fenced", "request_machine_id", "allowed"),
+    [
+        (False, None, True),
+        (True, "current-machine", True),
+        (True, None, False),
+        (True, "stale-machine", False),
+    ],
+)
+async def test_connected_agent_machine_fence_covers_session_write_routes(
+    client: httpx.AsyncClient,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fenced: bool,
+    request_machine_id: str | None,
+    allowed: bool,
+) -> None:
+    from app.core.config import settings
+    from app.services.session_events import EMPTY_EVENT_HEAD
+
+    monkeypatch.setattr(settings, "llm_api_key", "test-key")
+    restore_auth = _set_oauth_cli_auth(seed_user)
+    registration_machine_id = "current-machine" if fenced else "legacy-machine"
+    registration_headers = {"X-Clawdi-Machine-Id": registration_machine_id} if fenced else {}
+    request_headers = (
+        {"X-Clawdi-Machine-Id": request_machine_id} if request_machine_id is not None else {}
+    )
+    suffix = uuid.uuid4().hex
+    snapshot_id = f"fence-snapshot-{suffix}"
+    events_id = f"fence-events-{suffix}"
+    try:
+        registered = await client.post(
+            "/v1/agents",
+            headers=registration_headers,
+            json=_agent_body(registration_machine_id),
+        )
+        assert registered.status_code == 200, registered.text
+        environment_id = registered.json()["id"]
+        batch = await client.post(
+            "/v1/sessions/batch",
+            headers=registration_headers,
+            json={
+                "sessions": [
+                    {
+                        "environment_id": environment_id,
+                        "local_session_id": snapshot_id,
+                        "started_at": datetime.now(UTC).isoformat(),
+                    },
+                    {
+                        "environment_id": environment_id,
+                        "local_session_id": events_id,
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "content_protocol": "events-v1",
+                    },
+                ]
+            },
+        )
+        assert batch.status_code == 200, batch.text
+
+        responses = [
+            await client.post(f"/v1/sessions/{snapshot_id}/extract", headers=request_headers),
+            await client.post(
+                f"/v1/sessions/{snapshot_id}/upload",
+                headers=request_headers,
+                files={"file": ("session.json", b"[]", "application/json")},
+            ),
+            await client.post(
+                f"/v1/sessions/{events_id}/events/generations",
+                headers=request_headers,
+                json={
+                    "environment_id": environment_id,
+                    "generation": str(uuid.uuid4()),
+                    "append_id": str(uuid.uuid4()),
+                    "base_generation": None,
+                    "base_revision": 0,
+                    "base_count": 0,
+                    "base_head_hash": EMPTY_EVENT_HEAD,
+                    "final_count": 0,
+                    "final_head_hash": EMPTY_EVENT_HEAD,
+                },
+            ),
+        ]
+    finally:
+        restore_auth()
+
+    if allowed:
+        assert [response.status_code for response in responses] == [400, 200, 200]
+        return
+    for response in responses:
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"]["code"] == "agent_rebound"
 
 
 @pytest.mark.asyncio

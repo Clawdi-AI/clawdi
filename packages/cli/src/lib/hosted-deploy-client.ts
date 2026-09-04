@@ -33,6 +33,8 @@ import {
 import { getCliVersion } from "./version";
 
 const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_CHECKOUT_ATTEMPTS = 3;
+const MAX_CHECKOUT_RETRY_AFTER_MS = 2_000;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
 
 type HostedResult<T> = { data?: T; error?: unknown; response: Response };
@@ -82,6 +84,16 @@ function unwrapHosted<T>(result: HostedResult<T>): T {
 	return result.data;
 }
 
+function checkoutRetryDelay(response: Response): number | null {
+	if (response.status !== 409 && response.status !== 503) return null;
+	const retryAfter = response.headers.get("Retry-After");
+	if (retryAfter === null) return null;
+	const seconds = Number(retryAfter);
+	if (!Number.isFinite(seconds) || seconds < 0) return null;
+	const delayMs = seconds * 1_000;
+	return delayMs <= MAX_CHECKOUT_RETRY_AFTER_MS ? delayMs : null;
+}
+
 export type HostedDeployClientOptions = {
 	auth?: HostedDeployAuthProvider;
 	apiBaseUrl?: string;
@@ -89,6 +101,7 @@ export type HostedDeployClientOptions = {
 	fetch?: (request: Request) => Promise<Response>;
 	now?: () => number;
 	paidCheckoutSupported?: boolean;
+	sleep?: (delayMs: number) => Promise<void>;
 };
 
 /** Typed, auth-isolated adapter over the generated Hosted deploy API client. */
@@ -97,11 +110,15 @@ export class HostedDeployClient {
 	private readonly cloudClient: Client<paths>;
 	private readonly client: Client<DeployPaths>;
 	private readonly paidCheckoutSupported: boolean;
+	private readonly sleep: (delayMs: number) => Promise<void>;
 
 	constructor(options: HostedDeployClientOptions = {}) {
 		const config = getConfig();
 		const now = options.now ?? Date.now;
 		this.paidCheckoutSupported = options.paidCheckoutSupported ?? true;
+		this.sleep =
+			options.sleep ??
+			((delayMs) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
 		this.baseUrl = normalizeHostedDeployApiBaseUrl(options.baseUrl ?? config.deployApiUrl);
 		const cloudBaseUrl = normalizeCloudApiBaseUrl(options.apiBaseUrl ?? config.apiUrl);
 		const auth =
@@ -194,12 +211,28 @@ export class HostedDeployClient {
 	}
 
 	async checkout(body: HostedDeployCheckoutRequest, idempotencyKey: string) {
-		return unwrapHosted(
-			await this.client.POST("/v2/subscription/checkout", {
-				params: { header: { "Idempotency-Key": idempotencyKey } },
-				body,
-			}),
-		);
+		for (let attempt = 0; attempt < MAX_CHECKOUT_ATTEMPTS; attempt += 1) {
+			try {
+				const result = await this.client.POST("/v2/subscription/checkout", {
+					params: { header: { "Idempotency-Key": idempotencyKey } },
+					body,
+				});
+				const delayMs = checkoutRetryDelay(result.response);
+				if (delayMs === null || attempt === MAX_CHECKOUT_ATTEMPTS - 1) {
+					return unwrapHosted(result);
+				}
+				await this.sleep(delayMs);
+			} catch (error) {
+				if (
+					!(error instanceof HostedDeployApiError) ||
+					error.status !== 0 ||
+					attempt === MAX_CHECKOUT_ATTEMPTS - 1
+				) {
+					throw error;
+				}
+			}
+		}
+		throw new HostedDeployApiError(0, "Hosted deploy API request failed.");
 	}
 
 	async getOperation(operationName: string): Promise<HostedDeployOperation> {

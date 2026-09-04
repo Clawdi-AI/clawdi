@@ -113,6 +113,12 @@ class AgentEnvironment(Base, TimestampMixin):
     # OAuth CLI or unbound unmanaged API key. Historical ambiguous rows remain
     # NULL; Admin, managed, and environment-bound registration never qualify.
     connected_agent_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # False preserves pre-fence Connected installations. New setup/rebind
+    # enables this atomically with machine_id, after which every Agent write
+    # must prove the active machine binding.
+    machine_fence_required: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
     # Connected Agent-only compatibility observation retained for deployed CLI
     # clients. Desired-state reads and writes do not depend on these fields.
     project_skill_reconcile_version: Mapped[int | None] = mapped_column(Integer)

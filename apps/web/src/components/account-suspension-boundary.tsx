@@ -2,7 +2,6 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { AccountSuspendedPage } from "@/components/account-suspended-page";
-import { Spinner } from "@/components/ui/spinner";
 import {
 	getAccountSuspendedServerSnapshot,
 	getAccountSuspendedSnapshot,
@@ -35,23 +34,10 @@ export function AccountSuspensionBoundary({ children }: { children: React.ReactN
 		},
 	);
 
-	if (!hydrated || !isLoaded || !isSignedIn || (accessCheckEnabled && access.isPending)) {
-		return <AccountAccessPending />;
-	}
 	if (suspended || isAccountSuspendedError(access.error)) {
 		return <SuspendedAccountState />;
 	}
 	return children;
-}
-
-function AccountAccessPending() {
-	return (
-		<main className="flex min-h-dvh items-center justify-center bg-background" aria-busy="true">
-			<div className="flex size-12 items-center justify-center">
-				<Spinner className="size-5 text-muted-foreground" aria-label="Checking account access" />
-			</div>
-		</main>
-	);
 }
 
 function SuspendedAccountState() {

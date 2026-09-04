@@ -70,8 +70,12 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
-      client: ${{ steps.filter.outputs.client }}
-      web_e2e: ${{ steps.filter.outputs.web_e2e }}
+      client: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.cli == 'true' || steps.filter.outputs.sidecar == 'true' || steps.filter.outputs.workspace == 'true' }}
+      web: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
+      shared: ${{ steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
+      cli: ${{ steps.filter.outputs.cli == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
+      sidecar: ${{ steps.filter.outputs.sidecar == 'true' || steps.filter.outputs.workspace == 'true' }}
+      web_e2e: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
       whatsapp_native_e2e: ${{ steps.filter.outputs.whatsapp_native_e2e }}
     steps:
@@ -87,23 +91,17 @@ jobs:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
-            client:
+            web:
               - "apps/web/**"
+            shared:
               - "packages/shared/**"
+            cli:
               - "packages/cli/**"
-              - "packages/whatsapp-baileys-sidecar/**"
               - "install.sh"
-              - "package.json"
-              - "bun.lock"
+            sidecar:
+              - "packages/whatsapp-baileys-sidecar/**"
               - "patches/libsignal@6.0.0.patch"
-              - "turbo.json"
-              - "tsconfig.base.json"
-              - "biome.json"
-              - ".github/actions/setup-bun-ci/**"
-              - ".github/workflows/client-ci.yml"
-            web_e2e:
-              - "apps/web/**"
-              - "packages/shared/**"
+            workspace:
               - "package.json"
               - "bun.lock"
               - "turbo.json"
@@ -145,10 +143,8 @@ jobs:
               - "patches/libsignal@6.0.0.patch"
               - ".github/workflows/client-ci.yml"
 
-  # Lint, typecheck, build, and client package tests in one job.
-  #
-  # The consolidated gate intentionally verifies all four client packages.
-  # One change signal therefore describes the work this job actually performs.
+  # Keep one stable client check while routing package work through the actual
+  # workspace dependency edges. Shared changes fan out to Web and CLI.
   verify:
     needs: changes
     if: >-
@@ -161,6 +157,10 @@ jobs:
       VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
       VITE_CLAWDI_API_URL: http://localhost:8000
       CLERK_SECRET_KEY: sk_test_dummy
+      RUN_WEB: ${{ needs.changes.outputs.web }}
+      RUN_SHARED: ${{ needs.changes.outputs.shared }}
+      RUN_CLI: ${{ needs.changes.outputs.cli }}
+      RUN_SIDECAR: ${{ needs.changes.outputs.sidecar }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
@@ -169,27 +169,64 @@ jobs:
       - name: Biome check
         run: bun run check
       - name: Typecheck and build
-        run: >-
-          bunx turbo typecheck build
-          --filter=web --filter=clawdi --filter=@clawdi/shared
-          --filter=@clawdi/whatsapp-baileys-sidecar
-          --output-logs=errors-only
+        run: |
+          filters=()
+          [[ "$RUN_WEB" == "true" ]] && filters+=(--filter=web)
+          [[ "$RUN_SHARED" == "true" ]] && filters+=(--filter=@clawdi/shared)
+          [[ "$RUN_CLI" == "true" ]] && filters+=(--filter=clawdi)
+          [[ "$RUN_SIDECAR" == "true" ]] && filters+=(--filter=@clawdi/whatsapp-baileys-sidecar)
+          if (( ${#filters[@]} == 0 )); then
+            echo "Client CI routed no packages" >&2
+            exit 2
+          fi
+          bunx turbo typecheck build "${filters[@]}" --output-logs=errors-only
       # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
       - name: Build native CLI
+        if: needs.changes.outputs.cli == 'true'
         run: bun run --cwd packages/cli build:native
-      - name: Smoke native CLI
-        run: |
-          sh -n install.sh
-          packages/cli/dist-native/linux-x64/clawdi --version
-          bun run --cwd packages/cli test:native-linux-lifecycle:internal
       - name: Validate CLI publish payload
+        if: needs.changes.outputs.cli == 'true'
         run: bun run --cwd packages/cli check:publish-manifest
-      - name: Test client packages
+      - name: Test routed client packages
         run: |
-          bun run --cwd apps/web test:internal
-          bun run --cwd packages/shared test:internal
-          bun run --cwd packages/whatsapp-baileys-sidecar test:internal
-          bun run --cwd packages/cli test:internal
+          package_dirs=()
+          [[ "$RUN_WEB" == "true" ]] && package_dirs+=(apps/web)
+          [[ "$RUN_SHARED" == "true" ]] && package_dirs+=(packages/shared)
+          [[ "$RUN_SIDECAR" == "true" ]] && package_dirs+=(packages/whatsapp-baileys-sidecar)
+          [[ "$RUN_CLI" == "true" ]] && package_dirs+=(packages/cli)
+
+          test_packages() {
+            set -e
+            local package_dir
+            for package_dir in "${package_dirs[@]}"; do
+              printf '\n==> Tests: %s\n' "$package_dir"
+              bun run --cwd "$package_dir" test:internal
+            done
+          }
+
+          if [[ "$RUN_CLI" != "true" ]]; then
+            test_packages
+            exit
+          fi
+
+          (
+            set -e
+            printf '\n==> Native CLI lifecycle\n'
+            sh -n install.sh
+            packages/cli/dist-native/linux-x64/clawdi --version
+            bun run --cwd packages/cli test:native-linux-lifecycle:internal
+          ) &
+          native_pid=$!
+          test_packages &
+          packages_pid=$!
+
+          native_status=0
+          packages_status=0
+          wait "$native_pid" || native_status=$?
+          wait "$packages_pid" || packages_status=$?
+          if (( native_status != 0 || packages_status != 0 )); then
+            exit 1
+          fi
 
   deploy-contract-drift:
     needs: changes

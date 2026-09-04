@@ -461,6 +461,7 @@ const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
 const HERMES_DASHBOARD_INSTALL_TIMEOUT_MS = 600_000;
 const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
+export const HERMES_DASHBOARD_BUILD_REVISION_FILE = ".clawdi-runtime-revision";
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -741,6 +742,26 @@ export function prepareOfficialRuntimeServiceDependencies(
 	if (!preparesHermesGateway || !hasHermesDashboard) return null;
 
 	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
+	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
+	const revisionFile = join(dirname(index), HERMES_DASHBOARD_BUILD_REVISION_FILE);
+	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
+	);
+	const commandRevision = descriptor
+		? runtimeCommandCurrentRevision(
+				officialRuntimeServiceCommand(descriptor, paths),
+				paths.userHome,
+				paths.userHome,
+			)
+		: null;
+	if (
+		commandRevision &&
+		existsSync(index) &&
+		existsSync(revisionFile) &&
+		readFileSync(revisionFile, "utf8").trim() === commandRevision
+	) {
+		return null;
+	}
 	const commands = [
 		{
 			args: ["ci", "--include=dev", "--workspace", "web"],
@@ -770,8 +791,13 @@ export function prepareOfficialRuntimeServiceDependencies(
 			return `Hermes dashboard prerequisite failed; see ${logPath}`;
 		}
 	}
-	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
-	return existsSync(index) ? null : `Hermes dashboard prerequisite did not produce ${index}`;
+	if (!existsSync(index)) return `Hermes dashboard prerequisite did not produce ${index}`;
+	if (commandRevision) {
+		withRuntimeUserFileAccess(() =>
+			writePrivateFileAtomic(revisionFile, `${commandRevision}\n`, { mode: 0o600 }),
+		);
+	}
+	return null;
 }
 
 function installOfficialRuntimeUserService(

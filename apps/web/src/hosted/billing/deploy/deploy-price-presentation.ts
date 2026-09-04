@@ -20,6 +20,25 @@ export type DeployAmountPresentation = {
 	detail: string | null;
 };
 
+export type CardTrialPricePresentation = {
+	label: string;
+	summary: string;
+};
+
+export function cardTrialPricePresentation(
+	recurringPrice: string,
+	trialDays: number | null | undefined,
+): CardTrialPricePresentation | null {
+	if (typeof trialDays !== "number" || !Number.isInteger(trialDays) || trialDays < 1) {
+		return null;
+	}
+	const label = `${trialDays}-day free trial`;
+	return {
+		label,
+		summary: `${label}, then ${recurringPrice}`,
+	};
+}
+
 function monthlyPrice(offer: BillingOffer): string {
 	return `${formatCents(offer.effective_monthly_price_cents)}/mo`;
 }
@@ -55,22 +74,27 @@ export function computePricePresentation(
 }
 
 export function cardDeployAmountPresentation(offer: BillingOffer): DeployAmountPresentation {
+	const price = `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`;
+	const trial = cardTrialPricePresentation(price, offer.card_trial_period_days);
+	if (trial) {
+		return { amount: trial.label, caption: `then ${price}`, detail: null };
+	}
 	if (offer.billing_term_months === 1) {
 		return {
-			amount: `${formatCents(offer.price_cents)}/mo`,
+			amount: price,
 			caption: "Billed monthly",
 			detail: null,
 		};
 	}
 	if (offer.billing_term_months === 12) {
 		return {
-			amount: `${formatCents(offer.price_cents)}/yr`,
+			amount: price,
 			caption: `${monthlyPrice(offer)}, billed annually`,
 			detail: null,
 		};
 	}
 	return {
-		amount: `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
+		amount: price,
 		caption: `${monthlyPrice(offer)}, billed ${billingTermLabel(offer.billing_term_months).toLowerCase()}`,
 		detail: null,
 	};
