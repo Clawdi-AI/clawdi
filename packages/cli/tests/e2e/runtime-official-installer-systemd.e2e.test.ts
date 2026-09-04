@@ -37,6 +37,7 @@ import {
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
 import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
+import { runtimeCommandCurrentRevision } from "../../src/runtime/manifest-install";
 import type { HostedSkillSource } from "../../src/runtime/manifest-resources";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -46,6 +47,7 @@ import {
 import { LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-legacy-provider-plugin";
 import { openClawPluginCapabilityConsentArgs } from "../../src/runtime/openclaw-plugin-cli";
 import { getRuntimePaths } from "../../src/runtime/paths";
+import { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "../../src/runtime/runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
@@ -53,6 +55,9 @@ import {
 } from "../../src/runtime/systemd-transaction";
 
 const REAL_SYSTEMD_GATE = "CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD";
+const VIRGIN_RUNTIME_INIT_TIMEOUT_MS = 540_000;
+const VIRGIN_RUNTIME_PORT_TIMEOUT_MS = 60_000;
+const VIRGIN_RUNTIME_TEST_TIMEOUT_MS = 600_000;
 const FILE_BROWSER_VERSION = "v1.5.0-stable";
 const FILE_BROWSER_COMMIT = "79552f8adb27c3e29934c4001660eb98f4aab5d6";
 const FILE_BROWSER_AMD64_SHA256 =
@@ -289,8 +294,9 @@ function expectManagedSystemdTreeOwnership(
 	visit(root);
 }
 
-async function waitForTcpPort(port: number): Promise<void> {
-	for (let attempt = 0; attempt < 600; attempt += 1) {
+async function waitForTcpPort(port: number, timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
 		const listening = await new Promise<boolean>((resolve) => {
 			const socket = createConnection({ host: "127.0.0.1", port });
 			let settled = false;
@@ -308,7 +314,64 @@ async function waitForTcpPort(port: number): Promise<void> {
 		if (listening) return;
 		await Bun.sleep(100);
 	}
-	throw new Error(`port ${port} did not begin listening`);
+	throw new Error(`port ${port} did not begin listening within ${timeoutMs}ms`);
+}
+
+function userUnitDiagnostics(unitName: string, runtimeHome: string, runtimeUid: number): string {
+	const run = (...args: string[]) =>
+		spawnSync(
+			"runuser",
+			[
+				"-u",
+				"clawdi",
+				"--",
+				"env",
+				`HOME=${runtimeHome}`,
+				`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
+				`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
+				...args,
+			],
+			{ encoding: "utf8" },
+		);
+	const show = run(
+		"systemctl",
+		"--user",
+		"show",
+		unitName,
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=SubState",
+		"--property=Result",
+		"--property=MainPID",
+		"--property=ExecMainCode",
+		"--property=ExecMainStatus",
+		"--property=NRestarts",
+	);
+	const status = run("systemctl", "--user", "status", unitName, "--no-pager", "--full");
+	const journal = run("journalctl", "--user", "--unit", unitName, "--no-pager", "--lines=100");
+	const processes = spawnSync("ps", ["-eo", "pid,ppid,etimes,state,args", "--forest"], {
+		encoding: "utf8",
+	});
+	const sockets = spawnSync("ss", ["-ltnp"], { encoding: "utf8" });
+	return [
+		"--- systemctl show ---",
+		show.stdout,
+		show.stderr,
+		"--- systemctl status ---",
+		status.stdout,
+		status.stderr,
+		"--- journalctl ---",
+		journal.stdout,
+		journal.stderr,
+		"--- process tree ---",
+		processes.stdout,
+		processes.stderr,
+		"--- listening sockets ---",
+		sockets.stdout,
+		sockets.stderr,
+	]
+		.filter(Boolean)
+		.join("\n");
 }
 
 function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
@@ -606,7 +669,15 @@ exec /usr/bin/systemctl "$@"
 							runtime === "hermes"
 								? {
 										dashboard: {
-											args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+											args: [
+												"dashboard",
+												"--host",
+												"0.0.0.0",
+												"--port",
+												"9119",
+												"--no-open",
+												"--skip-build",
+											],
 										},
 									}
 								: {},
@@ -696,21 +767,40 @@ exec /usr/bin/systemctl "$@"
 
 			const runManagedInit = async () => {
 				const child = Bun.spawn(
-					[paths.cliManagedBin, "runtime", "init", "--non-interactive", "--json"],
+					[
+						"/usr/bin/setsid",
+						paths.cliManagedBin,
+						"runtime",
+						"init",
+						"--non-interactive",
+						"--json",
+					],
 					{
 						env: { ...process.env },
 						stdout: "pipe",
 						stderr: "pipe",
 					},
 				);
-				const timeout = setTimeout(() => child.kill("SIGKILL"), 180_000);
+				let timedOut = false;
+				const timeout = setTimeout(() => {
+					timedOut = true;
+					try {
+						process.kill(-child.pid, "SIGKILL");
+					} catch {}
+				}, VIRGIN_RUNTIME_INIT_TIMEOUT_MS);
 				try {
 					const [status, stdout, stderr] = await Promise.all([
 						child.exited,
 						new Response(child.stdout).text(),
 						new Response(child.stderr).text(),
 					]);
-					return { status, stdout, stderr };
+					return {
+						status,
+						stdout,
+						stderr: timedOut
+							? `${stderr}\nruntime init exceeded ${VIRGIN_RUNTIME_INIT_TIMEOUT_MS}ms`
+							: stderr,
+					};
 				} finally {
 					clearTimeout(timeout);
 				}
@@ -790,29 +880,10 @@ exec /usr/bin/systemctl "$@"
 				? ([[9119, "clawdi-hermes-dashboard.service"]] as const)
 				: ([[18789, "openclaw-gateway.service"]] as const)) {
 				try {
-					await waitForTcpPort(port);
+					await waitForTcpPort(port, VIRGIN_RUNTIME_PORT_TIMEOUT_MS);
 				} catch (error) {
-					const journal = spawnSync(
-						"runuser",
-						[
-							"-u",
-							"clawdi",
-							"--",
-							"env",
-							`HOME=${runtimeHome}`,
-							`XDG_RUNTIME_DIR=/run/user/${runtimeUid}`,
-							`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${runtimeUid}/bus`,
-							"journalctl",
-							"--user",
-							"--unit",
-							unitName,
-							"--no-pager",
-							"--lines=100",
-						],
-						{ encoding: "utf8" },
-					);
 					throw new Error(
-						`${error instanceof Error ? error.message : String(error)}\n${journal.stdout}${journal.stderr}`,
+						`${error instanceof Error ? error.message : String(error)}\n${userUnitDiagnostics(unitName, runtimeHome, runtimeUid)}`,
 					);
 				}
 			}
@@ -886,7 +957,7 @@ exec /usr/bin/systemctl "$@"
 			expect(reload.status, reload.stderr).toBe(0);
 		}
 	},
-	300_000,
+	VIRGIN_RUNTIME_TEST_TIMEOUT_MS,
 );
 
 test("propagates the real official OpenClaw installer failure without committing authority", () => {
@@ -2491,7 +2562,38 @@ function cleanBehavioralGuardUnits(paths: ReturnType<typeof getRuntimePaths>): v
 	rmSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"), { force: true });
 	rmSync(join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"), { force: true });
 	spawnSync("/usr/bin/systemctl", ["daemon-reload"]);
-	runBehavioralGuardUserSystemctl("disable", "--now", ...units);
+	const loadedUnits = units.filter(
+		(unit) =>
+			runBehavioralGuardUserSystemctl(
+				"show",
+				unit,
+				"--property=LoadState",
+				"--value",
+			).stdout.trim() === "loaded",
+	);
+	if (loadedUnits.length > 0) {
+		const stopped = runBehavioralGuardUserSystemctl("stop", ...loadedUnits);
+		if (stopped.status !== 0) throw new Error(stopped.stderr);
+		const reset = runBehavioralGuardUserSystemctl("reset-failed", ...loadedUnits);
+		if (reset.status !== 0) throw new Error(reset.stderr);
+		for (const unit of loadedUnits) {
+			const state = runBehavioralGuardUserSystemctl(
+				"show",
+				unit,
+				"--property=ActiveState",
+				"--property=MainPID",
+				"--property=ControlPID",
+			);
+			if (state.status !== 0 || !/^ActiveState=inactive$/m.test(state.stdout)) {
+				throw new Error(`could not stop ${unit}: ${state.stdout}${state.stderr}`);
+			}
+			if (!/^MainPID=0$/m.test(state.stdout) || !/^ControlPID=0$/m.test(state.stdout)) {
+				throw new Error(`processes remain for ${unit}: ${state.stdout}`);
+			}
+		}
+		const disabled = runBehavioralGuardUserSystemctl("disable", ...loadedUnits);
+		if (disabled.status !== 0) throw new Error(disabled.stderr);
+	}
 	for (const unit of units) {
 		rmSync(join(paths.systemdUserRoot, unit), { force: true });
 		rmSync(join(paths.systemdUserRoot, `${unit}.d`), { recursive: true, force: true });
@@ -2518,8 +2620,15 @@ function installBehavioralGuardHermesRuntime(): void {
 	);
 	if (install.status !== 0) throw new Error(install.stderr);
 	const dashboardRoot = "/home/clawdi/.hermes/hermes-agent/hermes_cli/web_dist";
-	mkdirSync(dashboardRoot, { recursive: true });
+	mkdirSync(join(dashboardRoot, "assets"), { recursive: true });
 	writeFileSync(join(dashboardRoot, "index.html"), "<html>Hermes dashboard</html>\n");
+	const commandRevision = runtimeCommandCurrentRevision(
+		"/home/clawdi/.local/bin/hermes",
+		"/home/clawdi",
+		"/home/clawdi",
+	);
+	if (!commandRevision) throw new Error("could not resolve the behavioral Hermes revision");
+	writeFileSync(join(dashboardRoot, HERMES_DASHBOARD_BUILD_REVISION_FILE), `${commandRevision}\n`);
 	chownTreeWithoutFollowingLinks(dashboardRoot, 10_001, 10_001);
 }
 
@@ -2612,7 +2721,15 @@ function behavioralGuardLoad(input: {
 					run: { args: ["gateway", "run"] },
 					services: {
 						dashboard: {
-							args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+							args: [
+								"dashboard",
+								"--host",
+								"0.0.0.0",
+								"--port",
+								"9119",
+								"--no-open",
+								"--skip-build",
+							],
 						},
 					},
 				},
@@ -2982,12 +3099,16 @@ exec /usr/bin/systemctl "$@"
 			dashboardEnvironmentBefore,
 		);
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
-		expect(behavioralGuardUnitState("hermes-gateway.service").InvocationID).toBe(
-			gatewayBefore.InvocationID,
-		);
-		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").InvocationID).toBe(
-			dashboardBefore.InvocationID,
-		);
+		const gatewayDuringCrash = behavioralGuardUnitState("hermes-gateway.service");
+		expect(
+			gatewayDuringCrash.InvocationID,
+			userUnitDiagnostics("hermes-gateway.service", "/home/clawdi", 10_001),
+		).toBe(gatewayBefore.InvocationID);
+		const dashboardDuringCrash = behavioralGuardUnitState("clawdi-hermes-dashboard.service");
+		expect(
+			dashboardDuringCrash.InvocationID,
+			userUnitDiagnostics("clawdi-hermes-dashboard.service", "/home/clawdi", 10_001),
+		).toBe(dashboardBefore.InvocationID);
 
 		process.kill(-child.pid, "SIGKILL");
 		const childStatus = await child.exited;
