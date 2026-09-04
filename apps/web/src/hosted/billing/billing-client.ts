@@ -63,7 +63,11 @@ const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
 export const BILLING_API_ORIGIN = new URL(ROOT_BASE_URL).origin;
 
 const REQUEST_TIMEOUT_MS = 20_000;
+const CHECKOUT_PATH = "/v2/subscription/checkout";
+const MAX_CHECKOUT_ATTEMPTS = 3;
+const MAX_CHECKOUT_RETRY_AFTER_MS = 2_000;
 const RETRYABLE_IDEMPOTENT_POST_PATHS = new Set([
+	CHECKOUT_PATH,
 	"/v2/wallet/topup",
 	"/v2/wallet/auto-reload/setup-intent",
 ]);
@@ -120,25 +124,59 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		});
 }
 
-export function retryIdempotentBillingTransport(fetcher: BillingFetch): BillingFetch {
+function checkoutRetryDelay(response: Response): number | null {
+	if (response.status !== 409 && response.status !== 503) return null;
+	const retryAfter = response.headers.get("Retry-After");
+	if (retryAfter === null) return null;
+	const seconds = Number(retryAfter);
+	if (!Number.isFinite(seconds) || seconds < 0) return null;
+	const delayMs = seconds * 1_000;
+	return delayMs <= MAX_CHECKOUT_RETRY_AFTER_MS ? delayMs : null;
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+	if (!signal.aborted) return;
+	throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+}
+
+export function retryIdempotentBillingTransport(
+	fetcher: BillingFetch,
+	sleep: (delayMs: number) => Promise<void> = (delayMs) =>
+		new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)),
+): BillingFetch {
 	return async (request) => {
-		const retryRequest = request.clone();
-		try {
-			return await fetcher(request);
-		} catch (error) {
-			const idempotencyKey = request.headers.get("Idempotency-Key");
-			const url = new URL(request.url);
-			if (
-				!(error instanceof BillingNetworkError) ||
-				request.method !== "POST" ||
-				!RETRYABLE_IDEMPOTENT_POST_PATHS.has(url.pathname) ||
-				!idempotencyKey?.trim() ||
-				request.signal.aborted
-			) {
-				throw error;
+		const path = new URL(request.url).pathname;
+		const retryable =
+			request.method === "POST" &&
+			RETRYABLE_IDEMPOTENT_POST_PATHS.has(path) &&
+			!!request.headers.get("Idempotency-Key")?.trim();
+		if (!retryable) return fetcher(request);
+
+		const maxAttempts = path === CHECKOUT_PATH ? MAX_CHECKOUT_ATTEMPTS : 2;
+		const attempts = Array.from({ length: maxAttempts }, (_, index) =>
+			index === 0 ? request : request.clone(),
+		);
+		for (let attempt = 0; attempt < attempts.length; attempt += 1) {
+			throwIfAborted(request.signal);
+			let response: Response;
+			try {
+				response = await fetcher(attempts[attempt] as Request);
+			} catch (error) {
+				if (
+					!(error instanceof BillingNetworkError) ||
+					request.signal.aborted ||
+					attempt === attempts.length - 1
+				) {
+					throw error;
+				}
+				continue;
 			}
-			return fetcher(retryRequest);
+
+			const delayMs = path === CHECKOUT_PATH ? checkoutRetryDelay(response) : null;
+			if (delayMs === null || attempt === attempts.length - 1) return response;
+			await sleep(delayMs);
 		}
+		throw new BillingNetworkError("offline");
 	};
 }
 
@@ -472,9 +510,12 @@ export function createBillingClient(
 	getToken: BillingAuthTokenGetter,
 	options: BillingClientOptions = {},
 ) {
+	const sleep =
+		options.sleep ??
+		((delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
 	const api = createClient<DeployPaths>({
 		baseUrl: ROOT_BASE_URL,
-		fetch: retryIdempotentBillingTransport(options.fetch ?? fetchWithTimeout),
+		fetch: retryIdempotentBillingTransport(options.fetch ?? fetchWithTimeout, sleep),
 	});
 	api.use({
 		async onRequest({ request }) {
@@ -496,10 +537,6 @@ export function createBillingClient(
 	const deploymentRequestTimeoutMs = Number.isFinite(configuredDeploymentRequestTimeoutMs)
 		? Math.max(0, configuredDeploymentRequestTimeoutMs)
 		: 120_000;
-	const sleep =
-		options.sleep ??
-		((delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
-
 	const getDeployment = async (id: string): Promise<HostedDeployment> =>
 		unwrapDeploy(
 			await api.GET("/v2/deployments/{deployment_id}", {
