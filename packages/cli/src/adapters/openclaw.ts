@@ -1132,12 +1132,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					message,
 				};
 				drafts.push(
-					...openClawEventDrafts(
-						raw,
-						`${entry.agentId}:${sessionId}`,
-						recordSeq,
-						currentModel,
-					),
+					...openClawEventDrafts(raw, `${entry.agentId}:${sessionId}`, recordSeq, currentModel),
 				);
 				const messageModel = jsonString(message.model);
 				if (messageModel) {
