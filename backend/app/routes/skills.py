@@ -74,6 +74,11 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.audit import record_control_plane_audit
+from app.services.connected_agent_fence import (
+    ConnectedAgentFenceHeaders,
+    connected_agent_fence_headers,
+    require_connected_agent_fence,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
@@ -892,6 +897,7 @@ async def upload_skill_legacy(
     ),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     """Back-compat shim for pre-PR-66 CLI binaries. Resolves the
@@ -950,6 +956,7 @@ async def upload_skill_legacy(
         content_hash=content_hash,
         authority=authority,
         authority_agent_id=authority_agent_id,
+        fence_headers=fence_headers,
     )
 
 
@@ -1089,6 +1096,7 @@ async def _upload_skill_project(
     create_only: bool,
     content_hash: str | None,
     skill_sync_protocol: str | None,
+    fence_headers: ConnectedAgentFenceHeaders,
 ) -> SkillUploadResponse:
     authority, authority_agent_id = await _project_upload_authority(
         db,
@@ -1110,6 +1118,7 @@ async def _upload_skill_project(
         create_only=create_only,
         authority=authority,
         authority_agent_id=authority_agent_id,
+        fence_headers=fence_headers,
     )
 
 
@@ -1125,6 +1134,7 @@ async def upload_agent_synced_skill(
         pattern=r"^[a-f0-9]{64}$",
     ),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     project_id = await _agent_sync_project(db, auth, agent_id)
@@ -1142,6 +1152,7 @@ async def upload_agent_synced_skill(
         content_hash=content_hash,
         authority=SKILL_AUTHORITY_AGENT_SYNC,
         authority_agent_id=agent_id,
+        fence_headers=fence_headers,
     )
 
 
@@ -1162,6 +1173,7 @@ async def upload_skill_project(
     ),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse:
     """Project-explicit tar.gz skill upload.
@@ -1181,6 +1193,7 @@ async def upload_skill_project(
         create_only=create_only,
         content_hash=content_hash,
         skill_sync_protocol=skill_sync_protocol,
+        fence_headers=fence_headers,
     )
 
 
@@ -1443,6 +1456,7 @@ async def upload_skill_project_legacy(
     ),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SkillUploadResponse | dict[str, bool]:
     """Preserve the released /api upload contract for legacy Agent scanners."""
@@ -1474,6 +1488,7 @@ async def upload_skill_project_legacy(
         create_only=create_only,
         content_hash=content_hash,
         skill_sync_protocol=skill_sync_protocol,
+        fence_headers=fence_headers,
     )
 
 
@@ -1628,6 +1643,7 @@ async def _do_upload_skill(
     create_only: bool = False,
     authority: str = SKILL_AUTHORITY_CLOUD,
     authority_agent_id: UUID | None = None,
+    fence_headers: ConnectedAgentFenceHeaders | None = None,
 ) -> SkillUploadResponse:
     """Validate and persist a Cloud row or Agent filesystem projection.
 
@@ -1712,11 +1728,17 @@ async def _do_upload_skill(
                     status.HTTP_403_FORBIDDEN,
                     "Agent sync authority is missing",
                 )
+            await require_connected_agent_fence(
+                db,
+                auth=auth,
+                agent_ids={authority_agent_id},
+                headers=fence_headers or ConnectedAgentFenceHeaders(machine_id=None),
+                lock=True,
+            )
             current_project_id = await _agent_sync_project(
                 db,
                 auth,
                 authority_agent_id,
-                lock_agent=True,
             )
             if current_project_id != project_id:
                 raise HTTPException(
@@ -2202,8 +2224,16 @@ async def delete_agent_synced_skill(
         ),
     ),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> Response:
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={agent_id},
+        headers=fence_headers,
+        lock=True,
+    )
     await _do_delete_agent_synced_skill(
         db=db,
         auth=auth,
@@ -2346,6 +2376,7 @@ async def delete_skill_project(
     ),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
     """Phase-2 project-explicit delete — only the named project's copy
@@ -2360,6 +2391,13 @@ async def delete_skill_project(
     if authority == SKILL_AUTHORITY_AGENT_SYNC:
         if authority_agent_id is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Agent identity is unavailable")
+        await require_connected_agent_fence(
+            db,
+            auth=auth,
+            agent_ids={authority_agent_id},
+            headers=fence_headers,
+            lock=True,
+        )
         return await _do_delete_agent_synced_skill(
             db=db,
             auth=auth,

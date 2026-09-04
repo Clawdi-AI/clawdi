@@ -252,6 +252,18 @@ export function restart(opts: InstallOpts = {}): void {
 	}
 }
 
+/** Stop an installed daemon without removing or disabling its supervisor unit. */
+export function stop(opts: InstallOpts = {}): void {
+	const p = platform();
+	if (p === "darwin") {
+		stopLaunchd(opts);
+	} else if (p === "linux") {
+		stopSystemd(opts);
+	} else {
+		throw new Error(`unsupported platform for service stop: ${p}`);
+	}
+}
+
 function restartLaunchd(opts: InstallOpts): void {
 	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	if (!existsSync(path)) {
@@ -406,7 +418,6 @@ ${programArgs}
 function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
 	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	if (!existsSync(path)) return { removed: false };
-	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
 	// Stop the daemon BEFORE removing the plist. Pre-fix this used a
 	// bare `tryRun(["launchctl", "unload", path])` and ignored the
 	// return code, then `unlinkSync(path)` regardless — so a
@@ -419,23 +430,26 @@ function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
 	//     ~/Library/LaunchAgents.
 	//   - `launchctl bootout gui/<uid>/<label>`: modern (10.10+),
 	//     works regardless of whether the plist file still exists.
-	// Try unload first; fall back to bootout. Only proceed to
+	// Try bootout first; fall back to the legacy unload form. Only proceed to
 	// unlink the plist after we've confirmed the daemon is stopped
 	// (or was never loaded in the first place).
-	const wasLoaded = tryRunCapture(["launchctl", "list", label]) !== null;
-	if (wasLoaded) {
-		const stopped =
-			tryRun(["launchctl", "unload", path]) ||
-			tryRun(["launchctl", "bootout", `gui/${process.getuid?.() ?? 501}/${label}`]);
-		if (!stopped) {
-			throw new Error(
-				`Failed to stop running daemon ${label}. Try manually: ` +
-					`launchctl bootout gui/$(id -u)/${label} && rm "${path}"`,
-			);
-		}
-	}
+	stopLaunchd(opts);
 	unlinkSync(path);
 	return { removed: true };
+}
+
+function stopLaunchd(opts: InstallOpts): void {
+	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+	if (!existsSync(path)) {
+		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
+	}
+	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
+	if (tryRunCapture(["launchctl", "list", label]) === null) return;
+	const target = `gui/${process.getuid?.() ?? 501}/${label}`;
+	if (tryRun(["launchctl", "bootout", target]) || tryRun(["launchctl", "unload", path])) return;
+	throw new Error(
+		`Failed to stop running daemon ${label}. Try manually: launchctl bootout gui/$(id -u)/${label}`,
+	);
 }
 
 function statusLaunchd(opts: InstallOpts): string[] {
@@ -582,10 +596,27 @@ WantedBy=default.target
 function uninstallSystemd(opts: InstallOpts): { removed: boolean } {
 	const path = unitPath(opts.agent);
 	if (!existsSync(path)) return { removed: false };
-	tryRun(["systemctl", "--user", "disable", "--now", unitFileName(opts.agent)]);
+	stopSystemd(opts);
+	if (!tryRun(["systemctl", "--user", "disable", unitFileName(opts.agent)])) {
+		throw new Error(`systemctl --user disable ${unitFileName(opts.agent)} failed.`);
+	}
 	unlinkSync(path);
 	tryRun(["systemctl", "--user", "daemon-reload"]);
 	return { removed: true };
+}
+
+function stopSystemd(opts: InstallOpts): void {
+	const path = unitPath(opts.agent);
+	const unit = unitFileName(opts.agent);
+	if (!existsSync(path)) {
+		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
+	}
+	if (!tryRun(["systemctl", "--user", "stop", unit])) {
+		throw new Error(
+			`systemctl --user stop ${unit} failed. ` +
+				`Check \`systemctl --user status ${unit}\` for details.`,
+		);
+	}
 }
 
 function statusSystemd(opts: InstallOpts): string[] {

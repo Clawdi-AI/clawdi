@@ -51,6 +51,7 @@ function env(id: string, name: string): Env {
 		id,
 		name,
 		default_name: name,
+		machine_id: `${id}-machine`,
 		machine_name: name,
 		agent_type: "openclaw",
 		agent_version: null,

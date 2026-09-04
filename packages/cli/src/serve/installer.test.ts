@@ -258,6 +258,35 @@ describe("installer.install (macOS plist)", () => {
 });
 
 describe("installer.install (Linux systemd)", () => {
+	it("stops without removing the unit and restart cold-starts it", async () => {
+		const os = await import("node:os");
+		if (os.platform() !== "linux") return;
+
+		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+		mkdirSync(stubBin, { recursive: true });
+		const calls = join(process.env.HOME ?? tmp, "systemctl-calls");
+		const stubSystemctl = join(stubBin, "systemctl");
+		writeFileSync(stubSystemctl, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${calls}"\nexit 0\n`, {
+			mode: 0o755,
+		});
+		chmodSync(stubSystemctl, 0o755);
+		const oldPath = process.env.PATH;
+		process.env.PATH = `${stubBin}:${oldPath}`;
+
+		try {
+			const { install, restart, stop } = await import("./installer");
+			const installed = install();
+			stop();
+			expect(existsSync(installed.unit)).toBe(true);
+			restart();
+			const commands = readFileSync(calls, "utf8").trim().split("\n");
+			expect(commands).toContain("--user stop clawdi-serve.service");
+			expect(commands).toContain("--user restart clawdi-serve.service");
+		} finally {
+			process.env.PATH = oldPath;
+		}
+	});
+
 	it("captures RPC host, port, and remote opt-in into the unit Environment", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "linux") return;

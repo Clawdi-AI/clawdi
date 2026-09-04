@@ -21,6 +21,7 @@ export interface ServeHandlers {
 	serve: (opts: Record<string, unknown>) => Promise<void> | void;
 	serveInstall: (opts: Record<string, unknown>) => Promise<void> | void;
 	serveUninstall: (opts: Record<string, unknown>) => Promise<void> | void;
+	serveStop: (opts: Record<string, unknown>) => Promise<void> | void;
 	serveRestart: (opts: Record<string, unknown>) => Promise<void> | void;
 	serveStatus: (opts: Record<string, unknown>) => Promise<void> | void;
 	serveLogs: (opts: Record<string, unknown>) => Promise<void> | void;
@@ -47,6 +48,7 @@ async function defaultHandlers(): Promise<ServeHandlers> {
 		serve: m.serve,
 		serveInstall: m.serveInstall,
 		serveUninstall: m.serveUninstall,
+		serveStop: m.serveStop,
 		serveRestart: m.serveRestart,
 		serveStatus: m.serveStatus,
 		serveLogs: m.serveLogs,
@@ -130,6 +132,14 @@ Examples:
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serveUninstall(cmd.optsWithGlobals());
+		});
+
+	serveCmd
+		.command("stop")
+		.description("Stop the singleton daemon while preserving its installed service unit")
+		.action(async (_opts, cmd) => {
+			const h = await get();
+			await h.serveStop(cmd.optsWithGlobals());
 		});
 
 	serveCmd

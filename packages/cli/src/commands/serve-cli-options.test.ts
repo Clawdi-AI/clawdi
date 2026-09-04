@@ -21,6 +21,7 @@ function makeHandlers(captured: { last: Record<string, unknown> | null }): Serve
 		serve: recordOpts,
 		serveInstall: recordOpts,
 		serveUninstall: recordOpts,
+		serveStop: recordOpts,
 		serveRestart: recordOpts,
 		serveStatus: recordOpts,
 		serveLogs: recordOpts,
@@ -166,6 +167,12 @@ describe("registerServeCommand", () => {
 	it("restart reaches the action", async () => {
 		const { program, captured } = buildTree();
 		await program.parseAsync(["node", "clawdi", "serve", "restart"]);
+		expect(captured.last).toEqual({});
+	});
+
+	it("stop reaches the action", async () => {
+		const { program, captured } = buildTree();
+		await program.parseAsync(["node", "clawdi", "daemon", "stop"]);
 		expect(captured.last).toEqual({});
 	});
 

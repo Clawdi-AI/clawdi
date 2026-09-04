@@ -1,8 +1,7 @@
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { normalizeCloudApiBaseUrl, normalizeHostedDeployApiBaseUrl } from "./api-origin";
-import { withPrivateDirectoryLockSync } from "./private-directory-lock";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "./private-file";
 
 // NOTE: these paths are computed lazily so tests can override HOME per-run
@@ -217,36 +216,10 @@ export function setAuth(auth: ClawdiAuth) {
 }
 
 export function clearAuth() {
-	const ownerUserId = getStoredAuth()?.userId?.trim();
-	if (ownerUserId) bindCachedEnvironmentsToUser(ownerUserId);
 	const p = authFile();
 	if (existsSync(p)) {
 		unlinkSync(p);
 	}
-}
-
-function bindCachedEnvironmentsToUser(userId: string): void {
-	const envDir = join(clawdiDir(), "environments");
-	if (!existsSync(envDir)) return;
-	withPrivateDirectoryLockSync(join(clawdiDir(), "environments.lock"), (lease) => {
-		for (const fileName of readdirSync(envDir)) {
-			if (!fileName.endsWith(".json")) continue;
-			const path = join(envDir, fileName);
-			const value = readRecoverablePrivateJson<unknown>(path);
-			if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
-			const registration = value as Record<string, unknown>;
-			if (typeof registration.id !== "string" || typeof registration.agentType !== "string") {
-				continue;
-			}
-			if (typeof registration.userId === "string") continue;
-			lease.assertOwned();
-			writePrivateFileAtomic(path, `${JSON.stringify({ ...registration, userId }, null, 2)}\n`, {
-				mode: PRIVATE_FILE_MODE,
-				dirMode: PRIVATE_DIR_MODE,
-				durable: true,
-			});
-		}
-	});
 }
 
 export function isLoggedIn(): boolean {

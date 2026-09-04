@@ -38,6 +38,11 @@ export function getOrCreateMachineId(): string {
 	});
 }
 
+/** Read the durable installation identity without creating or repairing it. */
+export function readMachineId(): string | null {
+	return readMachineIdentity(join(getClawdiDir(), "machine.json"))?.id ?? null;
+}
+
 function readMachineIdentity(path: string): MachineIdentity | null {
 	if (!existsSync(path)) return null;
 	try {
