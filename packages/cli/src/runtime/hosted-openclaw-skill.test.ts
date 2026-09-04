@@ -20,14 +20,11 @@ import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
-const originalJournalctlPath = process.env.CLAWDI_JOURNALCTL_PATH;
 afterEach(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
 	root = "";
 	if (originalSystemctlPath === undefined) delete process.env.CLAWDI_SYSTEMCTL_PATH;
 	else process.env.CLAWDI_SYSTEMCTL_PATH = originalSystemctlPath;
-	if (originalJournalctlPath === undefined) delete process.env.CLAWDI_JOURNALCTL_PATH;
-	else process.env.CLAWDI_JOURNALCTL_PATH = originalJournalctlPath;
 });
 
 test("retries the official workspace roster while the OpenClaw gateway is restarting", () => {
@@ -262,7 +259,7 @@ esac
 	]);
 });
 
-test("retires a conflicting legacy device identity reported only by gateway startup", () => {
+test("retires a conflicting legacy device identity without relying on gateway logs", () => {
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-identity-retirement-"));
 	const home = join(root, "home");
 	const workspaceRoot = join(home, "agent-workspace");
@@ -270,8 +267,6 @@ test("retires a conflicting legacy device identity reported only by gateway star
 	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
 	const archiveSdk = join(packageRoot, "runtime-doctor-migrations.mjs");
 	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
-	const journalctl = join(root, "journalctl");
-	const journalLog = join(root, "journal.log");
 	const commandLog = join(root, "commands.log");
 	mkdirSync(dirname(command), { recursive: true });
 	mkdirSync(dirname(legacyIdentity), { recursive: true });
@@ -313,29 +308,45 @@ case "$*" in
 esac
 `,
 	);
-	writeFileSync(
-		journalctl,
-		`#!/bin/sh
-printf '%s\n' "$*" > '${journalLog}'
-printf '%s\n' 'OpenClaw startup migrations did not complete cleanly; refusing to report the gateway ready.'
-`,
-	);
 	chmodSync(command, 0o755);
-	chmodSync(journalctl, 0o755);
-	process.env.CLAWDI_JOURNALCTL_PATH = journalctl;
 
 	expect(repairHostedOpenClawStartupMigrations(home)).toBe(true);
 	expect(existsSync(legacyIdentity)).toBe(false);
 	expect(existsSync(`${legacyIdentity}.migrated`)).toBe(true);
-	expect(readFileSync(journalLog, "utf8").trim()).toBe(
-		"--user-unit=openclaw-gateway.service --boot=0 --no-pager --quiet --output=cat --lines=500",
-	);
 	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
 		"doctor --fix --non-interactive",
 		"doctor --fix --non-interactive",
 		"agents list --json",
 	]);
+});
+
+test("does not run OpenClaw doctor when no legacy device identity exists", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-no-legacy-identity-"));
+	expect(repairHostedOpenClawStartupMigrations(join(root, "home"))).toBe(false);
+});
+
+test("does not archive the legacy identity for an unrelated doctor failure", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-unrelated-doctor-failure-"));
+	const home = join(root, "home");
+	const command = join(home, ".local", "bin", "openclaw");
+	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(legacyIdentity), { recursive: true });
+	writeFileSync(legacyIdentity, '{"version":1}\n');
+	writeFileSync(
+		command,
+		`#!/bin/sh
+printf '%s\n' 'unrelated doctor failure' >&2
+exit 1
+`,
+		{ mode: 0o755 },
+	);
+
+	expect(() => repairHostedOpenClawStartupMigrations(home)).toThrow(
+		"OpenClaw official repair failed",
+	);
+	expect(existsSync(legacyIdentity)).toBe(true);
 });
 
 test("does not repair without opt-in or a definitive invalid-config validation", () => {
