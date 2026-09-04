@@ -69,6 +69,9 @@ def test_metrics_exports_all_expected_metrics() -> None:
     assert "clawdi_backend_db_connection_hold_duration_seconds" in text
     assert "clawdi_backend_db_pool_checked_out" in text
     assert "clawdi_backend_db_pool_timeouts_total" in text
+    assert "clawdi_backend_embedding_in_flight" in text
+    assert "clawdi_backend_embedding_duration_seconds" in text
+    assert "clawdi_backend_embedding_rejections_total" in text
 
 
 def test_metrics_increment_counters() -> None:

@@ -1,3 +1,4 @@
+import os
 from ipaddress import AddressValueError, IPv6Address
 from typing import Annotated, Self
 from urllib.parse import urlsplit, urlunsplit
@@ -128,6 +129,24 @@ class Settings(BaseSettings):
             return base64.b64decode(candidate, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
             return value  # not base64 (e.g. test fixtures); leave unchanged
+
+    @field_validator("memory_embedding_service_socket_path")
+    @classmethod
+    def _validate_memory_embedding_service_socket_path(cls, value: str) -> str:
+        if (
+            not value
+            or value != value.strip()
+            or "\x00" in value
+            or not os.path.isabs(value)
+            or os.path.normpath(value) != value
+            or len(os.fsencode(value)) > 103
+            or os.path.basename(value) != "embedding.sock"
+        ):
+            raise ValueError(
+                "memory_embedding_service_socket_path must be a bounded absolute "
+                "normalized embedding.sock path"
+            )
+        return value
 
     @field_validator("clerk_jwt_issuer")
     @classmethod
@@ -308,10 +327,21 @@ class Settings(BaseSettings):
     # - "api":   call an OpenAI-compatible embeddings endpoint. Set
     #   memory_embedding_api_key, and optionally memory_embedding_base_url
     #   (e.g. https://openrouter.ai/api/v1) and memory_embedding_model.
+    # - "local-service": call one host-local FastEmbed worker over a Unix
+    #   socket so multiple API workers do not each load the ONNX model.
     memory_embedding_mode: str = "local"
     memory_embedding_api_key: str = ""
     memory_embedding_base_url: str = ""
     memory_embedding_model: str = "text-embedding-3-small"
+    memory_embedding_service_socket_path: str = "/run/clawdi-embedding/embedding.sock"
+    memory_embedding_service_timeout_seconds: Annotated[float, Field(gt=0, le=300)] = 30.0
+    # Zero preserves FastEmbed/ONNX Runtime automatic thread selection. A
+    # dedicated worker should set this to its container CPU quota.
+    memory_embedding_threads: Annotated[int, Field(ge=0, le=256)] = 0
+    # Initial local-service rollout runs one inference at a time through one
+    # shared ONNX session. Raise only after latency and rejection metrics show
+    # that concurrent session use improves throughput within the CPU quota.
+    memory_embedding_worker_max_concurrency: Annotated[int, Field(ge=1, le=256)] = 1
 
     # Channel emulation waits. PostgreSQL notifications wake normal long polls;
     # the interval is a bounded fallback for listener failure or notification loss.

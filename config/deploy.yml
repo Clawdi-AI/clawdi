@@ -50,21 +50,38 @@ servers:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>
     options:
-      memory: 6g # local embedding model + launch-load headroom
+      memory: 6g # preserve API headroom while the first two-worker slice is measured
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
       # tini as PID 1 reaps orphaned subprocesses (zombie prevention).
       init: true
     env:
       clear:
-        # Each uvicorn worker loads its own local embedding model, so the
-        # production web role must stay single-process on this host.
-        WEB_CONCURRENCY: 1
-        # One 10+10 pool leaves room for the channels worker, one overlapping
-        # web generation during rollout, and PostgreSQL operational sessions.
-        DB_POOL_SIZE: 10
-        DB_MAX_OVERFLOW: 10
+        # This is the smallest measured capacity step. The local ONNX model is
+        # isolated below, so two API workers no longer duplicate its RSS.
+        WEB_CONCURRENCY: 2
+        # Keep the web role at 20 total connections across both workers. The
+        # release helper rolls database-owning roles sequentially (60/100 max).
+        DB_POOL_SIZE: 5
+        DB_MAX_OVERFLOW: 5
         DB_POOL_TIMEOUT: 5
         PROMETHEUS_MULTIPROC_DIR: /tmp/clawdi-prometheus-multiproc
+  embedding-worker:
+    hosts:
+      - <%= ENV.fetch("DEPLOY_HOST") %>
+    proxy: false
+    options:
+      memory: 4g # measured model RSS plus startup/inference headroom
+      cpus: 2 # rollout knob: bound inference so it cannot consume host-wide CPU
+      init: true
+      health-cmd: "python -m app.workers.embedding healthcheck"
+    env:
+      clear:
+        CLAWDI_PROCESS_ROLE: embedding-worker
+        # This role does not import the database engine and owns no DB pool.
+        # One ONNX session uses both quota-matched inference threads. Increase
+        # concurrency only after scraped local-service metrics justify it.
+        MEMORY_EMBEDDING_THREADS: 2
+        MEMORY_EMBEDDING_WORKER_MAX_CONCURRENCY: 1
   channels-worker:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>
@@ -113,6 +130,7 @@ deploy_timeout: 120 # api entrypoint runs alembic before listening
 
 volumes:
   - clawdi-fastembed:/tmp/fastembed_cache # fastembed default cache; persists the ~1.1GB ONNX model across deploys
+  - clawdi-embedding:/run/clawdi-embedding # one UDS shared by API and embedding worker roles
   - /home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro
 
 accessories:
@@ -323,7 +341,10 @@ env:
     TRUST_FORWARDED_FOR: "true"
     PLUGIN_CATALOG_SYNC_ENABLED: "true"
     FILE_STORE_TYPE: s3
-    MEMORY_EMBEDDING_MODE: local
+    # The release helper always stages and identity-checks embedding-worker
+    # before switching web to the shared Unix socket.
+    MEMORY_EMBEDDING_MODE: local-service
+    MEMORY_EMBEDDING_SERVICE_SOCKET_PATH: /run/clawdi-embedding/embedding.sock
     FILE_STORE_S3_BUCKET: clawdi
     FILE_STORE_S3_REGION: auto
     FILE_STORE_S3_FORCE_PATH_STYLE: true

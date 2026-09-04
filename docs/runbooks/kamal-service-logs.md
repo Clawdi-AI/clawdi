@@ -1,11 +1,11 @@
 # Kamal Service Logs
 
 Use this runbook for host-local operational logs from the production Kamal
-deployment. It covers the `web` and `channels-worker` app roles and the
-`whatsapp-baileys`, `postgres`, and `postgres-backup` accessories. The shared
-`kamal-proxy` deliberately does not persist container logs. This does not change
-self-hosted Compose deployments, tenant runtimes, or any guest journal
-configuration.
+deployment. It covers the `web`, `embedding-worker`, and `channels-worker` app
+roles and the `whatsapp-baileys`, `postgres`, and `postgres-backup` accessories.
+The shared `kamal-proxy` deliberately does not persist container logs. This
+does not change self-hosted Compose deployments, tenant runtimes, or any guest
+journal configuration.
 
 ## Design
 
@@ -79,7 +79,7 @@ four values or the journal service is unhealthy.
 ## Rollout
 
 Logging drivers are fixed when Docker creates a container. A normal app deploy
-recreates the two app roles, but it does not recreate accessories or the proxy.
+recreates the three app roles, but it does not recreate accessories or the proxy.
 After the host prerequisite is verified:
 
 1. Deploy the app through the normal release path.
@@ -99,14 +99,14 @@ Confirm app and accessory containers report `journald`:
 
 ```bash
 docker ps --format '{{.Names}}' \
-  | grep -E '^clawdi-(web|channels-worker)-|^clawdi-(whatsapp-baileys|postgres|postgres-backup)$' \
+  | grep -E '^clawdi-(web|embedding-worker|channels-worker)-|^clawdi-(whatsapp-baileys|postgres|postgres-backup)$' \
   | while read -r container; do
       docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}}' "$container"
     done
 ```
 
-Expected: both app roles and all three accessories print `journald`. Confirm the
-proxy reports `none`:
+Expected: all three app roles and all three accessories print `journald`.
+Confirm the proxy reports `none`:
 
 ```bash
 docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}}' kamal-proxy
