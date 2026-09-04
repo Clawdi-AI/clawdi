@@ -24,7 +24,7 @@ RUN groupadd --gid "${APP_GID}" app \
 WORKDIR /app/backend
 
 COPY backend/pyproject.toml backend/uv.lock backend/alembic.ini ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --extra mem0
 
 COPY --chown=app:app backend/ /app/backend/
 

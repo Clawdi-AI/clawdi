@@ -164,6 +164,17 @@ class _ConnectedAccountDeleteResponse(_ComposioWireModel):
     success: bool
 
 
+class ConnectorAccountIdentity(BaseModel):
+    """Credential-free identity projection for Agent-side account selection."""
+
+    id: str
+    app_name: str
+    status: ComposioStatus
+    account_display: str | None = None
+    organization_display: str | None = None
+    tenant_display: str | None = None
+
+
 class _ConnectLinkResponse(_ComposioWireModel):
     redirect_url: str = Field(min_length=1)
     connected_account_id: str = Field(min_length=1)
@@ -735,6 +746,17 @@ def _high_level_sdk_failure(exc: HighLevelComposioError) -> ComposioFailure:
 
 async def get_connected_accounts(user_id: str) -> list[ConnectorConnectionResponse]:
     """List active connected accounts for a Composio user."""
+    accounts = await _get_active_connected_accounts(user_id)
+    return [_serialize_connected_account(account) for account in accounts]
+
+
+async def get_connected_account_identities(user_id: str) -> list[ConnectorAccountIdentity]:
+    """List safe account and tenant labels without exposing provider payloads."""
+    accounts = await _get_active_connected_accounts(user_id)
+    return [_serialize_connected_account_identity(account) for account in accounts]
+
+
+async def _get_active_connected_accounts(user_id: str) -> list[_ConnectedAccount]:
     client = get_composio_client()
     accounts: list[_ConnectedAccount] = []
     cursor: str | None = None
@@ -762,8 +784,7 @@ async def get_connected_accounts(user_id: str) -> list[ConnectorConnectionRespon
         cursor = response.next_cursor
         if not cursor:
             break
-
-    return [_serialize_connected_account(account) for account in accounts]
+    return accounts
 
 
 def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnectionResponse:
@@ -773,6 +794,38 @@ def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnect
         status=account.status,
         created_at=account.created_at,
         account_display=_account_display_label(account),
+    )
+
+
+def _serialize_connected_account_identity(account: _ConnectedAccount) -> ConnectorAccountIdentity:
+    state_value = _json_object(account.state.get("val"))
+    authed_user = _json_object(state_value.get("authed_user") or state_value.get("authedUser"))
+    containers = (account.data, state_value, authed_user)
+    return ConnectorAccountIdentity(
+        id=account.id,
+        app_name=account.toolkit.slug,
+        status=account.status,
+        account_display=_account_display_label(account),
+        organization_display=_first_identity_label(
+            containers,
+            (
+                "organization",
+                "organization_name",
+                "organizationName",
+                "org_name",
+                "orgName",
+                "workspace",
+                "workspace_name",
+                "workspaceName",
+                "team",
+                "team_name",
+                "teamName",
+            ),
+        ),
+        tenant_display=_first_identity_label(
+            containers,
+            ("tenant", "tenant_name", "tenantName"),
+        ),
     )
 
 
@@ -790,6 +843,30 @@ def _account_display_label(account: _ConnectedAccount) -> str | None:
             value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    return None
+
+
+def _first_identity_label(
+    containers: tuple[JsonObject, ...],
+    keys: tuple[str, ...],
+) -> str | None:
+    for container in containers:
+        for key in keys:
+            label = _identity_label(container.get(key))
+            if label is not None:
+                return label
+    return None
+
+
+def _identity_label(value: JsonValue | None) -> str | None:
+    if isinstance(value, str):
+        label = value.strip()
+        return label[:200] if label else None
+    if isinstance(value, dict):
+        for key in ("display_name", "displayName", "name", "slug", "id"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()[:200]
     return None
 
 

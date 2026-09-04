@@ -45,10 +45,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Mem0 SaaS-backed memory provider. Optional because most
-# self-hosters use the builtin pgvector provider and mem0ai
-# pulls a heavy transitive dep tree. Enable per deployment
-# with `uv pip install -e ".[mem0]"`. The `Mem0Provider`
+# Mem0 SaaS-backed memory provider. Source installs keep it optional because
+# most self-hosters use builtin pgvector and mem0ai has a heavier dependency
+# tree. The official backend image installs this extra, but each user still
+# opts in with their own API key. Other deployments can enable it with
+# `uv pip install -e ".[mem0]"`. The `Mem0Provider`
 # class lazy-imports `mem0`, and `get_memory_provider` falls
 # back to the builtin provider with a warning when the import
 # fails — so this extra controls whether mem0 is *available*,
@@ -309,6 +310,7 @@ strict = [
     "app/services/telegram_rate_limiter.py",
     "app/services/url_security.py",
     "app/services/user_provisioning.py",
+    "app/services/vault.py",
     "app/services/vault_crypto.py",
     "app/services/whatsapp_baileys.py",
     "app/services/whatsapp_delivery_transport.py",

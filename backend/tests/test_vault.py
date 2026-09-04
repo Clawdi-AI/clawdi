@@ -81,7 +81,7 @@ async def test_vault_rejects_invalid_slugs_and_item_names(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
-async def test_vault_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.AsyncClient):
+async def test_vault_item_upsert_encrypts_and_resolve_decrypts(cli_client: httpx.AsyncClient):
     """Secrets round-trip through AES-GCM storage.
 
     Write ciphertext via the vault endpoints, then decrypt it back via

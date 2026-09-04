@@ -4,7 +4,7 @@ Same output regardless of whether the caller is the OWNER fetching
 their own session via `GET /v1/sessions/{id}/export.md` or a PUBLIC
 visitor hitting `GET /v1/public/sessions/{token}/export.md`.
 Sharing the serializer keeps the agent-facing `.md` body byte-for-byte
-identical across both paths, which is what `session_read` MCP tool
+identical across both paths, which is what `session_get` MCP tool
 relies on to give the same agent context regardless of access mode.
 
 The Markdown body opens with a YAML front-matter block. That's the
@@ -180,7 +180,7 @@ def session_to_markdown(
     followed by the message content as-is.
 
     Plain Markdown — no HTML, no shadcn wrappers — so `WebFetch` returns
-    clean readable text and an MCP `session_read` call yields tokens an
+    clean readable text and an MCP `session_get` call yields tokens an
     LLM can directly attend to.
 
     `public=True` switches to the share-page variant: source tag flips

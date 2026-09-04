@@ -377,9 +377,13 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
 
     assert listed.status_code == 200, listed.text
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
-    assert {"memory_search", "memory_add", "memory_extract", "session_search", "session_read"} <= (
-        names
-    )
+    assert {
+        "memory_search",
+        "memory_create",
+        "memory_extract",
+        "session_search",
+        "session_get",
+    } <= names
 
 
 @pytest.mark.asyncio
@@ -1341,7 +1345,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
                     "id": 3,
                     "method": "tools/call",
                     "params": {
-                        "name": "session_read",
+                        "name": "session_get",
                         "arguments": {"reference": str(session_b.id)},
                     },
                 },
@@ -1407,8 +1411,8 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     names = [tool["name"] for tool in listed.json()["result"]["tools"]]
     assert "connector_calendar" in names
     assert "session_search" in names
-    assert "session_read" in names
-    assert {"memory_search", "memory_add", "memory_extract"} <= set(names)
+    assert "session_get" in names
+    assert {"memory_search", "memory_create", "memory_extract"} <= set(names)
     search_text = searched.json()["result"]["content"][0]["text"]
     assert "Alpha hosted runtime work" in search_text
     assert "Beta hosted runtime work" in search_text
@@ -1418,7 +1422,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     identity_only_names = {tool["name"] for tool in identity_only_listed.json()["result"]["tools"]}
     assert "session_search" not in identity_only_names
     assert "connector_calendar" not in identity_only_names
-    assert not {"memory_search", "memory_add", "memory_extract"} & identity_only_names
+    assert not {"memory_search", "memory_create", "memory_extract"} & identity_only_names
     assert (
         "missing scope: sessions:read"
         in identity_only_session.json()["result"]["content"][0]["text"]
@@ -1434,7 +1438,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
+async def test_clawdi_mcp_session_get_share_url_respects_env_binding(
     db_session,
     seed_user,
     monkeypatch,
@@ -1512,7 +1516,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
                 "id": 5,
                 "method": "tools/call",
                 "params": {
-                    "name": "session_read",
+                    "name": "session_get",
                     "arguments": {"reference": f"https://cloud.clawdi.ai/s/{session_id}"},
                 },
             },

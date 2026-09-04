@@ -3590,7 +3590,7 @@ async def extract_session_memories(
 # --- Owner-side export + Share-link routes ---------------------------------
 #
 # The `/export.md` route below is OWNER-readable via `require_scope("sessions:read")`
-# — it serves both the dashboard and the MCP `session_read` tool's UUID
+# — it serves both the dashboard and the MCP `session_get` tool's UUID
 # branch (which authenticates as the CLI api-key user).
 #
 # The `/permissions` routes use `require_web_auth`, rejecting bound
@@ -3607,7 +3607,7 @@ async def export_owned_session_markdown(
 ) -> Response:
     """Owner-side Markdown export — mirror of the public route.
 
-    Feeds the MCP `session_read` tool's UUID branch: when the agent
+    Feeds the MCP `session_get` tool's UUID branch: when the agent
     passes a session UUID (not a share token), the tool authenticates
     as the owner and hits this route. The body is byte-for-byte the
     same shape the public `.md` export returns — same `session_export.py`

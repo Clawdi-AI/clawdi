@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID
@@ -21,6 +22,7 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,10 +49,12 @@ from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
+from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.services.composio import (
     ComposioMcpUpstreamError,
     ComposioRouteError,
     call_tool_router_mcp_tool,
+    get_connected_account_identities,
     get_tool_router_mcp_session,
     get_tool_router_mcp_tools,
     list_tool_router_mcp_tools,
@@ -76,6 +80,12 @@ from app.services.session_search import session_search_matches
 from app.services.session_shares import (
     load_session_share_view,
     session_share_metadata,
+)
+from app.services.vault import (
+    VaultItemsGlobalDeleteConfirmationRequired,
+    create_account_vault,
+    delete_owned_vault_items,
+    upsert_owned_vault_items,
 )
 from app.services.vault_crypto import decrypt
 
@@ -107,9 +117,40 @@ class _MemorySearchArguments(_ToolArguments):
     limit: StrictInt = Field(default=10, ge=1, le=50)
 
 
-class _MemoryAddArguments(_ToolArguments):
+class _MemoryCreateArguments(_ToolArguments):
     content: StrictStr = Field(min_length=1, max_length=20_000)
     category: Literal["fact", "preference", "pattern", "decision", "context"] = "fact"
+
+    @field_validator("content")
+    @classmethod
+    def _strip_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("content is required")
+        return value
+
+
+class _MemoryListArguments(_ToolArguments):
+    limit: StrictInt = Field(default=25, ge=1, le=100)
+    page: StrictInt = Field(default=1, ge=1, le=1_000)
+    category: Literal["fact", "preference", "pattern", "decision", "context"] | None = None
+    order: Literal["asc", "desc"] = "desc"
+
+
+class _MemoryIdentityArguments(_ToolArguments):
+    memory_id: StrictStr = Field(min_length=1, max_length=200)
+
+    @field_validator("memory_id")
+    @classmethod
+    def _strip_memory_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("memory_id is required")
+        return value
+
+
+class _MemoryUpdateArguments(_MemoryIdentityArguments):
+    content: StrictStr = Field(min_length=1, max_length=20_000)
 
     @field_validator("content")
     @classmethod
@@ -125,7 +166,38 @@ class _SessionSearchArguments(_ToolArguments):
     limit: StrictInt = Field(default=10, ge=1, le=20)
 
 
-class _SessionReadArguments(_ToolArguments):
+class _SessionListArguments(_ToolArguments):
+    limit: StrictInt = Field(default=20, ge=1, le=100)
+    project_id: UUID | None = None
+    agent_type: StrictStr | None = Field(default=None, min_length=1, max_length=50)
+    after: datetime | None = None
+    before: datetime | None = None
+
+    @field_validator("agent_type")
+    @classmethod
+    def _strip_agent_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("agent_type is required")
+        return value
+
+    @field_validator("after", "before")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("datetime must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "_SessionListArguments":
+        if self.after is not None and self.before is not None and self.after >= self.before:
+            raise ValueError("after must be earlier than before")
+        return self
+
+
+class _SessionGetArguments(_ToolArguments):
     reference: StrictStr = Field(min_length=1, max_length=2_000)
 
     @field_validator("reference")
@@ -196,6 +268,31 @@ class _VaultResolveArguments(_ToolArguments):
         return value
 
 
+class _VaultCreateArguments(_ToolArguments, VaultCreate):
+    project_id: UUID = Field(
+        description="Exact owner Project to attach the newly created Vault to."
+    )
+
+
+class _VaultMutationIdentityArguments(_ToolArguments):
+    project_id: UUID = Field(description="Exact owner Project containing the Vault attachment.")
+    vault_id: UUID = Field(description="Exact stable Vault identity.")
+    slug: StrictStr = Field(min_length=1, max_length=200, description="Canonical Vault slug.")
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, value: str) -> str:
+        return VaultCreate.validate_slug(value)
+
+
+class _VaultItemUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
+    pass
+
+
+class _VaultItemDeleteArguments(_VaultMutationIdentityArguments, VaultItemDelete):
+    pass
+
+
 def _validate_arguments[ArgumentsT: _ToolArguments](
     model: type[ArgumentsT], arguments: JsonObject
 ) -> ArgumentsT:
@@ -227,27 +324,14 @@ class _NativeToolSpec:
 _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "memory_search": _NativeToolSpec(
         description=(
-            "ALWAYS call this BEFORE answering any question that references the user's own "
-            "context — their preferences, projects, past decisions, named entities, or work "
-            "history. A missed hit costs the user's trust every subsequent turn; a call that "
-            "returns empty costs ~100ms. Bias toward calling. Works in any language — pass "
-            "the user's query through as-is.\n\n"
-            "MUST call when the user's message contains ANY of these signals (in English, "
-            "Chinese, or any other language):\n"
-            '- First-person self-reference in a question about themselves: possessives like "my", '
-            'verbs of habit like "I usually", "I prefer", "I always"\n'
-            '- Preference / habit questions, even phrased abstractly: "what do I usually use for '
-            'X", "how do I normally do Y", "what\'s my preferred tool for Z" — these MUST trigger '
-            "even when no specific entity is named\n"
-            '- Callbacks to past context: "like last time", "as I mentioned", "you know the one", '
-            '"we discussed before", "what was that X"\n'
-            "- Named entities specific to this user: their project / repo / service / team / tool "
-            "name, or a person by name\n"
-            "- Any reference to a past bug, decision, investigation, meeting, or design choice\n\n"
-            "Do NOT call for pure textbook / generic programming questions with zero "
-            'user-specific signal (e.g. "how does async/await work").\n\n'
-            "When in doubt, CALL IT. Zero results is cheap; a missed memory makes you look "
-            "amnesic."
+            "Search durable user-specific memory when the current conversation, user-provided "
+            "artifacts, workspace, and repository history do not answer a question about the "
+            "user's preferences, prior decisions, recurring patterns, or earlier project "
+            "context. Use it for explicit callbacks to missing prior context. Do not call it "
+            "solely because a project, person, repository, or tool is named, for facts the "
+            "current code answers, or for generic knowledge. Use session_search instead when "
+            "the user wants a specific past conversation; an empty Memory result alone does "
+            "not justify a Session search. Works in any language."
         ),
         input_schema={
             "type": "object",
@@ -278,30 +362,16 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         scopes=("memories:read",),
         handler=lambda arguments, auth, db: _tool_memory_search(arguments, auth=auth, db=db),
     ),
-    "memory_add": _NativeToolSpec(
+    "memory_create": _NativeToolSpec(
         description=(
-            "Store a durable memory so future agent sessions (same agent, or a different one) "
-            "can retrieve this context. Call this when you learn something non-obvious about "
-            "the user or their project that a future session would benefit from knowing.\n\n"
-            "MUST call when:\n"
-            '- The user explicitly asks you to remember something ("remember this", "save '
-            'this", or equivalent in any language) — always honor the request\n'
-            '- You just fixed a non-trivial bug — save ROOT CAUSE + fix, not just "bug fixed"\n'
-            "- You and the user made an architecture decision together — save the decision AND "
-            "the reasoning (why this option over alternatives)\n"
-            "- The user expressed a coding / workflow preference you had to ask about — save it "
-            'so you or another agent never asks again (e.g. "user prefers pnpm over npm")\n'
-            "- The user shared personal info (their name, their project name, their team, who "
-            "they work with) that future context would need\n\n"
-            "Do NOT save:\n"
-            "- Trivia that any agent can discover by reading the current code\n"
-            "- Generic programming knowledge (how APIs work, language features)\n"
-            '- Ephemeral conversation details ("the user asked about X today")\n'
-            "- Plaintext tokens, API keys, bearer credentials, or private keys; use Vault and "
-            "save a clawdi:// reference instead\n\n"
-            "Write the content as a standalone sentence with full context — include proper "
-            "nouns, not pronouns. A future session will read it without today's conversation. "
-            "Content language should match the user's primary language for that context."
+            "Store durable user-specific context for future agent sessions. Use it when the "
+            "user explicitly asks you to remember something, or for a durable preference, "
+            "decision, or recurring pattern that is not discoverable from the repository and "
+            "is likely to prevent future rework. Ask when persistence is unclear. Do not save "
+            "routine task completion, code facts, generic knowledge, speculation, unnecessary "
+            "personal information, or plaintext secrets. Store secrets in Vault and save only "
+            "the exact clawdi:// reference when useful. Write a standalone sentence with enough "
+            "context for a future session."
         ),
         input_schema={
             "type": "object",
@@ -330,7 +400,36 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "additionalProperties": False,
         },
         scopes=("memories:write",),
-        handler=lambda arguments, auth, db: _tool_memory_add(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_memory_create(arguments, auth=auth, db=db),
+    ),
+    "memory_list": _NativeToolSpec(
+        description=(
+            "List durable memories with stable IDs and safe metadata for review or exact "
+            "management. Use this when the user asks what is remembered or needs an ID for "
+            "memory_update or memory_delete."
+        ),
+        input_schema=_MemoryListArguments.model_json_schema(),
+        scopes=("memories:read",),
+        handler=lambda arguments, auth, db: _tool_memory_list(arguments, auth=auth, db=db),
+    ),
+    "memory_update": _NativeToolSpec(
+        description=(
+            "Replace the content of one exact durable memory by ID while preserving its "
+            "category, tags, and provenance. Rejects plaintext secrets and does not create a "
+            "new memory when the ID is missing."
+        ),
+        input_schema=_MemoryUpdateArguments.model_json_schema(),
+        scopes=("memories:write",),
+        handler=lambda arguments, auth, db: _tool_memory_update(arguments, auth=auth, db=db),
+    ),
+    "memory_delete": _NativeToolSpec(
+        description=(
+            "Delete one exact durable memory by ID. Use only for an explicit request or after "
+            "the user identifies the exact item to remove."
+        ),
+        input_schema=_MemoryIdentityArguments.model_json_schema(),
+        scopes=("memories:write",),
+        handler=lambda arguments, auth, db: _tool_memory_delete(arguments, auth=auth, db=db),
     ),
     "memory_extract": _NativeToolSpec(
         description=(
@@ -339,7 +438,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "'extract memories', 'save what we discussed', 'remember this conversation', or "
             "any equivalent phrasing (in any language). The tool returns instructions — follow "
             "them exactly: list up to 5 candidates first, wait for the user's confirmation, "
-            "then call memory_add on the approved ones. Do not narrate your internal workflow. "
+            "then call memory_create on the approved ones. Do not narrate your internal workflow. "
             "This tool inspects your active conversation context — it does NOT read any "
             "external file or database."
         ),
@@ -356,7 +455,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "Search the user's past Clawdi sessions by keyword. Use when the user asks about "
             "prior work (e.g. 'find the auth migration session'). Returns up to N matching "
             "sessions with summary, agent, model, project, date, and message count. The "
-            "session UUID in each result can be passed back to session_read to fetch the full "
+            "session UUID in each result can be passed back to session_get to fetch the full "
             "conversation."
         ),
         input_schema={
@@ -384,7 +483,17 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         scopes=("sessions:read",),
         handler=lambda arguments, auth, db: _tool_session_search(arguments, auth=auth, db=db),
     ),
-    "session_read": _NativeToolSpec(
+    "session_list": _NativeToolSpec(
+        description=(
+            "List the user's recent Clawdi sessions, optionally filtered by last activity "
+            "time, Agent type, or the Agent's Project. Use session_search for keyword lookup "
+            "and session_get for transcript content."
+        ),
+        input_schema=_SessionListArguments.model_json_schema(),
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_list(arguments, auth=auth, db=db),
+    ),
+    "session_get": _NativeToolSpec(
         description=(
             "Read a Clawdi session and return its content as Markdown so you can ingest the "
             "conversation as context. Use this when the user references a Clawdi share URL "
@@ -408,16 +517,16 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "additionalProperties": False,
         },
         scopes=("sessions:read",),
-        handler=lambda arguments, auth, db: _tool_session_read(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_session_get(arguments, auth=auth, db=db),
     ),
-    "project_current": _NativeToolSpec(
+    "project_current_get": _NativeToolSpec(
         description=(
             "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
             "receive only the Project bound to their authenticated environment."
         ),
         input_schema=_NoArguments.model_json_schema(),
         scopes=("projects:read",),
-        handler=lambda arguments, auth, db: _tool_project_current(arguments, auth=auth, db=db),
+        handler=lambda arguments, auth, db: _tool_project_current_get(arguments, auth=auth, db=db),
     ),
     "project_list": _NativeToolSpec(
         description=(
@@ -466,6 +575,48 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         scopes=("vault:read",),
         handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
     ),
+    "vault_create": _NativeToolSpec(
+        description=(
+            "Create a new account-owned Vault and attach it to one explicit owner Project. "
+            "Fails if the slug already exists. Hosted runtimes may target only their bound "
+            "Project. Returns identifiers only and never returns secret values."
+        ),
+        input_schema=_VaultCreateArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_create(arguments, auth=auth, db=db),
+    ),
+    "vault_item_upsert": _NativeToolSpec(
+        description=(
+            "Create or replace exact fields in an attached account-owned Vault. Requires the "
+            "explicit Project UUID, Vault UUID, and canonical slug. Field values are plaintext "
+            "inputs encrypted at rest; the response contains identifiers and counts only."
+        ),
+        input_schema=_VaultItemUpsertArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_item_upsert(arguments, auth=auth, db=db),
+    ),
+    "vault_item_delete": _NativeToolSpec(
+        description=(
+            "Delete exact named fields from an attached account-owned Vault. Requires the "
+            "explicit Project UUID, Vault UUID, canonical slug, section, and field names. "
+            "Refuses Vaults attached to multiple Projects because deletion is account-wide."
+        ),
+        input_schema=_VaultItemDeleteArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_item_delete(arguments, auth=auth, db=db),
+    ),
+    "connector_account_list": _NativeToolSpec(
+        description=(
+            "List active Clawdi connector accounts and credential-free account, organization, "
+            "or tenant labels. Use it to verify the exact service identity before selecting "
+            "the connector for a side effect."
+        ),
+        input_schema=_NoArguments.model_json_schema(),
+        scopes=("connectors:read",),
+        handler=lambda arguments, auth, db: _tool_connector_account_list(
+            arguments, auth=auth, db=db
+        ),
+    ),
 }
 
 _MEMORY_EXTRACT_INSTRUCTIONS = (
@@ -479,8 +630,8 @@ _MEMORY_EXTRACT_INSTRUCTIONS = (
     'is already saved") and stop.\n\n'
     "Otherwise, present the surviving candidates to the user as a numbered list. For each: "
     "[category] full-sentence content, using proper nouns, not pronouns.\n\n"
-    "Wait for the user's reply. Do NOT call memory_add yet.\n\n"
-    "On approval, call memory_add once per approved memory, using the category and content "
+    "Wait for the user's reply. Do NOT call memory_create yet.\n\n"
+    "On approval, call memory_create once per approved memory, using the category and content "
     "from the candidate (with any edits the user asked for). Then print a bullet summary "
     "with the stored IDs so the user can delete individual ones later.\n\n"
     "Do NOT narrate your internal workflow to the user. The user should see only the "
@@ -729,10 +880,10 @@ async def _tool_memory_search(
     return _tool_text(text)
 
 
-async def _tool_memory_add(
+async def _tool_memory_create(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_MemoryAddArguments, arguments)
+    parsed = _validate_arguments(_MemoryCreateArguments, arguments)
     finding = find_likely_secret(parsed.content)
     if finding is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, secret_memory_warning(finding))
@@ -750,6 +901,46 @@ async def _tool_memory_add(
         source_environment_id=source_environment_id,
     )
     return _tool_text(f"Memory stored ({str(result['id'])[:8]})")
+
+
+async def _tool_memory_list(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_MemoryListArguments, arguments)
+    provider = await get_memory_provider(str(auth.user_id), db)
+    rows = await provider.list_all(
+        str(auth.user_id),
+        limit=parsed.limit,
+        offset=(parsed.page - 1) * parsed.limit,
+        category=parsed.category,
+        order=parsed.order,
+    )
+    await attach_source_machines(db, auth, rows)
+    total = await provider.count(str(auth.user_id), category=parsed.category)
+    return _tool_json({"memories": rows, "total": total, "page": parsed.page})
+
+
+async def _tool_memory_update(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_MemoryUpdateArguments, arguments)
+    finding = find_likely_secret(parsed.content)
+    if finding is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, secret_memory_warning(finding))
+    provider = await get_memory_provider(str(auth.user_id), db)
+    if not await provider.update(str(auth.user_id), parsed.memory_id, parsed.content):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    return _tool_json({"status": "updated", "memory_id": parsed.memory_id})
+
+
+async def _tool_memory_delete(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_MemoryIdentityArguments, arguments)
+    provider = await get_memory_provider(str(auth.user_id), db)
+    if not await provider.delete(str(auth.user_id), parsed.memory_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    return _tool_json({"status": "deleted", "memory_id": parsed.memory_id})
 
 
 def _user_sessions_stmt(auth: AuthContext):
@@ -809,10 +1000,52 @@ async def _tool_session_search(
     )
 
 
-async def _tool_session_read(
+async def _tool_session_list(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    parsed = _validate_arguments(_SessionReadArguments, arguments)
+    parsed = _validate_arguments(_SessionListArguments, arguments)
+    visible_project_ids = set(await project_ids_visible_to(db, auth))
+    if parsed.project_id is not None and parsed.project_id not in visible_project_ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    stmt = _user_sessions_stmt(auth).add_columns(AgentEnvironment.default_project_id)
+    if parsed.project_id is not None:
+        stmt = stmt.where(AgentEnvironment.default_project_id == parsed.project_id)
+    if parsed.agent_type is not None:
+        stmt = stmt.where(AgentEnvironment.agent_type == parsed.agent_type)
+    if parsed.after is not None:
+        stmt = stmt.where(Session.last_activity_at >= parsed.after)
+    if parsed.before is not None:
+        stmt = stmt.where(Session.last_activity_at < parsed.before)
+    rows = (
+        await db.execute(
+            stmt.order_by(Session.last_activity_at.desc(), Session.id.asc()).limit(parsed.limit)
+        )
+    ).all()
+    sessions = [
+        {
+            "id": str(session.id),
+            "summary": session.summary,
+            "project_path": session.project_path,
+            "project_id": (
+                str(project_id)
+                if project_id is not None and project_id in visible_project_ids
+                else None
+            ),
+            "agent_type": agent_type,
+            "model": session.model,
+            "started_at": session.started_at.isoformat(),
+            "last_activity_at": session.last_activity_at.isoformat(),
+            "message_count": session.message_count or 0,
+        }
+        for session, agent_type, project_id in rows
+    ]
+    return _tool_json({"sessions": sessions})
+
+
+async def _tool_session_get(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_SessionGetArguments, arguments)
     match = _SHARE_URL_RE.search(parsed.reference)
     session_id = match.group(1) if match else parsed.reference
     try:
@@ -927,7 +1160,7 @@ async def _visible_project_or_404(
     return project
 
 
-async def _tool_project_current(
+async def _tool_project_current_get(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     _validate_arguments(_NoArguments, arguments)
@@ -1149,6 +1382,100 @@ async def _tool_vault_resolve(
             "reference": parsed.reference,
             "value": decrypt(encrypted_value, nonce),
         }
+    )
+
+
+async def _tool_vault_create(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultCreateArguments, arguments)
+    vault = await create_account_vault(
+        db,
+        auth,
+        parsed,
+        project_id=parsed.project_id,
+        create_only=True,
+    )
+    return _tool_json(
+        {
+            "vault": {
+                "id": str(vault.id),
+                "slug": vault.slug,
+                "name": vault.name,
+                "project_id": str(parsed.project_id),
+            }
+        }
+    )
+
+
+async def _tool_vault_item_upsert(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultItemUpsertArguments, arguments)
+    fields = await upsert_owned_vault_items(
+        db,
+        auth,
+        parsed.slug,
+        parsed,
+        project_id=parsed.project_id,
+        vault_id=parsed.vault_id,
+    )
+    return _tool_json(
+        {
+            "status": "ok",
+            "project_id": str(parsed.project_id),
+            "vault_id": str(parsed.vault_id),
+            "slug": parsed.slug,
+            "fields": fields,
+        }
+    )
+
+
+async def _tool_vault_item_delete(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultItemDeleteArguments, arguments)
+    try:
+        deleted = await delete_owned_vault_items(
+            db,
+            auth,
+            parsed.slug,
+            parsed,
+            project_id=parsed.project_id,
+            vault_id=parsed.vault_id,
+            global_delete=False,
+        )
+    except VaultItemsGlobalDeleteConfirmationRequired:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Vault is attached to multiple Projects; item deletion requires human confirmation",
+        ) from None
+    return _tool_json(
+        {
+            "status": "deleted",
+            "project_id": str(parsed.project_id),
+            "vault_id": str(parsed.vault_id),
+            "slug": parsed.slug,
+            "fields": deleted,
+        }
+    )
+
+
+async def _tool_connector_account_list(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    _validate_arguments(_NoArguments, arguments)
+    del db
+    try:
+        accounts = await get_connected_account_identities(require_clerk_id(auth))
+    except ComposioRouteError:
+        logger.info("Connector account identities unavailable")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Connector accounts unavailable",
+        ) from None
+    return _tool_json(
+        {"accounts": [account.model_dump(mode="json", exclude_none=True) for account in accounts]}
     )
 
 

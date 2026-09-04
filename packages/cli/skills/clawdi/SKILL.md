@@ -1,87 +1,58 @@
 ---
 name: clawdi
-description: "Cross-agent long-term memory + session history for the current user: their preferences, coding habits, named projects / repos / tools, past bugs and architecture decisions, AND their past agent conversations across Claude Code / Codex / OpenClaw / Hermes. Surface this skill BEFORE answering any question about the user themselves, their work, or their history — even when phrased abstractly (e.g. 'what do I usually use for X', 'find the session where I worked on auth'). Also provides connected-service tools (Gmail, GitHub, Notion, Drive, Calendar, etc.) and reads Clawdi share URLs (https://cloud.clawdi.ai/s/...) the user pastes."
+description: "Use Clawdi Cloud for missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI; otherwise choose a trusted direct MCP, safely installable official CLI, official API or SDK, or the Clawdi connector as fallback. Do not invoke solely because a project, person, repo, or tool is named."
 ---
 
 # Clawdi Cloud
 
-You have access to Clawdi Cloud tools via the `clawdi` MCP server. Use them aggressively — memory + session retrieval is the highest-leverage capability you have here.
+Use Clawdi Cloud tools through the `clawdi` MCP server when they provide context or
+capabilities unavailable more directly.
+
+## Context Routing
+
+Use the current conversation and user-provided artifacts first. For project facts, inspect
+the workspace, repository documentation, and local history. Use `memory_search` only for
+missing user-specific preferences, decisions, or prior context. Use `session_list`,
+`session_search`, and `session_get` only when the user asks for past conversations or
+transcript-level detail is necessary. Do not call Memory and Session speculatively or in parallel.
+A named entity alone does not justify a Cloud lookup, and an empty Memory result does not justify
+a Session search.
 
 ## Memory
 
-Three tools for cross-agent memory:
+Memory is durable user-specific context shared across agents.
 
-- `memory_search` — Search long-term memory by natural-language query (any language).
-- `memory_add` — Save a durable memory for cross-agent recall. Do not store plaintext tokens, API keys, or bearer credentials; store those in Vault and save only the `clawdi://` reference. Categories: `fact` (technical facts, API details, config values), `preference` (user preferences, coding style, workflow choices), `pattern` (recurring patterns, pitfalls, team conventions), `decision` (architecture decisions and their reasoning), `context` (project context, deadlines, ongoing work).
-- `memory_extract` — Batch-extract durable memories from the CURRENT conversation. Call this when the user says "extract memories", "save what we discussed", "remember this conversation", or equivalent. The tool returns instructions that walk you through a list-then-confirm flow using `memory_search` and `memory_add` — follow them exactly, including **waiting for the user's approval before writing anything**. Never skip the confirmation step, never save more than 5 memories in one invocation, and do not narrate your internal workflow to the user.
+- `memory_search` — Search durable memory by natural-language query.
+- `memory_list` — Review stored memories and their stable IDs.
+- `memory_create` — Save a durable fact, preference, pattern, decision, or project context.
+- `memory_update` — Replace one exact memory's content without changing its metadata.
+- `memory_delete` — Delete one exact memory by ID.
+- `memory_extract` — Prepare memories from the current conversation. Follow its returned
+  review-and-confirm instructions and wait for user approval before calling `memory_create`.
 
-### When to search — bias toward calling
-
-**Default assumption: the user has stored context you don't have. Call `memory_search` BEFORE answering any question about them, their project, their preferences, or their history. A call that returns empty costs ~100ms; a missed hit makes you look amnesic and forces them to re-teach you every session.**
-
-The single most common failure mode is NOT calling memory_search on abstract self-referential questions. If the user's message has any of these shapes, you MUST call it — no judgment, no exceptions:
-
-1. **Preference / habit questions**, even without a specific entity named.
-   Examples: "what do I usually use for X", "how do I normally do Y", "what's my preferred tool for Z", "what's my coding style". Pass a short paraphrase as the query.
-2. **Callbacks to prior context.** "as I mentioned", "like last time", "you know the one", "we discussed before", "what was that X we set up".
-3. **Named entities specific to this user.** Their project / repo / service / team / tool name. A person by name.
-4. **Past bugs, decisions, investigations, design choices.**
-5. **Start of a new session where they reference anything about themselves or their work.**
-
-Do NOT search for:
-- Purely textbook programming questions with no user-specific signal ("how does `useEffect` work", "what is the time complexity of quicksort").
-- Questions the current code already answers directly.
-
-**When unsure, search.** Empty results cost you nothing. Missing the user's context costs you their trust.
-
-### When to save
-
-- After fixing a non-obvious bug (save root cause + fix)
-- After making an architecture decision (save reasoning)
-- After discovering a useful pattern or workaround
-- When the user explicitly says "remember this" / "save this"
-- After learning a user preference you'd otherwise have to re-ask ("I prefer rg", "I always use pnpm")
-
-Write memories as standalone sentences with full context — include names, not pronouns. A future session will read this without knowing today's conversation.
-
-Do NOT save trivial facts that are obvious from the code itself, or generic programming knowledge.
-
-Do NOT save plaintext tokens, API keys, bearer credentials, or private keys in memory. Use Vault for secret values and save only a `clawdi://` reference when future agents need to know where a secret lives.
+Use `memory_create` for explicit "remember this" requests or durable user-specific preferences
+and decisions not discoverable from the repository. Ask when persistence is unclear. Do not
+save routine task completion, code facts, speculation, or plaintext secrets; use Vault and
+remember only the exact `clawdi://` reference. List before updating or deleting unless the user
+already supplied the exact memory ID; never infer which stored item to mutate.
 
 ## Sessions
 
-Two tools for reading and finding past agent conversations stored in Clawdi Cloud:
+- Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
+- Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
+- Use `session_get` to read a session by UUID or Clawdi share URL.
 
-- `session_read` — Fetch a single session by reference and return its full conversation as Markdown. Accepts a Clawdi share URL (`https://cloud.clawdi.ai/s/{uuid}`) OR a session UUID for one of the user's own sessions. Handles owned and shared sessions transparently — you don't need to know which one.
-- `session_search` — Find sessions in the user's history by keyword. Trigram-ranked substring search with typo tolerance. Returns matching sessions with summary, project, timestamps, and **session UUIDs you can pass back to `session_read`**.
+Call `session_get` when the user provides a Clawdi share URL or session UUID and wants its
+contents. For a request to open a specific unnamed past conversation, use `session_search`
+to find the UUID and then read the selected match.
 
-### When to read — call `session_read` whenever the user references a specific session
-
-MUST call when the user's message includes:
-- A Clawdi share URL (e.g. `https://cloud.clawdi.ai/s/11111111-2222-3333-4444-555555555555`) — pass the full URL
-- A direct reference like "open the session where I did X" or "the one from yesterday about auth" — first call `session_search` to find the UUID, then `session_read` to load it
-
-Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_read` is the right tool and avoids the WebFetch permission prompt.
-
-### When to search — bias toward calling, similar to `memory_search`
-
-MUST call `session_search` when:
-- The user asks about prior work: "what did I do about the focus bug", "find the session where I migrated auth", "show me last week's debugging session"
-- They reference a past investigation by topic but don't name a specific session
-- They want to continue / reuse approach from a prior conversation
-
-### Difference from `memory_search`
-
-- `memory_search` finds **stored facts / preferences / decisions** the user (or a previous agent run) explicitly extracted. Short rows; high signal.
-- `session_search` finds **full conversations** in the corpus. Long rows; useful when the user wants the original context, not just the takeaway.
-
-When the user's request is **conceptual** ("how do I usually do X"), prefer `memory_search`. When they want to **revisit a specific past conversation** ("the session where..."), use `session_search`. When unsure, try `memory_search` first (cheaper, faster), fall back to `session_search` if empty.
+Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_get` is the right tool and avoids the WebFetch permission prompt.
 
 ## Projects
 
 Three read-only tools expose the caller's visible Project context:
 
-- `project_current` — Read the current or runtime-bound Project.
+- `project_current_get` — Read the current or runtime-bound Project.
 - `project_list` — List visible Projects.
 - `project_get` — Read one visible Project by UUID.
 
@@ -89,9 +60,9 @@ Hosted runtimes see only their bound Project. Treat a not-found response as an
 access boundary as well as a possible unknown UUID; do not try to bypass it
 through another tool.
 
-## Vault Metadata
+## Vault
 
-Two read-only MCP tools expose safe Vault metadata without secret values:
+Vault read tools expose metadata and exact references:
 
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
@@ -110,6 +81,19 @@ to an authorized runtime:
 Use the live schemas from the `clawdi` MCP server as authoritative; the local
 stdio command only transports the protocol.
 
+Vault write tools are available for explicit user requests:
+
+- `vault_create` — Create a Vault attached to one exact owner Project.
+- `vault_item_upsert` — Create or replace exact fields in an attached Vault.
+- `vault_item_delete` — Delete exact fields from a single-Project Vault.
+
+Follow the live schema and supply every required Project, Vault, section, and field identity;
+never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
+them, save them to Memory, or include them in logs. Environment-bound callers may write only
+their bound Project, and field deletion is rejected when a Vault is attached to multiple
+Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
+foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
+
 ## Wallet Funding
 
 Use `clawdi wallet status --json` to inspect the authenticated Wallet balance, verified
@@ -118,12 +102,39 @@ browser wallet surface; Clawdi does not store the payment private key. Ask the u
 there. Command-line spending requires a future owner-only or hardware signer authority and is not
 available.
 
-## Connectors
+## Connector Routing
 
-Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
-Treat their live names and schemas as authoritative; never assume a fixed meta-tool set.
+Respect an explicit user choice. Otherwise inspect installed service CLIs, direct MCP tools
+already exposed by the runtime, and authorized API or SDK credentials. If an installed and
+authenticated official CLI can perform the task, use it directly. Check availability and
+authentication non-destructively and prefer structured output.
 
-1. Start each external-app workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
+Otherwise choose the lowest-setup reliable option for the task. Consult the service's official
+documentation when installation, authentication, commands, or schemas are uncertain or likely
+to have changed:
+
+- Use a trusted direct MCP already configured and exposed by the runtime. Do not automatically
+  download, install, or start an unfamiliar MCP server.
+- Safely install the official CLI when the runtime permits it, the source is verified as
+  official, and no elevation or persistent host change is required.
+- Use the official API or SDK with a verified contract and credentials already authorized for
+  the runtime, including through an exact Vault reference.
+- Use the Clawdi connector when no direct option can perform the operation.
+
+Before a side effect, establish the exact service account and organization, Project, or tenant.
+Use `connector_account_list` when the connector is a candidate and its identity is not already clear.
+Fallback must not silently change that identity. Do not scan for credentials, start an interactive
+login, invent API details, or expose secrets. Choose the path before a side effect and advance
+only after a definite preflight failure. If a mutation's result is ambiguous, inspect it through
+the same path; never repeat it through another path.
+
+## Connector Workflow
+
+When the Clawdi connector path is selected, use the Composio Tool Router meta-tools returned
+by `tools/list` on the `clawdi` MCP server. Treat their live names and schemas as
+authoritative; never assume a fixed meta-tool set.
+
+1. Start the connector workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
    `queries` and `session` schema, reuse the returned session ID throughout that workflow,
    and use only the exact toolkit and tool slugs it returns. If a required schema is absent
    or incomplete, call `COMPOSIO_GET_TOOL_SCHEMAS`; never invent fields or inputs.
@@ -148,19 +159,10 @@ Treat their live names and schemas as authoritative; never assume a fixed meta-t
    arguments. Batch only independent calls. Keep ordinary results inline. Set
    `sync_response_to_workbench` only when a result may be large or needs later remote
    processing; use `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL` only for large
-   responses saved remotely or remote artifacts.
-6. Preserve dependencies and returned semantics. Follow signed-file metadata, pagination
-   fields, and termination signals exactly as exposed. Select an account only when the schema
-   supports it, and use additional or future meta-tools only according to their live schemas.
-
-## Vault Management
-
-Vault mutation is intentionally not an Agent MCP capability. Do not use raw HTTP, daemon
-control RPC, or execute foreground Vault CLI commands on the user's behalf. When the user
-asks to write, import, attach, detach, or delete Vault data, explain that a human operator
-must perform it and provide the safest exact foreground command. Prefer `clawdi vault set
-KEY --prompt` for one value and `clawdi vault import ...` for migrations; never place a
-plaintext secret in command arguments or your response.
+   responses saved remotely or remote artifacts. Preserve dependencies and returned semantics;
+   follow signed-file metadata, pagination fields, and termination signals exactly as exposed.
+   Select an account only when the schema supports it, and use additional or future meta-tools
+   only according to their live schemas.
 
 ## AI Provider Management
 

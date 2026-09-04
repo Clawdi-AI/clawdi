@@ -249,7 +249,7 @@ If they opted out of session upload, just confirm setup checks passed and remind
 
 After this their account has:
 
-- **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
+- **Memory** — `memory_search` and `memory_create` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
 - **Session sync** — pushed today; future sessions sync via `clawdi push`.
 - **Skill sync** — Agent filesystem Skills projected read-only to Cloud; explicit workspace/personal Project imports remain user-directed.

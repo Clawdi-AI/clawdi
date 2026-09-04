@@ -1577,7 +1577,7 @@ export interface paths {
          * Export Owned Session Markdown
          * @description Owner-side Markdown export — mirror of the public route.
          *
-         *     Feeds the MCP `session_read` tool's UUID branch: when the agent
+         *     Feeds the MCP `session_get` tool's UUID branch: when the agent
          *     passes a session UUID (not a share token), the tool authenticates
          *     as the owner and hits this route. The body is byte-for-byte the
          *     same shape the public `.md` export returns — same `session_export.py`
@@ -2692,9 +2692,9 @@ export interface paths {
          *     vault, put them in a named one") needs values to travel between
          *     vaults, but plaintext resolution stays CLI-only. So the copy happens
          *     entirely server-side: decrypt + re-encrypt per item, nothing
-         *     returned but a count. Owner-only on both ends (`_get_vault_write`),
-         *     so shared-project viewers can't exfiltrate by copying into a vault
-         *     they control.
+         *     returned but a count. Both Vaults must be owned by the caller, so
+         *     shared-project viewers can't exfiltrate by copying into a Vault they
+         *     control.
          */
         post: operations["copy_vault_items_v1_vault__slug__items_copy_post"];
         delete?: never;

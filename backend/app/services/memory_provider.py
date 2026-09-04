@@ -255,10 +255,57 @@ class BuiltinProvider:
             q = q.where(Memory.category == category)
         return (await self.db.execute(q)).scalar_one()
 
+    async def update(self, user_id: str, memory_id: str, content: str) -> bool:
+        try:
+            parsed_memory_id = uuid.UUID(memory_id)
+        except ValueError:
+            return False
+        owner_id = uuid.UUID(user_id)
+        exists = (
+            await self.db.execute(
+                select(Memory.id).where(
+                    Memory.id == parsed_memory_id,
+                    Memory.user_id == owner_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            return False
+
+        vec: list[float] | None = None
+        if self.embedder is not None:
+            await self.db.commit()
+            try:
+                vec = await self.embedder.embed(content)
+            except EmbeddingUpstreamError as exc:
+                log.warning("embedder failed at update-time, clearing stale embedding: %s", exc)
+
+        memory = (
+            await self.db.execute(
+                select(Memory)
+                .where(
+                    Memory.id == parsed_memory_id,
+                    Memory.user_id == owner_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if memory is None:
+            await self.db.rollback()
+            return False
+        memory.content = content
+        memory.embedding = vec
+        await self.db.commit()
+        return True
+
     async def delete(self, user_id: str, memory_id: str) -> bool:
+        try:
+            parsed_memory_id = uuid.UUID(memory_id)
+        except ValueError:
+            return False
         result = await self.db.execute(
             select(Memory).where(
-                Memory.id == uuid.UUID(memory_id),
+                Memory.id == parsed_memory_id,
                 Memory.user_id == uuid.UUID(user_id),
             )
         )
