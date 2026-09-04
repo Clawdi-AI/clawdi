@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	repairHostedOpenClawConfig,
+	repairHostedOpenClawStartupMigrations,
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
@@ -19,11 +20,14 @@ import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
+const originalJournalctlPath = process.env.CLAWDI_JOURNALCTL_PATH;
 afterEach(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
 	root = "";
 	if (originalSystemctlPath === undefined) delete process.env.CLAWDI_SYSTEMCTL_PATH;
 	else process.env.CLAWDI_SYSTEMCTL_PATH = originalSystemctlPath;
+	if (originalJournalctlPath === undefined) delete process.env.CLAWDI_JOURNALCTL_PATH;
+	else process.env.CLAWDI_JOURNALCTL_PATH = originalJournalctlPath;
 });
 
 test("retries the official workspace roster while the OpenClaw gateway is restarting", () => {
@@ -253,6 +257,82 @@ esac
 	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 		"agents list --json",
+		"doctor --fix --non-interactive",
+		"agents list --json",
+	]);
+});
+
+test("retires a conflicting legacy device identity reported only by gateway startup", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-identity-retirement-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
+	const archiveSdk = join(packageRoot, "runtime-doctor-migrations.mjs");
+	const legacyIdentity = join(home, ".openclaw", "identity", "device.json");
+	const journalctl = join(root, "journalctl");
+	const journalLog = join(root, "journal.log");
+	const commandLog = join(root, "commands.log");
+	mkdirSync(dirname(command), { recursive: true });
+	mkdirSync(dirname(legacyIdentity), { recursive: true });
+	mkdirSync(packageRoot, { recursive: true });
+	writeFileSync(legacyIdentity, '{"version":1}\n');
+	writeFileSync(
+		join(packageRoot, "package.json"),
+		JSON.stringify({
+			name: "openclaw",
+			type: "module",
+			exports: {
+				"./plugin-sdk/runtime-doctor-migrations": "./runtime-doctor-migrations.mjs",
+			},
+		}),
+	);
+	writeFileSync(
+		archiveSdk,
+		`import { rename } from "node:fs/promises";
+export async function archiveLegacyStateSource({ filePath, changes }) {
+  const archived = filePath + ".migrated";
+  await rename(filePath, archived);
+  changes.push("archived");
+}
+`,
+	);
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "agents list --json") printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]' ;;
+  "doctor --fix --non-interactive")
+    if test -f '${legacyIdentity}'; then
+      printf '%s\n' 'Failed migrating legacy device identity: Error: canonical SQLite device identity differs from the legacy identity' >&2
+    fi
+    ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	writeFileSync(
+		journalctl,
+		`#!/bin/sh
+printf '%s\n' "$*" > '${journalLog}'
+printf '%s\n' 'OpenClaw startup migrations did not complete cleanly; refusing to report the gateway ready.'
+`,
+	);
+	chmodSync(command, 0o755);
+	chmodSync(journalctl, 0o755);
+	process.env.CLAWDI_JOURNALCTL_PATH = journalctl;
+
+	expect(repairHostedOpenClawStartupMigrations(home)).toBe(true);
+	expect(existsSync(legacyIdentity)).toBe(false);
+	expect(existsSync(`${legacyIdentity}.migrated`)).toBe(true);
+	expect(readFileSync(journalLog, "utf8").trim()).toBe(
+		"--user-unit=openclaw-gateway.service --boot=0 --no-pager --quiet --output=cat --lines=500",
+	);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+		"doctor --fix --non-interactive",
 		"doctor --fix --non-interactive",
 		"agents list --json",
 	]);
