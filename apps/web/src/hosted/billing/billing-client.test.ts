@@ -62,21 +62,24 @@ describe("idempotent billing transport", () => {
 	it("absorbs brief checkout contention with the same idempotent request", async () => {
 		const seen: Array<{ body: string; key: string | null }> = [];
 		const delays: number[] = [];
-		const transport = retryIdempotentBillingTransport(async (request) => {
-			seen.push({
-				body: await request.text(),
-				key: request.headers.get("Idempotency-Key"),
-			});
-			if (seen.length === 1) throw new BillingNetworkError("timeout");
-			if (seen.length === 2) {
-				return jsonResponse({ detail: "A billing operation is already in progress" }, 409, {
-					"Retry-After": "1",
+		const transport = retryIdempotentBillingTransport(
+			async (request) => {
+				seen.push({
+					body: await request.text(),
+					key: request.headers.get("Idempotency-Key"),
 				});
-			}
-			return new Response(null, { status: 204 });
-		}, async (delayMs) => {
-			delays.push(delayMs);
-		});
+				if (seen.length === 1) throw new BillingNetworkError("timeout");
+				if (seen.length === 2) {
+					return jsonResponse({ detail: "A billing operation is already in progress" }, 409, {
+						"Retry-After": "1",
+					});
+				}
+				return new Response(null, { status: 204 });
+			},
+			async (delayMs) => {
+				delays.push(delayMs);
+			},
+		);
 		const response = await transport(
 			new Request("https://api.clawdi.ai/v2/subscription/checkout", {
 				method: "POST",

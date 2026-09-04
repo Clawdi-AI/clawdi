@@ -230,7 +230,6 @@ export class HostedDeployClient {
 				) {
 					throw error;
 				}
-				continue;
 			}
 		}
 		throw new HostedDeployApiError(0, "Hosted deploy API request failed.");
