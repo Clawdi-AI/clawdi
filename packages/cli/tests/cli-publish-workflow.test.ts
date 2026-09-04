@@ -81,7 +81,7 @@ describe("CLI publish workflow contract", () => {
 		expect(build).toBeGreaterThan(-1);
 		expect(publish).toBeGreaterThan(build);
 		expect(buildJob).toContain(
-			`runs-on: \${{ github.event_name == 'workflow_dispatch' && 'ubuntu-latest' || vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}`,
+			`runs-on: \${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}`,
 		);
 		expect(publishJob).toContain("runs-on: ubuntu-latest");
 		expect(publishJob).not.toContain("vars.CI_RUNNER");
