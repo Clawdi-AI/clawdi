@@ -1443,7 +1443,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "retry_retraction" | "verify_absent" | "rearm_external_ports_delete";
+            action: "retry_retraction" | "verify_absent" | "rearm_external_ports_delete" | "rearm_controller_terminal_hold";
             /** Intent Versions */
             intent_versions: [
                 number,
@@ -2483,8 +2483,6 @@ export interface components {
              * @enum {string}
              */
             request_status: "pending" | "ready" | "processing" | "succeeded" | "failed" | "expired" | "superseded";
-            /** Failure Code */
-            failure_code?: "trial_ineligible" | null;
             lineage_tail?: components["schemas"]["V2HostedDeployRequestLineageTail"] | null;
         };
         /** V2HostedDeploymentCommercialDisplay */
