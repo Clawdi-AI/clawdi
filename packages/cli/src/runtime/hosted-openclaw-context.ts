@@ -35,6 +35,16 @@ class OpenClawWorkspaceRosterError extends Error {
 	}
 }
 
+function openClawDoctorRepairRequired(result: ReturnType<typeof spawnRuntimeUserCommand>): boolean {
+	const output = [result.stderr, result.stdout]
+		.filter((value): value is string => typeof value === "string")
+		.join("\n");
+	return (
+		output.includes("OpenClaw startup migrations did not complete cleanly") &&
+		output.includes('Run "openclaw doctor --fix"')
+	);
+}
+
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
 function installedCommandPath(home: string): string | null {
@@ -143,15 +153,8 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 			maxBufferBytes: 1024 * 1024,
 		});
 	}
-	if (result.status !== 0) {
-		const output = [result.stderr, result.stdout]
-			.filter((value): value is string => typeof value === "string")
-			.join("\n");
-		throw new OpenClawWorkspaceRosterError(
-			output.includes("OpenClaw startup migrations did not complete cleanly") &&
-				output.includes('Run "openclaw doctor --fix"'),
-		);
-	}
+	if (openClawDoctorRepairRequired(result)) throw new OpenClawWorkspaceRosterError(true);
+	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
 	openClawWorkspaces.set(home, { revision, workspace });
 	return workspace;
