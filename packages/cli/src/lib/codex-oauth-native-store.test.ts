@@ -63,6 +63,7 @@ describe("native OAuth store contracts", () => {
 		const providerAuthPath = join(packageRoot, "provider-auth.mjs");
 		const configMutationPath = join(packageRoot, "config-mutation.mjs");
 		const deviceBootstrapPath = join(packageRoot, "device-bootstrap.mjs");
+		const doctorMigrationsPath = join(packageRoot, "doctor-migrations.mjs");
 		const commandPath = join(home, ".local", "bin", "openclaw");
 		mkdirSync(dirname(commandPath), { recursive: true });
 		mkdirSync(packageRoot, { recursive: true });
@@ -77,6 +78,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 		writeFileSync(providerAuthPath, "export const publicProviderAuth = true;\n");
 		writeFileSync(configMutationPath, "export const publicConfigMutation = true;\n");
 		writeFileSync(deviceBootstrapPath, "export const publicDeviceBootstrap = true;\n");
+		writeFileSync(doctorMigrationsPath, "export const publicDoctorMigrations = true;\n");
 		writeFileSync(
 			join(packageRoot, "package.json"),
 			JSON.stringify({
@@ -86,6 +88,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 					"./plugin-sdk/provider-auth": "./provider-auth.mjs",
 					"./plugin-sdk/config-mutation": "./config-mutation.mjs",
 					"./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs",
+					"./plugin-sdk/runtime-doctor-migrations": "./doctor-migrations.mjs",
 				},
 			}),
 		);
@@ -98,6 +101,7 @@ exec "${join(home, ".local", "tools", "node", "bin", "node")}" "${join(packageRo
 		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.providerAuth)).toBe(providerAuthPath);
 		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.configMutation)).toBe(configMutationPath);
 		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.deviceBootstrap)).toBe(deviceBootstrapPath);
+		expect(resolveSdk(OPENCLAW_SDK_EXPORT_PATHS.doctorMigrations)).toBe(doctorMigrationsPath);
 	});
 
 	test("preserves a future Hermes store version and unrelated pool entries", () => {

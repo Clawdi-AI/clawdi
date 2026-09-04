@@ -20,6 +20,7 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import {
 	createOpenClawHostedContext,
+	repairHostedOpenClawStartupMigrations,
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
@@ -189,6 +190,7 @@ function resolveOpenClawWorkspaceForConvergence(
 	home: string,
 	repairInvalidConfig: boolean,
 ): string {
+	if (repairInvalidConfig) repairHostedOpenClawStartupMigrations(home);
 	try {
 		return resolveHostedOpenClawWorkspace(home);
 	} catch (error) {
