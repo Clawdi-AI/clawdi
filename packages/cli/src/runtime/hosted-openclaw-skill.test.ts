@@ -233,7 +233,6 @@ case "$*" in
   "agents list --json")
     if test ! -f '${repaired}'; then
       printf '%s\n' 'OpenClaw startup migrations did not complete cleanly.' 'Run "openclaw doctor --fix" against the same state/config, then restart the gateway.' >&2
-      exit 1
     fi
     printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
     ;;
