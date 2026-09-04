@@ -7,9 +7,9 @@ import {
 	searchQueryLength,
 } from "@clawdi/shared/consts";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
-import { LayoutList, Table2 } from "lucide-react";
+import { LayoutList, Link2, Table2 } from "lucide-react";
 import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -61,7 +61,11 @@ export default function SessionsPage() {
 		<Suspense
 			fallback={
 				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-					<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
+					<PageHeader
+						title="Sessions"
+						description={SESSIONS_RESOURCE.managementDescription}
+						actions={<SharedLinksButton />}
+					/>
 					<SessionFeed sessions={[]} isLoading emptyMessage="" />
 				</div>
 			}
@@ -399,7 +403,11 @@ function SessionsListInner() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
+			<PageHeader
+				title="Sessions"
+				description={SESSIONS_RESOURCE.managementDescription}
+				actions={<SharedLinksButton />}
+			/>
 
 			{shouldBlockQueryError(error, data) ? (
 				<ApiErrorPanel
@@ -468,5 +476,19 @@ function SessionsListInner() {
 				</div>
 			)}
 		</div>
+	);
+}
+
+function SharedLinksButton() {
+	return (
+		<Button
+			render={<Link to="/sessions/shared" />}
+			nativeButton={false}
+			variant="outline"
+			size="sm"
+		>
+			<Link2 />
+			Shared links
+		</Button>
 	);
 }

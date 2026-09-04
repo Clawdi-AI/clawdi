@@ -47,6 +47,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 	let legacyLinkActive = true;
 	let shares: Array<Record<string, unknown>> = [];
 	let createdBody: unknown;
+	let requestedTimelineCategories: string[] = [];
 
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -63,6 +64,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 			return fulfillJson(route, session);
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/messages`) {
+			requestedTimelineCategories = url.searchParams.getAll("include");
 			return fulfillJson(route, {
 				items: [
 					{
@@ -125,6 +127,10 @@ test("uses direct message actions and keeps older live links revocable", async (
 	});
 
 	await page.goto(`/sessions/${SESSION_ID}`);
+	await expect.poll(() => requestedTimelineCategories).toEqual(["user", "assistant"]);
+	await expect(page.getByRole("checkbox", { name: "You" })).toBeChecked();
+	await expect(page.getByRole("checkbox", { name: "Agent" })).toBeChecked();
+	await expect(page.getByRole("checkbox", { name: "Tools" })).not.toBeChecked();
 	const assistantMessage = page.getByText("Assistant response ready to share", {
 		exact: true,
 	});
@@ -165,4 +171,56 @@ test("uses direct message actions and keeps older live links revocable", async (
 	});
 	await confirmation.getByRole("button", { name: "Turn off link" }).click();
 	await expect(sessionDialog.getByText("Live Session link", { exact: true })).not.toBeVisible();
+});
+
+test("manages active Session links from one page", async ({ page }) => {
+	let active = true;
+
+	await page.route("**/v1/**", async (route) => {
+		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents") return fulfillJson(route, []);
+		if (url.pathname === "/v1/sessions") {
+			return fulfillJson(route, { items: [], total: 0, page: 1, page_size: 25 });
+		}
+		if (url.pathname === "/v1/session-shares") {
+			return fulfillJson(route, {
+				items: active
+					? [
+							{
+								id: SHARE_ID,
+								kind: "snapshot",
+								session_id: SESSION_ID,
+								session_title: "Share a response",
+								scope: "response",
+								message_count: 1,
+								share_url: `http://127.0.0.1:3200/s/${SHARE_ID}`,
+								created_at: now,
+							},
+						]
+					: [],
+				total: active ? 1 : 0,
+				page: 1,
+				page_size: 25,
+			});
+		}
+		if (
+			url.pathname === `/v1/session-shares/${SHARE_ID}` &&
+			route.request().method() === "DELETE"
+		) {
+			active = false;
+			return route.fulfill({ status: 204 });
+		}
+		return fulfillJson(route, {});
+	});
+
+	await page.goto("/sessions/shared");
+	await expect(page.getByRole("heading", { name: "Shared Session links" })).toBeVisible();
+	await expect(page.getByText("Share a response", { exact: true })).toBeVisible();
+	await expect(page.getByText(/Single Agent response · 1 message/)).toBeVisible();
+	await page.getByRole("button", { name: "Turn off share link for Share a response" }).click();
+	await page
+		.getByRole("alertdialog", { name: "Turn off this share link?" })
+		.getByRole("button", { name: "Turn off link" })
+		.click();
+	await expect(page.getByText("No active Session links", { exact: true })).toBeVisible();
 });

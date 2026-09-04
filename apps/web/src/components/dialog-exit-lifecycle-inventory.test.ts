@@ -64,6 +64,7 @@ const STATELESS_OR_CANONICAL = [
 	"hosted/v2/channels/telegram-pair-dialog.tsx",
 	"hosted/v2/channels/whatsapp-pair-dialog.tsx",
 	"pages/dashboard/projects/[id]/page.tsx",
+	"pages/dashboard/sessions/shared-page.tsx",
 ] as const;
 
 describe("stateful popup lifecycle inventory", () => {

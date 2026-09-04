@@ -3,6 +3,7 @@ import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-ro
 import { agentSectionHref } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 import {
+	DEFAULT_SESSION_TIMELINE_VIEW,
 	sessionSearchAnchorFromSearch,
 	validateSessionDetailSearch,
 } from "@/lib/session-search-anchor";
@@ -30,7 +31,7 @@ function AgentSessionDetailRoute() {
 				sessionId={sessionId}
 				searchAnchor={searchAnchor}
 				searchQuery={search.matchQuery}
-				timelineView={search.timelineView ?? "all"}
+				timelineView={search.timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW}
 			/>
 		</AgentResourceRouteGate>
 	);
