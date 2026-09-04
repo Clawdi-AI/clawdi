@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	repairHostedOpenClawConfig,
+	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
@@ -213,6 +214,49 @@ esac
 		"agents list --json",
 	]);
 	expect(JSON.parse(readFileSync(configPath, "utf-8"))).toEqual(repairedConfig);
+});
+
+test("repairs an official state migration failure before retrying the workspace roster", () => {
+	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-state-repair-"));
+	const home = join(root, "home");
+	const workspaceRoot = join(home, "agent-workspace");
+	const command = join(home, ".local", "bin", "openclaw");
+	const repaired = join(root, "repaired");
+	const commandLog = join(root, "commands.log");
+	mkdirSync(dirname(command), { recursive: true });
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> '${commandLog}'
+case "$*" in
+  "agents list --json")
+    if test ! -f '${repaired}'; then
+      printf '%s\n' 'OpenClaw startup migrations did not complete cleanly.' 'Run "openclaw doctor --fix" against the same state/config, then restart the gateway.' >&2
+      exit 1
+    fi
+    printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
+    ;;
+  "doctor --fix --non-interactive") touch '${repaired}' ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	chmodSync(command, 0o755);
+
+	let rosterError: unknown;
+	try {
+		resolveHostedOpenClawWorkspace(home);
+	} catch (error) {
+		rosterError = error;
+	}
+	expect(repairHostedOpenClawWorkspace(home, rosterError)).toBe(true);
+	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
+	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
+		"agents list --json",
+		"doctor --fix --non-interactive",
+		"agents list --json",
+	]);
 });
 
 test("does not repair without opt-in or a definitive invalid-config validation", () => {

@@ -28,6 +28,13 @@ const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
 const openClawWorkspaces = new Map<string, { revision: string; workspace: string }>();
 
+class OpenClawWorkspaceRosterError extends Error {
+	constructor(readonly doctorRepairRequired: boolean) {
+		super("OpenClaw official agent workspace roster is unavailable");
+		this.name = "OpenClawWorkspaceRosterError";
+	}
+}
+
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
 function installedCommandPath(home: string): string | null {
@@ -137,7 +144,13 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 		});
 	}
 	if (result.status !== 0) {
-		throw new Error("OpenClaw official agent workspace roster is unavailable");
+		const output = [result.stderr, result.stdout]
+			.filter((value): value is string => typeof value === "string")
+			.join("\n");
+		throw new OpenClawWorkspaceRosterError(
+			output.includes("OpenClaw startup migrations did not complete cleanly") &&
+				output.includes('Run "openclaw doctor --fix"'),
+		);
 	}
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
 	openClawWorkspaces.set(home, { revision, workspace });
@@ -179,6 +192,11 @@ export function repairHostedOpenClawConfig(home: string): boolean {
 		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
 	);
 	if (!invalidConfigValidation(validation)) return false;
+	runHostedOpenClawDoctor(home, command);
+	return true;
+}
+
+function runHostedOpenClawDoctor(home: string, command = commandPath(home)): void {
 	const repair = spawnRuntimeUserCommand(
 		command,
 		["doctor", "--fix", "--non-interactive"],
@@ -186,8 +204,15 @@ export function repairHostedOpenClawConfig(home: string): boolean {
 		home,
 		{ timeoutMs: OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS, maxBufferBytes: 4 * 1024 * 1024 },
 	);
-	if (repair.status !== 0) throw new Error("OpenClaw official config repair failed");
-	return true;
+	if (repair.status !== 0) throw new Error("OpenClaw official repair failed");
+}
+
+export function repairHostedOpenClawWorkspace(home: string, error: unknown): boolean {
+	if (error instanceof OpenClawWorkspaceRosterError && error.doctorRepairRequired) {
+		runHostedOpenClawDoctor(home);
+		return true;
+	}
+	return repairHostedOpenClawConfig(home);
 }
 
 function resolveSdkExports(
