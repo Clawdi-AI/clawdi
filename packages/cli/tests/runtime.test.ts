@@ -5982,6 +5982,38 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(calls).toContain(`--user start ${unit}`);
 	});
 
+	it("reloads manager state changed before the apply snapshot without restarting active services", () => {
+		const paths = seedRuntimeWatchLocaleBaseline(
+			join(root, "home", "clawdi"),
+			join(root, "var", "lib", "clawdi"),
+			join(root, "run", "clawdi"),
+		);
+		const snapshot = readSystemdUnitSnapshot(paths);
+		const logPath = join(root, "systemctl-reload.log");
+		const stateRoot = join(root, "systemctl-reload-state");
+		const command = join(root, "bin", "systemctl");
+		writeFakeSystemdManager({ path: command, logPath, stateRoot });
+		seedFakeSystemdSnapshotProcesses(paths, stateRoot, snapshot);
+		for (const [scope, unit] of [
+			["system", "clawdi-runtime-sidecar.service"],
+			["user", "openclaw-gateway.service"],
+		] as const) {
+			writeFileSync(fakeSystemdStatePath(stateRoot, scope, unit, "reload"), "\n");
+		}
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = command;
+
+		expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {})).toMatchObject({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [],
+		});
+		const calls = readFileSync(logPath, "utf8").trim().split("\n");
+		expect(calls).toContain("daemon-reload");
+		expect(calls).toContain("--user daemon-reload");
+		expect(calls.some((call) => /\b(?:start|restart|stop)\b/.test(call))).toBe(false);
+	});
+
 	it("runtime watch keeps polling after SSE authentication failure", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");

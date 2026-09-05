@@ -926,6 +926,39 @@ exec /usr/bin/systemctl "$@"
 				);
 			}
 			expect(manifestFetches).toBeGreaterThanOrEqual(2);
+
+			if (runtime === "openclaw") {
+				const unitName = "openclaw-gateway.service";
+				const unitPath = join(paths.systemdUserRoot, unitName);
+				const installerLog = join(
+					paths.statusRoot,
+					"installer-logs",
+					"openclaw-gateway-service.log",
+				);
+				const installedAt = statSync(installerLog).mtimeMs;
+				const nativeUnit = `${readFileSync(unitPath, "utf8")}\n[Service]\nEnvironment=CLAWDI_TEST_NATIVE_REFRESH=1\n`;
+				writeFileSync(unitPath, nativeUnit);
+				expect(runUserSystemctl("show", unitName, "--property=NeedDaemonReload").stdout).toContain(
+					"NeedDaemonReload=yes",
+				);
+
+				const refreshed = await runManagedInit();
+				expect(refreshed.status, `${refreshed.stdout}\n${refreshed.stderr}`).toBe(0);
+				expect(readFileSync(unitPath, "utf8")).toBe(nativeUnit);
+				expect(statSync(installerLog).mtimeMs).toBe(installedAt);
+				const pid = Number(
+					runUserSystemctl("show", unitName, "--property=MainPID", "--value").stdout,
+				);
+				expect(pid).toBeGreaterThan(1);
+				expect(pid).not.toBe(firstPids.get(unitName));
+				expect(readFileSync(`/proc/${pid}/environ`, "utf8").split("\0")).toContain(
+					"CLAWDI_TEST_NATIVE_REFRESH=1",
+				);
+				expect(runUserSystemctl("show", unitName, "--property=NeedDaemonReload").stdout).toContain(
+					"NeedDaemonReload=no",
+				);
+				await waitForTcpPort(18789, VIRGIN_RUNTIME_PORT_TIMEOUT_MS);
+			}
 		} finally {
 			manifestServer?.stop(true);
 			if (previousUmask !== null) process.umask(previousUmask);

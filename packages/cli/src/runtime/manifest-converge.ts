@@ -960,7 +960,6 @@ function prepareRuntimeActivation(
 		state.runtimeSystemdUserPrograms,
 		paths,
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
-		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
 	const publishSystemdUnits = (deferredRuntimeUserUnitNames: readonly string[] = []) =>
 		writeRuntimeSystemdState({

@@ -99,7 +99,7 @@ test("adopts a persisted native Hermes service in a fresh process without reinst
 		env: {},
 		resolvedSecretEnv: {},
 	};
-	const adopted = planOfficialRuntimeServices([program], paths, true, {});
+	const adopted = planOfficialRuntimeServices([program], paths, true);
 	expect(adopted.pending).toEqual([]);
 	const modulePath = fileURLToPath(new URL("./runtime-systemd-reconciliation.ts", import.meta.url));
 	const child = spawnSync(
@@ -107,9 +107,9 @@ test("adopts a persisted native Hermes service in a fresh process without reinst
 		[
 			"--eval",
 			`import { planOfficialRuntimeServices } from ${JSON.stringify(modulePath)};
-const { program, paths, revisions } = JSON.parse(process.argv[1]);
-console.log(JSON.stringify(planOfficialRuntimeServices([program], paths, true, revisions)));`,
-			JSON.stringify({ program, paths, revisions: adopted.serviceRevisions }),
+const { program, paths } = JSON.parse(process.argv[1]);
+console.log(JSON.stringify(planOfficialRuntimeServices([program], paths, true)));`,
+			JSON.stringify({ program, paths }),
 		],
 		{ encoding: "utf8", timeout: 15_000 },
 	);
@@ -1555,7 +1555,7 @@ esac
 	});
 
 	test.each(installGateHarnesses)(
-		"adopts %s command revision when no revision is committed and repairs later drift",
+		"adopts %s native revisions and repairs a subsequently missing unit",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
@@ -1565,6 +1565,12 @@ esac
 			expect(harness.installCount()).toBe(1);
 
 			harness.drift();
+			const nativeUnit = harness.unitContents();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(harness.unitContents()).toBe(nativeUnit);
+
+			harness.removeUnit();
 			harness.failNextInstall();
 			expect(harness.converge().installErrors.join("\n")).toContain("install failed");
 			expect(harness.installCount()).toBe(2);
@@ -1604,7 +1610,7 @@ esac
 	});
 
 	test.each(installGateHarnesses)(
-		"reconciles a real %s command revision change exactly once",
+		"adopts %s version changes without reinstalling its native unit",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
@@ -1612,9 +1618,9 @@ esac
 
 			harness.revise();
 			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(2);
+			expect(harness.installCount()).toBe(1);
 			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(2);
+			expect(harness.installCount()).toBe(1);
 		},
 	);
 
@@ -1632,14 +1638,17 @@ esac
 		expect(harness.installCount()).toBe(1);
 	});
 
-	test.each(installGateHarnesses)("detects post-commit %s drift", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge(harness.drift).installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
+	test.each(installGateHarnesses)(
+		"preserves post-commit %s native edits",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge(harness.drift).installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-	});
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+		},
+	);
 
 	test.each([
 		["Hermes", "hermes"],

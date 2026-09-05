@@ -444,7 +444,6 @@ export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
 	executeInstallers: boolean,
-	committedServiceRevisions: Readonly<Record<string, string>>,
 ): OfficialRuntimeServicePlan {
 	const pending: OfficialRuntimeServicePlan["pending"] = [];
 	const serviceRevisions: Record<string, string> = {};
@@ -453,12 +452,8 @@ export function planOfficialRuntimeServices(
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
 		const serviceRevision = officialRuntimeServiceRevision(program, paths);
 		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
-		// Hermes owns native unit refresh during gateway startup and runtime updates.
-		if (
-			!serviceRevision ||
-			(program.runtime !== "hermes" &&
-				(committedServiceRevisions[unitName] ?? serviceRevision) !== serviceRevision)
-		) {
+		// Native updaters own service refresh. Fingerprint drift alone is not a repair request.
+		if (!serviceRevision) {
 			pending.push({ unitName, program, serviceRevision });
 		}
 	}
