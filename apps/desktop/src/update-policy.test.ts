@@ -11,7 +11,6 @@ const SIGNED_STABLE: DesktopUpdatePolicyInput = {
 	isMacAppStore: false,
 	channel: "stable",
 	feedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
-	expectedTeamId: "ABC1234567",
 	signature: {
 		authorities: ["Developer ID Application: Clawdi, Inc. (ABC1234567)"],
 		teamIdentifier: "ABC1234567",
@@ -40,8 +39,6 @@ describe("evaluateDesktopUpdatePolicy", () => {
 				{ ...SIGNED_STABLE, feedUrl: "https://downloads.example.test/clawdi/desktop/stable" },
 				"invalid-metadata",
 			],
-			[{ ...SIGNED_STABLE, expectedTeamId: "WRONG" }, "invalid-metadata"],
-			[{ ...SIGNED_STABLE, expectedTeamId: "ZZZ1234567" }, "unsigned"],
 			[{ ...SIGNED_STABLE, signature: null }, "unsigned"],
 			[
 				{

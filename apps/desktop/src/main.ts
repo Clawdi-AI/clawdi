@@ -279,7 +279,6 @@ function isDocumentRequest(request: Request): boolean {
 async function initializeUpdates(): Promise<void> {
 	const channel = readPackageMetadataField("clawdiUpdateChannel");
 	const feedUrl = readPackageMetadataField("clawdiUpdateFeedUrl");
-	const expectedTeamId = readPackageMetadataField("clawdiUpdateTeamId");
 	const shouldInspectSignature =
 		app.isPackaged && process.platform === "darwin" && process.mas !== true && channel === "stable";
 	const signature = shouldInspectSignature ? await readMacCodeSignature(process.execPath) : null;
@@ -289,7 +288,6 @@ async function initializeUpdates(): Promise<void> {
 		isMacAppStore: process.mas === true,
 		channel,
 		feedUrl,
-		expectedTeamId,
 		signature,
 	});
 	if (!policy.enabled) console.info(`Desktop updates disabled: ${policy.reason}`);

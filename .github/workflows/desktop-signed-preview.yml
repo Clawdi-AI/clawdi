@@ -46,10 +46,9 @@ jobs:
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          EXPECTED_TEAM_ID: ${{ secrets.CLAWDI_DESKTOP_TEAM_ID }}
         run: |
           set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER EXPECTED_TEAM_ID; do
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
             test -n "${!name}" || { echo "Missing secret: $name"; exit 1; }
           done
           umask 077
@@ -70,7 +69,7 @@ jobs:
           for target in "$app" "$cli"; do
             signature=$(codesign -dv --verbose=4 "$target" 2>&1)
             printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
-            printf '%s\n' "$signature" | grep -Fx "TeamIdentifier=$EXPECTED_TEAM_ID"
+            printf '%s\n' "$signature" | grep -Eq '^TeamIdentifier=[A-Z0-9]{10}$'
           done
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"

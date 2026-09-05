@@ -2,9 +2,7 @@ import { normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
-	teamId: string;
 	updateFeedUrl: string;
-	notarizationMode: "api-key" | "apple-id" | "keychain-profile";
 }
 
 export function readDesktopReleaseConfiguration(
@@ -24,10 +22,6 @@ export function readDesktopReleaseConfiguration(
 			"A Developer ID signing identity is required through CSC_NAME or CSC_LINK with CSC_KEY_PASSWORD.",
 		);
 	}
-	const teamId = env.CLAWDI_DESKTOP_TEAM_ID?.trim() ?? "";
-	if (!/^[A-Z0-9]{10}$/.test(teamId)) {
-		throw new Error("CLAWDI_DESKTOP_TEAM_ID must be the 10-character Developer ID Team ID.");
-	}
 	const updateFeedUrl = normalizeDesktopUpdateFeedUrl(env.CLAWDI_DESKTOP_UPDATE_FEED_URL);
 	if (!updateFeedUrl) {
 		throw new Error(
@@ -35,13 +29,12 @@ export function readDesktopReleaseConfiguration(
 		);
 	}
 
-	const notarizationMode = readNotarizationMode(env);
-	if (!notarizationMode) {
+	if (!allPresent(env, ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"])) {
 		throw new Error(
-			"Apple notarization requires APPLE_API_KEY/API_KEY_ID/API_ISSUER, APPLE_ID/APP_SPECIFIC_PASSWORD/TEAM_ID, or APPLE_KEYCHAIN_PROFILE.",
+			"Apple notarization requires APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER.",
 		);
 	}
-	return { version, teamId, updateFeedUrl, notarizationMode };
+	return { version, updateFeedUrl };
 }
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
@@ -59,23 +52,9 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		`--config.extraMetadata.version=${configuration.version}`,
 		"--config.extraMetadata.clawdiUpdateChannel=stable",
 		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,
-		`--config.extraMetadata.clawdiUpdateTeamId=${configuration.teamId}`,
 		"--config.publish.provider=generic",
 		`--config.publish.url=${configuration.updateFeedUrl}`,
 	];
-}
-
-function readNotarizationMode(
-	env: Record<string, string | undefined>,
-): DesktopReleaseConfiguration["notarizationMode"] | null {
-	if (allPresent(env, ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"])) {
-		return "api-key";
-	}
-	if (allPresent(env, ["APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"])) {
-		return "apple-id";
-	}
-	if (env.APPLE_KEYCHAIN_PROFILE?.trim()) return "keychain-profile";
-	return null;
 }
 
 function allPresent(env: Record<string, string | undefined>, names: string[]): boolean {

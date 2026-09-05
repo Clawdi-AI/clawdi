@@ -37,14 +37,10 @@ async function verifyReleaseSignature(): Promise<void> {
 		isMacAppStore: false,
 		channel: "stable",
 		feedUrl: configuration.updateFeedUrl,
-		expectedTeamId: configuration.teamId,
 		signature: existsSync(executable) ? signature : null,
 	});
 	if (!policy.enabled) {
 		throw new Error("Desktop release must have a Developer ID Application signature and Team ID.");
-	}
-	if (signature?.teamIdentifier !== configuration.teamId) {
-		throw new Error("Desktop release signature does not match CLAWDI_DESKTOP_TEAM_ID.");
 	}
 }
 
