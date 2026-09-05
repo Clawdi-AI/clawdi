@@ -17,7 +17,6 @@ export interface DesktopUpdatePolicyInput {
 	isMacAppStore: boolean;
 	channel: unknown;
 	feedUrl: unknown;
-	expectedTeamId: unknown;
 	signature: DesktopCodeSignature | null;
 }
 
@@ -34,9 +33,8 @@ export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): De
 	}
 	if (input.channel !== "stable") return { enabled: false, reason: "invalid-metadata" };
 	const feedUrl = normalizeDesktopUpdateFeedUrl(input.feedUrl);
-	const expectedTeamId = normalizeTeamId(input.expectedTeamId);
-	if (!feedUrl || !expectedTeamId) return { enabled: false, reason: "invalid-metadata" };
-	if (!isDeveloperIdSignature(input.signature, expectedTeamId)) {
+	if (!feedUrl) return { enabled: false, reason: "invalid-metadata" };
+	if (!isDeveloperIdSignature(input.signature)) {
 		return { enabled: false, reason: "unsigned" };
 	}
 	return { enabled: true, channel: "stable", feedUrl };
@@ -68,12 +66,10 @@ function normalizeTeamId(value: unknown): string | null {
 	return typeof value === "string" && /^[A-Z0-9]{10}$/.test(value) ? value : null;
 }
 
-function isDeveloperIdSignature(
-	signature: DesktopCodeSignature | null,
-	expectedTeamId: string,
-): boolean {
+function isDeveloperIdSignature(signature: DesktopCodeSignature | null): boolean {
 	return Boolean(
-		signature?.teamIdentifier === expectedTeamId &&
+		signature &&
+			normalizeTeamId(signature.teamIdentifier) &&
 			signature.authorities.some((authority) => authority.startsWith("Developer ID Application:")),
 	);
 }

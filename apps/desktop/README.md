@@ -18,12 +18,13 @@ the explicit Restart and Install command.
 
 ## Signed release package
 
-Set an explicit stable `CLAWDI_DESKTOP_VERSION`, the expected
-`CLAWDI_DESKTOP_TEAM_ID`, and `CLAWDI_DESKTOP_UPDATE_FEED_URL`. The feed must be
+Set an explicit stable `CLAWDI_DESKTOP_VERSION` and
+`CLAWDI_DESKTOP_UPDATE_FEED_URL`. The feed must be
 an owner-controlled strict HTTPS directory URL ending in `/`; it is embedded in
 the signed application metadata and has no runtime default. Also configure a
-standard electron-builder Developer ID signing identity and one of
-electron-builder's supported Apple notarization credential tuples. Then run:
+standard electron-builder Developer ID signing identity and API key notarization:
+`APPLE_API_KEY` (P8 file path), `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
+No separate Team ID configuration is required. Then run:
 
 ```bash
 bun run --cwd apps/desktop package:mac:release

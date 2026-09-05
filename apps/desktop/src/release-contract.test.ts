@@ -3,7 +3,6 @@ import { desktopReleaseBuilderArgs, readDesktopReleaseConfiguration } from "./re
 
 const RELEASE_ENV = {
 	CLAWDI_DESKTOP_VERSION: "1.2.3",
-	CLAWDI_DESKTOP_TEAM_ID: "ABC1234567",
 	CLAWDI_DESKTOP_UPDATE_FEED_URL: "https://downloads.example.test/clawdi/desktop/stable/",
 	CSC_NAME: "Developer ID Application: Clawdi, Inc.",
 	APPLE_API_KEY: "/private/AuthKey.p8",
@@ -15,6 +14,9 @@ describe("Desktop release contract", () => {
 	test("fails closed without a signed stable generic feed configuration", () => {
 		for (const env of [
 			{},
+			{ ...RELEASE_ENV, APPLE_API_KEY: "" },
+			{ ...RELEASE_ENV, APPLE_API_KEY_ID: "" },
+			{ ...RELEASE_ENV, APPLE_API_ISSUER: "" },
 			{ ...RELEASE_ENV, CLAWDI_DESKTOP_UPDATE_FEED_URL: "" },
 			{ ...RELEASE_ENV, CLAWDI_DESKTOP_UPDATE_FEED_URL: "http://downloads.example.test" },
 			{
@@ -27,12 +29,10 @@ describe("Desktop release contract", () => {
 		}
 	});
 
-	test("accepts explicit signing, notarization, Team ID, and strict HTTPS feed inputs", () => {
+	test("accepts API key notarization without a separate Team ID", () => {
 		expect(readDesktopReleaseConfiguration(RELEASE_ENV, "darwin")).toEqual({
 			version: "1.2.3",
-			teamId: "ABC1234567",
 			updateFeedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
-			notarizationMode: "api-key",
 		});
 	});
 
@@ -48,7 +48,6 @@ describe("Desktop release contract", () => {
 		expect(args).toContain(
 			"--config.extraMetadata.clawdiUpdateFeedUrl=https://downloads.example.test/clawdi/desktop/stable/",
 		);
-		expect(args).toContain("--config.extraMetadata.clawdiUpdateTeamId=ABC1234567");
 		expect(args).toContain("--config.publish.provider=generic");
 	});
 });
