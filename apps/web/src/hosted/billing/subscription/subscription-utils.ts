@@ -3,6 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
+	type ComputeSubscriptionActionResult,
 	type ComputeSubscriptionListItem,
 	type HostedComputeSubscription,
 	type Plan,
@@ -21,6 +22,18 @@ export function isHistoricalAccountSubscription(
 	return subscription.status === "canceled";
 }
 
+export function isTerminalComputeSubscriptionStatus(status: string | undefined): boolean {
+	return ["canceled", "expired", "incomplete", "incomplete_expired", "paused", "unpaid"].includes(
+		status?.toLowerCase() ?? "",
+	);
+}
+
+export function isComputeSubscriptionActionUnconfirmed(
+	result: ComputeSubscriptionActionResult,
+): boolean {
+	return result.action_state === "pending" || result.action_state === "reconciling";
+}
+
 export function computeSubscriptionCancellationCopy({
 	isTrial,
 	periodEndLabel,
@@ -33,7 +46,7 @@ export function computeSubscriptionCancellationCopy({
 	if (isTrial) {
 		return {
 			description: hasRetainedDeployment
-				? "The trial ends immediately. The agent stops, but its disk and data are retained."
+				? "The trial ends immediately and the agent stops. Your saved data is kept."
 				: "The trial ends immediately. This cannot restore a deleted agent.",
 			confirmLabel: "End trial now",
 		};
@@ -43,25 +56,28 @@ export function computeSubscriptionCancellationCopy({
 		: "The subscription will stop renewing at the end of the current billing period.";
 	return {
 		description: hasRetainedDeployment
-			? `${ending} At that point, the agent stops, but its disk and data are retained.`
+			? `${ending} The agent stops when the period ends. Your saved data is kept.`
 			: `${ending} This cannot restore a deleted agent.`,
 		confirmLabel: "Cancel at period end",
 	};
 }
 
 export function computeSubscriptionCancellationSuccessCopy({
+	isTrial,
 	cancelAtPeriodEnd,
 	periodEndLabel,
 	hasRetainedDeployment,
 }: {
+	isTrial: boolean;
 	cancelAtPeriodEnd: boolean;
 	periodEndLabel: string | null;
 	hasRetainedDeployment: boolean;
 }): string {
 	if (!cancelAtPeriodEnd) {
+		const ending = isTrial ? "The trial has ended." : "The subscription has ended.";
 		return hasRetainedDeployment
-			? "The trial has ended. The agent will stop; its disk and data are retained."
-			: "The trial has ended.";
+			? `${ending} The agent will stop. Your saved data is kept.`
+			: ending;
 	}
 	if (!hasRetainedDeployment) {
 		return periodEndLabel
@@ -69,8 +85,8 @@ export function computeSubscriptionCancellationSuccessCopy({
 			: "The subscription will not renew after the current billing period.";
 	}
 	return periodEndLabel
-		? `The subscription remains active through ${periodEndLabel}. The agent will then stop; its disk and data are retained.`
-		: "The agent will stop when the current billing period ends; its disk and data are retained.";
+		? `The subscription remains active through ${periodEndLabel}. The agent will then stop. Your saved data is kept.`
+		: "The agent will stop when the current billing period ends. Your saved data is kept.";
 }
 
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {

@@ -193,8 +193,7 @@ describe("compute subscription cancellation copy", () => {
 				hasRetainedDeployment: true,
 			}),
 		).toEqual({
-			description:
-				"The trial ends immediately. The agent stops, but its disk and data are retained.",
+			description: "The trial ends immediately and the agent stops. Your saved data is kept.",
 			confirmLabel: "End trial now",
 		});
 		expect(
@@ -205,25 +204,35 @@ describe("compute subscription cancellation copy", () => {
 			}),
 		).toEqual({
 			description:
-				"The subscription will stop renewing and remain active through Sep 12, 2026. At that point, the agent stops, but its disk and data are retained.",
+				"The subscription will stop renewing and remain active through Sep 12, 2026. The agent stops when the period ends. Your saved data is kept.",
 			confirmLabel: "Cancel at period end",
 		});
 		expect(
 			computeSubscriptionCancellationSuccessCopy({
+				isTrial: true,
 				cancelAtPeriodEnd: false,
 				periodEndLabel: null,
 				hasRetainedDeployment: true,
 			}),
-		).toBe("The trial has ended. The agent will stop; its disk and data are retained.");
+		).toBe("The trial has ended. The agent will stop. Your saved data is kept.");
 		expect(
 			computeSubscriptionCancellationSuccessCopy({
+				isTrial: false,
 				cancelAtPeriodEnd: true,
 				periodEndLabel: "Sep 12, 2026",
 				hasRetainedDeployment: true,
 			}),
 		).toBe(
-			"The subscription remains active through Sep 12, 2026. The agent will then stop; its disk and data are retained.",
+			"The subscription remains active through Sep 12, 2026. The agent will then stop. Your saved data is kept.",
 		);
+		expect(
+			computeSubscriptionCancellationSuccessCopy({
+				isTrial: false,
+				cancelAtPeriodEnd: false,
+				periodEndLabel: null,
+				hasRetainedDeployment: true,
+			}),
+		).toBe("The subscription has ended. The agent will stop. Your saved data is kept.");
 		expect(
 			computeSubscriptionCancellationCopy({
 				isTrial: false,
@@ -234,6 +243,16 @@ describe("compute subscription cancellation copy", () => {
 			description:
 				"The subscription will stop renewing at the end of the current billing period. This cannot restore a deleted agent.",
 			confirmLabel: "Cancel at period end",
+		});
+		expect(
+			computeSubscriptionCancellationCopy({
+				isTrial: true,
+				periodEndLabel: "Sep 12, 2026",
+				hasRetainedDeployment: false,
+			}),
+		).toEqual({
+			description: "The trial ends immediately. This cannot restore a deleted agent.",
+			confirmLabel: "End trial now",
 		});
 	});
 });
