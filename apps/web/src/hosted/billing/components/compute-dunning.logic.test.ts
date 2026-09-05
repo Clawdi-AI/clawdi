@@ -33,6 +33,7 @@ function deployment({
 		status,
 		currentPlanSlug,
 		computeSubscription,
+		recoveryAction: factKind === "funding_revoked" ? "start_new" : null,
 		fundingFact: factKind
 			? {
 					fact_kind: factKind,
@@ -107,7 +108,11 @@ describe("computeDunningState", () => {
 
 	test("routes card past due to payment remediation", () => {
 		const deploymentWithPastDueCard = deployment({
-			computeSubscription: subscription({ status: "past_due", payment_state: "past_due" }),
+			computeSubscription: subscription({
+				status: "past_due",
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+			}),
 			factKind: "funding_revoked",
 		});
 		expect(computeDunningState(deploymentWithPastDueCard)).toMatchObject({
@@ -122,6 +127,7 @@ describe("computeDunningState", () => {
 				computeSubscription: subscription({
 					status: "past_due",
 					payment_state: "requires_action",
+					recovery_action: "fix_payment",
 					latest_failed_invoice_hosted_url: "https://invoice.stripe.test/action",
 				}),
 			}),
@@ -144,6 +150,7 @@ describe("computeDunningState", () => {
 					status: "past_due",
 					payment_state: "requires_action",
 					pending_plan_slug: "compute_basic",
+					recovery_action: "fix_payment",
 				}),
 				currentPlanSlug: "compute_performance",
 			}),
@@ -152,7 +159,7 @@ describe("computeDunningState", () => {
 		expect(state?.recoveryPlanSlug).toBe("compute_basic");
 	});
 
-	test("presents every terminal rail as a new subscription", () => {
+	test("presents backend-finalized recovery on both payment rails", () => {
 		for (const fundingSource of ["stripe", "wallet"] as const) {
 			const state = computeDunningState(
 				deployment({
@@ -160,6 +167,7 @@ describe("computeDunningState", () => {
 						status: "unpaid",
 						funding_source: fundingSource,
 						payment_state: "unpaid",
+						recovery_action: "start_new",
 					}),
 					currentPlanSlug: "compute_basic",
 				}),
@@ -292,49 +300,17 @@ describe("computeDunningState", () => {
 	});
 });
 
-test("stopped power controls require a subscription only for known terminal entitlement", () => {
-	for (const status of [
-		"canceled",
-		"expired",
-		"incomplete",
-		"incomplete_expired",
-		"paused",
-		"unpaid",
-	]) {
-		expect(
-			computeSubscriptionRequiredToStart(
-				deployment({
-					status: "stopped",
-					computeSubscription: subscription({ status }),
-				}),
-			),
-			status,
-		).toBe(true);
+test("power controls use the backend start decision", () => {
+	expect(computeSubscriptionRequiredToStart({ start_action: "subscribe" })).toBe(true);
+	for (const start_action of [
+		"start",
+		"fix_payment",
+		"top_up",
+		"wait",
+		"contact_support",
+		"unavailable",
+		null,
+	] as const) {
+		expect(computeSubscriptionRequiredToStart({ start_action })).toBe(false);
 	}
-	for (const status of ["active", "trialing", "canceling", "past_due"]) {
-		expect(
-			computeSubscriptionRequiredToStart(
-				deployment({
-					status: "stopped",
-					computeSubscription: subscription({ status, cancel_at_period_end: true }),
-				}),
-			),
-			status,
-		).toBe(false);
-	}
-	expect(computeSubscriptionRequiredToStart(deployment({ status: "stopped" }))).toBe(false);
-	expect(
-		computeSubscriptionRequiredToStart(
-			deployment({ status: "stopped", factKind: "funding_revoked" }),
-		),
-	).toBe(true);
-	expect(
-		computeSubscriptionRequiredToStart(
-			deployment({
-				status: "stopped",
-				factKind: "funding_revoked",
-				computeSubscription: includedSubscription(),
-			}),
-		),
-	).toBe(false);
 });

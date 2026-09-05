@@ -4,7 +4,25 @@ import { computeSubscriptionRecoveryPresentation } from "./compute-subscription-
 const active = { label: "Active", tone: "success" } as const;
 
 describe("computeSubscriptionRecoveryPresentation", () => {
-	test("ended subscriptions override stale payment retries without needing a recovery action", () => {
+	test("pending cancellation does not promise completion or offer another purchase", () => {
+		expect(
+			computeSubscriptionRecoveryPresentation(
+				{
+					status: "canceled",
+					payment_state: "ok",
+					recovery_action: "start_new",
+					actions: { cancel: null, resume: false, command_state: "pending" },
+				},
+				active,
+			),
+		).toMatchObject({
+			status: { label: "Updating subscription" },
+			recoveryTarget: null,
+			schedule: { fallback: "Your request is still processing" },
+		});
+	});
+
+	test("backend recovery is not overridden by a coarse lifecycle status", () => {
 		const canceled = { label: "Canceled", tone: "neutral" } as const;
 		expect(
 			computeSubscriptionRecoveryPresentation(
@@ -18,10 +36,10 @@ describe("computeSubscriptionRecoveryPresentation", () => {
 				canceled,
 			),
 		).toEqual({
-			status: canceled,
+			status: { label: "Past due", tone: "destructive" },
 			hasPaymentIssue: true,
-			recoveryTarget: { kind: "start_new", action: "start_new" },
-			schedule: null,
+			recoveryTarget: { kind: "top_up", action: "top_up" },
+			schedule: { verb: "Retries", at: "2026-09-12T00:00:00Z", fallback: null },
 		});
 	});
 
@@ -85,7 +103,7 @@ describe("computeSubscriptionRecoveryPresentation", () => {
 				active,
 			),
 		).toEqual({
-			status: { label: "Unpaid", tone: "destructive" },
+			status: { label: "Ended", tone: "neutral" },
 			hasPaymentIssue: true,
 			recoveryTarget: { kind: "start_new", action: "start_new" },
 			schedule: null,

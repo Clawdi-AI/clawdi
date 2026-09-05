@@ -3,7 +3,6 @@ import type {
 	ComputeSubscriptionListItem,
 	HostedComputeSubscription,
 } from "@/hosted/billing/contracts";
-import { isTerminalComputeSubscriptionStatus } from "./subscription-utils";
 
 export type ComputeSubscriptionRecoveryFields =
 	| (Pick<
@@ -12,6 +11,8 @@ export type ComputeSubscriptionRecoveryFields =
 			| "next_payment_attempt_at"
 			| "payment_state"
 			| "recovery_action"
+			| "recovery_blocked_reason"
+			| "actions"
 	  > &
 			Partial<Pick<ComputeSubscriptionListItem, "funding_source" | "status">>)
 	| (Pick<
@@ -20,6 +21,8 @@ export type ComputeSubscriptionRecoveryFields =
 			| "next_payment_attempt_at"
 			| "payment_state"
 			| "recovery_action"
+			| "recovery_blocked_reason"
+			| "actions"
 	  > &
 			Partial<Pick<HostedComputeSubscription, "funding_source" | "status">>);
 
@@ -35,19 +38,14 @@ export type ComputeSubscriptionRecoveryPresentation = {
 	recoveryTarget: ComputeRecoveryTarget | null;
 	schedule:
 		| { verb: "Retries"; at: string; fallback: null }
-		| { verb: null; at: null; fallback: "Payment needs attention" }
+		| { verb: null; at: null; fallback: string }
 		| null;
 };
 
 export function computeSubscriptionRecoveryTarget(
 	subscription: ComputeSubscriptionRecoveryFields,
 ): ComputeRecoveryTarget | null {
-	if (
-		isTerminalComputeSubscriptionStatus(subscription.status) ||
-		subscription.payment_state === "unpaid"
-	) {
-		return { kind: "start_new", action: "start_new" };
-	}
+	if (subscription.actions?.command_state != null) return null;
 	const action = subscription.recovery_action;
 	if (action === "top_up") return { kind: "top_up", action };
 	if (action === "start_new") return { kind: "start_new", action };
@@ -56,17 +54,6 @@ export function computeSubscriptionRecoveryTarget(
 		return invoiceUrl
 			? { kind: "invoice", action, url: invoiceUrl }
 			: { kind: "fix_payment", action };
-	}
-	if (subscription.payment_state === "requires_action") {
-		const invoiceUrl = subscription.latest_failed_invoice_hosted_url?.trim();
-		return invoiceUrl
-			? { kind: "invoice", action: "fix_payment", url: invoiceUrl }
-			: { kind: "fix_payment", action: "fix_payment" };
-	}
-	if (subscription.payment_state === "past_due") {
-		return subscription.funding_source === "wallet"
-			? { kind: "top_up", action: "top_up" }
-			: { kind: "fix_payment", action: "fix_payment" };
 	}
 	return null;
 }
@@ -81,6 +68,14 @@ export function computeSubscriptionRecoveryPresentation(
 			hasPaymentIssue: false,
 			recoveryTarget: null,
 			schedule: null,
+		};
+	}
+	if (subscription.actions?.command_state != null) {
+		return {
+			status: { label: "Updating subscription", tone: "warning" },
+			hasPaymentIssue: false,
+			recoveryTarget: null,
+			schedule: { verb: null, at: null, fallback: "Your request is still processing" },
 		};
 	}
 
@@ -99,10 +94,29 @@ export function computeSubscriptionRecoveryPresentation(
 		}
 	})();
 	const target = computeSubscriptionRecoveryTarget(subscription);
-	const terminal = isTerminalComputeSubscriptionStatus(subscription.status);
+	const terminal = target?.kind === "start_new";
+	const blocked = subscription.recovery_blocked_reason;
+	if (blocked) {
+		return {
+			status: {
+				label: blocked === "payment_pending" ? "Payment processing" : "Needs attention",
+				tone: "warning",
+			},
+			hasPaymentIssue: true,
+			recoveryTarget: target,
+			schedule: {
+				verb: null,
+				at: null,
+				fallback:
+					blocked === "payment_pending"
+						? "Waiting for payment confirmation"
+						: "Contact support to restore this subscription",
+			},
+		};
+	}
 
 	return {
-		status: terminal ? lifecycleStatus : (paymentStatus ?? lifecycleStatus),
+		status: terminal ? { label: "Ended", tone: "neutral" } : (paymentStatus ?? lifecycleStatus),
 		hasPaymentIssue: paymentStatus !== null || target !== null,
 		recoveryTarget: target,
 		schedule:

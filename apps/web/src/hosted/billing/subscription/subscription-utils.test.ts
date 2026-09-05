@@ -374,15 +374,22 @@ describe("commonExplicitBillingOffers", () => {
 });
 
 describe("account subscription history", () => {
-	test("treats terminal canceled status as history regardless of service period", () => {
+	test("uses finalized recovery for history regardless of the coarse list status", () => {
 		const ended = {
 			status: "canceled" as const,
+			recovery_action: "start_new" as const,
 			cancel_at_period_end: false,
 			current_period_end: "2099-08-12T12:00:00Z",
 		};
 
 		expect(isHistoricalAccountSubscription(ended)).toBe(true);
-		expect(isHistoricalAccountSubscription({ ...ended, status: "canceling" })).toBe(false);
+		expect(isHistoricalAccountSubscription({ ...ended, recovery_action: null })).toBe(false);
+		expect(
+			isHistoricalAccountSubscription({
+				...ended,
+				actions: { cancel: null, resume: false, command_state: "pending" },
+			}),
+		).toBe(false);
 	});
 });
 

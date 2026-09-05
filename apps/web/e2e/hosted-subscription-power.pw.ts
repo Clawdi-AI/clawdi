@@ -22,8 +22,14 @@ for (const width of [1440, 320]) {
 			...mutationDeploymentReadFixture({
 				...paidBasicDeployment,
 				status: "stopped",
-				compute_subscription: { ...paidBasicDeployment.compute_subscription, status: "canceled" },
+				compute_subscription: {
+					...paidBasicDeployment.compute_subscription,
+					status: "canceled",
+					recovery_action: "start_new",
+					actions: null,
+				},
 			}),
+			start_action: "subscribe" as const,
 			files_endpoint: { url: "https://files.example.test/" },
 		};
 		await stubHostedApi(page, {
@@ -100,7 +106,16 @@ for (const status of ["trialing", "active"] as const) {
 	}) => {
 		const deployment = {
 			...paidBasicDeployment,
-			compute_subscription: { ...paidBasicDeployment.compute_subscription, status },
+			compute_subscription: {
+				...paidBasicDeployment.compute_subscription,
+				status,
+				actions: {
+					cancel:
+						status === "trialing" ? ("end_trial" as const) : ("cancel_at_period_end" as const),
+					resume: false,
+					command_state: null,
+				},
+			},
 		};
 		const cancelRequests: unknown[] = [];
 		const deleteRequests: unknown[] = [];
@@ -122,7 +137,12 @@ for (const status of ["trialing", "active"] as const) {
 			await route.fulfill({ json: { deployment_id: deployment.id, status: "absent" } });
 		});
 		await gotoHostedAgentSettings(page, fixtureAgentId(deployment), "Basic");
-		await page.getByRole("button", { name: "Cancel subscription", exact: true }).click();
+		await page
+			.getByRole("button", {
+				name: status === "trialing" ? "End trial now" : "Cancel subscription",
+				exact: true,
+			})
+			.click();
 		const cancelDialog = page.getByRole("alertdialog");
 		await expect(cancelDialog).toContainText("Your saved data is kept.");
 		await expect(cancelDialog).not.toContainText(/container|volume|disk|permanently delete/i);
@@ -158,3 +178,103 @@ for (const status of ["trialing", "active"] as const) {
 			.toEqual([{ subscription_choice: "cancel_subscription" }]);
 	});
 }
+
+for (const width of [1440, 320]) {
+	for (const state of [
+		{
+			status: "incomplete",
+			blocked: "payment_pending",
+			start: "wait",
+			label: "Updating subscription",
+		},
+		{ status: "paused", blocked: "paused", start: "contact_support", label: "Contact support" },
+		{
+			status: "unpaid",
+			blocked: "authority_pending",
+			start: "contact_support",
+			label: "Contact support",
+		},
+		{ status: "canceled", blocked: null, start: "wait", label: "Updating subscription" },
+	] as const) {
+		test(`${state.status} does not sell a replacement or duplicate payment at ${width}px`, async ({
+			page,
+		}) => {
+			await page.setViewportSize({ width, height: 900 });
+			const startRequests: string[] = [];
+			const deployment = {
+				...mutationDeploymentReadFixture({
+					...paidBasicDeployment,
+					status: "stopped",
+					compute_subscription: {
+						...paidBasicDeployment.compute_subscription,
+						status: state.status,
+						recovery_action: null,
+						recovery_blocked_reason: state.blocked,
+						actions:
+							state.status === "canceled"
+								? { cancel: null, resume: false, command_state: "pending" }
+								: null,
+					},
+				}),
+				start_action: state.start,
+			};
+			await stubHostedApi(page, {
+				deployments: [deployment],
+				plans: [basicPlan, performancePlan],
+				startRequests,
+			});
+			await gotoHostedAgentSettings(page, deployment.agent_id, "Basic");
+			await expect(page.getByRole("button", { name: state.label, exact: true })).toBeVisible();
+			await expect(
+				page.getByRole("button", {
+					name: /Subscribe to start|Fix payment|Start new subscription|Keep subscription/,
+				}),
+			).toHaveCount(0);
+			expect(startRequests).toEqual([]);
+			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+				width,
+			);
+		});
+	}
+}
+
+test("historical scheduled trial keeps its end date and offers an explicit immediate end", async ({
+	page,
+}) => {
+	const deployment = {
+		...paidBasicDeployment,
+		compute_subscription: {
+			...paidBasicDeployment.compute_subscription,
+			status: "trialing",
+			cancel_at_period_end: true,
+			actions: { cancel: "end_trial" as const, resume: true, command_state: null },
+		},
+	};
+	const cancelRequests: unknown[] = [];
+	await stubHostedApi(page, { deployments: [deployment], plans: [basicPlan, performancePlan] });
+	await page.route("**/v2/subscription/cancel", async (route) => {
+		cancelRequests.push(route.request().postDataJSON());
+		await route.fulfill({
+			json: {
+				status: "canceled",
+				billing_term_months: 12,
+				cancel_at_period_end: false,
+				action_state: "pending",
+			},
+		});
+	});
+	await gotoHostedAgentSettings(page, fixtureAgentId(deployment), "Basic");
+	await expect(page.getByRole("button", { name: "Keep subscription", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "End trial now", exact: true })).toBeVisible();
+	expect(cancelRequests).toEqual([]);
+	await page.getByRole("button", { name: "End trial now", exact: true }).click();
+	await expect(page.getByRole("alertdialog")).toContainText("Your saved data is kept");
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "End trial now", exact: true })
+		.click();
+	expect(cancelRequests).toEqual([{ deployment_id: deployment.id }]);
+	await expect(page.locator("[data-sonner-toast]")).toContainText(
+		"Cancellation is still processing",
+	);
+});

@@ -1,11 +1,13 @@
+import type { HostedComputeSubscription } from "@/hosted/billing/contracts";
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
 import type { ComputeRecoveryTarget } from "./compute-subscription-recovery";
-import { computeFundingSource, isTerminalComputeSubscriptionStatus } from "./subscription-utils";
+import { computeFundingSource } from "./subscription-utils";
 
 export type ComputeSubscriptionActionKind =
 	| "upgrade"
 	| "manage"
 	| "cancel"
+	| "end_trial"
 	| "resume"
 	| "fix_payment"
 	| "top_up"
@@ -39,9 +41,8 @@ export type ComputeSubscriptionActionEntitlement = {
 	cancelAtPeriodEnd: boolean;
 	pendingPlanSlug: string | null | undefined;
 	isOrphan?: boolean;
+	actions?: HostedComputeSubscription["actions"];
 };
-
-const CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
 
 function action(
 	kind: ComputeSubscriptionDirectAction["kind"],
@@ -93,21 +94,19 @@ export function resolveComputeSubscriptionActions({
 		entitlement.subscriptionKind === "paid" ||
 		(entitlement.subscriptionKind === undefined &&
 			(fundingSource === "stripe" || fundingSource === "wallet"));
-	const canCancel = paid && !entitlement.cancelAtPeriodEnd && CANCELABLE_STATUSES.has(status);
-	const cancel = canCancel ? action("cancel") : null;
+	const canCancel = entitlement.actions?.cancel != null;
+	const cancel = canCancel
+		? action(entitlement.actions?.cancel === "end_trial" ? "end_trial" : "cancel")
+		: null;
 
+	if (entitlement.actions?.command_state != null) return [];
 	if (hasPendingOperation) return [action("check_change")];
 
-	if (
-		recoveryTarget?.kind === "start_new" ||
-		entitlement.paymentState === "unpaid" ||
-		isTerminalComputeSubscriptionStatus(status)
-	) {
+	if (recoveryTarget?.kind === "start_new") {
 		if (!deploymentBound) return [];
-		const startNewTarget: ComputeRecoveryTarget = { kind: "start_new", action: "start_new" };
 		return [
 			{
-				...recoveryAction(recoveryTarget?.kind === "start_new" ? recoveryTarget : startNewTarget),
+				...recoveryAction(recoveryTarget),
 				disabledReason: startNewUnavailableReason,
 			},
 		];
@@ -122,8 +121,8 @@ export function resolveComputeSubscriptionActions({
 		];
 	}
 
-	if (paid && (entitlement.cancelAtPeriodEnd || status === "canceling")) {
-		return [...(recovery ? [recovery] : []), ...(deploymentBound ? [action("resume")] : [])];
+	if (entitlement.actions?.resume) {
+		return [...(recovery ? [recovery] : []), action("resume"), ...(cancel ? [cancel] : [])];
 	}
 
 	if (!paid) {

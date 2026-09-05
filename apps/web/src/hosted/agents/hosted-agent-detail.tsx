@@ -9,11 +9,13 @@ import {
 	Check,
 	Copy,
 	Cpu,
+	CreditCard,
 	ExternalLink,
 	Eye,
 	EyeOff,
 	FolderOpen,
 	Info,
+	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -418,6 +420,7 @@ function StartComputeAction({
 	const runAction = useActionLock();
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canStart = canStartDeployment(status);
+	const startAction = deployment.start_action;
 	if (computeSubscriptionRequiredToStart(deployment)) {
 		return (
 			<Button
@@ -440,6 +443,47 @@ function StartComputeAction({
 			>
 				<Plus className="size-3.5" />
 				Subscribe to start
+			</Button>
+		);
+	}
+	if (startAction === "fix_payment" || startAction === "top_up") {
+		return (
+			<Button
+				size="sm"
+				variant={variant}
+				disabled={disabled || !canStart}
+				render={
+					<Link
+						to={agentSectionHref(deployment.agent_id, "settings", {
+							settings: "billing-plan",
+						})}
+					/>
+				}
+				nativeButton={false}
+			>
+				<CreditCard className="size-3.5" />
+				{startAction === "top_up" ? "Top up to start" : "Pay to start"}
+			</Button>
+		);
+	}
+	if (startAction === "contact_support") {
+		return (
+			<Button
+				size="sm"
+				variant={variant}
+				disabled={disabled}
+				render={<a href="mailto:support@clawdi.ai" />}
+				nativeButton={false}
+			>
+				<LifeBuoy className="size-3.5" />
+				Contact support
+			</Button>
+		);
+	}
+	if (startAction !== "start") {
+		return (
+			<Button size="sm" variant={variant} disabled>
+				{startAction === "unavailable" ? "Start unavailable" : "Updating subscription"}
 			</Button>
 		);
 	}
@@ -832,7 +876,9 @@ function StoppedAgentState({
 			description={
 				computeSubscriptionRequiredToStart(deployment)
 					? "This agent is stopped. Choose a subscription to start it. Your saved data is kept."
-					: "This agent is stopped. Start it to use its tools again."
+					: deployment.start_action === "start"
+						? "This agent is stopped. Start it to use its tools again."
+						: "This agent is stopped. Your saved data is kept."
 			}
 			action={<StartComputeAction deployment={deployment} label="Start" />}
 		/>
@@ -3688,7 +3734,7 @@ function ComputeSettingsSections({
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const subscriptionCancellationCopy = computeSubscriptionCancellationCopy({
-		isTrial: currentSubscription?.status === "trialing",
+		isTrial: currentSubscription?.actions?.cancel === "end_trial",
 		periodEndLabel: subscriptionEndsAt ? subscriptionPeriodLabel : null,
 		hasRetainedDeployment: true,
 	});
@@ -3777,6 +3823,7 @@ function ComputeSettingsSections({
 			paymentState: currentSubscription?.payment_state ?? "ok",
 			cancelAtPeriodEnd: subscriptionCancelPending,
 			pendingPlanSlug,
+			actions: currentSubscription?.actions,
 		},
 		management: computeManagement,
 		recoveryTarget: actionRecoveryTarget,
@@ -3888,7 +3935,7 @@ function ComputeSettingsSections({
 								confirmLabel: subscriptionCancellationCopy.confirmLabel,
 								successDescription: (result) =>
 									computeSubscriptionCancellationSuccessCopy({
-										isTrial: currentSubscription?.status === "trialing",
+										isTrial: currentSubscription?.actions?.cancel === "end_trial",
 										cancelAtPeriodEnd: result.cancel_at_period_end,
 										periodEndLabel: result.current_period_end
 											? formatShortDate(result.current_period_end)
