@@ -175,6 +175,8 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	computeFundingSource,
+	computeSubscriptionCancellationCopy,
+	computeSubscriptionCancellationSuccessCopy,
 	computeSubscriptionLifecycle,
 	computeTierLabel,
 	pendingComputePlanSlug,
@@ -3646,6 +3648,11 @@ function ComputeSettingsSections({
 		currentSubscription?.cancel_at ?? currentSubscription?.current_period_end ?? null;
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
+	const subscriptionCancellationCopy = computeSubscriptionCancellationCopy({
+		isTrial: currentSubscription?.status === "trialing",
+		periodEndLabel: subscriptionPeriodLabel,
+		hasRetainedDeployment: true,
+	});
 	const subscriptionLifecycle = currentSubscription
 		? computeSubscriptionLifecycle(currentSubscription)
 		: null;
@@ -3832,17 +3839,16 @@ function ComputeSettingsSections({
 							}}
 							cancelCopy={{
 								title: `Cancel ${tierLabel} subscription?`,
-								description: (
-									<p>
-										Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls back
-										to an included Basic entitlement if available; otherwise, it stops.
-									</p>
-								),
-								confirmLabel: "Cancel at period end",
+								description: <p>{subscriptionCancellationCopy.description}</p>,
+								confirmLabel: subscriptionCancellationCopy.confirmLabel,
 								successDescription: (result) =>
-									result.current_period_end
-										? `Cancellation takes effect ${formatShortDate(result.current_period_end)}. The agent then falls back to an included Basic entitlement if available; otherwise, it stops.`
-										: "The agent falls back to an included Basic entitlement if available when cancellation takes effect; otherwise, it stops.",
+									computeSubscriptionCancellationSuccessCopy({
+										cancelAtPeriodEnd: result.cancel_at_period_end,
+										periodEndLabel: result.current_period_end
+											? formatShortDate(result.current_period_end)
+											: null,
+										hasRetainedDeployment: true,
+									}),
 							}}
 						/>
 					}

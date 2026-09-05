@@ -21,6 +21,58 @@ export function isHistoricalAccountSubscription(
 	return subscription.status === "canceled";
 }
 
+export function computeSubscriptionCancellationCopy({
+	isTrial,
+	periodEndLabel,
+	hasRetainedDeployment,
+}: {
+	isTrial: boolean;
+	periodEndLabel: string | null;
+	hasRetainedDeployment: boolean;
+}): { description: string; confirmLabel: string } {
+	if (isTrial) {
+		return {
+			description: hasRetainedDeployment
+				? "The trial ends immediately. The agent stops, but its disk and data are retained."
+				: "The trial ends immediately. This cannot restore a deleted agent.",
+			confirmLabel: "End trial now",
+		};
+	}
+	const ending = periodEndLabel
+		? `The subscription will stop renewing and remain active through ${periodEndLabel}.`
+		: "The subscription will stop renewing at the end of the current billing period.";
+	return {
+		description: hasRetainedDeployment
+			? `${ending} At that point, the agent stops, but its disk and data are retained.`
+			: `${ending} This cannot restore a deleted agent.`,
+		confirmLabel: "Cancel at period end",
+	};
+}
+
+export function computeSubscriptionCancellationSuccessCopy({
+	cancelAtPeriodEnd,
+	periodEndLabel,
+	hasRetainedDeployment,
+}: {
+	cancelAtPeriodEnd: boolean;
+	periodEndLabel: string | null;
+	hasRetainedDeployment: boolean;
+}): string {
+	if (!cancelAtPeriodEnd) {
+		return hasRetainedDeployment
+			? "The trial has ended. The agent will stop; its disk and data are retained."
+			: "The trial has ended.";
+	}
+	if (!hasRetainedDeployment) {
+		return periodEndLabel
+			? `The subscription remains active through ${periodEndLabel} and will not renew.`
+			: "The subscription will not renew after the current billing period.";
+	}
+	return periodEndLabel
+		? `The subscription remains active through ${periodEndLabel}. The agent will then stop; its disk and data are retained.`
+		: "The agent will stop when the current billing period ends; its disk and data are retained.";
+}
+
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
 	return plans?.find((plan) => plan.slug === COMPUTE_BASIC_SLUG);
 }
