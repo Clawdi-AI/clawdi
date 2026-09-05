@@ -18,6 +18,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import {
 	runtimeCommandCurrentRevision,
 	runtimeCommandPath,
+	runtimeFileCurrentRevision,
 	writeRuntimeInstallerLog,
 } from "./manifest-install";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -44,7 +45,6 @@ import {
 	commandResolvable,
 	executableExists,
 	makeRuntimeUserOwned,
-	RuntimeUserCommandTimeoutError,
 	runningAsRoot,
 	runRuntimeUserCommand,
 	runtimeEgressGid,
@@ -373,7 +373,7 @@ const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] =
 		runtime: "hermes",
 		programName: "hermes-gateway",
 		command: "hermes",
-		installArgs: ["gateway", "install", "--force"],
+		installArgs: ["gateway", "install", "--force", "--no-start-now"],
 		uninstallArgs: ["gateway", "uninstall"],
 		service: "gateway",
 		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
@@ -416,29 +416,34 @@ function officialRuntimeServiceRevision(
 	if (!descriptor) return null;
 	const unitName = systemdUnitFileName(descriptor.programName);
 	const unitPath = join(paths.systemdUserRoot, unitName);
+	let contents: Buffer;
 	try {
 		const unitStat = lstatSync(unitPath);
-		if (!unitStat.isFile()) return null;
-		const contents = readFileSync(unitPath);
-		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
-		const commandRevision = runtimeCommandCurrentRevision(
-			officialRuntimeServiceCommand(descriptor, paths),
-			paths.userHome,
-			paths.userHome,
-		);
-		if (!commandRevision) return null;
-		return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
+		if (!unitStat.isFile()) throw new Error(`official ${unitName} unit is not a regular file`);
+		contents = readFileSync(unitPath);
 	} catch (error) {
-		if (error instanceof RuntimeUserCommandTimeoutError) throw error;
-		return null;
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		throw error;
 	}
+	if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
+	const command = officialRuntimeServiceCommand(descriptor, paths);
+	const commandRevision =
+		descriptor.runtime === "hermes"
+			? runtimeFileCurrentRevision(command)
+			: runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+	// An unavailable observation is not evidence that a valid service needs reinstalling.
+	if (!commandRevision) {
+		throw new Error(
+			`official ${unitName} command revision is unavailable; refusing service reinstall`,
+		);
+	}
+	return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
 }
 
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
 	executeInstallers: boolean,
-	committedServiceRevisions: Readonly<Record<string, string>>,
 ): OfficialRuntimeServicePlan {
 	const pending: OfficialRuntimeServicePlan["pending"] = [];
 	const serviceRevisions: Record<string, string> = {};
@@ -447,10 +452,8 @@ export function planOfficialRuntimeServices(
 		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
 		const serviceRevision = officialRuntimeServiceRevision(program, paths);
 		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
-		if (
-			!serviceRevision ||
-			(committedServiceRevisions[unitName] ?? serviceRevision) !== serviceRevision
-		) {
+		// Native updaters own service refresh. Fingerprint drift alone is not a repair request.
+		if (!serviceRevision) {
 			pending.push({ unitName, program, serviceRevision });
 		}
 	}

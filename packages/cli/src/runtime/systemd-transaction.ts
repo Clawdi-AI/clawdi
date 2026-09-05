@@ -207,10 +207,21 @@ export function applySystemdRuntimeUpdate(
 		...system.removed,
 	]);
 	const userStates = readSystemdRuntimeUnits(paths, "user", [...user.present, ...user.removed]);
-	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+	// Native updates and interrupted applies can predate the filesystem snapshot.
+	if (
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		[...systemStates.values()].some((state) => state.needDaemonReload)
+	) {
 		systemctl(["daemon-reload"]);
 	}
-	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+	if (
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		[...userStates.values()].some((state) => state.needDaemonReload)
+	) {
 		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
 	if (system.removed.length > 0) {

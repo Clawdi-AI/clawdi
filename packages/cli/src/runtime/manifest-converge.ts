@@ -367,7 +367,6 @@ function prepareRuntimeInstallStage(
 			projectionHome,
 			paths,
 			hostedRuntimeContract.identity,
-			officialServiceCommandRevision(context, name),
 		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
@@ -961,7 +960,6 @@ function prepareRuntimeActivation(
 		state.runtimeSystemdUserPrograms,
 		paths,
 		opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
-		context.appliedState?.officialServiceCommandRevisions ?? {},
 	);
 	const publishSystemdUnits = (deferredRuntimeUserUnitNames: readonly string[] = []) =>
 		writeRuntimeSystemdState({
@@ -991,7 +989,10 @@ function prepareRuntimeActivation(
 			deferredRuntimeUserUnitNames,
 		});
 	const systemdUnits = publishSystemdUnits(
-		officialServicePlan.pending.map((item) => item.unitName),
+		// Hermes permits its environment before installation and defers startup to activation.
+		officialServicePlan.pending
+			.filter((item) => item.program.runtime === "openclaw")
+			.map((item) => item.unitName),
 	);
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);

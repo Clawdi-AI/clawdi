@@ -232,6 +232,59 @@ official binary. Clawdi does not intercept that command. After an updater
 replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
+For Hermes, an existing regular native gateway unit is adopted, not reinstalled
+because its bytes or displayed version changed. Hermes refreshes that unit
+during native gateway startup and updates. Its human-readable `--version`
+includes dependency and remote-update information and is not an installation
+identity. Clawdi installs only a missing gateway unit or a recognized legacy
+Clawdi-generated unit. Inspection failures do not authorize replacement;
+systemd activation and runtime readiness still determine whether the adopted
+service works. Service file fingerprints are bookkeeping, not proof of the
+running source version or dependency capabilities.
+
+OpenClaw also adopts existing regular native units without forcing installation
+on fingerprint drift. Its pinned
+[`2026.8.1` source](https://github.com/openclaw/openclaw/blob/ea806575e6450e4d1efdfc72c19f04be982a1b9b/src/entry.version-fast-path.ts)
+prints `OpenClaw <version> (<commit>)` on a local fast path, not a remote-update
+banner. The diagnostic commit can still come from `GIT_COMMIT` or `GIT_SHA`;
+neither that display nor a changed unit proves a broken service. The native
+[updater](https://github.com/openclaw/openclaw/blob/ea806575e6450e4d1efdfc72c19f04be982a1b9b/src/cli/update-cli/update-command-service.ts)
+owns service refresh and restart after an update, subject to its ownership and
+definition-mutation checks. Clawdi retains missing/generated-unit installation,
+inspection-error handling, failed-unit recovery, and activation proof. It does
+not emulate upstream service repair: stale entrypoint or target errors that
+remain after systemd activation require the native owner workflow
+(`openclaw gateway start/restart` or an intentional `gateway install --force`).
+
+When Hermes service installation is necessary, Clawdi publishes its environment
+and drop-in first and invokes native `gateway install --force --no-start-now`.
+The existing activation phase starts the service after prerequisites are ready.
+This flag does not stop an already running service or disable an enabled unit.
+OpenClaw's separate native install-time validation still requires deferring its
+drop-in until after installation. These Hermes semantics were checked against
+[`1cb3ab6`](https://github.com/NousResearch/hermes-agent/blob/1cb3ab617363ffab9e55239a7d2ab0d6f9c10473/hermes_cli/gateway.py)
+and the pinned systemd fixture's
+[`cc4cab2`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/gateway.py).
+
+OpenClaw's pinned
+[installer](https://github.com/openclaw/openclaw/blob/ea806575e6450e4d1efdfc72c19f04be982a1b9b/src/daemon/systemd-install.ts)
+publishes the native unit, then runs `daemon-reload`, `enable`, and `restart`.
+Clawdi therefore activates egress and proves tenant CA readability before a
+necessary gateway install, projects native authentication first, and publishes
+the OpenClaw drop-in after installation. Final activation processes system
+roles before user roles; this is not a dependency requiring the sync daemon to
+wait for the gateway. Hermes dashboard dependencies are built before a new
+gateway install. Files has its own readiness probe, and runtime-watch applies
+are serialized by the convergence lock. Both system and user managers are
+reloaded when they report `NeedDaemonReload`, including edits predating the
+current filesystem snapshot. Reused HOME units remain guarded by their
+boot-regenerated environment file, not merely by enablement state.
+
+Installer diagnostics retain the latest attempt as `<installer>.log` and the
+last failed attempt as `<installer>.failed.log` under the private status
+`installer-logs` directory. Both are mode `0600`; successful recovery does not
+overwrite the failure, and repeated failures do not create unbounded history.
+
 The bootstrap boundary is deliberately small: systemd owns `/etc/clawdi`,
 `/var/lib/clawdi`, `/var/cache/clawdi`, and `/run/clawdi` through its
 `ConfigurationDirectory=`, `StateDirectory=`, `CacheDirectory=`, and

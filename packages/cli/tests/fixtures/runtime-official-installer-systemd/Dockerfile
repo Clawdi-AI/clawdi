@@ -20,6 +20,9 @@ RUN apt-get update \
 		systemd-sysv \
 	&& rm -rf /var/lib/apt/lists/*
 
+# The disposable container must not configure its host's shared kernel.
+RUN systemctl mask systemd-sysctl.service systemd-modules-load.service
+
 RUN groupadd --gid 10001 clawdi \
 	&& useradd --uid 10001 --gid 10001 --create-home --home-dir /home/clawdi --shell /bin/bash clawdi
 

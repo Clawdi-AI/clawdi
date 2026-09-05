@@ -5982,6 +5982,38 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(calls).toContain(`--user start ${unit}`);
 	});
 
+	it("reloads manager state changed before the apply snapshot without restarting active services", () => {
+		const paths = seedRuntimeWatchLocaleBaseline(
+			join(root, "home", "clawdi"),
+			join(root, "var", "lib", "clawdi"),
+			join(root, "run", "clawdi"),
+		);
+		const snapshot = readSystemdUnitSnapshot(paths);
+		const logPath = join(root, "systemctl-reload.log");
+		const stateRoot = join(root, "systemctl-reload-state");
+		const command = join(root, "bin", "systemctl");
+		writeFakeSystemdManager({ path: command, logPath, stateRoot });
+		seedFakeSystemdSnapshotProcesses(paths, stateRoot, snapshot);
+		for (const [scope, unit] of [
+			["system", "clawdi-runtime-sidecar.service"],
+			["user", "openclaw-gateway.service"],
+		] as const) {
+			writeFileSync(fakeSystemdStatePath(stateRoot, scope, unit, "reload"), "\n");
+		}
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = command;
+
+		expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {})).toMatchObject({
+			applied: true,
+			systemUnitsChanged: [],
+			userUnitsChanged: [],
+		});
+		const calls = readFileSync(logPath, "utf8").trim().split("\n");
+		expect(calls).toContain("daemon-reload");
+		expect(calls).toContain("--user daemon-reload");
+		expect(calls.some((call) => /\b(?:start|restart|stop)\b/.test(call))).toBe(false);
+	});
+
 	it("runtime watch keeps polling after SSE authentication failure", async () => {
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
@@ -8093,7 +8125,9 @@ chmod +x "$prefix/bin/clawdi"
 			const serviceName = `${runtime}-gateway`;
 			const runtimeUnit = join(home, ".config", "systemd", "user", `${serviceName}.service`);
 			const installArgs =
-				runtime === "openclaw" ? "gateway install --force --json" : "gateway install --force";
+				runtime === "openclaw"
+					? "gateway install --force --json"
+					: "gateway install --force --no-start-now";
 			const previousLog = console.log;
 			const previousUmask = process.umask(0o022);
 			const previousExitCode = process.exitCode;
@@ -8137,10 +8171,10 @@ elif [ "${runtime}" = "hermes" ] && [ "\${1:-}" = "config" ]; then
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
-  test ! -e '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
+  test ${runtime === "hermes" ? "-r" : "! -e"} '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
   mkdir -p '${dirname(runtimeUnit)}' '${systemctlStateRoot}'
   printf '[Service]\\nExecStart=${runtime} gateway run\\n' > '${runtimeUnit}'
-	  systemctl --user enable --now '${serviceName}.service'
+	  systemctl --user enable ${runtime === "hermes" ? "" : "--now"} '${serviceName}.service'
 fi
 exit 0
 `,
@@ -8239,7 +8273,15 @@ esac
 			}
 			expect(officialInstaller).toBeGreaterThan(sidecarActivation);
 			expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
-			expect(calls).toContain(`--user restart ${serviceName}.service`);
+			if (runtime === "hermes") {
+				const gatewayStart = calls.findIndex(
+					(call) => call.startsWith("--user start ") && call.includes(`${serviceName}.service`),
+				);
+				expect(gatewayStart).toBeGreaterThan(officialInstaller);
+				expect(calls).not.toContain(`--user restart ${serviceName}.service`);
+			} else {
+				expect(calls).toContain(`--user restart ${serviceName}.service`);
+			}
 			const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
 			const installIndex = installerCalls.indexOf(installArgs);
 			if (runtime === "openclaw") {

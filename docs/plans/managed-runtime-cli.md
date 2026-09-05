@@ -149,7 +149,8 @@ Rules:
 The support modules are not interchangeable:
 
 - `runtime watch` reconciles manifests and can use Clawdi API auth.
-- `daemon run` serves live sync only when live-sync agents are declared.
+- `daemon run` reports runtime observations even without live-sync agents and
+  runs their sync engines when declared.
 - `runtime sidecar` proxies outbound runtime traffic only when egress profiles
   are enabled.
 
@@ -161,10 +162,10 @@ The runtime image is a stable capability envelope, while the CLI owns egress
 module paths, numeric UID/GID permissions, and name-free privilege dropping.
 See [ADR-0002](../adr/0002-runtime-image-is-a-stable-capability-envelope.md).
 
-Hermes deployments that need both gateway and dashboard should declare two
-official Hermes user services. The official Hermes Docker image is useful
-prior art for this fan-out, but the Linux-like host keeps in-place
-`hermes update` available.
+Hermes deployments that need both gateway and dashboard use the native
+`hermes-gateway.service` and the Clawdi-owned compatibility unit
+`clawdi-hermes-dashboard.service`. Both launch official Hermes commands, and
+the Linux-like host keeps in-place `hermes update` available.
 
 ## Provider Projection
 

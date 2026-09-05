@@ -21,16 +21,22 @@ import {
 	type RuntimeManifest,
 } from "./manifest";
 import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
-import { observeRuntimeInstall, runtimeCommandCurrentRevision } from "./manifest-install";
+import {
+	observeRuntimeInstall,
+	runtimeCommandCurrentRevision,
+	writeRuntimeInstallerLog,
+} from "./manifest-install";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
 	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	planOfficialRuntimeServices,
 	prepareOfficialRuntimeServiceDependencies,
 	type RuntimeSystemdUserProgram,
 } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
+import { RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const originalEnv = { ...process.env };
@@ -71,17 +77,69 @@ printf '%s\n' '${version}'
 	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version", "--version"]);
 });
 
-test("reuses the Hermes dashboard capability until its service revision changes", () => {
+test("adopts a persisted native Hermes service in a fresh process without reinstalling", () => {
+	const paths = tempRuntimePaths();
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
+	writeFakeGatewayCli({
+		path: command,
+		logPath: join(paths.runRoot, "commands.log"),
+		runtime: "hermes",
+		unitPath,
+	});
+	mkdirSync(dirname(unitPath), { recursive: true });
+	writeFileSync(unitPath, "[Service]\nExecStart=hermes gateway run\n");
+	const program: RuntimeSystemdUserProgram = {
+		programKind: "runtime",
+		runtime: "hermes",
+		service: null,
+		command,
+		args: ["gateway", "run"],
+		cwd: paths.userHome,
+		env: {},
+		resolvedSecretEnv: {},
+	};
+	const adopted = planOfficialRuntimeServices([program], paths, true);
+	expect(adopted.pending).toEqual([]);
+	const modulePath = fileURLToPath(new URL("./runtime-systemd-reconciliation.ts", import.meta.url));
+	const child = spawnSync(
+		process.execPath,
+		[
+			"--eval",
+			`import { planOfficialRuntimeServices } from ${JSON.stringify(modulePath)};
+const { program, paths } = JSON.parse(process.argv[1]);
+console.log(JSON.stringify(planOfficialRuntimeServices([program], paths, true)));`,
+			JSON.stringify({ program, paths }),
+		],
+		{ encoding: "utf8", timeout: 15_000 },
+	);
+	expect(child.status).toBe(0);
+	expect(child.stderr).toBe("");
+	expect(JSON.parse(child.stdout)).toEqual(adopted);
+});
+
+test("rechecks Hermes dashboard dependencies even when its launcher has not changed", () => {
 	const paths = tempRuntimePaths();
 	mkdirSync(paths.runRoot, { recursive: true });
 	const command = join(paths.userHome, ".local", "bin", "hermes");
 	const python = join(paths.userHome, ".hermes", "hermes-agent", "venv", "bin", "python");
 	const log = join(paths.runRoot, "dashboard-capability.log");
+	const dependencyError = join(paths.runRoot, "dependency-error");
 	for (const executable of [command, python]) {
 		mkdirSync(dirname(executable), { recursive: true });
-		writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`, {
-			mode: 0o755,
-		});
+		writeFileSync(
+			executable,
+			`#!/bin/sh
+printf '%s\\n' "$*" >> '${log}'
+if [ -f '${dependencyError}' ]; then
+  printf '%s\\n' 'dependency unavailable' >&2
+  exit 1
+fi
+`,
+			{
+				mode: 0o755,
+			},
+		);
 	}
 	const runtime: RuntimeManifest["runtimes"][string] = {
 		enabled: true,
@@ -94,21 +152,15 @@ test("reuses the Hermes dashboard capability until its service revision changes"
 		},
 		services: { dashboard: runSettings(command, ["dashboard"]) },
 	};
-	const observe = (revision: string) =>
-		observeRuntimeInstall(
-			"hermes",
-			runtime,
-			paths.userHome,
-			paths,
-			{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
-			revision,
-		);
+	const observe = () =>
+		observeRuntimeInstall("hermes", runtime, paths.userHome, paths, {
+			uid: TEST_PROCESS_UID,
+			gid: TEST_PROCESS_GID,
+		});
 
-	expect(observe("a".repeat(64)).error).toBeNull();
-	expect(observe("a".repeat(64)).error).toBeNull();
-	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
-	expect(observe("b".repeat(64)).error).toBeNull();
-	expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(2);
+	expect(observe().error).toBeNull();
+	writeFileSync(dependencyError, "dependency changed without replacing Python\n");
+	expect(observe().error).toContain("dependency unavailable");
 });
 
 test("reuses a Hermes dashboard build until its runtime revision changes", () => {
@@ -310,6 +362,7 @@ function writeFakeGatewayCli(input: {
 	unitPath: string;
 	version?: string;
 	hangVersion?: boolean;
+	failVersion?: boolean;
 	failInstall?: boolean;
 	failUninstall?: boolean;
 	requiredSystemdState?: {
@@ -340,9 +393,9 @@ function writeFakeGatewayCli(input: {
 	set -euo pipefail
 	case "$*" in
 	  "--version")
-		${input.hangVersion ? "exec sleep 60" : `printf '%s\\n' '${version}'`}
+		${input.hangVersion ? "exec sleep 60" : input.failVersion ? "exit 1" : `printf '%s\\n' '${version}'`}
 		;;
-  "gateway install --force --json"|"gateway install --force"|"gateway install")
+  "gateway install --force --json"|"gateway install --force --no-start-now"|"gateway install")
 	${stateCheck}
 	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 	${
@@ -427,6 +480,10 @@ interface OfficialServiceInstallHarness extends InstallGateHarness {
 	addForeignDropIn: () => string;
 	driftMetadata: () => void;
 	hangVersionProbe: () => void;
+	failVersionProbe: () => void;
+	managedDropIn: () => string;
+	removeUnit: () => void;
+	unitContents: () => string;
 }
 
 function officialServiceHarness(
@@ -504,11 +561,19 @@ function officialServiceHarness(
 		driftMetadata: () => chmodSync(unitPath, 0o600),
 		hangVersionProbe: () =>
 			writeFakeGatewayCli({ path: command, logPath, runtime, unitPath, hangVersion: true }),
+		failVersionProbe: () =>
+			writeFakeGatewayCli({ path: command, logPath, runtime, unitPath, failVersion: true }),
+		managedDropIn: () =>
+			readFileSync(
+				join(paths.systemdUserRoot, `${runtime}-gateway.service.d`, RUNTIME_SYSTEMD_DROP_IN_FILE),
+				"utf8",
+			),
+		removeUnit: () => rmSync(unitPath),
+		unitContents: () => readFileSync(unitPath, "utf8"),
 	};
 }
 
 const installGateHarnesses = [
-	["Hermes official service", () => officialServiceHarness("hermes")],
 	["OpenClaw official service", () => officialServiceHarness("openclaw")],
 ] as const;
 
@@ -605,7 +670,7 @@ const merge = (currentValue, patchValue) => {
 fs.writeFileSync(configPath, JSON.stringify(merge(current, patch)) + "\\n");
 NODE
     ;;
-  "gateway install --force --json"|"gateway install --force"|"gateway install")
+  "gateway install --force --json"|"gateway install --force --no-start-now"|"gateway install")
     mkdir -p '${dirname(unitPath)}'
     printf '%s\n' '[Service]' 'ExecStart=openclaw gateway run' > '${unitPath}'
     ;;
@@ -1380,7 +1445,7 @@ esac
 		}
 	});
 
-	test("installs official base units before publishing hosted drop-ins", () => {
+	test("publishes Hermes environment before deferred startup and respects OpenClaw installer validation", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".local", "bin", "openclaw");
@@ -1405,7 +1470,15 @@ esac
 				logPath,
 				runtime,
 				unitPath: join(paths.systemdUserRoot, `${name}.service`),
-				forbiddenDropInPath: dropInPath,
+				...(runtime === "hermes"
+					? {
+							requiredSystemdState: {
+								dropInPath,
+								envPath,
+								snapshotPrefix: join(paths.runRoot, "hermes-install"),
+							},
+						}
+					: { forbiddenDropInPath: dropInPath }),
 			});
 		}
 		const manifest: RuntimeManifest = {
@@ -1463,8 +1536,8 @@ esac
 		expect(finalActivations).toBe(1);
 		expect(invalidatedUserUnits).toEqual(["hermes-gateway.service", "openclaw-gateway.service"]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n").slice(-4)).toEqual([
-			"hermes drop-in absent",
-			"hermes gateway install --force",
+			"hermes systemd state ready",
+			"hermes gateway install --force --no-start-now",
 			"openclaw drop-in absent",
 			"openclaw gateway install --force --json",
 		]);
@@ -1482,7 +1555,7 @@ esac
 	});
 
 	test.each(installGateHarnesses)(
-		"adopts %s command revision when no revision is committed and repairs later drift",
+		"adopts %s native revisions and repairs a subsequently missing unit",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
@@ -1492,6 +1565,12 @@ esac
 			expect(harness.installCount()).toBe(1);
 
 			harness.drift();
+			const nativeUnit = harness.unitContents();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(harness.unitContents()).toBe(nativeUnit);
+
+			harness.removeUnit();
 			harness.failNextInstall();
 			expect(harness.converge().installErrors.join("\n")).toContain("install failed");
 			expect(harness.installCount()).toBe(2);
@@ -1503,8 +1582,35 @@ esac
 		},
 	);
 
+	test("preserves Hermes native updates and only reinstalls a missing gateway unit", () => {
+		const harness = officialServiceHarness("hermes");
+		expect(harness.converge().installErrors).toEqual([]);
+		harness.drift();
+		const nativeUnit = harness.unitContents();
+		harness.revise();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.unitContents()).toBe(nativeUnit);
+
+		const environment = harness.managedDropIn();
+		harness.failVersionProbe();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.managedDropIn()).toBe(environment);
+
+		harness.removeUnit();
+		harness.failNextInstall();
+		expect(harness.converge().installErrors.join("\n")).toContain("install failed");
+		expect(harness.installCount()).toBe(2);
+		expect(harness.managedDropIn()).toBe(environment);
+		harness.restoreInstaller();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(3);
+	});
+
 	test.each(installGateHarnesses)(
-		"reconciles a real %s command revision change exactly once",
+		"adopts %s version changes without reinstalling its native unit",
 		(_name, createHarness) => {
 			const harness = createHarness();
 			expect(harness.converge().installErrors).toEqual([]);
@@ -1512,9 +1618,9 @@ esac
 
 			harness.revise();
 			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(2);
+			expect(harness.installCount()).toBe(1);
 			expect(harness.converge().installErrors).toEqual([]);
-			expect(harness.installCount()).toBe(2);
+			expect(harness.installCount()).toBe(1);
 		},
 	);
 
@@ -1532,14 +1638,17 @@ esac
 		expect(harness.installCount()).toBe(1);
 	});
 
-	test.each(installGateHarnesses)("detects post-commit %s drift", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge(harness.drift).installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
+	test.each(installGateHarnesses)(
+		"preserves post-commit %s native edits",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge(harness.drift).installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-	});
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+		},
+	);
 
 	test.each([
 		["Hermes", "hermes"],
@@ -1572,6 +1681,42 @@ esac
 		expect(result.installErrors.join("\n")).toContain("runtime --version probe for");
 		expect(result.installErrors.join("\n")).toContain("timed out after 10000ms");
 	}, 15_000);
+
+	test.each(installGateHarnesses)(
+		"does not reinstall %s or remove its environment when the version probe fails",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			const dropIn = harness.managedDropIn();
+			harness.failVersionProbe();
+
+			expect(harness.converge().installErrors.join("\n")).toContain("refusing service reinstall");
+			expect(harness.installCount()).toBe(1);
+			expect(harness.managedDropIn()).toBe(dropIn);
+
+			harness.restoreInstaller();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+		},
+	);
+
+	test("retains a bounded private installer failure log after successful recovery", () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const latest = writeRuntimeInstallerLog(paths, "hermes-gateway-service", {
+			status: 23,
+			stderr: "first installer failure",
+		});
+		const failure = join(paths.statusRoot, "installer-logs", "hermes-gateway-service.failed.log");
+		const contents = readFileSync(failure, "utf8");
+		expect(contents).toContain("exitCode=23");
+		expect(contents).toContain("first installer failure");
+		expect(statSync(failure).mode & 0o777).toBe(0o600);
+		writeRuntimeInstallerLog(paths, "hermes-gateway-service", { status: 0, stdout: "recovered" });
+		expect(readFileSync(latest, "utf8")).toContain("recovered");
+		expect(readFileSync(failure, "utf8")).toBe(contents);
+		writeRuntimeInstallerLog(paths, "hermes-gateway-service", { signal: "SIGTERM" });
+		expect(readFileSync(failure, "utf8")).toContain("signal=SIGTERM");
+	});
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();
@@ -1654,7 +1799,7 @@ esac
 				.split("\n")
 				.filter((line) => line.includes(" gateway ")),
 		).toEqual([
-			"hermes gateway install --force",
+			"hermes gateway install --force --no-start-now",
 			"openclaw gateway install --force --json",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",
