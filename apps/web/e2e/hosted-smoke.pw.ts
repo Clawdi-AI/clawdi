@@ -1651,6 +1651,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
+		if (p === "/v1/me/notifications") {
+			return fulfillJson(r, { items: [], next_cursor: null });
+		}
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
 			await options.productAccessResponseGate;
