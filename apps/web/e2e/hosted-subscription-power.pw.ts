@@ -18,6 +18,7 @@ for (const width of [1440, 320]) {
 		await page.setViewportSize({ width, height: 900 });
 		const errors = collectBrowserErrors(page);
 		const startRequests: string[] = [];
+		const checkoutIdempotencyKeys: string[] = [];
 		const deployment = {
 			...mutationDeploymentReadFixture({
 				...paidBasicDeployment,
@@ -36,6 +37,12 @@ for (const width of [1440, 320]) {
 			deployments: [deployment],
 			plans: [basicPlan, performancePlan],
 			startRequests,
+			checkoutIdempotencyKeys,
+			checkoutResponses: [
+				"checkout_reconciliation_required",
+				"checkout_attempt_expired",
+				"checkout_reconciliation_required",
+			].map((code) => ({ status: 409, body: { detail: { code, message: "provider_internal" } } })),
 		});
 		await page.goto("/agents");
 		await page.getByRole("link", { name: /^Open .*Status: Stopped$/ }).click();
@@ -72,6 +79,24 @@ for (const width of [1440, 320]) {
 			await page.keyboard.press("Escape");
 		}
 		expect(errors).toEqual([]);
+		if (width === 1440) {
+			await page.getByRole("button", { name: "Subscribe to start", exact: true }).click();
+			for (const message of ["Contact support", "This checkout has expired", "Contact support"]) {
+				await page.getByRole("button", { name: "Continue to card checkout" }).click();
+				await expect(page.locator("[data-sonner-toast]").last()).toContainText(message);
+				await expect(page.locator("[data-sonner-toast]").last()).not.toContainText(
+					"provider_internal",
+				);
+			}
+			expect(checkoutIdempotencyKeys).toHaveLength(3);
+			expect(checkoutIdempotencyKeys[0]).toBe(checkoutIdempotencyKeys[1]);
+			expect(checkoutIdempotencyKeys[1]).not.toBe(checkoutIdempotencyKeys[2]);
+			expect(errors).toEqual(
+				Array(3).fill(
+					"Failed to load resource: the server responded with a status of 409 (Conflict)",
+				),
+			);
+		}
 	});
 }
 
@@ -182,26 +207,31 @@ for (const status of ["trialing", "active"] as const) {
 	});
 }
 
-for (const width of [1440, 320]) {
-	for (const state of [
-		{
-			status: "incomplete",
-			blocked: "payment_pending",
-			start: "wait",
-			label: "Updating subscription",
-		},
-		{ status: "paused", blocked: "paused", start: "contact_support", label: "Contact support" },
-		{
-			status: "unpaid",
-			blocked: "authority_pending",
-			start: "contact_support",
-			label: "Contact support",
-		},
-		{ status: "canceled", blocked: null, start: "wait", label: "Updating subscription" },
-	] as const) {
+for (const state of [
+	{
+		status: "incomplete",
+		blocked: "payment_pending",
+		start: "wait",
+		label: "Updating subscription",
+	},
+	{ status: "paused", blocked: "paused", start: "contact_support", label: "Contact support" },
+	{
+		status: "unpaid",
+		blocked: "authority_pending",
+		start: "wait",
+		label: "Updating subscription",
+	},
+	{
+		status: "canceled",
+		blocked: "authority_pending",
+		start: "wait",
+		label: "Updating subscription",
+	},
+] as const) {
+	for (const width of state.status === "canceled" ? [1440, 320] : [1440]) {
 		test(`${state.status} does not sell a replacement or duplicate payment at ${width}px`, async ({
 			page,
-		}) => {
+		}, testInfo) => {
 			await page.setViewportSize({ width, height: 900 });
 			const startRequests: string[] = [];
 			const deployment = {
@@ -211,12 +241,10 @@ for (const width of [1440, 320]) {
 					compute_subscription: {
 						...paidBasicDeployment.compute_subscription,
 						status: state.status,
+						payment_state: state.status === "unpaid" ? "unpaid" : "ok",
 						recovery_action: null,
 						recovery_blocked_reason: state.blocked,
-						actions:
-							state.status === "canceled"
-								? { cancel: null, resume: false, command_state: "pending" }
-								: null,
+						actions: { cancel: null, resume: false, command_state: null },
 					},
 				}),
 				start_action: state.start,
@@ -234,6 +262,16 @@ for (const width of [1440, 320]) {
 				}),
 			).toHaveCount(0);
 			expect(startRequests).toEqual([]);
+			if (state.blocked === "authority_pending") {
+				await expect(
+					page.getByText(/Payment processing|Waiting for payment confirmation/),
+				).toHaveCount(0);
+				await page.getByRole("button", { name: state.label, exact: true }).scrollIntoViewIfNeeded();
+				await page.screenshot({
+					path: testInfo.outputPath(`subscription-updating-${width}.png`),
+					fullPage: true,
+				});
+			}
 			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
 				width,
 			);

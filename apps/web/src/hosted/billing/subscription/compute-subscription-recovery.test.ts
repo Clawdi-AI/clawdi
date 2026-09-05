@@ -1,26 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { computeSubscriptionRecoveryPresentation } from "./compute-subscription-recovery";
+import {
+	computeSubscriptionRecoveryPresentation,
+	computeSubscriptionRecoveryTarget,
+} from "./compute-subscription-recovery";
 
 const active = { label: "Active", tone: "success" } as const;
 
 describe("computeSubscriptionRecoveryPresentation", () => {
-	test("pending cancellation does not promise completion or offer another purchase", () => {
-		expect(
-			computeSubscriptionRecoveryPresentation(
-				{
-					status: "canceled",
-					payment_state: "ok",
-					recovery_action: "start_new",
-					actions: { cancel: null, resume: false, command_state: "pending" },
+	test.each(["pending", "authority_pending"] as const)(
+		"%s cancellation does not promise completion or offer another purchase",
+		(pending) => {
+			const subscription = {
+				status: "canceled",
+				payment_state: "ok",
+				recovery_action: "start_new",
+				actions: {
+					cancel: null,
+					resume: false,
+					command_state: pending === "pending" ? "pending" : null,
 				},
-				active,
-			),
-		).toMatchObject({
-			status: { label: "Updating subscription" },
-			recoveryTarget: null,
-			schedule: { fallback: "Your request is still processing" },
-		});
-	});
+				recovery_blocked_reason: pending === "authority_pending" ? pending : null,
+			} as const;
+			expect(computeSubscriptionRecoveryTarget(subscription)).toBeNull();
+			expect(computeSubscriptionRecoveryPresentation(subscription, active)).toMatchObject({
+				status: { label: "Updating subscription" },
+				hasPaymentIssue: false,
+				recoveryTarget: null,
+				schedule: { fallback: "Your request is still processing" },
+			});
+		},
+	);
 
 	test("backend recovery is not overridden by a coarse lifecycle status", () => {
 		const canceled = { label: "Canceled", tone: "neutral" } as const;
@@ -67,6 +76,21 @@ describe("computeSubscriptionRecoveryPresentation", () => {
 	});
 
 	test("projects card, terminal, and healthy actions", () => {
+		expect(
+			computeSubscriptionRecoveryPresentation(
+				{
+					payment_state: "unpaid",
+					recovery_action: null,
+					recovery_blocked_reason: "authority_pending",
+				},
+				active,
+			),
+		).toMatchObject({
+			status: { label: "Needs attention" },
+			hasPaymentIssue: true,
+			recoveryTarget: null,
+			schedule: { fallback: "Contact support to restore this subscription" },
+		});
 		expect(
 			computeSubscriptionRecoveryPresentation(
 				{

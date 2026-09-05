@@ -45,7 +45,8 @@ export type ComputeSubscriptionRecoveryPresentation = {
 export function computeSubscriptionRecoveryTarget(
 	subscription: ComputeSubscriptionRecoveryFields,
 ): ComputeRecoveryTarget | null {
-	if (subscription.actions?.command_state != null) return null;
+	if (subscription.actions?.command_state != null || subscription.recovery_blocked_reason != null)
+		return null;
 	const action = subscription.recovery_action;
 	if (action === "top_up") return { kind: "top_up", action };
 	if (action === "start_new") return { kind: "start_new", action };
@@ -70,7 +71,11 @@ export function computeSubscriptionRecoveryPresentation(
 			schedule: null,
 		};
 	}
-	if (subscription.actions?.command_state != null) {
+	if (
+		subscription.actions?.command_state != null ||
+		(subscription.recovery_blocked_reason === "authority_pending" &&
+			subscription.payment_state !== "unpaid")
+	) {
 		return {
 			status: { label: "Updating subscription", tone: "warning" },
 			hasPaymentIssue: false,

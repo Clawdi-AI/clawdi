@@ -36,6 +36,10 @@ database migration, CI, and implementation details.
 - Managed runtimes accept released images' initial CLI bootstrap receipts
   without a spurious invalid-status warning. Adoption revalidates the installed
   CLI; malformed or unsafe state now stops instead of being overwritten.
+- Ending a hosted trial now shows subscription updates while the agent stops,
+  rather than waiting for payment. Expired checkouts can be retried, while
+  uncertain payment results retain the original request and provide support guidance.
+
 - OpenClaw sync serializes asynchronous discovery commands to reduce overlapping
   memory use. Skill polling survives inventory failures without reporting false
   deletions, and skill synchronization performs fewer workspace lookups.
