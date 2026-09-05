@@ -482,6 +482,30 @@ _MCP_OPERATION_ERRORS = (
 )
 
 
+@asynccontextmanager
+async def _map_mcp_operation_errors(
+    operation: Literal["list_tools", "call_tool"],
+) -> AsyncGenerator[None, None]:
+    try:
+        yield
+    except _MCP_OPERATION_ERRORS as exc:
+        upstream_error = exc
+    except BaseExceptionGroup as exc:
+        matched, remainder = exc.split(_MCP_OPERATION_ERRORS)
+        if matched is None or remainder is not None:
+            raise
+        upstream_error = exc
+    else:
+        return
+
+    logger.warning(
+        "Composio MCP operation failed: operation=%s error_type=%s",
+        operation,
+        type(upstream_error).__name__,
+    )
+    raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
+
+
 def get_composio_client() -> AsyncComposio:
     """Return the shared generated async Composio client."""
     global _client
@@ -645,32 +669,20 @@ def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[list[Jso
 
 async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
     """List tools through a fully initialized, operation-scoped MCP client."""
-    try:
+    async with _map_mcp_operation_errors("list_tools"):
         async with _tool_router_mcp_client(session) as client:
             response = await client.list_tools()
             return _normalize_mcp_response(response, ListToolsResult)
-    except _MCP_OPERATION_ERRORS as exc:
-        logger.warning(
-            "Composio MCP operation failed: operation=list_tools error_type=%s",
-            type(exc).__name__,
-        )
-        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
 
 
 async def call_tool_router_mcp_tool(
     session: ComposioMcpSession, name: str, arguments: JsonObject
 ) -> CallToolResult:
     """Call a tool through a fully initialized, operation-scoped MCP client."""
-    try:
+    async with _map_mcp_operation_errors("call_tool"):
         async with _tool_router_mcp_client(session) as client:
             response = await client.call_tool(name, arguments)
             return _normalize_mcp_response(response, CallToolResult)
-    except _MCP_OPERATION_ERRORS as exc:
-        logger.warning(
-            "Composio MCP operation failed: operation=call_tool error_type=%s",
-            type(exc).__name__,
-        )
-        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
 
 
 def _normalize_mcp_response[WireModelT: BaseModel](
