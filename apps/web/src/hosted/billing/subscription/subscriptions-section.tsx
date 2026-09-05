@@ -198,6 +198,7 @@ function SubscriptionRow({
 			cancelAtPeriodEnd: subscription.cancel_at_period_end,
 			pendingPlanSlug,
 			isOrphan: !deploymentBound,
+			actions: subscription.actions,
 		},
 		management,
 		recoveryTarget,
@@ -258,7 +259,7 @@ function SubscriptionRow({
 	);
 	const hasRetainedDeployment = !subscription.is_orphan && subscription.deployment_id !== null;
 	const cancellationCopy = computeSubscriptionCancellationCopy({
-		isTrial: subscription.status === "trialing",
+		isTrial: subscription.actions?.cancel === "end_trial",
 		periodEndLabel: subscription.current_period_end
 			? formatShortDate(subscription.current_period_end)
 			: null,
@@ -304,6 +305,7 @@ function SubscriptionRow({
 								confirmLabel: cancellationCopy.confirmLabel,
 								successDescription: (result) =>
 									computeSubscriptionCancellationSuccessCopy({
+										isTrial: subscription.actions?.cancel === "end_trial",
 										cancelAtPeriodEnd: result.cancel_at_period_end,
 										periodEndLabel: result.current_period_end
 											? formatShortDate(result.current_period_end)

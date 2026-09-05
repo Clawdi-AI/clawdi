@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	computeSubscriptionActionRequest,
 	scheduledPlanCancellationNotice,
+	subscriptionMutationNotice,
 } from "./compute-subscription-action-list";
 import {
 	type ComputeSubscriptionActionEntitlement,
@@ -46,6 +47,7 @@ function entitlement(
 		cancelAtPeriodEnd: false,
 		pendingPlanSlug: null,
 		isOrphan: false,
+		actions: { cancel: "cancel_at_period_end", resume: false, command_state: null },
 		...overrides,
 	};
 }
@@ -69,10 +71,15 @@ function kinds(
 describe("resolveComputeSubscriptionActions", () => {
 	test("covers healthy paid, trial, Included Basic, and orphan entitlements", () => {
 		expect(kinds()).toEqual(["manage", "cancel"]);
-		expect(kinds({ status: "trialing" })).toEqual(["cancel"]);
+		expect(
+			kinds({
+				status: "trialing",
+				actions: { cancel: "end_trial", resume: false, command_state: null },
+			}),
+		).toEqual(["end_trial"]);
 		expect(
 			kinds(
-				{ planSlug: "compute_basic", fundingSource: null, priceCents: 0 },
+				{ planSlug: "compute_basic", fundingSource: null, priceCents: 0, actions: null },
 				{ management: enabledManagement },
 			),
 		).toEqual(["upgrade"]);
@@ -109,17 +116,25 @@ describe("resolveComputeSubscriptionActions", () => {
 
 	test("gives pending, canceling, and terminal states exclusive recovery priority", () => {
 		expect(kinds({}, { hasPendingOperation: true })).toEqual(["check_change"]);
-		expect(kinds({ cancelAtPeriodEnd: true })).toEqual(["resume"]);
+		expect(
+			kinds({
+				cancelAtPeriodEnd: true,
+				actions: { cancel: null, resume: true, command_state: null },
+			}),
+		).toEqual(["resume"]);
+		expect(
+			kinds({
+				status: "trialing",
+				cancelAtPeriodEnd: true,
+				actions: { cancel: "end_trial", resume: true, command_state: null },
+			}),
+		).toEqual(["resume", "end_trial"]);
 		const unpaid = resolveComputeSubscriptionActions({
-			entitlement: entitlement({ status: "unpaid", paymentState: "unpaid" }),
+			entitlement: entitlement({ status: "unpaid", paymentState: "unpaid", actions: null }),
 			management: enabledManagement,
 			recoveryTarget: null,
 		});
-		expect(unpaid.map(({ kind }) => kind)).toEqual(["start_new"]);
-		expect(unpaid[0]).toMatchObject({
-			kind: "start_new",
-			recoveryTarget: { kind: "start_new" },
-		});
+		expect(unpaid).toEqual([]);
 		const terminalRecovery = resolveComputeSubscriptionActions({
 			entitlement: entitlement({ status: "canceled", paymentState: "ok" }),
 			management: enabledManagement,
@@ -130,10 +145,24 @@ describe("resolveComputeSubscriptionActions", () => {
 			kind: "start_new",
 			recoveryTarget: { kind: "start_new" },
 		});
-		expect(kinds({ status: "canceled", paymentState: "unpaid" })).toEqual(["start_new"]);
-		for (const status of ["canceled", "expired", "incomplete", "paused"]) {
-			expect(kinds({ status }, { management: hiddenManagement }), status).toEqual([]);
+		for (const status of ["canceled", "unpaid", "expired", "incomplete", "paused"]) {
+			expect(kinds({ status, actions: null }, { management: hiddenManagement }), status).toEqual(
+				[],
+			);
+			expect(
+				kinds(
+					{ status, actions: null },
+					{
+						management: hiddenManagement,
+						recoveryTarget: { kind: "fix_payment", action: "fix_payment" },
+					},
+				),
+				status,
+			).toEqual(["fix_payment"]);
 		}
+		expect(kinds({ actions: { cancel: null, resume: false, command_state: "pending" } })).toEqual(
+			[],
+		);
 	});
 
 	test("keeps scheduled-downgrade cancellation ahead of subscription cancellation", () => {
@@ -152,18 +181,30 @@ describe("resolveComputeSubscriptionActions", () => {
 			),
 		).toEqual(["fix_payment", "cancel_scheduled_change", "cancel"]);
 		expect(
-			kinds({ cancelAtPeriodEnd: true, status: "canceling", pendingPlanSlug: "compute_basic" }),
+			kinds({
+				cancelAtPeriodEnd: true,
+				status: "canceling",
+				pendingPlanSlug: "compute_basic",
+				actions: null,
+			}),
 		).toEqual(["cancel_scheduled_change"]);
 	});
 
 	test("keeps payment recovery ahead of resuming a canceling subscription", () => {
 		expect(
 			kinds(
-				{ status: "past_due", paymentState: "requires_action", cancelAtPeriodEnd: true },
+				{
+					status: "past_due",
+					paymentState: "requires_action",
+					cancelAtPeriodEnd: true,
+					actions: { cancel: null, resume: true, command_state: null },
+				},
 				{ recoveryTarget: { kind: "fix_payment", action: "fix_payment" } },
 			),
 		).toEqual(["fix_payment", "resume"]);
-		expect(kinds({ deploymentId: null, isOrphan: true, status: "canceling" })).toEqual([]);
+		expect(
+			kinds({ deploymentId: null, isOrphan: true, status: "canceling", actions: null }),
+		).toEqual([]);
 	});
 });
 
@@ -195,4 +236,50 @@ describe("scheduled plan cancellation execution", () => {
 			).toMatchObject({ kind: "info" });
 		}
 	});
+});
+
+test("subscription mutations only confirm completed cancellation or renewal", () => {
+	const result = {
+		status: "active",
+		billing_term_months: 1,
+		cancel_at_period_end: true,
+		action_state: null,
+		message: "Display-only service text",
+	};
+	expect(subscriptionMutationNotice(result, "cancel")).toMatchObject({
+		kind: "success",
+		title: "Cancellation scheduled",
+	});
+	expect(
+		subscriptionMutationNotice(
+			{ ...result, status: "canceled", cancel_at_period_end: false },
+			"cancel",
+		),
+	).toMatchObject({ kind: "success", title: "Subscription canceled" });
+	expect(
+		subscriptionMutationNotice({ ...result, cancel_at_period_end: false }, "resume"),
+	).toMatchObject({ kind: "success", title: "Subscription renewal restored" });
+	for (const action of ["cancel", "resume"] as const) {
+		for (const action_state of ["pending", "reconciling"] as const) {
+			expect(
+				subscriptionMutationNotice(
+					{
+						...result,
+						status: action === "cancel" ? "canceled" : "active",
+						cancel_at_period_end: false,
+						action_state,
+					},
+					action,
+					"Confirmed",
+				),
+			).toMatchObject({
+				kind: "info",
+				description: "Check the latest subscription details in a moment before trying again.",
+			});
+		}
+	}
+	expect(subscriptionMutationNotice(result, "resume").kind).toBe("info");
+	expect(
+		subscriptionMutationNotice({ ...result, cancel_at_period_end: false }, "cancel").kind,
+	).toBe("info");
 });

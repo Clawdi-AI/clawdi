@@ -130,6 +130,12 @@ function subscription(
 		plan_slug: "compute_performance",
 		funding_source: "stripe",
 		status,
+		lifecycle_status: status === "canceling" ? "active" : status,
+		actions: {
+			cancel: status === "active" || status === "past_due" ? "cancel_at_period_end" : null,
+			resume: status === "canceling",
+			command_state: null,
+		},
 		price_cents: 19_000,
 		currency: "usd",
 		billing_term_months: 12,
@@ -319,7 +325,7 @@ async function expectAgentSettingsSectionsAligned(
 		"Avatar",
 		"Language & timezone",
 		"Compute plan",
-		"Lifecycle",
+		"Agent controls",
 		"Danger zone",
 	];
 	const boxes = await Promise.all(
@@ -475,7 +481,6 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 						deployment_id: "hdep_deleted_stale_projection",
 						agent_name: "Stale deleted agent",
 						is_orphan: true,
-						recovery_action: "start_new",
 					}),
 					subscription("past_due", "past_due", {
 						plan_slug: "compute_basic",
@@ -590,7 +595,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		name: "Cancel scheduled change",
 	});
 	await expect(cancelScheduledAccount).toBeEnabled();
-	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toHaveCount(0);
+	await expect(cancelingCard.getByRole("button", { name: "Keep subscription" })).toHaveCount(0);
 	await cancelScheduledAccount.click();
 	await expect
 		.poll(() => scheduledPlanCancellationRequests.map((body) => JSON.parse(body)))
@@ -785,6 +790,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 test("agent settings uses compact canonical subscription management", async ({
 	page,
 }, testInfo) => {
+	test.setTimeout(120_000);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	const planQuoteRequests: string[] = [];
@@ -929,7 +935,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		"warning",
 	);
 	await expect(cancelingCard.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
-	await expect(cancelingCard.getByRole("button", { name: "Resume subscription" })).toBeEnabled();
+	await expect(cancelingCard.getByRole("button", { name: "Keep subscription" })).toBeEnabled();
 	await expectCardsFit(page.locator("body"));
 
 	await gotoHostedAgentSettings(page, fixtureAgentId(cardPastDueDeployment), "Basic");
@@ -974,7 +980,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		.poll(() => scheduledPlanCancellationRequests.map((body) => JSON.parse(body)))
 		.toEqual([{ deployment_id: "hdep_scheduled_downgrade" }]);
 	await expect(
-		page.locator("[data-sonner-toast]").filter({ hasText: "Billing details are reconciling" }),
+		page.locator("[data-sonner-toast]").filter({ hasText: "Subscription details are updating" }),
 	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 

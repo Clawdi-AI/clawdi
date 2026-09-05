@@ -249,8 +249,14 @@ export function mutationDeploymentReadFixture(
 					}
 			: null,
 		accepted_operation: null,
+		start_action: "start",
 		commercial_display: {
 			compute_subscription: deployment.compute_subscription ?? null,
+			recovery_action: deployment.compute_subscription?.funding_source
+				? (deployment.compute_subscription.recovery_action ?? null)
+				: fundingFact?.fact_kind === "funding_revoked"
+					? "start_new"
+					: null,
 			latest_funding_fact: fundingFact,
 		},
 		current_plan_slug: config.compute_plan_slug,
@@ -397,6 +403,7 @@ export const paidBasicDeployment = {
 		price_cents: 8_640,
 		currency: "usd",
 		cancel_at_period_end: false,
+		actions: { cancel: "cancel_at_period_end", resume: false, command_state: null },
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
 } satisfies DeploymentMutationFixture;
@@ -546,9 +553,10 @@ export const walletActiveDeployment = {
 		price_cents: 900,
 		currency: "usd",
 		cancel_at_period_end: false,
+		actions: { cancel: "cancel_at_period_end", resume: false, command_state: null },
 		current_period_end: "2026-08-15T00:00:00Z",
 	},
-};
+} satisfies DeploymentMutationFixture;
 
 export const walletPastDueDeployment = {
 	...walletActiveDeployment,
@@ -556,6 +564,7 @@ export const walletPastDueDeployment = {
 		...walletActiveDeployment.compute_subscription,
 		status: "past_due",
 		payment_state: "past_due",
+		recovery_action: "top_up",
 		latest_failed_invoice_id: "in_wallet_open",
 		next_payment_attempt_at: "2026-07-16T00:00:00Z",
 	},
@@ -569,6 +578,7 @@ export const cardPastDueDeployment = {
 		...paidBasicDeployment.compute_subscription,
 		status: "past_due",
 		payment_state: "past_due",
+		recovery_action: "fix_payment",
 		latest_failed_invoice_id: "in_card_open",
 		latest_failed_invoice_hosted_url: null,
 		next_payment_attempt_at: "2026-07-16T00:00:00Z",
@@ -597,9 +607,10 @@ export const cancelPendingBasicDeployment = {
 	compute_subscription: {
 		...paidBasicDeployment.compute_subscription,
 		cancel_at_period_end: true,
+		actions: { cancel: null, resume: true, command_state: null },
 		cancel_at: "2027-07-15T00:00:00Z",
 	},
-};
+} satisfies DeploymentMutationFixture;
 
 export const walletAnnualDeployment = {
 	...paidBasicDeployment,
@@ -777,6 +788,7 @@ export type HostedApiStubOptions = {
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
+	cancelResponse?: DeployComponents["schemas"]["V2ComputeSubscriptionActionResponse"];
 	checkoutIdempotencyKeys?: string[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
@@ -809,7 +821,7 @@ export type HostedApiStubOptions = {
 	subscriptionPages?: Record<string, SubscriptionListResponse>;
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
-	startError?: { status: number; detail: string };
+	startError?: { status: number; detail: string; code?: string };
 	startRequests?: string[];
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
@@ -1091,13 +1103,16 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				status: "active",
-				billing_term_months: 12,
-				cancel_at_period_end: true,
-				current_period_end: "2026-08-15T00:00:00Z",
-				cancel_at: "2026-08-15T00:00:00Z",
-			});
+			return fulfillJson(
+				r,
+				options.cancelResponse ?? {
+					status: "active",
+					billing_term_months: 12,
+					cancel_at_period_end: true,
+					current_period_end: "2026-08-15T00:00:00Z",
+					cancel_at: "2026-08-15T00:00:00Z",
+				},
+			);
 		}
 		if (p === "/v2/subscription/resume" && r.request().method() === "POST") {
 			options.resumeRequests?.push(r.request().postData() ?? "");
@@ -1124,7 +1139,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
 			if (options.startError) {
-				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
+				const { status, ...body } = options.startError;
+				return fulfillJson(r, body, status);
 			}
 			return fulfillJson(r, { status: "starting" });
 		}

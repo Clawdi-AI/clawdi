@@ -22,6 +22,7 @@ import {
 	ComputeSubscriptionRecoveryAction,
 	type ComputeSubscriptionStartNewAction,
 } from "@/hosted/billing/subscription/compute-subscription-recovery-action";
+import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 
 export type ComputeSubscriptionActionTarget =
@@ -65,9 +66,9 @@ export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActio
 		case "reconciling":
 			return {
 				kind: "info",
-				title: "Billing details are reconciling",
+				title: "Subscription details are updating",
 				description:
-					"The cancellation was accepted, but subscription details are still reconciling. Refresh in a moment.",
+					"The cancellation was accepted, but subscription details are still updating. Check again in a moment.",
 			};
 		default:
 			return {
@@ -76,6 +77,34 @@ export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActio
 				description: "Refresh the subscription details before trying again.",
 			};
 	}
+}
+
+export function subscriptionMutationNotice(
+	result: ComputeSubscriptionActionResult,
+	action: "cancel" | "resume",
+	successDescription?: string,
+): { kind: "success" | "info"; title: string; description?: string } {
+	const confirmed =
+		action === "cancel"
+			? result.cancel_at_period_end || result.status === "canceled"
+			: !result.cancel_at_period_end && ["active", "trialing", "past_due"].includes(result.status);
+	if (isComputeSubscriptionActionUnconfirmed(result) || !confirmed) {
+		return {
+			kind: "info",
+			title: action === "cancel" ? "Cancellation is still processing" : "Renewal is still updating",
+			description: "Check the latest subscription details in a moment before trying again.",
+		};
+	}
+	return {
+		kind: "success",
+		title:
+			action === "resume"
+				? "Subscription renewal restored"
+				: result.cancel_at_period_end
+					? "Cancellation scheduled"
+					: "Subscription canceled",
+		description: successDescription,
+	};
 }
 
 export function ComputeSubscriptionActionList({
@@ -111,10 +140,12 @@ export function ComputeSubscriptionActionList({
 	async function cancel() {
 		try {
 			const result = await cancelSubscription.mutateAsync(actionTarget);
-			toast.success(
-				result.cancel_at_period_end ? "Cancellation scheduled" : "Subscription canceled",
-				{ description: cancelCopy?.successDescription?.(result) },
+			const notice = subscriptionMutationNotice(
+				result,
+				"cancel",
+				cancelCopy?.successDescription?.(result),
 			);
+			toast[notice.kind](notice.title, { description: notice.description });
 		} catch (error) {
 			toast.error("Couldn't cancel subscription", { description: normalizeBillingError(error) });
 			throw error;
@@ -123,8 +154,9 @@ export function ComputeSubscriptionActionList({
 
 	async function resume() {
 		try {
-			await resumeSubscription.mutateAsync(actionTarget);
-			toast.success("Subscription resumed");
+			const result = await resumeSubscription.mutateAsync(actionTarget);
+			const notice = subscriptionMutationNotice(result, "resume");
+			toast[notice.kind](notice.title, { description: notice.description });
 		} catch (error) {
 			toast.error("Couldn't resume subscription", { description: normalizeBillingError(error) });
 			throw error;
@@ -213,9 +245,10 @@ export function ComputeSubscriptionActionList({
 						onClick={() => void runAction(resume).catch(() => undefined)}
 					>
 						{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
-						Resume subscription
+						Keep subscription
 					</Button>
 				);
+			case "end_trial":
 			case "cancel":
 				if (!cancelCopy) return null;
 				return (
@@ -235,7 +268,7 @@ export function ComputeSubscriptionActionList({
 							disabled={pending || candidate.disabledReason !== null}
 						>
 							{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
-							Cancel subscription
+							{candidate.kind === "end_trial" ? "End trial now" : "Cancel subscription"}
 						</Button>
 					</ConfirmAction>
 				);

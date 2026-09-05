@@ -9,11 +9,13 @@ import {
 	Check,
 	Copy,
 	Cpu,
+	CreditCard,
 	ExternalLink,
 	Eye,
 	EyeOff,
 	FolderOpen,
 	Info,
+	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -140,7 +142,10 @@ import {
 	type CheckoutReturnNavigationTarget,
 	useCheckoutReturnHandler,
 } from "@/hosted/billing/checkout-return";
-import { computeDunningState } from "@/hosted/billing/components/compute-dunning.logic";
+import {
+	computeDunningState,
+	computeSubscriptionRequiredToStart,
+} from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
@@ -401,19 +406,80 @@ function DeleteComputeAction({
 function StartComputeAction({
 	deployment,
 	label = "Start agent",
+	variant = "default",
+	disabled = false,
+	onSubscribe,
 }: {
 	deployment: HostedDeployment;
 	label?: string;
+	variant?: ComponentProps<typeof Button>["variant"];
+	disabled?: boolean;
+	onSubscribe?: () => void;
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canStart = canStartDeployment(status);
+	const startAction = deployment.start_action;
+	const needsSubscription = computeSubscriptionRequiredToStart(deployment);
+	if (needsSubscription || startAction === "fix_payment" || startAction === "top_up") {
+		const subscribe = needsSubscription ? onSubscribe : undefined;
+		const Icon = needsSubscription ? Plus : CreditCard;
+		return (
+			<Button
+				type="button"
+				size="sm"
+				variant={variant}
+				disabled={disabled || !canStart || (needsSubscription && lifecycle.isPending)}
+				onClick={subscribe}
+				render={
+					subscribe ? undefined : (
+						<Link
+							to={agentSectionHref(deployment.agent_id, "settings", {
+								settings: "billing-plan",
+								subscription_action: needsSubscription ? "start_new" : undefined,
+							})}
+						/>
+					)
+				}
+				nativeButton={Boolean(subscribe)}
+			>
+				<Icon className="size-3.5" />
+				{needsSubscription
+					? "Subscribe to start"
+					: startAction === "top_up"
+						? "Top up to start"
+						: "Pay to start"}
+			</Button>
+		);
+	}
+	if (startAction === "contact_support") {
+		return (
+			<Button
+				size="sm"
+				variant={variant}
+				disabled={disabled}
+				render={<a href="mailto:support@clawdi.ai" />}
+				nativeButton={false}
+			>
+				<LifeBuoy className="size-3.5" />
+				Contact support
+			</Button>
+		);
+	}
+	if (startAction !== "start") {
+		return (
+			<Button size="sm" variant={variant} disabled>
+				{startAction === "unavailable" ? "Start unavailable" : "Updating subscription"}
+			</Button>
+		);
+	}
 	return (
 		<Button
 			type="button"
 			size="sm"
-			disabled={lifecycle.isPending || !canStart}
+			variant={variant}
+			disabled={disabled || lifecycle.isPending || !canStart}
 			onClick={() =>
 				void runAction(async () => {
 					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "start" });
@@ -794,7 +860,13 @@ function StoppedAgentState({
 		<EmptyState
 			variant={variant}
 			title="Stopped"
-			description="This agent is stopped. Start it to use its tools again."
+			description={
+				computeSubscriptionRequiredToStart(deployment)
+					? "This agent is stopped. Choose a subscription to start it. Your saved data is kept."
+					: deployment.start_action === "start"
+						? "This agent is stopped. Start it to use its tools again."
+						: "This agent is stopped. Your saved data is kept."
+			}
 			action={<StartComputeAction deployment={deployment} label="Start" />}
 		/>
 	);
@@ -3649,8 +3721,8 @@ function ComputeSettingsSections({
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const subscriptionCancellationCopy = computeSubscriptionCancellationCopy({
-		isTrial: currentSubscription?.status === "trialing",
-		periodEndLabel: subscriptionPeriodLabel,
+		isTrial: currentSubscription?.actions?.cancel === "end_trial",
+		periodEndLabel: subscriptionEndsAt ? subscriptionPeriodLabel : null,
 		hasRetainedDeployment: true,
 	});
 	const subscriptionLifecycle = currentSubscription
@@ -3738,6 +3810,7 @@ function ComputeSettingsSections({
 			paymentState: currentSubscription?.payment_state ?? "ok",
 			cancelAtPeriodEnd: subscriptionCancelPending,
 			pendingPlanSlug,
+			actions: currentSubscription?.actions,
 		},
 		management: computeManagement,
 		recoveryTarget: actionRecoveryTarget,
@@ -3752,7 +3825,12 @@ function ComputeSettingsSections({
 	useEffect(() => {
 		if (routeSearch.subscription_action !== "start_new") return;
 		if (hostedAccess.isLoading || plans.isLoading) return;
-		if (canOfferStartNew && hostedAccess.canCreateCloudAgents && (basicPlan || perfPlan)) {
+		if (
+			canOfferStartNew &&
+			!hasPendingComputeChange &&
+			hostedAccess.canCreateCloudAgents &&
+			(basicPlan || perfPlan)
+		) {
 			setSubscriptionCreateOpen(true);
 		}
 		void router.navigate({
@@ -3769,6 +3847,7 @@ function ComputeSettingsSections({
 	}, [
 		basicPlan,
 		canOfferStartNew,
+		hasPendingComputeChange,
 		hostedAccess.canCreateCloudAgents,
 		hostedAccess.isLoading,
 		perfPlan,
@@ -3843,6 +3922,7 @@ function ComputeSettingsSections({
 								confirmLabel: subscriptionCancellationCopy.confirmLabel,
 								successDescription: (result) =>
 									computeSubscriptionCancellationSuccessCopy({
+										isTrial: currentSubscription?.actions?.cancel === "end_trial",
 										cancelAtPeriodEnd: result.cancel_at_period_end,
 										periodEndLabel: result.current_period_end
 											? formatShortDate(result.current_period_end)
@@ -3896,21 +3976,20 @@ function ComputeSettingsSections({
 							</Button>
 						</ConfirmAction>
 					) : (
-						<Button
+						<StartComputeAction
+							deployment={deployment}
+							label="Start"
 							variant="outline"
-							size="sm"
-							disabled={lifecycle.isPending || !canRunPrimaryLifecycleAction}
-							onClick={() =>
-								void runAction(() => runLifecycleAction(primaryLifecycleAction)).catch(
-									() => undefined,
-								)
+							disabled={
+								lifecycle.isPending ||
+								!canRunPrimaryLifecycleAction ||
+								(computeSubscriptionRequiredToStart(deployment) &&
+									(createUnavailableMessage !== null ||
+										hasPendingComputeChange ||
+										hostedAccess.isLoading))
 							}
-						>
-							{lifecycle.isPending && lifecycle.variables?.action === primaryLifecycleAction ? (
-								<Spinner className="size-3.5" />
-							) : null}
-							Start
-						</Button>
+							onSubscribe={() => setSubscriptionCreateOpen(true)}
+						/>
 					)}
 				</div>
 			</SettingsSection>
@@ -3924,7 +4003,7 @@ function ComputeSettingsSections({
 					<div>
 						<div className="text-sm font-medium">Delete this agent</div>
 						<p className="text-xs text-muted-foreground">
-							Deletes this agent and releases its resources. This can’t be undone.
+							Deletes this agent and its saved data. This can’t be undone.
 						</p>
 					</div>
 					<DeleteComputeAction

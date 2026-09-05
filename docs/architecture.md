@@ -38,6 +38,20 @@ The hosted box is intentionally opaque. This repo defines API contracts,
 dashboard surfaces, CLI behavior, local mock helpers, and runtime convergence
 code. Hosted service internals live outside this repository.
 
+Hosted subscription and power controls consume generated backend decisions:
+subscription `actions`, `recovery_action`, `recovery_blocked_reason`, and
+deployment `start_action`. The dashboard does not infer replacement purchases
+from raw billing status or treat undoing a scheduled cancellation as paused
+subscription resumption. Subscription cancellation retains saved data; explicit
+agent deletion remains separate. Pending requests do not imply completed stop.
+Deploy the additive Hosted contract before this dashboard; older stored
+responses without start advice wait for a fresh read. This is our product
+contract, not a claim that Stripe or Cashier cancellation defaults are identical.
+
+Done: regenerate `packages/shared/src/api/deploy.generated.ts` from the paired
+Hosted OpenAPI; run focused subscription consumer tests and
+`e2e/hosted-subscription-power.pw.ts` in an isolated Docker browser runner.
+
 Cross-platform client behavior and current decision owners are tracked in the
 [client capability matrix](cross-platform-capability-matrix.md).
 

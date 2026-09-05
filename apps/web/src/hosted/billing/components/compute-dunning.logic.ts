@@ -67,6 +67,7 @@ function recoveryPlanSlugFor(
 
 function detachedFallbackState(deployment: DunningDeployment): ComputeDunningState | null {
 	const fallback = deployment.commercial_display?.latest_funding_fact;
+	if (deployment.commercial_display?.recovery_action !== "start_new") return null;
 	if (fallback?.fact_kind !== "funding_revoked") return null;
 	if (!fallback.reason || !fallback.funding_source) return null;
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
@@ -76,6 +77,10 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const stopped = deploymentStatus.kind === "stopped";
 	const statusUnavailable = !deploymentStatus.known;
+	const includedBasic = isIncludedBasicSubscription(
+		deployment.current_plan_slug,
+		deployment.commercial_display?.compute_subscription,
+	);
 	const presentation = (() => {
 		switch (fallback.reason) {
 			case "payment_failure":
@@ -117,10 +122,14 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fundingSource: fallback.funding_source,
 		recoveryTarget: { kind: "start_new", action: "start_new" },
 		description: statusUnavailable
-			? "We can’t determine whether this agent stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
+			? "The agent’s current status is unavailable. Check again in a moment. Your saved data is kept."
 			: stopped
-				? "No included Basic entitlement was available, so this agent stopped. Start a new subscription to restore paid compute."
-				: "This agent is now using included Basic. Start a new subscription to restore paid compute.",
+				? includedBasic
+					? "This agent is stopped. You can start it on included Basic or choose a paid subscription. Your saved data is kept."
+					: "This agent is stopped. Choose a subscription to start it. Your saved data is kept."
+				: includedBasic
+					? "This agent is now using included Basic. Start a new subscription to restore paid compute."
+					: "This subscription ended. Choose a subscription to use this agent again. Your saved data is kept.",
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
@@ -131,11 +140,13 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
 	const subscription = deployment.commercial_display?.compute_subscription ?? null;
 	const fallbackState = detachedFallbackState(deployment);
-	if (fallbackState && isIncludedBasicSubscription(deployment.current_plan_slug, subscription)) {
+	if (
+		fallbackState &&
+		(!subscription || isIncludedBasicSubscription(deployment.current_plan_slug, subscription))
+	) {
 		return fallbackState;
 	}
 	if (!subscription) return null;
-	if (subscription.payment_state === "ok") return null;
 	const recoveryTarget = computeSubscriptionRecoveryTarget(subscription);
 	if (!recoveryTarget) return null;
 
@@ -153,7 +164,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		secondaryTarget: null,
 	};
 
-	if (subscription.payment_state === "unpaid") {
+	if (recoveryTarget.kind === "start_new") {
 		return {
 			...common,
 			paymentState: "unpaid",
@@ -161,9 +172,10 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "destructive",
 			title: "Compute subscription ended",
 			description:
-				"This paid subscription ended. Start a new subscription for this agent to restore paid compute.",
+				"This subscription is no longer active. Choose a subscription to start this agent. Your saved data is kept.",
 		};
 	}
+	if (subscription.payment_state === "ok") return null;
 
 	if (subscription.payment_state === "requires_action") {
 		return {
@@ -196,4 +208,10 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		title: "Payment past due",
 		description: "Update the card payment method for the open invoice.",
 	};
+}
+
+export function computeSubscriptionRequiredToStart(
+	deployment: Pick<HostedDeployment, "start_action">,
+): boolean {
+	return deployment.start_action === "subscribe";
 }

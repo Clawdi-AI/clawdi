@@ -3,6 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
+	type ComputeSubscriptionActionResult,
 	type ComputeSubscriptionListItem,
 	type HostedComputeSubscription,
 	type Plan,
@@ -16,9 +17,17 @@ export type ResolvedBillingOffer = {
 };
 
 export function isHistoricalAccountSubscription(
-	subscription: Pick<ComputeSubscriptionListItem, "status">,
+	subscription: Pick<ComputeSubscriptionListItem, "status" | "recovery_action" | "actions">,
 ): boolean {
-	return subscription.status === "canceled";
+	return (
+		subscription.actions?.command_state == null && subscription.recovery_action === "start_new"
+	);
+}
+
+export function isComputeSubscriptionActionUnconfirmed(
+	result: ComputeSubscriptionActionResult,
+): boolean {
+	return result.action_state === "pending" || result.action_state === "reconciling";
 }
 
 export function computeSubscriptionCancellationCopy({
@@ -33,7 +42,7 @@ export function computeSubscriptionCancellationCopy({
 	if (isTrial) {
 		return {
 			description: hasRetainedDeployment
-				? "The trial ends immediately. The agent stops, but its disk and data are retained."
+				? "The trial ends immediately and the agent stops. Your saved data is kept."
 				: "The trial ends immediately. This cannot restore a deleted agent.",
 			confirmLabel: "End trial now",
 		};
@@ -43,25 +52,28 @@ export function computeSubscriptionCancellationCopy({
 		: "The subscription will stop renewing at the end of the current billing period.";
 	return {
 		description: hasRetainedDeployment
-			? `${ending} At that point, the agent stops, but its disk and data are retained.`
+			? `${ending} The agent stops when the period ends. Your saved data is kept.`
 			: `${ending} This cannot restore a deleted agent.`,
 		confirmLabel: "Cancel at period end",
 	};
 }
 
 export function computeSubscriptionCancellationSuccessCopy({
+	isTrial,
 	cancelAtPeriodEnd,
 	periodEndLabel,
 	hasRetainedDeployment,
 }: {
+	isTrial: boolean;
 	cancelAtPeriodEnd: boolean;
 	periodEndLabel: string | null;
 	hasRetainedDeployment: boolean;
 }): string {
 	if (!cancelAtPeriodEnd) {
+		const ending = isTrial ? "The trial has ended." : "The subscription has ended.";
 		return hasRetainedDeployment
-			? "The trial has ended. The agent will stop; its disk and data are retained."
-			: "The trial has ended.";
+			? `${ending} The agent will stop. Your saved data is kept.`
+			: ending;
 	}
 	if (!hasRetainedDeployment) {
 		return periodEndLabel
@@ -69,8 +81,8 @@ export function computeSubscriptionCancellationSuccessCopy({
 			: "The subscription will not renew after the current billing period.";
 	}
 	return periodEndLabel
-		? `The subscription remains active through ${periodEndLabel}. The agent will then stop; its disk and data are retained.`
-		: "The agent will stop when the current billing period ends; its disk and data are retained.";
+		? `The subscription remains active through ${periodEndLabel}. The agent will then stop. Your saved data is kept.`
+		: "The agent will stop when the current billing period ends. Your saved data is kept.";
 }
 
 export function resolveBasicPlan(plans: Plan[] | undefined): Plan | undefined {
@@ -189,6 +201,7 @@ export type ComputeSubscriptionLifecycle = {
 };
 
 type ComputeSubscriptionLifecycleInput = {
+	lifecycle_status?: string | null;
 	status: string;
 	cancel_at_period_end: boolean;
 	current_period_end?: string | null;
@@ -200,7 +213,7 @@ type ComputeSubscriptionLifecycleInput = {
 export function computeSubscriptionLifecycle(
 	subscription: ComputeSubscriptionLifecycleInput,
 ): ComputeSubscriptionLifecycle {
-	const status = subscription.status.toLowerCase();
+	const status = (subscription.lifecycle_status ?? subscription.status).toLowerCase();
 	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;
 	if (
 		status === "canceling" ||
@@ -245,8 +258,8 @@ export function computeSubscriptionLifecycle(
 		return {
 			badgeLabel: "Unpaid",
 			badgeTone: "destructive",
-			dateAt: canceledAt,
-			dateVerb: "Ended",
+			dateAt: null,
+			dateVerb: null,
 			renews: false,
 		};
 	}

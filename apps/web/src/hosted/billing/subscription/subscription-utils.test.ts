@@ -61,14 +61,10 @@ function subscription(): HostedComputeSubscription {
 
 function includedSubscription(): HostedComputeSubscription {
 	return {
+		...subscription(),
 		subscription_id: 7,
-		status: "active",
 		funding_source: null,
-		payment_state: "ok",
-		billing_term_months: 1,
 		price_cents: 0,
-		currency: "usd",
-		cancel_at_period_end: false,
 	};
 }
 
@@ -193,8 +189,7 @@ describe("compute subscription cancellation copy", () => {
 				hasRetainedDeployment: true,
 			}),
 		).toEqual({
-			description:
-				"The trial ends immediately. The agent stops, but its disk and data are retained.",
+			description: "The trial ends immediately and the agent stops. Your saved data is kept.",
 			confirmLabel: "End trial now",
 		});
 		expect(
@@ -205,25 +200,35 @@ describe("compute subscription cancellation copy", () => {
 			}),
 		).toEqual({
 			description:
-				"The subscription will stop renewing and remain active through Sep 12, 2026. At that point, the agent stops, but its disk and data are retained.",
+				"The subscription will stop renewing and remain active through Sep 12, 2026. The agent stops when the period ends. Your saved data is kept.",
 			confirmLabel: "Cancel at period end",
 		});
 		expect(
 			computeSubscriptionCancellationSuccessCopy({
+				isTrial: true,
 				cancelAtPeriodEnd: false,
 				periodEndLabel: null,
 				hasRetainedDeployment: true,
 			}),
-		).toBe("The trial has ended. The agent will stop; its disk and data are retained.");
+		).toBe("The trial has ended. The agent will stop. Your saved data is kept.");
 		expect(
 			computeSubscriptionCancellationSuccessCopy({
+				isTrial: false,
 				cancelAtPeriodEnd: true,
 				periodEndLabel: "Sep 12, 2026",
 				hasRetainedDeployment: true,
 			}),
 		).toBe(
-			"The subscription remains active through Sep 12, 2026. The agent will then stop; its disk and data are retained.",
+			"The subscription remains active through Sep 12, 2026. The agent will then stop. Your saved data is kept.",
 		);
+		expect(
+			computeSubscriptionCancellationSuccessCopy({
+				isTrial: false,
+				cancelAtPeriodEnd: false,
+				periodEndLabel: null,
+				hasRetainedDeployment: true,
+			}),
+		).toBe("The subscription has ended. The agent will stop. Your saved data is kept.");
 		expect(
 			computeSubscriptionCancellationCopy({
 				isTrial: false,
@@ -234,6 +239,16 @@ describe("compute subscription cancellation copy", () => {
 			description:
 				"The subscription will stop renewing at the end of the current billing period. This cannot restore a deleted agent.",
 			confirmLabel: "Cancel at period end",
+		});
+		expect(
+			computeSubscriptionCancellationCopy({
+				isTrial: true,
+				periodEndLabel: "Sep 12, 2026",
+				hasRetainedDeployment: false,
+			}),
+		).toEqual({
+			description: "The trial ends immediately. This cannot restore a deleted agent.",
+			confirmLabel: "End trial now",
 		});
 	});
 });
@@ -355,19 +370,44 @@ describe("commonExplicitBillingOffers", () => {
 });
 
 describe("account subscription history", () => {
-	test("treats terminal canceled status as history regardless of service period", () => {
+	test("uses finalized recovery for history regardless of the coarse list status", () => {
 		const ended = {
 			status: "canceled" as const,
+			recovery_action: "start_new" as const,
 			cancel_at_period_end: false,
 			current_period_end: "2099-08-12T12:00:00Z",
 		};
 
 		expect(isHistoricalAccountSubscription(ended)).toBe(true);
-		expect(isHistoricalAccountSubscription({ ...ended, status: "canceling" })).toBe(false);
+		expect(isHistoricalAccountSubscription({ ...ended, recovery_action: null })).toBe(false);
+		expect(
+			isHistoricalAccountSubscription({
+				...ended,
+				actions: { cancel: null, resume: false, command_state: "pending" },
+			}),
+		).toBe(false);
 	});
 });
 
 describe("compute subscription lifecycle presentation", () => {
+	test("keeps a trial scheduled to cancel distinct from an ended trial", () => {
+		const trial = {
+			...subscription(),
+			status: "trialing",
+			cancel_at_period_end: true,
+			current_period_end: "2026-09-12T00:00:00Z",
+		};
+
+		expect(computeSubscriptionLifecycle(trial)).toEqual({
+			badgeLabel: "Canceling",
+			badgeTone: "warning",
+			dateAt: trial.current_period_end,
+			dateVerb: "Ends",
+			renews: false,
+		});
+		expect(isComputeSubscriptionRenewing(trial)).toBe(false);
+	});
+
 	test("only renewing states present as renewing", () => {
 		for (const status of ["active", "trialing", "past_due"]) {
 			expect(isComputeSubscriptionRenewing({ ...subscription(), status }), status).toBe(true);

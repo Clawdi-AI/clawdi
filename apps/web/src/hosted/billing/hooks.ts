@@ -31,6 +31,7 @@ import {
 	subscriptionCreateQuoteRequest,
 	subscriptionCreateQuoteView,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
+import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
 import {
 	deploymentPollingState,
 	deploymentStatusFromResource,
@@ -45,17 +46,13 @@ function subscriptionFromAction(
 	previous: HostedComputeSubscription | null | undefined,
 	next: ComputeSubscriptionActionResult,
 ): HostedComputeSubscription {
-	const paymentState =
-		next.status === "past_due"
-			? (previous?.payment_state ?? "past_due")
-			: next.status === "unpaid"
-				? "unpaid"
-				: "ok";
 	return {
 		...(previous ?? {}),
+		actions: null,
+		recovery_action: next.recovery_action,
 		funding_source: next.funding_source ?? previous?.funding_source ?? "stripe",
 		status: next.status,
-		payment_state: paymentState,
+		payment_state: previous?.payment_state ?? "ok",
 		billing_term_months: next.billing_term_months,
 		currency: previous?.currency ?? "usd",
 		cancel_at_period_end: next.cancel_at_period_end,
@@ -65,12 +62,6 @@ function subscriptionFromAction(
 				: next.pending_plan_slug,
 		current_period_end: next.current_period_end ?? previous?.current_period_end ?? null,
 		cancel_at: next.cancel_at ?? null,
-		latest_failed_invoice_id:
-			paymentState === "ok" ? null : (previous?.latest_failed_invoice_id ?? null),
-		latest_failed_invoice_hosted_url:
-			paymentState === "ok" ? null : (previous?.latest_failed_invoice_hosted_url ?? null),
-		next_payment_attempt_at:
-			paymentState === "ok" ? null : (previous?.next_payment_attempt_at ?? null),
 	};
 }
 
@@ -86,6 +77,7 @@ function patchDeploymentSubscription(
 		patched = true;
 		return {
 			...deployment,
+			start_action: null,
 			commercial_display: {
 				...(deployment.commercial_display ?? {}),
 				compute_subscription: subscriptionFromAction(
@@ -127,7 +119,7 @@ export async function applySubscriptionActionSuccess(
 	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
 	next: ComputeSubscriptionActionResult,
 ): Promise<void> {
-	if (body.deployment_id) {
+	if (body.deployment_id && !isComputeSubscriptionActionUnconfirmed(next)) {
 		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 	}
 	await invalidateComputeSubscriptionInventory(qc);
@@ -205,6 +197,17 @@ export function useSubscriptions() {
 		getNextPageParam: billingNextPageParam,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
+		refetchIntervalInBackground: false,
+		refetchInterval: (query) =>
+			query.state.data?.pages.some((page) =>
+				page.items?.some(
+					(subscription) =>
+						subscription.actions?.command_state != null ||
+						subscription.recovery_blocked_reason === "payment_pending",
+				),
+			)
+				? BILLING_RECOVERY_POLL_INTERVAL_MS
+				: false,
 	});
 }
 
@@ -433,10 +436,13 @@ export function billingRecoveryRefetchIntervalFor(
 			candidate.resource.id.toLowerCase() === target || candidate.agent_id.toLowerCase() === target;
 		return matchesTarget;
 	});
+	if (deployment?.start_action === "wait") return BILLING_RECOVERY_POLL_INTERVAL_MS;
 	const subscription = deployment?.commercial_display?.compute_subscription;
 	if (!subscription) return false;
 	return subscription.payment_state === "past_due" ||
-		subscription.payment_state === "requires_action"
+		subscription.payment_state === "requires_action" ||
+		subscription.actions?.command_state != null ||
+		subscription.recovery_blocked_reason === "payment_pending"
 		? BILLING_RECOVERY_POLL_INTERVAL_MS
 		: false;
 }
@@ -471,9 +477,9 @@ export function useHostedDeployments({
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
-			return eventStreamFallbackInterval(
-				shortestRefetchInterval(inventoryInterval, billingInterval),
-				eventStreamActive,
+			return shortestRefetchInterval(
+				eventStreamFallbackInterval(inventoryInterval, eventStreamActive),
+				billingInterval,
 			);
 		},
 		...HOSTED_DEPLOYMENTS_REFRESH_POLICY,

@@ -6,7 +6,11 @@ import type {
 	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
+import {
+	computeDunningState,
+	computeSubscriptionRequiredToStart,
+	fallbackReasonSentence,
+} from "./compute-dunning.logic";
 
 function deployment({
 	computeSubscription = null,
@@ -29,6 +33,7 @@ function deployment({
 		status,
 		currentPlanSlug,
 		computeSubscription,
+		recoveryAction: factKind === "funding_revoked" ? "start_new" : null,
 		fundingFact: factKind
 			? {
 					fact_kind: factKind,
@@ -103,7 +108,11 @@ describe("computeDunningState", () => {
 
 	test("routes card past due to payment remediation", () => {
 		const deploymentWithPastDueCard = deployment({
-			computeSubscription: subscription({ status: "past_due", payment_state: "past_due" }),
+			computeSubscription: subscription({
+				status: "past_due",
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+			}),
 			factKind: "funding_revoked",
 		});
 		expect(computeDunningState(deploymentWithPastDueCard)).toMatchObject({
@@ -118,6 +127,7 @@ describe("computeDunningState", () => {
 				computeSubscription: subscription({
 					status: "past_due",
 					payment_state: "requires_action",
+					recovery_action: "fix_payment",
 					latest_failed_invoice_hosted_url: "https://invoice.stripe.test/action",
 				}),
 			}),
@@ -140,6 +150,7 @@ describe("computeDunningState", () => {
 					status: "past_due",
 					payment_state: "requires_action",
 					pending_plan_slug: "compute_basic",
+					recovery_action: "fix_payment",
 				}),
 				currentPlanSlug: "compute_performance",
 			}),
@@ -148,7 +159,7 @@ describe("computeDunningState", () => {
 		expect(state?.recoveryPlanSlug).toBe("compute_basic");
 	});
 
-	test("presents every terminal rail as a new subscription", () => {
+	test("presents backend-finalized recovery on both payment rails", () => {
 		for (const fundingSource of ["stripe", "wallet"] as const) {
 			const state = computeDunningState(
 				deployment({
@@ -156,6 +167,7 @@ describe("computeDunningState", () => {
 						status: "unpaid",
 						funding_source: fundingSource,
 						payment_state: "unpaid",
+						recovery_action: "start_new",
 					}),
 					currentPlanSlug: "compute_basic",
 				}),
@@ -165,7 +177,7 @@ describe("computeDunningState", () => {
 				recoveryTarget: { kind: "start_new", action: "start_new" },
 				tone: "destructive",
 			});
-			expect(state?.description).toContain("Start a new subscription");
+			expect(state?.description).toContain("Choose a subscription");
 		}
 	});
 
@@ -197,7 +209,7 @@ describe("computeDunningState", () => {
 				status: "stopped",
 			}),
 		);
-		expect(stopped?.description).toContain("No included Basic entitlement was available");
+		expect(stopped?.description).toContain("You can start it on included Basic");
 
 		const unavailable = computeDunningState(
 			deployment({
@@ -206,14 +218,14 @@ describe("computeDunningState", () => {
 				status: null,
 			}),
 		);
-		expect(unavailable?.description).toContain(
-			"can’t determine whether this agent stopped or is using included Basic",
-		);
+		expect(unavailable?.description).toContain("current status is unavailable");
 		expect(unavailable?.description).not.toContain("is now using included Basic");
 	});
 
-	test("does not recover a detached or already recovered subscription", () => {
-		expect(computeDunningState(deployment({ factKind: "funding_revoked" }))).toBeNull();
+	test("recovers revoked funding even without a subscription, but not an active replacement", () => {
+		expect(
+			computeDunningState(deployment({ factKind: "funding_revoked" }))?.recoveryTarget.kind,
+		).toBe("start_new");
 		expect(
 			computeDunningState(
 				deployment({
@@ -286,4 +298,19 @@ describe("computeDunningState", () => {
 			"changed by an administrator",
 		);
 	});
+});
+
+test("power controls use the backend start decision", () => {
+	expect(computeSubscriptionRequiredToStart({ start_action: "subscribe" })).toBe(true);
+	for (const start_action of [
+		"start",
+		"fix_payment",
+		"top_up",
+		"wait",
+		"contact_support",
+		"unavailable",
+		null,
+	] as const) {
+		expect(computeSubscriptionRequiredToStart({ start_action })).toBe(false);
+	}
 });

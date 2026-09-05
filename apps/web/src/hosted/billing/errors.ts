@@ -411,6 +411,18 @@ export function normalizeBillingError(error: unknown): string {
 		if (code === "idempotency_key_reused") {
 			return "This request conflicts with an earlier submission. Review the details and try again.";
 		}
+		if (code === "checkout_attempt_expired") {
+			return "This checkout has expired. Try again to open a new checkout.";
+		}
+		if (code === "checkout_payment_pending") {
+			return "Your subscription is updating. Please check again shortly.";
+		}
+		if (code === "checkout_reconciliation_required") {
+			return "We could not confirm your previous checkout. Contact support before starting another payment.";
+		}
+		if (code === "checkout_target_reserved") {
+			return "A checkout is already open for this agent. Continue with the same subscription choice.";
+		}
 		if (typeof code === "string") {
 			return "The billing request could not be completed. Refresh and try again.";
 		}

@@ -28,6 +28,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					paymentState: state.paymentState,
 					cancelAtPeriodEnd: subscription?.cancel_at_period_end ?? false,
 					pendingPlanSlug: pendingComputePlanSlug(subscription),
+					actions: subscription?.actions,
 				},
 				management: { action: "hidden", target: null, unavailableReason: null },
 				recoveryTarget: state.recoveryTarget,

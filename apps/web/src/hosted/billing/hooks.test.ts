@@ -147,6 +147,8 @@ describe("applyDeploymentSubscriptionResult", () => {
 		let patched = qc.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 		expect(patched?.[0]?.commercial_display?.compute_subscription?.cancel_at_period_end).toBe(true);
 		expect(patched?.[0]?.commercial_display?.compute_subscription?.billing_term_months).toBe(12);
+		expect(patched?.[0]?.commercial_display?.compute_subscription?.actions).toBeNull();
+		expect(patched?.[0]?.start_action).toBeNull();
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
 
 		applyDeploymentSubscriptionResult(qc, "dep_123", subscriptionAction(false));
@@ -161,6 +163,25 @@ describe("applyDeploymentSubscriptionResult", () => {
 });
 
 describe("applySubscriptionActionSuccess", () => {
+	test("pending subscription actions invalidate inventory without projecting success", async () => {
+		for (const action_state of ["pending", "reconciling"] as const) {
+			const qc = new QueryClient();
+			const previous = [hostedDeploymentFixture({ id: "dep_123" })];
+			qc.setQueryData(billingKeys.deployments, previous);
+			await applySubscriptionActionSuccess(
+				qc,
+				{ deployment_id: "dep_123" },
+				{
+					...subscriptionAction(true),
+					action_state,
+				},
+			);
+			expect(qc.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toBe(previous);
+			expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+			qc.clear();
+		}
+	});
+
 	test("invalidates every compute subscription inventory after an action", async () => {
 		const qc = new QueryClient();
 		qc.setQueryData(billingKeys.deployments, { current: true });
@@ -373,6 +394,47 @@ describe("refreshCheckoutReturnQueries", () => {
 });
 
 describe("billingRecoveryRefetchIntervalFor", () => {
+	test("refreshes start advice while replacement funding is pending", () => {
+		const waiting = hostedDeploymentFixture({
+			status: "stopped",
+			startAction: "wait",
+			computeSubscription: {
+				status: "canceled",
+				payment_state: "ok",
+				billing_term_months: 1,
+				currency: "usd",
+				cancel_at_period_end: false,
+				recovery_action: "start_new",
+			},
+		});
+		for (const snapshot of [waiting, { ...waiting, commercial_display: {} }]) {
+			expect(billingRecoveryRefetchIntervalFor([snapshot], waiting.agent_id)).toBe(30_000);
+		}
+		expect(
+			billingRecoveryRefetchIntervalFor(
+				[{ ...waiting, start_action: "subscribe" }],
+				waiting.agent_id,
+			),
+		).toBe(false);
+	});
+
+	test("keeps foreground reads active while commands or payments are pending", () => {
+		for (const fields of [
+			{ actions: { cancel: null, resume: false, command_state: "pending" as const } },
+			{ actions: { cancel: null, resume: false, command_state: "reconciling" as const } },
+			{ recovery_blocked_reason: "payment_pending" as const },
+		]) {
+			const pending = deployment({
+				status: "active",
+				billing_term_months: 1,
+				payment_state: "ok",
+				currency: "usd",
+				cancel_at_period_end: false,
+				...fields,
+			});
+			expect(billingRecoveryRefetchIntervalFor([pending], pending.resource.id)).toBe(30_000);
+		}
+	});
 	test("polls only the visible past-due deployment", () => {
 		const due = deployment(
 			{
