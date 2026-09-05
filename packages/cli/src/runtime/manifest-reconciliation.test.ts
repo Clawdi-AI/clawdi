@@ -729,7 +729,7 @@ case "$*" in
 	"config schema")
 		printf '%s\n' '{"type":"object","properties":{"memory":{"type":"object","properties":{"search":{"type":"object"}}}}}'
 		;;
-  "gateway install --force --json"|"gateway install --force"|"gateway install")
+  "gateway install --force --json"|"gateway install --force --no-start-now"|"gateway install")
     ${
 			input.failInstall
 				? "exit 41"

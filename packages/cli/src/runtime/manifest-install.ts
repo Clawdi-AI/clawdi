@@ -77,7 +77,6 @@ const runtimeCommandRevisions = new Map<
 	string,
 	{ executableRevision: string; commandRevision: string; version: string }
 >();
-const hermesDashboardCapabilityRevisions = new Map<string, string>();
 function runtimeInstallTimeoutMs(): number {
 	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
 	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
@@ -91,7 +90,6 @@ function runtimeInstallTimeoutMs(): number {
 function hermesDashboardCapabilityError(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
-	officialServiceCommandRevision?: string | null,
 ): string | null {
 	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
 		return null;
@@ -99,11 +97,6 @@ function hermesDashboardCapabilityError(
 	if (!executableExists(python)) {
 		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
 	}
-	const capabilityRevision = [
-		officialServiceCommandRevision ?? "uncommitted",
-		runtimeFileCurrentRevision(python) ?? "missing",
-	].join("\0");
-	if (hermesDashboardCapabilityRevisions.get(python) === capabilityRevision) return null;
 	let result: ReturnType<typeof spawnRuntimeUserCommand>;
 	try {
 		result = spawnRuntimeUserCommand(
@@ -119,7 +112,6 @@ function hermesDashboardCapabilityError(
 		}`;
 	}
 	if (result.status === 0) {
-		hermesDashboardCapabilityRevisions.set(python, capabilityRevision);
 		return null;
 	}
 	return `Hermes dashboard runtime is incompatible: ${
@@ -345,7 +337,6 @@ export function observeRuntimeInstall(
 	home: string,
 	paths: RuntimePaths,
 	identity: { uid: number; gid: number },
-	officialServiceCommandRevision?: string | null,
 ) {
 	if (!runtime.enabled) {
 		return runtimeInstallObservation({
@@ -380,11 +371,7 @@ export function observeRuntimeInstall(
 	}
 	const observation = runOfficialInstaller(name, runtime.install, paths, identity);
 	if (observation.error) return observation;
-	const capabilityError = hermesDashboardCapabilityError(
-		name,
-		runtime,
-		officialServiceCommandRevision,
-	);
+	const capabilityError = hermesDashboardCapabilityError(name, runtime);
 	return capabilityError
 		? { ...observation, status: "install_failed" as const, error: capabilityError }
 		: observation;
@@ -429,21 +416,28 @@ export function writeRuntimeInstallerLog(
 			? result.error.message
 			: String(result.error)
 		: "";
-	writeRuntimePlatformFileAtomic(
-		paths,
-		path,
-		[
-			`exitCode=${result.status ?? "unavailable"}`,
-			`signal=${result.signal ?? "none"}`,
-			`spawnError=${error}`,
-			"--- stdout ---",
-			String(result.stdout ?? ""),
-			"--- stderr ---",
-			String(result.stderr ?? ""),
-			"",
-		].join("\n"),
-		{ mode: 0o600, dirMode: 0o700 },
-	);
+	const contents = [
+		`recordedAt=${new Date().toISOString()}`,
+		`exitCode=${result.status ?? "unavailable"}`,
+		`signal=${result.signal ?? "none"}`,
+		`spawnError=${error}`,
+		"--- stdout ---",
+		String(result.stdout ?? ""),
+		"--- stderr ---",
+		String(result.stderr ?? ""),
+		"",
+	].join("\n");
+	const options = { mode: 0o600, dirMode: 0o700 };
+	// Keep one failure per installer even when recovery overwrites the latest attempt.
+	if (result.status !== 0 || result.signal || result.error) {
+		writeRuntimePlatformFileAtomic(
+			paths,
+			join(paths.statusRoot, "installer-logs", `${name}.failed.log`),
+			contents,
+			options,
+		);
+	}
+	writeRuntimePlatformFileAtomic(paths, path, contents, options);
 	return path;
 }
 export function runtimeFileCurrentRevision(path: string): string | null {
@@ -479,7 +473,7 @@ export function runtimeCommandCurrentRevision(
 	const cacheKey = `${command}\0${home}\0${cwd}`;
 	const cached = runtimeCommandRevisions.get(cacheKey);
 	if (cached?.executableRevision === executableRevision) return cached.commandRevision;
-	runtimeCommandVersion(command, home, cwd);
+	if (!runtimeCommandVersion(command, home, cwd)) return null;
 	return runtimeCommandRevisions.get(cacheKey)?.commandRevision ?? null;
 }
 export function runtimeCommandVersion(command: string, home: string, cwd: string): string | null {

@@ -960,7 +960,7 @@ exec /usr/bin/systemctl "$@"
 	VIRGIN_RUNTIME_TEST_TIMEOUT_MS,
 );
 
-test("propagates the real official OpenClaw installer failure without committing authority", () => {
+test("rejects a non-file native unit before invoking the official OpenClaw installer", () => {
 	if (process.env[REAL_SYSTEMD_GATE] !== "1") return;
 
 	expect(process.geteuid?.()).toBe(0);
@@ -1147,15 +1147,10 @@ test("propagates the real official OpenClaw installer failure without committing
 		"installer-logs",
 		"openclaw-gateway-service.log",
 	);
-	expect(detail).toContain("official openclaw-gateway service install failed");
-	expect(detail).toContain(`see ${installerOutputLog}`);
+	expect(detail).toContain("official openclaw-gateway.service unit is not a regular file");
 	expect(detail).not.toContain("Gateway install failed:");
 	expect(detail).not.toContain("EISDIR");
-	const installerOutput = readFileSync(installerOutputLog, "utf8");
-	expect(installerOutput).toContain("exitCode=1");
-	expect(installerOutput).toContain('"ok": false');
-	expect(installerOutput).toContain('"error":');
-	expect(statSync(installerOutputLog).mode & 0o777).toBe(0o600);
+	expect(existsSync(installerOutputLog)).toBe(false);
 	expect(authorityCommits).toBe(0);
 	expect(statSync(unitPath).isDirectory()).toBe(true);
 	expect(readFileSync(unitSentinel, "utf8")).toBe("preserve directory target\n");
@@ -2253,7 +2248,7 @@ case "$*" in
   "config path"|"config get "*|"config set "*|"config unset "*)
 	exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
     ;;
-  "gateway install --force")
+  "gateway install --force --no-start-now")
     printf '%s\\n' install >> ${JSON.stringify(installLog)}
     mkdir -p "$HOME/.config/systemd/user"
     cat > "$HOME/.config/systemd/user/${unitName}" <<'EOF'
@@ -2444,8 +2439,9 @@ WantedBy=default.target
 
 		const repaired = await converge();
 		expect(repaired.installErrors).toEqual([]);
-		expect(readFileSync(unitPath, "utf8")).not.toContain("Existing Hermes Gateway");
-		expect(readFileSync(installLog, "utf8").trim().split("\n")).toEqual(["install"]);
+		expect(readFileSync(unitPath, "utf8")).toContain("Existing Hermes Gateway");
+		expect(readFileSync(unitPath, "utf8")).toContain("# tenant drift");
+		expect(readFileSync(installLog, "utf8")).toBe("");
 		expect([statSync(unitPath).uid, statSync(unitPath).gid]).toEqual([runtimeUid, runtimeGid]);
 		expect([statSync(rootOwnedSentinel).uid, statSync(rootOwnedSentinel).gid]).toEqual([0, 0]);
 		const repairedState = runUserSystemctl(
@@ -2460,7 +2456,13 @@ WantedBy=default.target
 			10,
 		);
 		expect(repairedPid).toBeGreaterThan(1);
+		// Native unit adoption does not bypass proof that changed content was activated.
 		expect(repairedPid).not.toBe(tamperedPid);
+		expect((await converge()).installErrors).toEqual([]);
+		expect(runUserSystemctl("show", unitName, "--property=MainPID").stdout.trim()).toBe(
+			`MainPID=${repairedPid}`,
+		);
+		expect(readFileSync(installLog, "utf8")).toBe("");
 	} finally {
 		runUserSystemctl("disable", "--now", unitName);
 		rmSync(unitPath, { force: true });

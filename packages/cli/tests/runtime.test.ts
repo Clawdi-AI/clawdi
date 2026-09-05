@@ -8093,7 +8093,9 @@ chmod +x "$prefix/bin/clawdi"
 			const serviceName = `${runtime}-gateway`;
 			const runtimeUnit = join(home, ".config", "systemd", "user", `${serviceName}.service`);
 			const installArgs =
-				runtime === "openclaw" ? "gateway install --force --json" : "gateway install --force";
+				runtime === "openclaw"
+					? "gateway install --force --json"
+					: "gateway install --force --no-start-now";
 			const previousLog = console.log;
 			const previousUmask = process.umask(0o022);
 			const previousExitCode = process.exitCode;
@@ -8137,10 +8139,10 @@ elif [ "${runtime}" = "hermes" ] && [ "\${1:-}" = "config" ]; then
 elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
-  test ! -e '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
+  test ${runtime === "hermes" ? "-r" : "! -e"} '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
   mkdir -p '${dirname(runtimeUnit)}' '${systemctlStateRoot}'
   printf '[Service]\\nExecStart=${runtime} gateway run\\n' > '${runtimeUnit}'
-	  systemctl --user enable --now '${serviceName}.service'
+	  systemctl --user enable ${runtime === "hermes" ? "" : "--now"} '${serviceName}.service'
 fi
 exit 0
 `,
@@ -8239,7 +8241,15 @@ esac
 			}
 			expect(officialInstaller).toBeGreaterThan(sidecarActivation);
 			expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
-			expect(calls).toContain(`--user restart ${serviceName}.service`);
+			if (runtime === "hermes") {
+				const gatewayStart = calls.findIndex(
+					(call) => call.startsWith("--user start ") && call.includes(`${serviceName}.service`),
+				);
+				expect(gatewayStart).toBeGreaterThan(officialInstaller);
+				expect(calls).not.toContain(`--user restart ${serviceName}.service`);
+			} else {
+				expect(calls).toContain(`--user restart ${serviceName}.service`);
+			}
 			const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
 			const installIndex = installerCalls.indexOf(installArgs);
 			if (runtime === "openclaw") {

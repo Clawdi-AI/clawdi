@@ -232,6 +232,31 @@ official binary. Clawdi does not intercept that command. After an updater
 replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
+For Hermes, an existing regular native gateway unit is adopted, not reinstalled
+because its bytes or displayed version changed. Hermes refreshes that unit
+during native gateway startup and updates. Its human-readable `--version`
+includes dependency and remote-update information and is not an installation
+identity. Clawdi installs only a missing gateway unit or a recognized legacy
+Clawdi-generated unit. Inspection failures do not authorize replacement;
+systemd activation and runtime readiness still determine whether the adopted
+service works. Service file fingerprints are bookkeeping, not proof of the
+running source version or dependency capabilities.
+
+When Hermes service installation is necessary, Clawdi publishes its environment
+and drop-in first and invokes native `gateway install --force --no-start-now`.
+The existing activation phase starts the service after prerequisites are ready.
+This flag does not stop an already running service or disable an enabled unit.
+OpenClaw's separate native install-time validation still requires deferring its
+drop-in until after installation. These Hermes semantics were checked against
+[`1cb3ab6`](https://github.com/NousResearch/hermes-agent/blob/1cb3ab617363ffab9e55239a7d2ab0d6f9c10473/hermes_cli/gateway.py)
+and the pinned systemd fixture's
+[`cc4cab2`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/gateway.py).
+
+Installer diagnostics retain the latest attempt as `<installer>.log` and the
+last failed attempt as `<installer>.failed.log` under the private status
+`installer-logs` directory. Both are mode `0600`; successful recovery does not
+overwrite the failure, and repeated failures do not create unbounded history.
+
 The bootstrap boundary is deliberately small: systemd owns `/etc/clawdi`,
 `/var/lib/clawdi`, `/var/cache/clawdi`, and `/run/clawdi` through its
 `ConfigurationDirectory=`, `StateDirectory=`, `CacheDirectory=`, and
