@@ -44,6 +44,7 @@ describe("Desktop release contract", () => {
 		expect(args).toContain("never");
 		expect(args).toContain("--config.forceCodeSigning=true");
 		expect(args).toContain("--config.mac.notarize=true");
+		expect(args).toContain("--config.dmg.sign=true");
 		expect(args).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
 		expect(args).toContain(
 			"--config.extraMetadata.clawdiUpdateFeedUrl=https://downloads.example.test/clawdi/desktop/stable/",

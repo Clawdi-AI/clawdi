@@ -60,7 +60,7 @@ jobs:
             --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" > /dev/null
           CSC_FOR_PULL_REQUEST=true bun x electron-builder \
             --projectDir apps/desktop --mac dmg zip --arm64 --publish never \
-            --config.forceCodeSigning=true --config.mac.notarize=true \
+            --config.forceCodeSigning=true --config.mac.notarize=true --config.dmg.sign=true \
             --config.extraMetadata.clawdiUpdateChannel=disabled
           app="apps/desktop/release/mac-arm64/Clawdi.app"
           cli="$app/Contents/Resources/native/clawdi"
@@ -78,6 +78,7 @@ jobs:
             "$cli" update --native-identity
           dmg=(apps/desktop/release/Clawdi-*.dmg)
           test "${#dmg[@]}" -eq 1
+          codesign --verify --strict --verbose=2 "${dmg[0]}"
           xcrun notarytool submit "${dmg[0]}" --wait --timeout 30m \
             --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
           xcrun stapler staple "${dmg[0]}"
