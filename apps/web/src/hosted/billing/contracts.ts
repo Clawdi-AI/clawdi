@@ -52,7 +52,9 @@ export type HostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
 export type HostedComputeSubscription = NonNullable<
 	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
 >;
-export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
+export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"] & {
+	failure_code?: "trial_ineligible" | null;
+};
 export type HostedEventStreamSnapshotHandoff = Schemas["EventStreamSnapshotHandoff"];
 export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
 export type HostedUsageSummary = Schemas["V2HostedUsageSummaryResponse"];

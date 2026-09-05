@@ -1443,7 +1443,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "retry_retraction" | "verify_absent" | "rearm_external_ports_delete";
+            action: "retry_retraction" | "verify_absent" | "rearm_external_ports_delete" | "rearm_controller_terminal_hold";
             /** Intent Versions */
             intent_versions: [
                 number,

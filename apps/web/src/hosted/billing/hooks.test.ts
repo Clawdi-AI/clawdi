@@ -250,8 +250,15 @@ describe("refreshCheckoutReturnQueries", () => {
 		});
 		const deploymentSnapshots: HostedDeployment[][] = [[beforeCheckout], [afterCheckout]];
 		const walletSnapshots = [{ balance_cents: 1_000 }, { balance_cents: 5_000 }];
+		const planSnapshots = [[{ id: "plan_before_checkout" }], [{ id: "plan_after_checkout" }]];
+		const subscriptionSnapshots = [
+			{ pages: [[{ id: "subscription_before_checkout" }]], pageParams: [null] },
+			{ pages: [[{ id: "subscription_after_checkout" }]], pageParams: [null] },
+		];
 		let deploymentsCalls = 0;
 		let walletCalls = 0;
+		let plansCalls = 0;
+		let subscriptionsCalls = 0;
 
 		await qc.prefetchQuery({
 			queryKey: billingKeys.deployments,
@@ -267,7 +274,25 @@ describe("refreshCheckoutReturnQueries", () => {
 				return walletSnapshots.shift() ?? { balance_cents: 5_000 };
 			},
 		});
-		qc.setQueryData(billingKeys.plans, [{ id: "plan_before_checkout" }]);
+		await qc.prefetchQuery({
+			queryKey: billingKeys.plans,
+			queryFn: async () => {
+				plansCalls += 1;
+				return planSnapshots.shift() ?? [{ id: "plan_after_checkout" }];
+			},
+		});
+		await qc.prefetchQuery({
+			queryKey: billingKeys.subscriptions,
+			queryFn: async () => {
+				subscriptionsCalls += 1;
+				return (
+					subscriptionSnapshots.shift() ?? {
+						pages: [[{ id: "subscription_after_checkout" }]],
+						pageParams: [null],
+					}
+				);
+			},
+		});
 		qc.setQueryData(billingKeys.transactions, { pages: [], pageParams: [] });
 		qc.setQueryData(["get", "/v1/agents"], [{ id: "agent_before_checkout" }]);
 
@@ -275,11 +300,19 @@ describe("refreshCheckoutReturnQueries", () => {
 
 		expect(deploymentsCalls).toBe(2);
 		expect(walletCalls).toBe(2);
+		expect(plansCalls).toBe(2);
+		expect(subscriptionsCalls).toBe(2);
 		expect(result?.[0]?.resource.name).toBe("Performance agent after checkout");
 		expect(qc.getQueryData<{ balance_cents: number }>(billingKeys.wallet)?.balance_cents).toBe(
 			5_000,
 		);
-		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
+		expect(qc.getQueryData<Array<{ id: string }>>(billingKeys.plans)?.[0]?.id).toBe(
+			"plan_after_checkout",
+		);
+		expect(
+			qc.getQueryData<{ pages: Array<Array<{ id: string }>> }>(billingKeys.subscriptions)
+				?.pages[0]?.[0]?.id,
+		).toBe("subscription_after_checkout");
 		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 	});

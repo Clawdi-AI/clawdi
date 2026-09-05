@@ -289,4 +289,26 @@ describe("deployment request terminal outcome", () => {
 		expect(superseded?.kind).toBe("review_agents");
 		expect(withLineage).toEqual({ kind: "open_deployment", deploymentId: "hdep_failed" });
 	});
+
+	test("presents trial ineligibility without exposing the anti-abuse reason", () => {
+		const outcome = deploymentRequestTerminalOutcome(
+			new DeploymentRequestTerminalError(
+				{
+					deploy_request_id: "checkout-trial-ineligible",
+					request_status: "failed",
+					failure_code: "trial_ineligible",
+					lineage_tail: null,
+				},
+				"failed",
+			),
+		);
+
+		expect(outcome).toEqual({
+			kind: "trial_ineligible",
+			title: "Free trial unavailable",
+			description:
+				"This payment method isn’t eligible for a free trial. You can still deploy at the regular price.",
+		});
+		expect(JSON.stringify(outcome)).not.toContain("trial_card_ineligible");
+	});
 });

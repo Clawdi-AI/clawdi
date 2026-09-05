@@ -1651,6 +1651,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
+		if (p === "/v1/me/notifications") {
+			return fulfillJson(r, { items: [], next_cursor: null });
+		}
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
 			await options.productAccessResponseGate;
@@ -4315,6 +4318,69 @@ test("Wallet auto-reload authorizes and replaces its dedicated card responsively
 		[],
 	);
 });
+
+for (const entry of ["inline", "return"] as const) {
+	test(`rejected trial refreshes eligibility after ${entry} checkout`, async ({ page }) => {
+		let rejected = false;
+		const checkoutRequests: string[] = [];
+		await stubCompletedStripeCheckout(page);
+		await stubHostedApi(page, {
+			checkoutRequests,
+			checkoutResponses: [
+				{
+					status: 200,
+					body: {
+						flow_type: "checkout_session",
+						funding_source: "stripe",
+						action_url: null,
+						checkout_url: "https://checkout.stripe.test/session",
+						client_secret: "cs_test_rejected_trial",
+						trial_period_days: 7,
+					},
+				},
+			],
+			deployments: [includedBasicDeployment],
+			plans: [basicPlan],
+		});
+		await page.route("**/v2/subscription/plans", (route) =>
+			fulfillJson(route, [
+				{
+					...basicPlan,
+					offers: basicPlan.offers.map((offer) => ({
+						...offer,
+						card_trial_period_days: rejected ? null : 7,
+					})),
+				},
+			]),
+		);
+		await page.route("**/v2/deployments/by-request/**", (route) => {
+			rejected = true;
+			return fulfillJson(route, {
+				deploy_request_id: "rejected-trial",
+				request_status: "failed",
+				failure_code: "trial_ineligible",
+				lineage_tail: null,
+			});
+		});
+		await page.goto(
+			entry === "return"
+				? "/deploy?session_id=cs_trial&deploy_request_id=rejected-trial"
+				: "/deploy",
+		);
+		if (entry === "inline") {
+			await expect(page.getByText("7-day free trial", { exact: true }).first()).toBeVisible();
+			await page.getByRole("button", { name: "Continue" }).click();
+			await page
+				.getByRole("dialog", { name: /Complete .* checkout/ })
+				.getByRole("button", { name: "Subscribe", exact: true })
+				.click();
+		}
+		await expect(page.getByText("Free trial unavailable", { exact: true })).toBeVisible();
+		await expect(page.getByText("7-day free trial", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("Checkout status refreshed", { exact: true })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
+	});
+}
 
 test("paid checkout navigates on deployment acceptance without LRO convergence", async ({
 	page,

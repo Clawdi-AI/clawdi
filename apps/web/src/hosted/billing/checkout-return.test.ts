@@ -3,6 +3,7 @@ import {
 	type CheckoutReturnNavigationTarget,
 	checkoutReturnHasNavigationOwner,
 	checkoutReturnMarker,
+	checkoutReturnNavigationResult,
 	checkoutReturnNavigationTarget,
 	checkoutReturnWasCanceled,
 	checkoutSearchAfterConsume,
@@ -50,6 +51,17 @@ describe("checkout return navigation", () => {
 		expect(await checkoutReturnHasNavigationOwner("?deployment_id=hdep_current", () => false)).toBe(
 			false,
 		);
+	});
+
+	test("preserves a handled terminal result without claiming navigation ownership", async () => {
+		expect(
+			await checkoutReturnNavigationResult("?deploy_request_id=checkout-rejected", () => "handled"),
+		).toBe("handled");
+		expect(
+			await checkoutReturnHasNavigationOwner("?deploy_request_id=checkout-rejected", () =>
+				Promise.resolve("handled"),
+			),
+		).toBe(false);
 	});
 
 	test("keeps only the billing destination after consuming callback state", () => {

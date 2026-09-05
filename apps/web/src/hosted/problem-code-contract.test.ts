@@ -39,7 +39,7 @@ const HOSTED_SMOKE_SOURCE = readFileSync(
  */
 function codeContextLiterals(source: string): string[] {
 	const literals: string[] = [];
-	for (const segment of source.matchAll(/code:[^\n]*/g)) {
+	for (const segment of source.matchAll(/\bcode:[^\n]*/g)) {
 		literals.push(...snakeCaseLiterals(segment[0]));
 	}
 	for (const segment of source.matchAll(/[A-Za-z_]*CODES?\s*=\s*new Set\(\[([^\]]*)\]\)/g)) {
