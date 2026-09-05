@@ -27,6 +27,11 @@ beforeEach(() => {
 	writeFileSync(
 		command,
 		`#!/bin/sh
+if [ -f "$HOME/.openclaw/delay-$1" ]; then
+  touch "$HOME/.openclaw/running-$1"
+  sleep 0.2
+  rm "$HOME/.openclaw/running-$1"
+fi
 if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/legacy-inventory-test" ]; then
   printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/sessions/sessions.json"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"oc-session-001","updatedAt":1776247205000,"sessionFile":"%s/.openclaw/agents/main/sessions/oc-session-001.jsonl","model":"claude-opus-4-7","inputTokens":12,"outputTokens":6,"cacheRead":2,"displayName":"Fixture session","acp":{"cwd":"/Users/fixture/project","lastActivityAt":1776247205000}}]}\n' "$HOME" "$HOME"
   exit 0
@@ -159,6 +164,59 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it.each(["sessions", "gateway"])(
+		"keeps the event loop responsive while %s is running",
+		async (command) => {
+			const stateRoot = join(tmpHome, ".openclaw");
+			writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+			writeFileSync(join(stateRoot, `delay-${command}`), "enabled");
+			let observedRunning = false;
+			const timer = setInterval(() => {
+				observedRunning ||= existsSync(join(stateRoot, `running-${command}`));
+			}, 10);
+			try {
+				const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+				expect(observedRunning).toBe(true);
+				expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+					"kept question",
+					"kept answer",
+				]);
+			} finally {
+				clearInterval(timer);
+			}
+		},
+	);
+
+	describe.each(["sessions", "gateway"])("%s failure fallback", (command) => {
+		it.each([
+			["nonzero exit", `printf '%s' '{"sessions":[],"messages":[]}'; exit 1`],
+			["invalid JSON", "printf 'invalid JSON'; exit 0"],
+		])("resolves the legacy transcript after %s", async (_failure, response) => {
+			writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
+			const executable = join(tmpHome, "bin", "openclaw");
+			writeFileSync(
+				executable,
+				readFileSync(executable, "utf8").replace(
+					"#!/bin/sh",
+					`#!/bin/sh\nif [ "$1" = "${command}" ]; then ${response}; fi`,
+				),
+			);
+
+			const session = await new OpenClawAdapter().sessions.resolve("oc-session-001");
+
+			expect(session?.messages.map((message) => message.content)).toEqual(["hello", "world"]);
+		});
+	});
+
+	it("falls back to the legacy inventory when the executable is missing", async () => {
+		rmSync(join(tmpHome, "bin", "openclaw"));
+		process.env.PATH = join(tmpHome, "bin");
+
+		const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+
+		expect(sessions.map((session) => session.localSessionId)).toEqual(["oc-session-001"]);
+	});
+
 	it("parses the fixture session with index metadata + transcript messages", async () => {
 		const a = new OpenClawAdapter();
 		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });
@@ -316,6 +374,8 @@ describe("OpenClawAdapter.collectSessions", () => {
 			"kept answer",
 		]);
 		expect(sessions[0]?.realUserInputAt).toBe("2026-04-15T10:00:00.000Z");
+		expect(await adapter.sessions.resolve("sqlite-session-001")).toEqual(sessions[0] ?? null);
+		expect(await adapter.sessions.resolve("missing-session")).toBeNull();
 		expect(adapter.sessions.watchPaths()).toContain(sqlitePath);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-wal`);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-journal`);
