@@ -43,6 +43,7 @@ export function readHostedRuntimeObserved(
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
 		includeAgentPlugins?: boolean;
+		includeUserActivity?: boolean;
 	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
@@ -87,8 +88,10 @@ export function readHostedRuntimeObserved(
 		});
 		if (agentPlugins) observed.agentPlugins = agentPlugins;
 	}
-	const userActivity = observedUserActivity(boot.status, observed.reportedAt);
-	if (userActivity) observed.userActivity = userActivity;
+	if (options.includeUserActivity) {
+		const userActivity = observedUserActivity(boot.status, observed.reportedAt);
+		if (userActivity) observed.userActivity = userActivity;
+	}
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;

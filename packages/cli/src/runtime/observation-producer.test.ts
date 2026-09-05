@@ -120,6 +120,7 @@ async function observationSchedule(
 	initialStatus: "ok" | "error",
 	stopAtMs: number,
 	transitionToOk = false,
+	terminalRejected = false,
 ): Promise<Array<{ at: number; status: "ok" | "error" | "unknown" }>> {
 	const paths = tempRuntimePaths();
 	writeApplyIdentityFile(paths, 1);
@@ -133,9 +134,15 @@ async function observationSchedule(
 		abort: abort.signal,
 		paths,
 		contextPath: runtimeContextPath(paths),
+		sessionFactory: (environmentId, sessionPaths) =>
+			new HostedRuntimeHeartbeatSession({
+				environmentId,
+				paths: sessionPaths,
+				now: () => new Date(clock),
+			}),
 		submit: async (_environmentId, event) => {
 			attempts.push({ at: clock, status: event.status });
-			return "accepted";
+			return terminalRejected ? "terminal-rejected" : "accepted";
 		},
 		now: () => clock,
 		delay: async (ms) => {
@@ -152,6 +159,59 @@ async function observationSchedule(
 }
 
 describe("hosted runtime observation producer", () => {
+	test("keeps permanent rejections at the normal observation interval", async () => {
+		const attempts = await observationSchedule("ok", 181_000, false, true);
+		expect(attempts.map((attempt) => attempt.at)).toEqual([0, 60_000, 120_000, 180_000]);
+	});
+
+	test("bounds failure retries and refreshes immediately after a delayed acknowledgement", async () => {
+		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "ok");
+		const abort = new AbortController();
+		const epoch = Date.parse("2026-09-05T00:00:00.000Z");
+		let clock = epoch;
+		const attempts: Array<{ at: number; eventId: string; capturedAt: string }> = [];
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			contextPath: runtimeContextPath(paths),
+			now: () => clock,
+			sessionFactory: (environmentId, sessionPaths) =>
+				new HostedRuntimeHeartbeatSession({
+					environmentId,
+					paths: sessionPaths,
+					now: () => new Date(clock),
+				}),
+			submit: async (_environmentId, event) => {
+				attempts.push({ at: clock - epoch, eventId: event.eventId, capturedAt: event.capturedAt });
+				if (attempts.length <= 5) throw new Error("temporary network failure");
+				if (attempts.length === 6) clock += 90_000;
+				if (attempts.length === 8) abort.abort();
+				return "accepted";
+			},
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (clock - epoch > 400_000) abort.abort();
+			},
+		});
+
+		expect(attempts.map((attempt) => attempt.at)).toEqual([
+			0, 5_000, 15_000, 35_000, 75_000, 135_000, 226_000, 286_000,
+		]);
+		expect(new Set(attempts.slice(0, 6).map((attempt) => attempt.eventId)).size).toBe(1);
+		expect(new Set(attempts.slice(0, 6).map((attempt) => attempt.capturedAt))).toEqual(
+			new Set([new Date(epoch).toISOString()]),
+		);
+		expect(attempts[6]?.eventId).not.toBe(attempts[0]?.eventId);
+		expect(attempts[6]?.capturedAt).toBe(new Date(epoch + 226_000).toISOString());
+	});
+
 	test("accepts apply generation three at checkpoint two and submits its exact identity", async () => {
 		const paths = tempRuntimePaths();
 		writeApplyIdentityFile(paths, 3);
@@ -182,7 +242,7 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(await producer.sendOnce()).toMatchObject({ outcome: "accepted", status: "unknown" });
 		expect(submitted).toMatchObject({
 			generation: 3,
 			manifestETag: '"manifest-3"',
@@ -237,10 +297,10 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(await producer.sendOnce()).toMatchObject({ outcome: "accepted", status: "unknown" });
 		writeApplyIdentityFile(paths, 2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(await producer.sendOnce()).toMatchObject({ outcome: "accepted", status: "unknown" });
 
 		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
@@ -352,7 +412,7 @@ describe("hosted runtime observation producer", () => {
 		expect(await producer.sendOnce()).toEqual({ outcome: "failed" });
 		writeApplyIdentityFile(paths, 2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(await producer.sendOnce()).toMatchObject({ outcome: "accepted", status: "unknown" });
 
 		expect(submitted.map((event) => event.eventId)).toEqual([
 			"old-event-000001",
@@ -398,7 +458,7 @@ describe("hosted runtime observation producer", () => {
 		});
 
 		expect(await producer.sendOnce()).toEqual({ outcome: "sent" });
-		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(await producer.sendOnce()).toMatchObject({ outcome: "accepted", status: "unknown" });
 		expect(submitted.map((event) => event.eventId)).toEqual([
 			"rejected-event-0001",
 			"fresh-event-000002",

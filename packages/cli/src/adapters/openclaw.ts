@@ -1,8 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import {
 	OPENCLAW_SDK_EXPORT_PATHS,
 	resolveOpenClawSdkExport,
@@ -354,25 +355,25 @@ function mergeUserActivity(
 }
 
 const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
-function runOpenClawJson(args: string[]): JsonObject | null {
-	const result = spawnSync("openclaw", args, {
-		encoding: "utf8",
-		env: process.env,
-		maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
-		timeout: 120_000,
-	});
-	if (result.status !== 0) return null;
+async function runOpenClawJson(args: string[]): Promise<JsonObject | null> {
 	try {
-		return jsonObject(JSON.parse(result.stdout)) ?? null;
+		const { stdout } = await execFileAsync("openclaw", args, {
+			encoding: "utf8",
+			env: process.env,
+			maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
+			timeout: 120_000,
+		});
+		return jsonObject(JSON.parse(stdout)) ?? null;
 	} catch {
 		return null;
 	}
 }
 
-function readOfficialSessionInventory(): OfficialSessionInventory | null {
+async function readOfficialSessionInventory(): Promise<OfficialSessionInventory | null> {
 	const override = process.env.OPENCLAW_AGENT_ID?.trim();
-	const payload = runOpenClawJson([
+	const payload = await runOpenClawJson([
 		"sessions",
 		"--json",
 		...(override ? ["--agent", override] : ["--all-agents"]),
@@ -486,13 +487,15 @@ async function readOfficialSessionMessagesFromSdk(
 	}
 }
 
-function readOfficialSessionMessagesFromGateway(entry: OfficialSessionEntry): JsonObject[] | null {
+async function readOfficialSessionMessagesFromGateway(
+	entry: OfficialSessionEntry,
+): Promise<JsonObject[] | null> {
 	let offset = 0;
 	let messages: JsonObject[] = [];
 	const seenOffsets = new Set<number>();
 	while (!seenOffsets.has(offset)) {
 		seenOffsets.add(offset);
-		const payload = runOpenClawJson([
+		const payload = await runOpenClawJson([
 			"gateway",
 			"call",
 			"chat.history",
@@ -833,7 +836,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	): Promise<SessionBatchScan> {
 		const materializeCanonicalActivity =
 			request.kind === "complete" && knownSourceRevisions.size === 0;
-		const officialInventory = readOfficialSessionInventory();
+		const officialInventory = await readOfficialSessionInventory();
 		if (officialInventory) {
 			const collection = await this.collectOfficialSessionsMatching(
 				officialInventory,
@@ -916,7 +919,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
-		const officialInventory = readOfficialSessionInventory();
+		const officialInventory = await readOfficialSessionInventory();
 		if (officialInventory) {
 			return (
 				(
@@ -1074,7 +1077,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 			let transcript = await readOfficialSessionMessagesFromSdk(entry);
-			transcript ??= readOfficialSessionMessagesFromGateway(entry);
+			transcript ??= await readOfficialSessionMessagesFromGateway(entry);
 			if (transcript === null && entry.sessionFile && sessionId && sourceRevision) {
 				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)

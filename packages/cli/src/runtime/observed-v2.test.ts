@@ -191,7 +191,8 @@ describe("hosted runtime observed v2", () => {
 			observedAt: new Date("2026-08-19T02:00:00.000Z"),
 		});
 
-		expect(readHostedRuntimeObserved(paths)?.userActivity).toEqual({
+		expect(readHostedRuntimeObserved(paths)).not.toHaveProperty("userActivity");
+		expect(readHostedRuntimeObserved(paths, { includeUserActivity: true })?.userActivity).toEqual({
 			schemaVersion: 1,
 			classifierVersion: 1,
 			classification: "known_last_user_input",

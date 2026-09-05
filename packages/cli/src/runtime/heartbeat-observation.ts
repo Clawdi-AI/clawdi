@@ -216,6 +216,7 @@ export class HostedRuntimeHeartbeatSession {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
 			includeAgentPlugins: true,
+			includeUserActivity: true,
 		});
 		if (!snapshot) return null;
 		if (!snapshot.applied) {
