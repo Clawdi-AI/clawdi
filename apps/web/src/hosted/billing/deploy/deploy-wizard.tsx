@@ -113,6 +113,7 @@ import {
 } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
+	refreshCheckoutReturnQueries,
 	useIncludedBasicAvailability,
 	useManagedModelCatalog,
 	usePlans,
@@ -368,6 +369,15 @@ export function DeployWizard() {
 						toast.error(terminalOutcome.title, {
 							description: terminalOutcome.description,
 						});
+						if (terminalOutcome.kind === "trial_ineligible") {
+							try {
+								await refreshCheckoutReturnQueries(queryClient);
+							} catch {
+								toast.error("Couldn’t refresh trial eligibility", {
+									description: "Refresh this page before starting another checkout.",
+								});
+							}
+						}
 						if (terminalOutcome.kind === "review_agents") {
 							acceptanceNavigatingRef.current = true;
 							try {
