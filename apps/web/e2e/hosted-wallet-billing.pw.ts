@@ -8,7 +8,6 @@ import {
 	basicPlan,
 	collectBrowserErrors,
 	fixtureAgentId,
-	gotoHostedAgentSettings,
 	gotoHostedSettingsDialog,
 	performancePlan,
 	stubHostedApi,
@@ -29,7 +28,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 		topUpRequests,
 		onTopUpSuccess: () => deployments.splice(0, 1, walletActiveDeployment),
 	});
-	await gotoHostedAgentSettings(page, fixtureAgentId(walletPastDueDeployment), "Basic");
+	await page.goto(`/agents/${fixtureAgentId(walletPastDueDeployment)}`);
 
 	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Wallet payment past due" });
 	await expect(pastDueAlert).toBeVisible();
@@ -48,6 +47,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect.poll(() => topUpRequests.length).toBe(1);
 	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
 	await expect(pastDueAlert).toHaveCount(0);
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });
 	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
@@ -232,8 +232,8 @@ test("x402 stays gated, then binds and recovers an unverifiable browser-wallet p
 		x402_payment_attempt: null,
 	});
 	settings = await gotoHostedSettingsDialog(page, "billing-wallet");
-	await expect(settings.getByText("Not bound", { exact: true })).toBeVisible();
-	await settings.getByRole("button", { name: "Connect & bind" }).click();
+	await expect(settings.getByText("No wallet verified", { exact: true })).toBeVisible();
+	await settings.getByRole("button", { name: "Connect & verify" }).click();
 	await expect(settings.getByText(payer.address, { exact: true }).first()).toBeVisible();
 	await expect(settings.getByRole("button", { name: /Review \$5\.00 top-up/ })).toBeEnabled();
 
@@ -245,17 +245,15 @@ test("x402 stays gated, then binds and recovers an unverifiable browser-wallet p
 
 	await expect.poll(() => typedDataPayloads.length).toBe(1);
 	await expect.poll(() => publicPaymentHeaders.length).toBe(2);
-	await expect(settings.getByText("USDC payment processing", { exact: true })).toBeVisible();
+	await expect(settings.getByText("USDC payment in progress", { exact: true })).toBeVisible();
 	await expect(
-		settings.getByText(
-			"Do not create a new payment until this payment attempt reaches a final status.",
-		),
+		settings.getByText("Wait for this payment to complete before starting another."),
 	).toBeVisible();
 	await expect(settings.getByRole("button", { name: /\$5\.00 top-up/ })).toBeDisabled();
 
 	await page.reload();
 	settings = await gotoHostedSettingsDialog(page, "billing-wallet");
-	await expect(settings.getByText("USDC payment processing", { exact: true })).toBeVisible();
+	await expect(settings.getByText("USDC payment in progress", { exact: true })).toBeVisible();
 	await expect(settings.getByRole("button", { name: /\$5\.00 top-up/ })).toBeDisabled();
 	expect(attemptAuthorizations).toEqual(["Bearer dev-bypass"]);
 	expect(publicPaymentHeaders).toHaveLength(2);
