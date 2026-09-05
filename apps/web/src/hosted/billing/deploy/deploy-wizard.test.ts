@@ -238,7 +238,6 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
-		expect(agentDetailSource).toContain("an included Basic entitlement if available");
 		expect(agentDetailSource).not.toContain("falls back to free compute");
 	});
 

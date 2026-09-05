@@ -30,6 +30,8 @@ import { PlanChangeController } from "@/hosted/billing/subscription/plan-change-
 import { useReusableSubscriptions } from "@/hosted/billing/subscription/reusable-subscriptions-query";
 import {
 	computeFundingSource,
+	computeSubscriptionCancellationCopy,
+	computeSubscriptionCancellationSuccessCopy,
 	computeSubscriptionLifecycle,
 	isHistoricalAccountSubscription,
 	pendingComputePlanSlug,
@@ -254,6 +256,14 @@ function SubscriptionRow({
 		agentHref,
 		reusableInventoryUncertain,
 	);
+	const hasRetainedDeployment = !subscription.is_orphan && subscription.deployment_id !== null;
+	const cancellationCopy = computeSubscriptionCancellationCopy({
+		status: subscription.status,
+		periodEndLabel: subscription.current_period_end
+			? formatShortDate(subscription.current_period_end)
+			: null,
+		hasRetainedDeployment,
+	});
 
 	return (
 		<li className="grid min-w-0 lg:row-span-5 lg:grid-rows-subgrid">
@@ -290,20 +300,16 @@ function SubscriptionRow({
 							}
 							cancelCopy={{
 								title: `Cancel ${computeSubscriptionPlanLabel(subscription.plan_slug)} subscription?`,
-								description: (
-									<p>
-										The subscription will stop renewing
-										{subscription.current_period_end
-											? ` and remain active through ${formatShortDate(subscription.current_period_end)}`
-											: ""}
-										. This cannot restore a deleted agent.
-									</p>
-								),
-								confirmLabel: "Cancel subscription",
+								description: <p>{cancellationCopy.description}</p>,
+								confirmLabel: cancellationCopy.confirmLabel,
 								successDescription: (result) =>
-									result.current_period_end
-										? `Access continues through ${formatShortDate(result.current_period_end)}.`
-										: undefined,
+									computeSubscriptionCancellationSuccessCopy({
+										cancelAtPeriodEnd: result.cancel_at_period_end,
+										periodEndLabel: result.current_period_end
+											? formatShortDate(result.current_period_end)
+											: null,
+										hasRetainedDeployment,
+									}),
 							}}
 						/>
 					) : null
