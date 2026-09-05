@@ -387,6 +387,24 @@ describe("account subscription history", () => {
 });
 
 describe("compute subscription lifecycle presentation", () => {
+	test("keeps a trial scheduled to cancel distinct from an ended trial", () => {
+		const trial = {
+			...subscription(),
+			status: "trialing",
+			cancel_at_period_end: true,
+			current_period_end: "2026-09-12T00:00:00Z",
+		};
+
+		expect(computeSubscriptionLifecycle(trial)).toEqual({
+			badgeLabel: "Canceling",
+			badgeTone: "warning",
+			dateAt: trial.current_period_end,
+			dateVerb: "Ends",
+			renews: false,
+		});
+		expect(isComputeSubscriptionRenewing(trial)).toBe(false);
+	});
+
 	test("only renewing states present as renewing", () => {
 		for (const status of ["active", "trialing", "past_due"]) {
 			expect(isComputeSubscriptionRenewing({ ...subscription(), status }), status).toBe(true);

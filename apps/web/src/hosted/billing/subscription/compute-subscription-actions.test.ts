@@ -111,6 +111,7 @@ describe("resolveComputeSubscriptionActions", () => {
 	test("gives pending, canceling, and terminal states exclusive recovery priority", () => {
 		expect(kinds({}, { hasPendingOperation: true })).toEqual(["check_change"]);
 		expect(kinds({ cancelAtPeriodEnd: true })).toEqual(["resume"]);
+		expect(kinds({ status: "trialing", cancelAtPeriodEnd: true })).toEqual(["resume"]);
 		const unpaid = resolveComputeSubscriptionActions({
 			entitlement: entitlement({ status: "unpaid", paymentState: "unpaid" }),
 			management: enabledManagement,
