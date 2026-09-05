@@ -49,6 +49,7 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		"never",
 		"--config.forceCodeSigning=true",
 		"--config.mac.notarize=true",
+		"--config.dmg.sign=true",
 		`--config.extraMetadata.version=${configuration.version}`,
 		"--config.extraMetadata.clawdiUpdateChannel=stable",
 		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,
