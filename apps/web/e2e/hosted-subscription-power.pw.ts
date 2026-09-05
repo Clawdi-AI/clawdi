@@ -80,13 +80,15 @@ test("a manually stopped paid agent still starts normally and explains a funding
 }) => {
 	const deployment = { ...paidBasicDeployment, status: "stopped" };
 	const startRequests: string[] = [];
-	await stubHostedApi(page, { deployments: [deployment], plans: [basicPlan, performancePlan] });
-	await page.route("**/v2/deployments/*/start", async (route) => {
-		startRequests.push(route.request().method());
-		await route.fulfill({
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		plans: [basicPlan, performancePlan],
+		startRequests,
+		startError: {
 			status: 409,
-			json: { code: "funding_revoked_after_accept", detail: "Internal funding fence" },
-		});
+			code: "funding_revoked_after_accept",
+			detail: "Internal funding fence",
+		},
 	});
 	await gotoHostedAgentSettings(page, fixtureAgentId(deployment), "Basic");
 	await expect(page.getByRole("button", { name: "Subscribe to start" })).toHaveCount(0);
@@ -97,7 +99,7 @@ test("a manually stopped paid agent still starts normally and explains a funding
 	await expect(page.locator("[data-sonner-toast]")).not.toContainText(
 		/internal|another session|container|volume|disk/i,
 	);
-	expect(startRequests).toEqual(["POST"]);
+	expect(startRequests).toHaveLength(1);
 });
 
 for (const status of ["trialing", "active"] as const) {
@@ -117,19 +119,18 @@ for (const status of ["trialing", "active"] as const) {
 				},
 			},
 		};
-		const cancelRequests: unknown[] = [];
+		const cancelRequests: string[] = [];
 		const deleteRequests: unknown[] = [];
-		await stubHostedApi(page, { deployments: [deployment], plans: [basicPlan, performancePlan] });
-		await page.route("**/v2/subscription/cancel", async (route) => {
-			cancelRequests.push(route.request().postDataJSON());
-			await route.fulfill({
-				json: {
-					status: "canceled",
-					billing_term_months: 12,
-					cancel_at_period_end: false,
-					action_state: status === "trialing" ? "pending" : "reconciling",
-				},
-			});
+		await stubHostedApi(page, {
+			deployments: [deployment],
+			plans: [basicPlan, performancePlan],
+			cancelRequests,
+			cancelResponse: {
+				status: "canceled",
+				billing_term_months: 12,
+				cancel_at_period_end: false,
+				action_state: status === "trialing" ? "pending" : "reconciling",
+			},
 		});
 		await page.route(`**/v2/deployments/${deployment.id}`, async (route) => {
 			if (route.request().method() !== "DELETE") return route.fallback();
@@ -160,7 +161,9 @@ for (const status of ["trialing", "active"] as const) {
 		await expect(page.locator("[data-sonner-toast]")).not.toContainText(
 			/Subscription canceled|Cancellation scheduled|trial has ended/,
 		);
-		expect(cancelRequests).toEqual([{ deployment_id: deployment.id }]);
+		expect(cancelRequests.map((body) => JSON.parse(body))).toEqual([
+			{ deployment_id: deployment.id },
+		]);
 		expect(deleteRequests).toEqual([]);
 		await page.getByRole("button", { name: "Delete", exact: true }).click();
 		const deleteDialog = page.getByRole("alertdialog");
@@ -250,18 +253,17 @@ test("historical scheduled trial keeps its end date and offers an explicit immed
 			actions: { cancel: "end_trial" as const, resume: true, command_state: null },
 		},
 	};
-	const cancelRequests: unknown[] = [];
-	await stubHostedApi(page, { deployments: [deployment], plans: [basicPlan, performancePlan] });
-	await page.route("**/v2/subscription/cancel", async (route) => {
-		cancelRequests.push(route.request().postDataJSON());
-		await route.fulfill({
-			json: {
-				status: "canceled",
-				billing_term_months: 12,
-				cancel_at_period_end: false,
-				action_state: "pending",
-			},
-		});
+	const cancelRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		plans: [basicPlan, performancePlan],
+		cancelRequests,
+		cancelResponse: {
+			status: "canceled",
+			billing_term_months: 12,
+			cancel_at_period_end: false,
+			action_state: "pending",
+		},
 	});
 	await gotoHostedAgentSettings(page, fixtureAgentId(deployment), "Basic");
 	await expect(page.getByRole("button", { name: "Keep subscription", exact: true })).toBeVisible();
@@ -273,7 +275,9 @@ test("historical scheduled trial keeps its end date and offers an explicit immed
 		.getByRole("alertdialog")
 		.getByRole("button", { name: "End trial now", exact: true })
 		.click();
-	expect(cancelRequests).toEqual([{ deployment_id: deployment.id }]);
+	expect(cancelRequests.map((body) => JSON.parse(body))).toEqual([
+		{ deployment_id: deployment.id },
+	]);
 	await expect(page.locator("[data-sonner-toast]")).toContainText(
 		"Cancellation is still processing",
 	);

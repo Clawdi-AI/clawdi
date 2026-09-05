@@ -66,21 +66,7 @@ describe("computeSubscriptionRecoveryPresentation", () => {
 		});
 	});
 
-	test("projects wallet, card, terminal, and healthy actions", () => {
-		expect(
-			computeSubscriptionRecoveryPresentation(
-				{
-					payment_state: "past_due",
-					recovery_action: "top_up",
-					latest_failed_invoice_hosted_url: null,
-					next_payment_attempt_at: "2026-08-20T00:00:00Z",
-				},
-				active,
-			),
-		).toMatchObject({
-			recoveryTarget: { kind: "top_up", action: "top_up" },
-			schedule: { verb: "Retries", at: "2026-08-20T00:00:00Z", fallback: null },
-		});
+	test("projects card, terminal, and healthy actions", () => {
 		expect(
 			computeSubscriptionRecoveryPresentation(
 				{

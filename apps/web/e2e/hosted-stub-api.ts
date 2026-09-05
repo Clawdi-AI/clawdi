@@ -788,6 +788,7 @@ export type HostedApiStubOptions = {
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
+	cancelResponse?: DeployComponents["schemas"]["V2ComputeSubscriptionActionResponse"];
 	checkoutIdempotencyKeys?: string[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
@@ -820,7 +821,7 @@ export type HostedApiStubOptions = {
 	subscriptionPages?: Record<string, SubscriptionListResponse>;
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
-	startError?: { status: number; detail: string };
+	startError?: { status: number; detail: string; code?: string };
 	startRequests?: string[];
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
@@ -1102,13 +1103,16 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				status: "active",
-				billing_term_months: 12,
-				cancel_at_period_end: true,
-				current_period_end: "2026-08-15T00:00:00Z",
-				cancel_at: "2026-08-15T00:00:00Z",
-			});
+			return fulfillJson(
+				r,
+				options.cancelResponse ?? {
+					status: "active",
+					billing_term_months: 12,
+					cancel_at_period_end: true,
+					current_period_end: "2026-08-15T00:00:00Z",
+					cancel_at: "2026-08-15T00:00:00Z",
+				},
+			);
 		}
 		if (p === "/v2/subscription/resume" && r.request().method() === "POST") {
 			options.resumeRequests?.push(r.request().postData() ?? "");
@@ -1135,7 +1139,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
 			if (options.startError) {
-				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
+				const { status, ...body } = options.startError;
+				return fulfillJson(r, body, status);
 			}
 			return fulfillJson(r, { status: "starting" });
 		}
