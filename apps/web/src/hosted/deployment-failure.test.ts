@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
-import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
+import {
+	BillingApiError,
+	BillingNetworkError,
+	DeploymentConflictError,
+} from "@/hosted/billing/errors";
 import {
 	deploymentFailurePresentation,
 	deploymentFailureProjection,
@@ -367,6 +371,43 @@ describe("deploymentFailureReason", () => {
 });
 
 describe("deploymentMutationErrorMessage", () => {
+	test("funding revocation stays actionable through conflict wrapping and failed operations", () => {
+		const problem = {
+			"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails" as const,
+			type: "https://api.clawdi.ai/problems/funding-revoked-after-accept",
+			title: "Internal funding fence",
+			detail: "Internal funding fence",
+			status: 409,
+			code: "funding_revoked_after_accept",
+			conditionReason: "FundingRevoked",
+			conditionMessage: "Internal resource details",
+			observedGeneration: 2,
+		};
+		const error = new BillingApiError(409, "Internal funding fence", problem);
+		const message = deploymentMutationErrorMessage(error);
+		expect(message).toContain("Open Agent settings and choose a subscription");
+		expect(message).not.toMatch(/internal|retry|container|volume|disk/i);
+		expect(deploymentMutationErrorMessage(new DeploymentConflictError({ cause: error }))).toBe(
+			message,
+		);
+		const operation = failedOperation("start");
+		const presentation = deploymentFailurePresentation(
+			hostedDeploymentFixture({
+				status: "stopped",
+				acceptedOperation: {
+					...operation,
+					error: { code: 9, message: "Internal funding fence", details: [problem] },
+				},
+			}),
+		);
+		expect(presentation).toMatchObject({
+			title: "Subscription required",
+			reason: message,
+			description: message,
+			remediation: { kind: "none", label: null },
+		});
+	});
+
 	test("does not map never-emitted provider codes to provider recovery copy", () => {
 		const error = new BillingApiError(404, "provider_not_found", {
 			detail: { code: "provider_not_found" },

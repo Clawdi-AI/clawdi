@@ -319,7 +319,7 @@ async function expectAgentSettingsSectionsAligned(
 		"Avatar",
 		"Language & timezone",
 		"Compute plan",
-		"Lifecycle",
+		"Agent controls",
 		"Danger zone",
 	];
 	const boxes = await Promise.all(
@@ -974,7 +974,7 @@ test("agent settings uses compact canonical subscription management", async ({
 		.poll(() => scheduledPlanCancellationRequests.map((body) => JSON.parse(body)))
 		.toEqual([{ deployment_id: "hdep_scheduled_downgrade" }]);
 	await expect(
-		page.locator("[data-sonner-toast]").filter({ hasText: "Billing details are reconciling" }),
+		page.locator("[data-sonner-toast]").filter({ hasText: "Subscription details are updating" }),
 	).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 

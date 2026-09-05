@@ -4,6 +4,27 @@ import { computeSubscriptionRecoveryPresentation } from "./compute-subscription-
 const active = { label: "Active", tone: "success" } as const;
 
 describe("computeSubscriptionRecoveryPresentation", () => {
+	test("ended subscriptions override stale payment retries without needing a recovery action", () => {
+		const canceled = { label: "Canceled", tone: "neutral" } as const;
+		expect(
+			computeSubscriptionRecoveryPresentation(
+				{
+					status: "canceled",
+					payment_state: "past_due",
+					recovery_action: "top_up",
+					latest_failed_invoice_hosted_url: null,
+					next_payment_attempt_at: "2026-09-12T00:00:00Z",
+				},
+				canceled,
+			),
+		).toEqual({
+			status: canceled,
+			hasPaymentIssue: true,
+			recoveryTarget: { kind: "start_new", action: "start_new" },
+			schedule: null,
+		});
+	});
+
 	test("prioritizes authoritative payment state over coarse lifecycle status", () => {
 		expect(
 			computeSubscriptionRecoveryPresentation(

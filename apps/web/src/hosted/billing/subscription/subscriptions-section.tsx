@@ -304,6 +304,7 @@ function SubscriptionRow({
 								confirmLabel: cancellationCopy.confirmLabel,
 								successDescription: (result) =>
 									computeSubscriptionCancellationSuccessCopy({
+										isTrial: subscription.status === "trialing",
 										cancelAtPeriodEnd: result.cancel_at_period_end,
 										periodEndLabel: result.current_period_end
 											? formatShortDate(result.current_period_end)
