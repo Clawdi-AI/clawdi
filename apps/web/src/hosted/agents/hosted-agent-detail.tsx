@@ -421,48 +421,35 @@ function StartComputeAction({
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canStart = canStartDeployment(status);
 	const startAction = deployment.start_action;
-	if (computeSubscriptionRequiredToStart(deployment)) {
+	const needsSubscription = computeSubscriptionRequiredToStart(deployment);
+	if (needsSubscription || startAction === "fix_payment" || startAction === "top_up") {
+		const subscribe = needsSubscription ? onSubscribe : undefined;
+		const Icon = needsSubscription ? Plus : CreditCard;
 		return (
 			<Button
 				type="button"
 				size="sm"
 				variant={variant}
-				disabled={disabled || lifecycle.isPending || !canStart}
-				onClick={onSubscribe}
+				disabled={disabled || !canStart || (needsSubscription && lifecycle.isPending)}
+				onClick={subscribe}
 				render={
-					onSubscribe ? undefined : (
+					subscribe ? undefined : (
 						<Link
 							to={agentSectionHref(deployment.agent_id, "settings", {
 								settings: "billing-plan",
-								subscription_action: "start_new",
+								subscription_action: needsSubscription ? "start_new" : undefined,
 							})}
 						/>
 					)
 				}
-				nativeButton={Boolean(onSubscribe)}
+				nativeButton={Boolean(subscribe)}
 			>
-				<Plus className="size-3.5" />
-				Subscribe to start
-			</Button>
-		);
-	}
-	if (startAction === "fix_payment" || startAction === "top_up") {
-		return (
-			<Button
-				size="sm"
-				variant={variant}
-				disabled={disabled || !canStart}
-				render={
-					<Link
-						to={agentSectionHref(deployment.agent_id, "settings", {
-							settings: "billing-plan",
-						})}
-					/>
-				}
-				nativeButton={false}
-			>
-				<CreditCard className="size-3.5" />
-				{startAction === "top_up" ? "Top up to start" : "Pay to start"}
+				<Icon className="size-3.5" />
+				{needsSubscription
+					? "Subscribe to start"
+					: startAction === "top_up"
+						? "Top up to start"
+						: "Pay to start"}
 			</Button>
 		);
 	}

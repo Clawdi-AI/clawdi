@@ -61,14 +61,10 @@ function subscription(): HostedComputeSubscription {
 
 function includedSubscription(): HostedComputeSubscription {
 	return {
+		...subscription(),
 		subscription_id: 7,
-		status: "active",
 		funding_source: null,
-		payment_state: "ok",
-		billing_term_months: 1,
 		price_cents: 0,
-		currency: "usd",
-		cancel_at_period_end: false,
 	};
 }
 
