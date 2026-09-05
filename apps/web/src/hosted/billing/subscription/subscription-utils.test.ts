@@ -185,10 +185,10 @@ describe("compute funding", () => {
 });
 
 describe("compute subscription cancellation copy", () => {
-	test("describes retained deployment behavior without promising a Basic fallback", () => {
+	test("describes trial, paid, and deleted deployment cancellation outcomes", () => {
 		expect(
 			computeSubscriptionCancellationCopy({
-				status: "trialing",
+				isTrial: true,
 				periodEndLabel: "Sep 12, 2026",
 				hasRetainedDeployment: true,
 			}),
@@ -199,7 +199,7 @@ describe("compute subscription cancellation copy", () => {
 		});
 		expect(
 			computeSubscriptionCancellationCopy({
-				status: "active",
+				isTrial: false,
 				periodEndLabel: "Sep 12, 2026",
 				hasRetainedDeployment: true,
 			}),
@@ -215,6 +215,26 @@ describe("compute subscription cancellation copy", () => {
 				hasRetainedDeployment: true,
 			}),
 		).toBe("The trial has ended. The agent will stop; its disk and data are retained.");
+		expect(
+			computeSubscriptionCancellationSuccessCopy({
+				cancelAtPeriodEnd: true,
+				periodEndLabel: "Sep 12, 2026",
+				hasRetainedDeployment: true,
+			}),
+		).toBe(
+			"The subscription remains active through Sep 12, 2026. The agent will then stop; its disk and data are retained.",
+		);
+		expect(
+			computeSubscriptionCancellationCopy({
+				isTrial: false,
+				periodEndLabel: null,
+				hasRetainedDeployment: false,
+			}),
+		).toEqual({
+			description:
+				"The subscription will stop renewing at the end of the current billing period. This cannot restore a deleted agent.",
+			confirmLabel: "Cancel at period end",
+		});
 	});
 });
 

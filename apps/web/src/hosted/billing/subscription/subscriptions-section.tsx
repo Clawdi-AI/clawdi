@@ -258,7 +258,7 @@ function SubscriptionRow({
 	);
 	const hasRetainedDeployment = !subscription.is_orphan && subscription.deployment_id !== null;
 	const cancellationCopy = computeSubscriptionCancellationCopy({
-		status: subscription.status,
+		isTrial: subscription.status === "trialing",
 		periodEndLabel: subscription.current_period_end
 			? formatShortDate(subscription.current_period_end)
 			: null,

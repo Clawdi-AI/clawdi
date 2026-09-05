@@ -22,15 +22,15 @@ export function isHistoricalAccountSubscription(
 }
 
 export function computeSubscriptionCancellationCopy({
-	status,
+	isTrial,
 	periodEndLabel,
 	hasRetainedDeployment,
 }: {
-	status: string;
+	isTrial: boolean;
 	periodEndLabel: string | null;
 	hasRetainedDeployment: boolean;
 }): { description: string; confirmLabel: string } {
-	if (status === "trialing") {
+	if (isTrial) {
 		return {
 			description: hasRetainedDeployment
 				? "The trial ends immediately. The agent stops, but its disk and data are retained."

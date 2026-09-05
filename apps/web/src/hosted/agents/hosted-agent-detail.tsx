@@ -3649,7 +3649,7 @@ function ComputeSettingsSections({
 	const subscriptionPeriodLabel = formatShortDate(subscriptionEndsAt);
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const subscriptionCancellationCopy = computeSubscriptionCancellationCopy({
-		status: currentSubscription?.status ?? "active",
+		isTrial: currentSubscription?.status === "trialing",
 		periodEndLabel: subscriptionPeriodLabel,
 		hasRetainedDeployment: true,
 	});
