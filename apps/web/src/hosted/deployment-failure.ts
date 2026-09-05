@@ -13,6 +13,8 @@ const PLAN_CHANGE_FAILURE_REASON =
 const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
 const RUNTIME_UNAVAILABLE_REASON =
 	"Clawdi is checking this Agent. Open Agent settings for details.";
+const SUBSCRIPTION_REQUIRED_REASON =
+	"This agent needs an active subscription to start. Open Agent settings and choose a subscription. Your saved data is kept.";
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -53,6 +55,10 @@ function isRuntimeStatusFailure(failure: { code?: string }): boolean {
 
 /** Customer-safe copy for declarative agent mutations handled by the deploy API. */
 export function deploymentMutationErrorMessage(error: unknown): string {
+	const cause = error instanceof DeploymentConflictError ? error.cause : error;
+	if (billingErrorDetail(cause)?.code === "funding_revoked_after_accept") {
+		return SUBSCRIPTION_REQUIRED_REASON;
+	}
 	if (error instanceof DeploymentConflictError) return error.message;
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"
@@ -133,6 +139,15 @@ export function deploymentFailurePresentation(
 	if (!failure) return null;
 	const operationLabel = deploymentOperationLabel(failure.failedVerb);
 	const operationName = operationLabel.toLocaleLowerCase();
+	if (failure.code === "funding_revoked_after_accept") {
+		return {
+			...failure,
+			title: "Subscription required",
+			description: SUBSCRIPTION_REQUIRED_REASON,
+			status: FAILED_STATUS,
+			remediation: { kind: "none", label: null },
+		};
+	}
 	const statusFailure =
 		deployment?.resource.status?.summary_state === "failed"
 			? deployment.resource.status.failure
@@ -255,6 +270,7 @@ export function deploymentFailureReason(
 ): string | null {
 	const failure = input?.failure;
 	if (!failure) return null;
+	if (failure.code === "funding_revoked_after_accept") return SUBSCRIPTION_REQUIRED_REASON;
 
 	// Failure title/detail/conditionMessage are free-form backend strings. Even
 	// after removing identifiers they can contain exception names or service

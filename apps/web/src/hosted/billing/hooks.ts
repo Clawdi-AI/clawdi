@@ -31,6 +31,7 @@ import {
 	subscriptionCreateQuoteRequest,
 	subscriptionCreateQuoteView,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
+import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
 import {
 	deploymentPollingState,
 	deploymentStatusFromResource,
@@ -127,7 +128,7 @@ export async function applySubscriptionActionSuccess(
 	body: ComputeSubscriptionCancelRequest | ComputeSubscriptionResumeRequest,
 	next: ComputeSubscriptionActionResult,
 ): Promise<void> {
-	if (body.deployment_id) {
+	if (body.deployment_id && !isComputeSubscriptionActionUnconfirmed(next)) {
 		applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 	}
 	await invalidateComputeSubscriptionInventory(qc);

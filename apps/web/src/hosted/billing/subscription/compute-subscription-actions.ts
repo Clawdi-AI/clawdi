@@ -1,6 +1,6 @@
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
 import type { ComputeRecoveryTarget } from "./compute-subscription-recovery";
-import { computeFundingSource } from "./subscription-utils";
+import { computeFundingSource, isTerminalComputeSubscriptionStatus } from "./subscription-utils";
 
 export type ComputeSubscriptionActionKind =
 	| "upgrade"
@@ -41,13 +41,6 @@ export type ComputeSubscriptionActionEntitlement = {
 	isOrphan?: boolean;
 };
 
-const TERMINAL_STATUSES = new Set([
-	"canceled",
-	"expired",
-	"incomplete",
-	"incomplete_expired",
-	"paused",
-]);
 const CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
 
 function action(
@@ -108,7 +101,7 @@ export function resolveComputeSubscriptionActions({
 	if (
 		recoveryTarget?.kind === "start_new" ||
 		entitlement.paymentState === "unpaid" ||
-		status === "unpaid"
+		isTerminalComputeSubscriptionStatus(status)
 	) {
 		if (!deploymentBound) return [];
 		const startNewTarget: ComputeRecoveryTarget = { kind: "start_new", action: "start_new" };
@@ -119,8 +112,6 @@ export function resolveComputeSubscriptionActions({
 			},
 		];
 	}
-	if (TERMINAL_STATUSES.has(status)) return [];
-
 	const recovery = recoveryTarget ? recoveryAction(recoveryTarget) : null;
 
 	if (entitlement.pendingPlanSlug != null) {

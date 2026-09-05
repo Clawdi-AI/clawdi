@@ -785,6 +785,25 @@ describe("declarative deployment mutations", () => {
 		await expect(result).rejects.toThrow(DEPLOYMENT_CONFLICT_MESSAGE);
 	});
 
+	it("does not retry or wrap a start rejected for ended funding", async () => {
+		const requests: string[] = [];
+		const client = testClient(async (request) => {
+			const path = new URL(request.url).pathname;
+			requests.push(`${request.method} ${path}`);
+			if (request.method === "GET") {
+				return jsonResponse(hostedDeploymentFixture({ id: "hdep_ended", status: "stopped" }));
+			}
+			return jsonResponse({ code: "funding_revoked_after_accept" }, 409);
+		});
+		await expect(
+			client.setDeploymentDesiredState("hdep_ended", "running", "intent-start"),
+		).rejects.toBeInstanceOf(BillingApiError);
+		expect(requests).toEqual([
+			"GET /v2/deployments/hdep_ended",
+			"POST /v2/deployments/hdep_ended/start",
+		]);
+	});
+
 	it("reveals Runtime UI credentials against the displayed resource version", async () => {
 		const requests: Request[] = [];
 		const deployment = hostedDeploymentFixture({

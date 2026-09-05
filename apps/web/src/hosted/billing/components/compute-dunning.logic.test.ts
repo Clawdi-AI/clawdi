@@ -6,7 +6,11 @@ import type {
 	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
+import {
+	computeDunningState,
+	computeSubscriptionRequiredToStart,
+	fallbackReasonSentence,
+} from "./compute-dunning.logic";
 
 function deployment({
 	computeSubscription = null,
@@ -165,7 +169,7 @@ describe("computeDunningState", () => {
 				recoveryTarget: { kind: "start_new", action: "start_new" },
 				tone: "destructive",
 			});
-			expect(state?.description).toContain("Start a new subscription");
+			expect(state?.description).toContain("Choose a subscription");
 		}
 	});
 
@@ -197,7 +201,7 @@ describe("computeDunningState", () => {
 				status: "stopped",
 			}),
 		);
-		expect(stopped?.description).toContain("No included Basic entitlement was available");
+		expect(stopped?.description).toContain("You can start it on included Basic");
 
 		const unavailable = computeDunningState(
 			deployment({
@@ -206,14 +210,14 @@ describe("computeDunningState", () => {
 				status: null,
 			}),
 		);
-		expect(unavailable?.description).toContain(
-			"can’t determine whether this agent stopped or is using included Basic",
-		);
+		expect(unavailable?.description).toContain("current status is unavailable");
 		expect(unavailable?.description).not.toContain("is now using included Basic");
 	});
 
-	test("does not recover a detached or already recovered subscription", () => {
-		expect(computeDunningState(deployment({ factKind: "funding_revoked" }))).toBeNull();
+	test("recovers revoked funding even without a subscription, but not an active replacement", () => {
+		expect(
+			computeDunningState(deployment({ factKind: "funding_revoked" }))?.recoveryTarget.kind,
+		).toBe("start_new");
 		expect(
 			computeDunningState(
 				deployment({
@@ -286,4 +290,51 @@ describe("computeDunningState", () => {
 			"changed by an administrator",
 		);
 	});
+});
+
+test("stopped power controls require a subscription only for known terminal entitlement", () => {
+	for (const status of [
+		"canceled",
+		"expired",
+		"incomplete",
+		"incomplete_expired",
+		"paused",
+		"unpaid",
+	]) {
+		expect(
+			computeSubscriptionRequiredToStart(
+				deployment({
+					status: "stopped",
+					computeSubscription: subscription({ status }),
+				}),
+			),
+			status,
+		).toBe(true);
+	}
+	for (const status of ["active", "trialing", "canceling", "past_due"]) {
+		expect(
+			computeSubscriptionRequiredToStart(
+				deployment({
+					status: "stopped",
+					computeSubscription: subscription({ status, cancel_at_period_end: true }),
+				}),
+			),
+			status,
+		).toBe(false);
+	}
+	expect(computeSubscriptionRequiredToStart(deployment({ status: "stopped" }))).toBe(false);
+	expect(
+		computeSubscriptionRequiredToStart(
+			deployment({ status: "stopped", factKind: "funding_revoked" }),
+		),
+	).toBe(true);
+	expect(
+		computeSubscriptionRequiredToStart(
+			deployment({
+				status: "stopped",
+				factKind: "funding_revoked",
+				computeSubscription: includedSubscription(),
+			}),
+		),
+	).toBe(false);
 });

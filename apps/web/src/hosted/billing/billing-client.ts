@@ -240,7 +240,11 @@ function strongResourceEtag(resourceVersion: string): string {
 }
 
 function isPreconditionConflict(error: unknown): error is BillingApiError {
-	return error instanceof BillingApiError && (error.status === 409 || error.status === 412);
+	return (
+		error instanceof BillingApiError &&
+		(error.status === 409 || error.status === 412) &&
+		billingErrorDetail(error)?.code !== "funding_revoked_after_accept"
+	);
 }
 
 function isNotFound(error: unknown): error is BillingApiError {

@@ -20,6 +20,7 @@ import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	computeFundingMode,
+	computeSubscriptionCancellationCopy,
 	isComputeSubscriptionRenewing,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
@@ -86,7 +87,11 @@ export function HostedDeploymentDeleteAction({
 	const keepDescription = `Keep subscription — it becomes available to choose for a future Agent.${
 		periodEnd === "—" ? "" : ` Valid through ${periodEnd}.`
 	}`;
-	const cancelDescription = `Stops at period end${periodEnd === "—" ? "." : ` on ${periodEnd}.`}`;
+	const cancelDescription = computeSubscriptionCancellationCopy({
+		isTrial: subscription?.status === "trialing",
+		periodEndLabel: periodEnd === "—" ? null : periodEnd,
+		hasRetainedDeployment: false,
+	}).description;
 
 	return (
 		<AlertDialog
@@ -102,7 +107,7 @@ export function HostedDeploymentDeleteAction({
 				<AlertDialogHeader>
 					<AlertDialogTitle>{`Delete ${name}?`}</AlertDialogTitle>
 					<AlertDialogDescription>
-						This permanently deletes the agent and releases its resources. This can’t be undone.
+						This permanently deletes the agent and its saved data. This can’t be undone.
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 

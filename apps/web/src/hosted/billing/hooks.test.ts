@@ -161,6 +161,25 @@ describe("applyDeploymentSubscriptionResult", () => {
 });
 
 describe("applySubscriptionActionSuccess", () => {
+	test("pending subscription actions invalidate inventory without projecting success", async () => {
+		for (const action_state of ["pending", "reconciling"] as const) {
+			const qc = new QueryClient();
+			const previous = [hostedDeploymentFixture({ id: "dep_123" })];
+			qc.setQueryData(billingKeys.deployments, previous);
+			await applySubscriptionActionSuccess(
+				qc,
+				{ deployment_id: "dep_123" },
+				{
+					...subscriptionAction(true),
+					action_state,
+				},
+			);
+			expect(qc.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toBe(previous);
+			expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+			qc.clear();
+		}
+	});
+
 	test("invalidates every compute subscription inventory after an action", async () => {
 		const qc = new QueryClient();
 		qc.setQueryData(billingKeys.deployments, { current: true });

@@ -3,6 +3,7 @@ import type {
 	ComputeSubscriptionListItem,
 	HostedComputeSubscription,
 } from "@/hosted/billing/contracts";
+import { isTerminalComputeSubscriptionStatus } from "./subscription-utils";
 
 export type ComputeSubscriptionRecoveryFields =
 	| (Pick<
@@ -12,7 +13,7 @@ export type ComputeSubscriptionRecoveryFields =
 			| "payment_state"
 			| "recovery_action"
 	  > &
-			Partial<Pick<ComputeSubscriptionListItem, "funding_source">>)
+			Partial<Pick<ComputeSubscriptionListItem, "funding_source" | "status">>)
 	| (Pick<
 			HostedComputeSubscription,
 			| "latest_failed_invoice_hosted_url"
@@ -20,7 +21,7 @@ export type ComputeSubscriptionRecoveryFields =
 			| "payment_state"
 			| "recovery_action"
 	  > &
-			Partial<Pick<HostedComputeSubscription, "funding_source">>);
+			Partial<Pick<HostedComputeSubscription, "funding_source" | "status">>);
 
 export type ComputeRecoveryTarget =
 	| { kind: "invoice"; action: "fix_payment"; url: string }
@@ -41,6 +42,12 @@ export type ComputeSubscriptionRecoveryPresentation = {
 export function computeSubscriptionRecoveryTarget(
 	subscription: ComputeSubscriptionRecoveryFields,
 ): ComputeRecoveryTarget | null {
+	if (
+		isTerminalComputeSubscriptionStatus(subscription.status) ||
+		subscription.payment_state === "unpaid"
+	) {
+		return { kind: "start_new", action: "start_new" };
+	}
 	const action = subscription.recovery_action;
 	if (action === "top_up") return { kind: "top_up", action };
 	if (action === "start_new") return { kind: "start_new", action };
@@ -49,9 +56,6 @@ export function computeSubscriptionRecoveryTarget(
 		return invoiceUrl
 			? { kind: "invoice", action, url: invoiceUrl }
 			: { kind: "fix_payment", action };
-	}
-	if (subscription.payment_state === "unpaid") {
-		return { kind: "start_new", action: "start_new" };
 	}
 	if (subscription.payment_state === "requires_action") {
 		const invoiceUrl = subscription.latest_failed_invoice_hosted_url?.trim();
@@ -95,13 +99,16 @@ export function computeSubscriptionRecoveryPresentation(
 		}
 	})();
 	const target = computeSubscriptionRecoveryTarget(subscription);
+	const terminal = isTerminalComputeSubscriptionStatus(subscription.status);
 
 	return {
-		status: paymentStatus ?? lifecycleStatus,
+		status: terminal ? lifecycleStatus : (paymentStatus ?? lifecycleStatus),
 		hasPaymentIssue: paymentStatus !== null || target !== null,
 		recoveryTarget: target,
 		schedule:
-			subscription.payment_state === "past_due" || subscription.payment_state === "requires_action"
+			!terminal &&
+			(subscription.payment_state === "past_due" ||
+				subscription.payment_state === "requires_action")
 				? subscription.next_payment_attempt_at
 					? {
 							verb: "Retries",
