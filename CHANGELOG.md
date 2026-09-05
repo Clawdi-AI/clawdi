@@ -52,6 +52,21 @@ database migration, CI, and implementation details.
 - Hosted OpenClaw upgrades now retire the legacy Clawdi provider plugin even
   when OpenClaw requires capability consent before it can inspect the plugin.
 
+## Clawdi CLI v0.14.48
+
+Package: `clawdi@0.14.48`
+
+### Fixed
+
+- Reuse existing Hermes and OpenClaw background services instead of reinstalling
+  them when version displays or native service definitions change.
+- Prepare Hermes service configuration before starting the gateway, and reload
+  systemd when native service changes precede reconciliation.
+- Preserve the latest failed installer log after successful recovery, and avoid
+  treating failed inspections or stale cached versions as a repair request.
+- Reduce overlapping OpenClaw discovery processes and keep skill polling alive
+  through inventory failures without reporting false deletions.
+
 ## Clawdi CLI v0.14.35
 
 Package: `clawdi@0.14.35`
