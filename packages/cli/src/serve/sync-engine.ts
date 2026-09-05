@@ -1217,7 +1217,7 @@ async function enqueueIfChanged(
 	}
 	const dir = join(skills.rootDir(), skillKey);
 	const projectId = getProjectId();
-	if (isReservedSkill(skills, skillKey) || !existsSync(join(dir, "SKILL.md"))) {
+	if (shouldIgnoreUserSkill(dir, skillKey) || !existsSync(join(dir, "SKILL.md"))) {
 		if (!lastPushedHash.has(skillKey)) return;
 		const version = queue.enqueue({
 			kind: "skill_delete",
@@ -1714,7 +1714,8 @@ export async function processQueueItem(
 			}
 			return "applied";
 		}
-		if (isReservedSkill(modules.skills.module, item.skill_key)) {
+		const skillDir = join(modules.skills.module.rootDir(), item.skill_key);
+		if (shouldIgnoreUserSkill(skillDir, item.skill_key)) {
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
@@ -1728,7 +1729,7 @@ export async function processQueueItem(
 		}
 		// Every accepted Skill item is Agent+Project fenced above. The current
 		// item can now safely project the latest local bytes.
-		await uploadSkillFromQueue(opts, modules.skills.module, api, item, lastPushedHash, projectId);
+		await uploadSkillFromQueue(opts, skillDir, api, item, lastPushedHash, projectId);
 		// markDoneIfVersion — if a newer version of the same
 		// skill_key was enqueued while we were uploading, leave
 		// it in the queue so the next drain picks it up. The
@@ -1935,13 +1936,12 @@ async function uploadSessionFromQueue(
 
 async function uploadSkillFromQueue(
 	opts: EngineOpts,
-	skills: SkillModule,
+	dir: string,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
 	projectId: string,
 ): Promise<void> {
-	const dir = join(skills.rootDir(), item.skill_key);
 	// Recompute the hash from the live directory at upload time
 	// rather than trusting `item.new_hash`. The watcher's hash
 	// could have aged out: enqueue stamps a hash, then the user
@@ -2233,7 +2233,7 @@ export async function reconcileAgentSkillProjection(input: {
 			enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
 			continue;
 		}
-		const reserved = isReservedSkill(skills, skillKey);
+		const reserved = shouldIgnoreUserSkill(join(rootDir, skillKey), skillKey);
 		if (reserved || !localKeys.has(skillKey)) {
 			if (
 				claims.has(skillKey) ||
@@ -2402,17 +2402,6 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
 		cur = parent;
 	}
 	return null;
-}
-
-// Skill enumeration moved to `adapter.listSkillKeys()` —
-// Hermes nests skills under category dirs (`category/foo/SKILL.md`)
-// so a flat top-level walk silently dropped them; flat adapters
-// (Claude Code / Codex / OpenClaw) implement the same dotfile +
-// bundled-`clawdi` filtering inline. See base.ts AgentAdapter
-// docstring for the contract.
-
-function isReservedSkill(skills: SkillModule, skillKey: string): boolean {
-	return shouldIgnoreUserSkill(join(skills.rootDir(), skillKey), skillKey);
 }
 
 /** Heartbeat sender. Fires immediately on boot then every

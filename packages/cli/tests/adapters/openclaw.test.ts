@@ -27,10 +27,18 @@ beforeEach(() => {
 	writeFileSync(
 		command,
 		`#!/bin/sh
+if [ -f "$HOME/.openclaw/command-log" ]; then
+  printf 'start:%s\n' "$1" >> "$HOME/.openclaw/command-log"
+  trap 'printf "end:%s\n" "$1" >> "$HOME/.openclaw/command-log"' EXIT
+fi
 if [ -f "$HOME/.openclaw/delay-$1" ]; then
   touch "$HOME/.openclaw/running-$1"
   sleep 0.2
   rm "$HOME/.openclaw/running-$1"
+fi
+if [ -f "$HOME/.openclaw/fail-once-$1" ]; then
+  rm "$HOME/.openclaw/fail-once-$1"
+  exit 1
 fi
 if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/legacy-inventory-test" ]; then
   printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/sessions/sessions.json"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"oc-session-001","updatedAt":1776247205000,"sessionFile":"%s/.openclaw/agents/main/sessions/oc-session-001.jsonl","model":"claude-opus-4-7","inputTokens":12,"outputTokens":6,"cacheRead":2,"displayName":"Fixture session","acp":{"cwd":"/Users/fixture/project","lastActivityAt":1776247205000}}]}\n' "$HOME" "$HOME"
@@ -164,7 +172,63 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
-	it.each(["sessions", "gateway"])(
+	it.each(["none", "sessions", "gateway", "agents"])(
+		"serializes scan/resolve/roster subprocesses (injected failure: %s)",
+		async (failingCommand) => {
+			const stateRoot = join(tmpHome, ".openclaw");
+			const commandLog = join(stateRoot, "command-log");
+			writeFileSync(commandLog, "");
+			writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+			for (const command of ["sessions", "gateway", "agents"]) {
+				writeFileSync(join(stateRoot, `delay-${command}`), "enabled");
+			}
+			if (failingCommand !== "none")
+				writeFileSync(join(stateRoot, `fail-once-${failingCommand}`), "enabled");
+
+			const adapter = new OpenClawAdapter();
+			const [scan, resolution, skills] = await Promise.allSettled([
+				adapter.sessions.scan({ kind: "complete" }, new Map()),
+				adapter.sessions.resolve("sqlite-session-001"),
+				adapter.skills.listKeys(),
+			]);
+			expect(scan.status).toBe("fulfilled");
+			expect(resolution.status).toBe("fulfilled");
+			if (failingCommand === "agents") {
+				expect(skills).toMatchObject({
+					status: "rejected",
+					reason: {
+						message: "OpenClaw workspace resolution requires `openclaw agents list --json`",
+					},
+				});
+			} else {
+				expect(skills).toEqual({ status: "fulfilled", value: ["demo"] });
+			}
+			expect(await adapter.skills.listKeys()).toEqual(["demo"]);
+			const recovered = await adapter.sessions.resolve("sqlite-session-001");
+			expect(recovered?.messages.map((message) => message.content)).toEqual([
+				"kept question",
+				"kept answer",
+			]);
+			if (failingCommand !== "none")
+				expect(existsSync(join(stateRoot, `fail-once-${failingCommand}`))).toBe(false);
+
+			const events = readFileSync(commandLog, "utf8").trim().split("\n");
+			expect(events.filter((event) => event === "start:sessions")).toHaveLength(3);
+			expect(events.filter((event) => event === "start:agents")).toHaveLength(2);
+			expect(events).toContain("start:gateway");
+			let active = 0;
+			let peak = 0;
+			for (const event of events) {
+				active += event.startsWith("start:") ? 1 : -1;
+				peak = Math.max(peak, active);
+				expect(active).toBeGreaterThanOrEqual(0);
+			}
+			expect(active).toBe(0);
+			expect(peak).toBe(1);
+		},
+	);
+
+	it.each(["sessions", "gateway", "agents"])(
 		"keeps the event loop responsive while %s is running",
 		async (command) => {
 			const stateRoot = join(tmpHome, ".openclaw");
@@ -175,12 +239,17 @@ describe("OpenClawAdapter.collectSessions", () => {
 				observedRunning ||= existsSync(join(stateRoot, `running-${command}`));
 			}, 10);
 			try {
-				const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+				const adapter = new OpenClawAdapter();
+				if (command === "agents") {
+					expect(await adapter.skills.listKeys()).toEqual(["demo"]);
+				} else {
+					const { sessions } = await adapter.sessions.collect({ kind: "complete" });
+					expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+						"kept question",
+						"kept answer",
+					]);
+				}
 				expect(observedRunning).toBe(true);
-				expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
-					"kept question",
-					"kept answer",
-				]);
 			} finally {
 				clearInterval(timer);
 			}
@@ -658,6 +727,18 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 });
 
 describe("OpenClawAdapter.collectSkills", () => {
+	it("lists only the selected agent's Skills and rejects a missing agent", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		const adapter = new OpenClawAdapter();
+		expect(await adapter.skills.listKeys()).toEqual(["demo"]);
+		process.env.OPENCLAW_AGENT_ID = " financial ";
+		expect(await adapter.skills.listKeys()).toEqual(["fin-skill"]);
+		process.env.OPENCLAW_AGENT_ID = "missing";
+		await expect(adapter.skills.listKeys()).rejects.toThrow(
+			"OpenClaw agent missing is not present in the official agent roster",
+		);
+	});
+
 	it("finds demo skill under agents/<id>/skills/ and skips SKIP_DIRS", async () => {
 		const a = new OpenClawAdapter();
 		const skills = await a.skills.collect();

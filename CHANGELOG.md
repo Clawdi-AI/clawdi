@@ -33,6 +33,9 @@ database migration, CI, and implementation details.
   rather than waiting for payment. Expired checkouts can be retried, while
   uncertain payment results retain the original request and provide support guidance.
 
+- OpenClaw sync serializes asynchronous discovery commands to reduce overlapping
+  memory use. Skill polling survives inventory failures without reporting false
+  deletions, and skill synchronization performs fewer workspace lookups.
 - CLI health reporting no longer stalls during OpenClaw session scans, sends
   compatible sync heartbeats, and promptly refreshes observations after delayed
   acknowledgements while retaining bounded retries.
