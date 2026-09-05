@@ -81,10 +81,10 @@ interface Opts {
 	onInventoryChanged?: () => void;
 }
 
-export async function watchSkills(opts: Opts): Promise<void> {
+export async function watchSkills(opts: Opts, delay: typeof sleep = sleep): Promise<void> {
 	if (opts.forcePoll) {
 		log.info("watcher.mode", { mode: "poll", reason: "forced" });
-		await pollLoop(opts);
+		await pollLoop(opts, delay);
 		return;
 	}
 
@@ -95,7 +95,7 @@ export async function watchSkills(opts: Opts): Promise<void> {
 			error: toErrorMessage(e),
 			fallback: "poll",
 		});
-		await pollLoop(opts);
+		await pollLoop(opts, delay);
 	}
 }
 
@@ -328,21 +328,29 @@ async function watchEvents(opts: Opts): Promise<void> {
 
 /** Polling fallback. Walks `rootDir` every POLL_INTERVAL_MS and
  * compares per-skill mtime + size signatures. */
-async function pollLoop(opts: Opts): Promise<void> {
-	let prev = await snapshot(opts.rootDir, opts.listSkillKeys);
-	log.info("watcher.mode", { mode: "poll", root: opts.rootDir, skill_count: prev.size });
-
+async function pollLoop(opts: Opts, delay: typeof sleep): Promise<void> {
+	let prev: Map<string, string> | null = null;
 	while (!opts.abort.aborted) {
-		await sleep(POLL_INTERVAL_MS, opts.abort);
+		let next: Map<string, string> | null = null;
+		try {
+			next = await snapshot(opts.rootDir, opts.listSkillKeys);
+		} catch (error) {
+			log.warn("watcher.snapshot_failed", { error: toErrorMessage(error) });
+		}
 		if (opts.abort.aborted) return;
 
-		const next = await snapshot(opts.rootDir, opts.listSkillKeys);
-		const changed = diff(prev, next);
-		for (const key of changed) {
-			opts.onSkillChanged(key);
+		// Failed discovery is not an empty inventory; retain the last valid baseline.
+		if (next) {
+			if (prev) {
+				const changed = diff(prev, next);
+				for (const key of changed) opts.onSkillChanged(key);
+				if (changed.length > 0) opts.onInventoryChanged?.();
+			} else {
+				log.info("watcher.mode", { mode: "poll", root: opts.rootDir, skill_count: next.size });
+			}
+			prev = next;
 		}
-		if (changed.length > 0) opts.onInventoryChanged?.();
-		prev = next;
+		if (!opts.abort.aborted) await delay(POLL_INTERVAL_MS, opts.abort);
 	}
 }
 

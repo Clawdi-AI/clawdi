@@ -14,7 +14,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDebouncedSkillChangeEmitter } from "./watcher";
+import { createDebouncedSkillChangeEmitter, watchSkills } from "./watcher";
 
 const SKILL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 
@@ -113,6 +113,56 @@ describe("createDebouncedSkillChangeEmitter", () => {
 
 		expect(seen).toEqual([]);
 	});
+});
+
+describe("skill inventory polling", () => {
+	it.each([false, true])(
+		"retains the last valid snapshot across failures (initial failure: %s)",
+		async (initialFailure) => {
+			const root = mkdtempSync(join(tmpdir(), "clawdi-skills-poll-"));
+			const abort = new AbortController();
+			const changed: string[] = [];
+			let inventoryChanges = 0;
+			const samples: Array<string[] | Error> = [
+				...(initialFailure ? [new Error("initial discovery failed")] : []),
+				["kept", "removed"],
+				new Error("discovery failed"),
+				["kept", "added"],
+			];
+			let sampleIndex = 0;
+			try {
+				await watchSkills(
+					{
+						rootDir: root,
+						abort: abort.signal,
+						forcePoll: true,
+						listSkillKeys: async () => {
+							const sample = samples[sampleIndex++];
+							if (sample instanceof Error) throw sample;
+							if (!sample) throw new Error("unexpected extra poll");
+							return sample;
+						},
+						onSkillChanged: (key) => changed.push(key),
+						onInventoryChanged: () => {
+							inventoryChanges++;
+							abort.abort();
+						},
+					},
+					async (ms) => {
+						expect(ms).toBe(30_000);
+						expect(changed).toEqual([]);
+						expect(inventoryChanges).toBe(0);
+					},
+				);
+				expect(sampleIndex).toBe(samples.length);
+				expect(changed).toEqual(["removed", "added"]);
+				expect(inventoryChanges).toBe(1);
+			} finally {
+				abort.abort();
+				rmSync(root, { recursive: true, force: true });
+			}
+		},
+	);
 });
 
 function sleep(ms: number): Promise<void> {

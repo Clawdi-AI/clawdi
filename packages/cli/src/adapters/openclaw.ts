@@ -356,19 +356,28 @@ function mergeUserActivity(
 
 const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+let sessionCommandTail: Promise<void> = Promise.resolve();
 
 async function runOpenClawJson(args: string[]): Promise<JsonObject | null> {
-	try {
-		const { stdout } = await execFileAsync("openclaw", args, {
-			encoding: "utf8",
-			env: process.env,
-			maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
-			timeout: 120_000,
-		});
-		return jsonObject(JSON.parse(stdout)) ?? null;
-	} catch {
-		return null;
-	}
+	// Scans and queue-time resolves share one subprocess slot, not the event loop.
+	const command = sessionCommandTail.then(async () => {
+		try {
+			const { stdout } = await execFileAsync("openclaw", args, {
+				encoding: "utf8",
+				env: process.env,
+				maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
+				timeout: 120_000,
+			});
+			return jsonObject(JSON.parse(stdout)) ?? null;
+		} catch {
+			return null;
+		}
+	});
+	sessionCommandTail = command.then(
+		() => {},
+		() => {},
+	);
+	return command;
 }
 
 async function readOfficialSessionInventory(): Promise<OfficialSessionInventory | null> {

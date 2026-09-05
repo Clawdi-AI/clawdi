@@ -27,10 +27,18 @@ beforeEach(() => {
 	writeFileSync(
 		command,
 		`#!/bin/sh
+if [ -f "$HOME/.openclaw/command-log" ]; then
+  printf 'start:%s\n' "$1" >> "$HOME/.openclaw/command-log"
+  trap 'printf "end:%s\n" "$1" >> "$HOME/.openclaw/command-log"' EXIT
+fi
 if [ -f "$HOME/.openclaw/delay-$1" ]; then
   touch "$HOME/.openclaw/running-$1"
   sleep 0.2
   rm "$HOME/.openclaw/running-$1"
+fi
+if [ -f "$HOME/.openclaw/fail-once-$1" ]; then
+  rm "$HOME/.openclaw/fail-once-$1"
+  exit 1
 fi
 if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.openclaw/legacy-inventory-test" ]; then
   printf '{"path":null,"stores":[{"agentId":"main","path":"%s/.openclaw/agents/main/sessions/sessions.json"}],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","sessionId":"oc-session-001","updatedAt":1776247205000,"sessionFile":"%s/.openclaw/agents/main/sessions/oc-session-001.jsonl","model":"claude-opus-4-7","inputTokens":12,"outputTokens":6,"cacheRead":2,"displayName":"Fixture session","acp":{"cwd":"/Users/fixture/project","lastActivityAt":1776247205000}}]}\n' "$HOME" "$HOME"
@@ -164,6 +172,47 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it.each(["none", "sessions", "gateway"])(
+		"serializes scan/resolve subprocesses (injected failure: %s)",
+		async (failingCommand) => {
+			const stateRoot = join(tmpHome, ".openclaw");
+			const commandLog = join(stateRoot, "command-log");
+			writeFileSync(commandLog, "");
+			writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+			for (const command of ["sessions", "gateway"]) {
+				writeFileSync(join(stateRoot, `delay-${command}`), "enabled");
+			}
+			if (failingCommand !== "none")
+				writeFileSync(join(stateRoot, `fail-once-${failingCommand}`), "enabled");
+
+			const adapter = new OpenClawAdapter();
+			await Promise.all([
+				adapter.sessions.scan({ kind: "complete" }, new Map()),
+				adapter.sessions.resolve("sqlite-session-001"),
+			]);
+			const recovered = await adapter.sessions.resolve("sqlite-session-001");
+			expect(recovered?.messages.map((message) => message.content)).toEqual([
+				"kept question",
+				"kept answer",
+			]);
+			if (failingCommand !== "none")
+				expect(existsSync(join(stateRoot, `fail-once-${failingCommand}`))).toBe(false);
+
+			const events = readFileSync(commandLog, "utf8").trim().split("\n");
+			expect(events.filter((event) => event === "start:sessions")).toHaveLength(3);
+			expect(events).toContain("start:gateway");
+			let active = 0;
+			let peak = 0;
+			for (const event of events) {
+				active += event.startsWith("start:") ? 1 : -1;
+				peak = Math.max(peak, active);
+				expect(active).toBeGreaterThanOrEqual(0);
+			}
+			expect(active).toBe(0);
+			expect(peak).toBe(1);
+		},
+	);
+
 	it.each(["sessions", "gateway"])(
 		"keeps the event loop responsive while %s is running",
 		async (command) => {
