@@ -17,6 +17,7 @@ const OBSERVATION_INTERVAL_MS = 60_000;
 const CONVERGENCE_OBSERVATION_INTERVAL_MS = 5_000;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
+const FAILURE_RETRY_INTERVAL_MS = 5_000;
 
 type ObservationSubmitResult = "accepted" | "terminal-rejected";
 type RuntimeObservedStatus = HostedRuntimeObservedEvent["status"];
@@ -25,7 +26,7 @@ type ObservationSendResult =
 	| { outcome: "idle" }
 	| { outcome: "sent" }
 	| { outcome: "failed" }
-	| { outcome: "accepted"; status: RuntimeObservedStatus };
+	| { outcome: "accepted"; status: RuntimeObservedStatus; capturedAt: string };
 
 interface RuntimeObservationProducerOptions {
 	abort: AbortSignal;
@@ -48,6 +49,7 @@ interface AttestedRuntimeObservationContext {
 
 interface ObservationSchedule {
 	nextAttemptAt: number;
+	consecutiveFailures: number;
 	convergenceWindowEnd: number | "closed" | null;
 	lastAttemptedAppliedReceipt: string | null;
 }
@@ -118,7 +120,11 @@ export class HostedRuntimeObservationProducer {
 			if (!this.session.acknowledge(buffered.event.eventId)) {
 				throw new Error("runtime observation acknowledgement did not match buffered event");
 			}
-			return { outcome: "accepted", status: buffered.event.status };
+			return {
+				outcome: "accepted",
+				status: buffered.event.status,
+				capturedAt: buffered.event.capturedAt,
+			};
 		} catch (error) {
 			log.info("daemon.runtime_observation_failed", {
 				error: toErrorMessage(error),
@@ -189,6 +195,7 @@ export async function runRuntimeObservationProducer(
 				const appliedReceipt = readRuntimeWatchAppliedReceipt(paths);
 				const schedule = schedules.get(identityKey) ?? {
 					nextAttemptAt: 0,
+					consecutiveFailures: 0,
 					convergenceWindowEnd: null,
 					lastAttemptedAppliedReceipt: null,
 				};
@@ -213,9 +220,26 @@ export async function runRuntimeObservationProducer(
 									);
 								}
 							}
+							// A retried event retains its capture time; acknowledging it must not
+							// postpone the next fresh sample by another full interval.
+							interval = Math.max(
+								IDLE_RETRY_INTERVAL_MS,
+								interval - Math.max(0, completedAt - Date.parse(result.capturedAt)),
+							);
 						}
-						schedule.nextAttemptAt =
-							completedAt + (result.outcome === "idle" ? IDLE_RETRY_INTERVAL_MS : interval);
+						if (result.outcome === "failed") {
+							schedule.consecutiveFailures = Math.min(schedule.consecutiveFailures + 1, 5);
+							interval = Math.min(
+								OBSERVATION_INTERVAL_MS,
+								FAILURE_RETRY_INTERVAL_MS * 2 ** (schedule.consecutiveFailures - 1),
+							);
+						} else {
+							schedule.consecutiveFailures = 0;
+						}
+						if (result.outcome === "idle") {
+							interval = IDLE_RETRY_INTERVAL_MS;
+						}
+						schedule.nextAttemptAt = completedAt + interval;
 						if (activeAttempts.get(identityKey) === attempt) {
 							activeAttempts.delete(identityKey);
 						}
