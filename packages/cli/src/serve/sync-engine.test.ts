@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import {
 	existsSync,
@@ -499,6 +499,29 @@ describe("Agent filesystem projection reconcile", () => {
 		}
 	}
 
+	it("resolves the root once per reconciliation instead of once per key", async () => {
+		await withProjectionCase(async ({ root, skills, queue, reconcile }) => {
+			for (const key of ["alpha", "beta"]) {
+				const dir = join(root, key);
+				mkdirSync(dir);
+				writeFileSync(join(dir, "SKILL.md"), `# ${key}\n`);
+			}
+			const rootDir = spyOn(skills, "rootDir");
+			try {
+				await reconcile(new Map());
+				expect(rootDir).toHaveBeenCalledTimes(1);
+				await reconcile(new Map());
+				expect(rootDir).toHaveBeenCalledTimes(2);
+				expect(queue.all().map((item) => ("skill_key" in item ? item.skill_key : null))).toEqual([
+					"alpha",
+					"beta",
+				]);
+			} finally {
+				rootDir.mockRestore();
+			}
+		});
+	});
+
 	it("durably deletes a claimed nested key missing after directory removal", async () => {
 		await withProjectionCase(async ({ queue, reconcile }) => {
 			await reconcile(new Map([["category/demo", "claimed-hash"]]));
@@ -917,9 +940,10 @@ describe("Agent filesystem projection reconcile", () => {
 	});
 
 	it("uploads a symlink projection with the hash of the exact dereferenced archive", async () => {
-		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+		await withProjectionCase(async ({ root, queue, keys, skills, reconcile }) => {
 			const originalHermesHome = process.env.HERMES_HOME;
 			const originalFetch = globalThis.fetch;
+			const rootDir = spyOn(skills, "rootDir");
 			try {
 				process.env.HERMES_HOME = dirname(root);
 				const shared = join(root, "shared");
@@ -931,6 +955,7 @@ describe("Agent filesystem projection reconcile", () => {
 				symlinkSync(join(shared, "body.md"), join(local, "body.md"));
 				keys.add("demo");
 				await reconcile(new Map());
+				rootDir.mockClear();
 				const item = queue.peek();
 				if (!item) throw new Error("expected queued projection");
 
@@ -954,6 +979,7 @@ describe("Agent filesystem projection reconcile", () => {
 				}) as typeof fetch;
 
 				const adapter = adapterRegistry.hermes.create();
+				adapter.skills = skills;
 				const abortController = new AbortController();
 				await processQueueItem(
 					{
@@ -971,7 +997,9 @@ describe("Agent filesystem projection reconcile", () => {
 					new Map(),
 				);
 				expect(verifiedHash).not.toBeNull();
+				expect(rootDir).toHaveBeenCalledTimes(1);
 			} finally {
+				rootDir.mockRestore();
 				globalThis.fetch = originalFetch;
 				if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
 				else process.env.HERMES_HOME = originalHermesHome;
