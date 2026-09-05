@@ -1,5 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
+import { runOpenClawCommand } from "./openclaw-command";
+
+const WORKSPACE_RESOLUTION_ERROR =
+	"OpenClaw workspace resolution requires `openclaw agents list --json`";
 
 export interface OpenClawAgentWorkspace {
 	id: string;
@@ -31,19 +35,41 @@ export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 		maxBuffer: 1024 * 1024,
 		timeout: 15_000,
 	});
-	if (result.status === 0) {
-		try {
-			const summaries = parseOpenClawAgentWorkspaces(result.stdout);
-			if (summaries.length > 0) return summaries;
-		} catch {
-			// Invalid public CLI output is reported below.
-		}
-	}
-	throw new Error("OpenClaw workspace resolution requires `openclaw agents list --json`");
+	if (result.status !== 0) throw new Error(WORKSPACE_RESOLUTION_ERROR);
+	return requireOpenClawAgentWorkspaces(result.stdout);
 }
 
 export function resolveOpenClawAgentWorkspace(agentId = openClawAgentId()): string {
-	const workspace = listOpenClawAgentWorkspaces().find((entry) => entry.id === agentId)?.workspace;
+	return workspaceForAgent(listOpenClawAgentWorkspaces(), agentId);
+}
+
+export async function resolveOpenClawAgentWorkspaceAsync(
+	agentId = openClawAgentId(),
+): Promise<string> {
+	let stdout: string;
+	try {
+		stdout = await runOpenClawCommand(["agents", "list", "--json"], {
+			maxBuffer: 1024 * 1024,
+			timeout: 15_000,
+		});
+	} catch {
+		throw new Error(WORKSPACE_RESOLUTION_ERROR);
+	}
+	return workspaceForAgent(requireOpenClawAgentWorkspaces(stdout), agentId);
+}
+
+function requireOpenClawAgentWorkspaces(output: string): OpenClawAgentWorkspace[] {
+	try {
+		const summaries = parseOpenClawAgentWorkspaces(output);
+		if (summaries.length > 0) return summaries;
+	} catch {
+		// Invalid public CLI output is reported below.
+	}
+	throw new Error(WORKSPACE_RESOLUTION_ERROR);
+}
+
+function workspaceForAgent(workspaces: OpenClawAgentWorkspace[], agentId: string): string {
+	const workspace = workspaces.find((entry) => entry.id === agentId)?.workspace;
 	if (!workspace)
 		throw new Error(`OpenClaw agent ${agentId} is not present in the official agent roster`);
 	return workspace;

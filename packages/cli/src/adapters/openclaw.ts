@@ -1,9 +1,8 @@
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import {
 	OPENCLAW_SDK_EXPORT_PATHS,
 	resolveOpenClawSdkExport,
@@ -40,10 +39,12 @@ import type {
 	SessionScanResult,
 	SessionUserActivity,
 } from "./base";
+import { runOpenClawCommand } from "./openclaw-command";
 import {
 	listOpenClawAgentWorkspaces,
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
+	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
 import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import {
@@ -355,29 +356,17 @@ function mergeUserActivity(
 }
 
 const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
-let sessionCommandTail: Promise<void> = Promise.resolve();
 
 async function runOpenClawJson(args: string[]): Promise<JsonObject | null> {
-	// Scans and queue-time resolves share one subprocess slot, not the event loop.
-	const command = sessionCommandTail.then(async () => {
-		try {
-			const { stdout } = await execFileAsync("openclaw", args, {
-				encoding: "utf8",
-				env: process.env,
-				maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
-				timeout: 120_000,
-			});
-			return jsonObject(JSON.parse(stdout)) ?? null;
-		} catch {
-			return null;
-		}
-	});
-	sessionCommandTail = command.then(
-		() => {},
-		() => {},
-	);
-	return command;
+	try {
+		const stdout = await runOpenClawCommand(args, {
+			maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
+			timeout: 120_000,
+		});
+		return jsonObject(JSON.parse(stdout)) ?? null;
+	} catch {
+		return null;
+	}
 }
 
 async function readOfficialSessionInventory(): Promise<OfficialSessionInventory | null> {
@@ -1285,7 +1274,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		// silently dropping those skills. Pre-fix the cross-agent
 		// enumerator silently lost OpenClaw skills under any
 		// agent other than the active one.
-		const root = skillsDir();
+		const root = join(await resolveOpenClawAgentWorkspaceAsync(agentId()), "skills");
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(root, "clawdi"),
 			id: "clawdi",

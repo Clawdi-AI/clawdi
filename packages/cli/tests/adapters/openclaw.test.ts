@@ -172,24 +172,38 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
-	it.each(["none", "sessions", "gateway"])(
-		"serializes scan/resolve subprocesses (injected failure: %s)",
+	it.each(["none", "sessions", "gateway", "agents"])(
+		"serializes scan/resolve/roster subprocesses (injected failure: %s)",
 		async (failingCommand) => {
 			const stateRoot = join(tmpHome, ".openclaw");
 			const commandLog = join(stateRoot, "command-log");
 			writeFileSync(commandLog, "");
 			writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
-			for (const command of ["sessions", "gateway"]) {
+			for (const command of ["sessions", "gateway", "agents"]) {
 				writeFileSync(join(stateRoot, `delay-${command}`), "enabled");
 			}
 			if (failingCommand !== "none")
 				writeFileSync(join(stateRoot, `fail-once-${failingCommand}`), "enabled");
 
 			const adapter = new OpenClawAdapter();
-			await Promise.all([
+			const [scan, resolution, skills] = await Promise.allSettled([
 				adapter.sessions.scan({ kind: "complete" }, new Map()),
 				adapter.sessions.resolve("sqlite-session-001"),
+				adapter.skills.listKeys(),
 			]);
+			expect(scan.status).toBe("fulfilled");
+			expect(resolution.status).toBe("fulfilled");
+			if (failingCommand === "agents") {
+				expect(skills).toMatchObject({
+					status: "rejected",
+					reason: {
+						message: "OpenClaw workspace resolution requires `openclaw agents list --json`",
+					},
+				});
+			} else {
+				expect(skills).toEqual({ status: "fulfilled", value: ["demo"] });
+			}
+			expect(await adapter.skills.listKeys()).toEqual(["demo"]);
 			const recovered = await adapter.sessions.resolve("sqlite-session-001");
 			expect(recovered?.messages.map((message) => message.content)).toEqual([
 				"kept question",
@@ -200,6 +214,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 
 			const events = readFileSync(commandLog, "utf8").trim().split("\n");
 			expect(events.filter((event) => event === "start:sessions")).toHaveLength(3);
+			expect(events.filter((event) => event === "start:agents")).toHaveLength(2);
 			expect(events).toContain("start:gateway");
 			let active = 0;
 			let peak = 0;
@@ -213,7 +228,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		},
 	);
 
-	it.each(["sessions", "gateway"])(
+	it.each(["sessions", "gateway", "agents"])(
 		"keeps the event loop responsive while %s is running",
 		async (command) => {
 			const stateRoot = join(tmpHome, ".openclaw");
@@ -224,12 +239,17 @@ describe("OpenClawAdapter.collectSessions", () => {
 				observedRunning ||= existsSync(join(stateRoot, `running-${command}`));
 			}, 10);
 			try {
-				const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+				const adapter = new OpenClawAdapter();
+				if (command === "agents") {
+					expect(await adapter.skills.listKeys()).toEqual(["demo"]);
+				} else {
+					const { sessions } = await adapter.sessions.collect({ kind: "complete" });
+					expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+						"kept question",
+						"kept answer",
+					]);
+				}
 				expect(observedRunning).toBe(true);
-				expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
-					"kept question",
-					"kept answer",
-				]);
 			} finally {
 				clearInterval(timer);
 			}
@@ -707,6 +727,18 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 });
 
 describe("OpenClawAdapter.collectSkills", () => {
+	it("lists only the selected agent's Skills and rejects a missing agent", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		const adapter = new OpenClawAdapter();
+		expect(await adapter.skills.listKeys()).toEqual(["demo"]);
+		process.env.OPENCLAW_AGENT_ID = " financial ";
+		expect(await adapter.skills.listKeys()).toEqual(["fin-skill"]);
+		process.env.OPENCLAW_AGENT_ID = "missing";
+		await expect(adapter.skills.listKeys()).rejects.toThrow(
+			"OpenClaw agent missing is not present in the official agent roster",
+		);
+	});
+
 	it("finds demo skill under agents/<id>/skills/ and skips SKIP_DIRS", async () => {
 		const a = new OpenClawAdapter();
 		const skills = await a.skills.collect();
