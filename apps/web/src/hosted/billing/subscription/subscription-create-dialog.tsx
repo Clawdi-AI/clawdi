@@ -36,6 +36,7 @@ import {
 	computePricePresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	isReusableSubscriptionUnavailableError,
@@ -328,7 +329,11 @@ export function SubscriptionCreateDialog({
 				void createQuote.refetch();
 				if (walletTopUp.handleFundingError(error)) return;
 			}
-			if (isIdempotencyKeyReusedError(error) && createAttemptRef.current) {
+			if (
+				(isIdempotencyKeyReusedError(error) ||
+					billingErrorDetail(error)?.code === "checkout_attempt_expired") &&
+				createAttemptRef.current
+			) {
 				forgetIdempotencyAttempt(
 					"subscription-terminal-fallback",
 					createAttemptRef.current.fingerprint,

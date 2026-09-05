@@ -29,6 +29,10 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Ending a hosted trial now shows subscription updates while the agent stops,
+  rather than waiting for payment. Expired checkouts can be retried, while
+  uncertain payment results retain the original request and provide support guidance.
+
 - CLI health reporting no longer stalls during OpenClaw session scans, sends
   compatible sync heartbeats, and promptly refreshes observations after delayed
   acknowledgements while retaining bounded retries.
