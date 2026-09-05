@@ -1,14 +1,46 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { sentryTanstackStart } from "@sentry/tanstackstart-react/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
+
+const require = createRequire(import.meta.url);
+const clerkBrowserDist = dirname(require.resolve("@clerk/clerk-js"));
+
+function clerkBrowserAssetClosure(): string[] {
+	const files = readdirSync(clerkBrowserDist);
+	const entry = "clerk.browser.js";
+	if (!files.includes(entry)) throw new Error(`Missing Clerk browser entry: ${entry}`);
+	const chunks = files.filter((name) => /_clerk\.browser_.*\.js$/.test(name));
+	if (chunks.length === 0) throw new Error("Missing Clerk browser chunks");
+	return [entry, ...chunks];
+}
+
+function desktopClerkAssetPlugin(): Plugin {
+	return {
+		name: "clawdi-desktop-clerk-asset",
+		apply: "build",
+		buildStart() {
+			for (const file of clerkBrowserAssetClosure()) {
+				this.emitFile({
+					type: "asset",
+					fileName: `assets/${file}`,
+					source: readFileSync(join(clerkBrowserDist, file)),
+				});
+			}
+		},
+	};
+}
 
 export default defineConfig(({ mode }) => {
 	// Vite does not load .env files into process.env while evaluating this file.
 	// Loading without a prefix follows Sentry's documented Vite plugin setup.
 	const env = loadEnv(mode, process.cwd(), "");
+	const desktopBuild = env.VITE_CLAWDI_DESKTOP_BUILD === "true";
 
 	// Vercel system variables are server-only by default. Mirror only the public
 	// deployment metadata Sentry needs before Vite resolves import.meta.env.
@@ -30,9 +62,7 @@ export default defineConfig(({ mode }) => {
 			: [];
 
 	return {
-		server: {
-			port: 3000,
-		},
+		...(desktopBuild ? {} : { server: { port: 3000 } }),
 		ssr: {
 			// Published leaf components use extensionless internal ESM imports,
 			// so Vite must transform this package before Node evaluates SSR.
@@ -42,14 +72,23 @@ export default defineConfig(({ mode }) => {
 			tsconfigPaths: true,
 		},
 		plugins: [
+			tailwindcss(),
+			...(desktopBuild ? [desktopClerkAssetPlugin()] : []),
 			tanstackStart({
+				...(desktopBuild
+					? {
+							spa: {
+								enabled: true,
+								prerender: { outputPath: "index.html" },
+							},
+						}
+					: {}),
 				importProtection: {
 					client: { specifiers: ["@clerk/tanstack-react-start/server"] },
 				},
 			}),
-			nitro(),
-			tailwindcss(),
 			viteReact(),
+			...(desktopBuild ? [] : [nitro()]),
 			...sentryPlugins,
 		],
 	};

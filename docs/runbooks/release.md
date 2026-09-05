@@ -35,18 +35,27 @@ releases.
 
 ## Desktop Release Blocker
 
-Desktop auto-update is not a released surface yet. `apps/desktop/package.json`
-has no publish provider, `desktop-preview.yml` uploads only an unsigned DMG PR
-artifact, and the calendar release workflow does not publish a Developer ID
-signed and notarized Desktop ZIP with update metadata. Until one trusted feed
-contract owns those immutable artifacts, Desktop must not call an updater or
-show a Check for Updates command; the bundled CLI also remains ineligible for
-self-update.
+Desktop stable updates use an independent electron-updater generic feed. Preview
+builds are ad-hoc signed, carry `clawdiUpdateChannel=disabled`, and never enter
+that feed. The bundled CLI also remains ineligible for self-update.
 
-Enabling updates requires one reviewed release change to define the trusted
-provider/feed, attach the signed ZIP and matching update metadata to the same
-release commit, and verify signing, notarization, version, and checksums before
-publication. Unsigned preview artifacts must remain outside that feed.
+Stable packaging requires an explicit `CLAWDI_DESKTOP_UPDATE_FEED_URL`: an
+owner-controlled strict HTTPS directory URL ending in `/`. The build embeds the
+feed URL, `stable` channel, and expected Developer ID Team ID in signed
+application metadata. Missing or invalid feed metadata fails closed. Runtime
+updates additionally require that the installed application's Developer ID Team
+matches the signed metadata; there is no hard-coded download host or GitHub
+`releases/latest` fallback.
+
+Before stable Desktop updates can operate, a reviewed credentialed workflow must
+run `bun run --cwd apps/desktop package:mac:release`, verify the app and bundled
+CLI signatures, stapler validation, Gatekeeper assessment, DMG, ZIP,
+`latest-mac.yml`, version, Team ID, and checksum, then atomically publish the
+immutable ZIP and matching `latest-mac.yml` to that generic feed. This repository
+does not currently contain that workflow or feed infrastructure. Until both are
+owner-controlled and reviewed, stable Desktop publication is blocked. The local
+packaging command never publishes and no production publication is part of this
+runbook change.
 
 ## Pre-Merge Checklist
 

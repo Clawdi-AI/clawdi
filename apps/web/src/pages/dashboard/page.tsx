@@ -24,6 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
+import { useDesktopBridge } from "@/lib/desktop";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -359,12 +360,20 @@ function ActivityGraphSkeleton() {
 /** Slim replacement for the embedded wizard duplicate (taste audit round
  * 2): one line + one button that opens the same Add-agent dialog. */
 function ConnectAnotherCard() {
+	const desktopBridge = useDesktopBridge();
 	const [open, setOpen] = useState(false);
+	const connectAgent = () => {
+		if (desktopBridge) {
+			void desktopBridge.openConnectWizard().catch(() => setOpen(true));
+			return;
+		}
+		setOpen(true);
+	};
 	return (
 		<Card className="py-4">
 			<CardContent className="flex items-center justify-between gap-3 px-4">
 				<div className="min-w-0 text-sm font-medium">Connect another machine</div>
-				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+				<Button size="sm" variant="outline" onClick={connectAgent}>
 					Add agent
 				</Button>
 			</CardContent>

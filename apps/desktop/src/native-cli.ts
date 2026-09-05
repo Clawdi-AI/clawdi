@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopConnectResult,
 	DesktopDetectedAgent,
+	DesktopReconnectCandidate,
 } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import { app } from "electron";
@@ -25,16 +27,19 @@ interface NativeIdentity {
 	target: string;
 }
 
-type AuthenticationStatus = "authenticated" | "cancelled";
+type AuthenticationResult =
+	| { status: "authenticated"; user: { id: string; email?: string } }
+	| { status: "cancelled" };
 
 interface AuthenticationOperation {
 	controller: AbortController;
-	completion: Promise<AuthenticationStatus>;
+	completion: Promise<AuthenticationResult>;
 }
 
 export class DesktopCliService {
 	private authentication: AuthenticationOperation | null = null;
 	private cliPath: string | null = null;
+	private nativeIdentity: Promise<NativeIdentity> | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = this.cli();
@@ -51,13 +56,17 @@ export class DesktopCliService {
 		};
 	}
 
-	async authenticate(): Promise<AuthenticationStatus> {
+	async getAuthState(): Promise<DesktopBootstrapState["auth"]> {
+		return this.authState(this.cli());
+	}
+
+	async authenticate(force = false): Promise<AuthenticationResult> {
 		if (this.authentication) return this.authentication.completion;
 
 		const controller = new AbortController();
 		const operation: AuthenticationOperation = {
 			controller,
-			completion: this.performAuthentication(controller.signal),
+			completion: this.performAuthentication(controller.signal, force),
 		};
 		this.authentication = operation;
 		try {
@@ -72,7 +81,7 @@ export class DesktopCliService {
 		if (!operation) return "not-active";
 		operation.controller.abort();
 		try {
-			return (await operation.completion) === "cancelled" ? "cancelled" : "not-active";
+			return (await operation.completion).status === "cancelled" ? "cancelled" : "not-active";
 		} catch {
 			return "not-active";
 		}
@@ -89,6 +98,12 @@ export class DesktopCliService {
 		return ticket;
 	}
 
+	async logout(): Promise<void> {
+		const cli = this.cli();
+		await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
+		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+	}
+
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
 		const cli = this.cli();
 		const result = await this.runJson(cli, ["agent", "detect", "--json"]);
@@ -97,25 +112,58 @@ export class DesktopCliService {
 		return result.agents.map(parseDetectedAgent);
 	}
 
-	async connectAgents(agentTypes: readonly DesktopAgentType[]): Promise<DesktopConnectResult> {
-		const requested = [...new Set(agentTypes)];
-		if (requested.length === 0 || requested.some((type) => !isDesktopAgentType(type))) {
+	async listReconnectableAgents(): Promise<DesktopReconnectCandidate[]> {
+		const result = await this.runJson(this.cli(), ["agent", "reconnect", "--desktop-list"]);
+		if (
+			result.schemaVersion !== "clawdi.agentReconnectCandidates.v1" ||
+			!Array.isArray(result.agents)
+		) {
+			throw new Error("Clawdi returned invalid reconnect data.");
+		}
+		return result.agents.map(parseReconnectCandidate);
+	}
+
+	async connectAgents(
+		connections: readonly DesktopAgentConnection[],
+	): Promise<DesktopConnectResult> {
+		const requested = [...connections];
+		const requestedTypes = new Set(requested.map((connection) => connection.type));
+		if (
+			requested.length === 0 ||
+			requestedTypes.size !== requested.length ||
+			requested.some((connection) => !isDesktopAgentType(connection.type))
+		) {
 			throw new Error("Choose at least one supported Agent.");
 		}
 
 		const cli = this.cli();
 		const detected = await this.detectAgents();
 		const available = new Map(detected.map((agent) => [agent.type, agent]));
-		for (const type of requested) {
+		for (const { type, reconnectAgentId } of requested) {
 			const agent = available.get(type);
 			if (!agent?.detected && !agent?.registered) {
 				throw new Error(`${displayNameFor(type)} is no longer available on this Mac.`);
 			}
+			if (reconnectAgentId && agent.registered) {
+				throw new Error(`${displayNameFor(type)} is already connected on this Mac.`);
+			}
 		}
 
 		const connected: DesktopAgentType[] = [];
-		for (const type of requested) {
-			if (!available.get(type)?.registered) {
+		for (const { type, reconnectAgentId, confirmTakeover } of requested) {
+			if (reconnectAgentId) {
+				const args = [
+					"agent",
+					"reconnect",
+					reconnectAgentId,
+					"--agent",
+					type,
+					"--yes",
+					"--no-daemon",
+				];
+				if (confirmTakeover) args.push("--confirm-takeover");
+				await this.run(cli, args, { timeoutMs: 3 * 60_000 });
+			} else if (!available.get(type)?.registered) {
 				await this.run(cli, ["setup", "--agent", type, "--yes", "--no-daemon"], {
 					timeoutMs: 3 * 60_000,
 				});
@@ -130,18 +178,38 @@ export class DesktopCliService {
 		await this.run(this.cli(), ["daemon", "restart"]);
 	}
 
-	private async performAuthentication(signal: AbortSignal): Promise<AuthenticationStatus> {
+	async stopDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "stop"], { timeoutMs: 60_000 });
+	}
+
+	async uninstallDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
+	}
+
+	private async performAuthentication(
+		signal: AbortSignal,
+		force: boolean,
+	): Promise<AuthenticationResult> {
 		try {
-			const result = await this.runJson(this.cli(), ["auth", "login", "--desktop"], {
+			const args = ["auth", "login", "--desktop"];
+			if (force) args.push("--force");
+			const result = await this.runJson(this.cli(), args, {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
 			});
-			if (readString(result.status) !== "authenticated") {
+			const user = isRecord(result.user) ? result.user : null;
+			const id = user ? readString(user.id) : null;
+			const email = user ? readString(user.email) : null;
+			if (
+				result.schemaVersion !== "clawdi.desktopLogin.v1" ||
+				readString(result.status) !== "authenticated" ||
+				!id
+			) {
 				throw new Error("Clawdi returned an invalid sign-in result.");
 			}
-			return "authenticated";
+			return { status: "authenticated", user: { id, ...(email ? { email } : {}) } };
 		} catch (error) {
-			if (error instanceof CommandCancelledError) return "cancelled";
+			if (error instanceof CommandCancelledError) return { status: "cancelled" };
 			throw error;
 		}
 	}
@@ -169,6 +237,18 @@ export class DesktopCliService {
 	}
 
 	private async identity(cli: string): Promise<NativeIdentity> {
+		if (this.nativeIdentity) return this.nativeIdentity;
+		const loading = this.readIdentity(cli);
+		this.nativeIdentity = loading;
+		try {
+			return await loading;
+		} catch (error) {
+			if (this.nativeIdentity === loading) this.nativeIdentity = null;
+			throw error;
+		}
+	}
+
+	private async readIdentity(cli: string): Promise<NativeIdentity> {
 		let result: CommandResult;
 		try {
 			result = await this.run(cli, ["update", "--native-identity"], { timeoutMs: 20_000 });
@@ -274,6 +354,36 @@ function parseDetectedAgent(value: unknown): DesktopDetectedAgent {
 		registered: value.registered === true,
 		version: readString(value.version),
 		inspection,
+	};
+}
+
+function parseReconnectCandidate(value: unknown): DesktopReconnectCandidate {
+	if (!isRecord(value) || !isDesktopAgentType(value.type)) {
+		throw new Error("Clawdi returned an unsupported reconnect candidate.");
+	}
+	const id = readString(value.id);
+	const displayName = readString(value.displayName);
+	const name = readString(value.name);
+	const machineName = readString(value.machineName);
+	const lastSyncAt = value.lastSyncAt === null ? null : readString(value.lastSyncAt);
+	if (
+		!id ||
+		!displayName ||
+		!name ||
+		!machineName ||
+		typeof value.isThisMachine !== "boolean" ||
+		(value.lastSyncAt !== null && !lastSyncAt)
+	) {
+		throw new Error("Clawdi returned invalid reconnect data.");
+	}
+	return {
+		id,
+		type: value.type,
+		displayName,
+		name,
+		machineName,
+		isThisMachine: value.isThisMachine,
+		lastSyncAt,
 	};
 }
 

@@ -13,10 +13,13 @@
 		"test": "../../scripts/test.sh desktop",
 		"test:internal": "bun test src",
 		"prepare:native": "bun run scripts/prepare-native.ts",
-		"package:mac": "bun run build && CLAWDI_NATIVE_TARGET=darwin-arm64 bun run prepare:native && electron-builder --mac dmg --arm64"
+		"package:mac": "bun run build && CLAWDI_NATIVE_TARGET=darwin-arm64 bun run prepare:native && electron-builder --mac dmg --arm64 --publish never",
+		"package:mac:release": "bun run scripts/package-release.ts"
 	},
 	"dependencies": {
-		"@clawdi/shared": "workspace:*"
+		"@clawdi/shared": "workspace:*",
+		"@lobehub/icons": "5.16.0",
+		"electron-updater": "6.8.9"
 	},
 	"devDependencies": {
 		"@electron/fuses": "^2.1.3",
@@ -30,13 +33,15 @@
 		"lucide-react": "catalog:",
 		"react": "catalog:",
 		"react-dom": "catalog:",
-		"typescript": "catalog:"
+		"typescript": "catalog:",
+		"yaml": "^2.9.0"
 	},
 	"build": {
 		"appId": "ai.clawdi.desktop",
 		"productName": "Clawdi",
 		"asar": true,
 		"directories": {
+			"buildResources": "build",
 			"output": "release"
 		},
 		"afterPack": "apps/desktop/scripts/after-pack.mjs",
@@ -45,7 +50,7 @@
 			"package.json"
 		],
 		"extraMetadata": {
-			"clawdiWebUrl": "https://cloud.clawdi.ai"
+			"clawdiUpdateChannel": "disabled"
 		},
 		"extraResources": [
 			{
@@ -60,9 +65,16 @@
 		"mac": {
 			"category": "public.app-category.developer-tools",
 			"icon": "../web/public/clawdi-logo-transparent.png",
+			"hardenedRuntime": true,
 			"target": [
 				{
 					"target": "dmg",
+					"arch": [
+						"arm64"
+					]
+				},
+				{
+					"target": "zip",
 					"arch": [
 						"arm64"
 					]

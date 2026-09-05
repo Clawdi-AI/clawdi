@@ -23,7 +23,10 @@ const HostedNotificationCenter = IS_HOSTED_BUILD
  */
 export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	return (
-		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
+		<header
+			data-clawdi-window-drag-region
+			className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background"
+		>
 			<div className="flex w-full min-w-0 items-center gap-1 px-4 lg:gap-2 lg:px-6">
 				<SidebarTrigger className="-ml-1 md:hidden" />
 				<Separator

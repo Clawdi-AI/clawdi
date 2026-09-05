@@ -22,6 +22,22 @@ export interface DesktopDetectedAgent {
 	inspection: "complete" | "failed";
 }
 
+export interface DesktopReconnectCandidate {
+	id: string;
+	type: DesktopAgentType;
+	displayName: string;
+	name: string;
+	machineName: string;
+	isThisMachine: boolean;
+	lastSyncAt: string | null;
+}
+
+export interface DesktopAgentConnection {
+	type: DesktopAgentType;
+	reconnectAgentId?: string;
+	confirmTakeover?: boolean;
+}
+
 export interface DesktopBootstrapState {
 	platform: "darwin" | "linux" | "win32";
 	cli: {
@@ -55,6 +71,10 @@ export interface DesktopAuthenticationCancellationResult {
 	status: "cancelled" | "not-active";
 }
 
+export interface DesktopShellAuthenticationResult {
+	status: "authenticated" | "cancelled";
+}
+
 export interface DesktopMoveToApplicationsResult {
 	status: "cancelled" | "not-required" | "relaunching";
 }
@@ -65,12 +85,18 @@ export interface ClawdiDesktopConnectBridge {
 	authenticate(): Promise<DesktopAuthenticationResult>;
 	cancelAuthentication(): Promise<DesktopAuthenticationCancellationResult>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
-	connectAgents(agentTypes: DesktopAgentType[]): Promise<DesktopConnectResult>;
+	listReconnectableAgents(): Promise<DesktopReconnectCandidate[]>;
+	connectAgents(connections: DesktopAgentConnection[]): Promise<DesktopConnectResult>;
 	moveToApplicationsFolder(): Promise<DesktopMoveToApplicationsResult>;
 	openDashboard(): Promise<void>;
 }
 
 export interface ClawdiDesktopShellBridge {
+	signIn(): Promise<DesktopShellAuthenticationResult>;
+	signOut(): Promise<void>;
+	openFilesWindow(url: string): Promise<boolean>;
+	openRuntimeWindow(url: string): Promise<boolean>;
+	openTerminalWindow(url: string): Promise<boolean>;
 	openConnectWizard(): Promise<void>;
 	retryDashboard(): Promise<void>;
 }

@@ -62,5 +62,19 @@ export function useAuthActions() {
 			},
 		};
 	}
-	return useClerk();
+	const clerk = useClerk();
+	const desktopBridge = typeof window === "undefined" ? undefined : window.clawdiDesktop;
+	if (desktopBridge) {
+		return {
+			signOut: async () => {
+				await desktopBridge.signOut();
+			},
+		};
+	}
+	return {
+		...clerk,
+		signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+			await clerk.signOut({ redirectUrl });
+		},
+	};
 }

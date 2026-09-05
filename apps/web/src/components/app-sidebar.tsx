@@ -127,6 +127,7 @@ import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 type AgentChromeKind = AgentOwnershipKind;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const IS_DESKTOP_BUILD = import.meta.env.VITE_CLAWDI_DESKTOP_BUILD === "true";
 const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
 	? lazy(() =>
 			import("@/hosted/use-unified-agent-list").then((m) => ({
@@ -1084,7 +1085,13 @@ function FocusRailContent({
 
 	return (
 		<>
-			<SidebarHeader className="h-(--clawdi-rail-width) items-center justify-center p-0">
+			<SidebarHeader
+				data-clawdi-window-drag-region
+				className={cn(
+					"h-(--clawdi-rail-width) items-center justify-center p-0",
+					IS_DESKTOP_BUILD && "h-[calc(var(--clawdi-rail-width)+2rem)] pt-8",
+				)}
+			>
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<a

@@ -45,6 +45,10 @@ export function NewAgentButton({
 
 	function handleClick() {
 		if (checkingDeployAccess) return;
+		if (desktopBridge && !canDeployOnClawdi) {
+			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
+			return;
+		}
 		if (canDeployOnClawdi || deployAccessError) {
 			setChooserOpen(true);
 			return;

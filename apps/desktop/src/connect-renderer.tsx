@@ -1,10 +1,12 @@
 import type {
 	ClawdiDesktopConnectBridge,
 	ClawdiDesktopShellBridge,
+	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
 	DesktopDetectedAgent,
 	DesktopInstallationState,
+	DesktopReconnectCandidate,
 } from "@clawdi/shared/desktop";
 import {
 	ArrowRight,
@@ -12,14 +14,16 @@ import {
 	CircleCheckBig,
 	FolderInput,
 	LoaderCircle,
+	LogIn,
 	RefreshCw,
 	ShieldCheck,
-	TerminalSquare,
+	Sparkles,
 	TriangleAlert,
 	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { AgentBrandIcon } from "./agent-brand-icon";
 import "./connect-renderer.css";
 
 declare global {
@@ -31,7 +35,8 @@ declare global {
 
 type Stage =
 	| "loading"
-	| "authenticate"
+	| "install"
+	| "welcome"
 	| "authenticating"
 	| "select"
 	| "moving"
@@ -46,7 +51,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		requiresMove: false,
 	});
 	const [agents, setAgents] = useState<DesktopDetectedAgent[]>([]);
+	const [reconnectCandidates, setReconnectCandidates] = useState<DesktopReconnectCandidate[]>([]);
 	const [selected, setSelected] = useState<Set<DesktopAgentType>>(new Set());
+	const [connectionModes, setConnectionModes] = useState<Map<DesktopAgentType, string>>(new Map());
 	const [failure, setFailure] = useState<string | null>(null);
 	const [cancellingAuth, setCancellingAuth] = useState(false);
 
@@ -55,44 +62,65 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		setStage("error");
 	}, []);
 
+	const applyAgentChoices = useCallback(
+		(detected: DesktopDetectedAgent[], candidates: DesktopReconnectCandidate[]) => {
+			setAgents(detected);
+			setReconnectCandidates(candidates);
+			const available = detected.filter((agent) => agent.detected && !agent.registered);
+			setSelected(new Set(available.map((agent) => agent.type)));
+			setConnectionModes(
+				new Map(
+					available.flatMap((agent) =>
+						candidates.some((candidate) => candidate.type === agent.type)
+							? []
+							: [[agent.type, "new"]],
+					),
+				),
+			);
+		},
+		[],
+	);
+
 	const loadAgents = useCallback(async () => {
 		setStage("loading");
 		setFailure(null);
 		try {
-			const [detected, location] = await Promise.all([
+			const [detected, candidates] = await Promise.all([
 				bridge.detectAgents(),
-				bridge.getInstallationState(),
+				bridge.listReconnectableAgents(),
 			]);
-			setAgents(detected);
-			setInstallation(location);
-			setSelected(
-				new Set(
-					detected
-						.filter((agent) => agent.detected && !agent.registered)
-						.map((agent) => agent.type),
-				),
-			);
+			applyAgentChoices(detected, candidates);
 			setStage("select");
 		} catch (error) {
 			fail(error);
 		}
-	}, [bridge, fail]);
+	}, [applyAgentChoices, bridge, fail]);
 
 	const load = useCallback(async () => {
 		setStage("loading");
 		setFailure(null);
 		try {
+			const location = await bridge.getInstallationState();
+			setInstallation(location);
+			if (location.requiresMove) {
+				setStage("install");
+				return;
+			}
+			const detected = await bridge.detectAgents();
+			setAgents(detected);
 			const state = await bridge.getBootstrapState();
 			setBootstrap(state);
 			if (!state.auth.authenticated) {
-				setStage("authenticate");
+				setStage("welcome");
 				return;
 			}
-			await loadAgents();
+			const candidates = await bridge.listReconnectableAgents();
+			applyAgentChoices(detected, candidates);
+			setStage("select");
 		} catch (error) {
 			fail(error);
 		}
-	}, [bridge, fail, loadAgents]);
+	}, [applyAgentChoices, bridge, fail]);
 
 	useEffect(() => {
 		void load();
@@ -104,7 +132,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			const result = await bridge.authenticate();
 			if (result.status === "cancelled") {
-				setStage("authenticate");
+				setStage("welcome");
 				return;
 			}
 			setBootstrap(result.state);
@@ -126,11 +154,27 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	}
 
 	async function connect() {
-		const requested =
+		const requestedTypes =
 			selected.size > 0
 				? [...selected]
 				: agents.filter((agent) => agent.registered).map((agent) => agent.type);
-		if (requested.length === 0) return;
+		if (requestedTypes.length === 0) return;
+		const requested: DesktopAgentConnection[] = requestedTypes.map((type) => {
+			const mode = connectionModes.get(type);
+			if (selected.has(type) && !mode) {
+				throw new Error("Choose whether to reconnect or create a new Agent.");
+			}
+			const candidate = reconnectCandidates.find((item) => item.id === mode);
+			return {
+				type,
+				...(candidate
+					? {
+							reconnectAgentId: candidate.id,
+							...(isRecentOtherMachine(candidate) ? { confirmTakeover: true } : {}),
+						}
+					: {}),
+			};
+		});
 		setStage("connecting");
 		setFailure(null);
 		try {
@@ -147,12 +191,12 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		try {
 			const result = await bridge.moveToApplicationsFolder();
 			if (result.status === "cancelled") {
-				setStage("select");
+				setStage("install");
 				return;
 			}
 			if (result.status === "not-required") {
 				setInstallation({ requiresMove: false });
-				await connect();
+				await load();
 			}
 		} catch (error) {
 			fail(error);
@@ -171,11 +215,11 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		<main className="app-shell">
 			<header className="titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
 					<h1>Connect Agent</h1>
-					<p>Clawdi Desktop</p>
 				</div>
 			</header>
 
@@ -184,26 +228,34 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 					<Centered icon={<LoaderCircle className="spin" />} title="Checking this Mac" />
 				) : null}
 
-				{stage === "authenticate" ? (
+				{stage === "install" ? (
 					<div className="stack">
-						<div className="notice">
+						<div className="notice install-notice">
 							<span className="icon-tile">
-								<ShieldCheck />
+								<FolderInput />
 							</span>
 							<div>
-								<h2>Sign in to Clawdi</h2>
+								<h2>Move Clawdi to Applications</h2>
 								<p>
-									Clawdi opens your default browser for secure authorization, then returns here
-									automatically.
+									Clawdi must run from Applications so macOS can safely start its bundled runtime
+									and background sync.
 								</p>
 							</div>
 						</div>
 						<footer className="actions">
-							<button className="button primary" type="button" onClick={() => void authenticate()}>
-								Continue in browser <ArrowRight />
+							<button
+								className="button primary"
+								type="button"
+								onClick={() => void moveToApplications()}
+							>
+								Move to Applications <ArrowRight />
 							</button>
 						</footer>
 					</div>
+				) : null}
+
+				{stage === "welcome" ? (
+					<Welcome agents={agents} onContinue={() => void authenticate()} />
 				) : null}
 
 				{stage === "authenticating" ? (
@@ -230,7 +282,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 				{stage === "select" ? (
 					<AgentSelection
 						agents={agents}
+						reconnectCandidates={reconnectCandidates}
 						selected={selected}
+						connectionModes={connectionModes}
 						account={bootstrap?.auth.user?.email}
 						daemonReady={bootstrap?.daemon.running === true}
 						requiresMove={installation.requiresMove}
@@ -243,6 +297,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 							});
 						}}
 						onRefresh={() => void loadAgents()}
+						onConnectionModeChange={(type, mode) => {
+							setConnectionModes((current) => new Map(current).set(type, mode));
+						}}
 						onConnect={() => void connect()}
 						onMoveToApplications={() => void moveToApplications()}
 						onOpenDashboard={() => void openDashboard()}
@@ -302,25 +359,86 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	);
 }
 
+function isRecentOtherMachine(candidate: DesktopReconnectCandidate): boolean {
+	if (candidate.isThisMachine || !candidate.lastSyncAt) return false;
+	const timestamp = Date.parse(candidate.lastSyncAt);
+	return Number.isFinite(timestamp) && Date.now() - timestamp < 5 * 60_000;
+}
+
+function Welcome({ agents, onContinue }: { agents: DesktopDetectedAgent[]; onContinue(): void }) {
+	const detected = agents.filter((agent) => agent.detected);
+	return (
+		<div className="stack welcome-step">
+			<div className="welcome-hero">
+				<span className="status-icon welcome-icon">
+					<Sparkles />
+				</span>
+				<h2>Welcome to Clawdi</h2>
+				<p>
+					{detected.length > 0
+						? `We found ${detected.length} supported Agent${detected.length === 1 ? "" : "s"} on this Mac. Sign in to connect or recover them.`
+						: "Sign in to Clawdi, then connect a supported Agent whenever it is available on this Mac."}
+				</p>
+			</div>
+			{detected.length > 0 ? (
+				<ul className="welcome-agents" aria-label="Agents found on this Mac">
+					{detected.map((agent) => (
+						<li className="welcome-agent" key={agent.type}>
+							<AgentBrandIcon type={agent.type} />
+							<span>
+								<strong>{agent.displayName}</strong>
+								<small>{agent.version ?? "Local data found"}</small>
+							</span>
+						</li>
+					))}
+				</ul>
+			) : null}
+			<div className="notice welcome-security">
+				<span className="icon-tile">
+					<ShieldCheck />
+				</span>
+				<div>
+					<h2>One secure sign-in</h2>
+					<p>
+						Clawdi opens your browser for authorization. The bundled CLI keeps the local credential
+						used by both sync and this app.
+					</p>
+				</div>
+			</div>
+			<footer className="actions">
+				<button className="button primary" type="button" onClick={onContinue}>
+					Sign in to continue <ArrowRight />
+				</button>
+			</footer>
+		</div>
+	);
+}
+
 function AgentSelection({
 	agents,
+	reconnectCandidates,
 	selected,
+	connectionModes,
 	account,
 	daemonReady,
 	requiresMove,
 	onToggle,
 	onRefresh,
+	onConnectionModeChange,
 	onConnect,
 	onMoveToApplications,
 	onOpenDashboard,
 }: {
 	agents: DesktopDetectedAgent[];
+	reconnectCandidates: DesktopReconnectCandidate[];
 	selected: ReadonlySet<DesktopAgentType>;
+	connectionModes: ReadonlyMap<DesktopAgentType, string>;
 	account?: string;
 	daemonReady: boolean;
 	requiresMove: boolean;
 	onToggle(type: DesktopAgentType, checked: boolean): void;
 	onRefresh(): void;
+	onConnectionModeChange(type: DesktopAgentType, mode: string): void;
 	onConnect(): void;
 	onMoveToApplications(): void;
 	onOpenDashboard(): void;
@@ -331,6 +449,13 @@ function AgentSelection({
 	);
 	const canRepairDaemon = !daemonReady && agents.some((agent) => agent.registered);
 	const shouldConnect = selected.size > 0 || canRepairDaemon;
+	const connectionChoiceRequired = [...selected].some((type) => !connectionModes.has(type));
+	const reconnectSelections = [...selected].flatMap((type) => {
+		const candidateId = connectionModes.get(type);
+		if (!candidateId || candidateId === "new") return [];
+		const candidate = reconnectCandidates.find((item) => item.id === candidateId);
+		return candidate ? [candidate] : [];
+	});
 	return (
 		<div className="stack">
 			<div className="section-heading">
@@ -338,7 +463,13 @@ function AgentSelection({
 					<h2>{found > 0 ? `Found ${found} Agent${found === 1 ? "" : "s"}` : "No Agents found"}</h2>
 					<p>{account ? `Connecting to ${account}` : "Select the Agents to connect."}</p>
 				</div>
-				<button className="icon-button" type="button" onClick={onRefresh} title="Scan again">
+				<button
+					aria-label="Scan again"
+					className="icon-button"
+					type="button"
+					onClick={onRefresh}
+					title="Scan again"
+				>
 					<RefreshCw />
 				</button>
 			</div>
@@ -346,34 +477,77 @@ function AgentSelection({
 			<div className="agent-list">
 				{agents.map((agent) => {
 					const available = agent.detected && !agent.registered;
+					const candidates = reconnectCandidates.filter(
+						(candidate) => candidate.type === agent.type,
+					);
 					return (
-						<label className={`agent-row${available ? "" : " unavailable"}`} key={agent.type}>
+						<div className={`agent-row${available ? "" : " unavailable"}`} key={agent.type}>
 							<input
 								type="checkbox"
+								aria-label={`Connect ${agent.displayName}`}
 								checked={agent.registered || selected.has(agent.type)}
 								disabled={!available}
 								onChange={(event) => onToggle(agent.type, event.currentTarget.checked)}
 							/>
-							<span className="agent-icon" aria-hidden="true">
-								<TerminalSquare />
-							</span>
+							<AgentBrandIcon type={agent.type} />
 							<span className="agent-copy">
 								<strong>{agent.displayName}</strong>
 								<small>
 									{agent.registered
 										? "Already connected"
-										: agent.detected
-											? (agent.version ?? "Local data found")
-											: agent.inspection === "failed"
-												? "Couldn't inspect"
-												: "Not installed"}
+										: candidates.length > 0
+											? "Previous connection found"
+											: agent.detected
+												? (agent.version ?? "Local data found")
+												: agent.inspection === "failed"
+													? "Couldn't inspect"
+													: "Not installed"}
 								</small>
+								{available && selected.has(agent.type) && candidates.length > 0 ? (
+									<select
+										aria-label={`Connection for ${agent.displayName}`}
+										value={connectionModes.get(agent.type) ?? ""}
+										onChange={(event) =>
+											onConnectionModeChange(agent.type, event.currentTarget.value)
+										}
+									>
+										<option value="" disabled>
+											Choose how to connect…
+										</option>
+										<option value="new">Connect as a new Agent</option>
+										{candidates.map((candidate) => (
+											<option value={candidate.id} key={candidate.id}>
+												Reconnect to {candidate.name} · {candidate.machineName}
+											</option>
+										))}
+									</select>
+								) : null}
 							</span>
 							{agent.registered ? <Check className="row-check" /> : null}
-						</label>
+						</div>
 					);
 				})}
 			</div>
+
+			{reconnectSelections.length > 0 ? (
+				<div className="notice reconnect-notice">
+					<span className="icon-tile">
+						<TriangleAlert />
+					</span>
+					<div>
+						<h2>Reconnect an existing Agent</h2>
+						<p>
+							{reconnectSelections
+								.map(
+									(candidate) =>
+										`${candidate.name} will replace its binding to ${candidate.machineName}`,
+								)
+								.join(". ")}
+							. Stop background sync on the previous Mac before continuing.
+						</p>
+					</div>
+				</div>
+			) : null}
 
 			{requiresMove && shouldConnect ? (
 				<div className="notice install-notice">
@@ -399,6 +573,7 @@ function AgentSelection({
 				<button
 					className="button primary"
 					type="button"
+					disabled={connectionChoiceRequired}
 					onClick={
 						requiresMove && shouldConnect
 							? onMoveToApplications
@@ -407,13 +582,19 @@ function AgentSelection({
 								: onOpenDashboard
 					}
 				>
-					{requiresMove && shouldConnect
-						? "Move to Applications"
-						: selected.size > 0
-							? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
-							: canRepairDaemon
-								? "Start background sync"
-								: "Open dashboard"}
+					{connectionChoiceRequired
+						? "Choose how to connect"
+						: requiresMove && shouldConnect
+							? "Move to Applications"
+							: reconnectSelections.length > 0
+								? reconnectSelections.length === selected.size
+									? `Reconnect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+									: `Connect ${selected.size} Agents · ${reconnectSelections.length} reconnect`
+								: selected.size > 0
+									? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
+									: canRepairDaemon
+										? "Start background sync"
+										: "Open dashboard"}
 					<ArrowRight />
 				</button>
 			</footer>
@@ -422,14 +603,14 @@ function AgentSelection({
 }
 
 function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
-	const [pending, setPending] = useState<"retry" | "connect" | null>(null);
+	const [pending, setPending] = useState<"retry" | "reauth" | null>(null);
 	const [failed, setFailed] = useState(false);
 
-	async function run(action: "retry" | "connect") {
+	async function run(action: "retry" | "reauth") {
 		setPending(action);
 		setFailed(false);
 		try {
-			await (action === "retry" ? bridge.retryDashboard() : bridge.openConnectWizard());
+			await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
 		} catch {
 			setFailed(true);
 		} finally {
@@ -441,11 +622,11 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 		<main className="app-shell">
 			<header className="titlebar dashboard-titlebar">
 				<div className="brand-mark" aria-hidden="true">
-					<TerminalSquare />
+					<img src="./clawdi-logo.png" alt="" />
 				</div>
-				<div>
-					<h1>Clawdi</h1>
-					<p>Desktop</p>
+				<div className="titlebar-copy">
+					<p>Clawdi</p>
+					<h1>Dashboard</h1>
 				</div>
 			</header>
 			<section className="content failure-content">
@@ -464,9 +645,9 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 							className="button secondary"
 							type="button"
 							disabled={pending !== null}
-							onClick={() => void run("connect")}
+							onClick={() => void run("reauth")}
 						>
-							<TerminalSquare /> Connect Agent
+							<LogIn /> Sign in again
 						</button>
 						<button
 							className="button primary"

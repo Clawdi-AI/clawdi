@@ -4,6 +4,7 @@ import { useAuth, useSignIn } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { DesktopWindowDragRegion } from "@/components/desktop-window-drag-region";
 import { Button } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
 import { routeHeadTitle } from "@/lib/document-title";
@@ -19,10 +20,18 @@ function DesktopAuthPage() {
 	const desktopBridge = useDesktopBridge();
 	const attempted = useRef(false);
 	const [failed, setFailed] = useState(false);
+	const [recovering, setRecovering] = useState<"retry" | "sign-in" | null>(null);
 
-	function recover() {
+	async function recover(action: "retry" | "sign-in") {
 		if (desktopBridge) {
-			void desktopBridge.openConnectWizard().catch(() => setFailed(true));
+			setRecovering(action);
+			try {
+				await (action === "retry" ? desktopBridge.retryDashboard() : desktopBridge.signIn());
+			} catch {
+				setFailed(true);
+			} finally {
+				setRecovering(null);
+			}
 			return;
 		}
 		window.location.replace("/sign-in");
@@ -63,11 +72,27 @@ function DesktopAuthPage() {
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
+			{desktopBridge ? <DesktopWindowDragRegion /> : null}
 			<div className="flex max-w-sm flex-col items-center gap-4 text-center">
 				{failed ? (
 					<>
 						<h1 className="text-lg font-semibold">Desktop sign-in expired</h1>
-						<Button onClick={recover}>{desktopBridge ? "Return to Clawdi" : "Sign in"}</Button>
+						{desktopBridge ? (
+							<div className="flex items-center gap-2">
+								<Button
+									disabled={recovering !== null}
+									onClick={() => void recover("sign-in")}
+									variant="outline"
+								>
+									Sign in again
+								</Button>
+								<Button disabled={recovering !== null} onClick={() => void recover("retry")}>
+									{recovering === "retry" ? "Retrying…" : "Try again"}
+								</Button>
+							</div>
+						) : (
+							<Button onClick={() => void recover("sign-in")}>Sign in</Button>
+						)}
 					</>
 				) : (
 					<>

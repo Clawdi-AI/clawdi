@@ -63,6 +63,7 @@
 		"zod": "catalog:"
 	},
 	"devDependencies": {
+		"@clerk/clerk-js": "6.31.0",
 		"@x402/core": "2.23.0",
 		"@playwright/test": "^1.62.1",
 		"@tailwindcss/postcss": "catalog:",

@@ -1,0 +1,101 @@
+name: Desktop Signed Preview
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-signed-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-arm64:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'desktop-signing' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-bun-ci
+
+      - name: Verify Desktop
+        run: |
+          bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test:internal
+          bun run --cwd apps/web typecheck
+
+      - name: Build bundled application
+        run: |
+          bun run --cwd apps/desktop build
+          CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
+
+      - name: Sign and notarize preview
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            test -n "${!name}" || { echo "Missing secret: $name"; exit 1; }
+          done
+          umask 077
+          export APPLE_API_KEY="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          trap 'rm -f "$APPLE_API_KEY"' EXIT
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY"
+          unset APPLE_API_KEY_CONTENT
+          xcrun notarytool history --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" > /dev/null
+          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
+            --projectDir apps/desktop --mac dmg zip --arm64 --publish never \
+            --config.forceCodeSigning=true --config.mac.notarize=true --config.dmg.sign=true \
+            --config.extraMetadata.clawdiUpdateChannel=disabled
+          app="apps/desktop/release/mac-arm64/Clawdi.app"
+          cli="$app/Contents/Resources/native/clawdi"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$cli"
+          for target in "$app" "$cli"; do
+            signature=$(codesign -dv --verbose=4 "$target" 2>&1)
+            printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
+            printf '%s\n' "$signature" | grep -Eq '^TeamIdentifier=[A-Z0-9]{10}$'
+          done
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          mkdir -p "$RUNNER_TEMP/signed-preview-home" "$RUNNER_TEMP/signed-preview-state"
+          HOME="$RUNNER_TEMP/signed-preview-home" CLAWDI_HOME="$RUNNER_TEMP/signed-preview-state" \
+            "$cli" update --native-identity
+          dmg=(apps/desktop/release/Clawdi-*.dmg)
+          test "${#dmg[@]}" -eq 1
+          codesign --verify --strict --verbose=2 "${dmg[0]}"
+          xcrun notarytool submit "${dmg[0]}" --wait --timeout 30m \
+            --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
+          xcrun stapler staple "${dmg[0]}"
+          xcrun stapler validate "${dmg[0]}"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg[0]}"
+          node apps/desktop/scripts/smoke-packaged.mjs \
+            "$PWD/$app/Contents/MacOS/Clawdi" "$RUNNER_TEMP/signed-preview-smoke" install
+          cd apps/desktop/release
+          shasum -a 256 Clawdi-*.dmg Clawdi-*.zip > SHA256SUMS
+
+      - name: Upload signed and notarized preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: clawdi-macos-arm64-signed-preview
+          path: |
+            apps/desktop/release/Clawdi-*.dmg
+            apps/desktop/release/Clawdi-*.zip
+            apps/desktop/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

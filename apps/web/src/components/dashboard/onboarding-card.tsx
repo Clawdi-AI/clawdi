@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useDesktopBridge } from "@/lib/desktop";
 
 type OnboardingCardProps = {
 	variant?: "first-agent" | "additional-agent";
@@ -23,6 +24,7 @@ export function OnboardingCard({
 	variant = "first-agent",
 	canDeployOnClawdi = false,
 }: OnboardingCardProps) {
+	const desktopBridge = useDesktopBridge();
 	const [connectOpen, setConnectOpen] = useState(false);
 	const isAdditionalAgent = variant === "additional-agent";
 	const title = isAdditionalAgent
@@ -37,6 +39,13 @@ export function OnboardingCard({
 		: canDeployOnClawdi
 			? "Deploy an Agent on Clawdi, or connect one from your machine."
 			: "Connect an Agent on your machine and manage it from this dashboard.";
+	const connectAgent = () => {
+		if (desktopBridge) {
+			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
+			return;
+		}
+		setConnectOpen(true);
+	};
 
 	return (
 		<>
@@ -69,7 +78,7 @@ export function OnboardingCard({
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
 							className="h-auto min-h-10 w-full whitespace-normal py-2"
-							onClick={() => setConnectOpen(true)}
+							onClick={connectAgent}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect an Agent on your machine
 						</Button>

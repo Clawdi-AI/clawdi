@@ -1,6 +1,7 @@
 "use client";
 
 import { LogOut, Monitor, Moon, Sun } from "lucide-react";
+import { toast } from "sonner";
 import { useTheme } from "@/components/theme-provider";
 import { TruncatedText } from "@/components/truncated-text";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -85,7 +86,15 @@ export function UserMenuItems() {
 			</DropdownMenuGroup>
 			<DropdownMenuSeparator />
 			<DropdownMenuGroup>
-				<DropdownMenuItem onClick={() => signOut({ redirectUrl: "/sign-in" })}>
+				<DropdownMenuItem
+					onClick={() =>
+						void signOut({ redirectUrl: "/sign-in" }).catch(() =>
+							toast.error("Couldn't sign out", {
+								description: "Clawdi could not finish signing out safely. Try again.",
+							}),
+						)
+					}
+				>
 					<LogOut />
 					Sign out
 				</DropdownMenuItem>
