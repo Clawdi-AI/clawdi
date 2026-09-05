@@ -3924,7 +3924,7 @@ test("header Wallet adapts long balances across narrow touch layouts", async ({
 	const sidebarTrigger = page.getByRole("button", { name: "Toggle Sidebar" });
 	const separator = header.locator('[data-slot="separator"]');
 	const breadcrumb = header.locator('[data-slot="breadcrumb-list"]');
-	const notificationCenter = page.getByRole("button", { name: "Notification Center" });
+	const notificationCenter = page.getByRole("button", { name: "Notifications", exact: true });
 	await expectNoHorizontalOverflow(header, "Wallet header at 320px");
 	await expect(separator).toHaveCSS("width", "1px");
 	await expectContainedInOwnerAndViewport(
@@ -3977,7 +3977,7 @@ test("header Wallet adapts long balances across narrow touch layouts", async ({
 					header.locator('[data-slot="separator"]'),
 					header.locator('[data-slot="breadcrumb-list"]'),
 					walletControl,
-					touchPage.getByRole("button", { name: "Notification Center" }),
+					touchPage.getByRole("button", { name: "Notifications", exact: true }),
 				],
 				`Wallet header at ${viewport.width}px touch`,
 			);

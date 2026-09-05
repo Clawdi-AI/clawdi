@@ -1132,6 +1132,23 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			options.deleteRequests?.push(p);
 			return fulfillJson(r, { status: "deleted", cvm_deleted: true });
 		}
+		if (/^\/v2\/deployments\/[^/]+\/events$/.test(p) && method === "GET") {
+			return r.fulfill({
+				status: 200,
+				contentType: "text/event-stream",
+				headers: { "Cache-Control": "no-store" },
+				body: ": heartbeat\n\n",
+			});
+		}
+		const workspaceSkillsMatch = p.match(/^\/v2\/deployments\/([^/]+)\/workspace-skills$/);
+		if (workspaceSkillsMatch && method === "GET") {
+			return fulfillJson(r, {
+				deployment_id: decodeURIComponent(workspaceSkillsMatch[1] ?? ""),
+				deployment_resource_version: "rv-workspace-skills",
+				manifest_generation: 1,
+				items: [],
+			});
+		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v2/deployments/".length));
 			const deployment = deployments.find(
