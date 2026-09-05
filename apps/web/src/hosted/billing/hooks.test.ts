@@ -394,6 +394,30 @@ describe("refreshCheckoutReturnQueries", () => {
 });
 
 describe("billingRecoveryRefetchIntervalFor", () => {
+	test("refreshes start advice while replacement funding is pending", () => {
+		const waiting = hostedDeploymentFixture({
+			status: "stopped",
+			startAction: "wait",
+			computeSubscription: {
+				status: "canceled",
+				payment_state: "ok",
+				billing_term_months: 1,
+				currency: "usd",
+				cancel_at_period_end: false,
+				recovery_action: "start_new",
+			},
+		});
+		for (const snapshot of [waiting, { ...waiting, commercial_display: {} }]) {
+			expect(billingRecoveryRefetchIntervalFor([snapshot], waiting.agent_id)).toBe(30_000);
+		}
+		expect(
+			billingRecoveryRefetchIntervalFor(
+				[{ ...waiting, start_action: "subscribe" }],
+				waiting.agent_id,
+			),
+		).toBe(false);
+	});
+
 	test("keeps foreground reads active while commands or payments are pending", () => {
 		for (const fields of [
 			{ actions: { cancel: null, resume: false, command_state: "pending" as const } },

@@ -436,6 +436,7 @@ export function billingRecoveryRefetchIntervalFor(
 			candidate.resource.id.toLowerCase() === target || candidate.agent_id.toLowerCase() === target;
 		return matchesTarget;
 	});
+	if (deployment?.start_action === "wait") return BILLING_RECOVERY_POLL_INTERVAL_MS;
 	const subscription = deployment?.commercial_display?.compute_subscription;
 	if (!subscription) return false;
 	return subscription.payment_state === "past_due" ||
