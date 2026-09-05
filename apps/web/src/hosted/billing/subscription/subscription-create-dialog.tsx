@@ -268,13 +268,31 @@ export function SubscriptionCreateDialog({
 				fingerprint,
 				newIdempotencyKey,
 			);
-			const outcome = await createSubscription.execute({
-				selection: createSelection,
-				subscriptionSelection,
-				target,
-				uiMode: "hosted",
-				idempotencyKey: createAttemptRef.current.key,
-				quote: source.mode === "new" ? (createQuote.data ?? null) : null,
+			const execute = (attempt: IdempotencyAttempt) =>
+				createSubscription.execute({
+					selection: createSelection,
+					subscriptionSelection,
+					target,
+					uiMode: "hosted",
+					idempotencyKey: attempt.key,
+					quote: source.mode === "new" ? (createQuote.data ?? null) : null,
+				});
+			const outcome = await execute(createAttemptRef.current).catch((error: unknown) => {
+				if (
+					source.mode !== "new" ||
+					fundingSource !== "stripe" ||
+					billingErrorDetail(error)?.code !== "checkout_attempt_expired"
+				)
+					throw error;
+				forgetIdempotencyAttempt("subscription-terminal-fallback", fingerprint);
+				createAttemptRef.current = idempotencyAttemptFor(
+					null,
+					"subscription-terminal-fallback",
+					fingerprint,
+					newIdempotencyKey,
+				);
+				// Only this first failure is retried; a second failure reaches the outer handler.
+				return execute(createAttemptRef.current);
 			});
 			if (outcome.flowType === "subscription_activation") {
 				forgetIdempotencyAttempt("subscription-terminal-fallback", fingerprint);

@@ -19,6 +19,7 @@ for (const width of [1440, 320]) {
 		const errors = collectBrowserErrors(page);
 		const startRequests: string[] = [];
 		const checkoutIdempotencyKeys: string[] = [];
+		const checkoutRequests: string[] = [];
 		const deployment = {
 			...mutationDeploymentReadFixture({
 				...paidBasicDeployment,
@@ -38,10 +39,12 @@ for (const width of [1440, 320]) {
 			plans: [basicPlan, performancePlan],
 			startRequests,
 			checkoutIdempotencyKeys,
+			checkoutRequests,
 			checkoutResponses: [
 				"checkout_reconciliation_required",
 				"checkout_attempt_expired",
-				"checkout_reconciliation_required",
+				"checkout_attempt_expired",
+				"checkout_attempt_expired",
 			].map((code) => ({ status: 409, body: { detail: { code, message: "provider_internal" } } })),
 		});
 		await page.goto("/agents");
@@ -81,18 +84,27 @@ for (const width of [1440, 320]) {
 		expect(errors).toEqual([]);
 		if (width === 1440) {
 			await page.getByRole("button", { name: "Subscribe to start", exact: true }).click();
-			for (const message of ["Contact support", "This checkout has expired", "Contact support"]) {
+			for (const [message, requests] of [
+				["Contact support", 1],
+				["This checkout has expired", 3],
+			] as const) {
 				await page.getByRole("button", { name: "Continue to card checkout" }).click();
+				await expect.poll(() => checkoutRequests.length).toBe(requests);
 				await expect(page.locator("[data-sonner-toast]").last()).toContainText(message);
 				await expect(page.locator("[data-sonner-toast]").last()).not.toContainText(
 					"provider_internal",
 				);
 			}
-			expect(checkoutIdempotencyKeys).toHaveLength(3);
+			await page.getByRole("button", { name: "Continue to card checkout" }).click();
+			await expect(page).toHaveURL(/#mock-checkout$/);
+			expect(checkoutIdempotencyKeys).toHaveLength(5);
 			expect(checkoutIdempotencyKeys[0]).toBe(checkoutIdempotencyKeys[1]);
 			expect(checkoutIdempotencyKeys[1]).not.toBe(checkoutIdempotencyKeys[2]);
+			expect(checkoutIdempotencyKeys[2]).not.toBe(checkoutIdempotencyKeys[3]);
+			expect(checkoutIdempotencyKeys[3]).not.toBe(checkoutIdempotencyKeys[4]);
+			expect(new Set(checkoutRequests).size).toBe(1);
 			expect(errors).toEqual(
-				Array(3).fill(
+				Array(4).fill(
 					"Failed to load resource: the server responded with a status of 409 (Conflict)",
 				),
 			);
@@ -218,8 +230,8 @@ for (const state of [
 	{
 		status: "unpaid",
 		blocked: "authority_pending",
-		start: "wait",
-		label: "Updating subscription",
+		start: "contact_support",
+		label: "Contact support",
 	},
 	{
 		status: "canceled",
