@@ -17,14 +17,10 @@ export type ResolvedBillingOffer = {
 };
 
 export function isHistoricalAccountSubscription(
-	subscription: Pick<ComputeSubscriptionListItem, "status">,
+	subscription: Pick<ComputeSubscriptionListItem, "status" | "recovery_action" | "actions">,
 ): boolean {
-	return subscription.status === "canceled";
-}
-
-export function isTerminalComputeSubscriptionStatus(status: string | undefined): boolean {
-	return ["canceled", "expired", "incomplete", "incomplete_expired", "paused", "unpaid"].includes(
-		status?.toLowerCase() ?? "",
+	return (
+		subscription.actions?.command_state == null && subscription.recovery_action === "start_new"
 	);
 }
 
@@ -205,6 +201,7 @@ export type ComputeSubscriptionLifecycle = {
 };
 
 type ComputeSubscriptionLifecycleInput = {
+	lifecycle_status?: string | null;
 	status: string;
 	cancel_at_period_end: boolean;
 	current_period_end?: string | null;
@@ -216,7 +213,7 @@ type ComputeSubscriptionLifecycleInput = {
 export function computeSubscriptionLifecycle(
 	subscription: ComputeSubscriptionLifecycleInput,
 ): ComputeSubscriptionLifecycle {
-	const status = subscription.status.toLowerCase();
+	const status = (subscription.lifecycle_status ?? subscription.status).toLowerCase();
 	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;
 	if (
 		status === "canceling" ||
@@ -261,8 +258,8 @@ export function computeSubscriptionLifecycle(
 		return {
 			badgeLabel: "Unpaid",
 			badgeTone: "destructive",
-			dateAt: canceledAt,
-			dateVerb: "Ended",
+			dateAt: null,
+			dateVerb: null,
 			renews: false,
 		};
 	}

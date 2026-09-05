@@ -922,6 +922,15 @@ export interface components {
             /** Fundinginvoiceid */
             fundingInvoiceId?: string | null;
         };
+        /** ComputeSubscriptionActions */
+        ComputeSubscriptionActions: {
+            /** Cancel */
+            cancel: ("end_trial" | "cancel_at_period_end") | null;
+            /** Resume */
+            resume: boolean;
+            /** Command State */
+            command_state: ("pending" | "reconciling") | null;
+        };
         /** ConditionChangedEventData */
         ConditionChangedEventData: {
             condition: components["schemas"]["DeploymentCondition"];
@@ -2052,6 +2061,11 @@ export interface components {
             recovery_action: ("top_up" | "fix_payment" | "start_new") | null;
             /** Pending Plan Slug */
             pending_plan_slug: string | null;
+            /** Lifecycle Status */
+            lifecycle_status?: string | null;
+            /** Recovery Blocked Reason */
+            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending") | null;
+            actions?: components["schemas"]["ComputeSubscriptionActions"] | null;
         };
         /** V2ComputeSubscriptionListResponse */
         V2ComputeSubscriptionListResponse: {
@@ -2360,6 +2374,9 @@ export interface components {
             recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
+            /** Recovery Blocked Reason */
+            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending") | null;
+            actions?: components["schemas"]["ComputeSubscriptionActions"] | null;
         };
         /** V2HostedComputeUpgradeEligibility */
         V2HostedComputeUpgradeEligibility: {
@@ -2491,6 +2508,8 @@ export interface components {
         V2HostedDeploymentCommercialDisplay: {
             compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
             latest_funding_fact?: components["schemas"]["V2HostedCommercialFundingFactInfo"] | null;
+            /** Recovery Action */
+            recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
         };
         /** V2HostedDeploymentReadResponse */
         V2HostedDeploymentReadResponse: {
@@ -2519,6 +2538,11 @@ export interface components {
             runtime_ui_endpoint?: (components["schemas"]["V2HermesRuntimeUiEndpointInfo"] | components["schemas"]["V2OpenClawRuntimeUiEndpointInfo"]) | null;
             files_endpoint?: components["schemas"]["V2HostedFilesEndpointInfo"] | null;
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
+            /**
+             * Start Action
+             * @description Display decision only. Lifecycle mutations revalidate funding and owner fences.
+             */
+            start_action?: ("start" | "subscribe" | "fix_payment" | "top_up" | "wait" | "contact_support" | "unavailable") | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
              * Current Plan Slug

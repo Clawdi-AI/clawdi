@@ -67,6 +67,7 @@ function recoveryPlanSlugFor(
 
 function detachedFallbackState(deployment: DunningDeployment): ComputeDunningState | null {
 	const fallback = deployment.commercial_display?.latest_funding_fact;
+	if (deployment.commercial_display?.recovery_action !== "start_new") return null;
 	if (fallback?.fact_kind !== "funding_revoked") return null;
 	if (!fallback.reason || !fallback.funding_source) return null;
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
@@ -209,14 +210,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	};
 }
 
-export function computeSubscriptionRequiredToStart(deployment: DunningDeployment): boolean {
-	const subscription = deployment.commercial_display?.compute_subscription;
-	if (
-		subscription &&
-		isIncludedBasicSubscription(deployment.current_plan_slug, subscription) &&
-		computeSubscriptionRecoveryTarget(subscription) === null
-	) {
-		return false;
-	}
-	return computeDunningState(deployment)?.recoveryTarget.kind === "start_new";
+export function computeSubscriptionRequiredToStart(
+	deployment: Pick<HostedDeployment, "start_action">,
+): boolean {
+	return deployment.start_action === "subscribe";
 }

@@ -29,6 +29,8 @@ type HostedDeploymentFixtureOptions = {
 	upgradeAvailable?: boolean;
 	upgradeEligibility?: HostedDeployment["upgrade_eligibility"];
 	acceptedOperation?: HostedDeployment["accepted_operation"];
+	startAction?: HostedDeployment["start_action"];
+	recoveryAction?: NonNullable<HostedDeployment["commercial_display"]>["recovery_action"];
 	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
 	aiProviderAuthKinds?: HostedDeployment["ai_provider_auth_kinds"];
 	runtimeUiEndpoint?: HostedDeployment["runtime_ui_endpoint"];
@@ -96,9 +98,11 @@ export function hostedDeploymentFixture(
 		runtime_ui_endpoint: options.runtimeUiEndpoint,
 		files_endpoint: options.filesEndpoint,
 		accepted_operation: options.acceptedOperation,
+		start_action: options.startAction,
 		commercial_display: {
 			compute_subscription: options.computeSubscription ?? null,
 			latest_funding_fact: options.fundingFact ?? null,
+			recovery_action: options.recoveryAction,
 		},
 		current_plan_slug: options.currentPlanSlug ?? "compute_basic",
 		upgrade_available: upgradeAvailable,

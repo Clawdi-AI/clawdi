@@ -99,7 +99,7 @@ export function subscriptionMutationNotice(
 		kind: "success",
 		title:
 			action === "resume"
-				? "Subscription resumed"
+				? "Subscription renewal restored"
 				: result.cancel_at_period_end
 					? "Cancellation scheduled"
 					: "Subscription canceled",
@@ -245,9 +245,10 @@ export function ComputeSubscriptionActionList({
 						onClick={() => void runAction(resume).catch(() => undefined)}
 					>
 						{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
-						Resume subscription
+						Keep subscription
 					</Button>
 				);
+			case "end_trial":
 			case "cancel":
 				if (!cancelCopy) return null;
 				return (
@@ -267,7 +268,7 @@ export function ComputeSubscriptionActionList({
 							disabled={pending || candidate.disabledReason !== null}
 						>
 							{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
-							Cancel subscription
+							{candidate.kind === "end_trial" ? "End trial now" : "Cancel subscription"}
 						</Button>
 					</ConfirmAction>
 				);
