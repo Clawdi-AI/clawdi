@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from queue import SimpleQueue
 
 import httpx
 import pytest
@@ -112,19 +113,26 @@ def test_api_sigterm_drains_before_forwarding(monkeypatch):
     monkeypatch.setattr(runtime_entrypoint, "_API_SERVER_ARGS", ["sleep", "30"])
     monkeypatch.setattr(runtime_entrypoint, "API_SIGTERM_DRAIN_SECONDS", 0.3)
 
-    timer = threading.Timer(0.2, os.kill, args=(os.getpid(), signal.SIGTERM))
+    signal_sent_at: SimpleQueue[float] = SimpleQueue()
+
+    def send_sigterm() -> None:
+        signal_sent_at.put(time.monotonic())
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    timer = threading.Timer(0.2, send_sigterm)
     timer.start()
-    started = time.monotonic()
     try:
         code = runtime_entrypoint._run_api_with_drain()
+        elapsed = time.monotonic() - signal_sent_at.get_nowait()
     finally:
         timer.cancel()
+        timer.join()
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
-    elapsed = time.monotonic() - started
 
     assert code == 128 + signal.SIGTERM
-    # SIGTERM at ~0.2s + 0.3s drain: the server must not die before ~0.5s.
-    assert elapsed >= 0.5
+    # The handler's sleep cannot finish early; recording before os.kill only
+    # lengthens the measured drain, so no timing tolerance is needed.
+    assert elapsed >= runtime_entrypoint.API_SIGTERM_DRAIN_SECONDS
     assert elapsed < 5
 
 
