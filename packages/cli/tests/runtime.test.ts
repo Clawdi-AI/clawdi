@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -46,6 +46,7 @@ import { applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsT
 import {
 	applyRuntimeCliDesiredState,
 	completePendingRuntimeCliUpgrade,
+	readRuntimeCliBootstrapStatus,
 	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
@@ -106,6 +107,7 @@ import {
 } from "../src/runtime/systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
+import { log } from "../src/serve/log";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import { ensureTestOpenClawWorkspaceCli } from "../src/test-support/runtime-workspace";
 import { mockFetch } from "./commands/helpers";
@@ -8611,16 +8613,21 @@ chmod +x "$prefix/bin/clawdi"
 		},
 	);
 
-	it("re-verifies the active CLI when its file identity drifts", () => {
+	it("adopts a released image bootstrap receipt and re-verifies stale CLI metadata", () => {
 		const state = join(root, "state-cli-verification-cache");
 		const run = join(root, "run-cli-verification-cache");
 		const commandLog = join(root, "cli-verification-cache.log");
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		seedCurrentCliInstall(state, "1.2.3");
 		const paths = getRuntimePaths();
-		const activeTarget = readlinkSync(paths.cliManagedBin);
+		const identity = createVersionedCliFixture(
+			paths,
+			"1.2.3",
+			join(paths.cliNpmPrefix, "installs", "install-bootstrap"),
+		);
+		pointManagedCliAt(paths, identity);
+		const { activeTarget } = identity;
 		writeFileSync(
 			activeTarget,
 			`#!/usr/bin/env bash
@@ -8632,16 +8639,97 @@ exit 64
 		);
 		chmodSync(activeTarget, 0o700);
 		const manifest = cliManifest("1.2.3");
+		const bootstrap = {
+			schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+			generatedAt: "2026-09-06T00:00:00Z",
+			status: "installed",
+			source: "npm",
+			...identity,
+			npmCache: paths.cliNpmCache,
+			activePath: paths.cliManagedBin,
+			error: null,
+		};
+		mkdirSync(paths.statusRoot, { recursive: true });
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(bootstrap));
+		const warn = spyOn(log, "warn");
+		try {
+			expect(readRuntimeCliBootstrapStatus(paths, { strict: true })).toEqual(bootstrap);
+			expect(applyRuntimeCliDesiredState(manifest, paths).status).toBe("current");
+			expect(warn).not.toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
 
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(2);
+		const adopted = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		expect(adopted).toMatchObject({
+			...identity,
+			previous: null,
+			bad: null,
+		});
+		expect(adopted.verification.inode).toBe(statSync(activeTarget).ino);
 		applyRuntimeCliDesiredState(manifest, paths);
 		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(2);
-		applyRuntimeCliDesiredState(manifest, paths);
-		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(2);
 
-		const driftedAt = new Date(Date.now() + 1_000);
-		utimesSync(activeTarget, driftedAt, driftedAt);
-		applyRuntimeCliDesiredState(manifest, paths);
+		adopted.verification.device += 1;
+		adopted.verification.inode += 1;
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(adopted));
+		expect(applyRuntimeCliDesiredState(manifest, paths).status).toBe("current");
 		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(4);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
+		expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).verification).toMatchObject({
+			device: statSync(activeTarget).dev,
+			inode: statSync(activeTarget).ino,
+		});
+	});
+
+	it.each(["partial", "mismatch", "permissions", "symlink", "probe"] as const)(
+		"does not adopt or overwrite an invalid CLI receipt/target: %s",
+		(failure) => {
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state-cli-invalid");
+			const paths = getRuntimePaths();
+			const identity = createVersionedCliFixture(paths, "1.2.3");
+			pointManagedCliAt(paths, identity);
+			reconcilePendingRuntimeCliUpgrade(paths);
+			const receipt = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			switch (failure) {
+				case "partial":
+					delete receipt.verification;
+					break;
+				case "mismatch":
+					receipt.version = "1.2.4";
+					break;
+				case "permissions":
+					chmodSync(identity.activeTarget, 0o777);
+					break;
+				case "symlink":
+					rmSync(identity.activeTarget);
+					symlinkSync("/bin/true", identity.activeTarget);
+					break;
+				case "probe":
+					writeFileSync(identity.activeTarget, "#!/bin/sh\nexit 42\n");
+					break;
+			}
+			writeFileSync(paths.cliBootstrapStatus, JSON.stringify(receipt));
+			const before = readFileSync(paths.cliBootstrapStatus, "utf-8");
+			expect(() => applyRuntimeCliDesiredState(cliManifest("1.2.3"), paths)).toThrow();
+			expect(readFileSync(paths.cliBootstrapStatus, "utf-8")).toBe(before);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(identity.activeTarget);
+			if (failure === "permissions") {
+				expect(statSync(identity.activeTarget).mode & 0o777).toBe(0o777);
+			}
+		},
+	);
+
+	it("rejects an unreadable CLI receipt instead of recovering it as missing", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state-cli-unreadable");
+		const paths = getRuntimePaths();
+		mkdirSync(paths.statusRoot, { recursive: true });
+		writeFileSync(paths.cliBootstrapStatus, "{}", { mode: 0o000 });
+		expect(() => applyRuntimeCliDesiredState(cliManifest("1.2.3"), paths)).toThrow("EACCES");
+		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0);
 	});
 
 	it("rolls back when the active symlink disagrees with state", () => {

@@ -9,8 +9,10 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
+	realpathSync,
 	renameSync,
 	rmSync,
+	type Stats,
 	statSync,
 	symlinkSync,
 } from "node:fs";
@@ -112,12 +114,20 @@ const runtimeCliStateSchema = z
 		verification: runtimeCliVerificationSchema,
 		previous: runtimeCliTargetSchema.nullable(),
 		bad: runtimeCliBadSchema.nullable(),
-		error: z.string().nullable(),
+		error: z.null(),
 	})
 	.strict();
 
-export type RuntimeCliBootstrapStatus = z.infer<typeof runtimeCliStateSchema>;
-type RuntimeCliState = RuntimeCliBootstrapStatus;
+// Released images write this phase before the CLI has adopted the installation.
+// Only the complete legacy field set is accepted, never a partial verification.
+const runtimeCliBootstrapSchema = runtimeCliStateSchema.omit({
+	verification: true,
+	previous: true,
+	bad: true,
+});
+const runtimeCliReceiptSchema = z.union([runtimeCliStateSchema, runtimeCliBootstrapSchema]);
+export type RuntimeCliBootstrapStatus = z.infer<typeof runtimeCliReceiptSchema>;
+type RuntimeCliState = z.infer<typeof runtimeCliStateSchema>;
 
 interface VerifiedCliTarget extends RuntimeCliTarget {
 	verification: RuntimeCliVerification;
@@ -175,7 +185,7 @@ export function applyRuntimeCliDesiredState(
 		throw new Error(`clawdi CLI packageSpec must be clawdi@<exact-semver>: ${packageSpec}`);
 	}
 	validateRegistry(manifest.clawdiCli?.registry);
-	const status = readRuntimeCliBootstrapStatus(paths);
+	const status = readRuntimeCliBootstrapStatus(paths, { strict: true });
 	let state = parseCliState(paths, status);
 	const retainedBad = state?.bad ?? null;
 	if (
@@ -252,8 +262,9 @@ export function rollbackPendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	reason: string,
 ): RuntimeCliRollbackResult {
-	const before = readCliState(paths);
+	let before: RuntimeCliState | null = null;
 	try {
+		before = readCliState(paths);
 		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths);
 		if (reconciliation.status === "rolled_back" && before?.previous) {
 			return rollbackResult(before, "rolled_back");
@@ -294,12 +305,16 @@ export function reconcilePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	runningVersion?: string,
 ): RuntimeCliReconciliationResult {
-	const status = readRuntimeCliBootstrapStatus(paths);
+	assertCliDirectories(paths, dirname(paths.cliManagedBin));
+	const status = readRuntimeCliBootstrapStatus(paths, { strict: true });
 	let state = parseCliState(paths, status);
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
 	if (!state) {
+		if (status && activeTarget !== status.activeTarget) {
+			throw new Error("clawdi CLI bootstrap target does not match its receipt");
+		}
 		if (!activeTarget) return { status: "unchanged", selfReexec: false };
-		const recovered = requireVerifiedCliTarget(paths, { activeTarget });
+		const recovered = requireVerifiedCliTarget(paths, { activeTarget, version: status?.version });
 		writeCliState(paths, recovered, null, null);
 		pruneCliPackagePrefixes(paths, [prefixForActiveTarget(recovered.activeTarget)]);
 		return reconciliationResult("unchanged", recovered.version, runningVersion);
@@ -347,11 +362,26 @@ export function reconcilePendingRuntimeCliUpgrade(
 
 export function readRuntimeCliBootstrapStatus(
 	paths: RuntimePaths,
+	opts: { strict?: boolean } = {},
 ): RuntimeCliBootstrapStatus | null {
-	if (!existsSync(paths.cliBootstrapStatus)) return null;
 	try {
-		return runtimeCliStateSchema.parse(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")));
+		assertCliDirectories(paths, dirname(paths.cliBootstrapStatus));
+		const file = optionalCliLstat(paths.cliBootstrapStatus);
+		if (!file) return null;
+		assertCliOwnership(file);
+		if (!file.isFile()) throw new Error("clawdi CLI receipt is not a regular file");
+		let value: unknown;
+		try {
+			value = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		} catch (error) {
+			if (error instanceof SyntaxError) throw new Error("clawdi CLI receipt has malformed JSON");
+			throw error;
+		}
+		const parsed = runtimeCliReceiptSchema.safeParse(value);
+		if (!parsed.success) throw new Error("clawdi CLI receipt format is invalid");
+		return parsed.data;
 	} catch (error) {
+		if (opts.strict) throw error;
 		log.warn("runtime.cli_bootstrap_status_invalid", {
 			path: paths.cliBootstrapStatus,
 			error: toErrorMessage(error),
@@ -423,25 +453,23 @@ function parseCliState(
 	paths: RuntimePaths,
 	status: RuntimeCliBootstrapStatus | null,
 ): RuntimeCliState | null {
-	const parsed = runtimeCliStateSchema.safeParse(status);
-	if (!parsed.success) return null;
-	const state = parsed.data;
+	if (!status) return null;
+	const state = status;
 	if (
 		state.activePath !== paths.cliManagedBin ||
 		state.npmCache !== paths.cliNpmCache ||
 		state.npmPrefix !== prefixForActiveTarget(state.activeTarget) ||
 		!isManagedCliTarget(paths, state.activeTarget) ||
 		exactNpmPackageVersion(state.packageSpec) !== state.version ||
-		!isValidRetryState(state.bad)
+		("bad" in state && !isValidRetryState(state.bad))
 	) {
-		log.warn("runtime.cli_state_invalid", { path: paths.cliBootstrapStatus });
-		return null;
+		throw new Error("clawdi CLI receipt identity is invalid");
 	}
-	return state;
+	return "verification" in state ? state : null;
 }
 
 function readCliState(paths: RuntimePaths): RuntimeCliState | null {
-	return parseCliState(paths, readRuntimeCliBootstrapStatus(paths));
+	return parseCliState(paths, readRuntimeCliBootstrapStatus(paths, { strict: true }));
 }
 
 function writeCliState(
@@ -631,8 +659,8 @@ function tryVerifyCliTarget(
 	target: { activeTarget: string; version?: string },
 	state?: RuntimeCliState,
 ): VerifiedCliTarget | null {
-	if (!isManagedCliTarget(paths, target.activeTarget) || !isExecutable(target.activeTarget))
-		return null;
+	assertCliTarget(paths, target.activeTarget);
+	if (!isExecutable(target.activeTarget)) return null;
 	const before = cliVerificationIdentity(target.activeTarget);
 	if (!before) return null;
 	if (
@@ -718,7 +746,53 @@ function isManagedCliPrefix(paths: RuntimePaths, path: string): boolean {
 }
 
 function isManagedCliTarget(paths: RuntimePaths, path: string): boolean {
-	return isManagedCliPrefix(paths, path) && path.endsWith("/bin/clawdi");
+	return path === resolve(path) && isManagedCliPrefix(paths, path) && path.endsWith("/bin/clawdi");
+}
+
+function optionalCliLstat(path: string): Stats | null {
+	try {
+		return lstatSync(path);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		throw error;
+	}
+}
+
+function assertCliOwnership(node: Stats): void {
+	if (node.uid !== process.getuid?.() || (node.mode & 0o022) !== 0) {
+		throw new Error("clawdi CLI path has unsafe ownership or permissions");
+	}
+}
+
+function assertCliDirectories(paths: RuntimePaths, path: string): void {
+	const root = resolve(paths.serviceStateRoot);
+	if (path !== root && !path.startsWith(`${root}/`)) {
+		throw new Error("clawdi CLI path escaped its state root");
+	}
+	for (let current = path; ; current = dirname(current)) {
+		const node = optionalCliLstat(current);
+		if (node) {
+			assertCliOwnership(node);
+			if (!node.isDirectory()) throw new Error("clawdi CLI directory is not a real directory");
+		}
+		if (current === root) break;
+	}
+}
+
+function assertCliTarget(paths: RuntimePaths, target: string): void {
+	if (!isManagedCliTarget(paths, target)) throw new Error("clawdi CLI target is not managed");
+	assertCliDirectories(paths, dirname(target));
+	const node = optionalCliLstat(target);
+	if (!node) return;
+	if (node.uid !== process.getuid?.()) throw new Error("clawdi CLI target has unsafe ownership");
+	const executable = realpathSync(target);
+	if (!executable.startsWith(`${prefixForActiveTarget(target)}/`)) {
+		throw new Error("clawdi CLI executable escaped its npm prefix");
+	}
+	assertCliDirectories(paths, dirname(executable));
+	const file = statSync(target);
+	assertCliOwnership(file);
+	if (!file.isFile()) throw new Error("clawdi CLI executable is not a regular file");
 }
 
 function ensureManagedCliDirectory(path: string): void {
@@ -726,11 +800,12 @@ function ensureManagedCliDirectory(path: string): void {
 }
 
 function activeLinkTarget(activePath: string): string | null {
-	try {
-		return resolve(dirname(activePath), readlinkSync(activePath));
-	} catch {
-		return null;
+	const node = optionalCliLstat(activePath);
+	if (!node) return null;
+	if (!node.isSymbolicLink() || node.uid !== process.getuid?.()) {
+		throw new Error("clawdi CLI active path is not a trusted symlink");
 	}
+	return resolve(dirname(activePath), readlinkSync(activePath));
 }
 
 function swapActiveCli(activePath: string, activeTarget: string): void {

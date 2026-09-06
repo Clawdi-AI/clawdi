@@ -1103,6 +1103,26 @@ CLI self-upgrade verifies a new exact package before atomically switching the
 active link inside the root-only managed directory. There is no shared
 `/var/lib/clawdi/bin` compatibility path and no migration or dual-path read.
 
+The `clawdi.cliNpmBootstrapStatus.v1` reader supports the exact initial
+bootstrap field set written by released images (without `verification`,
+`previous`, or `bad`) as well as the complete CLI-authored receipt. It never
+fills in a partial verification record. Adoption validates receipt/path
+identity and service ownership, runs the existing exact-version and isolated
+`runtime verify --json` probes, then writes the full v1 receipt without an
+invalid-status warning. Invalid or unreadable receipts stop mutation instead
+of being treated as missing. A stale device/inode/size/mtime invalidates the
+verification cache and revalidates the existing target; a failed probe does
+not permit reinstalling over it. The CLI retains its verified rollback path.
+
+Released image verifiers may reject stale metadata before this CLI runs, so
+that bootstrap reuse fix also requires a compatible image. Ship this additive
+reader before qualifying the new image/CLI pair. No new receipt version or
+runtime verification command is required.
+
+Done: `bash scripts/test.sh cli tests/runtime.test.ts src/runtime/observed-v2.test.ts`
+passes bootstrap adoption without warnings, stale-metadata revalidation,
+invalid-state preservation, and the existing activation/rollback contracts.
+
 The image bootstrap and CLI self-upgrade are independent atomic activation
 owners. If the image bootstrap replaces the active CLI while an older activated
 self-upgrade transaction remains, the transaction controller compares the full

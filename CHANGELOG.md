@@ -29,6 +29,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Managed runtimes accept released images' initial CLI bootstrap receipts
+  without a spurious invalid-status warning. Adoption revalidates the installed
+  CLI; malformed or unsafe state now stops instead of being overwritten.
 - OpenClaw sync serializes asynchronous discovery commands to reduce overlapping
   memory use. Skill polling survives inventory failures without reporting false
   deletions, and skill synchronization performs fewer workspace lookups.
