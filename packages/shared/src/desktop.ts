@@ -99,4 +99,5 @@ export interface ClawdiDesktopShellBridge {
 	openTerminalWindow(url: string): Promise<boolean>;
 	openConnectWizard(): Promise<void>;
 	retryDashboard(): Promise<void>;
+	createDashboardSession(): Promise<string>;
 }

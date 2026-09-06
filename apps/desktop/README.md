@@ -5,6 +5,14 @@ renderer keeps the `https://cloud.clawdi.ai` origin for Clerk and API behavior,
 but executable UI is served only from the signed application bundle. CLI owns
 OAuth credentials, Agent registration, and daemon lifecycle.
 
+Dashboard uses a persistent Chromium partition for Clerk's browser session.
+Startup first restores that session; only an expired or missing session requests
+a CLI-backed sign-in ticket. An HttpOnly account marker and renderer identity
+check prevent reuse under a different CLI account. Explicit sign-out/account
+replacement clears the partition; ordinary restarts and session retries do not.
+CLI credentials are never copied into renderer storage. The first launch after
+upgrading an old in-memory build will still need one new browser session.
+
 ## Preview package
 
 ```bash

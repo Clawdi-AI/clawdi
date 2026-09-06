@@ -15,4 +15,5 @@ export const DESKTOP_IPC = {
 	openConnectWizard: "clawdi:open-connect-wizard",
 	openDashboard: "clawdi:open-dashboard",
 	retryDashboard: "clawdi:retry-dashboard",
+	createDashboardSession: "clawdi:create-dashboard-session",
 } as const;

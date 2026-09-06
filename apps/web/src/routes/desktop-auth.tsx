@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { DesktopWindowDragRegion } from "@/components/desktop-window-drag-region";
 import { Button } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
+import { restoreDesktopSession } from "@/lib/desktop-session";
 import { routeHeadTitle } from "@/lib/document-title";
 
 export const Route = createFileRoute("/desktop-auth")({
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/desktop-auth")({
 });
 
 function DesktopAuthPage() {
-	const { isLoaded: authLoaded, isSignedIn } = useAuth();
+	const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
 	const { signIn } = useSignIn();
 	const desktopBridge = useDesktopBridge();
 	const attempted = useRef(false);
@@ -38,37 +39,29 @@ function DesktopAuthPage() {
 	}
 
 	useEffect(() => {
-		if (!authLoaded || attempted.current) return;
+		if (!authLoaded || desktopBridge === undefined || attempted.current) return;
 		attempted.current = true;
 
 		const params = new URLSearchParams(window.location.hash.slice(1));
-		const ticket = params.get("ticket") ?? "";
+		const account = params.get("account");
 		window.history.replaceState(null, "", window.location.pathname);
-		if (isSignedIn) {
-			window.location.replace("/");
-			return;
-		}
-		if (!ticket || ticket.length > 8192) {
-			setFailed(true);
-			return;
-		}
-
-		void signIn
-			.ticket({ ticket })
-			.then(async ({ error }) => {
-				if (error || signIn.status !== "complete") {
-					setFailed(true);
-					return;
-				}
+		void restoreDesktopSession({
+			userId: isSignedIn ? userId : null,
+			accountId: desktopBridge ? account : userId || "browser",
+			createTicket: () =>
+				desktopBridge
+					? desktopBridge.createDashboardSession()
+					: Promise.resolve(params.get("ticket") ?? ""),
+			consumeTicket: async (ticket) => {
+				const { error } = await signIn.ticket({ ticket });
+				if (error || signIn.status !== "complete") throw new Error("Sign-in failed.");
 				const finalized = await signIn.finalize();
-				if (finalized.error) {
-					setFailed(true);
-					return;
-				}
-				window.location.replace("/");
-			})
+				if (finalized.error) throw new Error("Sign-in finalization failed.");
+			},
+		})
+			.then(() => window.location.replace("/"))
 			.catch(() => setFailed(true));
-	}, [authLoaded, isSignedIn, signIn]);
+	}, [authLoaded, desktopBridge, isSignedIn, signIn, userId]);
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center bg-background p-6">

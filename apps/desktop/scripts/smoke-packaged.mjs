@@ -136,6 +136,7 @@ async function verifyPackagedDashboard(context) {
 	);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
 	assert.deepEqual(bridgeMethods, [
+		"createDashboardSession",
 		"openConnectWizard",
 		"openFilesWindow",
 		"openRuntimeWindow",

@@ -10,6 +10,7 @@ const bridge: ClawdiDesktopShellBridge = {
 	openTerminalWindow: (url) => ipcRenderer.invoke(DESKTOP_IPC.openTerminalWindow, url),
 	openConnectWizard: () => ipcRenderer.invoke(DESKTOP_IPC.openConnectWizard),
 	retryDashboard: () => ipcRenderer.invoke(DESKTOP_IPC.retryDashboard),
+	createDashboardSession: () => ipcRenderer.invoke(DESKTOP_IPC.createDashboardSession),
 };
 
 contextBridge.exposeInMainWorld("clawdiDesktop", bridge);

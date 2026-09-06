@@ -52,10 +52,9 @@ import { type DesktopUpdateState, desktopUpdateStatusLabel } from "./update-stat
 const APP_SCHEME = "clawdi-app";
 const APP_HOST = "connect";
 const DASHBOARD_ORIGIN = "https://cloud.clawdi.ai";
-// Intentionally in-memory: CLI credentials are the only durable auth source.
-// Each app launch exchanges them for a fresh, process-scoped Clerk session.
-const DASHBOARD_PARTITION = "clawdi-dashboard";
-const DASHBOARD_SIGN_IN_URL = `${DASHBOARD_ORIGIN}/sign-in`;
+// Chromium retains Clerk's browser session; CLI remains the account authority.
+const DASHBOARD_PARTITION = "persist:clawdi-dashboard";
+const DASHBOARD_ACCOUNT_COOKIE = "__Host-clawdi_desktop_account";
 const CONNECT_URL = `${APP_SCHEME}://${APP_HOST}/renderer.html`;
 const DASHBOARD_FAILURE_URL = `${CONNECT_URL}?surface=dashboard-failure`;
 const DASHBOARD_LOAD_TIMEOUT_MS = 30_000;
@@ -406,6 +405,18 @@ function restartToInstallUpdate(): void {
 }
 
 function registerIpc(): void {
+	ipcMain.handle(DESKTOP_IPC.createDashboardSession, (event) =>
+		safeDashboardAction(event, "restore dashboard sign-in", async () => {
+			if (new URL(event.senderFrame?.url ?? "").pathname !== "/desktop-auth") {
+				throw new Error("Session recovery is only available on the authentication page.");
+			}
+			const auth = await cli.getAuthState();
+			if (!auth.authenticated || !auth.user || auth.user.id !== dashboardAccountId) {
+				throw new Error("The local account changed. Reopen the dashboard.");
+			}
+			return cli.createDashboardSession();
+		}),
+	);
 	ipcMain.handle(DESKTOP_IPC.bootstrapState, (event) =>
 		safeConnectAction(event, "prepare the local runtime", async () => {
 			assertRuntimeLocation();
@@ -1373,7 +1384,7 @@ async function loadDashboardWithRecovery(
 				return "opened" as const;
 			}
 
-			await prepareDashboardSession(state.auth.user.id, forceAuthentication);
+			await prepareDashboardSession(state.auth.user.id);
 			const readyWindow = mainWindow;
 			if (!readyWindow || readyWindow.isDestroyed()) throw new Error("Dashboard window was closed");
 			await presentMainWindow(readyWindow);
@@ -1434,27 +1445,42 @@ async function presentMainWindow(window: BrowserWindow): Promise<void> {
 	runAsync("offer the downloaded update", maybePromptForUpdate());
 }
 
-async function prepareDashboardSession(
-	accountId: string,
-	forceAuthentication: boolean,
-): Promise<void> {
-	if (forceAuthentication || (dashboardAccountId && dashboardAccountId !== accountId)) {
+async function prepareDashboardSession(accountId: string): Promise<void> {
+	if (!dashboardSession) throw new Error("Dashboard session is unavailable.");
+	const accounts = await dashboardSession.cookies.get({
+		url: DASHBOARD_ORIGIN,
+		name: DASHBOARD_ACCOUNT_COOKIE,
+	});
+	if (accounts[0]?.value !== accountId) {
 		await clearDashboardSession();
 	}
+	dashboardAccountId = accountId;
+	await dashboardSession.cookies.set({
+		url: DASHBOARD_ORIGIN,
+		name: DASHBOARD_ACCOUNT_COOKIE,
+		value: accountId,
+		path: "/",
+		secure: true,
+		httpOnly: true,
+		sameSite: "strict",
+		expirationDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+	});
+	await dashboardSession.cookies.flushStore();
 	let window = mainWindow;
 	if (!window || window.isDestroyed()) {
-		await createMainWindow(DASHBOARD_SIGN_IN_URL);
+		await createMainWindow(DASHBOARD_FAILURE_URL);
 		window = mainWindow;
 	}
 	if (!window || window.isDestroyed()) throw new Error("Dashboard window was closed");
 
-	const ticket = await cli.createDashboardSession();
 	const url = new URL("/desktop-auth", DASHBOARD_ORIGIN);
-	url.hash = new URLSearchParams({ ticket }).toString();
+	url.hash = new URLSearchParams({ account: accountId }).toString();
 	const ready = waitForDashboardReady(window, DASHBOARD_LOAD_TIMEOUT_MS);
 	try {
 		await loadWindowUrl(window, url.toString());
 		await ready;
+		await dashboardSession.cookies.flushStore();
+		dashboardSession.flushStorageData();
 	} catch (error) {
 		void ready.catch(() => undefined);
 		throw error;
