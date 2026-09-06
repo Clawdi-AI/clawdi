@@ -6,6 +6,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	ArrowRight,
+	ArrowUp,
 	Check,
 	Copy,
 	Cpu,
@@ -38,6 +39,7 @@ import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
 	OverviewDescriptionSkeleton,
+	OverviewMetadata,
 	OverviewModuleError,
 	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
@@ -149,7 +151,11 @@ import {
 	computeSubscriptionRequiredToStart,
 } from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
-import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
+import type {
+	DeploymentUpdateRequest,
+	HostedComputeSubscription,
+	HostedDeployment,
+} from "@/hosted/billing/contracts";
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	fallbackTimezones,
@@ -172,7 +178,10 @@ import {
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
-import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
+import {
+	computeSubscriptionRecoveryPresentation,
+	computeSubscriptionRecoveryTarget,
+} from "@/hosted/billing/subscription/compute-subscription-recovery";
 import {
 	PlanChangeController,
 	planChangeBillingTerm,
@@ -209,7 +218,9 @@ import {
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
+	hasCurrentRuntimeHealthDegradation,
 	isRunningStatus,
+	isTransitionalStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
 import {
@@ -1015,13 +1026,11 @@ export function ComputeStatusDetails({
 }
 
 export function OverviewComputeSummary({
-	status,
 	plan,
 	vcpu,
 	memoryMib,
 	storageGib,
 }: {
-	status?: React.ReactNode;
 	plan: string;
 	vcpu: number;
 	memoryMib: number;
@@ -1034,12 +1043,9 @@ export function OverviewComputeSummary({
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-				{status}
-				<p data-overview-compute-plan className="text-sm text-muted-foreground">
-					{plan} plan
-				</p>
-			</div>
+			<p data-overview-compute-plan className="text-sm text-muted-foreground">
+				{plan} plan
+			</p>
 			<ul
 				aria-label={`Configuration: ${configuration.join(", ")}`}
 				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
@@ -1049,6 +1055,56 @@ export function OverviewComputeSummary({
 				))}
 			</ul>
 		</div>
+	);
+}
+
+function OverviewComputeUpgrade({
+	agentId,
+	deployment,
+	subscription,
+}: {
+	agentId: string;
+	deployment: HostedDeployment;
+	subscription: HostedComputeSubscription;
+}) {
+	const access = useProductAccess();
+	const plans = usePlans();
+	const entitlement = {
+		deploymentId: deployment.resource.id,
+		planSlug: deployment.current_plan_slug,
+		fundingSource: subscription.funding_source,
+		priceCents: subscription.price_cents,
+		billingTermMonths: subscription.billing_term_months,
+		status: subscription.status,
+		paymentState: subscription.payment_state,
+		cancelAtPeriodEnd: subscription.cancel_at_period_end,
+		recoveryAction: subscription.recovery_action,
+		pendingPlanSlug: pendingComputePlanSlug(subscription),
+		actions: subscription.actions,
+	};
+	const management = computeSubscriptionManagement({
+		entitlement,
+		deployment,
+		canCreateCloudAgents: !access.isLoading && access.canCreateCloudAgents,
+		plansLoading: plans.isLoading,
+		performancePlanAvailable: !plans.error && Boolean(resolvePerformancePlan(plans.data)),
+	});
+	const upgrade = resolveComputeSubscriptionActions({
+		entitlement,
+		management,
+		recoveryTarget: computeSubscriptionRecoveryTarget(subscription),
+		hasPendingOperation: Boolean(management.target?.projectedOperationName),
+	}).find((action) => action.kind === "upgrade" && action.disabledReason === null);
+	if (!upgrade) return null;
+	return (
+		<Button
+			render={<Link {...agentSectionLink(agentId, "settings")} hash="compute-plan-controls" />}
+			nativeButton={false}
+			variant="outline"
+			size="sm"
+		>
+			<ArrowUp /> Upgrade
+		</Button>
 	);
 }
 
@@ -1290,6 +1346,36 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
+	const currentSubscription = deployment.commercial_display?.compute_subscription;
+	const subscriptionLifecycle = currentSubscription
+		? computeSubscriptionLifecycle(currentSubscription)
+		: null;
+	const subscriptionRecovery = subscriptionLifecycle
+		? computeSubscriptionRecoveryPresentation(currentSubscription, {
+				label: subscriptionLifecycle.badgeLabel,
+				tone: subscriptionLifecycle.badgeTone,
+			})
+		: null;
+	const subscriptionSchedule =
+		subscriptionRecovery?.schedule ??
+		(!subscriptionRecovery?.hasPaymentIssue &&
+		subscriptionLifecycle?.dateVerb &&
+		subscriptionLifecycle.dateAt
+			? { verb: subscriptionLifecycle.dateVerb, at: subscriptionLifecycle.dateAt }
+			: null);
+	const subscriptionDate =
+		computeFundingSource(deployment.current_plan_slug, currentSubscription) !== "included_basic" &&
+		subscriptionSchedule?.verb &&
+		subscriptionSchedule.at
+			? { label: subscriptionSchedule.verb, value: formatShortDate(subscriptionSchedule.at) }
+			: null;
+	const upgradeReady =
+		deployment.upgrade_available &&
+		!isTransitionalStatus(deploymentStatus) &&
+		!deploymentFailure &&
+		!subscriptionRecovery?.hasPaymentIssue &&
+		currentSubscription?.recovery_blocked_reason == null &&
+		!(deployment.resource.status && hasCurrentRuntimeHealthDegradation(deployment.resource.status));
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const projectionLoading = projectionStatus === "loading";
@@ -1369,23 +1455,33 @@ function OverviewTab({
 	};
 	return (
 		<div className="flex flex-col gap-8">
-			<AgentDashboardOverview agentId={agentId} deployment={deployment} />
-			<OverviewNavigationCard
-				id="model-provider"
-				title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
-				icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
-				tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
-				description={
-					providers.isLoading || managedModelCatalog.isLoading ? (
-						<OverviewDescriptionSkeleton label="model and provider" />
-					) : providers.error || managedModelCatalog.error ? (
-						"Unavailable right now"
-					) : (
-						model
-					)
-				}
-				link={agentSectionLink(agentId, "ai")}
-			/>
+			<div className="grid auto-rows-fr gap-3 @5xl/main:grid-cols-3" data-overview-section="tools">
+				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
+				<OverviewNavigationCard
+					id="channels"
+					title={AGENT_SECTION_NAVIGATION_ITEMS.channels.label}
+					description="Telegram, Discord, or WhatsApp"
+					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
+					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
+					link={agentSectionLink(agentId, "channels")}
+				/>
+				<OverviewNavigationCard
+					id="model-provider"
+					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
+					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
+					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
+					description={
+						providers.isLoading || managedModelCatalog.isLoading ? (
+							<OverviewDescriptionSkeleton label="model and provider" />
+						) : providers.error || managedModelCatalog.error ? (
+							"Unavailable right now"
+						) : (
+							model
+						)
+					}
+					link={agentSectionLink(agentId, "ai")}
+				/>
+			</div>
 			<div
 				className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
 				data-overview-section="entry"
@@ -1430,24 +1526,42 @@ function OverviewTab({
 						icon={Cpu}
 						tint="bg-identity-4-bg text-identity-4-fg"
 						description={
+							<span
+								data-overview-compute-status
+								className="inline-flex items-center gap-2"
+								title={`Agent status: ${computeStatusPresentation.label}`}
+							>
+								<StatusDot status={computeStatusPresentation.tone} />
+								{computeStatusPresentation.label}
+							</span>
+						}
+					>
+						<div className="flex h-full flex-col justify-between gap-3">
 							<OverviewComputeSummary
-								status={
-									<span
-										data-overview-compute-status
-										className="inline-flex items-center gap-2"
-										title={`Agent status: ${computeStatusPresentation.label}`}
-									>
-										<StatusDot status={computeStatusPresentation.tone} />
-										{computeStatusPresentation.label}
-									</span>
-								}
 								plan={isPerformance ? "Performance" : "Basic"}
 								vcpu={spec.resources.vcpu}
 								memoryMib={spec.resources.memory_mib}
 								storageGib={spec.resources.disk_gib}
 							/>
-						}
-					/>
+							{subscriptionRecovery ? (
+								<div className="space-y-2">
+									<OverviewMetadata
+										items={[
+											{ label: "Subscription", value: subscriptionRecovery.status.label },
+											...(subscriptionDate ? [subscriptionDate] : []),
+										]}
+									/>
+									{currentSubscription && upgradeReady ? (
+										<OverviewComputeUpgrade
+											agentId={agentId}
+											deployment={deployment}
+											subscription={currentSubscription}
+										/>
+									) : null}
+								</div>
+							) : null}
+						</div>
+					</AgentOverviewStatusCard>
 				</div>
 			</div>
 			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />

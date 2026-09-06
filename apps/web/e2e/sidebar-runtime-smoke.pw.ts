@@ -1248,7 +1248,7 @@ test("connected overview keeps Status beside sessions and preserves resource col
 		await expect(main.locator('[data-overview-module="connectors"]')).toContainText("app");
 		await expect(
 			main.locator(
-				'[data-overview-section="start-chat"], [data-overview-module="channels"], [data-overview-module="model-provider"]',
+				'[data-overview-section="tools"], [data-overview-module="channels"], [data-overview-module="model-provider"]',
 			),
 		).toHaveCount(0);
 		const geometry = await expectAgentOverviewGeometry(page, {

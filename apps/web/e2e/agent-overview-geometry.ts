@@ -18,10 +18,10 @@ export async function expectAgentOverviewGeometry(
 			activity: box('[data-overview-section="activity"]'),
 			sessions: box('[data-testid="overview-session-grid"]'),
 			status: box("[data-overview-status]", true),
-			chat: main.querySelector('[data-overview-section="start-chat"]')
+			tools: main.querySelector('[data-overview-section="tools"]')
 				? {
-						section: box('[data-overview-section="start-chat"]'),
-						web: box('[data-overview-module="dashboard"] [data-slot="button"]', true),
+						section: box('[data-overview-section="tools"]'),
+						web: box('[data-overview-module="dashboard"]', true),
 						channel: box('[data-overview-module="channels"]', true),
 						provider: box('[data-overview-module="model-provider"]', true),
 					}
@@ -90,25 +90,31 @@ export async function expectAgentOverviewGeometry(
 		if (desktop) expect(card.height).toBeLessThanOrEqual(72);
 	}
 	if (hosted) {
-		const chat = geometry.chat;
-		if (!chat) throw new Error("Missing Start Chat section");
-		await expect(page.locator('[data-overview-section="start-chat"]')).toHaveCSS(
+		const tools = geometry.tools;
+		if (!tools) throw new Error("Missing overview tools");
+		await expect(page.getByRole("heading", { name: "Start Chat", exact: true })).toHaveCount(0);
+		await expect(page.locator('[data-overview-section="tools"]')).toHaveCSS(
 			"border-top-width",
 			"0px",
 		);
-		expect(chat.provider.top).toBeGreaterThan(chat.section.bottom);
-		expect(geometry.entry.top).toBeGreaterThan(chat.provider.bottom);
-		aligned(chat.provider.left, geometry.entry.left);
-		aligned(chat.provider.right, geometry.entry.right);
-		aligned(chat.web.width, chat.channel.width);
-		aligned(chat.web.height, chat.channel.height);
-		aligned(chat.web.left, geometry.entry.left);
-		aligned(chat.channel.right, geometry.entry.right);
-		if (desktop) {
-			aligned(chat.web.top, chat.channel.top);
-			aligned(chat.channel.left - chat.web.right, 12);
-		} else aligned(chat.channel.top - chat.web.bottom, 12);
-	} else expect(geometry.chat).toBeNull();
+		expect(geometry.entry.top).toBeGreaterThan(tools.section.bottom);
+		const cards = [tools.web, tools.channel, tools.provider];
+		aligned(cards[0].left, geometry.entry.left);
+		aligned(cards[2].right, geometry.entry.right);
+		for (const [index, card] of cards.entries()) {
+			aligned(card.width, cards[0].width);
+			aligned(card.height, cards[0].height);
+			if (desktop) {
+				aligned(card.top, cards[0].top);
+				aligned(card.height, geometry.resources[0].cards[0].height);
+				if (index > 0) aligned(card.left - cards[index - 1].right, 12);
+			} else {
+				aligned(card.left, geometry.entry.left);
+				aligned(card.right, geometry.entry.right);
+				if (index > 0) aligned(card.top - cards[index - 1].bottom, 12);
+			}
+		}
+	} else expect(geometry.tools).toBeNull();
 	return geometry;
 }
 

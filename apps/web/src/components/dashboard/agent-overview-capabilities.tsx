@@ -162,6 +162,7 @@ export function OverviewNavigationCard({
 	icon: Icon,
 	tint,
 	link,
+	disabled = false,
 }: {
 	id: string;
 	title: string;
@@ -169,6 +170,7 @@ export function OverviewNavigationCard({
 	icon: LucideIcon;
 	tint: string;
 	link: OverviewLinkOptions | null;
+	disabled?: boolean;
 }) {
 	const content = (
 		<>
@@ -179,7 +181,7 @@ export function OverviewNavigationCard({
 				<CardTitle>{title}</CardTitle>
 				<CardDescription data-overview-primary-value>{description}</CardDescription>
 			</div>
-			{link ? (
+			{link || disabled ? (
 				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 			) : null}
 		</>
@@ -192,7 +194,16 @@ export function OverviewNavigationCard({
 			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
 		>
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
-				{link ? (
+				{disabled ? (
+					<button
+						type="button"
+						disabled
+						aria-label={title}
+						className="flex min-w-0 items-center gap-3 text-left opacity-50"
+					>
+						{content}
+					</button>
+				) : link ? (
 					<Link
 						{...link}
 						aria-label={title}

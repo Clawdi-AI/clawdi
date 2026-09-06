@@ -3153,10 +3153,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("#hosted-recent-sessions, #agent-overview-workspace, #agent-overview-shared")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
 	).toEqual(["hosted-recent-sessions", "agent-overview-workspace", "agent-overview-shared"]);
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(8);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(9);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(8);
+	).toHaveCount(9);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
@@ -3165,7 +3165,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			),
 	).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		8,
+		9,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -3657,6 +3657,160 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 	}
 });
 
+test("overview subscription shortcut follows existing eligibility without billing mutations", async ({
+	page,
+}, testInfo) => {
+	const included = includedBasicDeployment.compute_subscription;
+	const paid = paidBasicDeployment.compute_subscription;
+	if (!included || !paid) throw new Error("Missing subscription fixtures");
+	const deployment: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		hermes_control_ui_url: "https://runtime.example/",
+	};
+	const billingMutations: string[] = [];
+	page.on("request", (request) => {
+		if (
+			["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) &&
+			new URL(request.url()).host === "127.0.0.1:8001"
+		) {
+			billingMutations.push(request.url());
+		}
+	});
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+		agentResourceFixtures: true,
+		sessionsPage: hostedOverviewSessionsPage(3),
+	});
+	for (const scenario of [
+		{
+			name: "eligible",
+			subscription: included,
+			runtime: "running",
+			available: true,
+			label: "Active",
+			upgrade: true,
+		},
+		{
+			name: "stopped",
+			subscription: included,
+			runtime: "stopped",
+			available: true,
+			label: "Active",
+			upgrade: true,
+		},
+		{
+			name: "canceling",
+			subscription: { ...included, cancel_at_period_end: true },
+			runtime: "running",
+			available: true,
+			label: "Canceling",
+			upgrade: false,
+		},
+		{
+			name: "paid",
+			subscription: paid,
+			runtime: "running",
+			available: true,
+			label: "Active",
+			upgrade: false,
+		},
+		{
+			name: "past-due",
+			subscription: { ...paid, payment_state: "past_due", recovery_action: "fix_payment" },
+			runtime: "running",
+			available: true,
+			label: "Past due",
+			upgrade: false,
+		},
+		{
+			name: "authority-pending",
+			subscription: { ...included, recovery_blocked_reason: "authority_pending" },
+			runtime: "running",
+			available: true,
+			label: "Updating subscription",
+			upgrade: false,
+		},
+		{
+			name: "transition",
+			subscription: included,
+			runtime: "restarting",
+			available: true,
+			label: "Active",
+			upgrade: false,
+		},
+		{
+			name: "failed",
+			subscription: included,
+			runtime: "failed",
+			available: true,
+			label: "Active",
+			upgrade: false,
+		},
+		{
+			name: "missing",
+			subscription: null,
+			runtime: "running",
+			available: true,
+			label: null,
+			upgrade: false,
+		},
+		{
+			name: "unavailable",
+			subscription: included,
+			runtime: "running",
+			available: false,
+			label: "Active",
+			upgrade: false,
+		},
+	] as const) {
+		deployment.compute_subscription = scenario.subscription;
+		deployment.status = scenario.runtime;
+		deployment.upgrade_available = scenario.available;
+		for (const width of scenario.name === "canceling" || scenario.name === "paid"
+			? [1440, 390]
+			: [1440]) {
+			await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			const compute = page.locator('[data-overview-status="compute"]');
+			const body = compute.locator('[data-slot="card-content"]');
+			await expect(body).toContainText("Basic plan");
+			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
+			if (scenario.label) await expect(body).toContainText(scenario.label);
+			else await expect(body.getByText("Subscription", { exact: true })).toHaveCount(0);
+			const upgrade = body.getByRole("button", { name: "Upgrade", exact: true });
+			await expect(upgrade).toHaveCount(scenario.upgrade ? 1 : 0);
+			await expect(body.getByText("Renews", { exact: true })).toHaveCount(
+				scenario.name === "paid" ? 1 : 0,
+			);
+			if (scenario.name === "paid") await expect(body).toContainText("Jul 15, 2027");
+			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
+			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
+			if (scenario.name === "canceling" || scenario.name === "paid") {
+				await captureAgentOverview(page, testInfo, `hermes-three-column-${scenario.name}-${width}`);
+			}
+			if (scenario.upgrade) {
+				await expect(upgrade).toHaveAttribute(
+					"href",
+					`/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`,
+				);
+				await upgrade.click();
+				await expect(page).toHaveURL(
+					`/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`,
+				);
+				await expect(
+					page
+						.locator("#compute-plan-controls")
+						.getByRole("button", { name: "Upgrade", exact: true }),
+				).toBeEnabled();
+				await expect(page.getByRole("dialog")).toHaveCount(0);
+			}
+		}
+	}
+	expect(billingMutations).toEqual([]);
+});
+
 for (const runtime of ["hermes", "openclaw"] as const) {
 	test(`${runtime} Dashboard entry is prominent, runtime-aware and secure`, async ({
 		page,
@@ -3675,6 +3829,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 		await stubHostedApi(page, {
 			deployments: [deployment],
 			cloudAgents: [{ ...railHostedCloudAgent, agent_type: runtime }],
+			plans: [basicPlan, performancePlan],
 			agentResourceFixtures: true,
 			sessionsPage,
 			runtimeUiRedemptionRequests: credentialRequests,
@@ -3713,22 +3868,21 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await page.setViewportSize(viewport);
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const module = page.locator('[data-overview-module="dashboard"]');
-			const open = page.getByRole("button", { name: "Web Chat", exact: true });
+			const open = page.getByRole("link", { name: "Web Chat", exact: true });
 			await expect(open).toHaveCount(1);
 			await expect(open).toBeEnabled();
 			await expect(open.getByText(label, { exact: true })).toBeVisible();
-			await expect(module.getByRole("button")).toHaveCount(1);
+			await expect(module.getByRole("link")).toHaveCount(1);
 			await expect(module.locator(":scope > *")).toHaveCount(1);
 			await expect(module.locator('[role="status"], #agent-dashboard-status')).toHaveCount(0);
-			await expect(open).toHaveAttribute("aria-describedby", "agent-dashboard-subtitle");
 			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
 			await expectNoHorizontalOverflow(module, "Dashboard module");
 			await expectNoHorizontalOverflow(
-				open.locator("#agent-dashboard-subtitle"),
+				open.locator('[data-slot="card-description"]'),
 				"Dashboard subtitle",
 			);
 			const lines = await open
-				.locator("#agent-dashboard-title, #agent-dashboard-subtitle")
+				.locator('[data-slot="card-title"], [data-slot="card-description"]')
 				.evaluateAll((elements) =>
 					elements.map((element) => ({
 						top: element.getBoundingClientRect().top,
@@ -3757,6 +3911,11 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			const channels = page.locator('[data-overview-module="channels"]');
 			await expect(channels).toContainText("Telegram, Discord, or WhatsApp");
 			await expect(entry.locator('[data-overview-status="compute"]')).toBeVisible();
+			const compute = entry.locator('[data-overview-status="compute"]');
+			await expect(compute.getByRole("button", { name: "Upgrade", exact: true })).toBeVisible();
+			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
+			await expect(compute.locator('[data-slot="card-content"]')).toContainText("Basic plan");
+			await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 			await expect(page.getByTestId("overview-session-placeholder")).toHaveCount(0);
 			const sessionGrid = page.getByTestId("overview-session-grid");
 			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
@@ -3772,7 +3931,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				desktop: viewport.width === 1440,
 			});
 			await testInfo.attach(
-				`${runtime}-compute-right-${viewport.width}-sessions-${sessionCount}-geometry`,
+				`${runtime}-three-column-${viewport.width}-sessions-${sessionCount}-geometry`,
 				{
 					body: JSON.stringify(geometry, null, 2),
 					contentType: "application/json",
@@ -3781,7 +3940,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await captureAgentOverview(
 				page,
 				testInfo,
-				`${runtime}-compute-right-${viewport.width}-sessions-${sessionCount}`,
+				`${runtime}-three-column-${viewport.width}-sessions-${sessionCount}`,
 			);
 			if (viewport.width < 768) {
 				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
@@ -3800,10 +3959,13 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			]);
 			if (viewport.width < 768) await page.keyboard.press("Escape");
 		}
-		await page.getByRole("link", { name: "Connect Channel", exact: true }).click();
+		await page
+			.locator('[data-overview-module="channels"]')
+			.getByRole("link", { name: "Channels", exact: true })
+			.click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/channel-links`);
 		await page.goto(`/agents/${railHostedEnvironmentId}`);
-		await page.getByRole("button", { name: "Web Chat", exact: true }).click();
+		await page.getByRole("link", { name: "Web Chat", exact: true }).click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
 		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
 		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;

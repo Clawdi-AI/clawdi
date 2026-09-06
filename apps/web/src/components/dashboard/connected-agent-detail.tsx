@@ -454,15 +454,12 @@ function AgentDetailContentSkeleton({
 				description={false}
 			/>
 			{variant === "hosted" ? (
-				<div className="space-y-3" aria-hidden="true">
-					<Skeleton className="h-5 w-20" />
-					<div className="grid gap-3 @2xl/main:grid-cols-2">
-						<Skeleton className="h-24 rounded-xl" />
-						<Skeleton className="h-24 rounded-xl" />
-					</div>
+				<div className="grid gap-3 @5xl/main:grid-cols-3" aria-hidden="true">
+					<Skeleton className="h-17 rounded-xl" />
+					<Skeleton className="h-17 rounded-xl" />
+					<Skeleton className="h-17 rounded-xl" />
 				</div>
 			) : null}
-			{variant === "hosted" ? <Skeleton className="h-17 rounded-xl" /> : null}
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">
