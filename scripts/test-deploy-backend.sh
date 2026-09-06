@@ -50,7 +50,7 @@ image="ghcr.io/clawdi-ai/clawdi-backend:${CURRENT_IMAGE}"
 if [[ -f "${FAKE_LOG}.${role}.deployed" ]]; then
 	image="ghcr.io/clawdi-ai/clawdi-backend:${DEPLOY_IMAGE_VERSION}"
 	case "${role}" in
-		web) pool=5:5:5; workers=2 ;;
+		web) pool=5:3:5; workers=2 ;;
 		channels-worker) pool=10:10:5 ;;
 		embedding-worker) pool=:: ;;
 	esac
@@ -109,7 +109,7 @@ if run invalid 12:12:5 10:10:5 >/dev/null 2>&1; then
 	exit 1
 fi
 
-if run saturated 10:10:5 10:10:5 19 >/dev/null 2>&1; then
+if run saturated 10:10:5 10:10:5 21 >/dev/null 2>&1; then
 	echo "Expected insufficient PostgreSQL headroom to fail" >&2
 	exit 1
 fi

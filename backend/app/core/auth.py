@@ -550,6 +550,9 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "OAuth CLI authentication is not configured",
             )
+        # Only the validated setting value is needed during the JWKS network
+        # lookup. Principal authority locks are acquired after JWT verification.
+        await db.rollback()
     signing_key = await _resolve_clerk_signing_key(token)
     if signing_key is None:
         return None

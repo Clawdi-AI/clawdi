@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import engine as runtime_engine
-from app.core.database import get_session
+from app.core.database import get_control_session, get_session
 from app.main import app
 from app.models.agent_plugin import (
     AgentPluginInstallation,
@@ -459,6 +459,7 @@ async def admin_client(db_session) -> AsyncIterator[httpx.AsyncClient]:
     original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = _ADMIN_KEY
     settings.clerk_jwt_issuer = "https://runtime-manifest.clerk.example.test"
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     try:
         transport = ASGITransport(app=app)
@@ -491,6 +492,7 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     async def _override_get_auth():
         return AuthContext(user=seed_user, api_key=api_key)
 
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
@@ -511,6 +513,7 @@ async def _isolated_admin_client(engine) -> AsyncIterator[httpx.AsyncClient]:
 
     original_admin_key = settings.admin_api_key
     settings.admin_api_key = _ADMIN_KEY
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     try:
         async with httpx.AsyncClient(

@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.auth import require_admin_api_key
-from app.core.database import get_session
+from app.core.database import get_control_session, get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.app_setting import AppSetting
@@ -283,7 +283,7 @@ async def admin_set_principal_suspension(
     body: AdminPrincipalSuspensionUpdate,
     response: Response,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminPrincipalSuspensionResponse:
     """Idempotently set or clear the platform-owned authentication fence."""
 
@@ -865,7 +865,7 @@ async def _assert_admin_cleanup_target_owns_environment(
 async def admin_mint_api_key(
     body: AdminApiKeyCreate,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> ApiKeyCreated:
     """Mint an api_key on behalf of a user identified by Clerk id.
 
@@ -963,7 +963,7 @@ async def admin_mint_api_key(
 async def admin_revoke_api_key(
     key_id: UUID,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> ApiKeyRevokeResponse:
     """Revoke any user's api_key. Used by SaaS admin/account-deletion
     paths (which don't have the user's Clerk JWT) to close the
@@ -1016,7 +1016,7 @@ async def admin_get_clawdi_managed_ai_provider(
     owner_kind: Annotated[str | None, Query(alias="kind")] = None,
     owner_ref: Annotated[str | None, Query(alias="ref")] = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminDeploymentManagedAiProviderResponse:
     """Read one first-party managed provider within an explicit owner scope."""
 
@@ -1087,7 +1087,7 @@ async def admin_upsert_clawdi_managed_ai_provider(
     provider_id: str,
     body: AdminManagedAiProviderUpsert | AdminDeploymentManagedAiProviderUpsert,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminManagedAiProviderResponse | AdminDeploymentManagedAiProviderResponse:
     """Upsert the first-party managed AI provider for a target user.
 
@@ -1262,7 +1262,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
     provider_id: str,
     body: AdminDeploymentManagedAiProviderRuntimeMetadataReplace,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminDeploymentManagedAiProviderResponse:
     """Replace deployment-managed runtime metadata without changing auth state."""
 
@@ -1350,7 +1350,7 @@ async def admin_get_ai_provider_removal_authority(
     owner_kind: Annotated[str | None, Query(alias="kind")] = None,
     owner_ref: Annotated[str | None, Query(alias="ref")] = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminAiProviderRemovalAuthorityResponse:
     """Read the exact Cloud incarnation to which removal must compare-and-set."""
 
@@ -1401,7 +1401,7 @@ async def admin_archive_ai_provider(
     ],
     provider_id: str = Path(..., min_length=1, max_length=80),
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminAiProviderArchiveReceipt:
     """Archive exactly the Cloud incarnation confirmed before Hosted Unset."""
 
@@ -1524,7 +1524,7 @@ async def admin_cleanup_deployment_managed_ai_provider(
     provider_id: str,
     body: AdminDeploymentManagedAiProviderCleanup,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminDeploymentManagedAiProviderCleanupReceipt:
     """Archive or prove one exact deployment-scoped managed provider."""
 
@@ -1623,7 +1623,7 @@ async def admin_delete_clawdi_managed_ai_provider(
     owner_kind: Annotated[str | None, Query(alias="kind")] = None,
     owner_ref: Annotated[str | None, Query(alias="ref")] = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AiProviderDeleteResponse:
     """Archive one first-party managed provider within an explicit owner scope."""
 
@@ -2269,7 +2269,7 @@ async def _admin_register_environment(
 async def admin_register_agent(
     body: AdminAgentCreate,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> EnvironmentCreatedResponse:
     return await _admin_register_environment(
         AdminEnvironmentCreate(
@@ -2294,7 +2294,7 @@ async def admin_register_agent(
 async def admin_register_environment(
     body: AdminEnvironmentCreate,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> EnvironmentCreatedResponse:
     """Register an AgentEnvironment row on behalf of a target user.
 
@@ -2380,7 +2380,7 @@ async def admin_delete_agent(
     agent_id: UUID,
     target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> None:
     await _admin_delete_environment(agent_id, target_clerk_id, db)
 
@@ -2394,7 +2394,7 @@ async def admin_delete_environment(
     environment_id: UUID,
     target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> None:
     """Delete an AgentEnvironment row on behalf of first-party hosted infra.
 
@@ -2628,7 +2628,7 @@ async def admin_get_runtime_source_authority(
     agent_id: UUID,
     owner: Annotated[PlatformOwner, Query()],
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> RuntimeSourceAuthorityResponse:
     target = await _find_admin_owner(db, owner)
     try:
@@ -2660,7 +2660,7 @@ async def admin_upsert_agent_runtime_state(
     agent_id: UUID,
     body: AdminRuntimeStateUpsert,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminRuntimeStateResponse:
     return await _admin_upsert_runtime_state(agent_id, body, db)
 
@@ -2674,7 +2674,7 @@ async def admin_upsert_runtime_state(
     environment_id: UUID,
     body: AdminRuntimeStateUpsert,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> AdminRuntimeStateResponse:
     return await _admin_upsert_runtime_state(environment_id, body, db)
 
@@ -2767,7 +2767,7 @@ async def admin_delete_agent_runtime_state(
     agent_id: UUID,
     target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> None:
     await _admin_delete_runtime_state(agent_id, target_clerk_id, db)
 
@@ -2781,7 +2781,7 @@ async def admin_delete_runtime_state(
     environment_id: UUID,
     target_clerk_id: str | None = None,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> None:
     await _admin_delete_runtime_state(environment_id, target_clerk_id, db)
 

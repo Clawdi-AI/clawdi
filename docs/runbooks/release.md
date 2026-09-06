@@ -355,13 +355,21 @@ Every migration must therefore remain expand/contract compatible with the old
 API during this window. Operators must use the release workflow rather than
 running Alembic independently.
 
-The two-worker `web` role owns two `5 + 5` PostgreSQL pools, while
-`channels-worker` owns one `10 + 10` pool. Both roles use a 5-second acquisition
-timeout; `embedding-worker` does not import the database engine and owns no
-pool. Steady state therefore reserves 40 connections. The production workflow
-rolls database-owning roles sequentially, so a bounded-pool release normally
-reserves at most 60 of PostgreSQL's 100 connections and leaves at least 40 for
-migrations, operators, and transient database work.
+Each of the two `web` workers owns a `5 + 3` ordinary PostgreSQL pool and a
+two separate `1 + 0` internal pools (control transactions and nested consistent
+runtime-source snapshots). `channels-worker` uses only its
+`10 + 10` ordinary pool. All pools use a 5-second acquisition timeout;
+`embedding-worker` does not import the database engine and owns no pool.
+The control pools are lazy and are never checked out by background workers.
+
+Steady pooled capacity is `2 * (5 + 3 + 2) + 20 = 40`. Each web worker and
+the channels worker also owns one independent LISTEN connection, giving
+`40 + 3 = 43` total client connections. Database-owning roles roll sequentially:
+web overlap is `2 * 22 + 21 = 65`, channels overlap is `22 + 2 * 21 = 64`.
+The previous web pool (`5 + 5`, without control) has the same total budget, so
+the transition does not increase it. PostgreSQL remains at 100 connections;
+subtracting 3 superuser-reserved slots leaves 97 ordinary slots and at least
+`97 - 65 = 32` for migrations, backups, operators, and transient client work.
 
 The deploy helper inspects the running roles before every release. It accepts
 only the known legacy and bounded pool contracts and fails closed on unknown or
@@ -376,7 +384,7 @@ rollout:
 scripts/deploy-backend.sh
 ```
 
-The helper checks for at least 20 currently available ordinary PostgreSQL
+The helper checks for at least 22 currently available ordinary PostgreSQL
 connection slots, after subtracting reserved slots, before migration and before
 each database-owning role deployment. It verifies that every role converged to
 the requested image, that database pools match their bounded contracts, that

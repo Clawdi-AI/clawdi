@@ -384,14 +384,15 @@ async def telegram_bot_api(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> _TelegramJsonObject | Response:
+    # Read the bounded request body before checking out an auth connection.
+    raw_body = await request.body()
+    params = await _telegram_request_params(request)
     agent, _agent_token = await _resolve_telegram_agent(
         db,
         routing_id=routing_id,
         authorization=authorization,
     )
     account = agent.account
-    raw_body = await request.body()
-    params = await _telegram_request_params(request)
     duplicate_parameter = await _telegram_duplicate_security_parameter(request, raw_body, params)
     if duplicate_parameter is not None:
         return _telegram_error_response(

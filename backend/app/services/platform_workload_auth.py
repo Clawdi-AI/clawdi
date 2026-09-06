@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_admin_api_key
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_control_session
 from app.models.platform_workload_auth import (
     PLATFORM_WORKLOAD_CLIENT_ACTIVE,
     PLATFORM_WORKLOAD_SIGNING_KEY_ACTIVE,
@@ -706,7 +706,7 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
         request: Request,
         x_admin_key: Annotated[str | None, Header(alias="X-Admin-Key")] = None,
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-        db: AsyncSession = Depends(get_session),
+        db: AsyncSession = Depends(get_control_session),
         resolver: PlatformWorkloadKeyResolver = Depends(get_platform_workload_key_resolver),
     ) -> PlatformMutationAuth:
         admin_values = _credential_values(request, "x-admin-key")

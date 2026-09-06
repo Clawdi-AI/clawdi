@@ -209,12 +209,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://clawdi:clawdi_dev@localhost:5433/clawdi"
 
-    # SQLAlchemy connection pool. Default sqlalchemy values
-    # (pool_size=5 + max_overflow=10) start to choke at ~10k
-    # connected daemons because every SSE refresh tick takes
-    # one connection for the duration of the visibility query.
-    # Override via env in prod (e.g. DB_POOL_SIZE=20,
-    # DB_MAX_OVERFLOW=40 sized to the daemon population).
+    # Ordinary SQLAlchemy pool per process. Budget API processes for the
+    # separate two-connection control pool and LISTEN connection as well.
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_timeout: float = 30.0

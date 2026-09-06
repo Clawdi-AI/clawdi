@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Request, Response, WebSocket, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -18,7 +18,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import (
+    ControlLockTimeoutError,
+    control_engine,
+    control_snapshot_engine,
+    get_session,
+)
 from app.core.logging_config import configure_application_logging
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
@@ -73,7 +78,7 @@ from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder, LocalServiceEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
-from app.services.metrics import db_pool_timeouts, observe_event_loop_lag
+from app.services.metrics import db_control_lock_timeouts, db_pool_timeouts, observe_event_loop_lag
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarClientPool
 
@@ -162,7 +167,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
                     try:
                         await close_composio_client()
                     finally:
-                        await LocalServiceEmbedder.close_shared()
+                        try:
+                            await LocalServiceEmbedder.close_shared()
+                        finally:
+                            try:
+                                await control_engine.dispose()
+                            finally:
+                                await control_snapshot_engine.dispose()
 
 
 app = FastAPI(
@@ -414,13 +425,32 @@ async def memory_provider_upstream_exception_handler(
     )
 
 
+@app.exception_handler(ControlLockTimeoutError)
+async def control_lock_timeout_exception_handler(
+    _request: Request,
+    _exc: ControlLockTimeoutError,
+) -> JSONResponse:
+    db_control_lock_timeouts.inc()
+    log.warning("database_control_lock_timeout")
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Deployment control temporarily unavailable"},
+        headers={"Retry-After": "1", "Cache-Control": "no-store"},
+    )
+
+
 @app.exception_handler(SQLAlchemyTimeoutError)
 async def database_pool_timeout_exception_handler(
-    request: Request,
+    request: Request | WebSocket,
     _exc: SQLAlchemyTimeoutError,
-) -> Response:
+) -> Response | None:
     db_pool_timeouts.inc()
     log.warning("database_pool_exhausted")
+    if isinstance(request, WebSocket):
+        # Before accept this rejects the handshake; afterwards it closes with
+        # Try Again Later. Neither path emits an HTTP ASGI response on a socket.
+        await request.close(code=status.WS_1013_TRY_AGAIN_LATER)
+        return None
     response = JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": "Database capacity temporarily unavailable"},

@@ -22,7 +22,7 @@ from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_control_session, get_session
 from app.main import app
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
@@ -157,6 +157,7 @@ async def admin_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncClient
 
     original_admin_key = settings.admin_api_key
     settings.admin_api_key = _ADMIN_KEY
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
 
     # Outer try/finally guards `settings.admin_api_key` restoration
@@ -185,6 +186,7 @@ async def _isolated_admin_client(engine) -> AsyncIterator[httpx.AsyncClient]:
 
     original_admin_key = settings.admin_api_key
     settings.admin_api_key = _ADMIN_KEY
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     try:
         async with httpx.AsyncClient(
@@ -379,6 +381,7 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
     original = settings.admin_api_key
     settings.admin_api_key = ""
 
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     try:
         transport = ASGITransport(app=app)

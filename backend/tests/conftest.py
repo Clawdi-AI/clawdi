@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session, optional_web_auth
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_control_session, get_session
 from app.main import app
 from app.models.user import User
 
@@ -529,6 +529,7 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
         return AuthContext(user=seed_user)
 
     overrides = {
+        get_control_session: _override_get_session,
         get_session: _override_get_session,
         get_auth: _override_get_auth,
         get_auth_short_session: _override_get_auth,
@@ -561,6 +562,7 @@ async def anon_client(
 
     with _dependency_overrides(
         {
+            get_control_session: _override_get_session,
             get_session: _override_get_session,
             optional_web_auth: _override_optional_web_auth,
         }
@@ -590,6 +592,7 @@ async def cli_client(db_session: AsyncSession, seed_user: User) -> AsyncIterator
 
     with _dependency_overrides(
         {
+            get_control_session: _override_get_session,
             get_session: _override_get_session,
             get_auth: _override_get_auth,
             get_auth_short_session: _override_get_auth,

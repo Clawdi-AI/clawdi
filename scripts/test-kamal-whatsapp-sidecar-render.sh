@@ -145,7 +145,7 @@ web = config.role("web")
 expected_web_env = {
   "WEB_CONCURRENCY" => 2,
   "DB_POOL_SIZE" => 5,
-  "DB_MAX_OVERFLOW" => 5,
+  "DB_MAX_OVERFLOW" => 3,
   "DB_POOL_TIMEOUT" => 5,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
 }
@@ -154,7 +154,7 @@ unless web.specialized_env.clear == expected_web_env
 end
 raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "6g"
 web_env = web.env(web.primary_host).clear
-unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 5, 5, 5 ]
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 5, 3, 5 ]
   raise "web role database pool drifted"
 end
 embedding_worker = config.role("embedding-worker")
@@ -194,8 +194,9 @@ end
 if channels_worker_env.key?("PROMETHEUS_MULTIPROC_DIR")
   raise "channels-worker unexpectedly enabled multiprocess metrics"
 end
+# core/database.py reserves one control and one nested snapshot connection per API worker.
 web_connections = web_env.fetch("WEB_CONCURRENCY") *
-  (web_env.fetch("DB_POOL_SIZE") + web_env.fetch("DB_MAX_OVERFLOW"))
+  (web_env.fetch("DB_POOL_SIZE") + web_env.fetch("DB_MAX_OVERFLOW") + 2)
 worker_connections = channels_worker_env.fetch("DB_POOL_SIZE") +
   channels_worker_env.fetch("DB_MAX_OVERFLOW")
 steady_connections = web_connections + worker_connections
@@ -205,6 +206,14 @@ rolling_connections = [
 ].max
 raise "steady database connection budget drifted" unless steady_connections == 40
 raise "rolling database connection budget drifted" unless rolling_connections == 60
+web_listeners = web_env.fetch("WEB_CONCURRENCY")
+worker_listeners = 1
+rolling_clients = [
+  2 * (web_connections + web_listeners) + worker_connections + worker_listeners,
+  web_connections + web_listeners + 2 * (worker_connections + worker_listeners),
+].max
+raise "rolling client budget drifted" unless rolling_clients == 65
+raise "rolling client reserve exhausted" unless 100 - 3 - rolling_clients >= 22
 shared_env = config.raw_config.env.clear
 if shared_env.keys.any? { |key| key.start_with?("DB_POOL_") }
   raise "database pool ownership escaped the web and channels roles"

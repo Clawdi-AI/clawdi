@@ -14,6 +14,7 @@ from fastapi import (
 )
 from pydantic import JsonValue
 from sqlalchemy import select, update
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -373,6 +374,9 @@ async def _run_whatsapp_baileys_websocket(
         return
     except _WhatsAppSessionAuthorityRevoked:
         return
+    except SQLAlchemyTimeoutError:
+        # Let the protocol-aware pool boundary close with Try Again Later.
+        raise
     except Exception as exc:  # noqa: BLE001 - close malformed agent sockets without leaking internals.
         with contextlib.suppress(Exception):
             await record_runtime_event(
