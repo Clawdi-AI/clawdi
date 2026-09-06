@@ -20,7 +20,12 @@ mkdirSync(clawdiHome, { recursive: true });
 const output = [];
 const desktop = spawn(
 	executablePath,
-	[`--user-data-dir=${join(runtimeRoot, "electron-data")}`, "--remote-debugging-port=0"],
+	[
+		`--user-data-dir=${join(runtimeRoot, "electron-data")}`,
+		"--remote-debugging-port=0",
+		// Match Playwright's Chromium defaults: no OS keychain prompts in unattended tests.
+		"--use-mock-keychain",
+	],
 	{
 		env: {
 			...process.env,
