@@ -41,7 +41,8 @@ try {
 	);
 	await waitFor(async () => {
 		const status = await controlStatus();
-		return status.active && status.bundleCaptured;
+		// Socket authentication precedes the stock inbound listener attachment.
+		return status.active && status.bundleCaptured && openClawReadyCount() > 0;
 	}, "stock OpenClaw WhatsApp plugin connection");
 
 	await controlPost("/control/push", {
