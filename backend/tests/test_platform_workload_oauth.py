@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -15,9 +16,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core import database
+from app.core.auth import AuthContext, get_auth_short_session
 from app.core.config import settings
-from app.core.database import get_runtime_observation_session, get_session
+from app.core.database import get_control_session, get_runtime_observation_session, get_session
 from app.main import app
 from app.models.ai_provider import AiProviderAuthPayload
 from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
@@ -33,7 +37,10 @@ from app.models.platform_workload_auth import (
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.user import User
-from app.services import platform_workload_auth
+from app.routes import admin as admin_route
+from app.routes import sync as sync_route
+from app.routes.channel_routers.discord import _discord_gateway_consumer_lease
+from app.services import platform_workload_auth, runtime_source_authority
 from app.services.platform_workload_auth import (
     PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
     PLATFORM_WORKLOAD_ACCESS_TOKEN_TTL_SECONDS,
@@ -48,6 +55,11 @@ from app.services.platform_workload_auth import (
 )
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.vault_crypto import encrypt
+from tests.conftest import create_test_hosted_runtime_state
+from tests.hosted_runtime_fixtures import (
+    CANONICAL_CODEX_TOOLS,
+    ensure_canonical_codex_tool_provider,
+)
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _CLERK_ISSUER = "https://platform-workload.clerk.example.test"
@@ -133,6 +145,7 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     settings.public_api_url = "http://test"
     settings.platform_workload_token_endpoint = ""
     settings.platform_workload_issuer = "clawdi-cloud-platform-test"
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_runtime_observation_session] = _override_get_session
     app.dependency_overrides[get_platform_workload_key_resolver] = _override_resolver
@@ -253,6 +266,127 @@ def _agent_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
         "agent_version": "1.0.0",
         "os_name": "linux",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
+    workload_harness, seed_user, db_session, monkeypatch
+):
+    """Real pool contention must not strand token issuance or deployment recovery."""
+    monkeypatch.setattr(settings, "db_pool_timeout", 1.0)
+    ordinary = database._create_engine(pool_size=2, max_overflow=0)
+    control = database._create_engine(pool_size=database.CONTROL_POOL_SIZE, max_overflow=0)
+    snapshot = database._create_engine(pool_size=1, max_overflow=0)
+    ordinary_sessions = async_sessionmaker(
+        ordinary, class_=database.async_session_factory.class_, expire_on_commit=False
+    )
+    control_sessions = async_sessionmaker(
+        control, class_=database.control_session_factory.class_, expire_on_commit=False
+    )
+    monkeypatch.setattr(database, "async_session_factory", ordinary_sessions)
+    monkeypatch.setattr(database, "control_session_factory", control_sessions)
+    monkeypatch.setattr(sync_route, "async_session_factory", ordinary_sessions)
+    monkeypatch.setattr(
+        runtime_source_authority,
+        "control_snapshot_session_factory",
+        async_sessionmaker(
+            snapshot,
+            class_=database.control_snapshot_session_factory.class_,
+            expire_on_commit=False,
+        ),
+    )
+    for dependency in (get_session, get_control_session, get_runtime_observation_session):
+        monkeypatch.delitem(app.dependency_overrides, dependency)
+
+    async def sync_auth():
+        return AuthContext(user=seed_user)
+
+    monkeypatch.setitem(app.dependency_overrides, get_auth_short_session, sync_auth)
+    provider_started = asyncio.Event()
+
+    async def slow_provider_webhook(**kwargs):
+        provider_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(admin_route, "configure_telegram_provider_webhook", slow_provider_webhook)
+    owner = _owner(seed_user)
+    agent_id = uuid.uuid4()
+    await db_session.commit()
+    client = workload_harness.client
+    try:
+        # A gateway lease and a channel transaction awaiting provider I/O consume
+        # both ordinary slots. Only the external provider call is stubbed.
+        async with _discord_gateway_consumer_lease(
+            account_id=uuid.uuid4(), bot_agent_link_id=uuid.uuid4(), lock_engine=ordinary
+        ) as acquired:
+            assert acquired
+            pressure = asyncio.create_task(
+                client.post(
+                    "/v1/admin/channels",
+                    headers={"X-Admin-Key": _ADMIN_KEY},
+                    json={
+                        "provider": "telegram",
+                        "name": f"slow-provider-{agent_id}",
+                        "visibility": "public",
+                        "provider_token": "test-provider-token",
+                    },
+                )
+            )
+            try:
+                await asyncio.wait_for(provider_started.wait(), timeout=2)
+                async with asyncio.timeout(10):
+                    saturated = await client.get("/v1/sync/events")
+                    assert saturated.status_code == 503, saturated.text
+                    assert saturated.headers["Retry-After"] == "1"
+                    token = await _access_token(
+                        workload_harness, "platform:agents:create platform:agents:delete"
+                    )
+                    created = await client.post(
+                        "/v1/platform/agents",
+                        headers=_workload_headers(token, f"capacity-create-{agent_id}"),
+                        json=_agent_body(owner, agent_id),
+                    )
+                    assert created.status_code == 200, created.text
+                    agent = await db_session.get(AgentEnvironment, agent_id)
+                    state = await create_test_hosted_runtime_state(
+                        db_session, agent, runtime_name="openclaw"
+                    )
+                    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+                    state.tools = CANONICAL_CODEX_TOOLS
+                    await db_session.commit()
+                    # These reads retain the outer authorization transaction
+                    # while loading a nested snapshot. Concurrent callers must
+                    # neither fall back to the ordinary pool nor deadlock.
+                    reads = await asyncio.gather(
+                        *(
+                            client.get(
+                                f"{prefix}/admin/agents/{agent_id}/runtime-state",
+                                params=owner,
+                                headers={"X-Admin-Key": _ADMIN_KEY},
+                            )
+                            for prefix in ("/v1", "/api")
+                        )
+                    )
+                    for result in reads:
+                        assert result.status_code == 200, result.text
+                    recovered = await client.request(
+                        "DELETE",
+                        f"/v1/platform/agents/{agent_id}",
+                        headers=_workload_headers(token, f"capacity-delete-{agent_id}"),
+                        json={"owner": owner},
+                    )
+                    assert recovered.status_code == 204, recovered.text
+
+                    assert not pressure.done()
+            finally:
+                pressure.cancel()
+                await asyncio.gather(pressure, return_exceptions=True)
+        assert (await client.get("/ready")).status_code == 200
+    finally:
+        await ordinary.dispose()
+        await control.dispose()
+        await snapshot.dispose()
 
 
 def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:

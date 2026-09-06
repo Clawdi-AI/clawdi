@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_session
+from app.core.database import get_control_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -172,7 +172,7 @@ def _oauth_form_value(form: Any, name: str) -> str:
 )
 async def platform_workload_oauth_token(
     request: Request,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
     resolver: PlatformWorkloadKeyResolver = Depends(get_platform_workload_key_resolver),
 ) -> PlatformOAuthTokenResponse | Response:
     if request.headers.getlist("authorization") or request.headers.getlist("x-admin-key"):
@@ -632,7 +632,7 @@ async def platform_create_agent(
     request: Request,
     idempotency_key: IdempotencyKey,
     _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:agents:create")),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> EnvironmentCreatedResponse | Response:
     action = "agent_environment.create"
     owner = await _resolve_owner(
@@ -726,7 +726,7 @@ async def platform_delete_agent(
     request: Request,
     idempotency_key: IdempotencyKey,
     _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:agents:delete")),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> Response:
     action = "agent_environment.delete"
     owner = await _resolve_owner(
@@ -809,7 +809,7 @@ async def platform_get_runtime_source_authority(
     _auth: PlatformMutationAuth = Depends(
         require_platform_mutation_auth("platform:runtime-state:write")
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> RuntimeSourceAuthorityResponse:
     owner_user_id = await _resolve_runtime_source_authority_owner_id(db, owner)
     try:
@@ -845,7 +845,7 @@ async def platform_upsert_runtime_state(
     _auth: PlatformMutationAuth = Depends(
         require_platform_mutation_auth("platform:runtime-state:write")
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> PlatformRuntimeStateResponse | Response:
     action = "hosted_runtime_state.upsert"
     owner = await _resolve_owner(
@@ -1101,7 +1101,7 @@ async def platform_delete_runtime_state(
     _auth: PlatformMutationAuth = Depends(
         require_platform_mutation_auth("platform:runtime-state:write")
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> Response:
     action = "hosted_runtime_state.delete"
     owner = await _resolve_owner(
@@ -1185,7 +1185,7 @@ async def platform_mint_api_key(
     request: Request,
     idempotency_key: IdempotencyKey,
     _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:mint")),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> ApiKeyCreated | Response:
     action = "api_key.mint"
     owner = await _resolve_owner(
@@ -1271,7 +1271,7 @@ async def platform_revoke_api_key(
     request: Request,
     idempotency_key: IdempotencyKey,
     _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:revoke")),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> ApiKeyRevokeResponse | Response:
     action = "api_key.revoke"
     owner = await _resolve_owner(

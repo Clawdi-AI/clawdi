@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import runtime_snapshot_session
+from app.core.database import control_snapshot_session_factory, runtime_snapshot_session
 from app.models.agent_plugin import AgentPluginInstallation
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -142,7 +142,9 @@ async def load_runtime_source_authority(
 ) -> RuntimeSourceAuthority:
     """Load the persisted authority, rendering only an unbackfilled legacy row."""
 
-    async with runtime_snapshot_session() as source_db:
+    async with runtime_snapshot_session(
+        session_factory=control_snapshot_session_factory
+    ) as source_db:
         persisted = await load_persisted_runtime_source_authority(
             source_db,
             environment_id=environment_id,

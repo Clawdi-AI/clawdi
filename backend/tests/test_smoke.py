@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from httpx import ASGITransport
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from starlette.websockets import WebSocketDisconnect
 
 from app.core.database import get_session
 from app.main import app
+from app.routes.channel_routers import discord, whatsapp
 
 
 @pytest.mark.asyncio
@@ -71,6 +74,26 @@ async def test_unauthenticated_request_rejected():
         r = await ac.get("/v1/memories")
     # HTTPBearer returns 403 when the Authorization header is absent.
     assert r.status_code in (401, 403), r.text
+
+
+@pytest.mark.parametrize("provider", ["whatsapp", "discord"])
+def test_websocket_pool_timeout_rejects_or_closes_without_http_response(monkeypatch, provider):
+    async def exhausted_auth(*args, **kwargs):
+        raise SQLAlchemyTimeoutError("private pool state")
+
+    route = whatsapp if provider == "whatsapp" else discord
+    monkeypatch.setattr(route, "resolve_channel_agent_by_token", exhausted_auth)
+    path = f"/v1/channels/{provider}/{'baileys' if provider == 'whatsapp' else 'gateway'}"
+    # No lifespan: authentication fails before any actual database or provider I/O.
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with client.websocket_connect(path, headers={"Authorization": "Bearer test"}) as socket:
+            assert provider == "discord"  # Discord accepts before IDENTIFY; WhatsApp does not.
+            assert socket.receive_json()["op"] == 10
+            socket.send_json({"op": 2, "d": {"token": "test"}})
+            socket.receive_json()
+    assert closed.value.code == 1013
+    assert "private" not in closed.value.reason
 
 
 @pytest.mark.asyncio

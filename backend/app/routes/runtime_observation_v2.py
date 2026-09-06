@@ -16,7 +16,7 @@ from app.core.auth import (
     is_runtime_deployment_principal,
     require_admin_api_key,
 )
-from app.core.database import get_runtime_observation_session, get_session
+from app.core.database import get_control_session, get_runtime_observation_session, get_session
 from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.user import PRINCIPAL_KIND_CLERK, PRINCIPAL_KIND_PARTNER_TENANT, User
@@ -393,7 +393,7 @@ async def create_runtime_deployment_key(
     body: RuntimeDeploymentKeyCreate,
     idempotency_key: IdempotencyKey,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> JSONResponse:
     owner = await _resolve_owner(db, body.owner)
     request_payload = body.model_dump(mode="json", by_alias=True)
@@ -536,7 +536,7 @@ async def retire_runtime_environment_endpoint(
     body: RuntimeEnvironmentRetireRequest,
     idempotency_key: IdempotencyKey,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> JSONResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
     binding_owner_id = binding.owner_id
@@ -662,7 +662,7 @@ async def cleanup_retired_runtime_state_endpoint(
     auth: PlatformMutationAuth = Depends(
         require_platform_mutation_auth("platform:runtime-environments:retire")
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> JSONResponse:
     try:
         if body.environment_reference != environment_id:
@@ -752,7 +752,7 @@ async def register_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerRequest,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> RuntimeObservationConsumerResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
     try:
@@ -824,7 +824,7 @@ async def acknowledge_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerAckRequest,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> RuntimeObservationConsumerResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
     try:
@@ -857,7 +857,7 @@ async def reset_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerRequest,
     _: None = Depends(require_admin_api_key),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_control_session),
 ) -> RuntimeObservationConsumerResetResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
     try:

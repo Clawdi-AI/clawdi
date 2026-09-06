@@ -13,7 +13,7 @@ from httpx import ASGITransport
 from sqlalchemy import func, select
 
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_control_session, get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
@@ -86,6 +86,7 @@ async def platform_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncCli
     original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = _ADMIN_KEY
     settings.clerk_jwt_issuer = _CLERK_ISSUER
+    app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     try:
         async with httpx.AsyncClient(
@@ -500,6 +501,7 @@ async def test_retirement_fences_late_runtime_state_writes_and_old_replay(
             yield session
 
     previous_session_override = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_control_session] = _fresh_session
     app.dependency_overrides[get_session] = _fresh_session
     try:
         client = platform_client
@@ -574,6 +576,7 @@ async def test_retirement_fences_late_runtime_state_writes_and_old_replay(
         assert admin.status_code == 409, admin.text
         assert admin.json()["detail"]["code"] == "runtime_environment_retired"
     finally:
+        app.dependency_overrides[get_control_session] = previous_session_override
         app.dependency_overrides[get_session] = previous_session_override
 
 

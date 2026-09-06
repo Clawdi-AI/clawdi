@@ -395,6 +395,55 @@ limit 10;
 
 ## Local admin API
 
+Deployment control routes use `get_control_session`, not the ordinary request
+pool: Agent registration/deletion, credentials and principal suspension,
+deployment-managed providers, platform token issuance/authentication and
+mutations, and internal runtime observation/recovery, including their aliases.
+Settings and all channel management (including WhatsApp pairing, command sync,
+and deletion) use the ordinary pool. Their external provider calls may retain
+transactions needed for atomic ownership and lifecycle transitions; an admin
+credential does not entitle them to the deployment reserve. The repeatable-read
+observation dependency uses the same control pool. Credential and scope
+checks remain mandatory; a URL prefix or client-supplied header never selects
+the pool for an ordinary route. Platform credentials must be read from this
+pool to authenticate even while ordinary traffic is saturated.
+
+Each API process reserves one control transaction connection and one separate
+control runtime-source snapshot connection, both without overflow. A source
+read holds its authorization transaction while opening a consistent snapshot;
+separate pools prevent nested checkout deadlocks between concurrent callers.
+Both use the ordinary pool's timeout, metrics, and cancellation-safe cleanup.
+Only control transactions additionally set a code-owned 5s `lock_timeout` per
+lock acquisition. PostgreSQL SQLSTATE `55P03` becomes a sanitized 503 with
+`Retry-After: 1`, counted by `clawdi_backend_db_control_lock_timeouts_total`,
+not the pool-timeout counter. Ordinary and read-only snapshot pools do not
+inherit this lock timeout.
+It isolates pool starvation, not PostgreSQL row locks, CPU saturation, or
+excessive internal-control traffic. See the [release budget](runbooks/release.md).
+SSE auth/visibility/lease queries and Telegram long polls release their query
+connections between waits. OAuth CLI authentication releases its read-only
+setting lookup before waiting on Clerk JWKS. Discord's session advisory lock
+must retain its ordinary connection for the consumer lifetime; releasing it would permit
+duplicate consumers. Delivery transactions that fence authority across sends
+also retain their locks deliberately.
+
+Pool timeout handling distinguishes HTTP from WebSocket: HTTP returns 503
+with `Retry-After: 1`; WebSocket sends `websocket.close` (1013 after acceptance,
+handshake rejection before acceptance). This follows the pinned
+[SQLAlchemy 2.0.52 pool](https://github.com/sqlalchemy/sqlalchemy/blob/rel_2_0_52/lib/sqlalchemy/pool/impl.py),
+[Starlette 1.6.0 exception handling](https://github.com/Kludex/starlette/blob/1.6.0/starlette/_exception_handler.py),
+and [Uvicorn 0.52.4 WebSocket transport](https://github.com/Kludex/uvicorn/blob/0.52.4/uvicorn/protocols/websockets/websockets_sansio_impl.py)
+contracts. A close before acceptance rejects the HTTP upgrade with 403; no
+WebSocket close frame can be delivered before the upgrade.
+
+```bash
+scripts/test.sh backend tests/test_platform_workload_oauth.py tests/test_smoke.py
+```
+
+Done: slow admin provider I/O and real PostgreSQL pool contention leave
+deployment control and concurrent nested snapshots usable, both
+WebSocket timeout paths close without HTTP ASGI messages, and the command exits 0.
+
 Admin endpoints are disabled by default. The local setup and key-minting flow is
 in [`AGENTS.md`](../AGENTS.md#local-end-to-end). To exercise admin endpoints
 locally, set `ADMIN_API_KEY` in `backend/.env` to your own local-only random

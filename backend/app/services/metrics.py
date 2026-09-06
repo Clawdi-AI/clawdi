@@ -155,6 +155,11 @@ db_pool_timeouts = Counter(
     "Requests rejected because the backend database pool was exhausted",
     registry=registry,
 )
+db_control_lock_timeouts = Counter(
+    "clawdi_backend_db_control_lock_timeouts_total",
+    "Control requests rejected because PostgreSQL could not acquire a lock in time",
+    registry=registry,
+)
 embedding_in_flight = Gauge(
     "clawdi_backend_embedding_in_flight",
     "Embedding requests currently executing or waiting on the configured backend",
