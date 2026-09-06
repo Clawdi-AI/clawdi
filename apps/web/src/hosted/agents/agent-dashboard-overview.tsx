@@ -12,13 +12,16 @@ import {
 import { runtimeConsoleUrl } from "@/hosted/runtimes";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { runtimeBrowserUiLabel } from "@/lib/navigation-model";
+import { cn } from "@/lib/utils";
 
 export function AgentDashboardOverview({
 	agentId,
 	deployment,
+	className,
 }: {
 	agentId: string;
 	deployment: HostedDeployment;
+	className?: string;
 }) {
 	const runtime = deployment.resource.spec.runtime;
 	const presentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
@@ -33,7 +36,7 @@ export function AgentDashboardOverview({
 			data-hosted="true"
 			data-overview-module="dashboard"
 			aria-labelledby="agent-dashboard-title"
-			className="flex min-w-0 flex-col gap-2"
+			className={cn("flex min-w-0 flex-col gap-2", className)}
 		>
 			<Button
 				render={available ? <Link {...agentSectionLink(agentId, "console")} /> : undefined}
@@ -42,7 +45,7 @@ export function AgentDashboardOverview({
 				aria-labelledby="agent-dashboard-title"
 				aria-describedby="agent-dashboard-subtitle agent-dashboard-status"
 				variant="outline"
-				className="h-auto min-h-24 w-full justify-start gap-3 border-primary/30 bg-primary/5 px-4 py-4 text-left whitespace-normal hover:bg-primary/10"
+				className="h-auto min-h-24 w-full flex-1 justify-start gap-3 border-primary/30 bg-primary/5 px-4 py-4 text-left whitespace-normal hover:bg-primary/10"
 			>
 				<AgentIcon agent={runtime} size="lg" />
 				<span className="min-w-0 flex-1 space-y-1">

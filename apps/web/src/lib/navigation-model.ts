@@ -421,7 +421,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
 		label: null,
-		itemIds: ["overview", "sessions", "console", "channels", "ai"],
+		itemIds: ["overview", "console", "sessions", "channels", "ai"],
 		separated: false,
 	},
 	{

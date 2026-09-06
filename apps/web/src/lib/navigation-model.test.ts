@@ -146,8 +146,8 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "overview", label: "Overview" },
-					{ id: "sessions", label: "Sessions" },
 					{ id: "console", label: "Hermes Dashboard" },
+					{ id: "sessions", label: "Sessions" },
 					{ id: "channels", label: "Channels" },
 					{ id: "ai", label: "AI Providers" },
 				],
@@ -198,8 +198,8 @@ describe("sidebar navigation model", () => {
 		]);
 		expect(HOSTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
-			"sessions",
 			"console",
+			"sessions",
 			"channels",
 			"ai",
 			"projects",

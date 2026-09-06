@@ -59,24 +59,24 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			elements.map((element) => {
 				const cardBox = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
-				const headerLink = header?.querySelector<HTMLElement>("a");
-				const linkBox = headerLink?.getBoundingClientRect();
+				const headerContent = header?.firstElementChild;
+				const contentBox = headerContent?.getBoundingClientRect();
 				const headerStyle = header ? getComputedStyle(header) : null;
-				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
+				const contentStyle = headerContent ? getComputedStyle(headerContent) : null;
 				return {
 					headerHeight: header?.getBoundingClientRect().height ?? 0,
 					headerCount: element.querySelectorAll(':scope > [data-slot="card-header"]').length,
 					contentCount: element.querySelectorAll('[data-slot="card-content"]').length,
 					headerPaddingInline: [headerStyle?.paddingLeft, headerStyle?.paddingRight],
 					headerPaddingBlock: [headerStyle?.paddingTop, headerStyle?.paddingBottom],
-					linkPadding: [
-						linkStyle?.paddingTop,
-						linkStyle?.paddingRight,
-						linkStyle?.paddingBottom,
-						linkStyle?.paddingLeft,
+					contentPadding: [
+						contentStyle?.paddingTop,
+						contentStyle?.paddingRight,
+						contentStyle?.paddingBottom,
+						contentStyle?.paddingLeft,
 					],
-					verticalInsetDelta: linkBox
-						? Math.abs(linkBox.top - cardBox.top - (cardBox.bottom - linkBox.bottom))
+					verticalInsetDelta: contentBox
+						? Math.abs(contentBox.top - cardBox.top - (cardBox.bottom - contentBox.bottom))
 						: Number.POSITIVE_INFINITY,
 				};
 			}),
@@ -114,7 +114,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.headerPaddingInline)))).toEqual(
 		new Set([JSON.stringify(["16px", "16px"])]),
 	);
-	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.contentPadding)))).toEqual(
 		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
 	);
 	for (const metric of shellMetrics) expect(metric.verticalInsetDelta).toBeLessThanOrEqual(1);
@@ -182,85 +182,6 @@ async function expectTerminalFitsHost(terminal: Locator) {
 	expect(geometry.viewport.bottom).toBeLessThanOrEqual(geometry.host.bottom + 1);
 	expect(geometry.screen.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
 	expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
-}
-
-async function _expectOverviewSessionSlot({
-	region,
-	statusCard,
-	realCount,
-}: {
-	region: Locator;
-	statusCard: Locator;
-	realCount: number;
-}) {
-	const grid = region.getByTestId("overview-session-grid");
-	const placeholders = grid.getByTestId("overview-session-placeholder");
-	await expect(grid.locator(":scope > article")).toHaveCount(realCount);
-	await expect(placeholders).toHaveCount(3 - realCount);
-	await expect(grid.getByRole("link")).toHaveCount(realCount);
-	await expect(placeholders.locator("a, button, article")).toHaveCount(0);
-	const cardAlignment = await grid.locator(":scope > article").evaluateAll((articles) =>
-		articles.map((article) => {
-			const avatar = article.querySelector<HTMLElement>('[data-testid="session-card-avatar"]');
-			const textBlock = article.querySelector<HTMLElement>('[data-testid="session-card-text"]');
-			const avatarBox = avatar?.getBoundingClientRect();
-			const textBox = textBlock?.getBoundingClientRect();
-			return {
-				avatarCenter: (avatarBox?.top ?? 0) + (avatarBox?.height ?? 0) / 2,
-				textCenter: (textBox?.top ?? 0) + (textBox?.height ?? 0) / 2,
-			};
-		}),
-	);
-	for (const alignment of cardAlignment)
-		expect(Math.abs(alignment.avatarCenter - alignment.textCenter)).toBeLessThanOrEqual(2);
-	const placeholderSemantics = await placeholders.evaluateAll((elements) =>
-		elements.map((element) => ({
-			ariaHidden: element.getAttribute("aria-hidden"),
-			role: element.getAttribute("role"),
-			tabIndex: element.getAttribute("tabindex"),
-			pointerEvents: getComputedStyle(element).pointerEvents,
-		})),
-	);
-	for (const placeholder of placeholderSemantics) {
-		expect(placeholder).toEqual({
-			ariaHidden: "true",
-			role: null,
-			tabIndex: null,
-			pointerEvents: "none",
-		});
-	}
-	const slotRows = grid.locator(
-		':scope > article, :scope > [data-testid="overview-session-placeholder"]',
-	);
-	await expect(slotRows).toHaveCount(3);
-	const rowBoxes = await slotRows.evaluateAll((elements) =>
-		elements.map((element) => element.getBoundingClientRect().toJSON()),
-	);
-	expect(
-		Math.max(...rowBoxes.map((box) => box.height)) - Math.min(...rowBoxes.map((box) => box.height)),
-	).toBeLessThanOrEqual(2);
-	for (let index = 1; index < rowBoxes.length; index += 1) {
-		expect(Math.abs(rowBoxes[index].x - rowBoxes[0].x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(rowBoxes[index].width - rowBoxes[0].width)).toBeLessThanOrEqual(1);
-	}
-	const [regionBox, gridBox, statusBox] = await Promise.all([
-		region.boundingBox(),
-		grid.boundingBox(),
-		statusCard.boundingBox(),
-	]);
-	expect(regionBox).not.toBeNull();
-	expect(gridBox).not.toBeNull();
-	expect(statusBox).not.toBeNull();
-	expect(Math.abs((gridBox?.height ?? 0) - (regionBox?.height ?? 0))).toBeLessThanOrEqual(2);
-	expect(Math.abs((statusBox?.y ?? 0) - (regionBox?.y ?? 0))).toBeLessThanOrEqual(2);
-	expect(
-		Math.abs(
-			(statusBox?.y ?? 0) +
-				(statusBox?.height ?? 0) -
-				((regionBox?.y ?? 0) + (regionBox?.height ?? 0)),
-		),
-	).toBeLessThanOrEqual(2);
-	return regionBox?.height ?? 0;
 }
 
 async function expectInlineSidebarStatus(sidebar: Locator, source: "hosted" | "connected") {
@@ -360,7 +281,7 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 
-function hostedOverviewSessionsPage(itemCount: number) {
+function hostedOverviewSessionsPage(itemCount: number, runtime: "hermes" | "openclaw" = "hermes") {
 	const summaries = [
 		"Prepare launch brief",
 		"Research customer feedback before the product planning review",
@@ -376,8 +297,8 @@ function hostedOverviewSessionsPage(itemCount: number) {
 			agent_name: "e2e-2",
 			agent_display_name: null,
 			agent_default_name: "e2e-2",
-			agent_type: "hermes",
-			machine_name: "hermes-3",
+			agent_type: runtime,
+			machine_name: `${runtime}-3`,
 			started_at: `2026-07-15T0${index}:00:00Z`,
 			ended_at: null,
 			updated_at: `2026-07-15T0${index}:30:00Z`,
@@ -3202,7 +3123,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
-	const overview = page.locator('[data-agent-overview="hosted"]');
+	const overview = page.locator("main");
 	const overviewTitleRow = page.locator('[data-slot="page-header"]');
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
@@ -3216,6 +3137,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual([
+		"dashboard",
 		"channels",
 		"model-provider",
 		"projects",
@@ -3240,7 +3162,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
 		8,
 	);
@@ -3250,7 +3172,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
 		),
 	).toHaveCount(0);
-	await expect(overview.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Connections", exact: true })).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"Chat in Telegram, Discord, or WhatsApp",
+	);
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Hosted Agent Project",
@@ -3352,7 +3277,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		}),
 	).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module] [data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
@@ -3409,20 +3334,17 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(8);
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(9);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	const workspaceGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="two-column"]',
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="single-column"]',
 	);
 	const sharedGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="two-column"]',
-	);
-	const toolsGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="two-column"]',
+		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="single-column"]',
 	);
 	const resourceGeometry = await workspaceGrid
 		.locator("[data-overview-module]")
@@ -3443,22 +3365,18 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "vaults", "plugins"]);
-	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
-	await expectOverviewResourceGeometry(sharedGrid, [2]);
-	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
-	await expectOverviewResourceGeometry(sharedGrid, [2]);
-	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
 	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
-	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
 	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
-	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
 		viewAllSessions.boundingBox(),
@@ -3755,6 +3673,8 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 		await stubHostedApi(page, {
 			deployments: [deployment],
 			cloudAgents: [{ ...railHostedCloudAgent, agent_type: runtime }],
+			agentResourceFixtures: true,
+			sessionsPage: hostedOverviewSessionsPage(2, runtime),
 			runtimeUiRedemptionRequests: credentialRequests,
 			runtimeUiRedemptionResponses: [
 				{
@@ -3825,9 +3745,66 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				"memories",
 				"connectors",
 			]);
-			await expect(
-				page.locator('[data-overview-section="resources"] [data-overview-status="compute"]'),
-			).toBeVisible();
+			const entry = page.locator('[data-overview-section="entry"]');
+			const activity = page.locator('[data-overview-section="activity"]');
+			const resources = page.locator('[data-agent-overview="hosted"]');
+			const channels = entry.locator('[data-overview-module="channels"]');
+			await expect(channels).toContainText("Chat in Telegram, Discord, or WhatsApp");
+			await expect(activity.locator('[data-overview-status="compute"]')).toBeVisible();
+			await expect(page.getByTestId("overview-session-placeholder")).toHaveCount(0);
+			await expect(page.getByTestId("overview-session-grid").getByRole("article")).toHaveCount(2);
+			await expectNoHorizontalOverflow(page.locator("main"), "Overview");
+			for (const group of ["workspace", "shared"]) {
+				await expectOverviewResourceGeometry(
+					resources.locator(`[aria-labelledby="agent-overview-${group}"] [data-overview-layout]`),
+					group === "workspace" ? [1, 1, 1, 1] : [1, 1],
+				);
+			}
+			const geometry = await page.locator("main").evaluate((main) => {
+				const box = (selector: string) => {
+					const element = main.querySelector(selector);
+					if (!element) throw new Error(`Missing overview element: ${selector}`);
+					return element.getBoundingClientRect().toJSON();
+				};
+				return {
+					entry: box('[data-overview-section="entry"]'),
+					dashboard: box('[data-overview-module="dashboard"]'),
+					channels: box('[data-overview-module="channels"]'),
+					providers: box('[data-overview-module="model-provider"]'),
+					activity: box('[data-overview-section="activity"]'),
+					sessions: box('[data-overview-section="activity"] > div'),
+					compute: box('[data-overview-status="compute"]'),
+					workspace: box('[aria-labelledby="agent-overview-workspace"]'),
+					shared: box('[aria-labelledby="agent-overview-shared"]'),
+				};
+			});
+			expect(geometry.activity.top).toBeGreaterThan(geometry.entry.bottom);
+			expect(geometry.workspace.top).toBeGreaterThan(geometry.activity.bottom);
+			if (viewport.width === 1440) {
+				expect(geometry.dashboard.top).toBe(geometry.channels.top);
+				expect(geometry.dashboard.bottom).toBe(geometry.providers.bottom);
+				expect(geometry.channels.left).toBe(geometry.providers.left);
+				expect(geometry.dashboard.right).toBeLessThan(geometry.channels.left);
+				expect(geometry.channels.bottom).toBeLessThan(geometry.providers.top);
+				expect(geometry.sessions.top).toBe(geometry.compute.top);
+				expect(geometry.sessions.right).toBeLessThan(geometry.compute.left);
+				expect(geometry.workspace.top).toBe(geometry.shared.top);
+				expect(geometry.workspace.right).toBeLessThan(geometry.shared.left);
+			} else {
+				const stacked = [
+					geometry.dashboard,
+					geometry.channels,
+					geometry.providers,
+					geometry.sessions,
+					geometry.compute,
+					geometry.workspace,
+					geometry.shared,
+				];
+				for (let index = 1; index < stacked.length; index++) {
+					expect(stacked[index].top).toBeGreaterThan(stacked[index - 1].bottom);
+					expect(stacked[index].left).toBe(stacked[0].left);
+				}
+			}
 			await page.screenshot({
 				path: testInfo.outputPath(`dashboard-${viewport.width}.png`),
 				fullPage: true,
@@ -3838,11 +3815,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			const sidebar =
 				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
 			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
-			const start = labels.findIndex((text) => text.trim() === "Sessions");
+			const start = labels.findIndex((text) => text.trim() === "Overview");
 			expect(start).toBeGreaterThanOrEqual(0);
-			expect(labels.slice(start, start + 4).map((text) => text.trim())).toEqual([
-				"Sessions",
+			expect(labels.slice(start, start + 5).map((text) => text.trim())).toEqual([
+				"Overview",
 				label,
+				"Sessions",
 				"Channels",
 				"AI Providers",
 			]);
@@ -4666,7 +4644,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
 	await expect(
-		main.getByText("Clawdi is checking the runtime. Open Compute settings for details.", {
+		main.getByText("Clawdi is checking this Agent. Open Agent settings for details.", {
 			exact: true,
 		}),
 	).toHaveCount(1);

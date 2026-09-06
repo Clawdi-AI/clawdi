@@ -39,6 +39,7 @@ import {
 	AgentOverviewStatusCard,
 	OverviewDescriptionSkeleton,
 	OverviewModuleError,
+	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	overviewProjectsModule,
@@ -295,6 +296,7 @@ import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-li
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import { WhatsAppRepairDialog } from "@/hosted/v2/channels/whatsapp-repair-dialog";
+import { agentOverviewGroups } from "@/lib/agent-capabilities";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
@@ -313,6 +315,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
+	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentSectionNavigationItem,
 	hostedAgentVisibleSectionIds,
 	runtimeBrowserUiLabel,
@@ -1290,7 +1293,6 @@ function OverviewTab({
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
-	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const workspaceProjectId = agent
@@ -1381,15 +1383,40 @@ function OverviewTab({
 					<OverviewDescriptionSkeleton label="channels" />
 				) : projectionUnavailable || channelLinks.error ? (
 					"Unavailable right now"
-				) : linkedChannelCount === 0 ? (
-					"No channels linked"
 				) : (
-					`${linkedChannelCount} linked ${linkedChannelCount === 1 ? "channel" : "channels"}`
+					"Chat in Telegram, Discord, or WhatsApp"
 				),
 		},
 	};
 	return (
 		<div className="flex flex-col gap-8">
+			<div
+				className="grid gap-3 @4xl/main:grid-cols-2 @4xl/main:gap-x-6"
+				data-overview-section="entry"
+			>
+				<AgentDashboardOverview
+					agentId={agentId}
+					deployment={deployment}
+					className="@4xl/main:row-span-2"
+				/>
+				{agentOverviewGroups("hosted")
+					.filter((group) => group.id === "operate")
+					.flatMap((group) => group.modules)
+					.map((module) => {
+						const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
+						return (
+							<OverviewNavigationCard
+								key={module.id}
+								id={module.id}
+								title={item.label}
+								icon={item.icon}
+								tint={item.tint}
+								description={overviewContent[module.id].description}
+								link={agentSectionLink(agentId, module.section)}
+							/>
+						);
+					})}
+			</div>
 			<div
 				className="grid items-start gap-6 @4xl/main:grid-cols-2"
 				data-overview-section="activity"
@@ -1423,27 +1450,7 @@ function OverviewTab({
 						)}
 					</section>
 				</div>
-				<div className="flex min-w-0 flex-col gap-4">
-					<AgentDashboardOverview agentId={agentId} deployment={deployment} />
-					<AgentOverviewCapabilities
-						agentId={agentId}
-						variant="hosted"
-						groupIds={["operate"]}
-						content={overviewContent}
-					/>
-				</div>
-			</div>
-			<div
-				className="grid items-start gap-6 @4xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]"
-				data-overview-section="resources"
-			>
-				<AgentOverviewCapabilities
-					agentId={agentId}
-					variant="hosted"
-					groupIds={["workspace", "shared"]}
-					content={overviewContent}
-				/>
-				<div className="min-w-0 @4xl/main:pt-8">
+				<div className="min-w-0">
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
@@ -1482,6 +1489,13 @@ function OverviewTab({
 					</AgentOverviewStatusCard>
 				</div>
 			</div>
+			<AgentOverviewCapabilities
+				agentId={agentId}
+				variant="hosted"
+				groupIds={["workspace", "shared"]}
+				content={overviewContent}
+				className="grid items-start gap-6 @4xl/main:grid-cols-2"
+			/>
 		</div>
 	);
 }

@@ -78,7 +78,6 @@ export function OverviewSessionList({
 		return <OverviewSessionListSkeleton />;
 	}
 	const visibleSessions = sessions.slice(0, 3);
-	const placeholderCount = 3 - visibleSessions.length;
 	return (
 		<div data-testid="overview-session-grid" className="grid gap-2">
 			{visibleSessions.map((session) => (
@@ -90,22 +89,8 @@ export function OverviewSessionList({
 					link={sessionLink(session)}
 				/>
 			))}
-			{Array.from({ length: placeholderCount }).map((_, index) => (
-				<div
-					key={`placeholder-${index}`}
-					data-testid="overview-session-placeholder"
-					aria-hidden="true"
-					className={cn(
-						ENTITY_CARD_BASE,
-						SESSION_CARD_CLASS,
-						"pointer-events-none border-border/60 bg-muted/10 text-xs text-muted-foreground select-none",
-					)}
-				>
-					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
-				</div>
-			))}
 			{visibleSessions.length === 0 ? (
-				<p className="sr-only" role="status">
+				<p className="py-3 text-sm text-muted-foreground" role="status">
 					{emptyMessage}
 				</p>
 			) : null}

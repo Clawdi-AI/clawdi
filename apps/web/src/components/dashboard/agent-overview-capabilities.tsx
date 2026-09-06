@@ -115,17 +115,19 @@ export function AgentOverviewCapabilities({
 	variant,
 	content,
 	groupIds,
+	className,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
 	groupIds?: readonly AgentOverviewGroupId[];
+	className?: string;
 }) {
 	const groups = agentOverviewGroups(variant).filter(
 		(group) => !groupIds || groupIds.includes(group.id),
 	);
 	return (
-		<div className="flex flex-col gap-8" data-agent-overview={variant}>
+		<div className={cn("flex flex-col gap-8", className)} data-agent-overview={variant}>
 			{groups.map((group) => (
 				<section key={group.id} aria-labelledby={`agent-overview-${group.id}`}>
 					<div className="mb-3">
@@ -139,7 +141,7 @@ export function AgentOverviewCapabilities({
 							"grid auto-rows-fr items-stretch gap-3",
 							group.layout === "three-column"
 								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
+								: group.layout === "two-column" && "@2xl/main:grid-cols-2",
 						)}
 					>
 						{group.modules.map((module) => {
@@ -169,7 +171,7 @@ export function AgentOverviewCapabilities({
 	);
 }
 
-function OverviewNavigationCard({
+export function OverviewNavigationCard({
 	id,
 	title,
 	description,
@@ -234,7 +236,7 @@ export function AgentOverviewCapabilitiesSkeleton({
 							"grid auto-rows-fr items-stretch gap-3",
 							group.layout === "three-column"
 								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
+								: group.layout === "two-column" && "@2xl/main:grid-cols-2",
 						)}
 					>
 						{group.modules.map((module) => (

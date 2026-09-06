@@ -26,7 +26,8 @@ describe("agent overview registry", () => {
 			"vaults",
 			"plugins",
 		]);
-		expect(hosted[1]?.layout).toBe("two-column");
+		expect(hosted[1]?.layout).toBe("single-column");
+		expect(hosted[2]?.layout).toBe("single-column");
 		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
 		expect(hosted[2]?.modules).toEqual(connected[1]?.modules);
 		expect(hosted[0]?.modules.map((module) => module.id)).toEqual(["channels", "model-provider"]);
