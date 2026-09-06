@@ -1,4 +1,4 @@
-name: Desktop Channel Build
+name: Desktop Release
 
 on:
   workflow_dispatch:
@@ -13,16 +13,16 @@ on:
         description: Version matching channel (e.g. 0.1.0-beta.1)
         required: true
         type: string
-      feed_url:
-        description: Public HTTPS update directory ending in slash
-        required: true
-        type: string
+      publish:
+        description: Publish Release and update GitHub Pages (otherwise build only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-channel-${{ inputs.channel }}
+  group: desktop-release
   cancel-in-progress: false
 
 jobs:
@@ -34,6 +34,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-ci
+      - name: Resolve Pages URL
+        id: pages
+        uses: actions/configure-pages@v5
       - name: Verify Desktop
         run: |
           bun run --cwd apps/desktop typecheck
@@ -42,7 +45,7 @@ jobs:
         env:
           CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
           CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
-          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ inputs.feed_url }}
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
@@ -71,3 +74,37 @@ jobs:
             apps/desktop/release/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    if: inputs.publish
+    needs: macos-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: clawdi-macos-arm64-${{ inputs.channel }}
+          path: release
+      - name: Publish immutable Desktop release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          tag="desktop-v$VERSION"
+          args=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+            --title "Clawdi Desktop $VERSION" --generate-notes --draft --latest=false)
+          if [ "$CHANNEL" = beta ]; then args+=(--prerelease); fi
+          gh release create "$tag" release/* "${args[@]}"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  update-site:
+    if: inputs.publish
+    needs: publish
+    uses: ./.github/workflows/desktop-update-site.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

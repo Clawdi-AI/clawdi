@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import {
 	desktopReleaseBuilderArgs,
 	readDesktopReleaseConfiguration,
@@ -98,6 +98,20 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 		"--verbose=4",
 		dmgPath,
 	]);
+	// Stapling changes DMG bytes after electron-builder generated the update metadata.
+	for (const entry of metadata.files) {
+		if (
+			!isRecord(entry) ||
+			typeof entry.url !== "string" ||
+			![...dmg, ...zip].includes(entry.url)
+		) {
+			throw new Error("Update metadata references an unexpected artifact.");
+		}
+		const bytes = readFileSync(join(releaseRoot, entry.url));
+		entry.sha512 = createHash("sha512").update(bytes).digest("base64");
+		entry.size = bytes.length;
+	}
+	writeFileSync(metadataPath, stringify(metadata));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
