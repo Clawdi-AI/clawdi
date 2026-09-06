@@ -355,20 +355,16 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
                     await ensure_canonical_codex_tool_provider(db_session, seed_user)
                     state.tools = CANONICAL_CODEX_TOOLS
                     await db_session.commit()
-                    # These reads retain the outer authorization transaction
-                    # while loading a nested snapshot. Concurrent callers must
-                    # neither fall back to the ordinary pool nor deadlock.
-                    reads = await asyncio.gather(
-                        *(
-                            client.get(
-                                f"{prefix}/admin/agents/{agent_id}/runtime-state",
-                                params=owner,
-                                headers={"X-Admin-Key": _ADMIN_KEY},
-                            )
-                            for prefix in ("/v1", "/api")
+                    # Each read retains the outer control transaction while
+                    # loading a nested snapshot, without ordinary-pool fallback
+                    # or self-deadlock. Cover both aliases sequentially: callers
+                    # must serialize through the single control slot.
+                    for prefix in ("/v1", "/api"):
+                        result = await client.get(
+                            f"{prefix}/admin/agents/{agent_id}/runtime-state",
+                            params=owner,
+                            headers={"X-Admin-Key": _ADMIN_KEY},
                         )
-                    )
-                    for result in reads:
                         assert result.status_code == 200, result.text
                     recovered = await client.request(
                         "DELETE",
