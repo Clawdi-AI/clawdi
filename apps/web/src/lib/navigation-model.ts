@@ -1,5 +1,6 @@
 import {
 	Blocks,
+	BrainCircuit,
 	FolderOpen,
 	LayoutDashboard,
 	type LucideIcon,
@@ -7,7 +8,6 @@ import {
 	MonitorPlay,
 	PanelsTopLeft,
 	Settings,
-	Sparkles,
 	TerminalSquare,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
@@ -124,7 +124,7 @@ export const CANONICAL_NAVIGATION_IDENTITIES = {
 		icon: PROJECT_RESOURCE_ICONS.connectors,
 	},
 	channels: { label: "Channels", icon: MessagesSquare },
-	"ai-providers": { label: "AI Providers", icon: Sparkles },
+	"ai-providers": { label: "AI Providers", icon: BrainCircuit },
 	settings: { label: "Settings", icon: Settings },
 } satisfies Record<CanonicalNavigationConceptId, { label: string; icon: LucideIcon }>;
 

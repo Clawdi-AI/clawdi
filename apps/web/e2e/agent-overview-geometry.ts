@@ -47,8 +47,14 @@ export async function expectAgentOverviewGeometry(
 			const levels = [luminance(background), luminance(foreground)];
 			return { background, contrast: (Math.max(...levels) + 0.05) / (Math.min(...levels) + 0.05) };
 		});
+		const resourceCard = main.querySelector("[data-agent-overview] [data-overview-module]");
+		if (!resourceCard) throw new Error("Missing resource card for background comparison");
+		paint(getComputedStyle(main).backgroundColor);
+		paint(getComputedStyle(resourceCard).backgroundColor);
+		const resourceBackground = pixel();
 		return {
 			colors,
+			resourceBackground,
 			subscription:
 				subscriptionRow && subscriptionStatus
 					? {
@@ -134,8 +140,10 @@ export async function expectAgentOverviewGeometry(
 		if (desktop) expect(card.height).toBeLessThanOrEqual(72);
 	}
 	if (hosted) {
-		expect(new Set(geometry.colors.map((color) => color.background.join(","))).size).toBe(3);
-		for (const color of geometry.colors) expect(color.contrast).toBeGreaterThanOrEqual(4.5);
+		for (const color of geometry.colors) {
+			expect(color.background).toEqual(geometry.resourceBackground);
+			expect(color.contrast).toBeGreaterThanOrEqual(4.5);
+		}
 		if (geometry.subscription) {
 			const { row, status, action, date } = geometry.subscription;
 			if (action) {

@@ -29,7 +29,6 @@ export function AgentDashboardOverview({
 			<OverviewNavigationCard
 				id="dashboard"
 				title="Chat on Web"
-				className="bg-identity-6-bg/50 dark:bg-identity-6-bg/30"
 				description={runtimeBrowserUiLabel(runtime)}
 				icon={item.icon}
 				tint={item.tint}

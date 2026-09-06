@@ -3791,7 +3791,7 @@ test("overview subscription shortcut follows existing eligibility without billin
 				await captureAgentOverview(
 					page,
 					testInfo,
-					`hermes-colored-entry-${scenario.name}-${width}`,
+					`hermes-neutral-entry-${scenario.name}-${width}`,
 				);
 				if (width === 1440) {
 					await page.locator("html").evaluate((element) => element.classList.add("dark"));
@@ -3799,7 +3799,7 @@ test("overview subscription shortcut follows existing eligibility without billin
 					await captureAgentOverview(
 						page,
 						testInfo,
-						`hermes-colored-entry-${scenario.name}-1440-dark`,
+						`hermes-neutral-entry-${scenario.name}-1440-dark`,
 					);
 					await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 				}
@@ -3888,6 +3888,9 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await expect(open.getByText(label, { exact: true })).toBeVisible();
 			await expect(module.getByRole("link")).toHaveCount(1);
 			await expect(module.locator(".lucide-panels-top-left")).toHaveCount(1);
+			await expect(
+				page.locator('[data-overview-module="model-provider"] .lucide-brain-circuit'),
+			).toHaveCount(1);
 			await expect(module.locator(":scope > *")).toHaveCount(1);
 			await expect(module.locator('[role="status"], #agent-dashboard-status')).toHaveCount(0);
 			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
@@ -3946,7 +3949,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				desktop: viewport.width === 1440,
 			});
 			await testInfo.attach(
-				`${runtime}-colored-entry-${viewport.width}-sessions-${sessionCount}-geometry`,
+				`${runtime}-neutral-entry-${viewport.width}-sessions-${sessionCount}-geometry`,
 				{
 					body: JSON.stringify(geometry, null, 2),
 					contentType: "application/json",
@@ -3955,12 +3958,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await captureAgentOverview(
 				page,
 				testInfo,
-				`${runtime}-colored-entry-${viewport.width}-sessions-${sessionCount}`,
+				`${runtime}-neutral-entry-${viewport.width}-sessions-${sessionCount}`,
 			);
 			if (viewport.width === 1440 && sessionCount === 3) {
 				await page.locator("html").evaluate((element) => element.classList.add("dark"));
 				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
-				await captureAgentOverview(page, testInfo, `${runtime}-colored-entry-1440-dark`);
+				await captureAgentOverview(page, testInfo, `${runtime}-neutral-entry-1440-dark`);
 				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 			}
 			if (viewport.width < 768) {
@@ -3970,6 +3973,11 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
 			await expect(
 				sidebar.getByRole("link", { name: label, exact: true }).locator(".lucide-panels-top-left"),
+			).toHaveCount(1);
+			await expect(
+				sidebar
+					.getByRole("link", { name: "AI Providers", exact: true })
+					.locator(".lucide-brain-circuit"),
 			).toHaveCount(1);
 			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
 			const start = labels.findIndex((text) => text.trim() === "Overview");

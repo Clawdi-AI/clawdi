@@ -1460,7 +1460,6 @@ function OverviewTab({
 				<OverviewNavigationCard
 					id="channels"
 					title="Chat in Channels"
-					className="bg-identity-5-bg/50 dark:bg-identity-5-bg/30"
 					description="Telegram, Discord, or WhatsApp"
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
@@ -1468,7 +1467,6 @@ function OverviewTab({
 				/>
 				<OverviewNavigationCard
 					id="model-provider"
-					className="bg-identity-2-bg/50 dark:bg-identity-2-bg/30"
 					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}

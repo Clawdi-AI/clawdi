@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { PanelsTopLeft, Settings } from "lucide-react";
+import { BrainCircuit, PanelsTopLeft, Settings, Sparkles } from "lucide-react";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentNavigationGroups,
@@ -253,6 +253,8 @@ describe("sidebar navigation model", () => {
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.console.icon).toBe(PanelsTopLeft);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.ai.icon).toBe(BrainCircuit);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.icon).toBe(Sparkles);
 	});
 
 	test("shares direct resource panels and keeps Project resources on the Project hub", () => {
