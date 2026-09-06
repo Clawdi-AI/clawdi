@@ -110,6 +110,44 @@ environments. Platform workload OAuth remains separate, default-closed
 infrastructure for the future resale platform surface; it is not on this v2
 data-plane path.
 
+`POST /v2/runtime/environments/drift-summary:batchRead` is an admin-key-only,
+read-only batch using the shared runtime observation RR session dependency.
+Send `{"bindings":[{"environmentId":"<uuid>","deploymentId":"<id>"}]}`
+with 1-100 distinct environment IDs and distinct deployment IDs. Invalid or
+duplicate bindings return 422. `items` preserves request order and echoes
+every requested pair, including missing entries; `observedAt` is the server's
+freshness evaluation time. This endpoint never registers consumers, ACKs,
+resets cursors, renders sources, or repairs persisted revisions.
+
+Each result reports `binding` (`active`, `retired`, `missing`, or
+`binding_mismatch`). A missing fence is `missing`; a fence or available runtime
+state bound to another deployment is `binding_mismatch`. Only active matching
+bindings expose evidence. `sourceAuthority.status` is `present` for a current
+persisted revision/contract, `unavailable` for an unbackfilled or stale contract
+(retaining the known `instanceId`), and `missing` when no owner-matching,
+unarchived environment/runtime state is available. Present authority requires
+all three fields; missing authority requires all three to be null; unavailable
+authority permits only a known instance ID. There is no legacy render fallback.
+
+`observation.head` contains the sole active boot head's apply identity,
+health, `capturedAt`, and `freshnessDeadline`. Zero heads is `missing`
+with a null head; one is `fresh` strictly before its deadline, otherwise
+`expired`; multiple heads is always `ambiguous` with a null head, even if only
+one is fresh. Two set-based SELECTs suffice: the second counts active heads by
+explicit environment/deployment binding and joins evidence only for singleton
+groups, returning at most one row per binding. The head's `diagnostics` contains
+only `activeCliVersion`, `applied`, `agentPlugins`, and `userActivity`, strictly
+validated with the existing v2 semantic schemas and plugin/apply identity rules.
+Absent or retention-scrubbed fields are null; raw payloads, logs and secrets are
+never returned. Coalescing advances head timestamps, not diagnostic timestamps.
+Semantic drift compares diagnostics; sequence, cursor and payload hash are not returned.
+Freshness is not health, and activity classification, coverage and
+its own timestamps still require consumer-side idle-reclaim checks. Invalid
+persisted diagnostics and database failures fail the request, not a partial batch.
+
+Verification: `scripts/test.sh backend tests/test_runtime_drift_summary.py`.
+Done: the focused contracts pass against the runner's throwaway PostgreSQL.
+
 Ingestion locks the permanent environment fence and rejects a retired binding
 before it inspects or creates a boot-session head. Retirement uses the same
 fence lock, freezes all session high-waters, persists the final cursor and

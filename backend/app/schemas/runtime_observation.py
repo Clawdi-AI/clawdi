@@ -418,6 +418,87 @@ class RuntimeObservationReadResponse(RuntimeObservationResponseModel):
     has_more: bool = Field(alias="hasMore")
 
 
+class RuntimeDriftBindingRequest(RuntimeObservationRequestModel):
+    environment_id: UUID = Field(alias="environmentId")
+    deployment_id: str = Field(alias="deploymentId", min_length=1, max_length=200)
+
+
+class RuntimeDriftSummaryReadRequest(RuntimeObservationRequestModel):
+    bindings: list[RuntimeDriftBindingRequest] = Field(min_length=1, max_length=100)
+
+    @field_validator("bindings")
+    @classmethod
+    def validate_unique_bindings(
+        cls, bindings: list[RuntimeDriftBindingRequest]
+    ) -> list[RuntimeDriftBindingRequest]:
+        if len({binding.environment_id for binding in bindings}) != len(bindings):
+            raise ValueError("environmentId must be unique within the batch")
+        if len({binding.deployment_id for binding in bindings}) != len(bindings):
+            raise ValueError("deploymentId must be unique within the batch")
+        return bindings
+
+
+class RuntimeDriftSourceAuthority(RuntimeObservationResponseModel):
+    status: Literal["present", "missing", "unavailable"]
+    instance_id: str | None = Field(alias="instanceId", min_length=1, max_length=200)
+    source_revision: str | None = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
+    etag: str | None = Field(min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_authority_status(self) -> RuntimeDriftSourceAuthority:
+        if self.status == "present":
+            if self.instance_id is None or self.source_revision is None or self.etag is None:
+                raise ValueError("present authority requires instanceId, sourceRevision and etag")
+        elif self.source_revision is not None or self.etag is not None:
+            raise ValueError("non-present authority cannot include sourceRevision or etag")
+        if self.status == "missing" and self.instance_id is not None:
+            raise ValueError("missing authority cannot include instanceId")
+        return self
+
+
+class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    active_cli_version: str | None = Field(alias="activeCliVersion", min_length=1, max_length=200)
+    applied: HostedRuntimeObservedAppliedV2 | None
+    agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(alias="agentPlugins")
+    user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(alias="userActivity")
+
+    @model_validator(mode="after")
+    def validate_plugin_identity(self) -> RuntimeDriftObservationDiagnostics:
+        if self.agent_plugins is not None:
+            if self.applied is None:
+                raise ValueError("Agent Plugin diagnostics require applied identity")
+            self.agent_plugins.validate_applied_identity(self.applied)
+        return self
+
+
+class RuntimeDriftObservationHead(RuntimeObservationResponseModel):
+    runtime_identity: RuntimeObservationIdentityResponse = Field(alias="runtimeIdentity")
+    captured_at: datetime = Field(alias="capturedAt")
+    freshness_deadline: datetime = Field(alias="freshnessDeadline")
+    health: RuntimeObservedStatus
+    diagnostics: RuntimeDriftObservationDiagnostics
+
+
+class RuntimeDriftObservationSummary(RuntimeObservationResponseModel):
+    status: Literal["missing", "fresh", "expired", "ambiguous"]
+    head: RuntimeDriftObservationHead | None
+
+
+class RuntimeDriftSummary(RuntimeObservationResponseModel):
+    environment_id: UUID = Field(alias="environmentId")
+    deployment_id: str = Field(alias="deploymentId")
+    binding: Literal["active", "retired", "missing", "binding_mismatch"]
+    source_authority: RuntimeDriftSourceAuthority = Field(alias="sourceAuthority")
+    observation: RuntimeDriftObservationSummary
+
+
+class RuntimeDriftSummaryReadResponse(RuntimeObservationResponseModel):
+    observed_at: datetime = Field(alias="observedAt")
+    items: list[RuntimeDriftSummary] = Field(min_length=1, max_length=100)
+
+
 class RuntimeObservationConsumerResponse(RuntimeObservationResponseModel):
     environment_id: str = Field(alias="environmentId")
     deployment_id: str = Field(alias="deploymentId")

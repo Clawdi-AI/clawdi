@@ -284,6 +284,7 @@ strict = [
     "app/services/private_ip.py",
     "app/services/project_runtime_skills.py",
     "app/services/rate_limiter.py",
+    "app/services/runtime_drift_summary.py",
     "app/services/runtime_generation.py",
     "app/services/runtime_manifest_resources.py",
     "app/services/runtime_observation.py",

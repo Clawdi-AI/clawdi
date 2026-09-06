@@ -3427,6 +3427,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/runtime/environments/drift-summary:batchRead": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Runtime Drift Summaries Endpoint
+         * @description Read ordered, persisted drift evidence without consuming the observation stream.
+         */
+        post: operations["read_runtime_drift_summaries"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/runtime/environments/{environment_id}/observation-consumers/register": {
         parameters: {
             query?: never;
@@ -7345,6 +7365,99 @@ export interface components {
             environmentId: string;
             /** Deploymentid */
             deploymentId: string;
+        };
+        /** RuntimeDriftBindingRequest */
+        RuntimeDriftBindingRequest: {
+            /**
+             * Environmentid
+             * Format: uuid
+             */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+        };
+        /** RuntimeDriftObservationDiagnostics */
+        RuntimeDriftObservationDiagnostics: {
+            /** Activecliversion */
+            activeCliVersion: string | null;
+            applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
+            userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
+        };
+        /** RuntimeDriftObservationHead */
+        RuntimeDriftObservationHead: {
+            runtimeIdentity: components["schemas"]["RuntimeObservationIdentityResponse"];
+            /**
+             * Capturedat
+             * Format: date-time
+             */
+            capturedAt: string;
+            /**
+             * Freshnessdeadline
+             * Format: date-time
+             */
+            freshnessDeadline: string;
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "ok" | "error" | "unknown";
+            diagnostics: components["schemas"]["RuntimeDriftObservationDiagnostics"];
+        };
+        /** RuntimeDriftObservationSummary */
+        RuntimeDriftObservationSummary: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "missing" | "fresh" | "expired" | "ambiguous";
+            head: components["schemas"]["RuntimeDriftObservationHead"] | null;
+        };
+        /** RuntimeDriftSourceAuthority */
+        RuntimeDriftSourceAuthority: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "present" | "missing" | "unavailable";
+            /** Instanceid */
+            instanceId: string | null;
+            /** Sourcerevision */
+            sourceRevision: string | null;
+            /** Etag */
+            etag: string | null;
+        };
+        /** RuntimeDriftSummary */
+        RuntimeDriftSummary: {
+            /**
+             * Environmentid
+             * Format: uuid
+             */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /**
+             * Binding
+             * @enum {string}
+             */
+            binding: "active" | "retired" | "missing" | "binding_mismatch";
+            sourceAuthority: components["schemas"]["RuntimeDriftSourceAuthority"];
+            observation: components["schemas"]["RuntimeDriftObservationSummary"];
+        };
+        /** RuntimeDriftSummaryReadRequest */
+        RuntimeDriftSummaryReadRequest: {
+            /** Bindings */
+            bindings: components["schemas"]["RuntimeDriftBindingRequest"][];
+        };
+        /** RuntimeDriftSummaryReadResponse */
+        RuntimeDriftSummaryReadResponse: {
+            /**
+             * Observedat
+             * Format: date-time
+             */
+            observedAt: string;
+            /** Items */
+            items: components["schemas"]["RuntimeDriftSummary"][];
         };
         /** RuntimeEnvironmentRetireRequest */
         RuntimeEnvironmentRetireRequest: {
@@ -16254,6 +16367,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeStateCleanupReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_runtime_drift_summaries: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeDriftSummaryReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeDriftSummaryReadResponse"];
                 };
             };
             /** @description Validation Error */

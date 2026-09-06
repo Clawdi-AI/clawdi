@@ -25,6 +25,8 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.runtime_observation import (
     RUNTIME_OBSERVATION_WRITE_SCOPE,
     RuntimeDeploymentKeyCreate,
+    RuntimeDriftSummaryReadRequest,
+    RuntimeDriftSummaryReadResponse,
     RuntimeEnvironmentRetirementReceipt,
     RuntimeEnvironmentRetireRequest,
     RuntimeObservationConsumerAckRequest,
@@ -59,6 +61,7 @@ from app.services.principal_lifecycle import (
     load_clerk_user_for_issuer,
     resolve_clerk_owner_issuer,
 )
+from app.services.runtime_drift_summary import read_runtime_drift_summaries
 from app.services.runtime_observation import (
     RuntimeApplyIdentity,
     RuntimeObservationProtocolError,
@@ -715,6 +718,20 @@ async def cleanup_retired_runtime_state_endpoint(
         await db.rollback()
         raise
     return _CanonicalJSONResponse(status_code=status.HTTP_200_OK, content=response_body)
+
+
+@router.post(
+    "/environments/drift-summary:batchRead",
+    response_model=RuntimeDriftSummaryReadResponse,
+    operation_id="read_runtime_drift_summaries",
+)
+async def read_runtime_drift_summaries_endpoint(
+    body: RuntimeDriftSummaryReadRequest,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_runtime_observation_session),
+) -> RuntimeDriftSummaryReadResponse:
+    """Read ordered, persisted drift evidence without consuming the observation stream."""
+    return await read_runtime_drift_summaries(db, body)
 
 
 async def _commit_cursor_expiry_or_rollback(
