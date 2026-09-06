@@ -30,7 +30,7 @@
 		"backend/app/routes/platform.py": {
 			"forbidden_route_fragments": ["runtime-environment", "runtime-observation"],
 			"symbols": {
-				"platform_mint_api_key": "20413a24e58c71d38bd4ce985e80fe10eff7c54c79e4b258ee87aba006db097b"
+				"platform_mint_api_key": "9018e7cac48a706b761941285f9653863a5b442fc1464561bb21973788221be6"
 			}
 		},
 		"backend/app/schemas/platform.py": {
