@@ -107,7 +107,24 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 	if (!existsSync(config.addonPath)) {
 		throw new Error(`egress addon is missing: ${config.addonPath}`);
 	}
-	const mitmdumpArgs = [
+	const childEnv = buildEgressEngineEnv(process.env, {
+		envFile: config.envFile,
+		home: config.caDir,
+	});
+	const command = config.engineBinaryPath;
+	const args = buildMitmdumpArgs(config);
+	const child = runningAsRoot()
+		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
+		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
+	child.stdout?.pipe(process.stdout);
+	child.stderr?.pipe(process.stderr);
+	return child;
+}
+
+export function buildMitmdumpArgs(
+	config: Pick<TransparentEgressEnvConfig, "transparentPort" | "caDir" | "addonPath">,
+): string[] {
+	return [
 		"--mode",
 		"transparent",
 		"--listen-host",
@@ -119,22 +136,14 @@ function startMitmdump(config: TransparentEgressEnvConfig): ChildProcess {
 		"--set",
 		"stream_large_bodies=1",
 		"--set",
-		"termlog_verbosity=info",
+		// The default flow dumper bypasses the addon's URL redaction.
+		"flow_detail=0",
+		"--set",
+		// INFO also includes raw WebSocket ping/pong payloads outside the dumper.
+		"termlog_verbosity=warn",
 		"-s",
 		config.addonPath,
 	];
-	const childEnv = buildEgressEngineEnv(process.env, {
-		envFile: config.envFile,
-		home: config.caDir,
-	});
-	const command = config.engineBinaryPath;
-	const args = mitmdumpArgs;
-	const child = runningAsRoot()
-		? spawnWithNumericIdentity(config.egressUid, config.egressGid, command, args, childEnv)
-		: spawnWithCurrentEgressIdentity(config.egressUid, config.egressGid, command, args, childEnv);
-	child.stdout?.pipe(process.stdout);
-	child.stderr?.pipe(process.stderr);
-	return child;
 }
 
 export function assertCurrentEgressIdentity(

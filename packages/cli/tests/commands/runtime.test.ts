@@ -5,9 +5,39 @@ import { dirname, join } from "node:path";
 
 import {
 	assertCurrentEgressIdentity,
+	buildMitmdumpArgs,
 	publishEgressSystemCaBundle,
 } from "../../src/runtime/egress-sidecar";
 import { runtimeUserUid } from "../../src/runtime/runtime-user-command";
+
+describe("runtime sidecar egress logging", () => {
+	it("omits raw flows and control payloads while retaining warnings and TLS defaults", () => {
+		expect(
+			buildMitmdumpArgs({
+				transparentPort: 25_080,
+				caDir: "/run/clawdi/egress/ca",
+				addonPath: "/opt/clawdi/egress-addon.py",
+			}),
+		).toEqual([
+			"--mode",
+			"transparent",
+			"--listen-host",
+			"127.0.0.1",
+			"--listen-port",
+			"25080",
+			"--set",
+			"confdir=/run/clawdi/egress/ca",
+			"--set",
+			"stream_large_bodies=1",
+			"--set",
+			"flow_detail=0",
+			"--set",
+			"termlog_verbosity=warn",
+			"-s",
+			"/opt/clawdi/egress-addon.py",
+		]);
+	});
+});
 
 describe("runtime sidecar egress privilege drop", () => {
 	it("accepts the current numeric uid without a passwd entry", () => {
