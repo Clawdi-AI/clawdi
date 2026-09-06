@@ -219,7 +219,7 @@ describe("deployment failure status rendering", () => {
 			{ status: "restarting", copy: "Restarting", spinner: true },
 			{
 				status: "stopped",
-				copy: "Compute is stopped. Channels and the agent interface are unavailable.",
+				copy: "Compute is stopped. Channels and OpenClaw Control UI are unavailable.",
 				spinner: false,
 			},
 			{

@@ -3334,11 +3334,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
-		"href",
-		/console/,
-	);
+	await expect(page.locator('[data-overview-module="dashboard"]')).toBeVisible();
+	await expect(page.getByRole("button", { name: "Open Dashboard" })).toBeDisabled();
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
@@ -3531,7 +3528,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Open Dashboard" })).toHaveCount(0);
 });
 
 for (const projectionFailure of [
@@ -3769,6 +3766,102 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 		await expectTerminalFitsHost(standaloneTerminal);
 	}
 });
+
+for (const runtime of ["hermes", "openclaw"] as const) {
+	test(`${runtime} Dashboard entry is prominent, runtime-aware and secure`, async ({
+		page,
+		context,
+	}, testInfo) => {
+		const label = runtime === "hermes" ? "Hermes Dashboard" : "OpenClaw Control UI";
+		const endpoint = "https://runtime.example/";
+		const deployment = {
+			...railHostedDeployment,
+			hermes_control_ui_url: endpoint,
+			openclaw_control_ui_url: endpoint,
+			config_info: { ...railHostedDeployment.config_info, runtime },
+		};
+		const credentialRequests: string[] = [];
+		await stubHostedApi(page, {
+			deployments: [deployment],
+			cloudAgents: [{ ...railHostedCloudAgent, agent_type: runtime }],
+			runtimeUiRedemptionRequests: credentialRequests,
+			runtimeUiRedemptionResponses: [
+				{
+					status: 200,
+					body: {
+						runtime,
+						url: endpoint,
+						deployment_resource_version: `rv_${deployment.id}`,
+						...(runtime === "hermes"
+							? { auth_mode: "password", username: "admin", password: "test-password" }
+							: {
+									auth_mode: "openclaw_token",
+									token: "test-token",
+									handoff_url: `${endpoint}#token=test-token`,
+								}),
+					},
+				},
+			],
+		});
+		await context.route("https://runtime.example/**", (route) =>
+			route.fulfill({
+				contentType: "text/html",
+				body: "<!doctype html><title>Runtime</title><main>Runtime dashboard</main>",
+			}),
+		);
+		for (const viewport of [
+			{ width: 1440, height: 900 },
+			{ width: 390, height: 844 },
+		]) {
+			await page.setViewportSize(viewport);
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			const module = page.locator('[data-overview-module="dashboard"]');
+			await expect(module.getByRole("heading", { name: label, exact: true })).toBeVisible();
+			const open = page.getByRole("button", { name: "Open Dashboard", exact: true });
+			await expect(open).toHaveCount(1);
+			await expect(open).toBeEnabled();
+			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
+			await expectNoHorizontalOverflow(module, "Dashboard module");
+			await page.screenshot({
+				path: testInfo.outputPath(`dashboard-${viewport.width}.png`),
+				fullPage: true,
+			});
+			if (viewport.width === 390) {
+				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
+			}
+			const sidebar =
+				viewport.width === 390 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
+			const start = labels.findIndex((text) => text.trim() === "Sessions");
+			expect(start).toBeGreaterThanOrEqual(0);
+			expect(labels.slice(start, start + 4).map((text) => text.trim())).toEqual([
+				"Sessions",
+				label,
+				"Channels",
+				"AI Providers",
+			]);
+			if (viewport.width === 390) await page.keyboard.press("Escape");
+		}
+		await page.getByRole("button", { name: "Open Dashboard", exact: true }).click();
+		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
+		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
+		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;
+		await expect(page.locator(`iframe[title="${label}"]`)).toHaveAttribute("src", target);
+		if (runtime === "hermes") {
+			await page.getByRole("button", { name: "Access Hermes Dashboard", exact: true }).click();
+			await expect(page.getByRole("dialog").getByText("admin", { exact: true })).toBeVisible();
+		}
+		expect(credentialRequests).toHaveLength(1);
+		const popupPromise = context.waitForEvent("page");
+		await page
+			.getByRole("button", { name: `Open ${label} in new window`, exact: true })
+			.last()
+			.click();
+		const popup = await popupPromise;
+		await expect(popup).toHaveURL(target);
+		await popup.close();
+	});
+}
 
 test("native OpenClaw windows wait for the handoff iframe load and reuse the clean endpoint", async ({
 	page,
@@ -4595,7 +4688,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(computeSettingsLink).toHaveAttribute("href", /\/settings/);
 	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Hermes Dashboard", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	expect(restartRequests).toEqual([]);
@@ -4971,10 +5064,9 @@ for (const firstTimeViewport of [
 		await expect(agentInterfaceHint).toContainText(
 			"Need a provider that Clawdi Channels doesn't support?",
 		);
-		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
-			"href",
-			`/agents/${missingProjectionEnvironmentId}/console`,
-		);
+		await expect(
+			agentInterfaceHint.getByRole("link", { name: "Hermes Dashboard" }),
+		).toHaveAttribute("href", `/agents/${missingProjectionEnvironmentId}/console`);
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);
 		await expect(connectDialog.getByRole("status")).toContainText(

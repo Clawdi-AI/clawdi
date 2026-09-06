@@ -286,11 +286,11 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	console: {
 		id: "console",
-		label: "Agent Interface",
+		label: "Dashboard",
 		icon: MonitorPlay,
 		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Use this agent's browser interface.",
-		tooltip: "Use this agent's browser interface",
+		description: "Open this agent's dashboard.",
+		tooltip: "Open dashboard",
 		variants: ["hosted"],
 	},
 	files: {
@@ -421,7 +421,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
 		label: null,
-		itemIds: ["overview", "sessions"],
+		itemIds: ["overview", "sessions", "console", "channels", "ai"],
 		separated: false,
 	},
 	{
@@ -439,7 +439,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "operate",
 		label: "Tools",
-		itemIds: ["console", "files", "terminal", "channels", "ai"],
+		itemIds: ["files", "terminal"],
 		separated: false,
 	},
 	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
@@ -468,6 +468,7 @@ export function hostedAgentVisibleSectionIds(filesAvailable: boolean): AgentSect
 export function agentNavigationGroups(
 	variant: AgentNavigationVariant,
 	visibleSectionIds?: readonly AgentSectionId[],
+	runtime?: string | null,
 ): AgentNavigationGroup[] {
 	const visibleSections = visibleSectionIds ? new Set(visibleSectionIds) : null;
 	return AGENT_NAVIGATION_GROUPS.map((group) => ({
@@ -475,10 +476,26 @@ export function agentNavigationGroups(
 		label: group.label,
 		separated: group.separated,
 		items: group.itemIds
-			.map((id) => AGENT_SECTION_NAVIGATION_ITEMS[id])
+			.map((id) => agentSectionNavigationItem(id, runtime))
 			.filter(
 				(item) =>
 					item.variants.includes(variant) && (!visibleSections || visibleSections.has(item.id)),
 			),
 	})).filter((group) => group.items.length > 0);
+}
+
+export function runtimeBrowserUiLabel(runtime?: string | null): string {
+	if (runtime === "openclaw") return "OpenClaw Control UI";
+	if (runtime === "hermes") return "Hermes Dashboard";
+	return "Dashboard";
+}
+
+export function agentSectionNavigationItem(
+	section: AgentSectionId,
+	runtime?: string | null,
+): AgentNavigationItemMetadata {
+	const item = AGENT_SECTION_NAVIGATION_ITEMS[section];
+	if (section !== "console") return item;
+	const label = runtimeBrowserUiLabel(runtime);
+	return { ...item, label, description: `Open ${label}.`, tooltip: `Open ${label}` };
 }

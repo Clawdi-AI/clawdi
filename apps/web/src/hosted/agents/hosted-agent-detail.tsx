@@ -106,6 +106,7 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { AgentDashboardOverview } from "@/hosted/agents/agent-dashboard-overview";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -220,6 +221,7 @@ import {
 	type HostedRuntime,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
+	runtimeDashboardUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
 import { agentPluginOverviewState } from "@/hosted/v2/agent-plugins/agent-plugin-model";
@@ -311,8 +313,9 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
-	AGENT_SECTION_NAVIGATION_ITEMS,
+	agentSectionNavigationItem,
 	hostedAgentVisibleSectionIds,
+	runtimeBrowserUiLabel,
 } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -574,7 +577,7 @@ export function HostedAgentDetail({
 	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null);
 	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
 	useSetBreadcrumbTitle(
-		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
+		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab, runtime),
 	);
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
@@ -589,15 +592,13 @@ export function HostedAgentDetail({
 		enabled: activeTab === "overview" && sessionsQueryable,
 	});
 
-	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
-	const activeTabLabel = agentSectionLabel(activeTab);
+	const activeNavItem = agentSectionNavigationItem(activeTab, runtime);
+	const activeTabLabel = activeNavItem.label;
 	const ActiveTabIcon = activeNavItem.icon;
 	const resourceScope = agentResourceScope(environmentId);
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
-	const interfaceAvailable =
-		activeTab === "overview" && !showInitialDeploymentPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	return (
@@ -626,18 +627,7 @@ export function HostedAgentDetail({
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
-							activeTab === "memories" ? (
-								<MemoriesPageActions scope={resourceScope} />
-							) : interfaceAvailable ? (
-								<Button
-									render={<Link {...agentSectionLink(environmentId, "console")} />}
-									nativeButton={false}
-									variant="outline"
-								>
-									<MonitorPlay />
-									Open Agent Interface
-								</Button>
-							) : null
+							activeTab === "memories" ? <MemoriesPageActions scope={resourceScope} /> : null
 						}
 					/>
 				)}
@@ -662,6 +652,9 @@ export function HostedAgentDetail({
 							void checkProjectionAgain();
 						}}
 					/>
+				) : null}
+				{activeTab === "overview" ? (
+					<AgentDashboardOverview agentId={environmentId} deployment={deployment} />
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{showInitialDeploymentPage ? (
@@ -999,7 +992,8 @@ export function OverviewComputeStatus({
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is stopped. Channels and the agent interface are unavailable.
+					Compute is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
+					are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
 				<p className="text-muted-foreground" role="status">
@@ -1494,11 +1488,12 @@ function useRuntimeUiCredentialRequest(
 	const deploymentId = deployment.resource.id;
 	const resourceVersion = deployment.resource.metadata.resourceVersion;
 	return useCallback(async () => {
-		if (!endpointUrl) throw new Error("The agent dashboard isn't available right now.");
+		const label = runtimeBrowserUiLabel(runtime);
+		if (!endpointUrl) throw new Error(`${label} isn't available right now.`);
 		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
 		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
 		if (!resolved || resolved.runtime !== runtime) {
-			throw new Error("Clawdi couldn't load the agent dashboard sign-in details.");
+			throw new Error(`Clawdi couldn't load the ${label} sign-in details.`);
 		}
 		return resolved;
 	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
@@ -1562,7 +1557,9 @@ function ConsoleTab({
 				setCredentialError(
 					error instanceof Error
 						? error
-						: new Error("Clawdi couldn't load the agent dashboard sign-in details."),
+						: new Error(
+								`Clawdi couldn't load the ${runtimeBrowserUiLabel(runtime)} sign-in details.`,
+							),
 				);
 				setCredentialLoadState("error");
 			}
@@ -1717,7 +1714,7 @@ function ConsoleTab({
 				: openClawNativeHandoffLoaded
 					? url
 					: "about:blank"
-			: url;
+			: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
 			? openClawRuntimeUiWindowTarget(
@@ -1726,7 +1723,7 @@ function ConsoleTab({
 					openClawNativeHandoffLoaded,
 					openClawFrameLoaded,
 				)
-			: url;
+			: runtimeDashboardUrl(url, runtime);
 
 	return (
 		<LiveToolFrame
@@ -2192,12 +2189,6 @@ function RuntimeUiAccessDialog({
 			) : null}
 		</Dialog>
 	);
-}
-
-function runtimeBrowserUiLabel(runtime: Runtime): string {
-	if (runtime === "openclaw") return "OpenClaw Control UI";
-	if (runtime === "hermes") return "Hermes Dashboard";
-	return `${runtimeDisplayName(runtime)} UI`;
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────

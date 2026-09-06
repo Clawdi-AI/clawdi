@@ -138,7 +138,7 @@ describe("sidebar navigation model", () => {
 		]);
 		expectNavigationHeadings(connectedGroups, ["Workspace", "Shared"]);
 
-		const hostedGroups = agentNavigationGroups("hosted");
+		const hostedGroups = agentNavigationGroups("hosted", undefined, "hermes");
 		expect(groupShape(hostedGroups)).toEqual([
 			{
 				id: "primary",
@@ -147,6 +147,9 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "sessions", label: "Sessions" },
+					{ id: "console", label: "Hermes Dashboard" },
+					{ id: "channels", label: "Channels" },
+					{ id: "ai", label: "AI Providers" },
 				],
 			},
 			{
@@ -172,11 +175,8 @@ describe("sidebar navigation model", () => {
 				label: "Tools",
 				separated: false,
 				items: [
-					{ id: "console", label: "Agent Interface" },
 					{ id: "files", label: "Files" },
 					{ id: "terminal", label: "Terminal" },
-					{ id: "channels", label: "Channels" },
-					{ id: "ai", label: "AI Providers" },
 				],
 			},
 			{
@@ -199,15 +199,15 @@ describe("sidebar navigation model", () => {
 		expect(HOSTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
+			"console",
+			"channels",
+			"ai",
 			"projects",
 			"plugins",
 			"memories",
 			"connectors",
-			"console",
 			"files",
 			"terminal",
-			"channels",
-			"ai",
 			"settings",
 		]);
 		expect(hostedAgentVisibleSectionIds(false)).not.toContain("files");
@@ -280,7 +280,6 @@ describe("sidebar navigation model", () => {
 			"utf8",
 		);
 		for (const source of [connectedDetail, hostedDetail]) {
-			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
 			expect(source).not.toContain("<AgentSkillsTab");
 			expect(source).not.toContain("<AgentVaultsTab");
@@ -288,6 +287,8 @@ describe("sidebar navigation model", () => {
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
 		}
+		expect(connectedDetail).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
+		expect(hostedDetail).toContain("agentSectionNavigationItem(activeTab, runtime)");
 		expect(connectorsPage).toContain("@/components/connectors/connectors-surface");
 		expect(connectorsPage).not.toContain("useQuery");
 		expect(vaultPage).toContain("@/components/vault/vaults-surface");

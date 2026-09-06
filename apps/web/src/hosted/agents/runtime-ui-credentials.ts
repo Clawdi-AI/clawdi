@@ -1,4 +1,5 @@
 import { isRuntimeUiCredentials, type RuntimeUiCredentials } from "@clawdi/shared/api";
+import { runtimeDashboardUrl } from "@/hosted/runtimes";
 
 type RuntimeWindow = {
 	close(): void;
@@ -142,7 +143,9 @@ export function resolveRuntimeUiCredentials(
 }
 
 export function runtimeUiLaunchTarget(credentials: RuntimeUiCredentials): string {
-	return credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url;
+	return credentials.runtime === "openclaw"
+		? credentials.handoff_url
+		: runtimeDashboardUrl(credentials.url, credentials.runtime);
 }
 
 export function openClawHandoffMode(
