@@ -29,6 +29,8 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.50 avoids a misleading missing-database warning when Files starts
+  with its existing database; genuine missing-database warnings remain enabled.
 - Managed CLI installations now create protected directories independently of
   the parent process's umask, without relaxing verification of existing paths.
 - Managed runtime egress no longer emits raw request URLs or WebSocket control
