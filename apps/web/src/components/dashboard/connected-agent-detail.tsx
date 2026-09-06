@@ -441,43 +441,6 @@ function AgentDetailContentSkeleton({
 		);
 	}
 
-	const statusSkeleton = (
-		<Card
-			size="sm"
-			className={cn(
-				"gap-0 border border-foreground/10 py-0 ring-0",
-				variant === "connected" && "h-full",
-			)}
-			data-testid="overview-status-card-skeleton"
-		>
-			<CardHeader className="p-0">
-				<div className="flex items-center gap-3 px-4 py-3">
-					<Skeleton className="size-8 shrink-0 rounded-lg" />
-					<div className="min-w-0 flex-1">
-						<Skeleton className="h-5 w-20" />
-						<Skeleton className="h-5 w-16" />
-					</div>
-					<Skeleton className="size-4 shrink-0" />
-				</div>
-			</CardHeader>
-			<CardContent
-				className={cn("gap-2 px-4 pb-4", variant === "connected" && "flex-1 justify-end")}
-			>
-				<Skeleton className="h-4 w-full" />
-				<Skeleton className="h-4 w-3/4" />
-			</CardContent>
-		</Card>
-	);
-	const sessionsSkeleton = (
-		<>
-			<div className="flex items-center justify-between">
-				<Skeleton className="h-5 w-28" />
-				<Skeleton className="h-8 w-20" />
-			</div>
-			<OverviewSessionListSkeleton />
-		</>
-	);
-
 	return (
 		<section
 			className="flex flex-col gap-8"
@@ -499,24 +462,40 @@ function AgentDetailContentSkeleton({
 					</div>
 				</div>
 			) : null}
-			{variant === "connected" ? (
-				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
-					<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
-						{sessionsSkeleton}
+			{variant === "hosted" ? <Skeleton className="h-17 rounded-xl" /> : null}
+			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+					<div className="flex items-center justify-between">
+						<Skeleton className="h-5 w-28" />
+						<Skeleton className="h-8 w-20" />
 					</div>
-					<div className="@3xl/main:row-start-2" aria-hidden="true">
-						{statusSkeleton}
-					</div>
+					<OverviewSessionListSkeleton />
 				</div>
-			) : (
-				<>
-					<div className="grid auto-rows-fr gap-3 @2xl/main:grid-cols-2" aria-hidden="true">
-						<Skeleton className="rounded-xl" />
-						{statusSkeleton}
-					</div>
-					<div className="grid min-w-0 gap-3">{sessionsSkeleton}</div>
-				</>
-			)}
+				<div className="@3xl/main:row-start-2" aria-hidden="true">
+					<Card
+						size="sm"
+						className="h-full gap-0 border border-foreground/10 py-0 ring-0"
+						data-testid="overview-status-card-skeleton"
+					>
+						<CardHeader className="p-0">
+							<div className="flex items-center gap-3 px-4 py-3">
+								<Skeleton className="size-8 shrink-0 rounded-lg" />
+								<div className="min-w-0 flex-1">
+									<Skeleton className="h-5 w-20" />
+									<Skeleton className="h-5 w-16" />
+								</div>
+								<Skeleton className="size-4 shrink-0" />
+							</div>
+						</CardHeader>
+						<CardContent
+							className={cn("gap-2 px-4 pb-4", variant === "connected" && "flex-1 justify-end")}
+						>
+							<Skeleton className="h-4 w-full" />
+							<Skeleton className="h-4 w-3/4" />
+						</CardContent>
+					</Card>
+				</div>
+			</div>
 			<AgentOverviewCapabilitiesSkeleton variant={variant} />
 		</section>
 	);

@@ -1370,77 +1370,85 @@ function OverviewTab({
 	return (
 		<div className="flex flex-col gap-8">
 			<AgentDashboardOverview agentId={agentId} deployment={deployment} />
-			<div className="grid auto-rows-fr gap-3 @2xl/main:grid-cols-2" data-overview-section="entry">
-				<OverviewNavigationCard
-					id="model-provider"
-					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
-					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
-					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
-					description={
-						providers.isLoading || managedModelCatalog.isLoading ? (
-							<OverviewDescriptionSkeleton label="model and provider" />
-						) : providers.error || managedModelCatalog.error ? (
-							"Unavailable right now"
-						) : (
-							model
-						)
-					}
-					link={agentSectionLink(agentId, "ai")}
-				/>
-				<AgentOverviewStatusCard
-					agentId={agentId}
-					section="settings"
-					title="Compute"
-					icon={Cpu}
-					tint="bg-identity-4-bg text-identity-4-fg"
-					description={
-						<OverviewComputeSummary
-							status={
-								<span
-									data-overview-compute-status
-									className="inline-flex items-center gap-2"
-									title={`Agent status: ${computeStatusPresentation.label}`}
-								>
-									<StatusDot status={computeStatusPresentation.tone} />
-									{computeStatusPresentation.label}
-								</span>
-							}
-							plan={isPerformance ? "Performance" : "Basic"}
-							vcpu={spec.resources.vcpu}
-							memoryMib={spec.resources.memory_mib}
-							storageGib={spec.resources.disk_gib}
-						/>
-					}
-				/>
-			</div>
-			<div className="grid min-w-0 gap-3" data-overview-section="activity">
-				<div className="flex items-center justify-between">
-					<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
-						Recent sessions
-					</h2>
-					<Button
-						render={<Link {...agentSectionLink(agentId, "sessions")} />}
-						nativeButton={false}
-						variant="ghost"
-						size="sm"
-						className="text-muted-foreground"
-					>
-						View all
-						<ArrowRight />
-					</Button>
-				</div>
-				<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
-					{sessionsError ? (
-						<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+			<OverviewNavigationCard
+				id="model-provider"
+				title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
+				icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
+				tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
+				description={
+					providers.isLoading || managedModelCatalog.isLoading ? (
+						<OverviewDescriptionSkeleton label="model and provider" />
+					) : providers.error || managedModelCatalog.error ? (
+						"Unavailable right now"
 					) : (
-						<OverviewSessionList
-							sessions={sessions}
-							isLoading={sessionsLoading}
-							emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
-							sessionLink={sessionLink}
-						/>
-					)}
-				</section>
+						model
+					)
+				}
+				link={agentSectionLink(agentId, "ai")}
+			/>
+			<div
+				className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
+				data-overview-section="entry"
+			>
+				<div
+					className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
+					data-overview-section="activity"
+				>
+					<div className="flex items-center justify-between">
+						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+							Recent sessions
+						</h2>
+						<Button
+							render={<Link {...agentSectionLink(agentId, "sessions")} />}
+							nativeButton={false}
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground"
+						>
+							View all
+							<ArrowRight />
+						</Button>
+					</div>
+					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
+						{sessionsError ? (
+							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+						) : (
+							<OverviewSessionList
+								sessions={sessions}
+								isLoading={sessionsLoading}
+								emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
+								sessionLink={sessionLink}
+							/>
+						)}
+					</section>
+				</div>
+				<div className="min-w-0 @3xl/main:row-start-2">
+					<AgentOverviewStatusCard
+						agentId={agentId}
+						section="settings"
+						title="Compute"
+						icon={Cpu}
+						tint="bg-identity-4-bg text-identity-4-fg"
+						description={
+							<OverviewComputeSummary
+								status={
+									<span
+										data-overview-compute-status
+										className="inline-flex items-center gap-2"
+										title={`Agent status: ${computeStatusPresentation.label}`}
+									>
+										<StatusDot status={computeStatusPresentation.tone} />
+										{computeStatusPresentation.label}
+									</span>
+								}
+								plan={isPerformance ? "Performance" : "Basic"}
+								vcpu={spec.resources.vcpu}
+								memoryMib={spec.resources.memory_mib}
+								storageGib={spec.resources.disk_gib}
+							/>
+						}
+					/>
+				</div>
 			</div>
 			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
 		</div>

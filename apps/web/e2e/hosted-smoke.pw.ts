@@ -3771,14 +3771,17 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				hosted: true,
 				desktop: viewport.width === 1440,
 			});
-			await testInfo.attach(`${runtime}-${viewport.width}-sessions-${sessionCount}-geometry`, {
-				body: JSON.stringify(geometry, null, 2),
-				contentType: "application/json",
-			});
+			await testInfo.attach(
+				`${runtime}-compute-right-${viewport.width}-sessions-${sessionCount}-geometry`,
+				{
+					body: JSON.stringify(geometry, null, 2),
+					contentType: "application/json",
+				},
+			);
 			await captureAgentOverview(
 				page,
 				testInfo,
-				`${runtime}-${viewport.width}-sessions-${sessionCount}`,
+				`${runtime}-compute-right-${viewport.width}-sessions-${sessionCount}`,
 			);
 			if (viewport.width < 768) {
 				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();

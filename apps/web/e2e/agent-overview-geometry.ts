@@ -44,10 +44,7 @@ export async function expectAgentOverviewGeometry(
 	});
 	const aligned = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
 	expect(geometry.overflows).toBe(false);
-	if (hosted) {
-		expect(geometry.activity.top).toBeGreaterThan(geometry.entry.bottom);
-		aligned(geometry.activity.right, geometry.entry.right);
-	} else if (desktop) {
+	if (desktop) {
 		aligned(geometry.activity.top, geometry.entry.top);
 		aligned(geometry.status.top, geometry.sessions.top);
 		aligned(geometry.status.left - geometry.sessions.right, 16);
@@ -99,22 +96,18 @@ export async function expectAgentOverviewGeometry(
 			"border-top-width",
 			"0px",
 		);
-		expect(geometry.entry.top).toBeGreaterThan(chat.section.bottom);
-		for (const [left, right] of [
-			[chat.web, chat.channel],
-			[chat.provider, geometry.status],
-		]) {
-			aligned(left.width, right.width);
-			aligned(left.height, right.height);
-			aligned(left.left, geometry.entry.left);
-			aligned(right.right, geometry.entry.right);
-			if (desktop) {
-				aligned(left.top, right.top);
-				aligned(right.left - left.right, 12);
-			} else aligned(right.top - left.bottom, 12);
-		}
-		aligned(chat.web.left, chat.provider.left);
-		aligned(chat.channel.right, geometry.status.right);
+		expect(chat.provider.top).toBeGreaterThan(chat.section.bottom);
+		expect(geometry.entry.top).toBeGreaterThan(chat.provider.bottom);
+		aligned(chat.provider.left, geometry.entry.left);
+		aligned(chat.provider.right, geometry.entry.right);
+		aligned(chat.web.width, chat.channel.width);
+		aligned(chat.web.height, chat.channel.height);
+		aligned(chat.web.left, geometry.entry.left);
+		aligned(chat.channel.right, geometry.entry.right);
+		if (desktop) {
+			aligned(chat.web.top, chat.channel.top);
+			aligned(chat.channel.left - chat.web.right, 12);
+		} else aligned(chat.channel.top - chat.web.bottom, 12);
 	} else expect(geometry.chat).toBeNull();
 	return geometry;
 }
