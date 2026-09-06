@@ -1088,6 +1088,8 @@ function writeFileBrowserSystemdUnit(input: {
 		directoryKind: "file-browser",
 		env: {
 			HOME: "/nonexistent",
+			// FileBrowser checks this path before loading server.database from YAML.
+			FILEBROWSER_DATABASE: join(input.paths.fileBrowserStateRoot, "filebrowser.db"),
 			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
 				companion: input.manifest.companions?.filebrowser ?? null,
 			}),
