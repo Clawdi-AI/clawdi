@@ -29,6 +29,9 @@ jobs:
   macos-arm64:
     runs-on: macos-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v7
         with:

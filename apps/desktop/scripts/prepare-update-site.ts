@@ -10,7 +10,11 @@ if (!repository || !/^[\w-]+\/[\w.-]+$/.test(repository) || !output) {
 }
 
 function gh(args: string[]): string {
-	return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+	return execFileSync("gh", args, {
+		encoding: "utf8",
+		maxBuffer: 16 * 1024 * 1024,
+		timeout: 60_000,
+	});
 }
 
 function record(value: unknown): value is Record<string, unknown> {

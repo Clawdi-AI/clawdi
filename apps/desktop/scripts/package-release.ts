@@ -40,7 +40,7 @@ async function verifyReleaseSignature(): Promise<void> {
 		signature: existsSync(executable) ? signature : null,
 	});
 	if (!policy.enabled) {
-		throw new Error("Desktop release must have a Developer ID Application signature and Team ID.");
+		throw new Error("Desktop release must have a valid Developer ID Application signature.");
 	}
 }
 
@@ -53,24 +53,24 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 		configuration.channel === "stable" ? "latest-mac.yml" : "beta-mac.yml",
 	);
 	if (dmg.length !== 1 || zip.length !== 1 || !existsSync(metadataPath)) {
-		throw new Error("Desktop release must produce one DMG, one ZIP, and latest-mac.yml.");
+		throw new Error("Desktop release must produce one DMG, one ZIP, and channel update metadata.");
 	}
 	const zipName = zip[0];
 	if (!zipName) throw new Error("Desktop release ZIP is missing.");
 	const metadata = parse(readFileSync(metadataPath, "utf8"));
 	if (!isRecord(metadata) || metadata.version !== version || !Array.isArray(metadata.files)) {
-		throw new Error("latest-mac.yml has an invalid Desktop update structure.");
+		throw new Error("Channel metadata has an invalid Desktop update structure.");
 	}
 	const file = metadata.files.find(
 		(value) => isRecord(value) && value.url === zipName && typeof value.sha512 === "string",
 	);
 	if (!isRecord(file) || typeof file.sha512 !== "string") {
-		throw new Error("latest-mac.yml does not describe the signed ZIP release artifact.");
+		throw new Error("Channel metadata does not describe the signed ZIP release artifact.");
 	}
 	const sha512 = createHash("sha512")
 		.update(readFileSync(join(releaseRoot, zipName)))
 		.digest("base64");
-	if (file.sha512 !== sha512) throw new Error("latest-mac.yml ZIP checksum does not match.");
+	if (file.sha512 !== sha512) throw new Error("Channel metadata ZIP checksum does not match.");
 	const dmgPath = join(releaseRoot, dmg[0] ?? "");
 	await run("codesign", ["--verify", "--strict", dmgPath]);
 	await run("xcrun", [
