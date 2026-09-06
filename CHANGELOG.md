@@ -29,6 +29,10 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Managed CLI installations now create protected directories independently of
+  the parent process's umask, without relaxing verification of existing paths.
+- Managed runtime egress no longer emits raw request URLs or WebSocket control
+  payloads in routine logs; certificate validation and warnings remain enabled.
 - Managed runtimes accept released images' initial CLI bootstrap receipts
   without a spurious invalid-status warning. Adoption revalidates the installed
   CLI; malformed or unsafe state now stops instead of being overwritten.
