@@ -477,6 +477,16 @@ Upstream [default initialization](https://github.com/gtsteffaniak/filebrowser/bl
 checks this environment path (otherwise `./database.db`) before loading YAML.
 This avoids a misleading missing-database warning on retained-state boots;
 a genuinely missing database still produces the native warning.
+
+Quantum `v1.5.0-stable` also performs a mandatory startup cache-space check:
+its [20 GiB recommendation is a constant](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/config.go#L231-L240),
+although the message labels binary GiB as `GB`. A 20 GiB filesystem with
+existing data can legitimately fall below it. The supported
+[`cacheDirCleanup` and `maxArchiveSize` settings](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/structs.go#L67-L69)
+do not change that threshold or impose a total cache quota. Keep DB/cache on
+the durable state mount and preserve the warning; do not suppress all warnings,
+move cache to memory, or increase storage just to silence this recommendation.
+
 The tenant can therefore inspect or alter its
 own Files state and can signal the same-UID Files process, but cannot replace
 the root-owned binary or configuration source, write receipts, or control the
