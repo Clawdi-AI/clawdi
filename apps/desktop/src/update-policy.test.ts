@@ -18,6 +18,13 @@ const SIGNED_STABLE: DesktopUpdatePolicyInput = {
 };
 
 describe("evaluateDesktopUpdatePolicy", () => {
+	test("enables signed beta macOS releases", () => {
+		expect(evaluateDesktopUpdatePolicy({ ...SIGNED_STABLE, channel: "beta" })).toEqual({
+			enabled: true,
+			channel: "beta",
+			feedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
+		});
+	});
 	test("enables signed stable macOS releases", () => {
 		expect(evaluateDesktopUpdatePolicy(SIGNED_STABLE)).toEqual({
 			enabled: true,
@@ -32,7 +39,7 @@ describe("evaluateDesktopUpdatePolicy", () => {
 			[{ ...SIGNED_STABLE, platform: "linux" }, "unsupported-platform"],
 			[{ ...SIGNED_STABLE, isMacAppStore: true }, "mac-app-store"],
 			[{ ...SIGNED_STABLE, channel: "disabled" }, "disabled-by-metadata"],
-			[{ ...SIGNED_STABLE, channel: "beta" }, "invalid-metadata"],
+			[{ ...SIGNED_STABLE, channel: "alpha" }, "invalid-metadata"],
 			[{ ...SIGNED_STABLE, feedUrl: undefined }, "invalid-metadata"],
 			[{ ...SIGNED_STABLE, feedUrl: "http://downloads.example.test" }, "invalid-metadata"],
 			[

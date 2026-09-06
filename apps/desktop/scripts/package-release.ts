@@ -35,7 +35,7 @@ async function verifyReleaseSignature(): Promise<void> {
 		isPackaged: true,
 		platform: "darwin",
 		isMacAppStore: false,
-		channel: "stable",
+		channel: configuration.channel,
 		feedUrl: configuration.updateFeedUrl,
 		signature: existsSync(executable) ? signature : null,
 	});
@@ -48,7 +48,10 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 	const files = readdirSync(releaseRoot);
 	const dmg = files.filter((file) => file.endsWith(".dmg") && file.includes(version));
 	const zip = files.filter((file) => file.endsWith(".zip") && file.includes(version));
-	const metadataPath = join(releaseRoot, "latest-mac.yml");
+	const metadataPath = join(
+		releaseRoot,
+		configuration.channel === "stable" ? "latest-mac.yml" : "beta-mac.yml",
+	);
 	if (dmg.length !== 1 || zip.length !== 1 || !existsSync(metadataPath)) {
 		throw new Error("Desktop release must produce one DMG, one ZIP, and latest-mac.yml.");
 	}
@@ -69,6 +72,22 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 		.digest("base64");
 	if (file.sha512 !== sha512) throw new Error("latest-mac.yml ZIP checksum does not match.");
 	const dmgPath = join(releaseRoot, dmg[0] ?? "");
+	await run("codesign", ["--verify", "--strict", dmgPath]);
+	await run("xcrun", [
+		"notarytool",
+		"submit",
+		dmgPath,
+		"--wait",
+		"--timeout",
+		"30m",
+		"--key",
+		process.env.APPLE_API_KEY ?? "",
+		"--key-id",
+		process.env.APPLE_API_KEY_ID ?? "",
+		"--issuer",
+		process.env.APPLE_API_ISSUER ?? "",
+	]);
+	await run("xcrun", ["stapler", "staple", dmgPath]);
 	await run("xcrun", ["stapler", "validate", dmgPath]);
 	await run("spctl", [
 		"--assess",

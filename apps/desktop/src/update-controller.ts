@@ -38,7 +38,10 @@ export class DesktopUpdateController {
 		this.updater.autoDownload = true;
 		this.updater.autoInstallOnAppQuit = false;
 		this.updater.autoRunAppAfterInstall = false;
-		this.updater.allowPrerelease = false;
+		this.updater.channel = this.options.policy.channel === "stable" ? "latest" : "beta";
+		this.updater.allowPrerelease = this.options.policy.channel === "beta";
+		// Setting channel enables downgrades in electron-updater.
+		this.updater.allowDowngrade = false;
 		this.updater.on("checking-for-update", () => this.transition({ type: "check" }));
 		this.updater.on("update-available", (info) =>
 			this.transition({ type: "available", version: info.version }),

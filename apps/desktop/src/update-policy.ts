@@ -21,7 +21,7 @@ export interface DesktopUpdatePolicyInput {
 }
 
 export type DesktopUpdatePolicy =
-	| { enabled: true; channel: "stable"; feedUrl: string }
+	| { enabled: true; channel: "stable" | "beta"; feedUrl: string }
 	| { enabled: false; reason: DesktopUpdateSkipReason };
 
 export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): DesktopUpdatePolicy {
@@ -31,13 +31,15 @@ export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): De
 	if (input.channel === "disabled") {
 		return { enabled: false, reason: "disabled-by-metadata" };
 	}
-	if (input.channel !== "stable") return { enabled: false, reason: "invalid-metadata" };
+	if (input.channel !== "stable" && input.channel !== "beta") {
+		return { enabled: false, reason: "invalid-metadata" };
+	}
 	const feedUrl = normalizeDesktopUpdateFeedUrl(input.feedUrl);
 	if (!feedUrl) return { enabled: false, reason: "invalid-metadata" };
 	if (!isDeveloperIdSignature(input.signature)) {
 		return { enabled: false, reason: "unsigned" };
 	}
-	return { enabled: true, channel: "stable", feedUrl };
+	return { enabled: true, channel: input.channel, feedUrl };
 }
 
 export function normalizeDesktopUpdateFeedUrl(value: unknown): string | null {

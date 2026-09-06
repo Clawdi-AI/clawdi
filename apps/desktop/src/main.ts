@@ -280,7 +280,10 @@ async function initializeUpdates(): Promise<void> {
 	const channel = readPackageMetadataField("clawdiUpdateChannel");
 	const feedUrl = readPackageMetadataField("clawdiUpdateFeedUrl");
 	const shouldInspectSignature =
-		app.isPackaged && process.platform === "darwin" && process.mas !== true && channel === "stable";
+		app.isPackaged &&
+		process.platform === "darwin" &&
+		process.mas !== true &&
+		(channel === "stable" || channel === "beta");
 	const signature = shouldInspectSignature ? await readMacCodeSignature(process.execPath) : null;
 	const policy = evaluateDesktopUpdatePolicy({
 		isPackaged: app.isPackaged,

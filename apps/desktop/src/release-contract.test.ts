@@ -11,6 +11,23 @@ const RELEASE_ENV = {
 } as const;
 
 describe("Desktop release contract", () => {
+	test("isolates beta metadata and rejects mismatched versions", () => {
+		const beta = {
+			...RELEASE_ENV,
+			CLAWDI_DESKTOP_UPDATE_CHANNEL: "beta",
+			CLAWDI_DESKTOP_VERSION: "1.2.3-beta.1",
+		};
+		const args = desktopReleaseBuilderArgs(readDesktopReleaseConfiguration(beta, "darwin"));
+		expect(args).toContain("--config.publish.channel=beta");
+		expect(args).toContain("--config.generateUpdatesFilesForAllChannels=false");
+		for (const env of [
+			{ ...beta, CLAWDI_DESKTOP_VERSION: "1.2.3" },
+			{ ...beta, CLAWDI_DESKTOP_UPDATE_CHANNEL: "stable" },
+			{ ...beta, CLAWDI_DESKTOP_VERSION: "1.2.3-beta.01" },
+			{ ...beta, CLAWDI_DESKTOP_UPDATE_CHANNEL: "alpha" },
+		])
+			expect(() => readDesktopReleaseConfiguration(env, "darwin")).toThrow();
+	});
 	test("fails closed without a signed stable generic feed configuration", () => {
 		for (const env of [
 			{},
@@ -32,6 +49,7 @@ describe("Desktop release contract", () => {
 	test("accepts API key notarization without a separate Team ID", () => {
 		expect(readDesktopReleaseConfiguration(RELEASE_ENV, "darwin")).toEqual({
 			version: "1.2.3",
+			channel: "stable",
 			updateFeedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 		});
 	});

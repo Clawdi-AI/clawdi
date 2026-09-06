@@ -2,6 +2,7 @@ import { normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
+	channel: "stable" | "beta";
 	updateFeedUrl: string;
 }
 
@@ -11,8 +12,15 @@ export function readDesktopReleaseConfiguration(
 ): DesktopReleaseConfiguration {
 	if (platform !== "darwin") throw new Error("Desktop release packaging must run on macOS.");
 	const version = env.CLAWDI_DESKTOP_VERSION?.trim() ?? "";
-	if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-		throw new Error("CLAWDI_DESKTOP_VERSION must be an explicit stable semver such as 1.2.3.");
+	const channel = env.CLAWDI_DESKTOP_UPDATE_CHANNEL?.trim() || "stable";
+	if (channel !== "stable" && channel !== "beta") {
+		throw new Error("CLAWDI_DESKTOP_UPDATE_CHANNEL must be stable or beta.");
+	}
+	const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-beta\.(0|[1-9]\d*))?$/.exec(version);
+	if (!match || Boolean(match[4]) !== (channel === "beta")) {
+		throw new Error(
+			"Desktop version must match its channel: 1.2.3 for stable or 1.2.3-beta.1 for beta.",
+		);
 	}
 	const hasSigningIdentity = Boolean(
 		env.CSC_NAME?.trim() || (env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
@@ -34,7 +42,7 @@ export function readDesktopReleaseConfiguration(
 			"Apple notarization requires APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER.",
 		);
 	}
-	return { version, updateFeedUrl };
+	return { version, channel, updateFeedUrl };
 }
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
@@ -51,9 +59,11 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		"--config.mac.notarize=true",
 		"--config.dmg.sign=true",
 		`--config.extraMetadata.version=${configuration.version}`,
-		"--config.extraMetadata.clawdiUpdateChannel=stable",
+		`--config.extraMetadata.clawdiUpdateChannel=${configuration.channel}`,
 		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,
 		"--config.publish.provider=generic",
+		"--config.generateUpdatesFilesForAllChannels=false",
+		`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,
 		`--config.publish.url=${configuration.updateFeedUrl}`,
 	];
 }
