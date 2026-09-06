@@ -23,7 +23,9 @@ export function readDesktopReleaseConfiguration(
 		);
 	}
 	const hasSigningIdentity = Boolean(
-		env.CSC_KEYCHAIN?.trim() || env.CSC_NAME?.trim() || (env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
+		env.CSC_KEYCHAIN?.trim() ||
+			env.CSC_NAME?.trim() ||
+			(env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
 	);
 	if (!hasSigningIdentity) {
 		throw new Error(
