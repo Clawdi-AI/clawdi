@@ -11,11 +11,9 @@ export type AgentOverviewModuleId =
 	| "plugins"
 	| "memories"
 	| "vaults"
-	| "connectors"
-	| "model-provider"
-	| "channels";
+	| "connectors";
 
-export type AgentOverviewGroupId = "workspace" | "shared" | "operate";
+export type AgentOverviewGroupId = "workspace" | "shared";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
@@ -25,7 +23,6 @@ export type AgentOverviewModule = {
 export type AgentOverviewGroup = {
 	id: AgentOverviewGroupId;
 	label: string;
-	layout: "three-column" | "two-column" | "single-column";
 	modules: readonly AgentOverviewModule[];
 };
 
@@ -49,36 +46,23 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "three-column",
 			modules: WORKSPACE_RESOURCES,
 		},
 		{
 			id: "shared",
 			label: "Shared",
-			layout: "three-column",
 			modules: SHARED_RESOURCES,
 		},
 	],
 	hosted: [
 		{
-			id: "operate",
-			label: "Connections",
-			layout: "two-column",
-			modules: [
-				{ id: "channels", section: "channels" },
-				{ id: "model-provider", section: "ai" },
-			],
-		},
-		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "single-column",
 			modules: HOSTED_WORKSPACE_RESOURCES,
 		},
 		{
 			id: "shared",
 			label: "Shared",
-			layout: "single-column",
 			modules: SHARED_RESOURCES,
 		},
 	],

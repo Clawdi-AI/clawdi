@@ -66,7 +66,7 @@ describe("overview modules", () => {
 		);
 
 		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(5);
-		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(8);
+		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(6);
 		expect(hosted).toContain('data-overview-module-skeleton="plugins"');
 		expect(hosted).toContain('data-overview-layout="two-column"');
 		expect(hosted).toContain("h-full min-w-0 border border-foreground/10 py-3 ring-0");

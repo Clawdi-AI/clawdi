@@ -5,17 +5,12 @@ import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-	type AgentOverviewGroupId,
-	type AgentOverviewModuleId,
-	agentOverviewGroups,
-} from "@/lib/agent-capabilities";
+import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
 import { agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
 } from "@/lib/navigation-model";
-import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
@@ -47,7 +42,7 @@ export function AgentOverviewStatusCard({
 			size="sm"
 			role="article"
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
-			className="h-full gap-0 border border-foreground/10 bg-muted/20 py-0 ring-0"
+			className="h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0"
 		>
 			<CardHeader className="p-0">
 				<Link
@@ -114,16 +109,12 @@ export function AgentOverviewCapabilities({
 	agentId,
 	variant,
 	content,
-	groupIds,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
-	groupIds?: readonly AgentOverviewGroupId[];
 }) {
-	const groups = agentOverviewGroups(variant).filter(
-		(group) => !groupIds || groupIds.includes(group.id),
-	);
+	const groups = agentOverviewGroups(variant);
 	return (
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{groups.map((group) => (
@@ -134,13 +125,8 @@ export function AgentOverviewCapabilities({
 						</h2>
 					</div>
 					<div
-						data-overview-layout={group.layout}
-						className={cn(
-							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: group.layout === "two-column" && "@2xl/main:grid-cols-2",
-						)}
+						data-overview-layout="two-column"
+						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
 					>
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
@@ -234,13 +220,8 @@ export function AgentOverviewCapabilitiesSkeleton({
 				<section key={group.id}>
 					<Skeleton className="mb-3 h-5 w-20" />
 					<div
-						data-overview-layout={group.layout}
-						className={cn(
-							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: group.layout === "two-column" && "@2xl/main:grid-cols-2",
-						)}
+						data-overview-layout="two-column"
+						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
 					>
 						{group.modules.map((module) => (
 							<Card

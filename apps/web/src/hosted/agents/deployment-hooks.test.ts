@@ -33,8 +33,8 @@ type ShouldShowHostedProjectionNotice =
 	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
 type RunManualDeploymentRefetch =
 	typeof import("@/hosted/agents/agent-home").runManualDeploymentRefetch;
-type OverviewComputeStatus =
-	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeStatus;
+type ComputeStatusDetails =
+	typeof import("@/hosted/agents/hosted-agent-detail").ComputeStatusDetails;
 type OverviewComputeSummary =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeSummary;
 type InitialDeploymentPage =
@@ -50,7 +50,7 @@ let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null
 let settleAcceptedDelete: SettleAcceptedDeploymentDelete | null = null;
 let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
-let overviewComputeStatus: OverviewComputeStatus | null = null;
+let computeStatusDetails: ComputeStatusDetails | null = null;
 let overviewComputeSummary: OverviewComputeSummary | null = null;
 let initialDeploymentPage: InitialDeploymentPage | null = null;
 let shouldShowInitialDeploymentProgress: ShouldShowInitialDeploymentProgress | null = null;
@@ -78,7 +78,7 @@ beforeAll(async () => {
 	runManualDeploymentRefetch = agentHomeModule.runManualDeploymentRefetch;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
 	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
-	overviewComputeStatus = detailModule.OverviewComputeStatus;
+	computeStatusDetails = detailModule.ComputeStatusDetails;
 	overviewComputeSummary = detailModule.OverviewComputeSummary;
 	initialDeploymentPage = detailModule.InitialDeploymentPage;
 	shouldShowInitialDeploymentProgress = detailModule.shouldShowInitialDeploymentProgress;
@@ -87,7 +87,7 @@ beforeAll(async () => {
 
 describe("deployment failure status rendering", () => {
 	test("renders safe failure context without lifecycle or destructive actions", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const deployment = hostedDeploymentFixture({
 			id: "hdep_failed",
 			status: "failed",
@@ -110,7 +110,7 @@ describe("deployment failure status rendering", () => {
 		if (!failure) throw new Error("Expected failure presentation");
 
 		const markup = renderToStaticMarkup(
-			createElement(overviewComputeStatus, {
+			createElement(computeStatusDetails, {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
@@ -129,9 +129,9 @@ describe("deployment failure status rendering", () => {
 	});
 
 	test("renders a concise generic failure without inventing a remedy", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const markup = renderToStaticMarkup(
-			createElement(overviewComputeStatus, {
+			createElement(computeStatusDetails, {
 				deployment: hostedDeploymentFixture({ status: "failed" }),
 				failure: null,
 				deploymentTransitionTimedOut: false,
@@ -147,7 +147,7 @@ describe("deployment failure status rendering", () => {
 	});
 
 	test("renders a later runtime failure without blaming a successful restart", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const running = hostedDeploymentFixture({ id: "hdep_runtime_degraded" });
 		const deployment = hostedDeploymentFixture({
 			id: "hdep_runtime_degraded",
@@ -170,7 +170,7 @@ describe("deployment failure status rendering", () => {
 		if (!failure) throw new Error("Expected runtime failure presentation");
 
 		const markup = renderToStaticMarkup(
-			createElement(overviewComputeStatus, {
+			createElement(computeStatusDetails, {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
@@ -188,7 +188,7 @@ describe("deployment failure status rendering", () => {
 	});
 
 	test("shows restart failure copy only for a terminal restart operation error", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const deployment = hostedDeploymentFixture({
 			status: "failed",
 			acceptedOperation: failedOperation("restart"),
@@ -197,7 +197,7 @@ describe("deployment failure status rendering", () => {
 		if (!failure) throw new Error("Expected restart failure presentation");
 
 		const markup = renderToStaticMarkup(
-			createElement(overviewComputeStatus, {
+			createElement(computeStatusDetails, {
 				deployment,
 				failure,
 				deploymentTransitionTimedOut: false,
@@ -213,7 +213,7 @@ describe("deployment failure status rendering", () => {
 	});
 
 	test("keeps non-running status summaries action-free", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		for (const fixture of [
 			{ status: "starting", copy: "Startup is still in progress.", spinner: true },
 			{ status: "restarting", copy: "Restarting", spinner: true },
@@ -229,7 +229,7 @@ describe("deployment failure status rendering", () => {
 			},
 		] as const) {
 			const markup = renderToStaticMarkup(
-				createElement(overviewComputeStatus, {
+				createElement(computeStatusDetails, {
 					deployment: hostedDeploymentFixture({ status: fixture.status }),
 					failure: null,
 					deploymentTransitionTimedOut: false,
@@ -449,20 +449,20 @@ describe("deployment transition timeout rendering", () => {
 		expect(shouldShowProjectionNotice("vaults")).toBe(false);
 	});
 
-	test("keeps lifecycle actions out of the deployment-backed overview", () => {
+	test("keeps diagnostics separate from lifecycle actions", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
-		const overviewStatusSource = detailSource.slice(
-			detailSource.indexOf("export function OverviewComputeStatus"),
+		const statusDetailsSource = detailSource.slice(
+			detailSource.indexOf("export function ComputeStatusDetails"),
 			detailSource.indexOf("export function OverviewComputeSummary"),
 		);
-		expect(overviewStatusSource).not.toContain("StartComputeAction");
-		expect(overviewStatusSource).not.toContain("RestartComputeAction");
-		expect(overviewStatusSource).not.toContain("DeleteComputeAction");
-		expect(overviewStatusSource).not.toContain("<Button");
-		expect(overviewStatusSource).not.toContain("href=");
+		expect(statusDetailsSource).not.toContain("StartComputeAction");
+		expect(statusDetailsSource).not.toContain("RestartComputeAction");
+		expect(statusDetailsSource).not.toContain("DeleteComputeAction");
+		expect(statusDetailsSource).not.toContain("<Button");
+		expect(statusDetailsSource).not.toContain("href=");
 		expect(detailSource).not.toContain("OverviewFailureAction");
 		expect(detailSource).toContain("shouldShowInitialDeploymentProgress(");
 	});
@@ -549,8 +549,8 @@ describe("deployment transition timeout rendering", () => {
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
-		const overviewStatusSource = detailSource.slice(
-			detailSource.indexOf("export function OverviewComputeStatus"),
+		const statusDetailsSource = detailSource.slice(
+			detailSource.indexOf("export function ComputeStatusDetails"),
 			detailSource.indexOf("export function OverviewComputeSummary"),
 		);
 		const initialPageSource = detailSource.slice(
@@ -562,7 +562,7 @@ describe("deployment transition timeout rendering", () => {
 			detailSource.indexOf("function FilesTab"),
 		);
 
-		for (const source of [overviewStatusSource, initialPageSource, consoleTabSource]) {
+		for (const source of [statusDetailsSource, initialPageSource, consoleTabSource]) {
 			expect(source).toContain("appears to be stuck");
 			expect(source).toContain("<DeploymentCancelAction");
 			expect(source).toContain("taking longer than expected");
@@ -584,9 +584,9 @@ describe("deployment transition timeout rendering", () => {
 	});
 
 	test("keeps the escalation honest as a stuck state, not a warning badge for running compute", () => {
-		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const markup = renderToStaticMarkup(
-			createElement(overviewComputeStatus, {
+			createElement(computeStatusDetails, {
 				deployment: hostedDeploymentFixture({ status: "running" }),
 				failure: null,
 				deploymentTransitionTimedOut: false,

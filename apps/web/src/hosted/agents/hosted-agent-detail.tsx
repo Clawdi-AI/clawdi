@@ -296,7 +296,6 @@ import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-li
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import { WhatsAppRepairDialog } from "@/hosted/v2/channels/whatsapp-repair-dialog";
-import { agentOverviewGroups } from "@/lib/agent-capabilities";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	type AgentRouteSearch,
@@ -683,8 +682,6 @@ export function HostedAgentDetail({
 							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
-							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							eventStreamActive={eventStreamActive}
 						/>
 					) : null}
@@ -769,6 +766,8 @@ export function HostedAgentDetail({
 							agent={agent}
 							routeSearch={routeSearch}
 							onDeleteAccepted={onDeleteAccepted}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							deploymentTransitionEscalated={deploymentTransitionEscalated}
 						/>
 					) : null}
 				</div>
@@ -939,7 +938,7 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-export function OverviewComputeStatus({
+export function ComputeStatusDetails({
 	deployment,
 	failure,
 	deploymentTransitionTimedOut,
@@ -1016,11 +1015,13 @@ export function OverviewComputeStatus({
 }
 
 export function OverviewComputeSummary({
+	status,
 	plan,
 	vcpu,
 	memoryMib,
 	storageGib,
 }: {
+	status?: React.ReactNode;
 	plan: string;
 	vcpu: number;
 	memoryMib: number;
@@ -1033,9 +1034,12 @@ export function OverviewComputeSummary({
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<p data-overview-compute-plan className="text-sm text-muted-foreground">
-				{plan} plan
-			</p>
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+				{status}
+				<p data-overview-compute-plan className="text-sm text-muted-foreground">
+					{plan} plan
+				</p>
+			</div>
 			<ul
 				aria-label={`Configuration: ${configuration.join(", ")}`}
 				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
@@ -1243,8 +1247,6 @@ function OverviewTab({
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
-	deploymentTransitionTimedOut,
-	deploymentTransitionEscalated,
 	eventStreamActive,
 }: {
 	agentId: string;
@@ -1260,8 +1262,6 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
-	deploymentTransitionTimedOut: boolean;
-	deploymentTransitionEscalated: boolean;
 	eventStreamActive: boolean;
 }) {
 	const spec = deployment.resource.spec;
@@ -1292,7 +1292,6 @@ function OverviewTab({
 	};
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const workspaceProjectId = agent
@@ -1367,134 +1366,83 @@ function OverviewTab({
 				: null,
 		},
 		connectors: connectorsModule,
-		"model-provider": {
-			description:
-				providers.isLoading || managedModelCatalog.isLoading ? (
-					<OverviewDescriptionSkeleton label="model and provider" />
-				) : providers.error || managedModelCatalog.error ? (
-					"Unavailable right now"
-				) : (
-					model
-				),
-		},
-		channels: {
-			description:
-				projectionLoading || channelLinks.isLoading ? (
-					<OverviewDescriptionSkeleton label="channels" />
-				) : projectionUnavailable || channelLinks.error ? (
-					"Unavailable right now"
-				) : (
-					"Chat in Telegram, Discord, or WhatsApp"
-				),
-		},
 	};
 	return (
 		<div className="flex flex-col gap-8">
-			<div
-				className="grid gap-3 @4xl/main:grid-cols-2 @4xl/main:gap-x-6"
-				data-overview-section="entry"
-			>
-				<AgentDashboardOverview
-					agentId={agentId}
-					deployment={deployment}
-					className="@4xl/main:row-span-2"
-				/>
-				{agentOverviewGroups("hosted")
-					.filter((group) => group.id === "operate")
-					.flatMap((group) => group.modules)
-					.map((module) => {
-						const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
-						return (
-							<OverviewNavigationCard
-								key={module.id}
-								id={module.id}
-								title={item.label}
-								icon={item.icon}
-								tint={item.tint}
-								description={overviewContent[module.id].description}
-								link={agentSectionLink(agentId, module.section)}
-							/>
-						);
-					})}
-			</div>
-			<div
-				className="grid gap-6 @4xl/main:grid-cols-2 @4xl/main:grid-rows-[auto_1fr] @4xl/main:gap-y-3"
-				data-overview-section="activity"
-			>
-				<div className="grid min-w-0 gap-3 @4xl/main:row-span-2 @4xl/main:grid-rows-subgrid">
-					<div className="flex items-center justify-between">
-						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
-							Recent sessions
-						</h2>
-						<Button
-							render={<Link {...agentSectionLink(agentId, "sessions")} />}
-							nativeButton={false}
-							variant="ghost"
-							size="sm"
-							className="text-muted-foreground"
-						>
-							View all
-							<ArrowRight />
-						</Button>
-					</div>
-					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
-						{sessionsError ? (
-							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+			<AgentDashboardOverview agentId={agentId} deployment={deployment} />
+			<div className="grid auto-rows-fr gap-3 @2xl/main:grid-cols-2" data-overview-section="entry">
+				<OverviewNavigationCard
+					id="model-provider"
+					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
+					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
+					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
+					description={
+						providers.isLoading || managedModelCatalog.isLoading ? (
+							<OverviewDescriptionSkeleton label="model and provider" />
+						) : providers.error || managedModelCatalog.error ? (
+							"Unavailable right now"
 						) : (
-							<OverviewSessionList
-								sessions={sessions}
-								isLoading={sessionsLoading}
-								emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
-								sessionLink={sessionLink}
-							/>
-						)}
-					</section>
-				</div>
-				<div className="min-w-0 @4xl/main:col-start-2 @4xl/main:row-start-2">
-					<AgentOverviewStatusCard
-						agentId={agentId}
-						section="settings"
-						title="Compute"
-						icon={Cpu}
-						tint="bg-identity-4-bg text-identity-4-fg"
-						description={
-							<span
-								data-overview-compute-status
-								className="inline-flex items-center gap-2"
-								title={`Agent status: ${computeStatusPresentation.label}`}
-							>
-								<StatusDot status={computeStatusPresentation.tone} />
-								{computeStatusPresentation.label}
-							</span>
-						}
-					>
-						<div className="flex h-full flex-col gap-4">
-							<OverviewComputeSummary
-								plan={isPerformance ? "Performance" : "Basic"}
-								vcpu={spec.resources.vcpu}
-								memoryMib={spec.resources.memory_mib}
-								storageGib={spec.resources.disk_gib}
-							/>
-							{deploymentStatus.kind === "running" && !deploymentFailure ? null : (
-								<div className="mt-auto border-t pt-3">
-									<OverviewComputeStatus
-										deployment={deployment}
-										failure={deploymentFailure}
-										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-										deploymentTransitionEscalated={deploymentTransitionEscalated}
-									/>
-								</div>
-							)}
-						</div>
-					</AgentOverviewStatusCard>
-				</div>
+							model
+						)
+					}
+					link={agentSectionLink(agentId, "ai")}
+				/>
+				<AgentOverviewStatusCard
+					agentId={agentId}
+					section="settings"
+					title="Compute"
+					icon={Cpu}
+					tint="bg-identity-4-bg text-identity-4-fg"
+					description={
+						<OverviewComputeSummary
+							status={
+								<span
+									data-overview-compute-status
+									className="inline-flex items-center gap-2"
+									title={`Agent status: ${computeStatusPresentation.label}`}
+								>
+									<StatusDot status={computeStatusPresentation.tone} />
+									{computeStatusPresentation.label}
+								</span>
+							}
+							plan={isPerformance ? "Performance" : "Basic"}
+							vcpu={spec.resources.vcpu}
+							memoryMib={spec.resources.memory_mib}
+							storageGib={spec.resources.disk_gib}
+						/>
+					}
+				/>
 			</div>
-			<AgentOverviewCapabilities
-				agentId={agentId}
-				variant="hosted"
-				groupIds={["workspace", "shared"]}
-				content={overviewContent}
-			/>
+			<div className="grid min-w-0 gap-3" data-overview-section="activity">
+				<div className="flex items-center justify-between">
+					<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+						Recent sessions
+					</h2>
+					<Button
+						render={<Link {...agentSectionLink(agentId, "sessions")} />}
+						nativeButton={false}
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground"
+					>
+						View all
+						<ArrowRight />
+					</Button>
+				</div>
+				<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
+					{sessionsError ? (
+						<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+					) : (
+						<OverviewSessionList
+							sessions={sessions}
+							isLoading={sessionsLoading}
+							emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
+							sessionLink={sessionLink}
+						/>
+					)}
+				</section>
+			</div>
+			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
 		</div>
 	);
 }
@@ -3515,12 +3463,16 @@ function HostedAgentSettingsTab({
 	agent,
 	routeSearch,
 	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null;
 	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
+	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
@@ -3535,6 +3487,8 @@ function HostedAgentSettingsTab({
 					deployment={deployment}
 					routeSearch={routeSearch}
 					onDeleteAccepted={onDeleteAccepted}
+					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+					deploymentTransitionEscalated={deploymentTransitionEscalated}
 				/>
 			</div>
 		</UnsavedNavigationBoundary>
@@ -3634,10 +3588,14 @@ function ComputeSettingsSections({
 	deployment,
 	routeSearch,
 	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	deployment: HostedDeployment;
 	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
+	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -3956,6 +3914,12 @@ function ComputeSettingsSections({
 			</SettingsSection>
 
 			<SettingsSection title="Agent controls" description="Restart, stop, or start this agent.">
+				<ComputeStatusDetails
+					deployment={deployment}
+					failure={deploymentFailurePresentation(deployment)}
+					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+					deploymentTransitionEscalated={deploymentTransitionEscalated}
+				/>
 				<div className="flex flex-wrap gap-2.5">
 					<ConfirmAction
 						title="Restart agent?"

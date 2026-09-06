@@ -28,7 +28,7 @@ Overview shows Session starts, recent Sessions, and Library resources.
 
 ## Open a running Agent
 
-The Agent page shows status, compute, Projects, Sessions, and resources. Cloud Agents also provide OpenClaw Control UI or Hermes Dashboard, Files, and Terminal. On desktop, Overview starts with Start Chat spanning the full height of Channels and AI Providers beside it, followed by recent Sessions beside Compute, whose card aligns with the first Session card. Below activity, Workspace is a full-width vertical list, followed by the entire Shared section as another full-width vertical list. On mobile, all modules stack in the same order. Start Chat opens the dashboard named on its second line; Hermes defaults to Chat. Sessions remains the conversation history.
+The Agent page shows status, compute, Projects, Sessions, and resources. Cloud Agents also provide OpenClaw Control UI or Hermes Dashboard, Files, and Terminal. Overview starts with an unframed Start Chat section: Web Chat opens the named runtime dashboard, while Connect Channel opens the Agent's Channels management. Hermes defaults to Chat. AI Providers and a compact Compute summary sit in the next row, with diagnostics and recovery in Settings. Connected Agents show their existing sync Status without unsupported chat or channel actions. Recent Sessions spans the full content width. Workspace follows as a full-width section with two-column resources, then Shared as another full-width section with two-column resources. On mobile, entries stack in the same order. Sessions remains the conversation history.
 
 ![A running Hermes Cloud Agent with one linked Project, recent Sessions, and 25 Memories](images/dashboard-preview.png)
 
