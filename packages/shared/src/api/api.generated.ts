@@ -7375,6 +7375,7 @@ export interface components {
             environmentId: string;
             /** Deploymentid */
             deploymentId: string;
+            expectedApplyIdentity?: components["schemas"]["RuntimeApplyIdentityRequest"] | null;
         };
         /** RuntimeDriftObservationDiagnostics */
         RuntimeDriftObservationDiagnostics: {
