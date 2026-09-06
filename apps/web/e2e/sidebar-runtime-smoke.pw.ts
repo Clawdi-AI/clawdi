@@ -1198,7 +1198,7 @@ async function stubConnectedAgentResources(page: Page) {
 	};
 }
 
-test("connected overview keeps Status above full-width sessions and supported resources", async ({
+test("connected overview keeps Status beside sessions and preserves resource columns", async ({
 	page,
 }, testInfo) => {
 	await page.clock.setFixedTime(now);
@@ -1240,6 +1240,8 @@ test("connected overview keeps Status above full-width sessions and supported re
 		await expect(
 			main.getByRole("region", { name: "Recent sessions" }).getByRole("article"),
 		).toHaveCount(sessionCount);
+		await expect(main.getByTestId("overview-session-placeholder")).toHaveCount(0);
+		await expect(main.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
 		await expect(main.locator('[data-overview-module="skills"]')).toContainText("skill");
 		await expect(main.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
 		await expect(main.locator('[data-overview-module="memories"]')).toContainText("1 memory");
@@ -1253,14 +1255,17 @@ test("connected overview keeps Status above full-width sessions and supported re
 			hosted: false,
 			desktop: viewport.width === 1440,
 		});
-		await testInfo.attach(`connected-${viewport.width}-sessions-${sessionCount}-geometry`, {
-			body: JSON.stringify(geometry, null, 2),
-			contentType: "application/json",
-		});
+		await testInfo.attach(
+			`connected-status-right-${viewport.width}-sessions-${sessionCount}-geometry`,
+			{
+				body: JSON.stringify(geometry, null, 2),
+				contentType: "application/json",
+			},
+		);
 		await captureAgentOverview(
 			page,
 			testInfo,
-			`connected-${viewport.width}-sessions-${sessionCount}`,
+			`connected-status-right-${viewport.width}-sessions-${sessionCount}`,
 		);
 	}
 	expect(sessionRequests.every((url) => new URL(url).searchParams.get("page_size") === "3")).toBe(

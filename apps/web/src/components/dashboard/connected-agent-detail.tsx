@@ -232,61 +232,71 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<div className="grid gap-3 @2xl/main:grid-cols-2" data-overview-section="entry">
-								<AgentOverviewStatusCard
-									agentId={id}
-									section="settings"
-									title="Status"
-									icon={Laptop}
-									tint="bg-identity-7-bg text-identity-7-fg"
-									description={
-										<span className="inline-flex items-center gap-2">
-											<StatusDot status={syncTone} /> {syncStatus.label}
-										</span>
-									}
-								>
-									<OverviewMetadata
-										items={[
-											{ label: "Machine", value: agent.machine_name },
-											{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
-										]}
-									/>
-								</AgentOverviewStatusCard>
-							</div>
-							{supportsSessions ? (
-								<div className="grid min-w-0 gap-3" data-overview-section="activity">
-									<div className="flex items-center justify-between">
-										<h2 id="connected-recent-sessions" className="text-sm font-semibold">
-											Recent sessions
-										</h2>
-										<Button
-											render={<Link {...agentSectionLink(id, "sessions")} />}
-											nativeButton={false}
-											variant="ghost"
-											size="sm"
-											className="text-muted-foreground"
-										>
-											View all
-											<ArrowRight />
-										</Button>
+							<div
+								className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
+								data-overview-section="entry"
+							>
+								{supportsSessions ? (
+									<div
+										className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
+										data-overview-section="activity"
+									>
+										<div className="flex items-center justify-between">
+											<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+												Recent sessions
+											</h2>
+											<Button
+												render={<Link {...agentSectionLink(id, "sessions")} />}
+												nativeButton={false}
+												variant="ghost"
+												size="sm"
+												className="text-muted-foreground"
+											>
+												View all
+												<ArrowRight />
+											</Button>
+										</div>
+										<section aria-labelledby="connected-recent-sessions" className="min-w-0">
+											{blockingOverviewSessionsError ? (
+												<OverviewModuleError
+													label="Sessions"
+													onRetry={() => void refetchOverviewSessions()}
+												/>
+											) : (
+												<OverviewSessionList
+													sessions={overviewSessionsPage?.items ?? []}
+													isLoading={overviewSessionsLoading}
+													emptyMessage="No recent sessions"
+													sessionLink={(session) => scopedSessionLink(session.id)}
+												/>
+											)}
+										</section>
 									</div>
-									<section aria-labelledby="connected-recent-sessions" className="min-w-0">
-										{blockingOverviewSessionsError ? (
-											<OverviewModuleError
-												label="Sessions"
-												onRetry={() => void refetchOverviewSessions()}
+								) : null}
+								<div className={cn(supportsSessions && "@3xl/main:row-start-2")}>
+									<AgentOverviewStatusCard
+										agentId={id}
+										section="settings"
+										title="Status"
+										icon={Laptop}
+										tint="bg-identity-7-bg text-identity-7-fg"
+										description={
+											<span className="inline-flex items-center gap-2">
+												<StatusDot status={syncTone} /> {syncStatus.label}
+											</span>
+										}
+									>
+										<div className="flex h-full flex-col justify-end">
+											<OverviewMetadata
+												items={[
+													{ label: "Machine", value: agent.machine_name },
+													{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
+												]}
 											/>
-										) : (
-											<OverviewSessionList
-												sessions={overviewSessionsPage?.items ?? []}
-												isLoading={overviewSessionsLoading}
-												emptyMessage="No recent sessions"
-												sessionLink={(session) => scopedSessionLink(session.id)}
-											/>
-										)}
-									</section>
+										</div>
+									</AgentOverviewStatusCard>
 								</div>
-							) : null}
+							</div>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
@@ -431,6 +441,43 @@ function AgentDetailContentSkeleton({
 		);
 	}
 
+	const statusSkeleton = (
+		<Card
+			size="sm"
+			className={cn(
+				"gap-0 border border-foreground/10 py-0 ring-0",
+				variant === "connected" && "h-full",
+			)}
+			data-testid="overview-status-card-skeleton"
+		>
+			<CardHeader className="p-0">
+				<div className="flex items-center gap-3 px-4 py-3">
+					<Skeleton className="size-8 shrink-0 rounded-lg" />
+					<div className="min-w-0 flex-1">
+						<Skeleton className="h-5 w-20" />
+						<Skeleton className="h-5 w-16" />
+					</div>
+					<Skeleton className="size-4 shrink-0" />
+				</div>
+			</CardHeader>
+			<CardContent
+				className={cn("gap-2 px-4 pb-4", variant === "connected" && "flex-1 justify-end")}
+			>
+				<Skeleton className="h-4 w-full" />
+				<Skeleton className="h-4 w-3/4" />
+			</CardContent>
+		</Card>
+	);
+	const sessionsSkeleton = (
+		<>
+			<div className="flex items-center justify-between">
+				<Skeleton className="h-5 w-28" />
+				<Skeleton className="h-8 w-20" />
+			</div>
+			<OverviewSessionListSkeleton />
+		</>
+	);
+
 	return (
 		<section
 			className="flex flex-col gap-8"
@@ -452,36 +499,24 @@ function AgentDetailContentSkeleton({
 					</div>
 				</div>
 			) : null}
-			<div className="grid auto-rows-fr gap-3 @2xl/main:grid-cols-2" aria-hidden="true">
-				{variant === "hosted" ? <Skeleton className="rounded-xl" /> : null}
-				<Card
-					size="sm"
-					className="gap-0 border border-foreground/10 py-0 ring-0"
-					data-testid="overview-status-card-skeleton"
-				>
-					<CardHeader className="p-0">
-						<div className="flex items-center gap-3 px-4 py-3">
-							<Skeleton className="size-8 shrink-0 rounded-lg" />
-							<div className="min-w-0 flex-1">
-								<Skeleton className="h-5 w-20" />
-								<Skeleton className="h-5 w-16" />
-							</div>
-							<Skeleton className="size-4 shrink-0" />
-						</div>
-					</CardHeader>
-					<CardContent className="gap-2 px-4 pb-4">
-						<Skeleton className="h-4 w-full" />
-						<Skeleton className="h-4 w-3/4" />
-					</CardContent>
-				</Card>
-			</div>
-			<div className="grid min-w-0 gap-3">
-				<div className="flex items-center justify-between">
-					<Skeleton className="h-5 w-28" />
-					<Skeleton className="h-8 w-20" />
+			{variant === "connected" ? (
+				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+					<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+						{sessionsSkeleton}
+					</div>
+					<div className="@3xl/main:row-start-2" aria-hidden="true">
+						{statusSkeleton}
+					</div>
 				</div>
-				<OverviewSessionListSkeleton />
-			</div>
+			) : (
+				<>
+					<div className="grid auto-rows-fr gap-3 @2xl/main:grid-cols-2" aria-hidden="true">
+						<Skeleton className="rounded-xl" />
+						{statusSkeleton}
+					</div>
+					<div className="grid min-w-0 gap-3">{sessionsSkeleton}</div>
+				</>
+			)}
 			<AgentOverviewCapabilitiesSkeleton variant={variant} />
 		</section>
 	);

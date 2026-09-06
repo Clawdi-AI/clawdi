@@ -44,16 +44,33 @@ export async function expectAgentOverviewGeometry(
 	});
 	const aligned = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
 	expect(geometry.overflows).toBe(false);
-	expect(geometry.activity.top).toBeGreaterThan(geometry.entry.bottom);
-	for (const section of [
-		geometry.activity,
-		geometry.sessions,
-		...geometry.resources.map((group) => group.section),
-	]) {
+	if (hosted) {
+		expect(geometry.activity.top).toBeGreaterThan(geometry.entry.bottom);
+		aligned(geometry.activity.right, geometry.entry.right);
+	} else if (desktop) {
+		aligned(geometry.activity.top, geometry.entry.top);
+		aligned(geometry.status.top, geometry.sessions.top);
+		aligned(geometry.status.left - geometry.sessions.right, 16);
+		aligned(geometry.status.right, geometry.entry.right);
+		aligned(geometry.sessions.width, geometry.status.width * 2);
+		if (geometry.sessionCards.length === 3)
+			aligned(geometry.status.bottom, geometry.sessions.bottom);
+	} else {
+		expect(geometry.status.top).toBeGreaterThan(geometry.activity.bottom);
+		aligned(geometry.status.left, geometry.entry.left);
+		aligned(geometry.status.right, geometry.entry.right);
+	}
+	for (const { section } of geometry.resources) {
 		aligned(section.left, geometry.entry.left);
 		aligned(section.right, geometry.entry.right);
 	}
-	expect(geometry.resources[0].section.top).toBeGreaterThan(geometry.activity.bottom);
+	aligned(geometry.activity.left, geometry.entry.left);
+	aligned(geometry.sessions.left, geometry.activity.left);
+	aligned(geometry.sessions.right, geometry.activity.right);
+	if (!desktop) aligned(geometry.activity.right, geometry.entry.right);
+	expect(geometry.resources[0].section.top).toBeGreaterThan(
+		Math.max(geometry.activity.bottom, geometry.status.bottom),
+	);
 	expect(geometry.resources[1].section.top).toBeGreaterThan(geometry.resources[0].section.bottom);
 	for (const group of geometry.resources) {
 		const columns = desktop ? 2 : 1;
@@ -71,8 +88,8 @@ export async function expectAgentOverviewGeometry(
 		}
 	}
 	for (const card of geometry.sessionCards) {
-		aligned(card.left, geometry.entry.left);
-		aligned(card.right, geometry.entry.right);
+		aligned(card.left, geometry.sessions.left);
+		aligned(card.right, geometry.sessions.right);
 		if (desktop) expect(card.height).toBeLessThanOrEqual(72);
 	}
 	if (hosted) {
