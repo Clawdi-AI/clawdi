@@ -39,16 +39,11 @@ jobs:
           bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
 
-      - name: Import Developer ID certificate
-        uses: Apple-Actions/import-codesign-certs@b2e261033a9e248f91a9b57201e8d1e12b15a24e # v7.0.0
-        with:
-          keychain: ${{ runner.temp }}/desktop-signing
-          p12-file-base64: ${{ secrets.CSC_LINK }}
-          p12-password: ${{ secrets.CSC_KEY_PASSWORD }}
-
       - name: Package and notarize preview
+        shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
         env:
-          CSC_KEYCHAIN: ${{ runner.temp }}/desktop-signing.keychain
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

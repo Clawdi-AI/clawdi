@@ -35,10 +35,13 @@ standard electron-builder Developer ID signing identity and API key notarization
 `APPLE_API_KEY` (P8 file path), `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
 No separate Team ID configuration is required.
 
-CI imports the P12 using the pinned `Apple-Actions/import-codesign-certs` action,
-which cleans up its temporary keychain after the job. electron-builder uses
-`CSC_KEYCHAIN` and the installed, lockfile-pinned tool instead of downloading a
-fresh CLI or importing the P12 itself.
+CI follows [GitHub's documented certificate import flow](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications)
+using macOS `security` directly. The shared shell wrapper generates a random
+temporary keychain password with OpenSSL, removes the P12 immediately after
+import, and restores the keychain search list and deletes the temporary keychain
+on success or failure. It does not grant all applications access to the key.
+electron-builder uses `CSC_KEYCHAIN` and the installed, lockfile-pinned tool;
+no third-party certificate-import Action receives the signing secret.
 
 For local packaging, run:
 
