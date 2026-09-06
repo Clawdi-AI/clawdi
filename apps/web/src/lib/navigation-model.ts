@@ -5,6 +5,7 @@ import {
 	type LucideIcon,
 	MessagesSquare,
 	MonitorPlay,
+	PanelsTopLeft,
 	Settings,
 	Sparkles,
 	TerminalSquare,
@@ -287,7 +288,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	console: {
 		id: "console",
 		label: "Dashboard",
-		icon: MonitorPlay,
+		icon: PanelsTopLeft,
 		tint: "bg-identity-6-bg text-identity-6-fg",
 		description: "Open this agent's dashboard.",
 		tooltip: "Open dashboard",
@@ -421,7 +422,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
 		label: null,
-		itemIds: ["overview", "console", "sessions", "channels", "ai"],
+		itemIds: ["overview", "console", "channels", "ai", "sessions"],
 		separated: false,
 	},
 	{

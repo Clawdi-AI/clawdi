@@ -13,7 +13,51 @@ export async function expectAgentOverviewGeometry(
 			}
 			return element.getBoundingClientRect().toJSON();
 		};
+		const subscriptionRow = main.querySelector("[data-overview-subscription-row]");
+		const subscriptionStatus = subscriptionRow?.querySelector(
+			"[data-overview-subscription-status]",
+		);
+		const subscriptionAction = subscriptionRow?.querySelector("[data-slot=button]");
+		const subscriptionDate = subscriptionRow?.parentElement?.querySelector(":scope > dl");
+		const entries = Array.from(
+			main.querySelectorAll('[data-overview-section="tools"] [data-slot="card"]'),
+		);
+		const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+		if (!context) throw new Error("Canvas is unavailable for color checks");
+		const pixel = () => Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+		const paint = (color: string) => {
+			context.fillStyle = color;
+			context.fillRect(0, 0, 1, 1);
+		};
+		const luminance = (rgb: number[]) =>
+			rgb
+				.map((value) => {
+					const channel = value / 255;
+					return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+				})
+				.reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+		const colors = entries.map((card) => {
+			const description = card.querySelector('[data-slot="card-description"]');
+			if (!description) throw new Error("Missing entry description");
+			paint(getComputedStyle(main).backgroundColor);
+			paint(getComputedStyle(card).backgroundColor);
+			const background = pixel();
+			paint(getComputedStyle(description).color);
+			const foreground = pixel();
+			const levels = [luminance(background), luminance(foreground)];
+			return { background, contrast: (Math.max(...levels) + 0.05) / (Math.min(...levels) + 0.05) };
+		});
 		return {
+			colors,
+			subscription:
+				subscriptionRow && subscriptionStatus
+					? {
+							row: subscriptionRow.getBoundingClientRect().toJSON(),
+							status: subscriptionStatus.getBoundingClientRect().toJSON(),
+							action: subscriptionAction?.getBoundingClientRect().toJSON() ?? null,
+							date: subscriptionDate?.getBoundingClientRect().toJSON() ?? null,
+						}
+					: null,
 			entry: box('[data-overview-section="entry"]'),
 			activity: box('[data-overview-section="activity"]'),
 			sessions: box('[data-testid="overview-session-grid"]'),
@@ -90,6 +134,17 @@ export async function expectAgentOverviewGeometry(
 		if (desktop) expect(card.height).toBeLessThanOrEqual(72);
 	}
 	if (hosted) {
+		expect(new Set(geometry.colors.map((color) => color.background.join(","))).size).toBe(3);
+		for (const color of geometry.colors) expect(color.contrast).toBeGreaterThanOrEqual(4.5);
+		if (geometry.subscription) {
+			const { row, status, action, date } = geometry.subscription;
+			if (action) {
+				aligned(status.y + status.height / 2, action.y + action.height / 2);
+				aligned(action.right, row.right);
+				expect(action.left - status.right).toBeGreaterThanOrEqual(12);
+			} else aligned(row.height, status.height);
+			if (date) expect(date.top).toBeGreaterThan(row.bottom);
+		}
 		const tools = geometry.tools;
 		if (!tools) throw new Error("Missing overview tools");
 		await expect(page.getByRole("heading", { name: "Start Chat", exact: true })).toHaveCount(0);
@@ -120,6 +175,10 @@ export async function expectAgentOverviewGeometry(
 
 export async function captureAgentOverview(page: Page, testInfo: TestInfo, name: string) {
 	await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
+	await page.locator("#dashboard-scroll-container").evaluate((element) => {
+		element.scrollTop = 0;
+	});
+	await page.evaluate(() => window.scrollTo(0, 0));
 	await page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
 	const viewport = page.viewportSize();
 	if (!viewport) throw new Error("Expected a fixed preview viewport");

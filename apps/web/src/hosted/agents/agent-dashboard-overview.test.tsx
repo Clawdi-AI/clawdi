@@ -25,7 +25,8 @@ test.each(["starting", "stopped", "failed", null, "running"] as const)(
 			<AgentDashboardOverview agentId={deployment.agent_id} deployment={deployment} />,
 		);
 		expect(markup).toContain("Hermes Dashboard");
-		expect(markup).toContain("Web Chat");
+		expect(markup).toContain("Chat on Web");
+		expect(markup).toContain("lucide-panels-top-left");
 		expect(markup).not.toContain("Start Chat");
 		expect(markup).toContain('data-size="sm"');
 		expect(markup).not.toContain("min-h-24");

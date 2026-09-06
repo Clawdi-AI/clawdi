@@ -3252,7 +3252,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		),
 	).toBeLessThanOrEqual(2);
 	await expect(page.locator('[data-overview-module="dashboard"]')).toBeVisible();
-	await expect(page.getByRole("button", { name: "Web Chat", exact: true })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Chat on Web", exact: true })).toBeDisabled();
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
@@ -3418,7 +3418,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Web Chat", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Chat on Web", exact: true })).toHaveCount(0);
 });
 
 for (const projectionFailure of [
@@ -3788,7 +3788,21 @@ test("overview subscription shortcut follows existing eligibility without billin
 			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
 			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
 			if (scenario.name === "canceling" || scenario.name === "paid") {
-				await captureAgentOverview(page, testInfo, `hermes-three-column-${scenario.name}-${width}`);
+				await captureAgentOverview(
+					page,
+					testInfo,
+					`hermes-colored-entry-${scenario.name}-${width}`,
+				);
+				if (width === 1440) {
+					await page.locator("html").evaluate((element) => element.classList.add("dark"));
+					await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+					await captureAgentOverview(
+						page,
+						testInfo,
+						`hermes-colored-entry-${scenario.name}-1440-dark`,
+					);
+					await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+				}
 			}
 			if (scenario.upgrade) {
 				await expect(upgrade).toHaveAttribute(
@@ -3868,11 +3882,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await page.setViewportSize(viewport);
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const module = page.locator('[data-overview-module="dashboard"]');
-			const open = page.getByRole("link", { name: "Web Chat", exact: true });
+			const open = page.getByRole("link", { name: "Chat on Web", exact: true });
 			await expect(open).toHaveCount(1);
 			await expect(open).toBeEnabled();
 			await expect(open.getByText(label, { exact: true })).toBeVisible();
 			await expect(module.getByRole("link")).toHaveCount(1);
+			await expect(module.locator(".lucide-panels-top-left")).toHaveCount(1);
 			await expect(module.locator(":scope > *")).toHaveCount(1);
 			await expect(module.locator('[role="status"], #agent-dashboard-status')).toHaveCount(0);
 			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
@@ -3931,7 +3946,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				desktop: viewport.width === 1440,
 			});
 			await testInfo.attach(
-				`${runtime}-three-column-${viewport.width}-sessions-${sessionCount}-geometry`,
+				`${runtime}-colored-entry-${viewport.width}-sessions-${sessionCount}-geometry`,
 				{
 					body: JSON.stringify(geometry, null, 2),
 					contentType: "application/json",
@@ -3940,32 +3955,41 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await captureAgentOverview(
 				page,
 				testInfo,
-				`${runtime}-three-column-${viewport.width}-sessions-${sessionCount}`,
+				`${runtime}-colored-entry-${viewport.width}-sessions-${sessionCount}`,
 			);
+			if (viewport.width === 1440 && sessionCount === 3) {
+				await page.locator("html").evaluate((element) => element.classList.add("dark"));
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+				await captureAgentOverview(page, testInfo, `${runtime}-colored-entry-1440-dark`);
+				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+			}
 			if (viewport.width < 768) {
 				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 			}
 			const sidebar =
 				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+			await expect(
+				sidebar.getByRole("link", { name: label, exact: true }).locator(".lucide-panels-top-left"),
+			).toHaveCount(1);
 			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
 			const start = labels.findIndex((text) => text.trim() === "Overview");
 			expect(start).toBeGreaterThanOrEqual(0);
 			expect(labels.slice(start, start + 5).map((text) => text.trim())).toEqual([
 				"Overview",
 				label,
-				"Sessions",
 				"Channels",
 				"AI Providers",
+				"Sessions",
 			]);
 			if (viewport.width < 768) await page.keyboard.press("Escape");
 		}
 		await page
 			.locator('[data-overview-module="channels"]')
-			.getByRole("link", { name: "Channels", exact: true })
+			.getByRole("link", { name: "Chat in Channels", exact: true })
 			.click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/channel-links`);
 		await page.goto(`/agents/${railHostedEnvironmentId}`);
-		await page.getByRole("link", { name: "Web Chat", exact: true }).click();
+		await page.getByRole("link", { name: "Chat on Web", exact: true }).click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
 		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
 		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;
@@ -4792,7 +4816,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(main.getByText("internal runtime health error", { exact: true })).toHaveCount(0);
 	await expect(main.getByText(/dashboard prerequisite/i)).toHaveCount(0);
 	const compute = main.locator('[data-overview-status="compute"]');
-	await expect(main.getByRole("button", { name: "Web Chat", exact: true })).toBeDisabled();
+	await expect(main.getByRole("button", { name: "Chat on Web", exact: true })).toBeDisabled();
 	const computeStatus = compute.locator("[data-overview-compute-status]");
 	await expect(computeStatus).toHaveText("Temporarily unavailable");
 	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(

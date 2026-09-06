@@ -1459,7 +1459,8 @@ function OverviewTab({
 				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
 				<OverviewNavigationCard
 					id="channels"
-					title={AGENT_SECTION_NAVIGATION_ITEMS.channels.label}
+					title="Chat in Channels"
+					className="bg-identity-5-bg/50 dark:bg-identity-5-bg/30"
 					description="Telegram, Discord, or WhatsApp"
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
@@ -1467,6 +1468,7 @@ function OverviewTab({
 				/>
 				<OverviewNavigationCard
 					id="model-provider"
+					className="bg-identity-2-bg/50 dark:bg-identity-2-bg/30"
 					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
@@ -1545,19 +1547,23 @@ function OverviewTab({
 							/>
 							{subscriptionRecovery ? (
 								<div className="space-y-2">
-									<OverviewMetadata
-										items={[
-											{ label: "Subscription", value: subscriptionRecovery.status.label },
-											...(subscriptionDate ? [subscriptionDate] : []),
-										]}
-									/>
-									{currentSubscription && upgradeReady ? (
-										<OverviewComputeUpgrade
-											agentId={agentId}
-											deployment={deployment}
-											subscription={currentSubscription}
-										/>
-									) : null}
+									<div
+										className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2"
+										data-overview-subscription-row
+									>
+										<dl className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
+											<dt>Subscription</dt>
+											<dd data-overview-subscription-status>{subscriptionRecovery.status.label}</dd>
+										</dl>
+										{currentSubscription && upgradeReady ? (
+											<OverviewComputeUpgrade
+												agentId={agentId}
+												deployment={deployment}
+												subscription={currentSubscription}
+											/>
+										) : null}
+									</div>
+									{subscriptionDate ? <OverviewMetadata items={[subscriptionDate]} /> : null}
 								</div>
 							) : null}
 						</div>

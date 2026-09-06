@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { Settings } from "lucide-react";
+import { PanelsTopLeft, Settings } from "lucide-react";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentNavigationGroups,
@@ -147,9 +147,9 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "console", label: "Hermes Dashboard" },
-					{ id: "sessions", label: "Sessions" },
 					{ id: "channels", label: "Channels" },
 					{ id: "ai", label: "AI Providers" },
+					{ id: "sessions", label: "Sessions" },
 				],
 			},
 			{
@@ -199,9 +199,9 @@ describe("sidebar navigation model", () => {
 		expect(HOSTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"console",
-			"sessions",
 			"channels",
 			"ai",
+			"sessions",
 			"projects",
 			"plugins",
 			"memories",
@@ -252,6 +252,7 @@ describe("sidebar navigation model", () => {
 			"Memories are shared across all agents.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.console.icon).toBe(PanelsTopLeft);
 	});
 
 	test("shares direct resource panels and keeps Project resources on the Project hub", () => {

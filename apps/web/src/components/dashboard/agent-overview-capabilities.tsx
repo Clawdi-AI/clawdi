@@ -11,6 +11,7 @@ import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
 } from "@/lib/navigation-model";
+import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
@@ -163,6 +164,7 @@ export function OverviewNavigationCard({
 	tint,
 	link,
 	disabled = false,
+	className,
 }: {
 	id: string;
 	title: string;
@@ -171,6 +173,7 @@ export function OverviewNavigationCard({
 	tint: string;
 	link: OverviewLinkOptions | null;
 	disabled?: boolean;
+	className?: string;
 }) {
 	const content = (
 		<>
@@ -191,7 +194,7 @@ export function OverviewNavigationCard({
 			size="sm"
 			role="article"
 			data-overview-module={id}
-			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
+			className={cn("h-full min-w-0 border border-foreground/10 py-3 ring-0", className)}
 		>
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
 				{disabled ? (
