@@ -47,7 +47,7 @@ export function AgentOverviewStatusCard({
 			size="sm"
 			role="article"
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
-			className="h-full gap-0 bg-muted/20 py-0"
+			className="h-full gap-0 border border-foreground/10 bg-muted/20 py-0 ring-0"
 		>
 			<CardHeader className="p-0">
 				<Link
@@ -115,19 +115,17 @@ export function AgentOverviewCapabilities({
 	variant,
 	content,
 	groupIds,
-	className,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
 	groupIds?: readonly AgentOverviewGroupId[];
-	className?: string;
 }) {
 	const groups = agentOverviewGroups(variant).filter(
 		(group) => !groupIds || groupIds.includes(group.id),
 	);
 	return (
-		<div className={cn("flex flex-col gap-8", className)} data-agent-overview={variant}>
+		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{groups.map((group) => (
 				<section key={group.id} aria-labelledby={`agent-overview-${group.id}`}>
 					<div className="mb-3">
@@ -201,7 +199,12 @@ export function OverviewNavigationCard({
 		</>
 	);
 	return (
-		<Card size="sm" role="article" data-overview-module={id} className="h-full min-w-0 py-3">
+		<Card
+			size="sm"
+			role="article"
+			data-overview-module={id}
+			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
+		>
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
 				{link ? (
 					<Link
@@ -244,7 +247,7 @@ export function AgentOverviewCapabilitiesSkeleton({
 								size="sm"
 								key={module.id}
 								data-overview-module-skeleton={module.id}
-								className="h-full min-w-0 py-3"
+								className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
 							>
 								<CardHeader className="h-full grid-rows-1 content-center gap-0">
 									<div className="flex min-w-0 items-center gap-3">

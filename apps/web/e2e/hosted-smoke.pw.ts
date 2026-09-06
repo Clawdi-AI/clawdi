@@ -3670,11 +3670,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			config_info: { ...railHostedDeployment.config_info, runtime },
 		};
 		const credentialRequests: string[] = [];
+		const sessionsPage = hostedOverviewSessionsPage(3, runtime);
 		await stubHostedApi(page, {
 			deployments: [deployment],
 			cloudAgents: [{ ...railHostedCloudAgent, agent_type: runtime }],
 			agentResourceFixtures: true,
-			sessionsPage: hostedOverviewSessionsPage(2, runtime),
+			sessionsPage,
 			runtimeUiRedemptionRequests: credentialRequests,
 			runtimeUiRedemptionResponses: [
 				{
@@ -3700,11 +3701,14 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				body: "<!doctype html><title>Runtime</title><main>Runtime dashboard</main>",
 			}),
 		);
-		for (const viewport of [
-			{ width: 1440, height: 900 },
-			{ width: 390, height: 844 },
-			{ width: 320, height: 800 },
+		for (const { sessionCount, ...viewport } of [
+			{ width: 1440, height: 900, sessionCount: 0 },
+			{ width: 1440, height: 900, sessionCount: 1 },
+			{ width: 1440, height: 900, sessionCount: 3 },
+			{ width: 390, height: 844, sessionCount: 3 },
+			{ width: 320, height: 800, sessionCount: 3 },
 		]) {
+			Object.assign(sessionsPage, hostedOverviewSessionsPage(sessionCount, runtime));
 			await page.setViewportSize(viewport);
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const module = page.locator('[data-overview-module="dashboard"]');
@@ -3713,6 +3717,9 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await expect(open).toBeEnabled();
 			await expect(open.getByText(`Open ${label}`, { exact: true })).toBeVisible();
 			await expect(module.getByRole("button")).toHaveCount(1);
+			await expect(module.locator(":scope > *")).toHaveCount(1);
+			await expect(module.locator('[role="status"], #agent-dashboard-status')).toHaveCount(0);
+			await expect(open).toHaveAttribute("aria-describedby", "agent-dashboard-subtitle");
 			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
 			await expectNoHorizontalOverflow(module, "Dashboard module");
 			await expectNoHorizontalOverflow(
@@ -3752,7 +3759,14 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await expect(channels).toContainText("Chat in Telegram, Discord, or WhatsApp");
 			await expect(activity.locator('[data-overview-status="compute"]')).toBeVisible();
 			await expect(page.getByTestId("overview-session-placeholder")).toHaveCount(0);
-			await expect(page.getByTestId("overview-session-grid").getByRole("article")).toHaveCount(2);
+			const sessionGrid = page.getByTestId("overview-session-grid");
+			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
+			await expect(page.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
+			if (sessionCount === 0) {
+				await expect(sessionGrid.getByRole("status")).toHaveText(
+					"No sessions from this agent yet.",
+				);
+			}
 			await expectNoHorizontalOverflow(page.locator("main"), "Overview");
 			for (const group of ["workspace", "shared"]) {
 				await expectOverviewResourceGeometry(
@@ -3764,15 +3778,23 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				const box = (selector: string) => {
 					const element = main.querySelector(selector);
 					if (!element) throw new Error(`Missing overview element: ${selector}`);
+					if (element.matches('[data-slot="button"], [data-slot="card"], article > a')) {
+						if (getComputedStyle(element).borderTopWidth !== "1px") {
+							throw new Error(`Expected a bordered control: ${selector}`);
+						}
+					}
 					return element.getBoundingClientRect().toJSON();
 				};
 				return {
 					entry: box('[data-overview-section="entry"]'),
-					dashboard: box('[data-overview-module="dashboard"]'),
+					dashboard: box('[data-overview-module="dashboard"] [data-slot="button"]'),
 					channels: box('[data-overview-module="channels"]'),
 					providers: box('[data-overview-module="model-provider"]'),
 					activity: box('[data-overview-section="activity"]'),
-					sessions: box('[data-overview-section="activity"] > div'),
+					sessions: box('[data-testid="overview-session-grid"]'),
+					sessionCards: Array.from(main.querySelectorAll('[data-testid="session-card"] > a')).map(
+						(element) => element.getBoundingClientRect().toJSON(),
+					),
 					compute: box('[data-overview-status="compute"]'),
 					workspace: box('[aria-labelledby="agent-overview-workspace"]'),
 					shared: box('[aria-labelledby="agent-overview-shared"]'),
@@ -3780,16 +3802,35 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			});
 			expect(geometry.activity.top).toBeGreaterThan(geometry.entry.bottom);
 			expect(geometry.workspace.top).toBeGreaterThan(geometry.activity.bottom);
+			expect(geometry.shared.top).toBeGreaterThan(geometry.workspace.bottom);
+			for (const section of [geometry.workspace, geometry.shared]) {
+				expect(section.left).toBe(geometry.entry.left);
+				expect(section.right).toBe(geometry.entry.right);
+			}
+			if (sessionCount === 0) expect(geometry.sessions.height).toBeLessThanOrEqual(68);
 			if (viewport.width === 1440) {
 				expect(geometry.dashboard.top).toBe(geometry.channels.top);
 				expect(geometry.dashboard.bottom).toBe(geometry.providers.bottom);
 				expect(geometry.channels.left).toBe(geometry.providers.left);
-				expect(geometry.dashboard.right).toBeLessThan(geometry.channels.left);
-				expect(geometry.channels.bottom).toBeLessThan(geometry.providers.top);
+				expect(geometry.channels.height).toBe(geometry.providers.height);
+				expect(geometry.channels.left - geometry.dashboard.right).toBe(24);
+				expect(geometry.providers.top - geometry.channels.bottom).toBe(12);
+				expect(geometry.dashboard.width).toBe(geometry.channels.width);
 				expect(geometry.sessions.top).toBe(geometry.compute.top);
-				expect(geometry.sessions.right).toBeLessThan(geometry.compute.left);
-				expect(geometry.workspace.top).toBe(geometry.shared.top);
-				expect(geometry.workspace.right).toBeLessThan(geometry.shared.left);
+				expect(geometry.compute.left - geometry.sessions.right).toBe(24);
+				expect(geometry.compute.width).toBe(geometry.dashboard.width);
+				expect(geometry.compute.right).toBe(geometry.channels.right);
+				expect(geometry.sessions.left).toBe(geometry.dashboard.left);
+				if (sessionCount > 0) {
+					expect(geometry.sessionCards[0].top).toBe(geometry.compute.top);
+					for (const card of geometry.sessionCards) {
+						expect(card.width).toBe(geometry.dashboard.width);
+						expect(card.height).toBeLessThanOrEqual(72);
+					}
+				}
+				if (sessionCount === 3) {
+					expect(geometry.sessionCards[2].bottom).toBe(geometry.compute.bottom);
+				}
 			} else {
 				const stacked = [
 					geometry.dashboard,
@@ -3803,12 +3844,24 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				for (let index = 1; index < stacked.length; index++) {
 					expect(stacked[index].top).toBeGreaterThan(stacked[index - 1].bottom);
 					expect(stacked[index].left).toBe(stacked[0].left);
+					expect(stacked[index].right).toBe(stacked[0].right);
 				}
 			}
+			await testInfo.attach(`${runtime}-${viewport.width}-sessions-${sessionCount}-geometry`, {
+				body: JSON.stringify(geometry, null, 2),
+				contentType: "application/json",
+			});
 			await page.screenshot({
-				path: testInfo.outputPath(`dashboard-${viewport.width}.png`),
+				path: testInfo.outputPath(`${runtime}-${viewport.width}-sessions-${sessionCount}.png`),
 				fullPage: true,
 			});
+			if (viewport.width === 1440 && sessionCount === 3) {
+				await resources.scrollIntoViewIfNeeded();
+				await page.screenshot({
+					path: testInfo.outputPath(`${runtime}-${viewport.width}-resources.png`),
+					fullPage: true,
+				});
+			}
 			if (viewport.width < 768) {
 				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 			}

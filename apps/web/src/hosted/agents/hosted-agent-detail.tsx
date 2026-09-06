@@ -1418,10 +1418,10 @@ function OverviewTab({
 					})}
 			</div>
 			<div
-				className="grid items-start gap-6 @4xl/main:grid-cols-2"
+				className="grid gap-6 @4xl/main:grid-cols-2 @4xl/main:grid-rows-[auto_1fr] @4xl/main:gap-y-3"
 				data-overview-section="activity"
 			>
-				<div className="flex min-w-0 flex-col gap-3">
+				<div className="grid min-w-0 gap-3 @4xl/main:row-span-2 @4xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">
 						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
 							Recent sessions
@@ -1450,7 +1450,7 @@ function OverviewTab({
 						)}
 					</section>
 				</div>
-				<div className="min-w-0">
+				<div className="min-w-0 @4xl/main:col-start-2 @4xl/main:row-start-2">
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
@@ -1494,7 +1494,6 @@ function OverviewTab({
 				variant="hosted"
 				groupIds={["workspace", "shared"]}
 				content={overviewContent}
-				className="grid items-start gap-6 @4xl/main:grid-cols-2"
 			/>
 		</div>
 	);

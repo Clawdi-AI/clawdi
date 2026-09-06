@@ -12,7 +12,9 @@ test.each(["starting", "stopped", "failed", null, "running"] as const)(
 		);
 		expect(markup).toContain("Open Hermes Dashboard");
 		expect(markup).toContain("Start Chat");
-		expect(markup).toContain('aria-describedby="agent-dashboard-subtitle agent-dashboard-status"');
+		expect(markup).toContain('aria-describedby="agent-dashboard-subtitle"');
+		expect(markup).not.toContain('role="status"');
+		expect(markup).not.toContain("agent-dashboard-status");
 		expect(markup).toContain('disabled=""');
 		expect(markup).not.toContain("href=");
 	},
@@ -41,7 +43,8 @@ test("current runtime degradation disables a retained endpoint", () => {
 		<AgentDashboardOverview agentId={deployment.agent_id} deployment={deployment} />,
 	);
 	expect(markup).toContain("Open OpenClaw Control UI");
-	expect(markup).toContain("Temporarily unavailable");
+	expect(markup).not.toContain('role="status"');
+	expect(markup).not.toContain("Temporarily unavailable");
 	expect(markup).toContain('disabled=""');
 	expect(markup).not.toContain("href=");
 });

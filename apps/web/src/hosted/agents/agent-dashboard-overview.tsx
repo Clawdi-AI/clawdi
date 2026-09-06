@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { Button } from "@/components/ui/button";
-import { StatusDot } from "@/components/ui/status-badge";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	deploymentRuntimeStatusPresentation,
@@ -36,14 +35,14 @@ export function AgentDashboardOverview({
 			data-hosted="true"
 			data-overview-module="dashboard"
 			aria-labelledby="agent-dashboard-title"
-			className={cn("flex min-w-0 flex-col gap-2", className)}
+			className={cn("flex min-w-0 flex-col", className)}
 		>
 			<Button
 				render={available ? <Link {...agentSectionLink(agentId, "console")} /> : undefined}
 				nativeButton={!available}
 				disabled={!available}
 				aria-labelledby="agent-dashboard-title"
-				aria-describedby="agent-dashboard-subtitle agent-dashboard-status"
+				aria-describedby="agent-dashboard-subtitle"
 				variant="outline"
 				className="h-auto min-h-24 w-full flex-1 justify-start gap-3 border-primary/30 bg-primary/5 px-4 py-4 text-left whitespace-normal hover:bg-primary/10"
 			>
@@ -61,14 +60,6 @@ export function AgentDashboardOverview({
 				</span>
 				<ArrowRight />
 			</Button>
-			<p
-				id="agent-dashboard-status"
-				className="flex items-center gap-2 text-xs text-muted-foreground"
-				role="status"
-			>
-				<StatusDot status={running && !available ? "warning" : presentation.tone} />
-				{available ? "Ready" : running && !degraded ? "Not ready yet" : presentation.label}
-			</p>
 		</section>
 	);
 }
