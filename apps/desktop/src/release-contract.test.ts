@@ -11,6 +11,14 @@ const RELEASE_ENV = {
 } as const;
 
 describe("Desktop release contract", () => {
+	test("accepts an imported CI signing keychain", () => {
+		expect(
+			readDesktopReleaseConfiguration(
+				{ ...RELEASE_ENV, CSC_NAME: "", CSC_KEYCHAIN: "/tmp/signing.keychain" },
+				"darwin",
+			).channel,
+		).toBe("stable");
+	});
 	test("isolates beta metadata and rejects mismatched versions", () => {
 		const beta = {
 			...RELEASE_ENV,

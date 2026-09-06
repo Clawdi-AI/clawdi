@@ -23,11 +23,11 @@ export function readDesktopReleaseConfiguration(
 		);
 	}
 	const hasSigningIdentity = Boolean(
-		env.CSC_NAME?.trim() || (env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
+		env.CSC_KEYCHAIN?.trim() || env.CSC_NAME?.trim() || (env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
 	);
 	if (!hasSigningIdentity) {
 		throw new Error(
-			"A Developer ID signing identity is required through CSC_NAME or CSC_LINK with CSC_KEY_PASSWORD.",
+			"A Developer ID signing identity is required through CSC_KEYCHAIN, CSC_NAME, or CSC_LINK with CSC_KEY_PASSWORD.",
 		);
 	}
 	const updateFeedUrl = normalizeDesktopUpdateFeedUrl(env.CLAWDI_DESKTOP_UPDATE_FEED_URL);
@@ -47,7 +47,7 @@ export function readDesktopReleaseConfiguration(
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
 	return [
-		"x",
+		"run",
 		"electron-builder",
 		"--mac",
 		"dmg",

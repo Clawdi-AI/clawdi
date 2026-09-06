@@ -39,16 +39,22 @@ jobs:
           bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
 
-      - name: Sign and notarize preview
+      - name: Import Developer ID certificate
+        uses: Apple-Actions/import-codesign-certs@b2e261033a9e248f91a9b57201e8d1e12b15a24e # v7.0.0
+        with:
+          keychain: ${{ runner.temp }}/desktop-signing
+          p12-file-base64: ${{ secrets.CSC_LINK }}
+          p12-password: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Package and notarize preview
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_KEYCHAIN: ${{ runner.temp }}/desktop-signing.keychain
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -euo pipefail
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
+          for name in APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER; do
             test -n "${!name}" || { echo "Missing secret: $name"; exit 1; }
           done
           umask 077
@@ -58,7 +64,7 @@ jobs:
           unset APPLE_API_KEY_CONTENT
           xcrun notarytool history --key "$APPLE_API_KEY" \
             --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" > /dev/null
-          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
+          CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop --mac dmg zip --arm64 --publish never \
             --config.forceCodeSigning=true --config.mac.notarize=true --config.dmg.sign=true \
             --config.extraMetadata.clawdiUpdateChannel=disabled

@@ -44,13 +44,19 @@ jobs:
         run: |
           bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
-      - name: Build signed channel package
+      - name: Import Developer ID certificate
+        uses: Apple-Actions/import-codesign-certs@b2e261033a9e248f91a9b57201e8d1e12b15a24e # v7.0.0
+        with:
+          keychain: ${{ runner.temp }}/desktop-signing
+          p12-file-base64: ${{ secrets.CSC_LINK }}
+          p12-password: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Package signed channel
         env:
           CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
           CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
           CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_KEYCHAIN: ${{ runner.temp }}/desktop-signing.keychain
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

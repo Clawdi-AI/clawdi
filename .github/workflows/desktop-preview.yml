@@ -39,7 +39,7 @@ jobs:
         run: |
           bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
-          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
+          CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop \
             --mac dmg \
             --arm64 \
@@ -117,7 +117,7 @@ jobs:
           cp "$native_cli" "$production_cli"
           cp apps/desktop/scripts/fake-native-smoke.sh "$native_cli"
           chmod +x "$native_cli"
-          CSC_FOR_PULL_REQUEST=true bun x electron-builder \
+          CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop \
             --mac dir \
             --arm64 \

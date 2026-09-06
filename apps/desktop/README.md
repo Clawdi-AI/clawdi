@@ -33,7 +33,14 @@ an owner-controlled strict HTTPS directory URL ending in `/`; it is embedded in
 the signed application metadata and has no runtime default. Also configure a
 standard electron-builder Developer ID signing identity and API key notarization:
 `APPLE_API_KEY` (P8 file path), `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
-No separate Team ID configuration is required. Then run:
+No separate Team ID configuration is required.
+
+CI imports the P12 using the pinned `Apple-Actions/import-codesign-certs` action,
+which cleans up its temporary keychain after the job. electron-builder uses
+`CSC_KEYCHAIN` and the installed, lockfile-pinned tool instead of downloading a
+fresh CLI or importing the P12 itself.
+
+For local packaging, run:
 
 ```bash
 bun run --cwd apps/desktop package:mac:release
