@@ -31,6 +31,16 @@ from tests.conftest import create_env_with_project
 pytestmark = pytest.mark.committed_db
 ENDPOINT = "/v2/runtime/environments/drift-summary:batchRead"
 REVISION = "a" * 64
+EXPECTED_APPLY_IDENTITY = {
+    "generation": 1,
+    "manifestETag": f'"sha256:{REVISION}"',
+    "applyReceiptId": "apply-receipt-0001",
+    "bootNonce": "boot-nonce-000001",
+}
+
+
+def expected_binding(binding):
+    return {**binding, "expectedApplyIdentity": EXPECTED_APPLY_IDENTITY}
 
 
 @pytest_asyncio.fixture
@@ -86,7 +96,17 @@ async def runtime(db_session, seed_user):
     return create
 
 
-async def observe(db, binding, captured_at, *, boot="boot-1", sequence=1, activity=None):
+async def observe(
+    db,
+    binding,
+    captured_at,
+    *,
+    boot="boot-1",
+    sequence=1,
+    activity=None,
+    apply_receipt_id="apply-receipt-0001",
+    boot_nonce="boot-nonce-000001",
+):
     payload = RuntimeObservationEventV2.model_validate(
         {
             "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
@@ -105,8 +125,8 @@ async def observe(db, binding, captured_at, *, boot="boot-1", sequence=1, activi
             "boot": None,
             "cli": None,
             "agentPlugins": {"schemaVersion": 1, "installations": []},
-            "applyReceiptId": "apply-receipt-0001",
-            "bootNonce": "boot-nonce-000001",
+            "applyReceiptId": apply_receipt_id,
+            "bootNonce": boot_nonce,
             "bootSessionId": boot,
             "sequence": sequence,
             "eventId": str(uuid.uuid4()),
@@ -251,7 +271,12 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
 ):
     now = datetime.now(UTC) - timedelta(seconds=2)
     old = now - timedelta(seconds=settings.runtime_observation_freshness_seconds + 10)
-    fresh, expired, ambiguous = await runtime(), await runtime(), await runtime()
+    fresh, expired, ambiguous, selected = (
+        await runtime(),
+        await runtime(),
+        await runtime(),
+        await runtime(),
+    )
     activity = {
         "schemaVersion": 1,
         "classifierVersion": 1,
@@ -265,21 +290,43 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     first = await observe(db_session, fresh, old, activity=activity)
     coalesced = await observe(db_session, fresh, now, sequence=2, activity=activity)
     assert first.stream_position == coalesced.stream_position
-    await observe(db_session, expired, old)
+    await observe(db_session, expired, old - timedelta(seconds=1), boot="boot-older")
+    await observe(db_session, expired, old, boot="boot-expired")
     await db_session.execute(
         update(V2RuntimeObservationInbox)
         .where(V2RuntimeObservationInbox.environment_id == uuid.UUID(expired["environmentId"]))
         .values(diagnostics={}, payload_purged_at=now)
     )
     await db_session.commit()
-    await observe(db_session, ambiguous, old, boot="boot-old")
-    await observe(db_session, ambiguous, now, boot="boot-new")
-    bindings = [ambiguous, expired, fresh]
+    await observe(db_session, ambiguous, now, boot="boot-one")
+    await observe(db_session, ambiguous, now, boot="boot-two")
+    await observe(db_session, selected, old, boot="boot-stale")
+    await observe(db_session, selected, now, boot="boot-current")
+    await observe(
+        db_session,
+        selected,
+        now,
+        boot="boot-other-identity",
+        apply_receipt_id="apply-receipt-0002",
+        boot_nonce="boot-nonce-000002",
+    )
+    bindings = [
+        expected_binding(ambiguous),
+        expected_binding(expired),
+        expected_binding(fresh),
+        expected_binding(selected),
+    ]
     response = await summary_client.post(ENDPOINT, json={"bindings": bindings})
     assert response.status_code == 200, response.text
     observations = [item["observation"] for item in response.json()["items"]]
-    assert [item["status"] for item in observations] == ["ambiguous", "expired", "fresh"]
+    assert [item["status"] for item in observations] == [
+        "ambiguous",
+        "expired",
+        "fresh",
+        "fresh",
+    ]
     assert observations[0] == {"status": "ambiguous", "head": None}
+    assert observations[1]["head"]["runtimeIdentity"]["bootSessionId"] == "boot-expired"
     head = observations[2]["head"]
     assert set(head) == {
         "runtimeIdentity",
@@ -311,6 +358,13 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         **activity,
         "observedAt": old.isoformat().replace("+00:00", "Z"),
         "completeAt": old.isoformat().replace("+00:00", "Z"),
+    }
+    assert observations[3]["head"]["runtimeIdentity"]["bootSessionId"] == "boot-current"
+    legacy = await summary_client.post(ENDPOINT, json={"bindings": [selected]})
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["items"][0]["observation"] == {
+        "status": "ambiguous",
+        "head": None,
     }
     for invalid in (
         {"activeCliVersion": 123},

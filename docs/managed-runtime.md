@@ -112,12 +112,15 @@ data-plane path.
 
 `POST /v2/runtime/environments/drift-summary:batchRead` is an admin-key-only,
 read-only batch using the shared runtime observation RR session dependency.
-Send `{"bindings":[{"environmentId":"<uuid>","deploymentId":"<id>"}]}`
-with 1-100 distinct environment IDs and distinct deployment IDs. Invalid or
-duplicate bindings return 422. `items` preserves request order and echoes
-every requested pair, including missing entries; `observedAt` is the server's
-freshness evaluation time. This endpoint never registers consumers, ACKs,
-resets cursors, renders sources, or repairs persisted revisions.
+Send 1-100 bindings with distinct environment and deployment IDs. Current
+callers include `expectedApplyIdentity` (`generation`, `manifestETag`,
+`applyReceiptId`, and `bootNonce`) so head selection uses the same authority as
+the full observation reader. The field is optional only for rolling compatibility;
+legacy requests retain the original all-active-head behavior. Invalid or duplicate
+bindings return 422. `items` preserves request order and echoes every requested
+pair, including missing entries; `observedAt` is the server's freshness evaluation
+time. This endpoint never registers consumers, ACKs, resets cursors, renders
+sources, or repairs persisted revisions.
 
 Each result reports `binding` (`active`, `retired`, `missing`, or
 `binding_mismatch`). A missing fence is `missing`; a fence or available runtime
@@ -129,13 +132,14 @@ unarchived environment/runtime state is available. Present authority requires
 all three fields; missing authority requires all three to be null; unavailable
 authority permits only a known instance ID. There is no legacy render fallback.
 
-`observation.head` contains the sole active boot head's apply identity,
-health, `capturedAt`, and `freshnessDeadline`. Zero heads is `missing`
-with a null head; one is `fresh` strictly before its deadline, otherwise
-`expired`; multiple heads is always `ambiguous` with a null head, even if only
-one is fresh. Two set-based SELECTs suffice: the second counts active heads by
-explicit environment/deployment binding and joins evidence only for singleton
-groups, returning at most one row per binding. The head's `diagnostics` contains
+`observation.head` contains the selected active boot head's apply identity,
+health, `capturedAt`, and `freshnessDeadline`. For current requests, heads must
+match the expected apply identity. One fresh matching boot is selected even when
+stale or unrelated active heads remain; multiple fresh matching boot sessions are
+`ambiguous`; otherwise the most recent expired matching head is returned. Zero
+matching heads is `missing`. Legacy requests remain ambiguous when more than one
+active head exists. Two set-based SELECTs suffice and return at most one row per
+binding. The head's `diagnostics` contains
 only `activeCliVersion`, `applied`, `agentPlugins`, and `userActivity`, strictly
 validated with the existing v2 semantic schemas and plugin/apply identity rules.
 Absent or retention-scrubbed fields are null; raw payloads, logs and secrets are

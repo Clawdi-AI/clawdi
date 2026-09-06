@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.runtime_observation import (
@@ -33,6 +34,7 @@ async def read_runtime_drift_summaries(
     body: RuntimeDriftSummaryReadRequest,
 ) -> RuntimeDriftSummaryReadResponse:
     """Read persisted drift evidence without writes in the caller's RR snapshot."""
+    observed_at = datetime.now(UTC)
     environment_ids = [binding.environment_id for binding in body.bindings]
     rows = (
         await db.execute(
@@ -58,6 +60,8 @@ async def read_runtime_drift_summaries(
     by_environment = {row.environment_id: row for row in rows}
     binding_states: dict[UUID, Literal["active", "retired", "missing", "binding_mismatch"]] = {}
     active: list[tuple[UUID, str]] = []
+    expected: list[tuple[UUID, str, int, str, str, str]] = []
+    legacy: list[tuple[UUID, str]] = []
     for requested in body.bindings:
         row = by_environment.get(requested.environment_id)
         if row is None:
@@ -72,85 +76,129 @@ async def read_runtime_drift_summaries(
         else:
             binding = "active"
             active.append((requested.environment_id, requested.deployment_id))
+            identity = requested.expected_apply_identity
+            if identity is None:
+                legacy.append((requested.environment_id, requested.deployment_id))
+            else:
+                expected.append(
+                    (
+                        requested.environment_id,
+                        requested.deployment_id,
+                        identity.generation,
+                        identity.manifest_etag,
+                        identity.apply_receipt_id,
+                        identity.boot_nonce,
+                    )
+                )
         binding_states[requested.environment_id] = binding
 
     heads: dict[UUID, RuntimeDriftObservationHead | None] = {}
     if active:
-        head_counts = (
-            select(
-                V2RuntimeObservationHead.environment_id,
-                V2RuntimeObservationHead.deployment_id,
-                func.count().label("active_head_count"),
-            )
-            .where(
+        fresh = and_(
+            V2RuntimeObservationHead.captured_at <= observed_at,
+            V2RuntimeObservationHead.freshness_deadline > observed_at,
+        )
+        predicates: list[ColumnElement[bool]] = []
+        if expected:
+            predicates.append(
                 tuple_(
                     V2RuntimeObservationHead.environment_id,
                     V2RuntimeObservationHead.deployment_id,
-                ).in_(active),
-                V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                    V2RuntimeObservationHead.generation,
+                    V2RuntimeObservationHead.manifest_etag,
+                    V2RuntimeObservationHead.apply_receipt_id,
+                    V2RuntimeObservationHead.boot_nonce,
+                ).in_(expected)
             )
-            .group_by(
-                V2RuntimeObservationHead.environment_id,
-                V2RuntimeObservationHead.deployment_id,
+        if legacy:
+            predicates.append(
+                tuple_(
+                    V2RuntimeObservationHead.environment_id,
+                    V2RuntimeObservationHead.deployment_id,
+                ).in_(legacy)
+            )
+        ranked_heads = (
+            select(
+                *V2RuntimeObservationHead.__table__.c,
+                func.count()
+                .over(partition_by=V2RuntimeObservationHead.environment_id)
+                .label("active_head_count"),
+                func.count()
+                .filter(fresh)
+                .over(partition_by=V2RuntimeObservationHead.environment_id)
+                .label("fresh_head_count"),
+                func.row_number()
+                .over(
+                    partition_by=V2RuntimeObservationHead.environment_id,
+                    order_by=(
+                        fresh.desc(),
+                        V2RuntimeObservationHead.captured_at.desc(),
+                        V2RuntimeObservationHead.freshness_deadline.desc(),
+                        V2RuntimeObservationHead.boot_session_id.desc(),
+                        V2RuntimeObservationHead.highest_sequence.desc(),
+                        V2RuntimeObservationHead.latest_event_id.desc(),
+                    ),
+                )
+                .label("head_rank"),
+            )
+            .where(
+                V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                or_(*predicates),
             )
             .subquery()
         )
-        # Only singleton groups join a head: ambiguous bindings return one count
-        # row with no head or diagnostics, regardless of how many boots exist.
         head_rows = (
             await db.execute(
                 select(
-                    head_counts.c.environment_id,
-                    head_counts.c.active_head_count,
-                    V2RuntimeObservationHead,
-                    V2RuntimeObservationInbox.diagnostics["activeCliVersion"],
-                    V2RuntimeObservationInbox.diagnostics["applied"],
-                    V2RuntimeObservationInbox.diagnostics["agentPlugins"],
-                    V2RuntimeObservationInbox.diagnostics["userActivity"],
-                )
-                .select_from(head_counts)
-                .outerjoin(
-                    V2RuntimeObservationHead,
-                    (head_counts.c.active_head_count == 1)
-                    & (V2RuntimeObservationHead.environment_id == head_counts.c.environment_id)
-                    & (V2RuntimeObservationHead.deployment_id == head_counts.c.deployment_id)
-                    & (V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE),
+                    ranked_heads,
+                    V2RuntimeObservationInbox.diagnostics["activeCliVersion"].label(
+                        "active_cli_version"
+                    ),
+                    V2RuntimeObservationInbox.diagnostics["applied"].label("applied_diagnostics"),
+                    V2RuntimeObservationInbox.diagnostics["agentPlugins"].label("agent_plugins"),
+                    V2RuntimeObservationInbox.diagnostics["userActivity"].label("user_activity"),
                 )
                 .outerjoin(
                     V2RuntimeObservationInbox,
-                    (V2RuntimeObservationInbox.id == V2RuntimeObservationHead.latest_inbox_id)
-                    & (V2RuntimeObservationInbox.environment_id == head_counts.c.environment_id)
-                    & (V2RuntimeObservationInbox.deployment_id == head_counts.c.deployment_id),
+                    (V2RuntimeObservationInbox.id == ranked_heads.c.latest_inbox_id)
+                    & (V2RuntimeObservationInbox.environment_id == ranked_heads.c.environment_id)
+                    & (V2RuntimeObservationInbox.deployment_id == ranked_heads.c.deployment_id),
                 )
+                .where(ranked_heads.c.head_rank == 1)
             )
         ).all()
-        for environment_id, count, head, cli_version, applied, plugins, activity in head_rows:
-            if count > 1:
-                heads[environment_id] = None
+        legacy_environments = {environment_id for environment_id, _ in legacy}
+        for row in head_rows:
+            ambiguous = (
+                row.active_head_count > 1
+                if row.environment_id in legacy_environments
+                else row.fresh_head_count > 1
+            )
+            if ambiguous:
+                heads[row.environment_id] = None
                 continue
             # Coalescing advances head metadata, not inbox diagnostic timestamps.
-            heads[environment_id] = RuntimeDriftObservationHead.model_validate(
+            heads[row.environment_id] = RuntimeDriftObservationHead.model_validate(
                 {
                     "runtimeIdentity": {
-                        "generation": head.generation,
-                        "manifestETag": head.manifest_etag,
-                        "applyReceiptId": head.apply_receipt_id,
-                        "bootNonce": head.boot_nonce,
-                        "bootSessionId": head.boot_session_id,
+                        "generation": row.generation,
+                        "manifestETag": row.manifest_etag,
+                        "applyReceiptId": row.apply_receipt_id,
+                        "bootNonce": row.boot_nonce,
+                        "bootSessionId": row.boot_session_id,
                     },
-                    "capturedAt": head.captured_at,
-                    "freshnessDeadline": head.freshness_deadline,
-                    "health": head.health,
+                    "capturedAt": row.captured_at,
+                    "freshnessDeadline": row.freshness_deadline,
+                    "health": row.health,
                     "diagnostics": {
-                        "activeCliVersion": cli_version,
-                        "applied": applied,
-                        "agentPlugins": plugins,
-                        "userActivity": activity,
+                        "activeCliVersion": row.active_cli_version,
+                        "applied": row.applied_diagnostics,
+                        "agentPlugins": row.agent_plugins,
+                        "userActivity": row.user_activity,
                     },
                 }
             )
 
-    observed_at = datetime.now(UTC)
     contract = runtime_source_contract_revision()
     items: list[RuntimeDriftSummary] = []
     for requested in body.bindings:

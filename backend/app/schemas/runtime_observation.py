@@ -421,6 +421,9 @@ class RuntimeObservationReadResponse(RuntimeObservationResponseModel):
 class RuntimeDriftBindingRequest(RuntimeObservationRequestModel):
     environment_id: UUID = Field(alias="environmentId")
     deployment_id: str = Field(alias="deploymentId", min_length=1, max_length=200)
+    expected_apply_identity: RuntimeApplyIdentityRequest | None = Field(
+        default=None, alias="expectedApplyIdentity"
+    )
 
 
 class RuntimeDriftSummaryReadRequest(RuntimeObservationRequestModel):
