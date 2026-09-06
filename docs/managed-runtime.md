@@ -300,6 +300,13 @@ Tenant-context CLI state has a separate durable root,
 `/var/lib/clawdi-user`, owned by `10001:10001` with mode `0750`. Hosted
 convergence sets `CLAWDI_HOME` to that path for every generated tenant user
 unit; `/var/lib/clawdi` remains the root-owned platform state root.
+`CLAWDI_HOME` contains durable Skill projection/deletion claims and Project
+materializations (`skills-lock.json`), plus the session sync ledger
+(`sessions-lock.json`), not just disposable upload caches. A control plane
+replacing root filesystems must retain this directory independently of HOME
+and root-private platform state, without changing its sibling-path contract.
+Existing rootfs state must be migrated while all writers are quiescent before
+replacement; creating an empty destination on the new image is insufficient.
 Before directory preparation, lock acquisition, or any external runtime command,
 Hosted convergence requires the explicit process contract
 `CLAWDI_RUNTIME_MODE=hosted`, a resolved HOME of exactly `/home/clawdi`, and
@@ -414,7 +421,15 @@ that file and the verified binary only inside the Files mount namespace through
 `BindReadOnlyPaths=`. Install receipts remain root-only `0600`.
 
 DB/cache state lives in the tenant-owned `0700`
-`StateDirectory=clawdi-files`. The tenant can therefore inspect or alter its
+`StateDirectory=clawdi-files` (`/var/lib/clawdi-files`). This root must also
+survive a replaceable-rootfs lifecycle. Native StateDirectory mount ordering
+must remain intact; bind it separately rather than exposing root-private
+platform state. FileBrowser Quantum's primary DB uses
+[Storm/Bolt](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/database/storage/storage.go);
+its SQLite indexes live separately under `cache/sql`. Retention checks should
+read user settings through the Files API, not hash a mutable database during
+concurrent writes. `/run/clawdi-files` remains service-scoped and disposable.
+The tenant can therefore inspect or alter its
 own Files state and can signal the same-UID Files process, but cannot replace
 the root-owned binary or configuration source, write receipts, or control the
 system unit. Systemd restarts a terminated Files process and readiness gates
