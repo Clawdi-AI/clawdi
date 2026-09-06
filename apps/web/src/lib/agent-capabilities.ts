@@ -61,6 +61,15 @@ const AGENT_OVERVIEW_GROUPS = {
 	],
 	hosted: [
 		{
+			id: "operate",
+			label: "Connections",
+			layout: "two-column",
+			modules: [
+				{ id: "channels", section: "channels" },
+				{ id: "model-provider", section: "ai" },
+			],
+		},
+		{
 			id: "workspace",
 			label: "Workspace",
 			layout: "two-column",
@@ -69,17 +78,8 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "shared",
 			label: "Shared",
-			layout: "three-column",
+			layout: "two-column",
 			modules: SHARED_RESOURCES,
-		},
-		{
-			id: "operate",
-			label: "Tools",
-			layout: "three-column",
-			modules: [
-				{ id: "model-provider", section: "ai" },
-				{ id: "channels", section: "channels" },
-			],
 		},
 	],
 } as const satisfies Record<AgentNavigationVariant, readonly AgentOverviewGroup[]>;

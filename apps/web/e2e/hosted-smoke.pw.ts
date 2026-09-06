@@ -3203,8 +3203,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	const overviewHeading = page.getByRole("heading", { name: "Hosted agent", exact: true });
-	const overviewTitleRow = overviewHeading.locator("..");
+	const overviewTitleRow = page.locator('[data-slot="page-header"]');
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({
@@ -3217,32 +3216,33 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual([
+		"channels",
+		"model-provider",
 		"projects",
 		"skills",
 		"vaults",
+		"plugins",
 		"memories",
 		"connectors",
-		"model-provider",
-		"channels",
 	]);
 	expect(
 		await page
 			.locator("#hosted-recent-sessions, #agent-overview-workspace, #agent-overview-shared")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
 	).toEqual(["hosted-recent-sessions", "agent-overview-workspace", "agent-overview-shared"]);
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(8);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(7);
+	).toHaveCount(8);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		7,
+		8,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -3250,7 +3250,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
 		),
 	).toHaveCount(0);
-	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Hosted Agent Project",
@@ -3314,9 +3314,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
 		);
 	}
-	const [recentSessionsBox, computeBox, viewAllBox] = await Promise.all([
+	const [recentSessionsBox, viewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
-		page.locator('[data-overview-status="compute"]').boundingBox(),
 		viewAllSessions.boundingBox(),
 	]);
 	expect(
@@ -3326,16 +3325,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
-	expect(Math.abs((computeBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
-	expect(
-		Math.abs(
-			(computeBox?.y ?? 0) +
-				(computeBox?.height ?? 0) -
-				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
-		),
-	).toBeLessThanOrEqual(2);
 	await expect(page.locator('[data-overview-module="dashboard"]')).toBeVisible();
-	await expect(page.getByRole("button", { name: "Open Dashboard" })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Start Chat", exact: true })).toBeDisabled();
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
@@ -3364,7 +3355,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
+		"AI Providers",
+	);
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
 	for (const configuration of ["2 vCPU", "4 GiB memory", "20 GiB storage"])
@@ -3390,9 +3383,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults`,
 	);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
-	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
-		"2 connected",
-	);
+	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText("2 apps");
 	expect(overviewConnectorRequests).toEqual([]);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
@@ -3418,25 +3409,25 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(7);
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(8);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	const workspaceGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="three-column"]',
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="two-column"]',
 	);
 	const sharedGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="three-column"]',
+		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="two-column"]',
 	);
 	const toolsGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
+		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="two-column"]',
 	);
 	const resourceGeometry = await workspaceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(4);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3451,41 +3442,21 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await workspaceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "vaults"]);
-	await expectOverviewResourceGeometry(workspaceGrid, [3]);
+	).toEqual(["projects", "skills", "vaults", "plugins"]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
 	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
-	const toolGeometry = await toolsGrid
-		.locator("[data-overview-module]")
-		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(toolGeometry).toHaveLength(2);
-	for (let index = 0; index < toolGeometry.length; index += 1) {
-		expect(
-			Math.abs((toolGeometry[index]?.width ?? 0) - (resourceGeometry[index]?.width ?? 0)),
-		).toBeLessThanOrEqual(2);
-		expect(
-			Math.abs((toolGeometry[index]?.x ?? 0) - (resourceGeometry[index]?.x ?? 0)),
-		).toBeLessThanOrEqual(2);
-	}
-	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
-	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	for (const height of moduleHeights) {
-		expect(Math.abs(height - (sessionBoxes[0]?.height ?? 0))).toBeLessThanOrEqual(2);
-	}
-	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
-		(resourceGeometry[2]?.x ?? 0) + 1,
-	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
 	await expectOverviewResourceGeometry(sharedGrid, [2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
@@ -3528,7 +3499,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Open Dashboard" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Start Chat", exact: true })).toHaveCount(0);
 });
 
 for (const projectionFailure of [
@@ -3812,25 +3783,60 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 		for (const viewport of [
 			{ width: 1440, height: 900 },
 			{ width: 390, height: 844 },
+			{ width: 320, height: 800 },
 		]) {
 			await page.setViewportSize(viewport);
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const module = page.locator('[data-overview-module="dashboard"]');
-			await expect(module.getByRole("heading", { name: label, exact: true })).toBeVisible();
-			const open = page.getByRole("button", { name: "Open Dashboard", exact: true });
+			const open = page.getByRole("button", { name: "Start Chat", exact: true });
 			await expect(open).toHaveCount(1);
 			await expect(open).toBeEnabled();
+			await expect(open.getByText(`Open ${label}`, { exact: true })).toBeVisible();
+			await expect(module.getByRole("button")).toHaveCount(1);
 			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
 			await expectNoHorizontalOverflow(module, "Dashboard module");
+			await expectNoHorizontalOverflow(
+				open.locator("#agent-dashboard-subtitle"),
+				"Dashboard subtitle",
+			);
+			const lines = await open
+				.locator("#agent-dashboard-title, #agent-dashboard-subtitle")
+				.evaluateAll((elements) =>
+					elements.map((element) => ({
+						top: element.getBoundingClientRect().top,
+						bottom: element.getBoundingClientRect().bottom,
+					})),
+				);
+			expect(lines).toHaveLength(2);
+			expect(lines[1].top).toBeGreaterThanOrEqual(lines[0].bottom);
+			const modules = page.locator("main [data-overview-module]");
+			expect(
+				await modules.evaluateAll((elements) =>
+					elements.map((element) => element.getAttribute("data-overview-module")),
+				),
+			).toEqual([
+				"dashboard",
+				"channels",
+				"model-provider",
+				"projects",
+				"skills",
+				"vaults",
+				"plugins",
+				"memories",
+				"connectors",
+			]);
+			await expect(
+				page.locator('[data-overview-section="resources"] [data-overview-status="compute"]'),
+			).toBeVisible();
 			await page.screenshot({
 				path: testInfo.outputPath(`dashboard-${viewport.width}.png`),
 				fullPage: true,
 			});
-			if (viewport.width === 390) {
+			if (viewport.width < 768) {
 				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 			}
 			const sidebar =
-				viewport.width === 390 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
 			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
 			const start = labels.findIndex((text) => text.trim() === "Sessions");
 			expect(start).toBeGreaterThanOrEqual(0);
@@ -3840,9 +3846,9 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				"Channels",
 				"AI Providers",
 			]);
-			if (viewport.width === 390) await page.keyboard.press("Escape");
+			if (viewport.width < 768) await page.keyboard.press("Escape");
 		}
-		await page.getByRole("button", { name: "Open Dashboard", exact: true }).click();
+		await page.getByRole("button", { name: "Start Chat", exact: true }).click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
 		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
 		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;

@@ -5,7 +5,11 @@ import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
+import {
+	type AgentOverviewGroupId,
+	type AgentOverviewModuleId,
+	agentOverviewGroups,
+} from "@/lib/agent-capabilities";
 import { agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
@@ -110,12 +114,16 @@ export function AgentOverviewCapabilities({
 	agentId,
 	variant,
 	content,
+	groupIds,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
+	groupIds?: readonly AgentOverviewGroupId[];
 }) {
-	const groups = agentOverviewGroups(variant);
+	const groups = agentOverviewGroups(variant).filter(
+		(group) => !groupIds || groupIds.includes(group.id),
+	);
 	return (
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{groups.map((group) => (
@@ -138,12 +146,11 @@ export function AgentOverviewCapabilities({
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
 							if (!moduleContent) return null;
-							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
 								<OverviewNavigationCard
 									key={module.id}
 									id={module.id}
-									title={title}
+									title={item.label}
 									description={moduleContent.description}
 									icon={item.icon}
 									tint={item.tint}

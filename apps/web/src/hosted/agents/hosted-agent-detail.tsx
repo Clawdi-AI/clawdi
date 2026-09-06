@@ -653,7 +653,7 @@ export function HostedAgentDetail({
 						}}
 					/>
 				) : null}
-				{activeTab === "overview" ? (
+				{showInitialDeploymentPage ? (
 					<AgentDashboardOverview agentId={environmentId} deployment={deployment} />
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
@@ -1341,10 +1341,60 @@ function OverviewTab({
 	});
 	const memoriesModule = useOverviewMemoriesModule();
 	const connectorsModule = useOverviewConnectorsModule();
+	const overviewContent = {
+		projects: overviewProjectsModule({
+			bindings: {
+				count: agent && projectBindings.data ? linkedAgentProjectCount(projectBindings.data) : null,
+				isLoading: projectionLoading || projectBindings.isLoading,
+				isUnavailable: projectionUnavailable,
+				error: projectBindings.error,
+			},
+		}),
+		skills: {
+			...skillsModule,
+			link: workspaceProjectId
+				? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
+				: null,
+		},
+		plugins: pluginsModule,
+		memories: memoriesModule,
+		vaults: {
+			...vaultsModule,
+			link: workspaceProjectId
+				? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
+				: null,
+		},
+		connectors: connectorsModule,
+		"model-provider": {
+			description:
+				providers.isLoading || managedModelCatalog.isLoading ? (
+					<OverviewDescriptionSkeleton label="model and provider" />
+				) : providers.error || managedModelCatalog.error ? (
+					"Unavailable right now"
+				) : (
+					model
+				),
+		},
+		channels: {
+			description:
+				projectionLoading || channelLinks.isLoading ? (
+					<OverviewDescriptionSkeleton label="channels" />
+				) : projectionUnavailable || channelLinks.error ? (
+					"Unavailable right now"
+				) : linkedChannelCount === 0 ? (
+					"No channels linked"
+				) : (
+					`${linkedChannelCount} linked ${linkedChannelCount === 1 ? "channel" : "channels"}`
+				),
+		},
+	};
 	return (
 		<div className="flex flex-col gap-8">
-			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
-				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+			<div
+				className="grid items-start gap-6 @4xl/main:grid-cols-2"
+				data-overview-section="activity"
+			>
+				<div className="flex min-w-0 flex-col gap-3">
 					<div className="flex items-center justify-between">
 						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
 							Recent sessions
@@ -1373,7 +1423,27 @@ function OverviewTab({
 						)}
 					</section>
 				</div>
-				<div className="@3xl/main:row-start-2">
+				<div className="flex min-w-0 flex-col gap-4">
+					<AgentDashboardOverview agentId={agentId} deployment={deployment} />
+					<AgentOverviewCapabilities
+						agentId={agentId}
+						variant="hosted"
+						groupIds={["operate"]}
+						content={overviewContent}
+					/>
+				</div>
+			</div>
+			<div
+				className="grid items-start gap-6 @4xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]"
+				data-overview-section="resources"
+			>
+				<AgentOverviewCapabilities
+					agentId={agentId}
+					variant="hosted"
+					groupIds={["workspace", "shared"]}
+					content={overviewContent}
+				/>
+				<div className="min-w-0 @4xl/main:pt-8">
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
@@ -1412,60 +1482,6 @@ function OverviewTab({
 					</AgentOverviewStatusCard>
 				</div>
 			</div>
-			<AgentOverviewCapabilities
-				agentId={agentId}
-				variant="hosted"
-				content={{
-					projects: overviewProjectsModule({
-						bindings: {
-							count:
-								agent && projectBindings.data
-									? linkedAgentProjectCount(projectBindings.data)
-									: null,
-							isLoading: projectionLoading || projectBindings.isLoading,
-							isUnavailable: projectionUnavailable,
-							error: projectBindings.error,
-						},
-					}),
-					skills: {
-						...skillsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
-							: null,
-					},
-					plugins: pluginsModule,
-					memories: memoriesModule,
-					vaults: {
-						...vaultsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
-							: null,
-					},
-					connectors: connectorsModule,
-					"model-provider": {
-						description:
-							providers.isLoading || managedModelCatalog.isLoading ? (
-								<OverviewDescriptionSkeleton label="model and provider" />
-							) : providers.error || managedModelCatalog.error ? (
-								"Unavailable right now"
-							) : (
-								model
-							),
-					},
-					channels: {
-						description:
-							projectionLoading || channelLinks.isLoading ? (
-								<OverviewDescriptionSkeleton label="channels" />
-							) : projectionUnavailable || channelLinks.error ? (
-								"Unavailable right now"
-							) : linkedChannelCount === 0 ? (
-								"No channels linked"
-							) : (
-								`${linkedChannelCount} linked ${linkedChannelCount === 1 ? "channel" : "channels"}`
-							),
-					},
-				}}
-			/>
 		</div>
 	);
 }
