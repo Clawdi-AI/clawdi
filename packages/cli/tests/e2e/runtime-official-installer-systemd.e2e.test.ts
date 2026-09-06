@@ -30,6 +30,7 @@ import {
 import { getCliVersion } from "../../src/lib/version";
 import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../../src/runtime/channels";
+import { reconcilePendingRuntimeCliUpgrade } from "../../src/runtime/cli-update";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import { prepareHostedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
 import {
@@ -48,7 +49,7 @@ import { LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID } from "../../src/runtime/open
 import { openClawPluginCapabilityConsentArgs } from "../../src/runtime/openclaw-plugin-cli";
 import { getRuntimePaths } from "../../src/runtime/paths";
 import { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "../../src/runtime/runtime-systemd-reconciliation";
-import { ensureRuntimeStateDirs } from "../../src/runtime/state";
+import { ensureRuntimePlatformDirectory, ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
@@ -377,9 +378,15 @@ function userUnitDiagnostics(unitName: string, runtimeHome: string, runtimeUid: 
 function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
 	const version = getCliVersion();
 	const prefix = join(paths.cliNpmPrefix, "packages", version);
+	// Bootstrap establishes the private boundary before npm creates package content.
+	ensureRuntimePlatformDirectory(paths, prefix, { mode: 0o700 });
+	ensureRuntimePlatformDirectory(paths, dirname(paths.cliManagedBin), { mode: 0o700 });
 	const install = spawnSync(
-		"npm",
+		"/bin/sh",
 		[
+			"-c",
+			'umask 077; exec npm "$@"',
+			"npm",
 			"install",
 			"--global",
 			`--prefix=${prefix}`,
@@ -392,36 +399,8 @@ function seedLocalCli(paths: ReturnType<typeof getRuntimePaths>): string {
 	);
 	expect(install.status, install.stderr).toBe(0);
 	const activeTarget = join(prefix, "bin", "clawdi");
-	const activeIdentity = statSync(activeTarget);
-	mkdirSync(dirname(paths.cliManagedBin), { recursive: true, mode: 0o755 });
 	symlinkSync(activeTarget, paths.cliManagedBin);
-	writeFileSync(
-		paths.cliBootstrapStatus,
-		`${JSON.stringify({
-			schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
-			generatedAt: new Date().toISOString(),
-			status: "installed",
-			source: "npm",
-			packageSpec: `clawdi@${version}`,
-			registry: "https://registry.npmjs.org",
-			npmPrefix: prefix,
-			npmCache: paths.cliNpmCache,
-			activePath: paths.cliManagedBin,
-			activeTarget,
-			version,
-			verification: {
-				verifiedAt: new Date().toISOString(),
-				device: activeIdentity.dev,
-				inode: activeIdentity.ino,
-				size: activeIdentity.size,
-				modifiedAtMs: activeIdentity.mtimeMs,
-			},
-			previous: null,
-			bad: null,
-			error: null,
-		})}\n`,
-		{ mode: 0o600 },
-	);
+	reconcilePendingRuntimeCliUpgrade(paths);
 	return prefix;
 }
 

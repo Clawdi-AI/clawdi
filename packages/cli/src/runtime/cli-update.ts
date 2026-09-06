@@ -368,7 +368,7 @@ export function readRuntimeCliBootstrapStatus(
 		assertCliDirectories(paths, dirname(paths.cliBootstrapStatus));
 		const file = optionalCliLstat(paths.cliBootstrapStatus);
 		if (!file) return null;
-		assertCliOwnership(file);
+		assertCliOwnership(file, "receipt", paths.cliBootstrapStatus);
 		if (!file.isFile()) throw new Error("clawdi CLI receipt is not a regular file");
 		let value: unknown;
 		try {
@@ -614,7 +614,8 @@ function installCliPackage(paths: RuntimePaths, packageSpec: string): VerifiedCl
 		NPM_REGISTRY,
 		packageSpec,
 	];
-	const result = spawnSync("npm", args, {
+	// npm's umask config does not cover Arborist's intermediate mkdir calls.
+	const result = spawnSync("/bin/sh", ["-c", 'umask 077; exec npm "$@"', "npm", ...args], {
 		encoding: "utf8",
 		timeout: NPM_INSTALL_TIMEOUT_MS,
 		env: {
@@ -758,9 +759,11 @@ function optionalCliLstat(path: string): Stats | null {
 	}
 }
 
-function assertCliOwnership(node: Stats): void {
+function assertCliOwnership(node: Stats, role: string, path: string): void {
 	if (node.uid !== process.getuid?.() || (node.mode & 0o022) !== 0) {
-		throw new Error("clawdi CLI path has unsafe ownership or permissions");
+		throw new Error(
+			`clawdi CLI path has unsafe ownership or permissions (role=${role}, path=${JSON.stringify(path)}, uid=${process.getuid?.()}, euid=${process.geteuid?.()}, ownerUid=${node.uid}, ownerGid=${node.gid}, mode=0${(node.mode & 0o7777).toString(8)})`,
+		);
 	}
 }
 
@@ -772,7 +775,10 @@ function assertCliDirectories(paths: RuntimePaths, path: string): void {
 	for (let current = path; ; current = dirname(current)) {
 		const node = optionalCliLstat(current);
 		if (node) {
-			assertCliOwnership(node);
+			let role = "directory";
+			if (current === root) role = "service-state root";
+			else if (current === paths.managedCliRoot) role = "managed CLI root";
+			assertCliOwnership(node, role, current);
 			if (!node.isDirectory()) throw new Error("clawdi CLI directory is not a real directory");
 		}
 		if (current === root) break;
@@ -791,12 +797,12 @@ function assertCliTarget(paths: RuntimePaths, target: string): void {
 	}
 	assertCliDirectories(paths, dirname(executable));
 	const file = statSync(target);
-	assertCliOwnership(file);
+	assertCliOwnership(file, "executable", target);
 	if (!file.isFile()) throw new Error("clawdi CLI executable is not a regular file");
 }
 
 function ensureManagedCliDirectory(path: string): void {
-	mkdirSync(path, { recursive: true });
+	mkdirSync(path, { recursive: true, mode: 0o755 });
 }
 
 function activeLinkTarget(activePath: string): string | null {

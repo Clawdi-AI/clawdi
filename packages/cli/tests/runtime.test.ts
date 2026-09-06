@@ -8552,6 +8552,7 @@ chmod +x "$prefix/bin/clawdi"
 			process.env.CLAWDI_RUN_DIR = run;
 			const desiredSpec = `clawdi@${desiredVersion}`;
 			seedCurrentCliInstall(state, currentVersion);
+			const previousUmask = process.umask(0o002);
 
 			try {
 				const desired = normalizeHostedManifestFixture(
@@ -8559,6 +8560,7 @@ chmod +x "$prefix/bin/clawdi"
 				);
 				const paths = getRuntimePaths();
 				const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+				expect(process.umask()).toBe(0o002);
 
 				expect(result.status).toBe("installed");
 				expect(result.selfReexec).toBe(true);
@@ -8572,7 +8574,7 @@ chmod +x "$prefix/bin/clawdi"
 				expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o755);
 				expect(statSync(result.npmPrefix).mode & 0o777).toBe(0o755);
 				if (!result.activeTarget) throw new Error("CLI update did not return an active target");
-				expect(statSync(result.activeTarget).mode & 0o777).toBe(0o755);
+				expect(statSync(result.activeTarget).mode & 0o777).toBe(0o700);
 				expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
 				const pending = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 				expect(pending).toMatchObject({
@@ -8607,6 +8609,7 @@ chmod +x "$prefix/bin/clawdi"
 					expect(applyRuntimeCliDesiredState(desired.manifest, paths).status).toBe("deferred");
 				}
 			} finally {
+				process.umask(previousUmask);
 				if (previousPath === undefined) delete process.env.PATH;
 				else process.env.PATH = previousPath;
 			}
