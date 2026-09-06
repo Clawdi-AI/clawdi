@@ -56,8 +56,10 @@ export function runtimeDashboardUrl(url: string, runtime: HostedRuntime): string
 	if (runtime !== "hermes") return url;
 	try {
 		const target = new URL(url);
-		if (target.pathname !== "/") return url;
-		target.pathname = "/chat";
+		const path = target.pathname.replace(/\/+$/, "");
+		// Hosted path-based proxy roots end in the Hermes dashboard port.
+		if (path !== "" && !path.endsWith("-9119")) return url;
+		target.pathname = `${path}/chat`;
 		return target.toString();
 	} catch {
 		return url;

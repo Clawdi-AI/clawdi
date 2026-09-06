@@ -86,6 +86,12 @@ describe("runtimeDashboardUrl", () => {
 		["https://runtime.example/settings/", "https://runtime.example/settings/"],
 		["https://runtime.example/chat?session=123", "https://runtime.example/chat?session=123"],
 		["https://proxy.example/app-9119/chat", "https://proxy.example/app-9119/chat"],
+		["https://proxy.example/app-9119", "https://proxy.example/app-9119/chat"],
+		["https://proxy.example/app-9119/", "https://proxy.example/app-9119/chat"],
+		[
+			"https://proxy.example/app-9119/settings?tab=model",
+			"https://proxy.example/app-9119/settings?tab=model",
+		],
 	])("defaults Hermes root to Chat without changing explicit targets: %s", (url, expected) => {
 		expect(runtimeDashboardUrl(url, "hermes")).toBe(expected);
 		expect(runtimeDashboardUrl(url, "openclaw")).toBe(url);
