@@ -429,6 +429,12 @@ platform state. FileBrowser Quantum's primary DB uses
 its SQLite indexes live separately under `cache/sql`. Retention checks should
 read user settings through the Files API, not hash a mutable database during
 concurrent writes. `/run/clawdi-files` remains service-scoped and disposable.
+The service environment sets `FILEBROWSER_DATABASE` to the same
+`/var/lib/clawdi-files/filebrowser.db` path as YAML `server.database`.
+Upstream [default initialization](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/config.go#L976)
+checks this environment path (otherwise `./database.db`) before loading YAML.
+This avoids a misleading missing-database warning on retained-state boots;
+a genuinely missing database still produces the native warning.
 The tenant can therefore inspect or alter its
 own Files state and can signal the same-UID Files process, but cannot replace
 the root-owned binary or configuration source, write receipts, or control the

@@ -4673,6 +4673,7 @@ esac
 		const config = readFileSync(paths.fileBrowserConfig, "utf8");
 		expect(parseYaml(config)).toMatchObject({
 			server: {
+				database: join(paths.fileBrowserStateRoot, "filebrowser.db"),
 				sources: [
 					{
 						config: {
@@ -4746,6 +4747,9 @@ esac
 		expect(unit).toContain("TasksMax=128");
 		expect(unit).toContain(
 			`EnvironmentFile=${join(paths.systemdEnvRoot, "clawdi-files.service.env")}`,
+		);
+		expect(readFileSync(join(paths.systemdEnvRoot, "clawdi-files.service.env"), "utf8")).toContain(
+			`FILEBROWSER_DATABASE="${join(paths.fileBrowserStateRoot, "filebrowser.db")}"`,
 		);
 		const second = convergeRuntimeManifest(fileBrowserManifestLoad(manifest), paths, options);
 		expect(second.installErrors).toEqual([]);
