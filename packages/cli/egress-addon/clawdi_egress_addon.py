@@ -13,7 +13,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 try:  # pragma: no cover - exercised only under mitmdump.
     from mitmproxy import ctx, http
@@ -408,11 +408,24 @@ def path_matcher_matches(path: str, matcher: dict[str, Any], secrets: dict[str, 
         secret = secrets.get(str(matcher.get("secretRef", "")))
         if secret is None:
             return False
-        expected = f"{matcher.get('prefix', '')}{secret}{matcher.get('suffix', '')}"
-        if matcher_type == "secretRefEquals":
-            return path == expected
-        return path.startswith(expected)
+        matched = match_secret_path_prefix(path, matcher, secret)
+        return matched is not None and (
+            matcher_type == "secretRefPrefix" or matched.end() == len(path)
+        )
     return False
+
+
+def match_secret_path_prefix(
+    path: str, matcher: dict[str, Any], secret: str
+) -> re.Match[str] | None:
+    # Encode only credential characters, never path structure or incoming escapes.
+    parts = [re.escape(str(matcher.get("prefix", "")))]
+    for char in secret:
+        encoded = quote(char, safe="/\\")
+        literal = re.escape(char)
+        parts.append(literal if encoded == char else f"(?:(?i:{encoded})|{literal})")
+    parts.append(re.escape(str(matcher.get("suffix", ""))))
+    return re.match("".join(parts), path)
 
 
 def matcher_matches(value: str | None, matcher: Any, secrets: dict[str, str]) -> bool:
@@ -523,10 +536,12 @@ def apply_path_replace(request_path: str, rewrite: dict[str, Any], secrets: dict
     split = urlsplit(request_path or "/")
     prefix = str(replacement.get("prefix", ""))
     suffix = str(replacement.get("suffix", ""))
-    expected = f"{prefix}{placeholder}{suffix}"
-    if not split.path.startswith(expected):
+    matched = match_secret_path_prefix(split.path, replacement, placeholder)
+    if matched is None:
         return request_path
-    replaced_path = f"{prefix}{actual}{suffix}{split.path[len(expected):]}"
+    # Keep path characters, but encode data that could start a query or fragment.
+    actual = quote(actual, safe="/:@!$&'()*+,;=")
+    replaced_path = f"{prefix}{actual}{suffix}{split.path[matched.end():]}"
     return f"{replaced_path}?{split.query}" if split.query else replaced_path
 
 

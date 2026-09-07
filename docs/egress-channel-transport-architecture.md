@@ -25,6 +25,21 @@ no profile remains on its original upstream request path. A matching `deny`
 profile fails closed. Secrets are resolved only inside the egress process and
 must not be embedded in the profile bundle.
 
+Secret-backed path matchers and path replacement accept credential characters
+in raw or URL-quoted form, with case-insensitive percent escapes. Literal
+prefixes/suffixes, path separators, and unreserved characters stay exact; the
+request path is never decoded. A literal `%` in a credential can match `%25`,
+but a double-encoded colon cannot match `:`. Replacement uses the matched wire
+length (preferring the encoded form), URL-quotes replacement credentials as
+path data, and preserves the trailing path and query. Public path equals/prefix
+matchers and headers remain literal; query values retain their existing single
+form-URL decode.
+
+The addon ships with the exact CLI artifact, independently of the mitmproxy
+engine pin. Convergence writes the packaged addon and includes its SHA256 in
+the sidecar unit revision, so an addon-only update requires sidecar activation
+through normal runtime reconciliation, not an engine upgrade or image rebuild.
+
 Only hosts from non-passthrough profiles enter the TLS interception set. Once a
 host is intercepted, an unmatched request on that host still uses the original
 request-level upstream. This is not byte-for-byte TCP passthrough because the
@@ -48,6 +63,8 @@ remain the authorization boundary.
 `packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` runs all three
 profile shapes through the same matcher and rewrite functions and asserts that
 the addon source has no Telegram, Discord, or WhatsApp constants.
+Done: `scripts/test.sh cli tests/egress-addon.test.ts` exits 0 and reports the
+Python interpreter suite passing inside the isolated CLI runner.
 
 ## Backend Boundary
 
