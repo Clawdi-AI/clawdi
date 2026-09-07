@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, bindparam, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -87,6 +87,12 @@ class PrincipalCleanupClaimLostError(RuntimeError):
 PRINCIPAL_CLEANUP_CLAIM_LEASE_SECONDS = 60
 PRINCIPAL_CLEANUP_BACKOFF_CAP_SECONDS = 15 * 60
 _USER_AUTHORITY_LOCK_PREFIX = "user-authority:"
+_API_KEY_USER_AUTHORITY_LOCK = select(
+    ApiKey.user_id,
+    func.pg_advisory_xact_lock_shared(
+        func.hashtextextended(func.concat(_USER_AUTHORITY_LOCK_PREFIX, ApiKey.user_id), 0)
+    ),
+).where(ApiKey.key_hash == bindparam("key_hash"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,19 +193,7 @@ async def lock_api_key_user_authority_shared(
 ) -> UUID | None:
     """Resolve an API key's user and acquire its shared authority lock."""
 
-    row = (
-        await db.execute(
-            select(
-                ApiKey.user_id,
-                func.pg_advisory_xact_lock_shared(
-                    func.hashtextextended(
-                        func.concat(_USER_AUTHORITY_LOCK_PREFIX, ApiKey.user_id),
-                        0,
-                    )
-                ),
-            ).where(ApiKey.key_hash == key_hash)
-        )
-    ).first()
+    row = (await db.execute(_API_KEY_USER_AUTHORITY_LOCK, {"key_hash": key_hash})).first()
     return row[0] if row is not None else None
 
 
