@@ -2,8 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import { useCallback } from "react";
-import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
+import { type ReactNode, useCallback } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { connectorSearchSupportingText } from "@/components/connectors/connector-search";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
@@ -11,11 +10,10 @@ import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { useOpenApi } from "@/lib/api";
 import {
 	availableAppQueryOptions,
-	type ConnectorAvailableApp,
+	type ConnectorMetadata,
 	connectorToolsQueryOptions,
 } from "@/lib/connectors-data";
 import {
-	connectorDetailHrefForScope,
 	connectorDetailLink,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
@@ -32,11 +30,13 @@ export function ConnectorCard({
 	isConnected = false,
 	scope = LIBRARY_RESOURCE_SCOPE,
 	searchQuery,
+	actions,
 }: {
-	app: ConnectorAvailableApp;
+	app: ConnectorMetadata;
 	isConnected?: boolean;
 	scope?: ResourceNavigationScope;
 	searchQuery?: string;
+	actions?: ReactNode;
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -47,6 +47,7 @@ export function ConnectorCard({
 
 	return (
 		<EntityRow
+			className="min-h-19"
 			ariaLabel={app.display_name}
 			icon={<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />}
 			title={
@@ -71,14 +72,7 @@ export function ConnectorCard({
 					app.description
 				)
 			}
-			actions={
-				!isConnected ? (
-					<ConnectorConnectAction
-						app={app}
-						redirectHref={connectorDetailHrefForScope(scope, app.name)}
-					/>
-				) : undefined
-			}
+			actions={actions}
 			link={{
 				...connectorDetailLink(scope, app.name),
 				onMouseEnter: prefetchDetail,
@@ -89,7 +83,7 @@ export function ConnectorCard({
 }
 
 export function ConnectorCardSkeleton() {
-	return <EntityCardSkeleton />;
+	return <EntityCardSkeleton className="min-h-19" />;
 }
 
 export const CONNECTOR_GRID_CLASS = ENTITY_GRID_CLASS;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
@@ -18,7 +18,20 @@ export function ConnectorIcon({
 	name: string;
 	size?: keyof typeof SIZES;
 }) {
-	const [imgError, setImgError] = useState(false);
+	const [imageState, setImageState] = useState<{
+		src: string;
+		status: "loaded" | "error";
+	} | null>(null);
+	const loaded = imageState?.status === "loaded" && imageState.src === logo;
+	const failed = imageState?.status === "error" && imageState.src === logo;
+	const imageRef = useCallback(
+		(image: HTMLImageElement | null) => {
+			if (logo && image?.complete) {
+				setImageState({ src: logo, status: image.naturalWidth > 0 ? "loaded" : "error" });
+			}
+		},
+		[logo],
+	);
 	const s = SIZES[size];
 	const letter =
 		name
@@ -26,36 +39,35 @@ export function ConnectorIcon({
 			.charAt(0)
 			.toUpperCase() || "?";
 
-	// Logo: bordered white tile with logo filling via object-contain + small
-	// breathing padding. Lets brand colors stay themselves instead of fighting
-	// a gray muted backdrop.
-	if (logo && !imgError) {
-		return (
-			<div
-				className={cn(
-					"flex shrink-0 items-center justify-center overflow-hidden border bg-background",
-					s.box,
-					s.radius,
-				)}
-			>
+	return (
+		<div
+			className={cn(
+				"relative flex shrink-0 items-center justify-center overflow-hidden border",
+				loaded ? "bg-background" : "bg-muted",
+				s.box,
+				s.radius,
+			)}
+		>
+			<span className={cn("font-semibold text-muted-foreground", s.text, loaded && "invisible")}>
+				{letter}
+			</span>
+			{logo && !failed ? (
 				<img
+					key={logo}
+					ref={imageRef}
 					src={logo}
 					alt=""
 					loading="lazy"
 					decoding="async"
-					className={cn("h-full w-full object-contain", s.pad)}
-					onError={() => setImgError(true)}
+					className={cn(
+						"absolute inset-0 h-full w-full object-contain transition-opacity",
+						s.pad,
+						loaded ? "opacity-100" : "opacity-0",
+					)}
+					onLoad={() => setImageState({ src: logo, status: "loaded" })}
+					onError={() => setImageState({ src: logo, status: "error" })}
 				/>
-			</div>
-		);
-	}
-
-	// Fallback: muted initial tile.
-	return (
-		<div
-			className={cn("flex shrink-0 items-center justify-center border bg-muted", s.box, s.radius)}
-		>
-			<span className={cn("font-semibold text-muted-foreground", s.text)}>{letter}</span>
+			) : null}
 		</div>
 	);
 }

@@ -9,6 +9,7 @@ import {
 	ConnectorCard,
 	ConnectorCardSkeleton,
 } from "@/components/connectors/connector-card";
+import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { EmptyState } from "@/components/empty-state";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -22,12 +23,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	CONNECTOR_CATALOG_PAGE_SIZE,
 	type ConnectorAvailableApp,
+	type ConnectorMetadata,
 	useAvailableApps,
 	useConnectedAppCards,
 } from "@/lib/connectors-data";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import {
+	connectorDetailHrefForScope,
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn } from "@/lib/utils";
@@ -124,12 +130,12 @@ function ConnectorsList({
 	// Connector access is decided inside `connectors-data.ts`. The
 	// "Connected" rail and the paginated "All" grid both flow through
 	// the unified cloud-api hooks so the page stays branch-free.
-	const connected = useConnectedAppCards();
 	const catalogQ = useAvailableApps({
 		page,
 		pageSize: PAGE_SIZE,
 		search: debouncedQuery || undefined,
 	});
+	const connected = useConnectedAppCards();
 	const pageData = catalogQ.data;
 	const isCatalogLoading = catalogQ.isLoading;
 	const catalogError = shouldBlockQueryError(catalogQ.error, pageData) ? catalogQ.error : null;
@@ -141,7 +147,7 @@ function ConnectorsList({
 		: null;
 
 	const connectedNames = useMemo(
-		() => new Set(connected.activeConnections.map((c) => c.app_name)),
+		() => new Set(connected.activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : []))),
 		[connected.activeConnections],
 	);
 
@@ -210,7 +216,7 @@ function ConnectorsList({
 			{showConnectedRail ? (
 				<ConnectedRail
 					apps={connected.data}
-					activeCount={connected.activeConnections.length}
+					appNames={[...connectedNames]}
 					isLoading={connected.isLoading}
 					error={connectedError}
 					onRetry={connected.refetch}
@@ -245,19 +251,21 @@ function ConnectorsList({
  */
 function ConnectedRail({
 	apps,
-	activeCount,
+	appNames,
 	isLoading,
 	error,
 	onRetry,
 	scope,
 }: {
-	apps: ConnectorAvailableApp[];
-	activeCount: number;
+	apps: ConnectorMetadata[];
+	appNames: readonly string[];
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
 	scope: ResourceNavigationScope;
 }) {
+	const byName = new Map(apps.map((app) => [app.name, app]));
+	const activeCount = appNames.length;
 	return (
 		<section className="space-y-3">
 			<SectionLabel
@@ -272,15 +280,20 @@ function ConnectedRail({
 				<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load connections" />
 			) : isLoading && apps.length === 0 ? (
 				<div className={CONNECTOR_GRID_CLASS}>
-					{Array.from({ length: 4 }).map((_, i) => (
+					{Array.from({ length: activeCount || 4 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
 					))}
 				</div>
 			) : (
 				<div className={CONNECTOR_GRID_CLASS}>
-					{apps.map((app) => (
-						<ConnectorCard key={app.name} app={app} isConnected scope={scope} />
-					))}
+					{appNames.map((name) => {
+						const app = byName.get(name);
+						return app ? (
+							<ConnectorCard key={name} app={app} isConnected scope={scope} />
+						) : (
+							<ConnectorCardSkeleton key={name} />
+						);
+					})}
 				</div>
 			)}
 		</section>
@@ -349,6 +362,14 @@ function CatalogSection({
 							isConnected={connectedNames.has(app.name)}
 							scope={scope}
 							searchQuery={query.trim() || undefined}
+							actions={
+								!connectedNames.has(app.name) ? (
+									<ConnectorConnectAction
+										app={app}
+										redirectHref={connectorDetailHrefForScope(scope, app.name)}
+									/>
+								) : undefined
+							}
 						/>
 					))}
 				</div>
