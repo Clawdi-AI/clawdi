@@ -16,17 +16,23 @@ readonly backend_image="ghcr.io/clawdi-ai/clawdi-backend:${DEPLOY_IMAGE_VERSION:
 	exit 1
 }
 
-remote_value() {
+inspection_value() {
 	local output value
-	output="$(kamal server exec "$1")"
-	value="$(printf '%s\n' "${output}" | sed -n 's/^.*CLAWDI_VALUE=//p' | tail -n 1)"
-	[[ -n "${value}" ]] || { echo "Remote inspection returned no value" >&2; exit 1; }
+	if ! output="$("$@")"; then
+		echo "Remote inspection command failed" >&2
+		return 1
+	fi
+	value="${output#CLAWDI_VALUE=}"
+	if [[ "${output}" != CLAWDI_VALUE=* || -z "${value}" || "${value}" == *$'\n'* || "${value}" == *$'\r'* ]]; then
+		echo "Remote inspection must return exactly one value" >&2
+		return 1
+	fi
 	printf '%s\n' "${value}"
 }
 
 role_state() {
 	local role="$1"
-	remote_value "
+	inspection_value kamal server exec --raw "
 		set -eu
 		set -- \$(docker ps -q --no-trunc --filter 'label=service=${service}' --filter 'label=role=${role}')
 		if [ \"\$#\" -eq 0 ]; then printf 'CLAWDI_VALUE=missing\\n'; exit 0; fi
@@ -80,10 +86,9 @@ validate_embedding_state() {
 }
 
 require_database_headroom() {
-	local available output
-	output="$(kamal accessory exec postgres --reuse \
-		"psql -U clawdi -d clawdi -Atqc \"SELECT 'CLAWDI_VALUE=' || (current_setting('max_connections')::int - current_setting('superuser_reserved_connections')::int - current_setting('reserved_connections')::int - count(*) FILTER (WHERE backend_type = 'client backend')) FROM pg_stat_activity\"")"
-	available="$(printf '%s\n' "${output}" | sed -n 's/^.*CLAWDI_VALUE=//p' | tail -n 1)"
+	local available
+	available="$(inspection_value kamal accessory exec postgres --reuse --raw \
+		"psql -U clawdi -d clawdi -Atqc \"SELECT 'CLAWDI_VALUE=' || (current_setting('max_connections')::int - current_setting('superuser_reserved_connections')::int - current_setting('reserved_connections')::int - count(*) FILTER (WHERE backend_type = 'client backend')) FROM pg_stat_activity\"")" || return 1
 	[[ "${available}" =~ ^[0-9]+$ ]] || { echo "Invalid PostgreSQL capacity result" >&2; exit 1; }
 	(( available >= minimum_available_connections )) || {
 		echo "PostgreSQL has ${available} available connections; ${minimum_available_connections} required" >&2
