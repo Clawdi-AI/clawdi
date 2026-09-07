@@ -57,7 +57,7 @@ from app.services.composio import (
     get_connected_account_identities,
     get_tool_router_mcp_session,
     get_tool_router_mcp_tools,
-    list_tool_router_mcp_tools,
+    get_tool_router_mcp_tools_result,
     verify_mcp_bridge_token,
 )
 from app.services.file_store import get_file_store
@@ -671,9 +671,8 @@ async def mcp_composio_post(request: Request) -> JsonObject:
         return _mcp_error(rpc_id, -32601, "Method not found")
 
     try:
-        session = await get_tool_router_mcp_session(user_id)
         if method == "tools/list":
-            result = await list_tool_router_mcp_tools(session)
+            result = await get_tool_router_mcp_tools_result(user_id)
         else:
             params = body.get("params")
             if not isinstance(params, dict):
@@ -682,6 +681,7 @@ async def mcp_composio_post(request: Request) -> JsonObject:
             arguments = params.get("arguments") or {}
             if not isinstance(name, str) or not isinstance(arguments, dict):
                 return _mcp_error(rpc_id, -32602, "Invalid params")
+            session = await get_tool_router_mcp_session(user_id)
             result = await call_tool_router_mcp_tool(session, name, arguments)
     except (ComposioMcpUpstreamError, ComposioRouteError) as exc:
         logger.error(

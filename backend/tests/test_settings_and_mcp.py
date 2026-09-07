@@ -254,13 +254,14 @@ async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_s
 
 
 @pytest.mark.asyncio
-async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
+async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch, tool_router_cache):
     from mcp.types import CallToolResult, ListToolsResult
 
     from app.core.config import settings
     from app.routes import mcp_bridge
     from app.services.composio import ComposioMcpSession, create_mcp_bridge_token
 
+    composio, sessions = tool_router_cache
     seen: list[tuple[str, object]] = []
     session = ComposioMcpSession(
         url="https://composio.example.test/mcp",
@@ -268,14 +269,17 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
 
-    async def fake_session(user_id: str) -> ComposioMcpSession:
-        seen.append(("session", user_id))
-        return session
+    sessions["clerk_user_123"] = [session]
 
     async def fake_list(value: ComposioMcpSession) -> ListToolsResult:
         assert value is session
+        seen.append(("list", "clerk_user_123"))
         return ListToolsResult.model_validate(
-            {"tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}]}
+            {
+                "tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}],
+                "_meta": {"upstream": "preserved"},
+                "nextCursor": "upstream-cursor",
+            }
         )
 
     async def fake_call(value: ComposioMcpSession, name: str, arguments: dict) -> CallToolResult:
@@ -286,8 +290,7 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
         )
 
     monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
-    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(composio, "list_tool_router_mcp_tools", fake_list)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     token = create_mcp_bridge_token("clerk_user_123")
     headers = {"Authorization": f"Bearer {token}"}
@@ -311,11 +314,15 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
             )
             assert listed.status_code == 200, listed.text
             assert listed.json()["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
+            assert listed.json()["result"]["_meta"] == {"upstream": "preserved"}
+            assert listed.json()["result"]["nextCursor"] == "upstream-cursor"
             assert called.status_code == 200, called.text
             assert called.json()["result"]["content"] == [{"type": "text", "text": "called"}]
             assert called.json()["result"]["isError"] is False
 
-    assert seen.count(("session", "clerk_user_123")) == 4
+    native_tools = await composio.get_tool_router_mcp_tools("clerk_user_123")
+    assert native_tools[0]["name"] == "COMPOSIO_SEARCH_TOOLS"
+    assert seen.count(("list", "clerk_user_123")) == 1
     assert seen.count(("COMPOSIO_SEARCH_TOOLS", {"query": "mail"})) == 2
 
 
@@ -901,7 +908,7 @@ async def test_connector_tool_cache_is_session_bound_and_user_scoped(
     composio._tool_router_session_cache["user-a"] = sessions["user-a"].pop(0)
     refreshed = await composio.get_tool_router_mcp_tools("user-a")
 
-    assert first is cached
+    assert first == cached
     assert first[0] == {
         "name": "user-a-1",
         "inputSchema": {"type": "object"},
@@ -946,7 +953,7 @@ async def test_connector_tool_load_is_single_flight(monkeypatch, tool_router_cac
     assert list_calls == 1
     release.set()
     first_result, second_result = await asyncio.gather(first, second)
-    assert first_result is second_result
+    assert first_result == second_result
 
 
 @pytest.mark.asyncio
@@ -982,7 +989,7 @@ async def test_connector_tool_load_restarts_after_inflight_invalidation(
         "https://composio.test/invalidation/1",
         "https://composio.test/invalidation/2",
     ]
-    assert composio._tool_router_tools_cache["invalidation"][1] is result
+    assert composio._tool_router_tools_cache["invalidation"][1].tools[0].name == result[0]["name"]
 
 
 @pytest.mark.asyncio

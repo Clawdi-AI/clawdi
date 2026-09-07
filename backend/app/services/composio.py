@@ -248,8 +248,8 @@ class ConnectorAppPage(TypedDict):
 _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
-_tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, list[JsonObject]]] = {}
-_tool_router_tools_inflight: dict[str, asyncio.Task[list[JsonObject]]] = {}
+_tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, ListToolsResult]] = {}
+_tool_router_tools_inflight: dict[str, asyncio.Task[ListToolsResult]] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
@@ -601,6 +601,19 @@ async def invalidate_tool_router_mcp_session(user_id: str) -> None:
 
 
 async def get_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
+    result = await get_tool_router_mcp_tools_result(user_id)
+    serialized = _JSON_OBJECT_ADAPTER.validate_json(
+        result.model_dump_json(by_alias=True, exclude_none=True)
+    )
+    raw_tools = serialized.get("tools")
+    return (
+        [tool for tool in raw_tools if isinstance(tool, dict)]
+        if isinstance(raw_tools, list)
+        else []
+    )
+
+
+async def get_tool_router_mcp_tools_result(user_id: str) -> ListToolsResult:
     """Return session-bound tools through a cancellation-safe per-user load."""
     task = _tool_router_tools_inflight.get(user_id)
     if task is None:
@@ -612,7 +625,7 @@ async def get_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
     return await asyncio.shield(task)
 
 
-async def _load_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
+async def _load_tool_router_mcp_tools(user_id: str) -> ListToolsResult:
     while True:
         session = await get_tool_router_mcp_session(user_id)
         cached = _tool_router_tools_cache.get(user_id)
@@ -623,20 +636,11 @@ async def _load_tool_router_mcp_tools(user_id: str) -> list[JsonObject]:
         if _tool_router_session_cache.get(user_id) is not session:
             continue
 
-        serialized = _JSON_OBJECT_ADAPTER.validate_json(
-            result.model_dump_json(by_alias=True, exclude_none=True)
-        )
-        raw_tools = serialized.get("tools")
-        tools = (
-            [tool for tool in raw_tools if isinstance(tool, dict)]
-            if isinstance(raw_tools, list)
-            else []
-        )
-        _tool_router_tools_cache[user_id] = (session, tools)
-        return tools
+        _tool_router_tools_cache[user_id] = (session, result)
+        return result
 
 
-def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[list[JsonObject]]) -> None:
+def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListToolsResult]) -> None:
     if _tool_router_tools_inflight.get(user_id) is task:
         _tool_router_tools_inflight.pop(user_id, None)
     if not task.cancelled():
