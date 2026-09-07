@@ -587,6 +587,19 @@ async def test_catalog_search_prioritizes_identity_before_description(
     missing_term = await composio.get_available_apps(search="gmail missing")
     assert missing_term["items"] == []
 
+    projected = []
+    serialize = composio._serialize_app
+
+    def record_projection(toolkit, **kwargs):
+        projected.append(toolkit.slug)
+        return serialize(toolkit, **kwargs)
+
+    monkeypatch.setattr(composio, "_serialize_app", record_projection)
+    second_page = await composio.get_available_apps(search="gmail", page=2, page_size=1)
+    assert second_page["total"] == 4
+    assert [app.name for app in second_page["items"]] == ["gmail-analytics"]
+    assert projected == ["gmail-analytics"]
+
 
 @pytest.mark.asyncio
 async def test_connector_detail_requires_explicit_toolkit_auth_metadata(

@@ -1458,7 +1458,7 @@ def _auth_fields_from_toolkit_detail(
     ]
 
 
-def _primary_auth_type(toolkit: _Toolkit) -> str:
+def _primary_auth_type(toolkit: _Toolkit, *, allow_unknown: bool = False) -> str:
     """Lowercase auth scheme for connector routing."""
     if toolkit.no_auth:
         return "none"
@@ -1481,6 +1481,8 @@ def _primary_auth_type(toolkit: _Toolkit) -> str:
     for scheme in all_schemes:
         if scheme:
             return scheme
+    if allow_unknown:
+        return "unknown"
     raise ConnectorAuthMetadataError(f"Connector auth metadata unavailable for {toolkit.slug}")
 
 
@@ -1489,12 +1491,7 @@ def _serialize_app(
     *,
     allow_unknown_auth_type: bool = False,
 ) -> ConnectorAvailableAppResponse:
-    try:
-        auth_type = _primary_auth_type(toolkit)
-    except ConnectorAuthMetadataError:
-        if not allow_unknown_auth_type:
-            raise
-        auth_type = "unknown"
+    auth_type = _primary_auth_type(toolkit, allow_unknown=allow_unknown_auth_type)
     return ConnectorAvailableAppResponse(
         name=toolkit.slug,
         display_name=toolkit.name or _titleize_slug(toolkit.slug),
@@ -1590,52 +1587,55 @@ async def get_available_apps(
     """
     client = get_composio_client()
     toolkits = await _get_all_toolkits()
-    items = [
-        (toolkit, _serialize_app(toolkit, allow_unknown_auth_type=True)) for toolkit in toolkits
-    ]
+    items = [(toolkit, _primary_auth_type(toolkit, allow_unknown=True)) for toolkit in toolkits]
     query = (search or "").strip().casefold()
     if query:
         ranked_items = [
-            (rank, toolkit, app)
-            for toolkit, app in items
-            if (rank := _connector_search_rank(app, query)) is not None
+            (rank, toolkit, auth_type)
+            for toolkit, auth_type in items
+            if (rank := _connector_search_rank(toolkit, query)) is not None
         ]
         ranked_items.sort(key=lambda item: item[0])
-        items = [(toolkit, app) for _, toolkit, app in ranked_items]
+        items = [(toolkit, auth_type) for _, toolkit, auth_type in ranked_items]
     needs_custom_oauth = any(
         _requires_preconfigured_custom_oauth(
             toolkit,
-            app.auth_type,
+            auth_type,
         )
-        for toolkit, app in items
+        for toolkit, auth_type in items
     )
     custom_auth_config_index: frozenset[tuple[str, str]] = (
         await _get_custom_auth_config_index(client) if needs_custom_oauth else frozenset()
     )
-    visible_items: list[ConnectorAvailableAppResponse] = []
-    for toolkit, app in items:
-        annotated = await _annotate_connect_status(
+    visible_items: list[_Toolkit] = []
+    for toolkit, auth_type in items:
+        disabled_reason = await _connect_disabled_reason(
             client,
             toolkit,
-            app,
+            toolkit.slug,
+            auth_type,
             custom_auth_config_index=custom_auth_config_index,
         )
-        if not annotated.connect_disabled:
-            visible_items.append(annotated)
+        if disabled_reason is None:
+            visible_items.append(toolkit)
 
     total = len(visible_items)
     start = max(0, (page - 1) * page_size)
     end = start + page_size
     return {
-        "items": visible_items[start:end],
+        "items": [
+            _serialize_app(toolkit, allow_unknown_auth_type=True)
+            for toolkit in visible_items[start:end]
+        ],
         "total": total,
         "page": page,
         "page_size": page_size,
     }
 
 
-def _connector_search_rank(app: ConnectorAvailableAppResponse, query: str) -> int | None:
-    identity = (app.display_name.casefold(), app.name.casefold())
+def _connector_search_rank(toolkit: _Toolkit, query: str) -> int | None:
+    identity = ((toolkit.name or _titleize_slug(toolkit.slug)).casefold(), toolkit.slug.casefold())
+    description = toolkit.meta.description[:200].casefold()
     for index, value in enumerate(identity):
         if value == query:
             return index
@@ -1645,9 +1645,9 @@ def _connector_search_rank(app: ConnectorAvailableAppResponse, query: str) -> in
     for index, value in enumerate(identity):
         if query in value:
             return len(identity) * 2 + index
-    if query in app.description.casefold():
+    if query in description:
         return len(identity) * 3
-    fields = (*identity, app.description.casefold())
+    fields = (*identity, description)
     terms = tuple(dict.fromkeys(query.split()))
     if terms and all(any(term in field for field in fields) for term in terms):
         supporting_matches = sum(any(term in field for field in fields[2:]) for term in terms)
