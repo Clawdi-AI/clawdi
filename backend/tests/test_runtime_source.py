@@ -1264,13 +1264,13 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
     golden = json.loads(fixture_path.read_text())
-    expected_revision = "81572b32d67e9f7386e58ea17899c71cf0864b85d874dcd9ccb76fa8a4f90a78"
+    expected_revision = "3560dad84408e66195cdf581512875d71d399df03b4dac43b6a28be318402e0c"
     assert (
         RUNTIME_SOURCE_RENDERER_REVISION,
         source.source_revision,
         golden["sourceRevision"],
     ) == (
-        "runtime-source.v1",
+        "runtime-source.v2",
         expected_revision,
         expected_revision,
     ), (

@@ -355,6 +355,14 @@ describe("backend image release workflow contract", () => {
 			]),
 		);
 		expect(ignored.backend).toBe(baseline.backend);
+		const routingPath = "config/native-ai-providers.json";
+		const routingChanged = calculateClawdiImageRevisions(
+			repoRoot,
+			new Map([[routingPath, `${readFileSync(resolve(repoRoot, routingPath), "utf8")}\n`]]),
+		);
+		expect(routingChanged.backend).not.toBe(baseline.backend);
+		expect(routingChanged.deployment).toBe(baseline.deployment);
+		expect(routingChanged.sidecar).toBe(baseline.sidecar);
 
 		for (const [path, source] of [
 			["backend/Dockerfile", backendDockerfile],

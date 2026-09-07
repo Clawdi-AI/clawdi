@@ -11,6 +11,7 @@ import {
 } from "./whatsapp-sidecar-deployment-revision";
 
 const BACKEND_ROOT = "backend";
+const NATIVE_PROVIDER_INPUT = "config/native-ai-providers.json";
 const IMAGE_RELEASE_WORKFLOW = ".github/workflows/clawdi-image-release.yml";
 const DEPLOYMENT_FILE_INPUTS = [
 	".github/actions/setup-bun-ci/action.yml",
@@ -48,8 +49,15 @@ export function calculateClawdiImageRevisionsFromSnapshot(
 	snapshot: RevisionSnapshot,
 ): ClawdiImageRevisions {
 	const dockerignore = snapshot.readText(".dockerignore");
-	assertBackendDockerInputContract(snapshot.readText("backend/Dockerfile"), dockerignore);
+	const nativeProvidersIncluded = snapshot.listFiles("config").includes(NATIVE_PROVIDER_INPUT);
+	assertBackendDockerInputContract(
+		snapshot.readText("backend/Dockerfile"),
+		dockerignore,
+		nativeProvidersIncluded,
+	);
 	const backendInputs = new Map<string, string>([[".dockerignore", dockerignore]]);
+	if (nativeProvidersIncluded)
+		backendInputs.set(NATIVE_PROVIDER_INPUT, snapshot.readText(NATIVE_PROVIDER_INPUT));
 	for (const path of snapshot.listFiles(BACKEND_ROOT)) {
 		if (path.startsWith("backend/tests/")) continue;
 		backendInputs.set(path, snapshot.readText(path));
@@ -76,7 +84,11 @@ function readOptionalSnapshotText(snapshot: RevisionSnapshot, path: string): str
 		: `<missing:${path}>`;
 }
 
-function assertBackendDockerInputContract(dockerfile: string, dockerignore: string): void {
+function assertBackendDockerInputContract(
+	dockerfile: string,
+	dockerignore: string,
+	nativeProvidersIncluded: boolean,
+): void {
 	const copyInstructions = dockerfile
 		.split(/\r?\n/)
 		.map((line) => line.trim())
@@ -84,6 +96,11 @@ function assertBackendDockerInputContract(dockerfile: string, dockerignore: stri
 	const expectedCopies = [
 		"COPY backend/pyproject.toml backend/uv.lock backend/alembic.ini ./",
 		"COPY --chown=app:app backend/ /app/backend/",
+		...(nativeProvidersIncluded
+			? [
+					"COPY --chown=app:app config/native-ai-providers.json /app/config/native-ai-providers.json",
+				]
+			: []),
 	];
 	if (stableStringify(copyInstructions) !== stableStringify(expectedCopies)) {
 		throw new Error("backend Docker COPY contract changed; update the image revision inputs");

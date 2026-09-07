@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/web/**"
       - "packages/shared/**"
+      - "config/native-ai-providers.json"
       - "packages/cli/**"
       - "packages/whatsapp-baileys-sidecar/**"
       - "backend/app/routes/channel_routers/whatsapp.py"
@@ -30,6 +31,7 @@ on:
     paths:
       - "apps/web/**"
       - "packages/shared/**"
+      - "config/native-ai-providers.json"
       - "packages/cli/**"
       - "packages/whatsapp-baileys-sidecar/**"
       - "backend/app/routes/channel_routers/whatsapp.py"
@@ -95,6 +97,7 @@ jobs:
               - "apps/web/**"
             shared:
               - "packages/shared/**"
+              - "config/native-ai-providers.json"
             cli:
               - "packages/cli/**"
               - "install.sh"

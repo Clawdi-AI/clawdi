@@ -216,6 +216,7 @@ strict = [
     "app/schemas/connector.py",
     "app/schemas/dashboard.py",
     "app/schemas/memory.py",
+    "app/schemas/native_provider.py",
     "app/schemas/platform.py",
     "app/schemas/platform_oauth.py",
     "app/schemas/plugin_catalog.py",

@@ -138,7 +138,8 @@ role. Do not bypass that state check or edit the running container environment.
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
    - `Backend CI` is the sole automatic backend-image change gate. Its
-     `push.main.paths` filter includes every backend image/release input, and
+     `push.main.paths` filter includes every backend image/release input, including
+     the shared `config/native-ai-providers.json` routing data, and
      main concurrency may cancel an older run in favor of the newest cumulative
      commit. A push outside that path filter does not start a backend image
      release. Because a `workflow_run` workflow can access secrets and write
