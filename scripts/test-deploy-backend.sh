@@ -10,6 +10,22 @@ cat > "${tmp}/bin/kamal" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$*" >> "${FAKE_LOG}"
+if [[ "$*" == 'server exec '* || "$*" == 'accessory exec postgres '* ]]; then
+	[[ " $* " == *' --raw '* ]] || { echo 'Expected raw inspection' >&2; exit 1; }
+fi
+
+emit_value() {
+	local target="$1" value="$2"
+	if [[ "${INSPECTION_TARGET:-}" == "${target}" ]]; then
+		case "${INSPECTION_FAILURE:-}" in
+			failed) printf 'CLAWDI_VALUE=%s\n' "${value}"; return 1 ;;
+			duplicate) printf 'CLAWDI_VALUE=%s\nCLAWDI_VALUE=%s\n' "${value}" "${value}"; return ;;
+			log-only) printf 'INFO running command CLAWDI_VALUE=%s\n' "${value}"; return ;;
+		esac
+	fi
+	printf 'CLAWDI_VALUE=%s\n' "${value}"
+}
+
 case "$*" in
 	"deploy -P --roles web "*) touch "${FAKE_LOG}.web.deployed"; exit 0 ;;
 	"deploy -P --roles channels-worker "*) touch "${FAKE_LOG}.channels-worker.deployed"; exit 0 ;;
@@ -23,7 +39,7 @@ case "$*" in
 		exit
 		;;
 	"app exec "*|"app stop "*) exit 0 ;;
-	"accessory exec postgres "*) echo "CLAWDI_VALUE=${AVAILABLE_CONNECTIONS:-80}"; exit 0 ;;
+	"accessory exec postgres "*) emit_value database "${AVAILABLE_CONNECTIONS:-80}"; exit ;;
 	*"docker ps -q"*"role=web"*) role=web ;;
 	*"docker ps -q"*"role=channels-worker"*) role=channels-worker ;;
 	*"docker ps -q"*"role=embedding-worker"*) role=embedding-worker ;;
@@ -55,7 +71,7 @@ if [[ -f "${FAKE_LOG}.${role}.deployed" ]]; then
 		embedding-worker) pool=:: ;;
 	esac
 fi
-echo "CLAWDI_VALUE=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|${image}|${pool}|${workers}"
+emit_value "${role}" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|${image}|${pool}|${workers}"
 FAKE
 chmod +x "${tmp}/bin/kamal"
 
@@ -66,6 +82,7 @@ run() {
 	local scenario="$1" web_pool="$2" channels_pool="$3" available="${4:-80}"
 	local embedding_state="${5:-missing}" fail_embedding_health="${6:-0}"
 	local fail_web_ready="${7:-0}" web_workers="${8:-}"
+	local inspection_target="${9:-}" inspection_failure="${10:-}"
 	local log="${tmp}/${scenario}.log"
 	if ! FAKE_LOG="${log}" PATH="${tmp}/bin:${PATH}" \
 		DEPLOY_IMAGE_VERSION="${target_image}" CURRENT_IMAGE="${current_image}" \
@@ -73,6 +90,7 @@ run() {
 		AVAILABLE_CONNECTIONS="${available}" EMBEDDING_STATE="${embedding_state}" \
 		FAIL_EMBEDDING_HEALTH="${fail_embedding_health}" FAIL_WEB_READY="${fail_web_ready}" \
 		WEB_WORKERS="${web_workers}" \
+		INSPECTION_TARGET="${inspection_target}" INSPECTION_FAILURE="${inspection_failure}" \
 		"${root}/scripts/deploy-backend.sh" >/dev/null; then
 		return 1
 	fi
@@ -111,6 +129,16 @@ if run invalid 12:12:5 10:10:5 >/dev/null 2>&1; then
 	echo "Expected an unknown pool configuration to fail" >&2
 	exit 1
 fi
+
+for inspection_case in 'web failed' 'web duplicate' 'database failed' 'database log-only'; do
+	read -r inspection_target inspection_failure <<<"${inspection_case}"
+	scenario="inspection-${inspection_target}-${inspection_failure}"
+	if run "${scenario}" 8:0:5 10:10:5 80 present 0 0 2 "${inspection_target}" "${inspection_failure}" >/dev/null 2>&1; then
+		echo "Expected ${scenario} to fail before deployment" >&2
+		exit 1
+	fi
+	! grep -Eq '^deploy |^app exec ' "${tmp}/${scenario}.log"
+done
 
 if run saturated 10:10:5 10:10:5 21 >/dev/null 2>&1; then
 	echo "Expected insufficient PostgreSQL headroom to fail" >&2

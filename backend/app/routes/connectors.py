@@ -14,6 +14,8 @@ from app.schemas.connector import (
     ConnectorCredentialsConnectResponse,
     ConnectorDisconnectResponse,
     ConnectorMcpConfigResponse,
+    ConnectorMetadataBatchRequest,
+    ConnectorMetadataBatchResponse,
     ConnectorToolResponse,
     ConnectRequest,
 )
@@ -29,6 +31,7 @@ from app.services.composio import (
     get_auth_fields,
     get_available_apps,
     get_connected_accounts,
+    get_connector_metadata,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
 )
@@ -128,6 +131,20 @@ async def list_connections(
     # MCP bridge call to create a fresh session.
     await invalidate_tool_router_mcp_session(clerk_id)
     return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
+
+
+@router.post("/metadata:batchRead", response_model=ConnectorMetadataBatchResponse)
+async def read_connector_metadata(
+    body: ConnectorMetadataBatchRequest,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorMetadataBatchResponse:
+    """Batch display metadata; connection/auth configuration remains a separate read."""
+    if not settings.composio_api_key:
+        return ConnectorMetadataBatchResponse(items=[], missing=body.names)
+    try:
+        return await get_connector_metadata(body.names)
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
 
 
 @router.get("/available")
