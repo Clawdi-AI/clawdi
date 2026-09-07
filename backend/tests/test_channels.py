@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -9772,9 +9772,11 @@ async def test_telegram_callback_query_answer_requires_recorded_reference(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("compact_encoded_path", [False, True], ids=["legacy", "sdk-encoded"])
 async def test_telegram_get_file_records_path_and_download_is_scoped(
     client: httpx.AsyncClient,
     monkeypatch,
+    compact_encoded_path: bool,
 ):
     _reset_fake_provider_client({"ok": True, "result": {"file_path": "photos/file_1.jpg"}})
     monkeypatch.setattr(
@@ -9819,10 +9821,15 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
         content=b"telegram-file",
         headers={"content-type": "text/plain"},
     )
-    download_path = f"/v1/channels/telegram/file/bot/{routing_id}/photos/file_1.jpg"
-    unowned_download_path = f"/v1/channels/telegram/file/bot/{routing_id}/photos/other.jpg"
+    route = quote(routing_id, safe="") if compact_encoded_path else f"/{routing_id}"
+    download_path = f"/v1/channels/telegram/file/bot{route}/photos/file_1.jpg"
+    unowned_download_path = f"/v1/channels/telegram/file/bot{route}/photos/other.jpg"
     download = await client.get(download_path, headers=managed_headers)
     unowned_download = await client.get(unowned_download_path, headers=managed_headers)
+    wrong_route = await client.get(
+        f"/v1/channels/telegram/file/bot{route}-other/photos/file_1.jpg",
+        headers=managed_headers,
+    )
     rejected_old_secret_path = await client.get(
         f"/v1/channels/telegram/file/bot/{created['agent_token']}/photos/file_1.jpg"
     )
@@ -9841,6 +9848,13 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     )
     assert unowned_download.status_code == 403
     assert unowned_download.json()["description"] == "Forbidden: file_path is not bound to this bot"
+    assert wrong_route.status_code == 401
+    if compact_encoded_path:
+        double_encoded = await client.get(
+            f"/v1/channels/telegram/file/bot{quote(route, safe='')}/photos/file_1.jpg",
+            headers=managed_headers,
+        )
+        assert double_encoded.status_code == 401
 
 
 @pytest.mark.asyncio
