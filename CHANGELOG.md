@@ -29,8 +29,8 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
-- CLI 0.14.53 ships only the Python egress addon source in its npm package and
-  rejects generated Python caches and bytecode before publication.
+- CLI 0.14.53 ships only the Python egress addon source in npm and native packages,
+  rejecting generated Python caches and bytecode before publication.
 - CLI 0.14.52 avoids redundant managed service restarts when the watcher inherits
   a PATH already prepared during startup.
 - CLI 0.14.50 avoids a misleading missing-database warning when Files starts
