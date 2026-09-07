@@ -248,6 +248,7 @@ class ConnectorAppPage(TypedDict):
 _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
+_tool_router_session_creations: dict[str, set[object]] = {}
 _tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, ListToolsResult]] = {}
 _tool_router_tools_inflight: dict[str, asyncio.Task[ListToolsResult]] = {}
 
@@ -521,6 +522,7 @@ def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
 async def close_composio_client() -> None:
     """Close the shared Composio HTTP clients on ASGI shutdown."""
     global _client, _sdk_client
+    _tool_router_session_creations.clear()
     pending_tools = tuple(_tool_router_tools_inflight.values())
     _tool_router_tools_inflight.clear()
     for task in pending_tools:
@@ -584,16 +586,34 @@ async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     cached = _tool_router_session_cache.get(user_id)
     if cached and cached.expires_at > now:
         return cached
-    if cached is not None:
-        await cached.retire()
 
-    session = await _create_tool_router_mcp_session(user_id, now=now)
-    _tool_router_session_cache[user_id] = session
-    return session
+    # Invalidation detaches this group; its in-flight requests cannot republish.
+    pending = _tool_router_session_creations.setdefault(user_id, set())
+    creation = object()
+    pending.add(creation)
+    try:
+        if cached is not None:
+            await cached.retire()
+        session = await _create_tool_router_mcp_session(user_id, now=now)
+        if _tool_router_session_creations.get(user_id) is not pending:
+            await session.retire()
+            raise ComposioMcpUpstreamError("Composio session invalidated during creation")
+        current = _tool_router_session_cache.get(user_id)
+        if current is not None and current.expires_at > datetime.now(UTC):
+            if current is not session:
+                await session.retire()
+            return current
+        _tool_router_session_cache[user_id] = session
+        return session
+    finally:
+        pending.discard(creation)
+        if not pending and _tool_router_session_creations.get(user_id) is pending:
+            _tool_router_session_creations.pop(user_id)
 
 
 async def invalidate_tool_router_mcp_session(user_id: str) -> None:
     """Drop a user's cached Tool Router session and schemas after connection changes."""
+    _tool_router_session_creations.pop(user_id, None)
     session = _tool_router_session_cache.pop(user_id, None)
     _tool_router_tools_cache.pop(user_id, None)
     if session is not None:
