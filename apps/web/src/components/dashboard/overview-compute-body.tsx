@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 type ComputeFact = { label: string | null; value: ReactNode };
 
-/** Specs and commercial facts share one label/value track, including while loading. */
+/** Specs and billing facts share a right edge, including while loading. */
 export function OverviewComputeBody({
 	planLabel,
 	resources,
@@ -34,24 +34,21 @@ export function OverviewComputeBody({
 		: [subscription, date].filter((fact): fact is ComputeFact => Boolean(fact));
 	return (
 		<div
-			className="space-y-1.5"
+			className="space-y-2"
 			data-testid="overview-compute-summary"
 			aria-busy={loading || undefined}
 		>
 			<div data-overview-compute-plan className="text-sm text-muted-foreground">
 				{loading ? <Skeleton className="h-lh w-32 max-w-full" /> : planLabel}
 			</div>
-			<dl
-				aria-label="Compute resources"
-				className="grid grid-cols-[fit-content(40%)_minmax(0,1fr)] gap-x-4 gap-y-0.5 text-xs text-muted-foreground"
-			>
+			<dl aria-label="Compute resources" className="space-y-1 text-xs text-muted-foreground">
 				{[...rows, ...commercial].map((item, index) => (
 					<div
 						key={item.label ?? "access"}
 						className={cn(
-							"col-span-full grid grid-cols-subgrid items-baseline",
+							"grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-baseline gap-x-4",
 							loading && "items-center",
-							index === rows.length && "mt-2",
+							index === rows.length && "mt-3",
 						)}
 						data-overview-subscription-row={index === rows.length || undefined}
 					>
@@ -69,7 +66,7 @@ export function OverviewComputeBody({
 						<dd
 							className={
 								item.label
-									? "flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 break-words"
+									? "flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2 text-right break-words"
 									: "col-span-full flex min-w-0 flex-wrap items-center justify-between gap-3 break-words"
 							}
 						>

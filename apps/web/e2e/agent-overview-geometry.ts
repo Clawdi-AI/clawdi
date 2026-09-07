@@ -54,6 +54,21 @@ export async function expectAgentOverviewGeometry(
 		paint(getComputedStyle(resourceCard).backgroundColor);
 		const resourceBackground = pixel();
 		return {
+			computeRows: Array.from(
+				main.querySelectorAll('[data-testid="overview-compute-summary"] dl > div'),
+			).map((row) => {
+				const label = row.querySelector("dt:not(.sr-only)");
+				const value = row.querySelector("dd > span");
+				const details = row.querySelector("dd");
+				if (!value || !details) throw new Error("Missing Compute value");
+				return {
+					row: row.getBoundingClientRect().toJSON(),
+					label: label?.getBoundingClientRect().toJSON() ?? null,
+					value: value.getBoundingClientRect().toJSON(),
+					hasAction: Boolean(row.querySelector("[data-slot=button]")),
+					overflows: details.scrollWidth > details.clientWidth + 1,
+				};
+			}),
 			headings: Array.from(main.querySelectorAll("[data-overview-heading]")).map((row) => ({
 				row: row.getBoundingClientRect().toJSON(),
 				title: row.querySelector("h2")?.getBoundingClientRect().toJSON(),
@@ -100,6 +115,13 @@ export async function expectAgentOverviewGeometry(
 		};
 	});
 	const aligned = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+	for (const { row, label, value, hasAction, overflows } of geometry.computeRows) {
+		expect(overflows).toBe(false);
+		if (label) {
+			expect(value.left - label.right).toBeGreaterThanOrEqual(16);
+			if (!hasAction) aligned(value.right, row.right);
+		}
+	}
 	for (const heading of geometry.headings) {
 		if (!heading.title || !heading.content) throw new Error("Missing overview heading or content");
 		aligned(heading.row.height, 32);
