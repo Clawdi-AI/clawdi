@@ -22,6 +22,7 @@ import {
 	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
+import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import { agentRouteIdsEqual, agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -278,7 +279,14 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						<span className="sr-only">{linkLabel}</span>
 					</a>
 				) : (
-					<Link to={tile.href} className={ENTITY_STRETCHED_LINK_CLASS} aria-label={linkLabel}>
+					<Link
+						to={tile.href}
+						className={ENTITY_STRETCHED_LINK_CLASS}
+						aria-label={linkLabel}
+						onMouseEnter={preloadHostedAgentHome}
+						onFocus={preloadHostedAgentHome}
+						onTouchStartCapture={preloadHostedAgentHome}
+					>
 						<span className="sr-only">{linkLabel}</span>
 					</Link>
 				)

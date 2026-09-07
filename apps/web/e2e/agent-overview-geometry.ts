@@ -159,6 +159,8 @@ export async function expectAgentOverviewGeometry(
 		if (geometry.subscription) {
 			const { row, status, details, action, date } = geometry.subscription;
 			if (action) {
+				expect(action.left).toBeGreaterThanOrEqual(row.left - 1);
+				expect(action.right).toBeLessThanOrEqual(row.right + 1);
 				if (details && action.top >= details.bottom) {
 					expect(action.top - details.bottom).toBeGreaterThanOrEqual(8);
 				} else {

@@ -23,15 +23,6 @@ import {
 } from "@/lib/agent-routes";
 import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
-import { AgentOverviewPage, AgentSectionPage } from "@/pages/dashboard/agents/agent-detail-client";
-
-export function HostedAgentOverviewPage() {
-	return <AgentOverviewPage detail={AgentHome} />;
-}
-
-export function HostedAgentSectionPage() {
-	return <AgentSectionPage detail={AgentHome} />;
-}
 
 export async function runManualDeploymentRefetch(
 	refetch: () => Promise<unknown>,

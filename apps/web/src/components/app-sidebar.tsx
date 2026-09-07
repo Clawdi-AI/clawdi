@@ -88,6 +88,7 @@ import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
 import { connectedAdapterHasModule } from "@/lib/adapter-modules";
+import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -843,6 +844,7 @@ function SortableAgentRailItem({
 	const preloadAgent = () => {
 		if (!agent.href) return;
 		void router.preloadRoute({ to: agent.href }).catch(() => undefined);
+		preloadHostedAgentHome();
 	};
 
 	// Touch preloading uses capture to coexist with dnd-kit's bubble-phase touch listener below.

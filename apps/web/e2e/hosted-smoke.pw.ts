@@ -7,11 +7,9 @@ import {
 	type Route,
 	test,
 } from "@playwright/test";
-import { computeNow, computeOverviewCases } from "../src/hosted/agents/overview-compute.test-cases";
 import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 import { captureAgentOverview, expectAgentOverviewGeometry } from "./agent-overview-geometry";
-import { runComputeOverviewMatrix } from "./compute-overview-matrix";
 import {
 	type DeploymentMutationFixture,
 	fixtureAgentId,
@@ -20,7 +18,7 @@ import {
 	mutationDeploymentReadFixture,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
-import { measureNavigation, type NavigationIntent } from "./navigation-measurement";
+import { measureNavigation } from "./navigation-measurement";
 
 type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
 type PlanChangeKind = PlanChangeProgress["changeKind"];
@@ -868,16 +866,6 @@ test("navigation timing preserves the outgoing iframe geometry", async ({
 	page,
 	context,
 }, testInfo) => {
-	test.setTimeout(180_000);
-	await stubCompletedStripeCheckout(page);
-	const intent: NavigationIntent =
-		process.env.NAVIGATION_INTENT === "hover"
-			? "hover"
-			: process.env.NAVIGATION_INTENT === "focus"
-				? "focus"
-				: process.env.NAVIGATION_INTENT === "touch"
-					? "touch"
-					: "none";
 	await stubHostedApi(page, {
 		deployments: [
 			{
@@ -924,27 +912,12 @@ test("navigation timing preserves the outgoing iframe geometry", async ({
 		await route.fallback();
 	});
 	const results = [];
-	await page.goto("/");
-	await expect(
-		page.locator(`a[href="/agents/${railHostedEnvironmentId}"]:visible`).first(),
-	).toBeVisible();
-	await page.evaluate(() => document.fonts.ready);
-	slow = true;
-	results.push(
-		await measureNavigation(page, testInfo, {
-			name: "dashboard-to-overview-cold",
-			href: `/agents/${railHostedEnvironmentId}`,
-			destination: '[data-overview-section="tools"]',
-			intent,
-		}),
-	);
 	for (const [section, destination] of [
 		["", '[data-overview-section="tools"]'],
 		["sessions", '[data-slot="page-header"] h1'],
 		["channel-links", '[data-slot="page-header"] h1'],
 		["model-provider", '[data-slot="page-header"] h1'],
 		["settings", '[data-slot="page-header"] h1'],
-		["files", 'main iframe[title="Files"]'],
 	] as const) {
 		for (const temperature of ["cold", "warm"] as const) {
 			slow = false;
@@ -960,7 +933,6 @@ test("navigation timing preserves the outgoing iframe geometry", async ({
 			results.push(
 				await measureNavigation(page, testInfo, {
 					name: `${section || "overview"}-${temperature}`,
-					intent,
 					href: `/agents/${railHostedEnvironmentId}${section ? `/${section}` : ""}`,
 					destination,
 				}),
@@ -1042,23 +1014,61 @@ test("agent navigation retains keyboard focus as inventory resolves", async ({ p
 	}
 });
 
-test("Compute schema and resolver rendering matrix", async ({ page }, testInfo) => {
-	test.setTimeout(300_000);
-	await stubCompletedStripeCheckout(page);
-	await runComputeOverviewMatrix(page, testInfo, async (deployment) => {
-		await page.unrouteAll({ behavior: "wait" });
-		const projectionRemoved =
-			deployment.resource.status?.summary_state === "deleted" &&
-			!deployment.clawdi_cloud_environments?.hermes;
-		await stubHostedApi(page, {
-			deployments: [deployment],
-			cloudAgents: projectionRemoved ? [] : [{ ...railHostedCloudAgent, id: deployment.agent_id }],
-			cloudAgentNotFoundIds: projectionRemoved ? [deployment.agent_id] : [],
-			plans: [basicPlan, performancePlan],
-			agentResourceFixtures: true,
-			sessionsPage: hostedOverviewSessionsPage(3),
+test("agent layout does not mount the runtime before its provider is loaded", async ({
+	page,
+	context,
+}) => {
+	let release = () => {};
+	let requested = false;
+	let documents = 0;
+	const provider = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route(/hosted-agent-event-stream-layout/, async (route) => {
+		requested = true;
+		await provider;
+		await route.fallback();
+	});
+	await stubHostedApi(page, {
+		deployments: [{ ...railHostedDeployment, hermes_control_ui_url: "https://runtime.example/" }],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await context.route("https://runtime.example/**", (route) => {
+		if (route.request().isNavigationRequest()) documents += 1;
+		return route.fulfill({
+			contentType: "text/html",
+			body: "<!doctype html><p>Runtime document</p>",
 		});
 	});
+	try {
+		await page.goto(`/agents/${railHostedEnvironmentId}/console`, {
+			waitUntil: "domcontentloaded",
+		});
+		await expect.poll(() => requested).toBe(true);
+		expect(documents).toBe(0);
+		release();
+		await expect(
+			page.frameLocator('iframe[title="Hermes Dashboard"]').getByText("Runtime document"),
+		).toBeVisible();
+		expect(documents).toBe(1);
+	} finally {
+		release();
+	}
+});
+
+test("dismissed hosted agents never reappear as connected during projection cleanup", async ({
+	page,
+}) => {
+	for (const status of ["deleting", "deleted"]) {
+		await page.unrouteAll({ behavior: "wait" });
+		await stubHostedApi(page, {
+			deployments: [{ ...railHostedDeployment, status }],
+			cloudAgents: [railHostedCloudAgent],
+		});
+		await page.goto(`/agents/${railHostedEnvironmentId}`);
+		await expect(page).toHaveURL("/");
+		await expect(page.locator("[data-overview-status]")).toHaveCount(0);
+	}
 });
 
 test("overview loading geometry retains card structure and section rhythm", async ({
@@ -1109,9 +1119,6 @@ test("overview loading geometry retains card structure and section rhythm", asyn
 						border: style.borderWidth,
 						radius: style.borderRadius,
 						padding: style.padding,
-						facts: Array.from(card.querySelectorAll("dt, dd"), (fact) =>
-							fact.getBoundingClientRect().toJSON(),
-						),
 						titleLine: title ? getComputedStyle(title).lineHeight : null,
 						descriptionLine: description ? getComputedStyle(description).lineHeight : null,
 					};
@@ -1138,9 +1145,6 @@ test("overview loading geometry retains card structure and section rhythm", asyn
 		try {
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			await expect(page.getByTestId("overview-status-card-skeleton")).toBeVisible();
-			const loadingCompute = page.getByTestId("overview-compute-summary");
-			await expect(loadingCompute.getByText("Subscription", { exact: true })).toBeHidden();
-			await expect(loadingCompute.getByText("Next renewal", { exact: true })).toBeHidden();
 			await page.locator("#dashboard-scroll-container").evaluate((element) => {
 				element.scrollTop = 0;
 			});
@@ -1190,14 +1194,6 @@ test("overview loading geometry retains card structure and section rhythm", asyn
 					`${before.id} height`,
 				).toBeLessThanOrEqual(1);
 				expect(Math.abs(after.box.y - before.box.y), `${before.id} top`).toBeLessThanOrEqual(1);
-				expect(after.facts).toHaveLength(before.facts.length);
-				for (const [index, fact] of before.facts.entries()) {
-					for (const dimension of ["x", "y", "width", "height"] as const)
-						expect(
-							Math.abs(after.facts[index][dimension] - fact[dimension]),
-							`Compute ${index} ${dimension}`,
-						).toBeLessThanOrEqual(1);
-				}
 			}
 			const geometry = await expectAgentOverviewGeometry(page, {
 				hosted: true,
@@ -3433,7 +3429,7 @@ async function stubOpenClawRuntime(page: Page, context: BrowserContext, handoffU
 		return { isStarted: () => started, release };
 	};
 
-	// Page routes exclude a popup's initial navigation, unlike context routes.
+	// A popup's initial navigation belongs to context routing, not this page.
 	await page.route("https://runtime.example/**", async (route) => {
 		if (route.request().isNavigationRequest()) {
 			const gate = nextFrameGate;
@@ -4161,9 +4157,22 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 	}
 });
 
-test("Compute shortcuts navigate without billing mutations", async ({ page }) => {
-	await page.clock.setFixedTime(new Date(computeNow));
-	await stubCompletedStripeCheckout(page);
+test("overview billing facts and shortcuts follow subscription authority", async ({
+	page,
+}, testInfo) => {
+	await page.clock.setFixedTime(new Date("2026-09-07T12:00:00Z"));
+	const included = includedBasicDeployment.compute_subscription;
+	const paid = paidBasicDeployment.compute_subscription;
+	if (!included || !paid) throw new Error("Missing subscription fixtures");
+	const deployment = mutationDeploymentReadFixture({
+		...railHostedDeployment,
+		hermes_control_ui_url: "https://runtime.example/",
+	});
+	const commercial = deployment.commercial_display;
+	const runtimeStatus = deployment.resource.status;
+	if (!commercial || !runtimeStatus) throw new Error("Missing deployment projection");
+	const future = "2027-07-15T00:00:00Z";
+	const ended = "2026-08-15T00:00:00Z";
 	const billingMutations: string[] = [];
 	page.on("request", (request) => {
 		if (
@@ -4172,32 +4181,192 @@ test("Compute shortcuts navigate without billing mutations", async ({ page }) =>
 		)
 			billingMutations.push(request.url());
 	});
-	for (const name of [
-		"included-upgrade",
-		"requires-action",
-		"wallet-recovery",
-		"canceled-recovery",
-	]) {
-		const scenario = computeOverviewCases.find((scenario) => scenario.name === name);
-		if (!scenario) throw new Error(`Missing Compute action fixture: ${name}`);
-		const { deployment, expected } = scenario;
-		await page.unrouteAll({ behavior: "wait" });
-		await stubHostedApi(page, {
-			deployments: [deployment],
-			cloudAgents: [{ ...railHostedCloudAgent, id: deployment.agent_id }],
-			plans: [basicPlan, performancePlan],
-		});
-		await page.goto(`/agents/${deployment.agent_id}`);
-		const action = page.getByTestId("overview-compute-summary").getByRole("button");
-		await expect(action).toHaveCount(1);
-		await action.click();
-		const target =
-			expected.action === "top_up"
-				? `/agents/${deployment.agent_id}?settings=billing-wallet`
-				: `/agents/${deployment.agent_id}/settings#compute-plan-controls`;
-		await expect(page).toHaveURL(target);
-		if (expected.action === "top_up") await expect(page.getByRole("dialog")).toBeVisible();
-		else await expect(page.locator("#compute-plan-controls")).toBeVisible();
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+		agentResourceFixtures: true,
+		sessionsPage: hostedOverviewSessionsPage(3),
+	});
+	for (const scenario of [
+		{
+			name: "included",
+			subscription: included,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
+		},
+		{
+			name: "stopped",
+			subscription: included,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
+		},
+		{
+			name: "paid",
+			subscription: paid,
+			value: "Active",
+			date: ["Next renewal", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "canceling",
+			subscription: { ...paid, cancel_at_period_end: true, cancel_at: future },
+			value: "Canceling",
+			date: ["Ends on", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "trial",
+			subscription: {
+				...paid,
+				status: "trialing",
+				actions: { cancel: "end_trial", resume: false, command_state: null },
+			},
+			value: "Trial",
+			date: ["Trial ends", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "payment-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: "2026-09-08T12:00:00Z",
+			},
+			value: "Past due",
+			date: ["Next payment attempt", "Sep 8, 2026"],
+			action: "Fix payment",
+		},
+		{
+			name: "missing-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: null,
+			},
+			value: "Past due",
+			date: null,
+			action: "Fix payment",
+		},
+		{
+			name: "wallet-recovery",
+			subscription: {
+				...paid,
+				funding_source: "wallet",
+				payment_state: "past_due",
+				recovery_action: "top_up",
+			},
+			value: "Past due",
+			date: null,
+			action: "Top up",
+		},
+		{
+			name: "ended",
+			subscription: {
+				...paid,
+				status: "canceled",
+				canceled_at: ended,
+				recovery_action: "start_new",
+			},
+			value: "Ended",
+			date: ["Ended on", "Aug 15, 2026"],
+			action: "Manage",
+		},
+		{
+			name: "pending",
+			subscription: { ...paid, recovery_blocked_reason: "authority_pending" },
+			value: "Updating subscription",
+			date: null,
+			action: null,
+		},
+		{
+			name: "missing-date",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-subscription",
+			subscription: { ...paid, status: "unrecognized" },
+			value: "Status unavailable",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-runtime",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{ name: "missing-subscription", subscription: null, value: null, date: null, action: null },
+	] as const) {
+		commercial.compute_subscription = scenario.subscription;
+		deployment.resource.status =
+			scenario.name === "unknown-runtime"
+				? null
+				: { ...runtimeStatus, summary_state: scenario.name === "stopped" ? "stopped" : "running" };
+		deployment.upgrade_available = scenario.name === "included" || scenario.name === "stopped";
+		for (const width of scenario.name === "payment-retry"
+			? [1440, 320]
+			: scenario.name === "paid"
+				? [1440, 390]
+				: [1440]) {
+			await page.setViewportSize({
+				width,
+				height: width === 1440 ? 900 : width === 320 ? 800 : 844,
+			});
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			const compute = page.locator('[data-overview-status="compute"]');
+			const body = compute.locator('[data-slot="card-content"]');
+			await expect(body).toContainText("Basic plan");
+			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
+			const row = body.locator("[data-overview-subscription-row]");
+			if (scenario.value) await expect(row).toContainText(scenario.value);
+			else await expect(row).toHaveCount(0);
+			if (scenario.value === "Included with your plan") {
+				await expect(row.getByText("Subscription:", { exact: true })).toHaveCount(0);
+				await expect(row.getByText("Active", { exact: true })).toHaveCount(0);
+			}
+			const date = row.locator("xpath=following-sibling::div[1]");
+			await expect(date).toHaveCount(scenario.date ? 1 : 0);
+			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
+			const actions = body.getByRole("button");
+			await expect(actions).toHaveCount(scenario.action ? 1 : 0);
+			if (scenario.action) {
+				await expect(actions).toHaveText(scenario.action);
+				await expect(
+					page.locator('main [data-slot="alert"]').getByRole("button", {
+						name: /^(Fix payment|Top up|Start a new subscription)$/,
+					}),
+				).toHaveCount(0);
+			}
+			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
+			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
+			await captureAgentOverview(page, testInfo, `hermes-final-clean-${scenario.name}-${width}`);
+			if (scenario.name === "paid" && width === 1440) {
+				await page.locator("html").evaluate((element) => element.classList.add("dark"));
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+				await captureAgentOverview(page, testInfo, "hermes-final-clean-paid-1440-dark");
+				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+			}
+			if (scenario.action) {
+				const target =
+					scenario.action === "Top up"
+						? `/agents/${railHostedEnvironmentId}?settings=billing-wallet`
+						: `/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`;
+				await expect(actions).toHaveAttribute("href", target);
+				await actions.click();
+				await expect(page).toHaveURL(target);
+				if (scenario.action === "Top up") await expect(page.getByRole("dialog")).toBeVisible();
+				else await expect(page.locator("#compute-plan-controls")).toBeVisible();
+			}
+		}
 	}
 	expect(billingMutations).toEqual([]);
 });
