@@ -59,6 +59,34 @@ bun run --cwd apps/web test
 validated env module. If you bypass that Bun config, seed
 `VITE_CLERK_PUBLISHABLE_KEY` yourself.
 
+## Route admission
+
+Initial SSR still uses Clerk request middleware and server `auth()` with
+`cache-control: no-store`. SPA navigation uses live Clerk `useAuth()` and SDK
+status through typed native Router context; it does not reverify the session
+on the Start server for each navigation. API, Files grants, runtime and stream
+authorization remain independent server boundaries.
+
+`AuthRouterBridge` replaces the QueryClient on user/session identity changes,
+retires protected route preloads, and invalidates protected matches.
+`ProtectedAuthBoundary` prevents a cached match from rendering under another
+live identity. Same-identity navigation keeps its cache and mounted state.
+Loading/pending/unavailable SDK states do not admit protected UI. SDK readiness
+is not proof of immediate remote revocation or current JWT validity; denied
+API requests remain errors. Account-admission failures block protected content;
+401 offers explicit reauthentication, while other failures remain recoverable
+without signing the user out.
+
+Inside an isolated Docker browser-test environment with dependencies and
+Chromium installed, run the SDK-event contract suite:
+
+```bash
+bun run --cwd apps/web e2e --config=playwright.auth.config.ts
+```
+
+Done: the lifecycle suite passes without Clerk credentials. Its event mocks
+test the integration contract, not a live Clerk tenant.
+
 ## OSS build boundary
 
 `bun run --cwd apps/web build:oss` is defined as:

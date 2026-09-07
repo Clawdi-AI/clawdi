@@ -8,6 +8,8 @@ export default defineConfig({
 	testMatch: "**/*.pw.ts",
 	globalSetup: "./e2e/global-setup.ts",
 	testIgnore: [
+		// SDK lifecycle contracts use their own isolated Clerk fixture server.
+		"**/auth/**",
 		// Hosted suites run under playwright.hosted.config.ts
 		// (VITE_CLAWDI_HOSTED=true); in the OSS build those surfaces cannot
 		// render.

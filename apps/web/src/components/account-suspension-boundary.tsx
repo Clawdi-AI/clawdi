@@ -2,13 +2,14 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { AccountSuspendedPage } from "@/components/account-suspended-page";
+import { AuthStatus } from "@/components/auth-status";
 import {
 	getAccountSuspendedServerSnapshot,
 	getAccountSuspendedSnapshot,
 	subscribeToAccountSuspension,
 } from "@/lib/account-suspension";
 import { useOpenApi } from "@/lib/api";
-import { isAccountSuspendedError } from "@/lib/api-errors";
+import { isAccountSuspendedError, isApiAuthError } from "@/lib/api-errors";
 import { useAuthActions, useCurrentUser } from "@/lib/auth-client";
 import { useHydrated } from "@/lib/use-hydrated";
 
@@ -35,12 +36,14 @@ export function AccountSuspensionBoundary({ children }: { children: React.ReactN
 	);
 
 	if (suspended || isAccountSuspendedError(access.error)) {
-		return <SuspendedAccountState />;
+		return <AccountAccessDeniedState suspended />;
 	}
+	if (isApiAuthError(access.error)) return <AccountAccessDeniedState suspended={false} />;
+	if (access.isError) return <AuthStatus status="unavailable" />;
 	return children;
 }
 
-function SuspendedAccountState() {
+function AccountAccessDeniedState({ suspended }: { suspended: boolean }) {
 	const { signOut } = useAuthActions();
 	const [signingOut, setSigningOut] = useState(false);
 	const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -56,6 +59,16 @@ function SuspendedAccountState() {
 		}
 	};
 
+	if (!suspended) {
+		return (
+			<AuthStatus
+				status="signed-out"
+				onSignIn={() => void handleSignOut()}
+				signingIn={signingOut}
+				error={signOutError}
+			/>
+		);
+	}
 	return (
 		<AccountSuspendedPage
 			onSignOut={() => void handleSignOut()}

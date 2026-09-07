@@ -1,7 +1,9 @@
 "use client";
 
 import { useAuth, useClerk, useUser } from "@clerk/tanstack-react-start";
+import { useCallback, useSyncExternalStore } from "react";
 import { env } from "@/lib/env";
+import { resolveRouteAuth } from "@/lib/route-auth";
 
 const DEV_AUTH_BEARER = env.VITE_DEV_AUTH_TOKEN;
 
@@ -33,12 +35,33 @@ export function useAuthToken() {
 export function useDashboardAuth() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return {
+			isLoaded: true,
 			isSignedIn: true,
 			userId: DEV_USER.id,
+			sessionId: "dev_browser_session",
 			getToken: async () => DEV_AUTH_BEARER,
 		};
 	}
 	return useAuth();
+}
+
+export function useRouteAuth() {
+	const auth = useDashboardAuth();
+	if (env.VITE_DEV_AUTH_BYPASS) return resolveRouteAuth(auth, "ready");
+	const clerk = useClerk();
+	const status = useSyncExternalStore(
+		useCallback(
+			(listener) => {
+				clerk.on("status", listener);
+				return () => clerk.off("status", listener);
+			},
+			[clerk],
+		),
+		() => clerk.status,
+		// Only SSR/hydration uses the server-authenticated Clerk snapshot.
+		() => "ready" as const,
+	);
+	return resolveRouteAuth(auth, status);
 }
 
 export function useCurrentUser() {
