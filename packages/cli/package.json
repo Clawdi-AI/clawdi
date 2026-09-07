@@ -65,7 +65,7 @@
 		"@clack/prompts": "^1.7.0",
 		"@clawdi/shared": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.30.0",
-		"@types/bun": "^1.4.0",
+		"@types/bun": "^1.4.1",
 		"@types/node": "^24.13.3",
 		"chalk": "^6.0.0",
 		"commander": "^15.0.0",

@@ -19,13 +19,13 @@
 		"test:internal": "bun test src"
 	},
 	"dependencies": {
-		"@x402/core": "2.23.0",
-		"@x402/evm": "2.23.0",
-		"@x402/fetch": "2.23.0",
-		"viem": "2.55.19"
+		"@x402/core": "2.25.0",
+		"@x402/evm": "2.25.0",
+		"@x402/fetch": "2.25.0",
+		"viem": "2.56.3"
 	},
 	"devDependencies": {
-		"@types/bun": "^1.4.0",
+		"@types/bun": "^1.4.1",
 		"typescript": "catalog:"
 	}
 }
