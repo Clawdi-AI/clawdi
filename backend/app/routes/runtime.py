@@ -11,17 +11,30 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import exists, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import (
+    API_KEY_PREFIX,
     AuthContext,
+    VerifiedClerkJwt,
+    auth_via_verified_clerk_jwt,
+    bearer_scheme,
+    get_auth,
     is_connected_agent_principal,
     require_auth_scopes,
     require_cli_auth,
+    verify_clerk_jwt,
 )
 from app.core.config import settings
-from app.core.database import get_session, runtime_snapshot_session
+from app.core.database import (
+    RuntimeManifestSessions,
+    async_session_factory,
+    get_runtime_manifest_sessions,
+    get_session,
+    runtime_snapshot_session,
+)
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -112,13 +125,43 @@ class _RuntimeManifestSnapshot:
     repair_link_ids: tuple[UUID, ...]
 
 
+async def _manifest_credential(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> HTTPAuthorizationCredentials | VerifiedClerkJwt:
+    token = credentials.credentials
+    if token.startswith(API_KEY_PREFIX) or (
+        settings.dev_auth_bypass and token == settings.dev_auth_token
+    ):
+        return credentials
+    # Verify JWTs before reserving connections; JWKS can require network I/O.
+    async with async_session_factory() as db:
+        verified = await verify_clerk_jwt(token, db)
+    if verified is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    return verified
+
+
+async def _get_runtime_manifest_auth(
+    credential: HTTPAuthorizationCredentials | VerifiedClerkJwt = Depends(_manifest_credential),
+    sessions: RuntimeManifestSessions = Depends(get_runtime_manifest_sessions),
+) -> AuthContext:
+    if isinstance(credential, HTTPAuthorizationCredentials):
+        return await get_auth(credential, sessions.auth)
+    auth = await auth_via_verified_clerk_jwt(credential, sessions.auth)
+    if auth is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    return auth
+
+
 @router.get("/manifest")
 async def get_runtime_manifest(
     request: Request,
     requested_environment_id: UUID | None = Query(default=None, alias="environment_id"),
-    auth: AuthContext = Depends(require_cli_auth),
-    db: AsyncSession = Depends(get_session),
+    auth: AuthContext = Depends(_get_runtime_manifest_auth),
+    sessions: RuntimeManifestSessions = Depends(get_runtime_manifest_sessions),
 ) -> Response:
+    await require_cli_auth(auth)
+    db = sessions.auth
     environment_id = _authorized_environment_id(auth, requested_environment_id)
     if request.headers.get("accept") != RUNTIME_BUNDLE_V2_MEDIA_TYPE:
         raise HTTPException(
@@ -140,6 +183,7 @@ async def get_runtime_manifest(
     try:
         snapshot = await _render_runtime_source_snapshot(
             db=db,
+            snapshot_sessions=sessions.snapshots,
             environment_id=environment_id,
             owner_user_id=auth.user_id,
             if_none_match=if_none_match,
@@ -161,6 +205,7 @@ async def get_runtime_manifest(
             await db.commit()
             snapshot = await _render_runtime_source_snapshot(
                 db=db,
+                snapshot_sessions=sessions.snapshots,
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
                 if_none_match=if_none_match,
@@ -191,6 +236,7 @@ async def get_runtime_manifest(
 async def _render_runtime_source_snapshot(
     *,
     db: AsyncSession,
+    snapshot_sessions: async_sessionmaker[AsyncSession],
     environment_id: UUID,
     owner_user_id: UUID,
     if_none_match: str | None,
@@ -199,7 +245,7 @@ async def _render_runtime_source_snapshot(
 ) -> _RuntimeManifestSnapshot:
     canonical_projection = project_agent_plugins and project_agent_plugin_github_release_sources
     if if_none_match is not None:
-        async with runtime_snapshot_session() as source_db:
+        async with runtime_snapshot_session(session_factory=snapshot_sessions) as source_db:
             authority = await load_persisted_runtime_source_authority(
                 source_db,
                 environment_id=environment_id,
@@ -221,7 +267,7 @@ async def _render_runtime_source_snapshot(
                 repair_link_ids=(),
             )
 
-    async with runtime_snapshot_session() as source_db:
+    async with runtime_snapshot_session(session_factory=snapshot_sessions) as source_db:
         batch = await load_runtime_source_batch(
             source_db,
             environment_ids=[environment_id],
@@ -522,6 +568,7 @@ async def get_project_skill_archive(
         skill.skill_key,
         skill.name,
     ).local_skill_key
+    await db.close()
     try:
         stored = await file_store.get(skill.file_key)
         stored = await _prepare_project_skill_archive(
@@ -567,6 +614,7 @@ async def get_project_skill_file(
     )
     if not skill.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
+    await db.close()
     try:
         stored = await file_store.get(skill.file_key)
     except Exception:
@@ -603,6 +651,13 @@ def _assert_project_skill_signature(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectSkillSource:
+    file_key: str | None
+    skill_key: str
+    name: str
+
+
 async def _linked_project_skill(
     db: AsyncSession,
     *,
@@ -611,7 +666,7 @@ async def _linked_project_skill(
     content_hash: str,
     project_id: UUID | None = None,
     local_skill_key: str | None = None,
-) -> Skill:
+) -> _ProjectSkillSource:
     membership = ProjectMembership.__table__.alias("signed_project_skill_membership")
     filters = [
         Skill.id == skill_id,
@@ -626,9 +681,9 @@ async def _linked_project_skill(
     ]
     if project_id is not None:
         filters.append(Project.id == project_id)
-    skill = (
+    row = (
         await db.execute(
-            select(Skill)
+            select(Skill.file_key, Skill.skill_key, Skill.name)
             .join(Project, Project.id == Skill.project_id)
             .join(
                 AgentProjectBinding,
@@ -643,8 +698,12 @@ async def _linked_project_skill(
             )
             .where(*filters)
         )
-    ).scalar_one_or_none()
-    if skill is None or (
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
+    file_key, stored_skill_key, name = row
+    skill = _ProjectSkillSource(file_key=file_key, skill_key=stored_skill_key, name=name)
+    if (
         local_skill_key is not None
         and project_skill_runtime_identity(
             skill.skill_key,
@@ -673,7 +732,9 @@ def _validated_project_skill_file_path(value: str) -> str:
     return value
 
 
-def _extract_project_skill_file(data: bytes, skill: Skill, relative_path: str) -> bytes:
+def _extract_project_skill_file(
+    data: bytes, skill: _ProjectSkillSource, relative_path: str
+) -> bytes:
     if skill.file_key and skill.file_key.endswith(".md"):
         if relative_path != "SKILL.md" or len(data) > _MAX_PROJECT_SKILL_FILE_BYTES:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")

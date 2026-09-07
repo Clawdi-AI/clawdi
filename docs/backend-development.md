@@ -413,6 +413,17 @@ control runtime-source snapshot connection, both without overflow. A source
 read holds its authorization transaction while opening a consistent snapshot;
 separate pools prevent nested checkout deadlocks between concurrent callers.
 Both use the ordinary pool's timeout, metrics, and cancellation-safe cleanup.
+Ordinary runtime manifests acquire a complete pair of ordinary connections
+before authentication: one for the unchanged authority transaction, one for
+read-only RR snapshots. Only pair acquisition is serialized, within the ordinary
+pool timeout; renders run concurrently. Connections stay reserved across commits
+and repairs, so no manifest can hold auth while competing for a second checkout.
+The shared eight-slot web pool still supports four concurrent manifests and
+remains fully available to other traffic when manifests are idle. Neither
+control slot is borrowed. Signed Project Skill downloads retain only immutable
+file metadata and close their read-only lookup before object storage I/O.
+JWT signature/JWKS verification precedes pair acquisition; principal authority
+is still resolved under the original transaction locks afterwards.
 Only control transactions additionally set a code-owned 5s `lock_timeout` per
 lock acquisition. PostgreSQL SQLSTATE `55P03` becomes a sanitized 503 with
 `Retry-After: 1`, counted by `clawdi_backend_db_control_lock_timeouts_total`,
@@ -437,12 +448,13 @@ contracts. A close before acceptance rejects the HTTP upgrade with 403; no
 WebSocket close frame can be delivered before the upgrade.
 
 ```bash
-scripts/test.sh backend tests/test_platform_workload_oauth.py tests/test_smoke.py
+scripts/test.sh backend tests/test_runtime_manifest_pool.py tests/test_platform_workload_oauth.py tests/test_smoke.py
 ```
 
 Done: slow admin provider I/O and real PostgreSQL pool contention leave
 deployment control and concurrent nested snapshots usable, both
-WebSocket timeout paths close without HTTP ASGI messages, and the command exits 0.
+WebSocket timeout paths close without HTTP ASGI messages, synchronized manifests
+complete without nested pool starvation, and the command exits 0.
 
 Admin endpoints are disabled by default. The local setup and key-minting flow is
 in [`AGENTS.md`](../AGENTS.md#local-end-to-end). To exercise admin endpoints

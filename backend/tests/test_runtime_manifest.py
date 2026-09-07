@@ -19,8 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
+from app.core.database import (
+    RuntimeManifestSessions,
+    get_control_session,
+    get_runtime_manifest_sessions,
+    get_session,
+)
 from app.core.database import engine as runtime_engine
-from app.core.database import get_control_session, get_session
 from app.main import app
 from app.models.agent_plugin import (
     AgentPluginInstallation,
@@ -492,9 +497,17 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     async def _override_get_auth():
         return AuthContext(user=seed_user, api_key=api_key)
 
+    async def _override_manifest_sessions():
+        yield RuntimeManifestSessions(
+            auth=db_session,
+            snapshots=async_sessionmaker(runtime_engine, expire_on_commit=False),
+        )
+
     app.dependency_overrides[get_control_session] = _override_get_session
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
+    app.dependency_overrides[runtime_routes._get_runtime_manifest_auth] = _override_get_auth
+    app.dependency_overrides[get_runtime_manifest_sessions] = _override_manifest_sessions
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(
         transport=transport,
@@ -5318,8 +5331,9 @@ async def test_admin_runtime_state_rejects_hosted_control_plane_authority(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_requires_environment_bound_cli_key(client):
-    clerk_response = await client.get("/v1/runtime/manifest")
+async def test_runtime_manifest_requires_environment_bound_cli_key(db_session, seed_user):
+    async with await _runtime_client(db_session, seed_user, None) as client:
+        clerk_response = await client.get("/v1/runtime/manifest")
     assert clerk_response.status_code == 403
 
 
