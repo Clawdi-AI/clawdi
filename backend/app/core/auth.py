@@ -13,7 +13,7 @@ import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, bindparam, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,6 +105,29 @@ _clerk_jwks_client = (
 # long ago. Every authenticated CLI request used to write+commit the row,
 # which becomes write-lock contention on a hot key at scale.
 LAST_USED_THROTTLE = timedelta(minutes=1)
+
+# Reuse only the query structure; authority is read anew after acquiring its lock.
+_USER_AUTHORITY_SQL = user_authority_sql_expressions()
+_API_KEY_AUTHORITY_QUERY = (
+    select(
+        ApiKey,
+        User,
+        AgentEnvironment.default_project_id,
+        _USER_AUTHORITY_SQL.suspended.label("principal_suspended"),
+        _USER_AUTHORITY_SQL.disabled.label("principal_disabled"),
+    )
+    .outerjoin(User, User.id == ApiKey.user_id)
+    .outerjoin(
+        AgentEnvironment,
+        and_(
+            AgentEnvironment.id == ApiKey.environment_id,
+            AgentEnvironment.user_id == ApiKey.user_id,
+            AgentEnvironment.archived_at.is_(None),
+        ),
+    )
+    .where(ApiKey.key_hash == bindparam("key_hash"))
+    .execution_options(populate_existing=True)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,29 +225,7 @@ async def _load_api_key_authority(
     db: AsyncSession,
     key_hash: str,
 ) -> _ApiKeyAuthority | None:
-    expressions = user_authority_sql_expressions()
-    row = (
-        await db.execute(
-            select(
-                ApiKey,
-                User,
-                AgentEnvironment.default_project_id,
-                expressions.suspended.label("principal_suspended"),
-                expressions.disabled.label("principal_disabled"),
-            )
-            .outerjoin(User, User.id == ApiKey.user_id)
-            .outerjoin(
-                AgentEnvironment,
-                and_(
-                    AgentEnvironment.id == ApiKey.environment_id,
-                    AgentEnvironment.user_id == ApiKey.user_id,
-                    AgentEnvironment.archived_at.is_(None),
-                ),
-            )
-            .where(ApiKey.key_hash == key_hash)
-            .execution_options(populate_existing=True)
-        )
-    ).one_or_none()
+    row = (await db.execute(_API_KEY_AUTHORITY_QUERY, {"key_hash": key_hash})).one_or_none()
     if row is None:
         return None
     api_key, user, api_key_project_id, suspended, disabled = row

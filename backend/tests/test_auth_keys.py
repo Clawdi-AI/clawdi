@@ -175,7 +175,14 @@ async def test_unbound_api_key_auth_reloads_committed_scope_and_revocation(
         label="durable authority key",
         scopes=["vault:read", "vault:write"],
     )
+    other_key = await mint_api_key(
+        db_session, user_id=seed_user.id, label="other authority key", scopes=["skills:read"]
+    )
     assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    other_auth = await _auth_via_api_key(other_key.raw_key, db_session)
+    assert other_auth is not None and other_auth.api_key is not None
+    assert other_auth.api_key.id == other_key.api_key.id
+    assert other_auth.api_key.scopes == ["skills:read"]
     await db_session.commit()
 
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
