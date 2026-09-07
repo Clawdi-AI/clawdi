@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -93,6 +94,7 @@ import {
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
+import { runtimeSystemdCommonEnvironment } from "../src/runtime/runtime-systemd-reconciliation";
 import { canonicalSecretRefSchema, normalizeSecretValues } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
@@ -6544,6 +6546,93 @@ exit 64
 			restore();
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("keeps systemd activation unchanged when watch inherits its generated PATH", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const systemctlLog = join(root, "systemctl-path.log");
+		const inheritedPath = process.env.PATH;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		installSuccessfulSystemctlFixture(join(run, "egress", "systemd", "ca.pem"), systemctlLog);
+		writeHermesVersionBinary(home, "0.20.1");
+		seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
+		const paths = getRuntimePaths();
+		const load = hostedHermesDashboardCapabilityLoad(home);
+		load.applyContext = explicitTestApplyContext(load.manifest);
+
+		try {
+			const bootstrap = convergeRuntimeManifest(load, paths);
+			expect(bootstrap.installErrors).toEqual([]);
+			const bootstrapUnits = readSystemdUnitSnapshot(paths);
+			const bootstrapActivation = applySystemdRuntimeUpdate(
+				paths,
+				{ system: new Map(), user: new Map() },
+				bootstrapUnits,
+				{},
+			);
+			expect(bootstrapActivation.applied).toBe(true);
+			writeTestRuntimeAppliedState(paths, load, bootstrap, {
+				activated: bootstrapActivation.activated,
+			});
+			const watchPath = parseEnv(readSystemdEnvFile(paths, "clawdi-runtime-watch")).PATH;
+			if (watchPath === undefined) throw new Error("watch environment has no PATH");
+			const dashboardRevision = systemdEnvDigest(
+				readSystemdEnvFile(paths, "clawdi-hermes-dashboard"),
+			);
+
+			// Bootstrap and watch are separate processes with the same desired state.
+			process.env.PATH = watchPath;
+			for (const phase of ["first-watch", "repeat-watch"]) {
+				writeFileSync(systemctlLog, "");
+				const before = readSystemdUnitSnapshot(paths);
+				const convergence = convergeRuntimeManifest(load, paths);
+				expect(convergence.installErrors).toEqual([]);
+				const after = readSystemdUnitSnapshot(paths);
+				const activation = applySystemdRuntimeUpdate(paths, before, after, {});
+				expect(activation.applied).toBe(true);
+				expect({
+					phase,
+					watchPath: parseEnv(readSystemdEnvFile(paths, "clawdi-runtime-watch")).PATH,
+					units: after,
+					dashboardRevision: systemdEnvDigest(readSystemdEnvFile(paths, "clawdi-hermes-dashboard")),
+					activated: activation.activated,
+					systemUnitsChanged: activation.systemUnitsChanged,
+					userUnitsChanged: activation.userUnitsChanged,
+					restarts: readFileSync(systemctlLog, "utf8")
+						.split("\n")
+						.filter((line) => /^(--user )?restart /.test(line)),
+				}).toEqual({
+					phase,
+					watchPath,
+					units: bootstrapUnits,
+					dashboardRevision,
+					activated: bootstrapActivation.activated,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+					restarts: [],
+				});
+				writeTestRuntimeAppliedState(paths, load, convergence, { activated: activation.activated });
+			}
+
+			const managed = `${paths.userLocalBin}:${join(home, ".openclaw", "bin")}`;
+			process.env.PATH = `/custom bin::./tools:${managed}:/usr/bin:`;
+			expect(runtimeSystemdCommonEnvironment(paths).PATH).toBe(
+				`${managed}:/custom bin::./tools:/usr/bin`,
+			);
+			delete process.env.PATH;
+			const fallback = `${managed}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+			expect(runtimeSystemdCommonEnvironment(paths).PATH).toBe(fallback);
+			process.env.PATH = "";
+			expect(runtimeSystemdCommonEnvironment(paths).PATH).toBe(fallback);
+		} finally {
+			if (inheritedPath === undefined) delete process.env.PATH;
+			else process.env.PATH = inheritedPath;
 		}
 	});
 
