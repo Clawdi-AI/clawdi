@@ -71,9 +71,13 @@ authorization remain independent server boundaries.
 retires protected route preloads, and invalidates protected matches.
 `ProtectedAuthBoundary` prevents a cached match from rendering under another
 live identity. Same-identity navigation keeps its cache and mounted state.
-Loading/pending/unavailable SDK states do not admit protected UI. SDK readiness
-is not proof of immediate remote revocation or current JWT validity; denied
-API requests remain errors. Account-admission failures block protected content;
+Clerk's native authenticated SSR snapshot remains admitted while its browser
+SDK initializes; script loading alone does not replace the cache or unmount
+content. Unknown auth, pending/signed-out sessions and explicit SDK
+degraded/error states do not admit protected UI. No application auth snapshot
+is retained: Clerk owns the handover from SSR to emitted client resources.
+Native auth is not proof of immediate remote revocation or current JWT validity;
+denied API requests remain errors. Account-admission failures block protected content;
 401 offers explicit reauthentication, while other failures remain recoverable
 without signing the user out.
 

@@ -14,6 +14,7 @@ import { AuthRouterBridge } from "@/components/auth-router-bridge";
 import { ProtectedAuthBoundary, ProtectedRouteError } from "@/components/protected-auth-boundary";
 import { useRouteAuth } from "@/lib/auth-client";
 import { type AppRouterContext, type RouteAuth, requireRouteIdentity } from "@/lib/route-auth";
+import { useHydrated } from "@/lib/use-hydrated";
 import { emitSdk } from "./clerk-fixture";
 
 const serverAuth: RouteAuth = { status: "signed-in", userId: "user-a", sessionId: "session-a" };
@@ -21,15 +22,20 @@ const observations: { status: RouteAuth["status"]; sameClient: boolean; cached: 
 const errors: string[] = [];
 let mounts = 0;
 let unmounts = 0;
+let hydrated = false;
+let originalClient: ReturnType<typeof useQueryClient> | undefined;
 
 function CacheProbe() {
 	const client = useQueryClient();
 	const auth = useRouteAuth();
+	const isHydrated = useHydrated();
 	const [firstClient] = useState(() => {
 		client.setQueryData(["hydration-probe"], "fixture-cache");
+		originalClient = client;
 		return client;
 	});
 	useLayoutEffect(() => {
+		hydrated = isHydrated;
 		observations.push({
 			status: auth.status,
 			sameClient: client === firstClient,
@@ -83,8 +89,13 @@ function createProbeRouter(isServer: boolean) {
 		path: "/",
 		component: DocumentProbe,
 	});
+	const signIn = createRoute({
+		getParentRoute: () => root,
+		path: "/sign-in",
+		component: () => <h1>Sign in</h1>,
+	});
 	const router = createRouter({
-		routeTree: root.addChildren([protectedRoute.addChildren([index])]),
+		routeTree: root.addChildren([protectedRoute.addChildren([index]), signIn]),
 		history: createMemoryHistory({ initialEntries: ["/"] }),
 		isServer,
 		context: { auth: isServer ? serverAuth : undefined },
@@ -117,6 +128,12 @@ if (typeof document !== "undefined") {
 		observations,
 		errors,
 		emitSdk,
+		get hydrated() {
+			return hydrated;
+		},
+		get originalCached() {
+			return originalClient?.getQueryData(["hydration-probe"]) === "fixture-cache";
+		},
 		get mounts() {
 			return mounts;
 		},
@@ -139,6 +156,8 @@ if (typeof document !== "undefined") {
 declare global {
 	interface Window {
 		hydrationTest: {
+			hydrated: boolean;
+			originalCached: boolean;
 			observations: typeof observations;
 			errors: string[];
 			mounts: number;

@@ -20,16 +20,22 @@ test("admission uses a loaded live session, including same-user session changes"
 	);
 });
 
-test("SDK loading and unavailable states never admit, even with a signed-in SSR snapshot", () => {
-	for (const status of ["loading", "degraded", "error"] as const) {
+test("native authenticated SSR state admits during SDK bootstrap", () => {
+	expect(resolveRouteAuth(signedIn, "loading")).toEqual(resolveRouteAuth(signedIn, "ready"));
+});
+
+test("unknown auth and explicit SDK failures never admit, even with a signed-in SSR snapshot", () => {
+	for (const status of ["degraded", "error"] as const) {
 		expect(() => requireRouteIdentity(resolveRouteAuth(signedIn, status), "/agents")).toThrow(
 			RouteAuthUnavailable,
 		);
 	}
 	expect(() => requireRouteIdentity(undefined, "/agents")).toThrow(RouteAuthUnavailable);
-	expect(() =>
-		requireRouteIdentity(resolveRouteAuth({ ...signedIn, isLoaded: false }, "ready"), "/agents"),
-	).toThrow(RouteAuthUnavailable);
+	for (const status of ["loading", "ready"] as const) {
+		expect(() =>
+			requireRouteIdentity(resolveRouteAuth({ ...signedIn, isLoaded: false }, status), "/agents"),
+		).toThrow(RouteAuthUnavailable);
+	}
 });
 
 test("signed-out and Clerk's default pending-as-signed-out result redirect with the destination", () => {

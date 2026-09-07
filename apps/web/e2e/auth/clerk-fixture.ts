@@ -25,7 +25,9 @@ export let signOutCalls = 0;
 
 export function emitSdk(update: Partial<SdkState>) {
 	state = { ...state, ...update };
-	for (const listener of resources) listener();
+	if (Object.keys(update).some((key) => key !== "status")) {
+		for (const listener of resources) listener();
+	}
 	for (const listener of statuses) listener();
 }
 
@@ -63,18 +65,24 @@ const clerk = {
 	get status() {
 		return state.status;
 	},
-	on(_event: "status", listener: () => void) {
-		statuses.add(listener);
-	},
-	off(_event: "status", listener: () => void) {
-		statuses.delete(listener);
-	},
 	signOut: async () => {
 		signOutCalls += 1;
 		emitSdk({ userId: null, sessionId: null });
 	},
 };
-export const useClerk = () => clerk;
+export function useClerk() {
+	// Native ClerkProvider subscribes to status and updates its context even
+	// without a resource emission. Model that separately from useAuth's store.
+	useSyncExternalStore(
+		(listener) => {
+			statuses.add(listener);
+			return () => statuses.delete(listener);
+		},
+		() => state.status,
+		() => initial.status,
+	);
+	return clerk;
+}
 export function useUser() {
 	const auth = useAuth();
 	return { ...auth, user: auth.userId ? { id: auth.userId } : null };

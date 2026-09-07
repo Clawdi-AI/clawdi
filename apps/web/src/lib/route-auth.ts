@@ -18,7 +18,7 @@ export function resolveRouteAuth(
 	status: ReturnType<typeof useClerk>["status"],
 ): RouteAuth {
 	if (status === "degraded" || status === "error") return { status: "unavailable" };
-	if (status === "loading" || !auth.isLoaded) return { status: "loading" };
+	if (!auth.isLoaded) return { status: "loading" };
 	if (!auth.isSignedIn || !auth.userId || !auth.sessionId) return { status: "signed-out" };
 	return { status: "signed-in", userId: auth.userId, sessionId: auth.sessionId };
 }

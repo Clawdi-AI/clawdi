@@ -26,10 +26,14 @@ export default defineConfig({
 						)
 							throw new Error("Invalid SSR fixture output");
 						response.setHeader("Content-Type", "text/html");
+						const template = await server.transformIndexHtml(
+							request.url,
+							'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Auth hydration contract</title></head><body><!--ssr-outlet--><script type="module" src="/e2e/auth/hydration.browser.tsx"></script></body></html>',
+						);
 						response.end(
-							await server.transformIndexHtml(
-								request.url,
-								`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Auth hydration contract</title></head><body><div id="app">${output.markup}</div>${output.bootstrap}<script type="module" src="/e2e/auth/hydration.browser.tsx"></script></body></html>`,
+							template.replace(
+								"<!--ssr-outlet-->",
+								() => `<div id="app">${output.markup}</div>${output.bootstrap}`,
 							),
 						);
 					} catch (error) {

@@ -94,7 +94,7 @@ for (const update of [{ userId: null, sessionId: null }, { pending: true }]) {
 	});
 }
 
-for (const status of ["loading", "degraded", "error"] as const) {
+for (const status of ["degraded", "error"] as const) {
 	test(`SDK ${status} blocks stale snapshots without signing out and recovers by event`, async ({
 		page,
 	}) => {
@@ -107,6 +107,18 @@ for (const status of ["loading", "degraded", "error"] as const) {
 		await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
 	});
 }
+
+test("native unknown auth removes an admitted session independently of script status", async ({
+	page,
+}) => {
+	await start(page);
+	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: false }));
+	await expect(page.locator("iframe")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
+	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
+	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: true }));
+	await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
+});
 
 test("late old-identity queries cannot publish in the new identity", async ({ page }) => {
 	await start(page);
