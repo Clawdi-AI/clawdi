@@ -2,14 +2,17 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
 
 import anyio
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, ExceptionContext
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -126,9 +129,9 @@ for observed_engine in (engine, control_engine, control_snapshot_engine):
     event.listen(observed_engine.sync_engine.pool, "checkin", _connection_checkin)
 
 
-async def _close_session(session: AsyncSession) -> None:
+async def _close_resource(resource: AsyncSession | AsyncConnection) -> None:
     """Return the connection before propagating request cancellation."""
-    close_task = asyncio.create_task(session.close())
+    close_task = asyncio.create_task(resource.close())
     cancellation: asyncio.CancelledError | None = None
 
     with anyio.CancelScope(shield=True):
@@ -141,7 +144,7 @@ async def _close_session(session: AsyncSession) -> None:
                 if cancellation is None:
                     raise
 
-                log.exception("Database session cleanup failed during request cancellation")
+                log.exception("Database resource cleanup failed during request cancellation")
                 raise cancellation from exc
 
     try:
@@ -150,7 +153,7 @@ async def _close_session(session: AsyncSession) -> None:
         if cancellation is None:
             raise
 
-        log.exception("Database session cleanup failed during request cancellation")
+        log.exception("Database resource cleanup failed during request cancellation")
         raise cancellation from exc
 
     if cancellation is not None:
@@ -159,7 +162,7 @@ async def _close_session(session: AsyncSession) -> None:
 
 class _CancellationSafeAsyncSession(AsyncSession):
     async def __aexit__(self, type_: object, value: object, traceback: object) -> None:
-        await _close_session(self)
+        await _close_resource(self)
 
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -205,7 +208,56 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     try:
         yield session
     finally:
-        await _close_session(session)
+        await _close_resource(session)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeManifestSessions:
+    auth: AsyncSession
+    snapshots: async_sessionmaker[AsyncSession]
+
+
+_manifest_checkout_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def _reserved_connection() -> AsyncGenerator[AsyncConnection, None]:
+    connection = await engine.connect()
+    try:
+        yield connection
+    finally:
+        await _close_resource(connection)
+
+
+async def get_runtime_manifest_sessions() -> AsyncGenerator[RuntimeManifestSessions, None]:
+    """Acquire a complete pair before auth so manifest readers cannot deadlock.
+
+    Only acquisition is serialized. Both connections stay reserved across
+    commits, allowing repairs and fresh RR snapshots without another checkout.
+    Other requests continue sharing the entire ordinary pool.
+    """
+    async with AsyncExitStack() as stack:
+        acquisition = asyncio.timeout(settings.db_pool_timeout)
+        try:
+            async with acquisition, _manifest_checkout_lock:
+                auth_connection = await stack.enter_async_context(_reserved_connection())
+                snapshot_connection = await stack.enter_async_context(_reserved_connection())
+        except TimeoutError:
+            if not acquisition.expired():
+                raise
+            raise SQLAlchemyTimeoutError(
+                "Runtime manifest connection acquisition timed out"
+            ) from None
+
+        async with async_session_factory(bind=auth_connection) as auth_session:
+            yield RuntimeManifestSessions(
+                auth=auth_session,
+                snapshots=async_sessionmaker(
+                    snapshot_connection,
+                    class_=_CancellationSafeAsyncSession,
+                    expire_on_commit=False,
+                ),
+            )
 
 
 async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None]:
@@ -232,7 +284,7 @@ async def runtime_snapshot_session(
         await _configure_runtime_snapshot(session)
         yield session
     finally:
-        await _close_session(session)
+        await _close_resource(session)
 
 
 async def _configure_runtime_snapshot(session: AsyncSession) -> None:

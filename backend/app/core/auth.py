@@ -535,7 +535,13 @@ def _decode_clerk_oauth_access_jwt(
     return payload
 
 
-async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
+@dataclass(frozen=True, slots=True)
+class VerifiedClerkJwt:
+    payload: _JwtClaims
+    oauth_setting: ClerkCliOAuthSetting | None
+
+
+async def verify_clerk_jwt(token: str, db: AsyncSession) -> VerifiedClerkJwt | None:
     oauth_setting: ClerkCliOAuthSetting | None = None
     if _is_oauth_access_jwt(token):
         try:
@@ -562,6 +568,21 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         payload = _decode_clerk_oauth_access_jwt(token, signing_key, oauth_setting)
     if payload is None:
         return None
+    return VerifiedClerkJwt(payload=payload, oauth_setting=oauth_setting)
+
+
+async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
+    verified = await verify_clerk_jwt(token, db)
+    if verified is None:
+        return None
+    return await auth_via_verified_clerk_jwt(verified, db)
+
+
+async def auth_via_verified_clerk_jwt(
+    verified: VerifiedClerkJwt, db: AsyncSession
+) -> AuthContext | None:
+    payload = verified.payload
+    oauth_setting = verified.oauth_setting
 
     clerk_id = payload.get("sub")
     if not isinstance(clerk_id, str) or not clerk_id:
