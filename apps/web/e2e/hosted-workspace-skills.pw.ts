@@ -276,6 +276,7 @@ test("Library Skills use references from both entry points, show source content,
 	};
 	let installed = false;
 	let installs = 0;
+	let detailReads = 0;
 	const canonical = (): ManagedSkillList => ({
 		agent_id: agentId,
 		removal_failures: [],
@@ -321,7 +322,12 @@ test("Library Skills use references from both entry points, show source content,
 	await page.route(
 		`http://127.0.0.1:8000/v1/agents/${agentId}/skill-references/${skillId}`,
 		(route) => {
-			if (route.request().method() === "GET") return route.fulfill({ json: sourceSkill });
+			if (route.request().method() === "GET") {
+				detailReads += 1;
+				return route.fulfill({
+					json: { ...sourceSkill, content: detailReads === 1 ? null : sourceSkill.content },
+				});
+			}
 			installed = route.request().method() === "PUT";
 			if (installed) installs += 1;
 			return route.fulfill({
@@ -344,6 +350,9 @@ test("Library Skills use references from both entry points, show source content,
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await page.getByRole("link", { name: /review-pr/ }).click();
+	await expect(page.getByText("Skill instructions aren't available right now.")).toBeVisible();
+	await expect(page.getByRole("button", { name: "Copy skill" })).toBeDisabled();
+	await page.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Team review", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "View in Library" })).toHaveAttribute(
 		"href",

@@ -9,6 +9,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailPanel } from "@/components/detail/layout";
+import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -137,6 +138,7 @@ export default function HostedWorkspaceSkillDetail({
 							<Button
 								variant="outline"
 								size="sm"
+								disabled={!skill.content}
 								onClick={() => {
 									if (skill.content) void copy(skill.content);
 								}}
@@ -165,7 +167,24 @@ export default function HostedWorkspaceSkillDetail({
 						</Link>
 					) : null}
 					<DetailPanel>
-						<Markdown content={stripFrontmatter(skill.content ?? "")} />
+						{skill.content ? (
+							<Markdown content={stripFrontmatter(skill.content)} />
+						) : (
+							<EmptyState
+								variant="inset"
+								description="Skill instructions aren't available right now."
+								action={
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={detail.isFetching}
+										onClick={() => void detail.refetch()}
+									>
+										Retry
+									</Button>
+								}
+							/>
+						)}
 					</DetailPanel>
 				</>
 			) : (

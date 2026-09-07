@@ -39,8 +39,9 @@ export default function LibrarySkillInstallAction({
 	const [open, setOpen] = useState(false);
 	const [agentId, setAgentId] = useState("");
 	const locked = useRef(false);
-	const inventory = useHostedDeploymentInventory({ enabled: open });
-	const cloudAgents = useOpenApi().useQuery("get", "/v1/agents", {}, { enabled: open });
+	const queryEnabled = open || Boolean(agentId);
+	const inventory = useHostedDeploymentInventory({ enabled: queryEnabled });
+	const cloudAgents = useOpenApi().useQuery("get", "/v1/agents", {}, { enabled: queryEnabled });
 	const hostedIds = new Set(
 		(inventory.deployments ?? [])
 			.filter(isHostedDeploymentVisible)
