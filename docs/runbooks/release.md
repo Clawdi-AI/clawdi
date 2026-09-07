@@ -128,6 +128,13 @@ publication. Unsigned preview artifacts must remain outside that feed.
 
 ## Merge And Release
 
+The web pool retains eight ordinary connections per worker (`8+0`) without
+increasing its maximum connection budget. Deployment preflight accepts the
+previous `5+3` shape for this transition. To reverse the retention policy, use
+a reviewed forward revert that accepts both pool shapes during preflight;
+an older workflow ref that only recognizes `5+3` will reject a running `8+0`
+role. Do not bypass that state check or edit the running container environment.
+
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
    - `Backend CI` is the sole automatic backend-image change gate. Its

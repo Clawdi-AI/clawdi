@@ -422,7 +422,11 @@ failure or cancellation; existing cleanup returns all reserved connections.
 Renders run concurrently. Connections stay reserved across commits and repairs,
 so no manifest can hold auth while competing for a second checkout.
 The shared eight-slot web pool still supports four concurrent manifests and
-remains fully available to other traffic when manifests are idle. Neither
+retains all eight connections after bursts (pool size 8, overflow 0), rather
+than discarding overflow connections and repeatedly initializing replacements.
+Connections remain lazy; this changes retention, not the maximum connection
+budget. The pool remains fully available to other traffic when manifests are
+idle. Neither
 control slot is borrowed. Signed Project Skill downloads retain only immutable
 file metadata and close their read-only lookup before object storage I/O.
 JWT signature/JWKS verification precedes pair acquisition; principal authority

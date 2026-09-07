@@ -144,8 +144,8 @@ end
 web = config.role("web")
 expected_web_env = {
   "WEB_CONCURRENCY" => 2,
-  "DB_POOL_SIZE" => 5,
-  "DB_MAX_OVERFLOW" => 3,
+  "DB_POOL_SIZE" => 8,
+  "DB_MAX_OVERFLOW" => 0,
   "DB_POOL_TIMEOUT" => 5,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
 }
@@ -154,7 +154,7 @@ unless web.specialized_env.clear == expected_web_env
 end
 raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "6g"
 web_env = web.env(web.primary_host).clear
-unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 5, 3, 5 ]
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 8, 0, 5 ]
   raise "web role database pool drifted"
 end
 embedding_worker = config.role("embedding-worker")
