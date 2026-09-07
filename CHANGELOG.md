@@ -29,6 +29,8 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.52 avoids redundant managed service restarts when the watcher inherits
+  a PATH already prepared during startup.
 - CLI 0.14.50 avoids a misleading missing-database warning when Files starts
   with its existing database; genuine missing-database warnings remain enabled.
 - Managed CLI installations now create protected directories independently of

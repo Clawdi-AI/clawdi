@@ -261,10 +261,14 @@ function systemdUnitNameSegment(value: string): string {
 }
 
 function runtimeSystemdPath(paths: RuntimePaths): string {
+	const inheritedPath =
+		process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 	return [
-		paths.userLocalBin,
-		join(paths.userHome, ".openclaw", "bin"),
-		process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		...new Set([
+			paths.userLocalBin,
+			join(paths.userHome, ".openclaw", "bin"),
+			...inheritedPath.split(":"),
+		]),
 	].join(":");
 }
 
