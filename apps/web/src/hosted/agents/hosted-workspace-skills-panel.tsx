@@ -11,10 +11,12 @@ import {
 	workspaceSkillMutationsAvailable,
 } from "@/components/dashboard/workspace-skills.logic";
 import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
+import { useWorkspaceSkills } from "@/components/dashboard/workspace-skills-query";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { PageHeader, type PageHeaderProps } from "@/components/page-header";
 import { SkillCard, SkillCardSkeleton } from "@/components/skills/skill-card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -29,13 +31,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
+import {
+	normalizeWorkspaceSkillError,
+	workspaceSkillErrorNormalizer,
+} from "@/hosted/agents/workspace-skill-errors";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import { normalizeBillingError } from "@/hosted/billing/errors";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
+import { billingKeys } from "@/hosted/billing/query-keys";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
-import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
+import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 type WorkspaceSkillMutation =
@@ -61,7 +68,6 @@ function HostedWorkspaceSkillsPanelContent({
 	projectId,
 	pageHeader,
 }: HostedWorkspaceSkillsPanelProps) {
-	const api = useApi();
 	const $api = useOpenApi();
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
@@ -74,21 +80,16 @@ function HostedWorkspaceSkillsPanelContent({
 	const deployment = deploymentResolution.deployment;
 	const deploymentId = deployment?.resource.id ?? null;
 	const isConnectedAgent = deploymentResolution.membershipResolved && !deployment;
-	const statusKey = ["hosted", "deployments", deploymentId, "skills"] as const;
+	const statusKey = billingKeys.workspaceSkills(deploymentId ?? "");
 	const connectedAgent = useQuery({
 		...agentDetailQueryOptions($api, queryClient, agentId),
 		enabled: isConnectedAgent,
 	});
-	const connectedSkills = useQuery({
-		queryKey: ["skills", "connected-workspace", projectId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/skills", {
-					params: { query: { project_id: projectId, page: 1, page_size: 200 } },
-				}),
-			),
-		enabled: isConnectedAgent,
-	});
+	const workspaceSkills = useWorkspaceSkills(
+		agentId,
+		projectId,
+		deploymentResolution.membershipResolved,
+	);
 
 	const status = useQuery({
 		queryKey: statusKey,
@@ -97,6 +98,8 @@ function HostedWorkspaceSkillsPanelContent({
 			return billingClient.listWorkspaceSkills(deploymentId);
 		},
 		enabled: Boolean(deploymentId),
+		refetchInterval: eventStreamFallbackInterval(10_000, eventStreamActive),
+		refetchIntervalInBackground: false,
 	});
 	const canMutate = workspaceSkillMutationsAvailable(status.data, status.error);
 
@@ -125,6 +128,7 @@ function HostedWorkspaceSkillsPanelContent({
 		},
 		onSuccess: (result, variables) => {
 			void queryClient.invalidateQueries({ queryKey: statusKey });
+			void queryClient.invalidateQueries({ queryKey: ["skills"] });
 			if (result.status === "failed") {
 				if (variables.action === "install") {
 					setInstallError("Update failed. We'll retry automatically.");
@@ -143,11 +147,11 @@ function HostedWorkspaceSkillsPanelContent({
 		},
 		onError: (error, variables) => {
 			if (variables.action === "install") {
-				setInstallError(normalizeBillingError(error));
+				setInstallError(normalizeWorkspaceSkillError(error));
 			}
 			toast.error(
 				variables.action === "install" ? "Couldn't install skill" : "Couldn't uninstall skill",
-				{ description: normalizeBillingError(error) },
+				{ description: normalizeWorkspaceSkillError(error) },
 			);
 		},
 		onSettled: () => {
@@ -206,17 +210,17 @@ function HostedWorkspaceSkillsPanelContent({
 				agentId={agentId}
 				projectId={projectId}
 				agentType={connectedAgent.data.agent_type}
-				projections={(connectedSkills.data?.items ?? []).filter(
+				projections={(workspaceSkills.data ?? []).filter(
 					(skill) => skill.authority === "agent_sync",
 				)}
-				isLoading={connectedSkills.isLoading}
+				isLoading={workspaceSkills.isLoading}
 				projectionError={
-					shouldBlockQueryError(connectedSkills.error, connectedSkills.data)
-						? connectedSkills.error
+					shouldBlockQueryError(workspaceSkills.error, workspaceSkills.data)
+						? workspaceSkills.error
 						: undefined
 				}
 				onRetryProjections={() => {
-					void connectedSkills.refetch();
+					void workspaceSkills.refetch();
 				}}
 				pageHeader={pageHeader}
 			/>
@@ -226,6 +230,7 @@ function HostedWorkspaceSkillsPanelContent({
 		return renderPageState(
 			<ApiErrorPanel
 				error={deploymentResolution.error ?? new Error("Agent not found")}
+				normalizer={workspaceSkillErrorNormalizer}
 				onRetry={() => {
 					void deploymentResolution.refetch();
 				}}
@@ -237,31 +242,65 @@ function HostedWorkspaceSkillsPanelContent({
 	const blockingStatusError = shouldBlockQueryError(status.error, status.data)
 		? status.error
 		: null;
-	const inventory = mergeWorkspaceRuntimeSkills([], status.data?.items ?? []);
-	const installAction = canMutate ? (
-		<Button size="sm" onClick={() => setInstallOpen(true)} disabled={mutateSkill.isPending}>
+	const inventory = mergeWorkspaceRuntimeSkills(
+		workspaceSkills.data ?? [],
+		status.data?.items ?? [],
+	);
+	const installAction = (
+		<Button
+			size="sm"
+			onClick={() => setInstallOpen(true)}
+			disabled={!canMutate || mutateSkill.isPending}
+		>
 			<Plus className="size-3.5" />
 			Install skill
 		</Button>
-	) : undefined;
+	);
 	return renderPageState(
 		<div className="space-y-4">
-			{canMutate && !pageHeader ? (
+			{!pageHeader ? (
 				<div className="flex justify-end max-sm:[&_[data-slot=button]]:min-h-11">
 					{installAction}
 				</div>
 			) : null}
-			{blockingStatusError ? (
+			{status.data && !canMutate && !status.error ? (
+				<Alert>
+					<AlertTitle>Skill installation is unavailable</AlertTitle>
+					<AlertDescription>
+						{status.data.capability?.reason === "upgrade_not_observed"
+							? "Installation will be available when your Agent is ready."
+							: "This Agent needs a compatible update before you can install Skills."}
+					</AlertDescription>
+				</Alert>
+			) : null}
+			{status.data?.items?.some((skill) => skill.status === "failed") ? (
+				<Alert variant="destructive">
+					<AlertTitle>Couldn't update Skills</AlertTitle>
+					<AlertDescription>We'll retry automatically.</AlertDescription>
+				</Alert>
+			) : null}
+			{workspaceSkills.error ? (
 				<ApiErrorPanel
-					error={blockingStatusError}
+					error={workspaceSkills.error}
+					onRetry={() => {
+						void workspaceSkills.refetch();
+					}}
+					title="Couldn't load Skill details"
+				/>
+			) : null}
+			{status.error ? (
+				<ApiErrorPanel
+					error={status.error}
+					normalizer={workspaceSkillErrorNormalizer}
 					onRetry={() => {
 						void status.refetch();
 					}}
 					title="Couldn't load skills"
 				/>
-			) : status.isLoading ? (
+			) : null}
+			{status.isLoading || workspaceSkills.isLoading ? (
 				<WorkspaceSkillSkeleton />
-			) : inventory.length === 0 ? (
+			) : inventory.length === 0 && !blockingStatusError && !workspaceSkills.error ? (
 				<EmptyState
 					variant="inset"
 					description="No Skills are available in this Agent's Workspace."
@@ -278,6 +317,7 @@ function HostedWorkspaceSkillsPanelContent({
 								key={item.entity.skill_key}
 								skill={item.entity}
 								cloudSkill={item.cloudProjection ?? undefined}
+								entityLink={agentSkillDetailLink(agentId, item.entity.skill_key, projectId)}
 								readOnly
 								readOnlyLabel={item.projectionOnly ? "Read-only" : null}
 								provenanceLabel={item.projectionOnly ? "Synced from Agent" : null}
@@ -318,9 +358,6 @@ function HostedWorkspaceSkillsPanelContent({
 										</div>
 									) : null
 								}
-								skillLink={(cloudSkill) =>
-									agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId)
-								}
 							/>
 						);
 					})}
@@ -355,7 +392,7 @@ function HostedWorkspaceSkillsPanelContent({
 								setInstallError(null);
 							}}
 							onKeyDown={(event) => {
-								if (event.key === "Enter" && !mutateSkill.isPending) submitInstall();
+								if (event.key === "Enter" && canMutate && !mutateSkill.isPending) submitInstall();
 							}}
 							placeholder="owner/repo or owner/repo/path-to-skill…"
 							autoComplete="off"
@@ -375,7 +412,10 @@ function HostedWorkspaceSkillsPanelContent({
 						>
 							Cancel
 						</Button>
-						<Button onClick={submitInstall} disabled={!repoInput.trim() || mutateSkill.isPending}>
+						<Button
+							onClick={submitInstall}
+							disabled={!canMutate || !repoInput.trim() || mutateSkill.isPending}
+						>
 							{mutateSkill.isPending && mutateSkill.variables?.action === "install" ? (
 								<Spinner />
 							) : (

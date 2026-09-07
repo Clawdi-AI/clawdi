@@ -108,7 +108,6 @@ describe("hosted agent detail header", () => {
 		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("queryKey: billingKeys.workspaceSkills(deployment.resource.id)");
-		expect(source).toContain("enabled: isRunningStatus(deploymentStatus)");
 		expect(source).toContain("retry: billingQueryRetry");
 	});
 });

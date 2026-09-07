@@ -964,6 +964,12 @@ export function createBillingClient(
 		getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 		getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
 		listWorkspaceSkills,
+		getWorkspaceSkill: async (deploymentId: string, skillKey: string) =>
+			unwrapDeploy(
+				await api.GET("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
+					params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
+				}),
+			),
 		installWorkspaceSkill: async (
 			deploymentId: string,
 			request: HostedWorkspaceSkillInstallRequest,

@@ -1,5 +1,5 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { resolveAgentProjectResourceContext } from "@/components/dashboard/agent-project-resource-context";
@@ -18,6 +18,11 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 import { SkillDetailContent } from "@/pages/dashboard/skills/[key]/page";
+
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const HostedWorkspaceSkillDetail = IS_HOSTED_BUILD
+	? lazy(() => import("@/hosted/agents/hosted-workspace-skill-detail"))
+	: null;
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/$")({
 	head: () => routeHeadTitle("Skill"),
@@ -55,7 +60,15 @@ function AgentSkillDetailRoute() {
 			requiredAdapterModule="skills"
 			projectAccess={{ projectId }}
 		>
-			<SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />
+			{HostedWorkspaceSkillDetail ? (
+				<Suspense fallback={<Skeleton className="mx-6 h-40 rounded-lg" />}>
+					<HostedWorkspaceSkillDetail agentId={id} projectId={projectId} skillKey={skillKey}>
+						<SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />
+					</HostedWorkspaceSkillDetail>
+				</Suspense>
+			) : (
+				<SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />
+			)}
 		</AgentResourceRouteGate>
 	);
 }

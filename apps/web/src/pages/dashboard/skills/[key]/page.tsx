@@ -76,7 +76,7 @@ import {
 // renderer doesn't show "name:" / "description:" lines (already
 // rendered above in PageHeader) and so the closing
 // `---` doesn't render as a stray `<hr>` next to the Separator.
-function stripFrontmatter(raw: string): string {
+export function stripFrontmatter(raw: string): string {
 	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
 	return m ? (m[1] ?? "") : raw;
 }
