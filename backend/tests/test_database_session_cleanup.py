@@ -69,7 +69,8 @@ async def test_externally_cancelled_dependency_waits_for_session_close() -> None
     assert pool.checkedout() == checked_out_before
 
 
-async def test_anyio_level_cancellation_still_returns_connection() -> None:
+@pytest.mark.parametrize("early_close", [False, True])
+async def test_anyio_level_cancellation_still_returns_connection(early_close: bool) -> None:
     pool = _database_pool()
     checked_out_before = pool.checkedout()
     rollback_started = asyncio.Event()
@@ -83,10 +84,19 @@ async def test_anyio_level_cancellation_still_returns_connection() -> None:
         await session.execute(text("SELECT 1"))
         assert pool.checkedout() == checked_out_before + 1
 
-        with anyio.CancelScope() as cancel_scope:
-            cancel_scope.cancel()
+        close_completed = False
+        try:
+            with anyio.CancelScope() as cancel_scope:
+                cancel_scope.cancel()
+                if early_close:
+                    await session.close()
+                else:
+                    await dependency.aclose()
+                close_completed = True
+                assert pool.checkedout() == checked_out_before
+            assert close_completed
+        finally:
             await dependency.aclose()
-            assert pool.checkedout() == checked_out_before
 
     event.listen(database.engine.sync_engine, "rollback", mark_rollback)
     try:
