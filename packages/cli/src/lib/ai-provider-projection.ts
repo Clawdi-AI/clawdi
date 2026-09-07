@@ -11,6 +11,8 @@ import {
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
 	isClawdiManagedV2ProviderId,
+	type NativeAiProvider,
+	nativeAiProvider,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
 
@@ -59,8 +61,8 @@ export interface AgentTargetProjection {
 	warnings: string[];
 	contract: (typeof AGENT_TARGET_CONTRACTS)[AgentTarget];
 	provider_ids: string[];
-	default_provider_id: string;
-	primary_model: AgentPrimaryModel;
+	default_provider_id: string | null;
+	primary_model: AgentPrimaryModel | null;
 }
 
 export interface AgentPrimaryModel {
@@ -69,6 +71,7 @@ export interface AgentPrimaryModel {
 }
 
 interface ProjectionProvider {
+	native?: NativeAiProvider;
 	id: string;
 	type: AiProvider["type"];
 	label?: string;
@@ -98,7 +101,7 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 export function buildAgentTargetProjection(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
-	primaryModel?: AgentPrimaryModel,
+	primaryModel?: AgentPrimaryModel | null,
 	options: { freezeManagedModelCatalog?: boolean } = {},
 ): AgentTargetProjection {
 	const validation = validateAiProviderCatalog(catalog);
@@ -111,17 +114,26 @@ export function buildAgentTargetProjection(
 	const selectedPrimaryModel = selection.primaryModel;
 	const warnings = [...validation.warnings, ...selection.warnings];
 	const embeddingModel = selectCatalogEmbeddingModel(catalog, providers);
-	const projection =
-		target === "openclaw"
-			? buildOpenClawProjection(providers, primaryProvider, selectedPrimaryModel, embeddingModel)
-			: target === "hermes"
-				? buildHermesProjection(
-						providers,
-						primaryProvider,
-						selectedPrimaryModel,
-						options.freezeManagedModelCatalog === true,
-					)
-				: buildCodexProjection(providers, primaryProvider, selectedPrimaryModel);
+	let projection: string;
+	if (target === "openclaw") {
+		projection = buildOpenClawProjection(
+			providers,
+			primaryProvider,
+			selectedPrimaryModel,
+			embeddingModel,
+		);
+	} else if (target === "hermes") {
+		projection = buildHermesProjection(
+			providers,
+			primaryProvider,
+			selectedPrimaryModel,
+			options.freezeManagedModelCatalog === true,
+		);
+	} else {
+		if (!primaryProvider || !selectedPrimaryModel)
+			throw new Error("Codex catalog projection requires a primary model");
+		projection = buildCodexProjection(providers, primaryProvider, selectedPrimaryModel);
+	}
 	const extension = target === "openclaw" ? "json" : target === "hermes" ? "yaml" : "toml";
 	return {
 		target,
@@ -134,7 +146,7 @@ export function buildAgentTargetProjection(
 		warnings,
 		contract: AGENT_TARGET_CONTRACTS[target],
 		provider_ids: providers.map((provider) => provider.id),
-		default_provider_id: primaryProvider.id,
+		default_provider_id: primaryProvider?.id ?? null,
 		primary_model: selectedPrimaryModel,
 	};
 }
@@ -142,11 +154,11 @@ export function buildAgentTargetProjection(
 function selectProjectionProviders(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
-	primaryModel: AgentPrimaryModel | undefined,
+	primaryModel: AgentPrimaryModel | null | undefined,
 ): {
 	providers: ProjectionProvider[];
-	primaryProvider: ProjectionProvider;
-	primaryModel: AgentPrimaryModel;
+	primaryProvider: ProjectionProvider | null;
+	primaryModel: AgentPrimaryModel | null;
 	warnings: string[];
 } {
 	const warnings: string[] = [];
@@ -160,6 +172,26 @@ function selectProjectionProviders(
 		throw new Error(
 			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
+	}
+	const nativeCredentials = providers.some((provider) => provider.native);
+	if (
+		nativeCredentials &&
+		(!primaryModel ||
+			providers.some((provider) => provider.native && provider.id === primaryModel.provider_id))
+	) {
+		if (
+			providers.some(
+				(provider) =>
+					!provider.native &&
+					!(
+						provider.managed_by === "clawdi" &&
+						provider.models?.length &&
+						provider.models.every((model) => model.capabilities?.embeddings === true)
+					),
+			)
+		)
+			throw new Error("Catalog chat providers require a primary model");
+		return { providers, primaryProvider: null, primaryModel: null, warnings };
 	}
 	const selectedPrimaryModelInput = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
 	if (!selectedPrimaryModelInput) {
@@ -215,6 +247,10 @@ function normalizeProjectionProvider(
 		return `Provider ${providerId} skipped for ${target}: requires api_mode before agent config apply.`;
 	}
 	const projectionProvider = {
+		native:
+			provider.configuration_mode === "native"
+				? nativeAiProvider(provider.native_provider, provider.native_variant)
+				: undefined,
 		id: providerId,
 		type: provider.type,
 		label: provider.label,
@@ -229,7 +265,7 @@ function normalizeProjectionProvider(
 		const reason = codexProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
-	if (target === "hermes") {
+	if (target === "hermes" && !projectionProvider.native) {
 		const reason = hermesProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
@@ -299,8 +335,8 @@ function authEnvName(provider: AiProvider): string | undefined {
 
 function buildOpenClawProjection(
 	providers: ProjectionProvider[],
-	primaryProvider: ProjectionProvider,
-	primaryModel: AgentPrimaryModel,
+	primaryProvider: ProjectionProvider | null,
+	primaryModel: AgentPrimaryModel | null,
 	embeddingModel: AgentPrimaryModel | undefined,
 ): string {
 	const hasClawdiManagedProvider = providers.some((provider) => provider.managed_by === "clawdi");
@@ -308,6 +344,15 @@ function buildOpenClawProjection(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
 			.map((provider) => {
+				if (provider.native)
+					return [
+						provider.native.openclaw.provider,
+						{
+							baseUrl: provider.base_url,
+							auth: "api-key",
+							apiKey: { source: "env", provider: "clawdi-native", id: provider.env_name },
+						},
+					];
 				const apiKeyEnv = openClawApiKeyEnvForProvider(provider);
 				return [
 					openClawProjectedProviderId(provider),
@@ -318,7 +363,7 @@ function buildOpenClawProjection(
 						apiKey: apiKeyEnv ? { source: "env", provider: "default", id: apiKeyEnv } : undefined,
 						models: openClawModels(
 							provider,
-							provider.id === primaryProvider.id ? primaryModel.model : undefined,
+							provider.id === primaryProvider?.id ? primaryModel?.model : undefined,
 						),
 					}),
 				];
@@ -326,25 +371,43 @@ function buildOpenClawProjection(
 	);
 	const usesNativeCodex = providers.some(usesNativeCodexOpenAiProvider);
 	const usesEnvSecrets = providers
-		.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
+		.filter((provider) => !provider.native && !usesNativeCodexOpenAiProvider(provider))
 		.some((provider) => Boolean(openClawApiKeyEnvForProvider(provider)));
+	const usesNativeEnvSecrets = providers.some(
+		(provider) => provider.native && !usesNativeCodexOpenAiProvider(provider),
+	);
 	const body = compactObject({
-		plugins: usesNativeCodex ? { entries: { codex: { enabled: true } } } : undefined,
-		secrets: usesEnvSecrets
-			? {
-					providers: {
-						default: { source: "env" },
-					},
-					defaults: {
-						env: "default",
-					},
-				}
-			: undefined,
+		plugins:
+			usesNativeCodex || providers.some((provider) => provider.native)
+				? {
+						entries: {
+							...(usesNativeCodex ? { codex: { enabled: true } } : {}),
+							...Object.fromEntries(
+								providers.flatMap((provider) =>
+									provider.native ? [[provider.native.openclaw.plugin, { enabled: true }]] : [],
+								),
+							),
+						},
+					}
+				: undefined,
+		secrets:
+			usesEnvSecrets || usesNativeEnvSecrets
+				? {
+						providers: {
+							...(usesEnvSecrets ? { default: { source: "env" } } : {}),
+							...(usesNativeEnvSecrets ? { "clawdi-native": { source: "env" } } : {}),
+						},
+						...(usesEnvSecrets ? { defaults: { env: "default" } } : {}),
+					}
+				: undefined,
 		agents: {
 			defaults: {
-				model: {
-					primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
-				},
+				model:
+					primaryProvider && primaryModel
+						? {
+								primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
+							}
+						: undefined,
 				memorySearch: embeddingModel || hasClawdiManagedProvider ? null : undefined,
 			},
 		},
@@ -485,23 +548,27 @@ function openClawModelCost(
 
 function buildHermesProjection(
 	providers: ProjectionProvider[],
-	primaryProvider: ProjectionProvider,
-	primaryModel: AgentPrimaryModel,
+	primaryProvider: ProjectionProvider | null,
+	primaryModel: AgentPrimaryModel | null,
 	freezeManagedModelCatalog: boolean,
 ): string {
-	const nativeCodexDefault = usesNativeCodexOpenAiProvider(primaryProvider);
-	const customProviders = providers.filter((provider) => !usesNativeCodexOpenAiProvider(provider));
+	const nativeCodexDefault = primaryProvider && usesNativeCodexOpenAiProvider(primaryProvider);
+	const customProviders = providers.filter(
+		(provider) => !provider.native && !usesNativeCodexOpenAiProvider(provider),
+	);
 	const lines: string[] = [
 		"# Generated by Clawdi. Reconcile this projection into Hermes config.",
 		`# Verified contract baseline: ${AGENT_TARGET_CONTRACTS.hermes.verifiedContractBaseline}; ${AGENT_TARGET_CONTRACTS.hermes.settingMethod}.`,
-		"model:",
 	];
-	if (nativeCodexDefault) {
-		lines.push('  provider: "openai-codex"');
-		lines.push(`  default: ${quoteYaml(codexNativeModelId(primaryModel.model))}`);
-	} else {
-		lines.push(`  provider: ${quoteYaml(hermesProviderSelector(primaryProvider.id))}`);
-		lines.push(`  default: ${quoteYaml(primaryModel.model)}`);
+	if (primaryProvider && primaryModel) {
+		lines.push("model:");
+		if (nativeCodexDefault) {
+			lines.push('  provider: "openai-codex"');
+			lines.push(`  default: ${quoteYaml(codexNativeModelId(primaryModel.model))}`);
+		} else {
+			lines.push(`  provider: ${quoteYaml(hermesProviderSelector(primaryProvider.id))}`);
+			lines.push(`  default: ${quoteYaml(primaryModel.model)}`);
+		}
 	}
 	if (customProviders.length > 0) lines.push("providers:");
 	for (const provider of customProviders) {
@@ -522,6 +589,7 @@ function buildHermesProjection(
 		}
 		lines.push(...hermesModelLines(provider));
 	}
+	if (customProviders.length === 0 && !primaryModel) lines.push("{}");
 	return `${lines.join("\n")}\n`;
 }
 

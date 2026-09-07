@@ -1,3 +1,6 @@
+import type { components } from "./api/api.generated";
+import { nativeAiProvider } from "./native-ai-provider";
+
 export const AI_PROVIDER_TYPES = [
 	"openai",
 	"anthropic",
@@ -86,6 +89,10 @@ export interface AiProviderModel {
 export interface AiProvider {
 	id: string;
 	type: AiProviderType;
+	configuration_mode?: "native" | "catalog";
+	native_provider?: string;
+	native_variant?: string;
+	readiness?: NonNullable<components["schemas"]["AiProviderResponse"]["readiness"]>;
 	label?: string;
 	base_url: string;
 	api_mode?: AiProviderApiMode;
@@ -331,8 +338,29 @@ export function defaultAiProviderModels(type: AiProviderType): readonly AiProvid
 }
 
 export function aiProviderRuntimeCompatibility(
-	provider: Pick<AiProvider, "api_mode" | "auth" | "base_url" | "runtime_env_name" | "type">,
+	provider: Pick<
+		AiProvider,
+		| "api_mode"
+		| "auth"
+		| "base_url"
+		| "runtime_env_name"
+		| "type"
+		| "configuration_mode"
+		| "native_provider"
+		| "native_variant"
+	>,
 ): AiProviderRuntimeCompatibility {
+	if (provider.configuration_mode === "native") {
+		const native = nativeAiProvider(provider.native_provider, provider.native_variant);
+		const valid = Boolean(
+			native && native.base_url === provider.base_url && native.api_mode === provider.api_mode,
+		);
+		return {
+			openclaw: valid,
+			hermes: valid,
+			codex: valid && (native?.id === "openai" || native?.id === "openai-codex"),
+		};
+	}
 	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
 	const nativeCodexAuth = provider.auth.type === "agent_profile" && provider.auth.tool === "codex";
 	const nativeCodexShape =
@@ -445,6 +473,23 @@ function validateProvider(
 	options: AiProviderValidationOptions,
 ): void {
 	const prefix = provider.id || "<missing>";
+	if (provider.configuration_mode === "native") {
+		const native = nativeAiProvider(provider.native_provider, provider.native_variant);
+		if (
+			!native ||
+			native.base_url !== provider.base_url ||
+			native.api_mode !== provider.api_mode ||
+			native.type !== provider.type
+		) {
+			errors.push(`Provider ${prefix} has invalid native credential routing.`);
+		}
+		if (provider.managed_by === "clawdi" || provider.models?.length) {
+			errors.push(`Provider ${prefix} native credentials cannot manage a model catalog.`);
+		}
+		const codexAuth = provider.auth?.type === "agent_profile" && provider.auth.tool === "codex";
+		if ((native?.id === "openai-codex") !== codexAuth)
+			errors.push(`Provider ${prefix} has incompatible native auth.`);
+	}
 	if (!isAiProviderId(provider.id)) {
 		errors.push(`Invalid provider id "${provider.id}".`);
 	}

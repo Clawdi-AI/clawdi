@@ -1,0 +1,485 @@
+[
+	{
+		"id": "openai",
+		"variant": null,
+		"type": "openai",
+		"base_url": "https://api.openai.com/v1",
+		"api_mode": "openai_responses",
+		"runtime_env_name": "OPENAI_API_KEY",
+		"openclaw": {
+			"provider": "openai",
+			"plugin": "openai",
+			"package": "@openclaw/openai-provider"
+		},
+		"hermes": {
+			"provider": "openai-api",
+			"env": "OPENAI_API_KEY",
+			"base_url_env": "OPENAI_BASE_URL"
+		}
+	},
+	{
+		"id": "openai-codex",
+		"variant": null,
+		"type": "openai",
+		"base_url": "https://api.openai.com/v1",
+		"api_mode": "openai_responses",
+		"runtime_env_name": "OPENAI_API_KEY",
+		"openclaw": {
+			"provider": "openai",
+			"plugin": "openai",
+			"package": "@openclaw/openai-provider",
+			"companion_plugin": "codex",
+			"companion_package": "@openclaw/codex"
+		},
+		"hermes": {
+			"provider": "openai-codex",
+			"env": "OPENAI_API_KEY"
+		}
+	},
+	{
+		"id": "anthropic",
+		"variant": null,
+		"type": "anthropic",
+		"base_url": "https://api.anthropic.com",
+		"api_mode": "anthropic_messages",
+		"runtime_env_name": "ANTHROPIC_API_KEY",
+		"openclaw": {
+			"provider": "anthropic",
+			"plugin": "anthropic",
+			"package": "@openclaw/anthropic-provider"
+		},
+		"hermes": {
+			"provider": "anthropic",
+			"env": "ANTHROPIC_API_KEY",
+			"base_url_env": "ANTHROPIC_BASE_URL"
+		}
+	},
+	{
+		"id": "gemini",
+		"variant": null,
+		"type": "gemini",
+		"base_url": "https://generativelanguage.googleapis.com/v1beta",
+		"api_mode": "google_generate_content",
+		"runtime_env_name": "GEMINI_API_KEY",
+		"openclaw": {
+			"provider": "google",
+			"plugin": "google",
+			"package": "@openclaw/google-plugin"
+		},
+		"hermes": {
+			"provider": "gemini",
+			"env": "GEMINI_API_KEY",
+			"base_url_env": "GEMINI_BASE_URL"
+		}
+	},
+	{
+		"id": "openrouter",
+		"variant": null,
+		"type": "openrouter",
+		"base_url": "https://openrouter.ai/api/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "OPENROUTER_API_KEY",
+		"openclaw": {
+			"provider": "openrouter",
+			"plugin": "openrouter",
+			"package": "@openclaw/openrouter-provider"
+		},
+		"hermes": {
+			"provider": "openrouter",
+			"env": "OPENROUTER_API_KEY",
+			"base_url_env": "OPENROUTER_BASE_URL"
+		}
+	},
+	{
+		"id": "mistral",
+		"variant": null,
+		"type": "mistral",
+		"base_url": "https://api.mistral.ai/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "MISTRAL_API_KEY",
+		"openclaw": {
+			"provider": "mistral",
+			"plugin": "mistral",
+			"package": "@openclaw/mistral-provider"
+		},
+		"hermes": {
+			"provider": "mistral",
+			"env": "MISTRAL_API_KEY"
+		}
+	},
+	{
+		"id": "deepseek",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.deepseek.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "DEEPSEEK_API_KEY",
+		"openclaw": {
+			"provider": "deepseek",
+			"plugin": "deepseek",
+			"package": "@openclaw/deepseek-provider"
+		},
+		"hermes": {
+			"provider": "deepseek",
+			"env": "DEEPSEEK_API_KEY",
+			"base_url_env": "DEEPSEEK_BASE_URL"
+		}
+	},
+	{
+		"id": "kimi-coding",
+		"variant": null,
+		"type": "anthropic",
+		"base_url": "https://api.kimi.com/coding",
+		"api_mode": "anthropic_messages",
+		"runtime_env_name": "KIMI_API_KEY",
+		"openclaw": {
+			"provider": "kimi",
+			"plugin": "kimi",
+			"package": "@openclaw/kimi-provider"
+		},
+		"hermes": {
+			"provider": "kimi-coding",
+			"env": "KIMI_API_KEY",
+			"base_url_env": "KIMI_BASE_URL"
+		}
+	},
+	{
+		"id": "moonshot",
+		"variant": "cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.moonshot.cn/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "MOONSHOT_API_KEY",
+		"openclaw": {
+			"provider": "moonshot",
+			"plugin": "moonshot",
+			"package": "@openclaw/moonshot-provider"
+		},
+		"hermes": {
+			"provider": "kimi-coding-cn",
+			"env": "KIMI_CN_API_KEY"
+		}
+	},
+	{
+		"id": "moonshot",
+		"variant": "global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.moonshot.ai/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "MOONSHOT_API_KEY",
+		"openclaw": {
+			"provider": "moonshot",
+			"plugin": "moonshot",
+			"package": "@openclaw/moonshot-provider"
+		},
+		"hermes": {
+			"provider": "kimi-coding",
+			"env": "KIMI_API_KEY",
+			"base_url_env": "KIMI_BASE_URL"
+		}
+	},
+	{
+		"id": "qwen-dashscope",
+		"variant": "cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "QWEN_API_KEY",
+		"openclaw": {
+			"provider": "qwen",
+			"plugin": "qwen",
+			"package": "@openclaw/qwen-provider"
+		},
+		"hermes": {
+			"provider": "alibaba",
+			"env": "DASHSCOPE_API_KEY",
+			"base_url_env": "DASHSCOPE_BASE_URL"
+		}
+	},
+	{
+		"id": "qwen-dashscope",
+		"variant": "global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "QWEN_API_KEY",
+		"openclaw": {
+			"provider": "qwen",
+			"plugin": "qwen",
+			"package": "@openclaw/qwen-provider"
+		},
+		"hermes": {
+			"provider": "alibaba",
+			"env": "DASHSCOPE_API_KEY",
+			"base_url_env": "DASHSCOPE_BASE_URL"
+		}
+	},
+	{
+		"id": "qwen-dashscope",
+		"variant": "coding-cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://coding.dashscope.aliyuncs.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "QWEN_API_KEY",
+		"openclaw": {
+			"provider": "qwen",
+			"plugin": "qwen",
+			"package": "@openclaw/qwen-provider"
+		},
+		"hermes": {
+			"provider": "alibaba-coding-plan",
+			"env": "ALIBABA_CODING_PLAN_API_KEY",
+			"base_url_env": "ALIBABA_CODING_PLAN_BASE_URL"
+		}
+	},
+	{
+		"id": "qwen-dashscope",
+		"variant": "coding-global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "QWEN_API_KEY",
+		"openclaw": {
+			"provider": "qwen",
+			"plugin": "qwen",
+			"package": "@openclaw/qwen-provider"
+		},
+		"hermes": {
+			"provider": "alibaba-coding-plan",
+			"env": "ALIBABA_CODING_PLAN_API_KEY",
+			"base_url_env": "ALIBABA_CODING_PLAN_BASE_URL"
+		}
+	},
+	{
+		"id": "zhipu-glm",
+		"variant": "cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://open.bigmodel.cn/api/paas/v4",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "ZAI_API_KEY",
+		"openclaw": {
+			"provider": "zai",
+			"plugin": "zai",
+			"package": "@openclaw/zai-provider"
+		},
+		"hermes": {
+			"provider": "zai",
+			"env": "ZAI_API_KEY",
+			"base_url_env": "GLM_BASE_URL"
+		}
+	},
+	{
+		"id": "zhipu-glm",
+		"variant": "global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.z.ai/api/paas/v4",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "ZAI_API_KEY",
+		"openclaw": {
+			"provider": "zai",
+			"plugin": "zai",
+			"package": "@openclaw/zai-provider"
+		},
+		"hermes": {
+			"provider": "zai",
+			"env": "ZAI_API_KEY",
+			"base_url_env": "GLM_BASE_URL"
+		}
+	},
+	{
+		"id": "zhipu-glm",
+		"variant": "coding-cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "ZAI_API_KEY",
+		"openclaw": {
+			"provider": "zai",
+			"plugin": "zai",
+			"package": "@openclaw/zai-provider"
+		},
+		"hermes": {
+			"provider": "zai",
+			"env": "ZAI_API_KEY",
+			"base_url_env": "GLM_BASE_URL"
+		}
+	},
+	{
+		"id": "zhipu-glm",
+		"variant": "coding-global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.z.ai/api/coding/paas/v4",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "ZAI_API_KEY",
+		"openclaw": {
+			"provider": "zai",
+			"plugin": "zai",
+			"package": "@openclaw/zai-provider"
+		},
+		"hermes": {
+			"provider": "zai",
+			"env": "ZAI_API_KEY",
+			"base_url_env": "GLM_BASE_URL"
+		}
+	},
+	{
+		"id": "stepfun",
+		"variant": "global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.stepfun.ai/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "STEPFUN_API_KEY",
+		"openclaw": {
+			"provider": "stepfun",
+			"plugin": "stepfun",
+			"package": "@openclaw/stepfun-provider"
+		},
+		"hermes": {
+			"provider": "stepfun",
+			"env": "STEPFUN_API_KEY",
+			"base_url_env": "STEPFUN_BASE_URL"
+		}
+	},
+	{
+		"id": "stepfun",
+		"variant": "cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.stepfun.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "STEPFUN_API_KEY",
+		"openclaw": {
+			"provider": "stepfun",
+			"plugin": "stepfun",
+			"package": "@openclaw/stepfun-provider"
+		},
+		"hermes": {
+			"provider": "stepfun",
+			"env": "STEPFUN_API_KEY",
+			"base_url_env": "STEPFUN_BASE_URL"
+		}
+	},
+	{
+		"id": "stepfun",
+		"variant": "plan-global",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.stepfun.ai/step_plan/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "STEPFUN_API_KEY",
+		"openclaw": {
+			"provider": "stepfun-plan",
+			"plugin": "stepfun",
+			"package": "@openclaw/stepfun-provider"
+		},
+		"hermes": {
+			"provider": "stepfun",
+			"env": "STEPFUN_API_KEY",
+			"base_url_env": "STEPFUN_BASE_URL"
+		}
+	},
+	{
+		"id": "stepfun",
+		"variant": "plan-cn",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.stepfun.com/step_plan/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "STEPFUN_API_KEY",
+		"openclaw": {
+			"provider": "stepfun-plan",
+			"plugin": "stepfun",
+			"package": "@openclaw/stepfun-provider"
+		},
+		"hermes": {
+			"provider": "stepfun",
+			"env": "STEPFUN_API_KEY",
+			"base_url_env": "STEPFUN_BASE_URL"
+		}
+	},
+	{
+		"id": "minimax",
+		"variant": "global",
+		"type": "anthropic",
+		"base_url": "https://api.minimax.io/anthropic",
+		"api_mode": "anthropic_messages",
+		"runtime_env_name": "MINIMAX_API_KEY",
+		"openclaw": {
+			"provider": "minimax",
+			"plugin": "minimax",
+			"package": "@openclaw/minimax-provider"
+		},
+		"hermes": {
+			"provider": "minimax",
+			"env": "MINIMAX_API_KEY",
+			"base_url_env": "MINIMAX_BASE_URL"
+		}
+	},
+	{
+		"id": "minimax",
+		"variant": "cn",
+		"type": "anthropic",
+		"base_url": "https://api.minimaxi.com/anthropic",
+		"api_mode": "anthropic_messages",
+		"runtime_env_name": "MINIMAX_API_KEY",
+		"openclaw": {
+			"provider": "minimax",
+			"plugin": "minimax",
+			"package": "@openclaw/minimax-provider"
+		},
+		"hermes": {
+			"provider": "minimax-cn",
+			"env": "MINIMAX_CN_API_KEY",
+			"base_url_env": "MINIMAX_CN_BASE_URL"
+		}
+	},
+	{
+		"id": "together-ai",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.together.xyz/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "TOGETHER_API_KEY",
+		"openclaw": {
+			"provider": "together",
+			"plugin": "together",
+			"package": "@openclaw/together-provider"
+		},
+		"hermes": {
+			"provider": "togetherai",
+			"env": "TOGETHER_API_KEY"
+		}
+	},
+	{
+		"id": "groq",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.groq.com/openai/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "GROQ_API_KEY",
+		"openclaw": {
+			"provider": "groq",
+			"plugin": "groq",
+			"package": "@openclaw/groq-provider"
+		},
+		"hermes": {
+			"provider": "groq",
+			"env": "GROQ_API_KEY"
+		}
+	},
+	{
+		"id": "xai-grok",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.x.ai/v1",
+		"api_mode": "openai_responses",
+		"runtime_env_name": "XAI_API_KEY",
+		"openclaw": {
+			"provider": "xai",
+			"plugin": "xai",
+			"package": "@openclaw/xai-plugin"
+		},
+		"hermes": {
+			"provider": "xai",
+			"env": "XAI_API_KEY",
+			"base_url_env": "XAI_BASE_URL"
+		}
+	}
+]

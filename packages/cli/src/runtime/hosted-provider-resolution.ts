@@ -5,6 +5,7 @@ import {
 	CLAWDI_MANAGED_V2_API_MODE,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+	nativeAiProviderForRuntime,
 } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
@@ -13,7 +14,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 
 export type HostedAiProviderProjectionInput = {
 	catalog: AiProviderCatalog;
-	primaryModel: AgentPrimaryModel;
+	primaryModel: AgentPrimaryModel | null;
 };
 
 type HostedProviderProjection = NonNullable<
@@ -39,8 +40,11 @@ export function agentTargetProjectionInput(
 			api_mode: isClawdiManagedV2ProviderId(id) ? CLAWDI_MANAGED_V2_API_MODE : provider.api_mode,
 		} satisfies AiProviderCatalog["providers"][number];
 	});
-	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);
-	if (!primaryProviderId) return input;
+	if (providerIdMap.size === 0) return input;
+	const primaryProviderId = input.primaryModel
+		? (providerIdMap.get(input.primaryModel.provider_id) ?? input.primaryModel.provider_id)
+		: undefined;
+	const chatProviderId = input.catalog.defaults?.chat_provider_id;
 	const embeddingProviderId = input.catalog.defaults?.embedding_provider_id;
 	return {
 		catalog: {
@@ -48,7 +52,11 @@ export function agentTargetProjectionInput(
 			providers,
 			defaults: {
 				...input.catalog.defaults,
-				chat_provider_id: primaryProviderId,
+				...(primaryProviderId
+					? { chat_provider_id: primaryProviderId }
+					: chatProviderId
+						? { chat_provider_id: providerIdMap.get(chatProviderId) ?? chatProviderId }
+						: {}),
 				...(embeddingProviderId
 					? {
 							embedding_provider_id: providerIdMap.get(embeddingProviderId) ?? embeddingProviderId,
@@ -56,19 +64,26 @@ export function agentTargetProjectionInput(
 					: {}),
 			},
 		},
-		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
+		primaryModel:
+			input.primaryModel && primaryProviderId
+				? { ...input.primaryModel, provider_id: primaryProviderId }
+				: null,
 	};
 }
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
-): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
+): HostedAiProviderProjectionInput | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest);
 	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName);
-	if (!primaryModel) return null;
+	if (
+		!primaryModel &&
+		!providerEntries.some(([, provider]) => provider.configurationMode === "native")
+	)
+		return null;
 	const entries = providerEntries
 		.map(([id, input]) => {
 			const baseUrl = input.baseUrl;
@@ -81,14 +96,32 @@ export function hostedAiProviderCatalog(
 			if (!auth) return null;
 			const models = hostedProviderModels(
 				input,
-				id === primaryModel.provider_id ? primaryModel : null,
+				input.configurationMode !== "native" && id === primaryModel?.provider_id
+					? primaryModel
+					: null,
 			);
+			const native =
+				input.configurationMode === "native" &&
+				(runtimeName === "openclaw" || runtimeName === "hermes")
+					? nativeAiProviderForRuntime(
+							runtimeName,
+							input.nativeProvider ?? "",
+							baseUrl,
+							input.auth?.type === "agent_profile",
+						)
+					: undefined;
+			if (input.configurationMode === "native" && !native)
+				throw new Error("Invalid native provider runtime identity");
 			return {
 				id,
 				type: hostedProviderType(input),
 				base_url: baseUrl,
 				api_mode: apiMode,
 				managed_by: input.managed_by,
+				configuration_mode: input.configurationMode,
+				...(native
+					? { native_provider: native.id, native_variant: native.variant ?? undefined }
+					: {}),
 				auth,
 				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
 				models,
@@ -104,7 +137,7 @@ export function hostedAiProviderCatalog(
 			schema_version: 1,
 			providers: entries,
 			defaults: {
-				chat_provider_id: primaryModel.provider_id,
+				...(primaryModel ? { chat_provider_id: primaryModel.provider_id } : {}),
 				...(embeddingProvider ? { embedding_provider_id: embeddingProvider.id } : {}),
 			},
 		},
@@ -216,6 +249,7 @@ function hostedProviderRuntimeEnvName(
 
 interface HostedProviderEnvironment {
 	placeholderEnv: Record<string, string>;
+	configEnv: Record<string, string>;
 	secretEnv: Record<string, string>;
 }
 
@@ -225,12 +259,23 @@ export function hostedProviderEnvironment(
 	options: { validateOverlap?: boolean } = {},
 ): HostedProviderEnvironment {
 	const placeholderEnv: Record<string, string> = {};
+	const configEnv: Record<string, string> = {};
 	const secretEnv: Record<string, string> = {};
 	for (const [providerId, provider] of hostedProviderEntries(
 		manifest.projection?.providers ?? {},
 		runtimeName,
 		manifest,
 	)) {
+		if (provider.configurationMode === "native" && runtimeName === "hermes") {
+			const native = nativeAiProviderForRuntime(
+				runtimeName,
+				provider.nativeProvider ?? "",
+				provider.baseUrl ?? "",
+				provider.auth?.type === "agent_profile",
+			);
+			if (!native) throw new Error("Invalid Hermes native credential routing");
+			if (native.hermes.base_url_env) configEnv[native.hermes.base_url_env] = native.base_url;
+		}
 		if (!provider.apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
@@ -243,7 +288,7 @@ export function hostedProviderEnvironment(
 	if (options.validateOverlap) {
 		assertNoProviderEnvOverlap(runtimeName ?? "default", placeholderEnv, secretEnv);
 	}
-	return { placeholderEnv, secretEnv };
+	return { placeholderEnv, configEnv, secretEnv };
 }
 
 function assertNoProviderEnvOverlap(

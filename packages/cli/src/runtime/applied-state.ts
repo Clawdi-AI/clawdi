@@ -57,6 +57,7 @@ export const runtimeAppliedStateSchema = z
 		officialServiceCommandRevisions: officialServiceCommandRevisionsSchema.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
+		nativeCredentialProviderIds: projectedProviderIdsSchema.optional(),
 	})
 	.strict()
 	.superRefine((state, ctx) => {

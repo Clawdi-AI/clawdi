@@ -434,6 +434,9 @@ def runtime_manifest_provider_non_auth_signature(
         return None
     return {
         "type": provider.type,
+        "configuration_mode": provider.configuration_mode,
+        "native_provider": provider.native_provider,
+        "native_variant": provider.native_variant,
         "base_url": provider.base_url,
         "api_mode": provider.api_mode,
         "models": provider.models,

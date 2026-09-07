@@ -40,6 +40,11 @@ class AiProvider(Base, TimestampMixin):
     )
     provider_id: Mapped[str] = mapped_column(String(80), nullable=False)
     type: Mapped[str] = mapped_column(String(80), nullable=False)
+    configuration_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="catalog", server_default="catalog"
+    )
+    native_provider: Mapped[str | None] = mapped_column(String(120))
+    native_variant: Mapped[str | None] = mapped_column(String(120))
     label: Mapped[str | None] = mapped_column(String(200))
     base_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     api_mode: Mapped[str | None] = mapped_column(String(80))

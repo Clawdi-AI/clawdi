@@ -287,7 +287,7 @@ describe("AI provider projection", () => {
 			const projection = buildAgentTargetProjection(target, catalog, primaryModel);
 			expect(projection.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
 			expect(projection.default_provider_id).toBe(CLAWDI_MANAGED_PROVIDER_ID);
-			expect(projection.primary_model.provider_id).toBe(CLAWDI_MANAGED_PROVIDER_ID);
+			expect(projection.primary_model?.provider_id).toBe(CLAWDI_MANAGED_PROVIDER_ID);
 			expect(projection.files[0]?.content).not.toContain(legacyProviderId);
 		}
 	});

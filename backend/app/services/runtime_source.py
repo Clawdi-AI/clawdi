@@ -38,6 +38,7 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.ai_provider import AiProviderModel
+from app.schemas.native_provider import native_provider
 from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES
 from app.schemas.runtime import (
     HostedAgentPlugins,
@@ -93,7 +94,7 @@ RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 # Renderer contract: bump this value whenever emitted desired-state material changes.
 # A bump makes each Agent render and backfill once on its next manifest poll, spreading
 # the fleet work naturally. Forgetting it can make an old ETag return 304 indefinitely.
-RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v1"
+RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
@@ -748,6 +749,7 @@ def render_runtime_source(
             )
         provider_entry = _provider_entry(
             provider,
+            runtime_name=runtime_name,
             secret_ref=secret_ref,
             credential_revision=(
                 payload.credential_revision
@@ -794,6 +796,27 @@ def render_runtime_source(
     providers = {
         provider_id: provider_material[provider_id] for provider_id in runtime["provider_ids"]
     }
+    if runtime.get("providerMode") == "configured" and not primary_model:
+        native_chat = [
+            entry for entry in providers.values() if entry.get("configurationMode") == "native"
+        ]
+        catalog_chat = [
+            entry
+            for entry in providers.values()
+            if entry.get("configurationMode") != "native"
+            and not (
+                entry.get("managed_by") == "clawdi"
+                and entry.get("models")
+                and all(
+                    model.get("capabilities", {}).get("embeddings") is True
+                    for model in entry["models"]
+                )
+            )
+        ]
+        if len(native_chat) != 1 or catalog_chat:
+            raise RuntimeSourceError(
+                "Configured chat requires a primary model or native credentials"
+            )
     tool_projection = tools.model_dump(
         exclude={"codex"},
         exclude_none=True,
@@ -1139,6 +1162,7 @@ def _provider_entry(
     secret_ref: str | None,
     credential_revision: str | None,
     selected_model: str | None,
+    runtime_name: HostedRuntimeName = "openclaw",
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "kind": "openai-compatible",
@@ -1156,6 +1180,17 @@ def _provider_entry(
         else provider.api_mode
     )
     runtime_env = _MANAGED_PROVIDER_RUNTIME_ENV if managed else provider.runtime_env_name
+    if provider.configuration_mode == "native":
+        try:
+            routing = native_provider(provider.native_provider, provider.native_variant)
+        except ValueError as exc:
+            raise RuntimeSourceError("Stored native provider identity is invalid") from exc
+        if managed or provider.models or provider.base_url != routing.base_url:
+            raise RuntimeSourceError("Native provider must contain only credential routing")
+        runtime_routing = getattr(routing, runtime_name)
+        result["configurationMode"] = "native"
+        result["nativeProvider"] = runtime_routing.provider
+        runtime_env = runtime_routing.env or routing.runtime_env_name
     if api_mode:
         result["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
@@ -1169,7 +1204,11 @@ def _provider_entry(
             ]
         except ValidationError as exc:
             raise RuntimeSourceError("Stored AI provider model metadata is invalid") from exc
-    if selected_model and not any(model["id"] == selected_model for model in models):
+    if (
+        provider.configuration_mode != "native"
+        and selected_model
+        and not any(model["id"] == selected_model for model in models)
+    ):
         models.insert(0, {"id": selected_model})
     if models:
         result["models"] = models

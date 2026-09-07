@@ -195,9 +195,9 @@ export function resolveRuntimeRunConfigs(input: {
 	const runtimeName = runtimeNameSchema.parse(input.name);
 	const providerEnvironment = input.runtime.enabled
 		? hostedProviderEnvironment(input.manifest, input.name, { validateOverlap: true })
-		: { placeholderEnv: {}, secretEnv: {} };
-	const { placeholderEnv: providerPlaceholderEnv, secretEnv: providerSecretEnv } =
-		providerEnvironment;
+		: { placeholderEnv: {}, configEnv: {}, secretEnv: {} };
+	const { placeholderEnv, configEnv, secretEnv: providerSecretEnv } = providerEnvironment;
+	const providerPlaceholderEnv = { ...placeholderEnv, ...configEnv };
 	const runtimeRunSettings = resolvedRuntimeSettings(
 		runtimeName,
 		input.runtime.run,

@@ -4,6 +4,7 @@ import {
 	AI_PROVIDER_API_MODES,
 	AI_PROVIDER_TYPES,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+	nativeAiProviderForRuntime,
 } from "@clawdi/shared";
 import { z } from "zod";
 import { egressEngineSchema } from "./egress-engine";
@@ -398,7 +399,7 @@ const hostedConfiguredRuntimeEntrySchema = z
 		...hostedRuntimeEntryBaseShape,
 		providerMode: z.literal("configured"),
 		provider_ids: hostedProviderIdsSchema,
-		primary_model: hostedPrimaryModelSchema,
+		primary_model: hostedPrimaryModelSchema.nullable().optional(),
 	})
 	.strict()
 	.superRefine((runtime, ctx) => {
@@ -492,6 +493,8 @@ const hostedProviderAuthSchema = z
 const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
+		configurationMode: z.enum(["native", "catalog"]).optional(),
+		nativeProvider: z.string().min(1).max(120).optional(),
 		type: z.enum(AI_PROVIDER_TYPES).optional(),
 		baseUrl: z.string().url().optional(),
 		models: z.array(hostedProviderModelSchema).optional(),
@@ -516,6 +519,23 @@ function validateHostedProvider(
 	provider: z.infer<typeof hostedProviderBaseSchema>,
 	ctx: z.RefinementCtx,
 ): void {
+	if (
+		provider.configurationMode === "native" &&
+		(provider.managed_by === "clawdi" || provider.models?.length || !provider.nativeProvider)
+	) {
+		ctx.addIssue({
+			code: "custom",
+			message: "Native providers contain credentials, not managed catalogs",
+			path: [],
+		});
+	}
+	if (provider.configurationMode !== "native" && provider.nativeProvider) {
+		ctx.addIssue({
+			code: "custom",
+			message: "nativeProvider requires native configurationMode",
+			path: ["nativeProvider"],
+		});
+	}
 	const hasErrorStatus = provider.status === "error";
 	const hasError = provider.error !== undefined;
 	if (hasErrorStatus !== hasError) {
@@ -647,7 +667,7 @@ interface RuntimeEntry {
 	run?: RuntimeRunSettings;
 	services: Record<string, RuntimeRunSettings>;
 	provider_ids?: string[];
-	primary_model?: { provider_id: string; model: string };
+	primary_model?: { provider_id: string; model: string } | null;
 }
 
 export interface RuntimeManifest {
@@ -858,6 +878,46 @@ function validateHostedRuntimeManifest(
 	}
 	if (selectedRuntime) {
 		const providerIds = new Set(selectedRuntime.provider_ids);
+		const selectedProviders = selectedRuntime.provider_ids.map((id) => manifest.providers[id]);
+		const nativeProviders = selectedProviders.filter(
+			(provider) => provider?.configurationMode === "native",
+		);
+		for (const provider of nativeProviders) {
+			const routing = nativeAiProviderForRuntime(
+				manifest.runtime,
+				provider.nativeProvider ?? "",
+				provider.baseUrl ?? "",
+				provider.auth?.type === "agent_profile",
+			);
+			if (
+				!routing ||
+				routing.api_mode !== provider.apiMode ||
+				routing.type !== provider.type ||
+				provider.runtimeEnvName !==
+					(manifest.runtime === "hermes" ? routing.hermes.env : routing.runtime_env_name)
+			) {
+				addIssue("Native provider routing does not match the runtime contract", ["providers"]);
+			}
+		}
+		if (
+			selectedRuntime.providerMode === "configured" &&
+			!selectedRuntime.primary_model &&
+			(nativeProviders.length !== 1 ||
+				selectedProviders.some(
+					(provider) =>
+						provider?.configurationMode !== "native" &&
+						!(
+							provider?.managed_by === "clawdi" &&
+							provider.models?.length &&
+							provider.models.every((model) => model.capabilities?.embeddings === true)
+						),
+				))
+		) {
+			addIssue(
+				"Configured chat requires a primary model or a native credential binding",
+				runtimePath("primary_model"),
+			);
+		}
 		for (const providerId of providerIds) {
 			if (!Object.hasOwn(manifest.providers, providerId)) {
 				ctx.addIssue({
@@ -988,7 +1048,7 @@ export const hostedRuntimeBundleV2ManifestSchema =
 function hostedRuntimeProviderBinding(
 	runtime: HostedRuntimeBundleV2ManifestWire["runtimes"][string],
 ):
-	| { provider_ids: string[]; primary_model: { provider_id: string; model: string } }
+	| { provider_ids: string[]; primary_model?: { provider_id: string; model: string } | null }
 	| { provider_ids: [] } {
 	if (runtime.providerMode === "unmanaged") return { provider_ids: [] };
 	return { provider_ids: runtime.provider_ids, primary_model: runtime.primary_model };

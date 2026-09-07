@@ -449,6 +449,14 @@ async def transition_ai_provider_auth(
     provider.auth_type = auth_type
     provider.auth_ref = auth_ref
     provider.auth_metadata = auth_metadata
+    if provider.configuration_mode == "native" and provider.native_provider in {
+        "openai",
+        "openai-codex",
+    }:
+        if auth_type == "agent_profile" and (auth_metadata or {}).get("tool") == "codex":
+            provider.native_provider = "openai-codex"
+        elif auth_type in {"api_key", "secret_ref"}:
+            provider.native_provider = "openai"
     if archive_provider:
         provider.archived_at = now
     manifest_event_queued = archive_active

@@ -106,6 +106,7 @@ import {
 	removeStaleRuntimeSystemdFiles,
 	resolveRuntimeSystemdIdentity,
 	runtimeSystemdCommonEnvironment,
+	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
 	writeRuntimeSystemdState,
@@ -144,6 +145,8 @@ interface RuntimeConvergenceContext {
 }
 
 interface RuntimeConvergenceState {
+	nativeCredentialChangedRuntimes: Set<string>;
+	nativeCredentialProviderIds: Record<string, string[]>;
 	agentPluginTransaction: HostedAgentPluginTransaction | null;
 	agentPluginFailedNames: Set<string>;
 	agentPluginMutationAttempted: boolean;
@@ -270,6 +273,8 @@ function initializeRuntimeConvergence(
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
 	const state: RuntimeConvergenceState = {
+		nativeCredentialChangedRuntimes: new Set(),
+		nativeCredentialProviderIds: {},
 		agentPluginTransaction: null,
 		agentPluginFailedNames: new Set(),
 		agentPluginMutationAttempted: false,
@@ -749,6 +754,7 @@ function applyRuntimeResourceProjections(
 			manifest,
 			projectionHome,
 			previousProjectedProviderIds[name] ?? [],
+			context.appliedState?.nativeCredentialProviderIds?.[name] ?? [],
 		);
 	}
 	try {
@@ -888,8 +894,13 @@ function applyRuntimeEntryProjections(
 					state.openClawOwnerBrowserBootstrapSupported,
 					hermesConfig,
 					runtimeProbeRevision(context, name),
+					context.appliedState?.nativeCredentialProviderIds?.[name] ?? [],
 				);
 				state.projectedProviderIds[name] = providerProjection.providerIds;
+				state.nativeCredentialProviderIds[name] =
+					providerProjection.nativeCredentialProviderIds ?? [];
+				if (providerProjection.nativeCredentialsChanged)
+					state.nativeCredentialChangedRuntimes.add(name);
 			} catch (error) {
 				state.installErrors.push(
 					`runtime ${name} provider projection failed: ${
@@ -1071,7 +1082,14 @@ function activateRuntimeServices(
 		const activation = opts.systemdApply.activate({
 			staleSystemUnits: state.staleSystemdFiles.systemUnits,
 			staleUserUnits: state.staleSystemdFiles.userUnits,
-			invalidatedUserUnits: officialServicePlan.pending.map((item) => item.unitName),
+			invalidatedUserUnits: [
+				...new Set([
+					...officialServicePlan.pending.map((item) => item.unitName),
+					...state.runtimeSystemdUserPrograms
+						.filter((program) => state.nativeCredentialChangedRuntimes.has(program.runtime))
+						.map(runtimeSystemdUserUnitName),
+				]),
+			],
 		});
 		if (!activation.applied) {
 			throw new Error("systemd runtime services did not reach required readiness");
@@ -1108,6 +1126,7 @@ function buildRuntimeConvergenceResult(
 		installErrors: state.installErrors,
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
+		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),
 		outputs: {
 			processManager: "systemd",

@@ -65,6 +65,7 @@ from app.schemas.ai_provider import (
     CredentialMaterialState,
     ai_provider_auth_from_persistence,
 )
+from app.schemas.native_provider import native_provider as native_provider_routing
 from app.services.ai_provider_auth_transition import (
     AuthCredentialWrite,
     transition_ai_provider_auth,
@@ -675,6 +676,18 @@ async def patch_ai_provider(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": null_errors})
     for key, value in update.items():
         setattr(merged, key, value)
+    if merged.configuration_mode == "native":
+        try:
+            native_input = merged.model_dump(exclude_none=True)
+            if "native_provider" in update or "native_variant" in update:
+                for field in ("type", "base_url", "api_mode", "runtime_env_name"):
+                    if field not in update:
+                        native_input.pop(field, None)
+            merged = AiProviderResponse.model_validate(native_input)
+        except ValidationError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid native provider configuration"
+            ) from exc
     errors = _validate_provider(merged)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": errors})
@@ -775,12 +788,25 @@ async def set_ai_provider_api_key(
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid runtime_env_name")
     proposed_runtime_env_name = runtime_env_name or provider.runtime_env_name
-    await _validate_runtime_env_name_unique(
-        db,
-        auth,
-        proposed_runtime_env_name,
-        exclude_provider_id=provider.provider_id,
-    )
+    if provider.configuration_mode == "native":
+        try:
+            routing = native_provider_routing(provider.native_provider, provider.native_variant)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Stored native provider identity is invalid"
+            ) from exc
+        if runtime_env_name is not None and runtime_env_name != routing.runtime_env_name:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Native credential environment is derived from its provider",
+            )
+    else:
+        await _validate_runtime_env_name_unique(
+            db,
+            auth,
+            proposed_runtime_env_name,
+            exclude_provider_id=provider.provider_id,
+        )
     metadata: dict[str, JsonValue] = {"source": "managed", "profile": profile}
     await transition_ai_provider_auth(
         db,
@@ -1487,6 +1513,8 @@ async def _validate_runtime_env_unique(
     *,
     exclude_provider_id: str | None = None,
 ) -> None:
+    if provider.configuration_mode == "native":
+        return
     auth_ref, _metadata = provider.auth.persistence_fields()
     names: set[str] = (
         {provider.runtime_env_name}
@@ -1520,6 +1548,7 @@ async def _validate_runtime_env_name_unique(
             AiProvider.owner_user_id == auth.user_id,
             AiProvider.provider_id != exclude_provider_id,
             AiProvider.managed_by == "user",
+            AiProvider.configuration_mode != "native",
             AiProvider.archived_at.is_(None),
             (
                 (AiProvider.runtime_env_name == runtime_env_name)
@@ -1582,6 +1611,9 @@ def _apply_provider_body(
     apply_auth: bool = True,
 ) -> None:
     provider.type = body.type
+    provider.configuration_mode = body.configuration_mode or "catalog"
+    provider.native_provider = body.native_provider
+    provider.native_variant = body.native_variant
     provider.label = body.label
     provider.base_url = body.base_url
     provider.api_mode = managed_provider_api_mode(body.provider_id) or body.api_mode
@@ -1717,6 +1749,9 @@ def _build_response(
             "provider_id": runtime_managed_provider_id(provider.provider_id),
             "scope": AI_PROVIDER_SCOPE,
             "type": provider.type,
+            "configuration_mode": provider.configuration_mode or "catalog",
+            "native_provider": provider.native_provider,
+            "native_variant": provider.native_variant,
             "label": provider.label,
             "base_url": provider.base_url,
             "api_mode": api_mode,
@@ -1750,6 +1785,9 @@ def _provider_capability_input(
             auth_tool=str(metadata.get("tool")) if metadata.get("tool") else None,
             auth_ref=provider.auth_ref,
             runtime_env_name=provider.runtime_env_name,
+            configuration_mode=provider.configuration_mode or "catalog",
+            native_provider=provider.native_provider,
+            native_variant=provider.native_variant,
         )
     auth_ref, metadata = provider.auth.persistence_fields()
     return AiProviderCapabilityInput(
@@ -1761,6 +1799,9 @@ def _provider_capability_input(
         auth_tool=(str(metadata.get("tool")) if metadata and metadata.get("tool") else None),
         auth_ref=auth_ref,
         runtime_env_name=provider.runtime_env_name,
+        configuration_mode=provider.configuration_mode or "catalog",
+        native_provider=provider.native_provider,
+        native_variant=provider.native_variant,
     )
 
 
@@ -1840,6 +1881,12 @@ def _connection_test_failure_with_readiness(
 
 def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     errors: list[str] = []
+    if body.configuration_mode != "native" and (body.native_provider or body.native_variant):
+        errors.append("catalog configuration cannot include native provider identity")
+    if body.configuration_mode == "native":
+        is_codex = body.auth.type == "agent_profile" and body.auth.tool == "codex"
+        if (body.native_provider == "openai-codex") != is_codex:
+            errors.append("native Codex credentials require Codex OAuth auth")
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
@@ -1937,7 +1984,7 @@ def _validate_supported_oauth_provider(oauth_provider: str) -> None:
 
 def _validate_patch_nulls(update: Mapping[str, object]) -> list[str]:
     errors: list[str] = []
-    for field in ("type", "base_url", "auth", "managed_by"):
+    for field in ("type", "base_url", "auth", "managed_by", "configuration_mode"):
         if field in update and update[field] is None:
             errors.append(f"{field} cannot be null")
     return errors

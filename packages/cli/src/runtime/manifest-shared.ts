@@ -7,6 +7,7 @@ import type { RuntimePaths } from "./paths";
 import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 export interface RuntimeConvergenceResult {
+	nativeCredentialProviderIds?: Record<string, string[]>;
 	manifest: RuntimeManifest;
 	source: RuntimeManifestLoad["source"];
 	sourcePath: string;

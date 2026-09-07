@@ -1,6 +1,10 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isClawdiManagedProviderId, MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
+import {
+	isClawdiManagedProviderId,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+	nativeAiProvider,
+} from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -11,6 +15,7 @@ import {
 	type HermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
+import { reconcileHermesNativeCredentials } from "./hermes-native-credentials";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import {
@@ -27,6 +32,8 @@ import {
 } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { canonicalJsonEqual, isPlainRecord, recordValue, stringValue } from "./manifest-shared";
+import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
+import { openClawPluginListSchema } from "./openclaw-plugin-observation";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
@@ -38,6 +45,87 @@ import {
 import { runtimeSecretValue } from "./secret-values";
 
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
+function ensureNativeOpenClawProviderPlugins(
+	input: HostedAiProviderProjectionInput | null,
+	commandPath: string,
+	home: string,
+	workspaceRoot: string,
+): void {
+	const required = new Map(
+		input?.catalog.providers.flatMap((provider) => {
+			const native =
+				provider.configuration_mode === "native"
+					? nativeAiProvider(provider.native_provider, provider.native_variant)
+					: undefined;
+			if (!native) return [];
+			const plugins = [[native.openclaw.plugin, native.openclaw.package] as const];
+			if (native.openclaw.companion_plugin && native.openclaw.companion_package)
+				plugins.push([native.openclaw.companion_plugin, native.openclaw.companion_package]);
+			return plugins;
+		}) ?? [],
+	);
+	if (required.size === 0) return;
+	const run = (args: string[]) => {
+		const result = spawnRuntimeUserCommand(commandPath, args, home, workspaceRoot, {
+			timeoutMs: 30_000,
+		});
+		return {
+			status: result.status,
+			stdout: String(result.stdout ?? ""),
+			stderr: String(result.stderr ?? ""),
+		};
+	};
+	const observe = () => {
+		const result = run(["plugins", "list", "--json"]);
+		if (result.status !== 0)
+			throw new Error("Native OpenClaw provider plugins could not be inspected");
+		return openClawPluginListSchema.parse(JSON.parse(String(result.stdout)));
+	};
+	let installed = observe();
+	for (const [plugin, packageSpec] of required) {
+		if (!installed.plugins.some((entry) => entry.id === plugin)) {
+			// The target is absent. --force acknowledges this fixed official npm
+			// source; native security policy still governs installation.
+			runRuntimeUserCommand(
+				commandPath,
+				[
+					"plugins",
+					"install",
+					packageSpec,
+					"--force",
+					"--pin",
+					...openClawPluginCapabilityConsentArgs("install", run),
+				],
+				"",
+				home,
+				workspaceRoot,
+				{ timeoutMs: 180_000 },
+			);
+			installed = observe();
+		}
+		const matches = installed.plugins.filter((entry) => entry.id === plugin);
+		if (matches.length !== 1 || matches[0]?.status === "error") {
+			throw new Error(`Required native OpenClaw provider plugin ${plugin} is unavailable`);
+		}
+		if (matches[0]?.enabled !== true) {
+			runRuntimeUserCommand(
+				commandPath,
+				["plugins", "enable", plugin, ...openClawPluginCapabilityConsentArgs("enable", run)],
+				"",
+				home,
+				workspaceRoot,
+				{ timeoutMs: 30_000 },
+			);
+			installed = observe();
+		}
+		if (
+			!installed.plugins.some(
+				(entry) => entry.id === plugin && entry.enabled && entry.status === "loaded",
+			)
+		)
+			throw new Error(`Required native OpenClaw provider plugin ${plugin} did not activate`);
+	}
+}
 const OPENCLAW_SCHEMA_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_SCHEMA_PROBE_MAX_BYTES = 16 * 1024 * 1024;
 const openClawProviderPatchRevisions = new Map<string, string>();
@@ -72,7 +160,11 @@ export function providerHealthReasons(
 			reasons.push("base_url_invalid");
 		}
 	}
-	if (!stringValue(provider.model) && !providerHasModels(provider)) {
+	if (
+		provider.configurationMode !== "native" &&
+		!stringValue(provider.model) &&
+		!providerHasModels(provider)
+	) {
 		reasons.push("model_missing");
 	}
 	const apiMode = stringValue(provider.apiMode);
@@ -107,6 +199,8 @@ function isOpenAiCompatibleMode(apiMode: string | null): boolean {
 	return apiMode === "openai_chat" || apiMode === "openai_responses";
 }
 interface HostedAiProviderProjectionResult {
+	nativeCredentialsChanged?: boolean;
+	nativeCredentialProviderIds?: string[];
 	path: string | null;
 	revision: string | null;
 	providerIds: string[];
@@ -130,6 +224,7 @@ export function applyHostedAiProviderProjection(
 	openClawOwnerBrowserBootstrapSupported: boolean,
 	hermesConfig: HermesConfigTransaction | null,
 	providerRevision: string,
+	previousNativeProviderIds: readonly string[] = [],
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
@@ -147,17 +242,87 @@ export function applyHostedAiProviderProjection(
 				openClawOwnerBrowserBootstrapSupported,
 			);
 		}
-		return { path: null, revision: null, providerIds: [...previousProviderIds] };
+		return {
+			path: null,
+			revision: null,
+			providerIds: [...previousProviderIds],
+			nativeCredentialProviderIds: [...previousNativeProviderIds],
+		};
 	}
 	if (name === "hermes") {
-		return applyHostedHermesAiProviderProjection(
+		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
+		const providers =
+			projectionInput?.catalog.providers.flatMap((provider) => {
+				if (provider.configuration_mode !== "native" || provider.auth.type === "agent_profile")
+					return [];
+				const native = nativeAiProvider(provider.native_provider, provider.native_variant);
+				if (!native) throw new Error("Invalid native Hermes provider identity");
+				const ref = manifest.projection?.providers?.[provider.id]?.apiKeySecretRef;
+				const apiKey = ref ? runtimeSecretValue(secretValues ?? {}, ref) : null;
+				if (!apiKey) throw new Error("Native Hermes provider credential is unavailable");
+				return [{ providerId: native.hermes.provider, apiKey, baseUrl: native.base_url }];
+			}) ?? [];
+		const currentStrategies = getHermesRawConfigValue(hermesConfig, "credential_pool_strategies");
+		if (currentStrategies.exists && !isPlainRecord(currentStrategies.value))
+			throw new Error("Hermes credential strategies must be an object");
+		const strategies = isPlainRecord(currentStrategies.value) ? currentStrategies.value : {};
+		const selected = getHermesRawConfigValue(hermesConfig, "model.provider");
+		const selectedProvider = stringValue(selected.value)?.trim().toLowerCase();
+		const ownsSelectedConnection = projectionInput?.catalog.providers.some(
+			(provider) =>
+				provider.configuration_mode === "native" &&
+				nativeAiProvider(provider.native_provider, provider.native_variant)?.hermes.provider ===
+					selectedProvider,
+		);
+		let connectionOverridesChanged = false;
+		if (ownsSelectedConnection) {
+			for (const field of HERMES_DIRECT_MODEL_FIELDS) {
+				const path = `model.${field}`;
+				if (getHermesRawConfigValue(hermesConfig, path).exists) {
+					reconcileHermesConfigValue(hermesConfig, path, undefined);
+					connectionOverridesChanged = true;
+				}
+			}
+		}
+		const auth = reconcileHermesNativeCredentials({
+			commandPath: observation.commandPath,
+			home,
+			workspaceRoot,
+			providers,
+			previousProviderIds: previousNativeProviderIds,
+			strategies,
+		});
+		if (Object.keys(auth.strategyUpdates).length > 0) {
+			const next = { ...strategies };
+			for (const [providerId, strategy] of Object.entries(auth.strategyUpdates)) {
+				if (strategy.exists) next[providerId] = strategy.value;
+				else delete next[providerId];
+			}
+			reconcileHermesConfigValue(
+				hermesConfig,
+				"credential_pool_strategies",
+				Object.keys(next).length > 0 ? next : undefined,
+			);
+		}
+		const projection = applyHostedHermesAiProviderProjection(
 			projectionInput,
 			previousProviderIds,
 			home,
 			hermesConfig,
 		);
+		return {
+			...projection,
+			nativeCredentialsChanged: auth.changed || connectionOverridesChanged,
+			nativeCredentialProviderIds: providers.map((provider) => provider.providerId),
+		};
 	}
 	if (name === "openclaw") {
+		ensureNativeOpenClawProviderPlugins(
+			projectionInput,
+			observation.commandPath,
+			openClawContext.home,
+			workspaceRoot,
+		);
 		applyOpenClawGatewayHostedProjection(
 			observation.commandPath,
 			manifest,
@@ -166,7 +331,11 @@ export function applyHostedAiProviderProjection(
 			workspaceRoot,
 			openClawOwnerBrowserBootstrapSupported,
 		);
-		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
+		const providerPatch = buildOpenClawHostedProviderPatch(
+			projectionInput,
+			previousProviderIds,
+			previousNativeProviderIds,
+		);
 		if (providerPatch.apply) {
 			applyOpenClawHostedProviderPatch(
 				providerPatch,
@@ -174,6 +343,17 @@ export function applyHostedAiProviderProjection(
 				openClawContext,
 				workspaceRoot,
 				providerRevision,
+				[
+					...previousNativeProviderIds,
+					...(projectionInput?.catalog.providers
+						.filter((provider) => provider.configuration_mode === "native")
+						.flatMap((provider) => {
+							const native = nativeAiProvider(provider.native_provider, provider.native_variant);
+							return native && !previousProviderIds.includes(native.openclaw.provider)
+								? [native.openclaw.provider]
+								: [];
+						}) ?? []),
+				],
 			);
 		}
 		if (openClawContext.managedApiKeyProjection) {
@@ -188,6 +368,7 @@ export function applyHostedAiProviderProjection(
 			path: observation.commandPath,
 			revision: null,
 			providerIds: providerPatch.providerIds,
+			nativeCredentialProviderIds: providerPatch.nativeCredentialProviderIds,
 		};
 	}
 	return { path: null, revision: null, providerIds: [] };
@@ -198,6 +379,7 @@ export function previewHostedAiProviderProjectionRevision(
 	manifest: RuntimeManifest,
 	home: string,
 	previousProviderIds: readonly string[],
+	previousNativeProviderIds: readonly string[] = [],
 ): string | null {
 	if (
 		(name !== "openclaw" && name !== "hermes") ||
@@ -213,7 +395,11 @@ export function previewHostedAiProviderProjectionRevision(
 		return null;
 	}
 	if (name === "openclaw") {
-		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
+		const providerPatch = buildOpenClawHostedProviderPatch(
+			projectionInput,
+			previousProviderIds,
+			previousNativeProviderIds,
+		);
 		if (!projectionInput) {
 			return runtimeImpactRevision({
 				openClawProviderProjection: "delete",
@@ -474,7 +660,14 @@ function applyHostedHermesAiProviderProjection(
 		const patch = parseYaml(file.content) as unknown;
 		const root = recordValue(patch);
 		if (!root) throw new Error("Hermes projection patch must be a YAML object.");
-		applyHermesProviderConfig(config, root, deletedProviderIds);
+		applyHermesProviderConfig(
+			config,
+			root,
+			deletedProviderIds,
+			projectionInput.catalog.providers.some(
+				(provider) => provider.configuration_mode === "native",
+			),
+		);
 	}
 	return {
 		path: configPath,
@@ -489,6 +682,7 @@ function quoteTomlString(value: string): string {
 	return JSON.stringify(value);
 }
 export interface OpenClawHostedProviderPatch {
+	nativeCredentialProviderIds?: string[];
 	apply: boolean;
 	content: string;
 	providerIds: string[];
@@ -506,6 +700,7 @@ if (
   throw new Error("required public config-mutation export is missing");
 }
 const patch = JSON.parse(readFileSync(0, "utf8"));
+const nativeProviderIds = new Set(JSON.parse(process.argv[2]));
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 if (!isRecord(patch)) throw new Error("OpenClaw provider patch must be an object");
 const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -518,13 +713,17 @@ const applyMergePatch = (target, source, path = []) => {
     if (value === null) {
       delete target[key];
       unsetPaths.push(nextPath);
-    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers") {
+    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers" && !nativeProviderIds.has(key)) {
       target[key] = structuredClone(value);
       explicitSetPaths.push(nextPath);
     } else if (isRecord(value)) {
       if (!isRecord(target[key])) target[key] = {};
       if (Object.keys(value).length === 0) explicitSetPaths.push(nextPath);
       applyMergePatch(target[key], value, nextPath);
+      if (path.length === 2 && path[0] === "models" && path[1] === "providers" && nativeProviderIds.has(key) && Object.keys(target[key]).length === 0) {
+        delete target[key];
+        unsetPaths.push(nextPath);
+      }
     } else {
       target[key] = structuredClone(value);
       explicitSetPaths.push(nextPath);
@@ -575,6 +774,7 @@ function applyOpenClawHostedProviderPatch(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	providerRevision: string,
+	nativeProviderIds: string[] = [],
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
 	const content = adaptOpenClawMemorySearchPatch(
@@ -596,7 +796,13 @@ function applyOpenClawHostedProviderPatch(
 	}
 	runRuntimeUserCommand(
 		"node",
-		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_CONFIG_MUTATION_HELPER,
+			sdkPath,
+			JSON.stringify(nativeProviderIds),
+		],
 		content,
 		context.home,
 		workspaceRoot,
@@ -678,13 +884,18 @@ function jsonSchemaHasPropertyPath(schema: unknown, path: readonly string[]): bo
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
 	previousProviderIds: readonly string[],
+	previousNativeProviderIds: readonly string[] = [],
 ): OpenClawHostedProviderPatch {
 	if (!projectionInput) {
 		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
 		return {
-			apply: deletedProviderIds.length > 0,
-			content: mergeProviderDeletes("openclaw", "{}\n", deletedProviderIds),
+			apply: deletedProviderIds.length > 0 || previousNativeProviderIds.length > 0,
+			content: removeNativeOpenClawCredentials(
+				mergeProviderDeletes("openclaw", "{}\n", deletedProviderIds),
+				previousNativeProviderIds,
+			),
 			providerIds: [],
+			nativeCredentialProviderIds: [],
 		};
 	}
 	const projection = buildAgentTargetProjection(
@@ -694,15 +905,47 @@ export function buildOpenClawHostedProviderPatch(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	const providerIds = [...providerIdsFromPatch("openclaw", file.content)].sort();
-	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
-	const providerPatchContent =
-		providerIds.length > 0 ? withOpenClawProviderMode(file.content, "replace") : file.content;
+	const projectedIds = providerIdsFromPatch("openclaw", file.content);
+	const nativeIds = new Set(
+		projectionInput.catalog.providers.flatMap((provider) => {
+			const native =
+				provider.configuration_mode === "native"
+					? nativeAiProvider(provider.native_provider, provider.native_variant)
+					: undefined;
+			return native && native.id !== "openai-codex" ? [native.openclaw.provider] : [];
+		}),
+	);
+	const providerIds = [...projectedIds].filter((id) => !nativeIds.has(id)).sort();
+	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), projectedIds);
+	let providerPatchContent = file.content;
+	if (
+		projectionInput.catalog.providers.some((provider) => provider.configuration_mode === "native")
+	) {
+		providerPatchContent = withOpenClawProviderMode(file.content, "merge");
+	} else if (providerIds.length > 0) {
+		providerPatchContent = withOpenClawProviderMode(file.content, "replace");
+	}
 	return {
 		apply: true,
-		content: mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
+		content: removeNativeOpenClawCredentials(
+			mergeProviderDeletes("openclaw", providerPatchContent, deletedProviderIds),
+			previousNativeProviderIds.filter((id) => !nativeIds.has(id) && !projectedIds.has(id)),
+		),
 		providerIds,
+		nativeCredentialProviderIds: [...nativeIds],
 	};
+}
+
+function removeNativeOpenClawCredentials(content: string, providerIds: readonly string[]): string {
+	if (providerIds.length === 0) return content;
+	const patch = recordValue(JSON.parse(content) as unknown);
+	if (!patch) throw new Error("OpenClaw provider patch must be an object");
+	const models = recordValue(patch.models) ?? {};
+	const providers = { ...(recordValue(models.providers) ?? {}) };
+	for (const id of providerIds) providers[id] = { apiKey: null, auth: null, baseUrl: null };
+	models.providers = providers;
+	patch.models = models;
+	return `${JSON.stringify(patch, null, 2)}\n`;
 }
 type ProviderPatchRuntime = "hermes" | "openclaw";
 function providerPatchRoot(
@@ -767,14 +1010,19 @@ function applyHermesProviderConfig(
 	context: HermesConfigTransaction,
 	patch: Record<string, unknown>,
 	deletedProviderIds: readonly string[],
+	preserveModelSelection = false,
 ): void {
 	const patchModel = recordValue(patch.model) ?? {};
 	const modelKeys = new Set<string>([...HERMES_DIRECT_MODEL_FIELDS, ...Object.keys(patchModel)]);
-	for (const key of [...modelKeys].sort()) {
+	for (const key of preserveModelSelection ? [] : [...modelKeys].sort()) {
 		const value = Object.hasOwn(patchModel, key) ? patchModel[key] : undefined;
 		reconcileHermesConfigValue(context, `model.${key}`, value === null ? undefined : value);
 	}
-	if (!Object.hasOwn(patchModel, "provider") && deletedProviderIds.length > 0) {
+	if (
+		!preserveModelSelection &&
+		!Object.hasOwn(patchModel, "provider") &&
+		deletedProviderIds.length > 0
+	) {
 		const currentProvider = getHermesResolvedConfigValue(context.context, "model.provider");
 		if (currentProvider.exists && typeof currentProvider.value !== "string") {
 			throw new Error("Hermes config field model.provider must be a string");

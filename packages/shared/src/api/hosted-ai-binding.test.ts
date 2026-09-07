@@ -75,6 +75,30 @@ const codexProvider = {
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
 } satisfies HostedSavedAiProvider;
 
+test("native API key and OAuth bindings carry credential readiness without choosing a model", () => {
+	for (const saved of [apiKeyProvider, codexProvider]) {
+		const provider: HostedSavedAiProvider = {
+			...saved,
+			configuration_mode: "native",
+			native_provider: saved.auth.type === "agent_profile" ? "openai-codex" : "openai",
+			models: null,
+		};
+		const binding = buildHostedAiBindingFields({
+			providers: [provider],
+			managedModels,
+			mode: "create",
+			selection: { mode: "saved", providerId: provider.provider_id },
+		});
+		expect(binding.primary_model).toBeNull();
+		expect(binding.ai_provider_bootstrap?.catalog.providers[0]).toMatchObject({
+			configuration_mode: "native",
+			native_provider: provider.native_provider,
+			readiness: provider.readiness,
+		});
+		expect(binding.ai_provider_bootstrap?.catalog.providers[0]?.models).toBeUndefined();
+	}
+});
+
 const noncanonicalManagedProviders: HostedSavedAiProvider[] = [
 	{ ...apiKeyProvider, id: "row-v1", provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
 	{
