@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
@@ -129,9 +129,9 @@ for observed_engine in (engine, control_engine, control_snapshot_engine):
     event.listen(observed_engine.sync_engine.pool, "checkin", _connection_checkin)
 
 
-async def _close_resource(resource: AsyncSession | AsyncConnection) -> None:
+async def _close_resource(close: Callable[[], Coroutine[object, object, None]]) -> None:
     """Return the connection before propagating request cancellation."""
-    close_task = asyncio.create_task(resource.close())
+    close_task = asyncio.create_task(close())
     cancellation: asyncio.CancelledError | None = None
 
     with anyio.CancelScope(shield=True):
@@ -161,8 +161,11 @@ async def _close_resource(resource: AsyncSession | AsyncConnection) -> None:
 
 
 class _CancellationSafeAsyncSession(AsyncSession):
+    async def close(self) -> None:
+        await _close_resource(super().close)
+
     async def __aexit__(self, type_: object, value: object, traceback: object) -> None:
-        await _close_resource(self)
+        await self.close()
 
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -208,7 +211,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     try:
         yield session
     finally:
-        await _close_resource(session)
+        await session.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +229,7 @@ async def _reserved_connection() -> AsyncGenerator[AsyncConnection, None]:
     try:
         yield connection
     finally:
-        await _close_resource(connection)
+        await _close_resource(connection.close)
 
 
 async def get_runtime_manifest_sessions() -> AsyncGenerator[RuntimeManifestSessions, None]:
@@ -298,7 +301,7 @@ async def runtime_snapshot_session(
         await _configure_runtime_snapshot(session)
         yield session
     finally:
-        await _close_resource(session)
+        await _close_resource(session.close)
 
 
 async def _configure_runtime_snapshot(session: AsyncSession) -> None:
