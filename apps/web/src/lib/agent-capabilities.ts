@@ -11,11 +11,9 @@ export type AgentOverviewModuleId =
 	| "plugins"
 	| "memories"
 	| "vaults"
-	| "connectors"
-	| "model-provider"
-	| "channels";
+	| "connectors";
 
-export type AgentOverviewGroupId = "workspace" | "shared" | "operate";
+export type AgentOverviewGroupId = "workspace" | "shared";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
@@ -25,7 +23,6 @@ export type AgentOverviewModule = {
 export type AgentOverviewGroup = {
 	id: AgentOverviewGroupId;
 	label: string;
-	layout: "three-column" | "two-column";
 	modules: readonly AgentOverviewModule[];
 };
 
@@ -49,13 +46,11 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "three-column",
 			modules: WORKSPACE_RESOURCES,
 		},
 		{
 			id: "shared",
 			label: "Shared",
-			layout: "three-column",
 			modules: SHARED_RESOURCES,
 		},
 	],
@@ -63,23 +58,12 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "workspace",
 			label: "Workspace",
-			layout: "two-column",
 			modules: HOSTED_WORKSPACE_RESOURCES,
 		},
 		{
 			id: "shared",
 			label: "Shared",
-			layout: "three-column",
 			modules: SHARED_RESOURCES,
-		},
-		{
-			id: "operate",
-			label: "Tools",
-			layout: "three-column",
-			modules: [
-				{ id: "model-provider", section: "ai" },
-				{ id: "channels", section: "channels" },
-			],
 		},
 	],
 } as const satisfies Record<AgentNavigationVariant, readonly AgentOverviewGroup[]>;

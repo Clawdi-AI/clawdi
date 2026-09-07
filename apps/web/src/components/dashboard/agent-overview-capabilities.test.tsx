@@ -8,6 +8,7 @@ import {
 	OverviewMetadata,
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
+import { overviewProjectsModule } from "@/components/dashboard/agent-overview-resource-bodies";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 describe("overview card typography", () => {
@@ -48,6 +49,15 @@ describe("overview metadata", () => {
 });
 
 describe("overview modules", () => {
+	test.each([
+		[0, "No projects linked"],
+		[1, "1 linked project"],
+		[2, "2 linked projects"],
+	] as const)("uses sentence case for the project count (%s)", (count, description) => {
+		expect(
+			overviewProjectsModule({ bindings: { count, isLoading: false, error: null } }).description,
+		).toBe(description);
+	});
 	test("keeps loading summaries on the standard description line height", () => {
 		const markup = renderToStaticMarkup(
 			createElement(OverviewDescriptionSkeleton, { label: "projects" }),
@@ -66,10 +76,10 @@ describe("overview modules", () => {
 		);
 
 		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(5);
-		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(8);
+		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(6);
 		expect(hosted).toContain('data-overview-module-skeleton="plugins"');
 		expect(hosted).toContain('data-overview-layout="two-column"');
-		expect(hosted).toContain("h-full min-w-0 py-3");
+		expect(hosted).toContain("h-full min-w-0 border border-foreground/10 py-3 ring-0");
 		expect(hosted).toContain("grid-rows-1 content-center gap-0");
 		expect(hosted).not.toContain("h-40");
 	});

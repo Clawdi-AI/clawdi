@@ -237,14 +237,17 @@ describe("agent routes", () => {
 	it("keeps canonical labels while preserving backward-compatible URL segments", () => {
 		expect(agentSectionLabel("projects")).toBe("Projects");
 		expect(agentSectionLabel("memories")).toBe("Memories");
-		expect(agentSectionLabel("console")).toBe("Agent Interface");
+		expect(agentSectionLabel("console")).toBe("Dashboard");
+		expect(agentSectionLabel("console", "hermes")).toBe("Hermes Dashboard");
+		expect(agentSectionLabel("console", "openclaw")).toBe("OpenClaw Control UI");
 		expect(agentSectionLabel("files")).toBe("Files");
 		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabel("connectors")).toBe("Connectors");
 		expect(agentSectionLabel("vaults")).toBe("Vaults");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Projects");
 		expect(agentSectionLabelFromSegment("memories")).toBe("Memories");
-		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
+		expect(agentSectionLabelFromSegment("console")).toBe("Dashboard");
+		expect(agentSectionLabelFromSegment("console", "hermes")).toBe("Hermes Dashboard");
 		expect(agentSectionLabelFromSegment("files")).toBe("Files");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
 		expect(agentSectionLabelFromSegment("connectors")).toBe("Connectors");

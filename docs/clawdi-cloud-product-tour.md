@@ -28,7 +28,9 @@ Overview shows Session starts, recent Sessions, and Library resources.
 
 ## Open a running Agent
 
-The Agent page shows status, compute, Projects, Sessions, and resources. Cloud Agents also provide Agent Interface, Files, and Terminal.
+Cloud Agent Overview starts with Chat on the web, Chat via channels, and AI Providers. Web chat opens OpenClaw Control UI or Hermes Dashboard; Hermes defaults to Chat. The sidebar orders Overview, the runtime dashboard, Channels, AI Providers, then Sessions.
+
+The Recent sessions section sits beside Compute, or Status for Connected Agents, and stacks above it on mobile. Compute separates runtime health from the current plan, hardware, and billing. Included Basic reads "Included with your plan"; other subscriptions show confirmed billing dates. Eligible upgrade and payment-recovery shortcuts open existing Settings or Wallet controls. Workspace and Shared follow as separate sections, each with two-column resource lists on desktop.
 
 ![A running Hermes Cloud Agent with one linked Project, recent Sessions, and 25 Memories](images/dashboard-preview.png)
 
@@ -96,7 +98,7 @@ Files opens a Cloud Agent's private Workspace. Keep important work in source con
 
 ![Twelve synthetic long-term Workspace files in the Acme demo folder](images/cloud-files.png)
 
-See [Agent Interface, Files, and Terminal](https://docs.clawdi.ai/cloud-agents/agent-interface-and-terminal).
+See [OpenClaw Control UI, Hermes Dashboard, Files, and Terminal](https://docs.clawdi.ai/cloud-agents/agent-interface-and-terminal).
 
 ## Next
 

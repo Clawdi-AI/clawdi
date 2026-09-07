@@ -9,6 +9,7 @@ import {
 } from "@playwright/test";
 import type { ManagedModelCatalogItem, WalletState } from "../src/hosted/billing/contracts";
 import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
+import { captureAgentOverview, expectAgentOverviewGeometry } from "./agent-overview-geometry";
 import {
 	type DeploymentMutationFixture,
 	fixtureAgentId,
@@ -59,24 +60,24 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			elements.map((element) => {
 				const cardBox = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
-				const headerLink = header?.querySelector<HTMLElement>("a");
-				const linkBox = headerLink?.getBoundingClientRect();
+				const headerContent = header?.firstElementChild;
+				const contentBox = headerContent?.getBoundingClientRect();
 				const headerStyle = header ? getComputedStyle(header) : null;
-				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
+				const contentStyle = headerContent ? getComputedStyle(headerContent) : null;
 				return {
 					headerHeight: header?.getBoundingClientRect().height ?? 0,
 					headerCount: element.querySelectorAll(':scope > [data-slot="card-header"]').length,
 					contentCount: element.querySelectorAll('[data-slot="card-content"]').length,
 					headerPaddingInline: [headerStyle?.paddingLeft, headerStyle?.paddingRight],
 					headerPaddingBlock: [headerStyle?.paddingTop, headerStyle?.paddingBottom],
-					linkPadding: [
-						linkStyle?.paddingTop,
-						linkStyle?.paddingRight,
-						linkStyle?.paddingBottom,
-						linkStyle?.paddingLeft,
+					contentPadding: [
+						contentStyle?.paddingTop,
+						contentStyle?.paddingRight,
+						contentStyle?.paddingBottom,
+						contentStyle?.paddingLeft,
 					],
-					verticalInsetDelta: linkBox
-						? Math.abs(linkBox.top - cardBox.top - (cardBox.bottom - linkBox.bottom))
+					verticalInsetDelta: contentBox
+						? Math.abs(contentBox.top - cardBox.top - (cardBox.bottom - contentBox.bottom))
 						: Number.POSITIVE_INFINITY,
 				};
 			}),
@@ -114,7 +115,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.headerPaddingInline)))).toEqual(
 		new Set([JSON.stringify(["16px", "16px"])]),
 	);
-	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.contentPadding)))).toEqual(
 		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
 	);
 	for (const metric of shellMetrics) expect(metric.verticalInsetDelta).toBeLessThanOrEqual(1);
@@ -184,85 +185,6 @@ async function expectTerminalFitsHost(terminal: Locator) {
 	expect(geometry.lastRow.bottom).toBeLessThanOrEqual(geometry.viewport.bottom + 1);
 }
 
-async function _expectOverviewSessionSlot({
-	region,
-	statusCard,
-	realCount,
-}: {
-	region: Locator;
-	statusCard: Locator;
-	realCount: number;
-}) {
-	const grid = region.getByTestId("overview-session-grid");
-	const placeholders = grid.getByTestId("overview-session-placeholder");
-	await expect(grid.locator(":scope > article")).toHaveCount(realCount);
-	await expect(placeholders).toHaveCount(3 - realCount);
-	await expect(grid.getByRole("link")).toHaveCount(realCount);
-	await expect(placeholders.locator("a, button, article")).toHaveCount(0);
-	const cardAlignment = await grid.locator(":scope > article").evaluateAll((articles) =>
-		articles.map((article) => {
-			const avatar = article.querySelector<HTMLElement>('[data-testid="session-card-avatar"]');
-			const textBlock = article.querySelector<HTMLElement>('[data-testid="session-card-text"]');
-			const avatarBox = avatar?.getBoundingClientRect();
-			const textBox = textBlock?.getBoundingClientRect();
-			return {
-				avatarCenter: (avatarBox?.top ?? 0) + (avatarBox?.height ?? 0) / 2,
-				textCenter: (textBox?.top ?? 0) + (textBox?.height ?? 0) / 2,
-			};
-		}),
-	);
-	for (const alignment of cardAlignment)
-		expect(Math.abs(alignment.avatarCenter - alignment.textCenter)).toBeLessThanOrEqual(2);
-	const placeholderSemantics = await placeholders.evaluateAll((elements) =>
-		elements.map((element) => ({
-			ariaHidden: element.getAttribute("aria-hidden"),
-			role: element.getAttribute("role"),
-			tabIndex: element.getAttribute("tabindex"),
-			pointerEvents: getComputedStyle(element).pointerEvents,
-		})),
-	);
-	for (const placeholder of placeholderSemantics) {
-		expect(placeholder).toEqual({
-			ariaHidden: "true",
-			role: null,
-			tabIndex: null,
-			pointerEvents: "none",
-		});
-	}
-	const slotRows = grid.locator(
-		':scope > article, :scope > [data-testid="overview-session-placeholder"]',
-	);
-	await expect(slotRows).toHaveCount(3);
-	const rowBoxes = await slotRows.evaluateAll((elements) =>
-		elements.map((element) => element.getBoundingClientRect().toJSON()),
-	);
-	expect(
-		Math.max(...rowBoxes.map((box) => box.height)) - Math.min(...rowBoxes.map((box) => box.height)),
-	).toBeLessThanOrEqual(2);
-	for (let index = 1; index < rowBoxes.length; index += 1) {
-		expect(Math.abs(rowBoxes[index].x - rowBoxes[0].x)).toBeLessThanOrEqual(1);
-		expect(Math.abs(rowBoxes[index].width - rowBoxes[0].width)).toBeLessThanOrEqual(1);
-	}
-	const [regionBox, gridBox, statusBox] = await Promise.all([
-		region.boundingBox(),
-		grid.boundingBox(),
-		statusCard.boundingBox(),
-	]);
-	expect(regionBox).not.toBeNull();
-	expect(gridBox).not.toBeNull();
-	expect(statusBox).not.toBeNull();
-	expect(Math.abs((gridBox?.height ?? 0) - (regionBox?.height ?? 0))).toBeLessThanOrEqual(2);
-	expect(Math.abs((statusBox?.y ?? 0) - (regionBox?.y ?? 0))).toBeLessThanOrEqual(2);
-	expect(
-		Math.abs(
-			(statusBox?.y ?? 0) +
-				(statusBox?.height ?? 0) -
-				((regionBox?.y ?? 0) + (regionBox?.height ?? 0)),
-		),
-	).toBeLessThanOrEqual(2);
-	return regionBox?.height ?? 0;
-}
-
 async function expectInlineSidebarStatus(sidebar: Locator, source: "hosted" | "connected") {
 	const status = sidebar.getByTestId("app-sidebar-agent-status");
 	await expect(status).toHaveAttribute("data-agent-status-source", source);
@@ -329,7 +251,7 @@ async function expectAgentOverviewTypography(page: Page) {
 
 	const metadataMetrics = await main
 		.locator(
-			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
+			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] dl',
 		)
 		.evaluateAll((elements) =>
 			elements.map((element) => {
@@ -360,7 +282,7 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 
-function hostedOverviewSessionsPage(itemCount: number) {
+function hostedOverviewSessionsPage(itemCount: number, runtime: "hermes" | "openclaw" = "hermes") {
 	const summaries = [
 		"Prepare launch brief",
 		"Research customer feedback before the product planning review",
@@ -376,8 +298,8 @@ function hostedOverviewSessionsPage(itemCount: number) {
 			agent_name: "e2e-2",
 			agent_display_name: null,
 			agent_default_name: "e2e-2",
-			agent_type: "hermes",
-			machine_name: "hermes-3",
+			agent_type: runtime,
+			machine_name: `${runtime}-3`,
 			started_at: `2026-07-15T0${index}:00:00Z`,
 			ended_at: null,
 			updated_at: `2026-07-15T0${index}:30:00Z`,
@@ -3202,9 +3124,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect.poll(() => sessionRequests.length).toBe(1);
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
-	const overview = page.locator('[data-agent-overview="hosted"]');
-	const overviewHeading = page.getByRole("heading", { name: "Hosted agent", exact: true });
-	const overviewTitleRow = overviewHeading.locator("..");
+	const overview = page.locator("main");
+	const overviewTitleRow = page.locator('[data-slot="page-header"]');
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({
@@ -3217,32 +3138,34 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual([
+		"dashboard",
+		"channels",
+		"model-provider",
 		"projects",
 		"skills",
 		"vaults",
+		"plugins",
 		"memories",
 		"connectors",
-		"model-provider",
-		"channels",
 	]);
 	expect(
 		await page
 			.locator("#hosted-recent-sessions, #agent-overview-workspace, #agent-overview-shared")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
 	).toEqual(["hosted-recent-sessions", "agent-overview-workspace", "agent-overview-shared"]);
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(9);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(7);
+	).toHaveCount(9);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		7,
+		9,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -3250,7 +3173,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
 		),
 	).toHaveCount(0);
-	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Connections", exact: true })).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"Telegram, Discord, or WhatsApp",
+	);
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Hosted Agent Project",
@@ -3314,9 +3240,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
 		);
 	}
-	const [recentSessionsBox, computeBox, viewAllBox] = await Promise.all([
+	const [recentSessionsBox, viewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
-		page.locator('[data-overview-status="compute"]').boundingBox(),
 		viewAllSessions.boundingBox(),
 	]);
 	expect(
@@ -3326,19 +3251,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
-	expect(Math.abs((computeBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
-	expect(
-		Math.abs(
-			(computeBox?.y ?? 0) +
-				(computeBox?.height ?? 0) -
-				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
-		),
-	).toBeLessThanOrEqual(2);
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
-		"href",
-		/console/,
-	);
+	await expect(page.locator('[data-overview-module="dashboard"]')).toBeVisible();
+	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toBeDisabled();
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
@@ -3358,24 +3272,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
 		/rounded|border|bg-/,
 	);
-	await expect(
-		compute.getByRole("list", {
-			name: "Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage",
-		}),
-	).toBeVisible();
+	await expect(compute.getByLabel("Compute resources", { exact: true })).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module] [data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
+		"AI Providers",
+	);
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
-	for (const configuration of ["2 vCPU", "4 GiB memory", "20 GiB storage"])
+	for (const configuration of ["2 vCPU", "4 GiB", "20 GiB"])
 		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
 	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("CPU", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("Memory", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("Storage", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("CPU", { exact: true })).toBeVisible();
+	await expect(compute.getByText("Memory", { exact: true })).toBeVisible();
+	await expect(compute.getByText("Storage", { exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
 		"No skills installed",
 	);
@@ -3393,9 +3305,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults`,
 	);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
-	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
-		"2 connected",
-	);
+	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText("2 apps");
 	expect(overviewConnectorRequests).toEqual([]);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
@@ -3421,25 +3331,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(7);
+	await expect(overview.locator("[data-overview-module]")).toHaveCount(9);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	const workspaceGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="three-column"]',
+		'section[aria-labelledby="agent-overview-workspace"] [data-overview-layout="two-column"]',
 	);
 	const sharedGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="three-column"]',
-	);
-	const toolsGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
+		'section[aria-labelledby="agent-overview-shared"] [data-overview-layout="two-column"]',
 	);
 	const resourceGeometry = await workspaceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(4);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3454,43 +3361,19 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await workspaceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "vaults"]);
-	await expectOverviewResourceGeometry(workspaceGrid, [3]);
+	).toEqual(["projects", "skills", "vaults", "plugins"]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
 	await expectOverviewResourceGeometry(sharedGrid, [2]);
-	await expectOverviewResourceGeometry(toolsGrid, [2]);
-	const toolGeometry = await toolsGrid
-		.locator("[data-overview-module]")
-		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(toolGeometry).toHaveLength(2);
-	for (let index = 0; index < toolGeometry.length; index += 1) {
-		expect(
-			Math.abs((toolGeometry[index]?.width ?? 0) - (resourceGeometry[index]?.width ?? 0)),
-		).toBeLessThanOrEqual(2);
-		expect(
-			Math.abs((toolGeometry[index]?.x ?? 0) - (resourceGeometry[index]?.x ?? 0)),
-		).toBeLessThanOrEqual(2);
-	}
-	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
-	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	for (const height of moduleHeights) {
-		expect(Math.abs(height - (sessionBoxes[0]?.height ?? 0))).toBeLessThanOrEqual(2);
-	}
-	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
-		(resourceGeometry[2]?.x ?? 0) + 1,
-	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [2, 2]);
 	await expectOverviewResourceGeometry(sharedGrid, [2]);
-	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
-	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(workspaceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(sharedGrid, [1, 1]);
-	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
 		viewAllSessions.boundingBox(),
@@ -3531,7 +3414,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toHaveCount(0);
 });
 
 for (const projectionFailure of [
@@ -3769,6 +3652,406 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 		await expectTerminalFitsHost(standaloneTerminal);
 	}
 });
+
+test("overview billing facts and shortcuts follow subscription authority", async ({
+	page,
+}, testInfo) => {
+	await page.clock.setFixedTime(new Date("2026-09-07T12:00:00Z"));
+	const included = includedBasicDeployment.compute_subscription;
+	const paid = paidBasicDeployment.compute_subscription;
+	if (!included || !paid) throw new Error("Missing subscription fixtures");
+	const deployment = mutationDeploymentReadFixture({
+		...railHostedDeployment,
+		hermes_control_ui_url: "https://runtime.example/",
+	});
+	const commercial = deployment.commercial_display;
+	const runtimeStatus = deployment.resource.status;
+	if (!commercial || !runtimeStatus) throw new Error("Missing deployment projection");
+	const future = "2027-07-15T00:00:00Z";
+	const ended = "2026-08-15T00:00:00Z";
+	const billingMutations: string[] = [];
+	page.on("request", (request) => {
+		if (
+			["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) &&
+			new URL(request.url()).host === "127.0.0.1:8001"
+		)
+			billingMutations.push(request.url());
+	});
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+		agentResourceFixtures: true,
+		sessionsPage: hostedOverviewSessionsPage(3),
+	});
+	for (const scenario of [
+		{
+			name: "included",
+			subscription: included,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
+		},
+		{
+			name: "stopped",
+			subscription: included,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
+		},
+		{
+			name: "paid",
+			subscription: paid,
+			value: "Active",
+			date: ["Next renewal", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "canceling",
+			subscription: { ...paid, cancel_at_period_end: true, cancel_at: future },
+			value: "Canceling",
+			date: ["Ends on", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "trial",
+			subscription: {
+				...paid,
+				status: "trialing",
+				actions: { cancel: "end_trial", resume: false, command_state: null },
+			},
+			value: "Trial",
+			date: ["Trial ends", "Jul 15, 2027"],
+			action: null,
+		},
+		{
+			name: "payment-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: "2026-09-08T12:00:00Z",
+			},
+			value: "Past due",
+			date: ["Next payment attempt", "Sep 8, 2026"],
+			action: "Fix payment",
+		},
+		{
+			name: "missing-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: null,
+			},
+			value: "Past due",
+			date: null,
+			action: "Fix payment",
+		},
+		{
+			name: "wallet-recovery",
+			subscription: {
+				...paid,
+				funding_source: "wallet",
+				payment_state: "past_due",
+				recovery_action: "top_up",
+			},
+			value: "Past due",
+			date: null,
+			action: "Top up",
+		},
+		{
+			name: "ended",
+			subscription: {
+				...paid,
+				status: "canceled",
+				canceled_at: ended,
+				recovery_action: "start_new",
+			},
+			value: "Ended",
+			date: ["Ended on", "Aug 15, 2026"],
+			action: "Manage",
+		},
+		{
+			name: "pending",
+			subscription: { ...paid, recovery_blocked_reason: "authority_pending" },
+			value: "Updating subscription",
+			date: null,
+			action: null,
+		},
+		{
+			name: "missing-date",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-subscription",
+			subscription: { ...paid, status: "unrecognized" },
+			value: "Status unavailable",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-runtime",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{ name: "missing-subscription", subscription: null, value: null, date: null, action: null },
+	] as const) {
+		commercial.compute_subscription = scenario.subscription;
+		deployment.resource.status =
+			scenario.name === "unknown-runtime"
+				? null
+				: { ...runtimeStatus, summary_state: scenario.name === "stopped" ? "stopped" : "running" };
+		deployment.upgrade_available = scenario.name === "included" || scenario.name === "stopped";
+		for (const width of scenario.name === "payment-retry"
+			? [1440, 320]
+			: scenario.name === "paid"
+				? [1440, 390]
+				: [1440]) {
+			await page.setViewportSize({
+				width,
+				height: width === 1440 ? 900 : width === 320 ? 800 : 844,
+			});
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			const compute = page.locator('[data-overview-status="compute"]');
+			const body = compute.locator('[data-slot="card-content"]');
+			await expect(body).toContainText("Basic plan");
+			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
+			const row = body.locator("[data-overview-subscription-row]");
+			if (scenario.value) await expect(row).toContainText(scenario.value);
+			else await expect(row).toHaveCount(0);
+			if (scenario.value === "Included with your plan") {
+				await expect(row.getByText("Subscription:", { exact: true })).toHaveCount(0);
+				await expect(row.getByText("Active", { exact: true })).toHaveCount(0);
+			}
+			const date = row.locator("..").locator(":scope > dl");
+			await expect(date).toHaveCount(scenario.date ? 1 : 0);
+			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
+			const actions = body.getByRole("button");
+			await expect(actions).toHaveCount(scenario.action ? 1 : 0);
+			if (scenario.action) await expect(actions).toHaveText(scenario.action);
+			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
+			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
+			await captureAgentOverview(page, testInfo, `hermes-final-clean-${scenario.name}-${width}`);
+			if (scenario.name === "paid" && width === 1440) {
+				await page.locator("html").evaluate((element) => element.classList.add("dark"));
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+				await captureAgentOverview(page, testInfo, "hermes-final-clean-paid-1440-dark");
+				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+			}
+			if (scenario.action) {
+				const target =
+					scenario.action === "Top up"
+						? `/agents/${railHostedEnvironmentId}?settings=billing-wallet`
+						: `/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`;
+				await expect(actions).toHaveAttribute("href", target);
+				await actions.click();
+				await expect(page).toHaveURL(target);
+				if (scenario.action === "Top up") await expect(page.getByRole("dialog")).toBeVisible();
+				else await expect(page.locator("#compute-plan-controls")).toBeVisible();
+			}
+		}
+	}
+	expect(billingMutations).toEqual([]);
+});
+
+for (const runtime of ["hermes", "openclaw"] as const) {
+	test(`${runtime} overview entries preserve navigation and layout`, async ({
+		page,
+		context,
+	}, testInfo) => {
+		const label = runtime === "hermes" ? "Hermes Dashboard" : "OpenClaw Control UI";
+		const endpoint = "https://runtime.example/";
+		const deployment = {
+			...railHostedDeployment,
+			hermes_control_ui_url: endpoint,
+			openclaw_control_ui_url: endpoint,
+			config_info: { ...railHostedDeployment.config_info, runtime },
+		};
+		const credentialRequests: string[] = [];
+		const sessionsPage = hostedOverviewSessionsPage(3, runtime);
+		await stubHostedApi(page, {
+			deployments: [deployment],
+			cloudAgents: [{ ...railHostedCloudAgent, agent_type: runtime }],
+			plans: [basicPlan, performancePlan],
+			agentResourceFixtures: true,
+			sessionsPage,
+			runtimeUiRedemptionRequests: credentialRequests,
+			runtimeUiRedemptionResponses: [
+				{
+					status: 200,
+					body: {
+						runtime,
+						url: endpoint,
+						deployment_resource_version: `rv_${deployment.id}`,
+						...(runtime === "hermes"
+							? { auth_mode: "password", username: "admin", password: "test-password" }
+							: {
+									auth_mode: "openclaw_token",
+									token: "test-token",
+									handoff_url: `${endpoint}#token=test-token`,
+								}),
+					},
+				},
+			],
+		});
+		await context.route("https://runtime.example/**", (route) =>
+			route.fulfill({
+				contentType: "text/html",
+				body: "<!doctype html><title>Runtime</title><main>Runtime dashboard</main>",
+			}),
+		);
+		for (const { sessionCount, ...viewport } of [
+			{ width: 1440, height: 900, sessionCount: 0 },
+			{ width: 1440, height: 900, sessionCount: 1 },
+			{ width: 1440, height: 900, sessionCount: 3 },
+			{ width: 390, height: 844, sessionCount: 3 },
+			{ width: 320, height: 800, sessionCount: 3 },
+		]) {
+			Object.assign(sessionsPage, hostedOverviewSessionsPage(sessionCount, runtime));
+			await page.setViewportSize(viewport);
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			const module = page.locator('[data-overview-module="dashboard"]');
+			const open = page.getByRole("link", { name: "Chat on the web", exact: true });
+			await expect(open).toHaveCount(1);
+			await expect(open).toBeEnabled();
+			await expect(open.getByText(label, { exact: true })).toBeVisible();
+			await expect(module.getByRole("link")).toHaveCount(1);
+			await expect(module.locator(".lucide-panels-top-left")).toHaveCount(1);
+			await expect(
+				page.locator('[data-overview-module="model-provider"] .lucide-brain-circuit'),
+			).toHaveCount(1);
+			await expect(module.locator(":scope > *")).toHaveCount(1);
+			await expect(module.locator('[role="status"], #agent-dashboard-status')).toHaveCount(0);
+			await expectContainedInOwnerAndViewport(page, open, module, "Dashboard action");
+			await expectNoHorizontalOverflow(module, "Dashboard module");
+			await expectNoHorizontalOverflow(
+				open.locator('[data-slot="card-description"]'),
+				"Dashboard subtitle",
+			);
+			const lines = await open
+				.locator('[data-slot="card-title"], [data-slot="card-description"]')
+				.evaluateAll((elements) =>
+					elements.map((element) => ({
+						top: element.getBoundingClientRect().top,
+						bottom: element.getBoundingClientRect().bottom,
+					})),
+				);
+			expect(lines).toHaveLength(2);
+			expect(lines[1].top).toBeGreaterThanOrEqual(lines[0].bottom);
+			const modules = page.locator("main [data-overview-module]");
+			expect(
+				await modules.evaluateAll((elements) =>
+					elements.map((element) => element.getAttribute("data-overview-module")),
+				),
+			).toEqual([
+				"dashboard",
+				"channels",
+				"model-provider",
+				"projects",
+				"skills",
+				"vaults",
+				"plugins",
+				"memories",
+				"connectors",
+			]);
+			const entry = page.locator('[data-overview-section="entry"]');
+			const channels = page.locator('[data-overview-module="channels"]');
+			await expect(channels).toContainText("Telegram, Discord, or WhatsApp");
+			await expect(entry.locator('[data-overview-status="compute"]')).toBeVisible();
+			const compute = entry.locator('[data-overview-status="compute"]');
+			await expect(compute.getByRole("button", { name: "Upgrade", exact: true })).toBeVisible();
+			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
+			await expect(compute.locator('[data-slot="card-content"]')).toContainText("Basic plan");
+			await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
+			await expect(page.getByTestId("overview-session-placeholder")).toHaveCount(0);
+			const sessionGrid = page.getByTestId("overview-session-grid");
+			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
+			await expect(page.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
+			if (sessionCount === 0) {
+				await expect(sessionGrid.getByRole("status")).toHaveText(
+					"No sessions from this agent yet.",
+				);
+			}
+			await expectNoHorizontalOverflow(page.locator("main"), "Overview");
+			const geometry = await expectAgentOverviewGeometry(page, {
+				hosted: true,
+				desktop: viewport.width === 1440,
+			});
+			await testInfo.attach(
+				`${runtime}-final-clean-${viewport.width}-sessions-${sessionCount}-geometry`,
+				{
+					body: JSON.stringify(geometry, null, 2),
+					contentType: "application/json",
+				},
+			);
+			await captureAgentOverview(
+				page,
+				testInfo,
+				`${runtime}-final-clean-${viewport.width}-sessions-${sessionCount}`,
+			);
+			if (viewport.width === 1440 && sessionCount === 3) {
+				await page.locator("html").evaluate((element) => element.classList.add("dark"));
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+				await captureAgentOverview(page, testInfo, `${runtime}-final-clean-1440-dark`);
+				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+			}
+			if (viewport.width < 768) {
+				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
+			}
+			const sidebar =
+				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+			await expect(
+				sidebar.getByRole("link", { name: label, exact: true }).locator(".lucide-panels-top-left"),
+			).toHaveCount(1);
+			await expect(
+				sidebar
+					.getByRole("link", { name: "AI Providers", exact: true })
+					.locator(".lucide-brain-circuit"),
+			).toHaveCount(1);
+			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
+			const start = labels.findIndex((text) => text.trim() === "Overview");
+			expect(start).toBeGreaterThanOrEqual(0);
+			expect(labels.slice(start, start + 5).map((text) => text.trim())).toEqual([
+				"Overview",
+				label,
+				"Channels",
+				"AI Providers",
+				"Sessions",
+			]);
+			if (viewport.width < 768) await page.keyboard.press("Escape");
+		}
+		await page
+			.locator('[data-overview-module="channels"]')
+			.getByRole("link", { name: "Chat via channels", exact: true })
+			.click();
+		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/channel-links`);
+		await page.goto(`/agents/${railHostedEnvironmentId}`);
+		await page.getByRole("link", { name: "Chat on the web", exact: true }).click();
+		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
+		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
+		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;
+		await expect(page.locator(`iframe[title="${label}"]`)).toHaveAttribute("src", target);
+		if (runtime === "hermes") {
+			await page.getByRole("button", { name: "Access Hermes Dashboard", exact: true }).click();
+			await expect(page.getByRole("dialog").getByText("admin", { exact: true })).toBeVisible();
+		}
+		expect(credentialRequests).toHaveLength(1);
+		const popupPromise = context.waitForEvent("page");
+		await page
+			.getByRole("button", { name: `Open ${label} in new window`, exact: true })
+			.last()
+			.click();
+		const popup = await popupPromise;
+		await expect(popup).toHaveURL(target);
+		await popup.close();
+	});
+}
 
 test("native OpenClaw windows wait for the handoff iframe load and reuse the clean endpoint", async ({
 	page,
@@ -4567,15 +4850,16 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
 	await expect(
-		main.getByText("Clawdi is checking the runtime. Open Compute settings for details.", {
+		main.getByText("Clawdi is checking this agent.", {
 			exact: true,
 		}),
-	).toHaveCount(1);
+	).toHaveCount(0);
 	await expect(main.getByText("Agent temporarily unavailable", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Agent restart failed", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("internal runtime health error", { exact: true })).toHaveCount(0);
 	await expect(main.getByText(/dashboard prerequisite/i)).toHaveCount(0);
 	const compute = main.locator('[data-overview-status="compute"]');
+	await expect(main.getByRole("button", { name: "Chat on the web", exact: true })).toBeDisabled();
 	const computeStatus = compute.locator("[data-overview-compute-status]");
 	await expect(computeStatus).toHaveText("Temporarily unavailable");
 	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(
@@ -4595,7 +4879,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(computeSettingsLink).toHaveAttribute("href", /\/settings/);
 	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Hermes Dashboard", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	expect(restartRequests).toEqual([]);
@@ -4609,6 +4893,11 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 
 	await computeSettingsLink.click();
 	await expect(page).toHaveURL(/\/settings/);
+	await expect(
+		main.getByText("Clawdi is checking this agent.", {
+			exact: true,
+		}),
+	).toBeVisible();
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -4971,10 +5260,9 @@ for (const firstTimeViewport of [
 		await expect(agentInterfaceHint).toContainText(
 			"Need a provider that Clawdi Channels doesn't support?",
 		);
-		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
-			"href",
-			`/agents/${missingProjectionEnvironmentId}/console`,
-		);
+		await expect(
+			agentInterfaceHint.getByRole("link", { name: "Hermes Dashboard" }),
+		).toHaveAttribute("href", `/agents/${missingProjectionEnvironmentId}/console`);
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);
 		await expect(connectDialog.getByRole("status")).toContainText(

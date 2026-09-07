@@ -6,6 +6,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	ArrowRight,
+	ArrowUp,
 	Check,
 	Copy,
 	Cpu,
@@ -26,6 +27,7 @@ import {
 	Settings,
 	TerminalSquare,
 	Trash2,
+	WalletCards,
 	X,
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +40,9 @@ import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
 	OverviewDescriptionSkeleton,
+	OverviewMetadata,
 	OverviewModuleError,
+	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	overviewProjectsModule,
@@ -106,6 +110,7 @@ import {
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { AgentDashboardOverview } from "@/hosted/agents/agent-dashboard-overview";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -122,6 +127,7 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
 import {
 	forgetOpenClawNativeHandoffLoaded,
 	hasOpenClawNativeHandoffLoaded,
@@ -220,6 +226,7 @@ import {
 	type HostedRuntime,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
+	runtimeDashboardUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
 import { agentPluginOverviewState } from "@/hosted/v2/agent-plugins/agent-plugin-model";
@@ -312,7 +319,9 @@ import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
+	agentSectionNavigationItem,
 	hostedAgentVisibleSectionIds,
+	runtimeBrowserUiLabel,
 } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -574,10 +583,9 @@ export function HostedAgentDetail({
 	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null);
 	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
 	useSetBreadcrumbTitle(
-		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab),
+		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab, runtime),
 	);
 
-	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal");
 	const terminalWindowHref = agentTerminalWindowHref(environmentId);
 	const scopedSessionLink = (sessionId: string) => ({
@@ -589,15 +597,13 @@ export function HostedAgentDetail({
 		enabled: activeTab === "overview" && sessionsQueryable,
 	});
 
-	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
-	const activeTabLabel = agentSectionLabel(activeTab);
+	const activeNavItem = agentSectionNavigationItem(activeTab, runtime);
+	const activeTabLabel = activeNavItem.label;
 	const ActiveTabIcon = activeNavItem.icon;
 	const resourceScope = agentResourceScope(environmentId);
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
-	const interfaceAvailable =
-		activeTab === "overview" && !showInitialDeploymentPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	return (
@@ -626,18 +632,7 @@ export function HostedAgentDetail({
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
-							activeTab === "memories" ? (
-								<MemoriesPageActions scope={resourceScope} />
-							) : interfaceAvailable ? (
-								<Button
-									render={<Link {...agentSectionLink(environmentId, "console")} />}
-									nativeButton={false}
-									variant="outline"
-								>
-									<MonitorPlay />
-									Open Agent Interface
-								</Button>
-							) : null
+							activeTab === "memories" ? <MemoriesPageActions scope={resourceScope} /> : null
 						}
 					/>
 				)}
@@ -663,6 +658,9 @@ export function HostedAgentDetail({
 						}}
 					/>
 				) : null}
+				{showInitialDeploymentPage ? (
+					<AgentDashboardOverview agentId={environmentId} deployment={deployment} />
+				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{showInitialDeploymentPage ? (
 						<InitialDeploymentPage
@@ -679,7 +677,6 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isAgentRouteId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
-							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={
@@ -687,8 +684,6 @@ export function HostedAgentDetail({
 							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
-							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							eventStreamActive={eventStreamActive}
 						/>
 					) : null}
@@ -773,6 +768,8 @@ export function HostedAgentDetail({
 							agent={agent}
 							routeSearch={routeSearch}
 							onDeleteAccepted={onDeleteAccepted}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							deploymentTransitionEscalated={deploymentTransitionEscalated}
 						/>
 					) : null}
 				</div>
@@ -943,7 +940,7 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-export function OverviewComputeStatus({
+export function ComputeStatusDetails({
 	deployment,
 	failure,
 	deploymentTransitionTimedOut,
@@ -959,7 +956,7 @@ export function OverviewComputeStatus({
 		<div className="space-y-3 text-xs">
 			{failure?.status.kind === "runtime_unavailable" ? (
 				<p className="text-warning-muted-foreground" role="status">
-					{failure.reason}
+					Clawdi is checking this agent.
 				</p>
 			) : failure ? (
 				<div className="space-y-1 text-destructive-muted-foreground" role="status">
@@ -999,7 +996,8 @@ export function OverviewComputeStatus({
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is stopped. Channels and the agent interface are unavailable.
+					Compute is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
+					are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
 				<p className="text-muted-foreground" role="status">
@@ -1019,34 +1017,37 @@ export function OverviewComputeStatus({
 }
 
 export function OverviewComputeSummary({
-	plan,
+	planLabel,
 	vcpu,
 	memoryMib,
 	storageGib,
 }: {
-	plan: string;
+	planLabel: string;
 	vcpu: number;
 	memoryMib: number;
 	storageGib: number;
 }) {
 	const configuration = [
-		`${vcpu} vCPU`,
-		`${formatMemoryMib(memoryMib)} memory`,
-		`${storageGib} GiB storage`,
+		{ label: "CPU", value: `${vcpu} vCPU` },
+		{ label: "Memory", value: formatMemoryMib(memoryMib) },
+		{ label: "Storage", value: `${storageGib} GiB` },
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
 			<p data-overview-compute-plan className="text-sm text-muted-foreground">
-				{plan} plan
+				{planLabel}
 			</p>
-			<ul
-				aria-label={`Configuration: ${configuration.join(", ")}`}
-				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+			<dl
+				aria-label="Compute resources"
+				className="grid grid-cols-3 gap-3 text-xs text-muted-foreground"
 			>
 				{configuration.map((item) => (
-					<li key={item}>{item}</li>
+					<div key={item.label} className="min-w-0">
+						<dt>{item.label}</dt>
+						<dd className="break-words">{item.value}</dd>
+					</div>
 				))}
-			</ul>
+			</dl>
 		</div>
 	);
 }
@@ -1240,21 +1241,17 @@ function OverviewTab({
 	deployment,
 	agent,
 	projectionStatus,
-	isPerformance,
 	sessions,
 	sessionsLoading,
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
-	deploymentTransitionTimedOut,
-	deploymentTransitionEscalated,
 	eventStreamActive,
 }: {
 	agentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
-	isPerformance: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -1263,8 +1260,6 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
-	deploymentTransitionTimedOut: boolean;
-	deploymentTransitionEscalated: boolean;
 	eventStreamActive: boolean;
 }) {
 	const spec = deployment.resource.spec;
@@ -1293,10 +1288,27 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
+	const access = useProductAccess();
+	const plans = usePlans({ enabled: deployment.upgrade_available && access.canCreateCloudAgents });
+	const compute = overviewComputePresentation(deployment, {
+		canCreateCloudAgents: !access.isLoading && access.canCreateCloudAgents,
+		plansLoading: plans.isLoading,
+		performancePlanAvailable: !plans.error && Boolean(resolvePerformancePlan(plans.data)),
+	});
+	const actionLink =
+		compute.action?.kind === "top_up"
+			? agentSectionLink(agentId, "overview", { settings: "billing-wallet" })
+			: { ...agentSectionLink(agentId, "settings"), hash: "compute-plan-controls" };
+	const ActionIcon =
+		compute.action?.kind === "upgrade"
+			? ArrowUp
+			: compute.action?.kind === "top_up"
+				? WalletCards
+				: compute.action?.kind === "fix_payment"
+					? CreditCard
+					: Settings;
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
-	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
-	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const workspaceProjectId = agent
@@ -1347,10 +1359,68 @@ function OverviewTab({
 	});
 	const memoriesModule = useOverviewMemoriesModule();
 	const connectorsModule = useOverviewConnectorsModule();
+	const overviewContent = {
+		projects: overviewProjectsModule({
+			bindings: {
+				count: agent && projectBindings.data ? linkedAgentProjectCount(projectBindings.data) : null,
+				isLoading: projectionLoading || projectBindings.isLoading,
+				isUnavailable: projectionUnavailable,
+				error: projectBindings.error,
+			},
+		}),
+		skills: {
+			...skillsModule,
+			link: workspaceProjectId
+				? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
+				: null,
+		},
+		plugins: pluginsModule,
+		memories: memoriesModule,
+		vaults: {
+			...vaultsModule,
+			link: workspaceProjectId
+				? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
+				: null,
+		},
+		connectors: connectorsModule,
+	};
 	return (
 		<div className="flex flex-col gap-8">
-			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
-				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+			<div className="grid auto-rows-fr gap-3 @5xl/main:grid-cols-3" data-overview-section="tools">
+				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
+				<OverviewNavigationCard
+					id="channels"
+					title="Chat via channels"
+					description="Telegram, Discord, or WhatsApp"
+					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
+					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
+					link={agentSectionLink(agentId, "channels")}
+				/>
+				<OverviewNavigationCard
+					id="model-provider"
+					title={AGENT_SECTION_NAVIGATION_ITEMS.ai.label}
+					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
+					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
+					description={
+						providers.isLoading || managedModelCatalog.isLoading ? (
+							<OverviewDescriptionSkeleton label="model and provider" />
+						) : providers.error || managedModelCatalog.error ? (
+							"Unavailable right now"
+						) : (
+							model
+						)
+					}
+					link={agentSectionLink(agentId, "ai")}
+				/>
+			</div>
+			<div
+				className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
+				data-overview-section="entry"
+			>
+				<div
+					className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
+					data-overview-section="activity"
+				>
 					<div className="flex items-center justify-between">
 						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
 							Recent sessions
@@ -1379,7 +1449,7 @@ function OverviewTab({
 						)}
 					</section>
 				</div>
-				<div className="@3xl/main:row-start-2">
+				<div className="min-w-0 @3xl/main:row-start-2">
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"
@@ -1397,81 +1467,46 @@ function OverviewTab({
 							</span>
 						}
 					>
-						<div className="flex h-full flex-col gap-4">
+						<div className="flex h-full flex-col justify-between gap-3">
 							<OverviewComputeSummary
-								plan={isPerformance ? "Performance" : "Basic"}
+								planLabel={compute.planLabel}
 								vcpu={spec.resources.vcpu}
 								memoryMib={spec.resources.memory_mib}
 								storageGib={spec.resources.disk_gib}
 							/>
-							{deploymentStatus.kind === "running" && !deploymentFailure ? null : (
-								<div className="mt-auto border-t pt-3">
-									<OverviewComputeStatus
-										deployment={deployment}
-										failure={deploymentFailure}
-										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-										deploymentTransitionEscalated={deploymentTransitionEscalated}
-									/>
+							{compute.subscription ? (
+								<div className="space-y-2">
+									<div
+										className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2"
+										data-overview-subscription-row
+									>
+										<dl className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
+											{compute.subscription.label ? (
+												<dt>{compute.subscription.label}:</dt>
+											) : (
+												<dt className="sr-only">Plan access</dt>
+											)}
+											<dd data-overview-subscription-status>{compute.subscription.value}</dd>
+										</dl>
+										{compute.action ? (
+											<Button
+												render={<Link {...actionLink} />}
+												nativeButton={false}
+												variant="outline"
+												size="sm"
+											>
+												<ActionIcon /> {compute.action.label}
+											</Button>
+										) : null}
+									</div>
+									{compute.date ? <OverviewMetadata items={[compute.date]} /> : null}
 								</div>
-							)}
+							) : null}
 						</div>
 					</AgentOverviewStatusCard>
 				</div>
 			</div>
-			<AgentOverviewCapabilities
-				agentId={agentId}
-				variant="hosted"
-				content={{
-					projects: overviewProjectsModule({
-						bindings: {
-							count:
-								agent && projectBindings.data
-									? linkedAgentProjectCount(projectBindings.data)
-									: null,
-							isLoading: projectionLoading || projectBindings.isLoading,
-							isUnavailable: projectionUnavailable,
-							error: projectBindings.error,
-						},
-					}),
-					skills: {
-						...skillsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "skills")
-							: null,
-					},
-					plugins: pluginsModule,
-					memories: memoriesModule,
-					vaults: {
-						...vaultsModule,
-						link: workspaceProjectId
-							? agentProjectResourceLink(agentId, workspaceProjectId, "vaults")
-							: null,
-					},
-					connectors: connectorsModule,
-					"model-provider": {
-						description:
-							providers.isLoading || managedModelCatalog.isLoading ? (
-								<OverviewDescriptionSkeleton label="model and provider" />
-							) : providers.error || managedModelCatalog.error ? (
-								"Unavailable right now"
-							) : (
-								model
-							),
-					},
-					channels: {
-						description:
-							projectionLoading || channelLinks.isLoading ? (
-								<OverviewDescriptionSkeleton label="channels" />
-							) : projectionUnavailable || channelLinks.error ? (
-								"Unavailable right now"
-							) : linkedChannelCount === 0 ? (
-								"No channels linked"
-							) : (
-								`${linkedChannelCount} linked ${linkedChannelCount === 1 ? "channel" : "channels"}`
-							),
-					},
-				}}
-			/>
+			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
 		</div>
 	);
 }
@@ -1494,11 +1529,12 @@ function useRuntimeUiCredentialRequest(
 	const deploymentId = deployment.resource.id;
 	const resourceVersion = deployment.resource.metadata.resourceVersion;
 	return useCallback(async () => {
-		if (!endpointUrl) throw new Error("The agent dashboard isn't available right now.");
+		const label = runtimeBrowserUiLabel(runtime);
+		if (!endpointUrl) throw new Error(`${label} isn't available right now.`);
 		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
 		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
 		if (!resolved || resolved.runtime !== runtime) {
-			throw new Error("Clawdi couldn't load the agent dashboard sign-in details.");
+			throw new Error(`Clawdi couldn't load the ${label} sign-in details.`);
 		}
 		return resolved;
 	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
@@ -1562,7 +1598,9 @@ function ConsoleTab({
 				setCredentialError(
 					error instanceof Error
 						? error
-						: new Error("Clawdi couldn't load the agent dashboard sign-in details."),
+						: new Error(
+								`Clawdi couldn't load the ${runtimeBrowserUiLabel(runtime)} sign-in details.`,
+							),
 				);
 				setCredentialLoadState("error");
 			}
@@ -1717,7 +1755,7 @@ function ConsoleTab({
 				: openClawNativeHandoffLoaded
 					? url
 					: "about:blank"
-			: url;
+			: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
 			? openClawRuntimeUiWindowTarget(
@@ -1726,7 +1764,7 @@ function ConsoleTab({
 					openClawNativeHandoffLoaded,
 					openClawFrameLoaded,
 				)
-			: url;
+			: runtimeDashboardUrl(url, runtime);
 
 	return (
 		<LiveToolFrame
@@ -2192,12 +2230,6 @@ function RuntimeUiAccessDialog({
 			) : null}
 		</Dialog>
 	);
-}
-
-function runtimeBrowserUiLabel(runtime: Runtime): string {
-	if (runtime === "openclaw") return "OpenClaw Control UI";
-	if (runtime === "hermes") return "Hermes Dashboard";
-	return `${runtimeDisplayName(runtime)} UI`;
 }
 
 // ── Terminal ────────────────────────────────────────────────────────────────
@@ -3495,12 +3527,16 @@ function HostedAgentSettingsTab({
 	agent,
 	routeSearch,
 	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null;
 	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
+	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
@@ -3515,6 +3551,8 @@ function HostedAgentSettingsTab({
 					deployment={deployment}
 					routeSearch={routeSearch}
 					onDeleteAccepted={onDeleteAccepted}
+					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+					deploymentTransitionEscalated={deploymentTransitionEscalated}
 				/>
 			</div>
 		</UnsavedNavigationBoundary>
@@ -3614,10 +3652,14 @@ function ComputeSettingsSections({
 	deployment,
 	routeSearch,
 	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	deploymentTransitionEscalated,
 }: {
 	deployment: HostedDeployment;
 	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
+	deploymentTransitionTimedOut: boolean;
+	deploymentTransitionEscalated: boolean;
 }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -3936,6 +3978,12 @@ function ComputeSettingsSections({
 			</SettingsSection>
 
 			<SettingsSection title="Agent controls" description="Restart, stop, or start this agent.">
+				<ComputeStatusDetails
+					deployment={deployment}
+					failure={deploymentFailurePresentation(deployment)}
+					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+					deploymentTransitionEscalated={deploymentTransitionEscalated}
+				/>
 				<div className="flex flex-wrap gap-2.5">
 					<ConfirmAction
 						title="Restart agent?"

@@ -89,7 +89,9 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
 		expect(connectDialog).toContain("Need a provider that Clawdi Channels");
 		expect(connectDialog).toContain('agentSectionLink(agentId, "console")');
-		expect(connectDialog).toContain("Open the relevant Agent's Agent Interface");
+		expect(connectDialog).toContain(
+			"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard",
+		);
 		expect(connectDialog).toContain("data-agent-link-warning");
 		expect(connectDialog).toContain('className="border-warning/30 bg-warning-muted py-2.5"');
 		expect(connectDialog).toContain("<TriangleAlert aria-hidden />");

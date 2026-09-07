@@ -2,12 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AuthBadge, ProviderReadinessBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import {
+	AuthBadge,
+	ProviderIcon,
+	ProviderReadinessBadge,
+} from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers/model-binding";
 
 const providerPageSource = readFileSync(
 	new URL("./ai-providers-page.tsx", import.meta.url),
 	"utf8",
 );
+
+test("managed AI uses the shared AI Providers icon", () => {
+	const markup = renderToStaticMarkup(
+		createElement(ProviderIcon, { provider: MANAGED_PROVIDER_ID }),
+	);
+	expect(markup).toContain("lucide-brain-circuit");
+	expect(markup).not.toContain("lucide-sparkles");
+});
 
 describe("ProviderReadinessBadge", () => {
 	test("badges an unfinished provider as needing setup, never connected", () => {

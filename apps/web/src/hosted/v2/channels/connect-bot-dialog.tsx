@@ -38,6 +38,7 @@ import {
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { agentSectionLink } from "@/lib/agent-routes";
+import { runtimeBrowserUiLabel } from "@/lib/navigation-model";
 
 type CreatedCustomBot = Pick<
 	ChannelCreated,
@@ -224,12 +225,12 @@ export function ConnectBotDialog({
 						className="font-medium text-foreground underline underline-offset-4"
 						onClick={() => handleOpenChange(false)}
 					>
-						Agent Interface
+						{runtimeBrowserUiLabel(agentType)}
 					</Link>
 					.
 				</>
 			) : (
-				"Open the relevant Agent's Agent Interface to configure it."
+				"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard to configure it."
 			)}
 		</p>
 	);

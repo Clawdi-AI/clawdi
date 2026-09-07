@@ -179,11 +179,12 @@ export function useWalletTransactions() {
 
 // ── Subscription / compute ────────────────────────────────────────────────────
 
-export function usePlans() {
+export function usePlans({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.plans,
 		queryFn: () => client.getPlans(),
+		enabled,
 		staleTime: 5 * 60_000,
 	});
 }

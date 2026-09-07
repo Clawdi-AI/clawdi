@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldCheck, Sparkles } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
@@ -12,6 +12,7 @@ import {
 	providerPresentation,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider, AiProviderAuth } from "@/hosted/v2/ai-providers/types";
+import { CANONICAL_NAVIGATION_IDENTITIES } from "@/lib/navigation-model";
 
 /** Brand-preserving icon for a saved provider or provider reference. */
 export function ProviderIcon({
@@ -27,9 +28,10 @@ export function ProviderIcon({
 }) {
 	const presentation = providerPresentation(provider, providers);
 	if (presentation.managed) {
+		const Icon = CANONICAL_NAVIGATION_IDENTITIES["ai-providers"].icon;
 		return (
 			<IconChip size={size} tint="bg-primary/10 text-primary" className={className}>
-				<Sparkles />
+				<Icon />
 			</IconChip>
 		);
 	}

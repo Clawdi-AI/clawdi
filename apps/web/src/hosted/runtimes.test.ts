@@ -6,6 +6,7 @@ import {
 	observedCloudProjectionId,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
+	runtimeDashboardUrl,
 } from "@/hosted/runtimes";
 
 describe("deploymentFilesUrl", () => {
@@ -72,6 +73,28 @@ describe("deploymentRuntime", () => {
 				}),
 			),
 		).toBeNull();
+	});
+});
+
+describe("runtimeDashboardUrl", () => {
+	test.each([
+		["https://runtime.example", "https://runtime.example/chat"],
+		[
+			"https://runtime.example/?next=one%2Ftwo#section",
+			"https://runtime.example/chat?next=one%2Ftwo#section",
+		],
+		["https://runtime.example/settings/", "https://runtime.example/settings/"],
+		["https://runtime.example/chat?session=123", "https://runtime.example/chat?session=123"],
+		["https://proxy.example/app-9119/chat", "https://proxy.example/app-9119/chat"],
+		["https://proxy.example/app-9119", "https://proxy.example/app-9119/chat"],
+		["https://proxy.example/app-9119/", "https://proxy.example/app-9119/chat"],
+		[
+			"https://proxy.example/app-9119/settings?tab=model",
+			"https://proxy.example/app-9119/settings?tab=model",
+		],
+	])("defaults Hermes root to Chat without changing explicit targets: %s", (url, expected) => {
+		expect(runtimeDashboardUrl(url, "hermes")).toBe(expected);
+		expect(runtimeDashboardUrl(url, "openclaw")).toBe(url);
 	});
 });
 

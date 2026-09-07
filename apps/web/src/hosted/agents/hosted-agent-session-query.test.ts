@@ -169,17 +169,14 @@ describe("hosted agent sessions refresh", () => {
 		const sessionsQueryEnd = detailSource.indexOf("\n\t});", sessionsQueryStart) + "\n\t});".length;
 		const sessionsQuerySource = detailSource.slice(sessionsQueryStart, sessionsQueryEnd);
 		const initialPageStart = detailSource.indexOf("const showInitialDeploymentPage", detailStart);
-		const initialPageEnd = detailSource.indexOf("const interfaceAvailable", initialPageStart);
+		const initialPageEnd = detailSource.indexOf(";", initialPageStart) + 1;
 		const initialPageSource = detailSource.slice(initialPageStart, initialPageEnd);
 		const overviewStart = detailSource.indexOf("function OverviewTab(");
 		const recentSessionsStart = detailSource.indexOf(
 			'<h2 id="hosted-recent-sessions"',
 			overviewStart,
 		);
-		const recentSessionsEnd = detailSource.indexOf(
-			'<div className="@3xl/main:row-start-2">',
-			recentSessionsStart,
-		);
+		const recentSessionsEnd = detailSource.indexOf("</section>", recentSessionsStart);
 		const recentSessionsSource = detailSource.slice(recentSessionsStart, recentSessionsEnd);
 
 		expect(sessionsQueryStart).toBeGreaterThan(detailStart);
@@ -187,6 +184,8 @@ describe("hosted agent sessions refresh", () => {
 		expect(sessionsQuerySource).toContain('enabled: activeTab === "overview" && sessionsQueryable');
 		expect(sessionsQuerySource).not.toContain("deploymentStatus");
 		expect(sessionsQuerySource).not.toContain("projection.status");
+		expect(initialPageStart).toBeGreaterThan(detailStart);
+		expect(initialPageEnd).toBeGreaterThan(initialPageStart);
 		expect(initialPageSource).toContain("shouldShowInitialDeploymentProgress(");
 		expect(initialPageSource).not.toContain("cloudAgentId");
 		expect(initialPageSource).not.toContain('projection.status !== "resolved"');

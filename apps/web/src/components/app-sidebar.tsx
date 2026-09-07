@@ -365,6 +365,7 @@ function ConsoleNavigationSections({
 function AgentSectionList({
 	agentId,
 	variant,
+	runtime,
 	visibleSectionIds,
 	activeSection,
 	primaryProject,
@@ -374,6 +375,7 @@ function AgentSectionList({
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
+	runtime?: AgentTile["agentType"];
 	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
@@ -388,7 +390,7 @@ function AgentSectionList({
 		}),
 	});
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
-	const groups = agentNavigationGroups(variant, visibleSectionIds);
+	const groups = agentNavigationGroups(variant, visibleSectionIds, runtime);
 	const activeAgentRoute = parseAgentPathname(pathname);
 	const primaryProjectRouteActive = Boolean(
 		primaryProject && agentRouteIdsEqual(activeAgentRoute?.projectId, primaryProject.id),
@@ -479,6 +481,7 @@ function AgentSectionList({
 function AgentFocusSections({
 	agentId,
 	kind,
+	runtime,
 	adapterModules,
 	filesAvailable,
 	activeSection,
@@ -487,6 +490,7 @@ function AgentFocusSections({
 }: {
 	agentId: string;
 	kind: Exclude<AgentChromeKind, "unresolved">;
+	runtime: AgentTile["agentType"];
 	adapterModules?: SidebarEnvironment["adapter_modules"];
 	filesAvailable?: boolean;
 	activeSection: AgentSectionId;
@@ -518,6 +522,7 @@ function AgentFocusSections({
 		<AgentSectionList
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
+			runtime={runtime}
 			visibleSectionIds={
 				kind === "cloud"
 					? hostedAgentVisibleSectionIds(filesAvailable === true)
@@ -624,6 +629,7 @@ function SidebarMainNavigation({
 			<AgentFocusSections
 				agentId={activeAgentId}
 				kind={activeAgentKind}
+				runtime={activeAgentTile.agentType}
 				adapterModules={activeAgentTile.env?.adapter_modules}
 				filesAvailable={activeAgentTile.filesAvailable}
 				activeSection={activeSection}

@@ -1,6 +1,6 @@
 import { defaultStringifySearch, linkOptions } from "@tanstack/react-router";
 import type { AgentSectionId } from "@/lib/navigation-model";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { agentSectionNavigationItem } from "@/lib/navigation-model";
 import { parseSessionTimelineView, type SessionTimelineView } from "@/lib/session-search-anchor";
 
 export type { AgentSectionId } from "@/lib/navigation-model";
@@ -56,14 +56,17 @@ export function agentSectionSegment(section: AgentSectionId): string {
 	return AGENT_SECTION_SEGMENTS[section];
 }
 
-export function agentSectionLabel(section: AgentSectionId): string {
-	return AGENT_SECTION_NAVIGATION_ITEMS[section].label;
+export function agentSectionLabel(section: AgentSectionId, runtime?: string | null): string {
+	return agentSectionNavigationItem(section, runtime).label;
 }
 
-export function agentSectionLabelFromSegment(segment: string): string | null {
+export function agentSectionLabelFromSegment(
+	segment: string,
+	runtime?: string | null,
+): string | null {
 	const section = parseAgentSectionSegment(segment);
 	if (!section) return null;
-	return agentSectionLabel(section);
+	return agentSectionLabel(section, runtime);
 }
 
 export function parseAgentSectionSegment(value: string | null | undefined): AgentSectionId | null {

@@ -232,9 +232,15 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+							<div
+								className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
+								data-overview-section="entry"
+							>
 								{supportsSessions ? (
-									<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+									<div
+										className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
+										data-overview-section="activity"
+									>
 										<div className="flex items-center justify-between">
 											<h2 id="connected-recent-sessions" className="text-sm font-semibold">
 												Recent sessions
@@ -271,7 +277,7 @@ export function ConnectedAgentDetail({
 									<AgentOverviewStatusCard
 										agentId={id}
 										section="settings"
-										title="Live Sync"
+										title="Status"
 										icon={Laptop}
 										tint="bg-identity-7-bg text-identity-7-fg"
 										description={
@@ -447,6 +453,13 @@ function AgentDetailContentSkeleton({
 				actions={variant === "hosted"}
 				description={false}
 			/>
+			{variant === "hosted" ? (
+				<div className="grid gap-3 @5xl/main:grid-cols-3" aria-hidden="true">
+					<Skeleton className="h-17 rounded-xl" />
+					<Skeleton className="h-17 rounded-xl" />
+					<Skeleton className="h-17 rounded-xl" />
+				</div>
+			) : null}
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">
@@ -455,11 +468,10 @@ function AgentDetailContentSkeleton({
 					</div>
 					<OverviewSessionListSkeleton />
 				</div>
-				<div className="@3xl/main:row-start-2">
+				<div className="@3xl/main:row-start-2" aria-hidden="true">
 					<Card
 						size="sm"
-						className="h-full gap-0 bg-muted/20 py-0"
-						aria-hidden="true"
+						className="h-full gap-0 border border-foreground/10 py-0 ring-0"
 						data-testid="overview-status-card-skeleton"
 					>
 						<CardHeader className="p-0">
@@ -472,7 +484,9 @@ function AgentDetailContentSkeleton({
 								<Skeleton className="size-4 shrink-0" />
 							</div>
 						</CardHeader>
-						<CardContent className="flex flex-1 flex-col justify-end gap-2 px-4 pb-4">
+						<CardContent
+							className={cn("gap-2 px-4 pb-4", variant === "connected" && "flex-1 justify-end")}
+						>
 							<Skeleton className="h-4 w-full" />
 							<Skeleton className="h-4 w-3/4" />
 						</CardContent>

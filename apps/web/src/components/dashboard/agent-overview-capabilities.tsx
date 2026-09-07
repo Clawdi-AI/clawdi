@@ -11,7 +11,6 @@ import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
 } from "@/lib/navigation-model";
-import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
@@ -43,7 +42,7 @@ export function AgentOverviewStatusCard({
 			size="sm"
 			role="article"
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
-			className="h-full gap-0 bg-muted/20 py-0"
+			className="h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0"
 		>
 			<CardHeader className="p-0">
 				<Link
@@ -126,24 +125,18 @@ export function AgentOverviewCapabilities({
 						</h2>
 					</div>
 					<div
-						data-overview-layout={group.layout}
-						className={cn(
-							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
-						)}
+						data-overview-layout="two-column"
+						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
 					>
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
 							if (!moduleContent) return null;
-							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
 								<OverviewNavigationCard
 									key={module.id}
 									id={module.id}
-									title={title}
+									title={item.label}
 									description={moduleContent.description}
 									icon={item.icon}
 									tint={item.tint}
@@ -162,13 +155,14 @@ export function AgentOverviewCapabilities({
 	);
 }
 
-function OverviewNavigationCard({
+export function OverviewNavigationCard({
 	id,
 	title,
 	description,
 	icon: Icon,
 	tint,
 	link,
+	disabled = false,
 }: {
 	id: string;
 	title: string;
@@ -176,6 +170,7 @@ function OverviewNavigationCard({
 	icon: LucideIcon;
 	tint: string;
 	link: OverviewLinkOptions | null;
+	disabled?: boolean;
 }) {
 	const content = (
 		<>
@@ -186,15 +181,29 @@ function OverviewNavigationCard({
 				<CardTitle>{title}</CardTitle>
 				<CardDescription data-overview-primary-value>{description}</CardDescription>
 			</div>
-			{link ? (
+			{link || disabled ? (
 				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 			) : null}
 		</>
 	);
 	return (
-		<Card size="sm" role="article" data-overview-module={id} className="h-full min-w-0 py-3">
+		<Card
+			size="sm"
+			role="article"
+			data-overview-module={id}
+			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
+		>
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
-				{link ? (
+				{disabled ? (
+					<button
+						type="button"
+						disabled
+						aria-label={title}
+						className="flex min-w-0 items-center gap-3 text-left opacity-50"
+					>
+						{content}
+					</button>
+				) : link ? (
 					<Link
 						{...link}
 						aria-label={title}
@@ -222,20 +231,15 @@ export function AgentOverviewCapabilitiesSkeleton({
 				<section key={group.id}>
 					<Skeleton className="mb-3 h-5 w-20" />
 					<div
-						data-overview-layout={group.layout}
-						className={cn(
-							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
-						)}
+						data-overview-layout="two-column"
+						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
 					>
 						{group.modules.map((module) => (
 							<Card
 								size="sm"
 								key={module.id}
 								data-overview-module-skeleton={module.id}
-								className="h-full min-w-0 py-3"
+								className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
 							>
 								<CardHeader className="h-full grid-rows-1 content-center gap-0">
 									<div className="flex min-w-0 items-center gap-3">

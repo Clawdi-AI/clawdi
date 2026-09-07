@@ -172,7 +172,7 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 	}
 }
 
-function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatus): boolean {
+export function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatus): boolean {
 	return (
 		status.summary_state === "running" &&
 		status.conditions.some(

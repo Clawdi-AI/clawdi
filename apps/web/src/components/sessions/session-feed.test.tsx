@@ -34,7 +34,7 @@ describe("OverviewSessionList", () => {
 		expect(markup).not.toContain("<a");
 	});
 
-	test("renders an accessible empty state and three inert visual placeholders", () => {
+	test("renders a visible accessible empty state without blank session cards", () => {
 		const markup = renderToStaticMarkup(
 			createElement(OverviewSessionList, {
 				sessions: [],
@@ -44,11 +44,11 @@ describe("OverviewSessionList", () => {
 			}),
 		);
 
-		expect(markup.match(/data-testid="overview-session-placeholder"/g)).toHaveLength(3);
-		expect(markup.match(/aria-hidden="true"/g)).toHaveLength(3);
+		expect(markup).not.toContain("overview-session-placeholder");
+		expect(markup).not.toContain("aria-hidden");
 		expect(markup).toContain('role="status"');
 		expect(markup).toContain("No recent sessions");
-		expect(markup).toContain("pointer-events-none");
+		expect(markup).not.toContain("sr-only");
 		expect(markup).not.toContain("<article");
 		expect(markup).not.toContain("<a");
 	});

@@ -51,6 +51,21 @@ export function runtimeConsoleUrl(
 	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
 }
 
+/** Browser entry only; credential validation still uses the exact published endpoint. */
+export function runtimeDashboardUrl(url: string, runtime: HostedRuntime): string {
+	if (runtime !== "hermes") return url;
+	try {
+		const target = new URL(url);
+		const path = target.pathname.replace(/\/+$/, "");
+		// Hosted path-based proxy roots end in the Hermes dashboard port.
+		if (path !== "" && !path.endsWith("-9119")) return url;
+		target.pathname = `${path}/chat`;
+		return target.toString();
+	} catch {
+		return url;
+	}
+}
+
 export function deploymentFilesUrl(deployment: HostedDeployment): string | null {
 	const value = deployment.files_endpoint?.url;
 	if (!value) return null;

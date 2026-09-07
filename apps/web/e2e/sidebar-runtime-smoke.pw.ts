@@ -1,4 +1,5 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
+import { captureAgentOverview, expectAgentOverviewGeometry } from "./agent-overview-geometry";
 
 const now = new Date("2026-07-04T12:00:00.000Z");
 
@@ -162,7 +163,7 @@ const sessions = {
 	page: 1,
 	page_size: 25,
 };
-const _overviewSessions = {
+const overviewSessions = {
 	...sessions,
 	items: Array.from({ length: 5 }, (_, index) => ({
 		...sessions.items[0],
@@ -1196,6 +1197,88 @@ async function stubConnectedAgentResources(page: Page) {
 		longContextProjectDescription,
 	};
 }
+
+test("connected overview keeps Status beside sessions and preserves resource columns", async ({
+	page,
+}, testInfo) => {
+	await page.clock.setFixedTime(now);
+	const agent = agents[0];
+	if (!agent) throw new Error("Missing Connected Agent fixture");
+	const currentAgent = { ...agent, adapter_modules: ["sessions", "skills"] };
+	const currentSessions = { ...overviewSessions };
+	const sessionRequests: string[] = [];
+	await stubDashboardApi(page, [], { sessionsPage: currentSessions, sessionRequests });
+	await page.route("**/v1/agents", (route) =>
+		fulfillJson(
+			route,
+			agents.map((item) => (item.id === agent.id ? currentAgent : item)),
+		),
+	);
+	await page.route(`**/v1/agents/${agent.id}`, (route) => fulfillJson(route, currentAgent));
+	for (const { sessionCount, syncDisabled, ...viewport } of [
+		{ width: 1440, height: 900, sessionCount: 0, syncDisabled: false },
+		{ width: 1440, height: 900, sessionCount: 1, syncDisabled: false },
+		{ width: 1440, height: 900, sessionCount: 3, syncDisabled: false },
+		{ width: 390, height: 844, sessionCount: 3, syncDisabled: false },
+		{ width: 320, height: 800, sessionCount: 3, syncDisabled: true },
+	]) {
+		Object.assign(currentSessions, {
+			items: overviewSessions.items.slice(0, sessionCount),
+			total: sessionCount,
+		});
+		currentAgent.sync_enabled = !syncDisabled;
+		await page.setViewportSize(viewport);
+		await page.goto(`/agents/${agent.id}`);
+		const main = page.locator("main");
+		const status = main.locator('[data-overview-status="status"]');
+		await expect(status).toContainText(syncDisabled ? "Setup" : "Live");
+		await expect(status).toContainText(agent.machine_name);
+		await expect(status.getByRole("link", { name: "Status", exact: true })).toHaveAttribute(
+			"href",
+			`/agents/${agent.id}/settings`,
+		);
+		await expect(
+			main.getByRole("region", { name: "Recent sessions" }).getByRole("article"),
+		).toHaveCount(sessionCount);
+		await expect(main.getByTestId("overview-session-placeholder")).toHaveCount(0);
+		await expect(main.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
+		await expect(main.locator('[data-overview-module="skills"]')).toContainText("skill");
+		await expect(main.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
+		await expect(main.locator('[data-overview-module="memories"]')).toContainText("1 memory");
+		await expect(main.locator('[data-overview-module="connectors"]')).toContainText("app");
+		await expect(
+			main.locator(
+				'[data-overview-section="tools"], [data-overview-module="channels"], [data-overview-module="model-provider"]',
+			),
+		).toHaveCount(0);
+		const geometry = await expectAgentOverviewGeometry(page, {
+			hosted: false,
+			desktop: viewport.width === 1440,
+		});
+		await testInfo.attach(
+			`connected-final-clean-${viewport.width}-sessions-${sessionCount}-geometry`,
+			{
+				body: JSON.stringify(geometry, null, 2),
+				contentType: "application/json",
+			},
+		);
+		await captureAgentOverview(
+			page,
+			testInfo,
+			`connected-final-clean-${viewport.width}-sessions-${sessionCount}`,
+		);
+	}
+	expect(sessionRequests.every((url) => new URL(url).searchParams.get("page_size") === "3")).toBe(
+		true,
+	);
+	currentAgent.adapter_modules = [];
+	sessionRequests.length = 0;
+	await page.goto(`/agents/${agent.id}`);
+	await expect(page.locator('[data-overview-status="status"]')).toContainText("Setup");
+	await expect(page.getByRole("region", { name: "Recent sessions" })).toHaveCount(0);
+	await expect(page.locator('main [data-overview-module="skills"]')).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
+});
 
 test("connected agent resources select Projects before scoped Skills and Vaults", async ({
 	page,
