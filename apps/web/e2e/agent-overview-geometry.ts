@@ -18,7 +18,9 @@ export async function expectAgentOverviewGeometry(
 			"[data-overview-subscription-status]",
 		);
 		const subscriptionDetails = subscriptionRow?.querySelector("dd > span");
-		const subscriptionAction = subscriptionRow?.querySelector("[data-slot=button]");
+		const subscriptionAction = main.querySelector(
+			'[data-testid="overview-compute-summary"] [data-slot=button]',
+		);
 		const subscriptionDate = subscriptionRow?.nextElementSibling;
 		const entries = Array.from(
 			main.querySelectorAll('[data-overview-section="tools"] [data-slot="card"]'),
@@ -54,8 +56,13 @@ export async function expectAgentOverviewGeometry(
 		paint(getComputedStyle(resourceCard).backgroundColor);
 		const resourceBackground = pixel();
 		return {
+			computeSpecs: Array.from(main.querySelectorAll('[aria-label="Compute resources"] > div')).map(
+				(spec) => spec.getBoundingClientRect().toJSON(),
+			),
 			computeRows: Array.from(
-				main.querySelectorAll('[data-testid="overview-compute-summary"] dl > div'),
+				main.querySelectorAll(
+					'[data-testid="overview-compute-summary"] dl:not([aria-label]) > div',
+				),
 			).map((row) => {
 				const label = row.querySelector("dt:not(.sr-only)");
 				const value = row.querySelector("dd > span");
@@ -115,11 +122,16 @@ export async function expectAgentOverviewGeometry(
 		};
 	});
 	const aligned = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+	for (const spec of geometry.computeSpecs) {
+		aligned(spec.height, 16);
+		if ((page.viewportSize()?.width ?? 0) >= 390) aligned(spec.top, geometry.computeSpecs[0].top);
+	}
 	for (const { row, label, value, hasAction, overflows } of geometry.computeRows) {
 		expect(overflows).toBe(false);
+		expect(hasAction).toBe(false);
 		if (label) {
 			expect(value.left - label.right).toBeGreaterThanOrEqual(16);
-			if (!hasAction) aligned(value.right, row.right);
+			aligned(value.right, row.right);
 		}
 	}
 	for (const heading of geometry.headings) {
@@ -179,18 +191,13 @@ export async function expectAgentOverviewGeometry(
 			expect(color.contrast).toBeGreaterThanOrEqual(4.5);
 		}
 		if (geometry.subscription) {
-			const { row, status, details, action, date } = geometry.subscription;
+			const { row, details, action, date } = geometry.subscription;
 			if (action) {
 				expect(action.left).toBeGreaterThanOrEqual(row.left - 1);
-				expect(action.right).toBeLessThanOrEqual(row.right + 1);
-				if (details && action.top >= details.bottom) {
-					expect(action.top - details.bottom).toBeGreaterThanOrEqual(8);
-				} else {
-					aligned(status.y + status.height / 2, action.y + action.height / 2);
-					aligned(action.right, row.right);
-					expect(action.left - status.right).toBeGreaterThanOrEqual(12);
-				}
-			} else if (details) aligned(row.height, details.height);
+				aligned(action.right, row.right);
+				expect(action.top - (date ?? row).bottom).toBeGreaterThanOrEqual(8);
+			}
+			if (details) aligned(row.height, details.height);
 			if (date) expect(date.top).toBeGreaterThan(row.bottom);
 		}
 		const tools = geometry.tools;

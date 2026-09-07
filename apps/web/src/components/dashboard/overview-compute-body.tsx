@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 type ComputeFact = { label: string | null; value: ReactNode };
 
-/** Specs and billing facts share a right edge, including while loading. */
+/** Inline specs and billing facts keep their own space above optional actions. */
 export function OverviewComputeBody({
 	planLabel,
 	resources,
@@ -21,10 +21,18 @@ export function OverviewComputeBody({
 	action?: ReactNode;
 	loading?: boolean;
 }) {
-	const rows: ComputeFact[] = [
-		{ label: "CPU", value: resources ? `${resources.vcpu} vCPU` : null },
-		{ label: "Memory", value: resources ? formatMemoryMib(resources.memory_mib) : null },
-		{ label: "Storage", value: resources ? `${resources.disk_gib} GiB` : null },
+	const specs = [
+		{ label: "CPU", value: resources ? `${resources.vcpu} vCPU` : null, width: "w-10" },
+		{
+			label: "Memory",
+			value: resources ? `${formatMemoryMib(resources.memory_mib)} RAM` : null,
+			width: "w-16",
+		},
+		{
+			label: "Storage",
+			value: resources ? `${resources.disk_gib} GiB storage` : null,
+			width: "w-20",
+		},
 	];
 	const commercial = loading
 		? [
@@ -41,46 +49,65 @@ export function OverviewComputeBody({
 			<div data-overview-compute-plan className="text-sm text-muted-foreground">
 				{loading ? <Skeleton className="h-lh w-32 max-w-full" /> : planLabel}
 			</div>
-			<dl aria-label="Compute resources" className="space-y-1 text-xs text-muted-foreground">
-				{[...rows, ...commercial].map((item, index) => (
-					<div
-						key={item.label ?? "access"}
-						className={cn(
-							"grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-baseline gap-x-4",
-							loading && "items-center",
-							index === rows.length && "mt-3",
-						)}
-						data-overview-subscription-row={index === rows.length || undefined}
-					>
-						<dt className={item.label ? "min-w-0 break-words" : "sr-only"}>
-							{loading && index >= rows.length ? (
-								<Skeleton className="relative h-lh max-w-full">
-									<span className="invisible" aria-hidden="true">
-										{item.label}
-									</span>
-								</Skeleton>
+			<dl
+				aria-label="Compute resources"
+				className="flex flex-wrap gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
+			>
+				{specs.map((item, index) => (
+					<div key={item.label}>
+						<dt className="sr-only">{item.label}</dt>
+						<dd className="flex items-center gap-1.5">
+							{index > 0 && <span aria-hidden="true">·</span>}
+							{loading ? (
+								<Skeleton className={cn("h-lh max-w-full", item.width)} />
 							) : (
-								(item.label ?? "Plan access")
+								<span>{item.value}</span>
 							)}
-						</dt>
-						<dd
-							className={
-								item.label
-									? "flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2 text-right break-words"
-									: "col-span-full flex min-w-0 flex-wrap items-center justify-between gap-3 break-words"
-							}
-						>
-							<span
-								data-overview-subscription-status={index === rows.length || undefined}
-								className="min-w-0"
-							>
-								{loading ? <Skeleton className="h-lh w-16 max-w-full" /> : item.value}
-							</span>
-							{index === rows.length ? action : null}
 						</dd>
 					</div>
 				))}
 			</dl>
+			{commercial.length > 0 && (
+				<dl className="space-y-1 text-xs text-muted-foreground">
+					{commercial.map((item, index) => (
+						<div
+							key={item.label ?? "access"}
+							className={cn(
+								"grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-baseline gap-x-4",
+								loading && "items-center",
+							)}
+							data-overview-subscription-row={index === 0 || undefined}
+						>
+							<dt className={item.label ? "min-w-0 break-words" : "sr-only"}>
+								{loading ? (
+									<Skeleton className="relative h-lh max-w-full">
+										<span className="invisible" aria-hidden="true">
+											{item.label}
+										</span>
+									</Skeleton>
+								) : (
+									(item.label ?? "Plan access")
+								)}
+							</dt>
+							<dd
+								className={
+									item.label
+										? "min-w-0 text-right break-words"
+										: "col-span-full min-w-0 break-words"
+								}
+							>
+								<span
+									data-overview-subscription-status={index === 0 || undefined}
+									className="inline-block max-w-full align-top"
+								>
+									{loading ? <Skeleton className="h-lh w-16 max-w-full" /> : item.value}
+								</span>
+							</dd>
+						</div>
+					))}
+				</dl>
+			)}
+			{action && <div className="flex flex-wrap justify-end gap-2 pt-1">{action}</div>}
 		</div>
 	);
 }

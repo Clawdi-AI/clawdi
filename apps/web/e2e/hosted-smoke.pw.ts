@@ -3803,12 +3803,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
-	for (const configuration of ["2 vCPU", "4 GiB", "20 GiB"])
+	for (const configuration of ["2 vCPU", "4 GiB RAM", "20 GiB storage"])
 		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
 	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("CPU", { exact: true })).toBeVisible();
-	await expect(compute.getByText("Memory", { exact: true })).toBeVisible();
-	await expect(compute.getByText("Storage", { exact: true })).toBeVisible();
+	await expect(compute.getByLabel("Compute resources").locator("dt:not(.sr-only)")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
 		"No skills installed",
 	);
@@ -3852,6 +3850,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
 	await expect(overview.locator("[data-overview-module]")).toHaveCount(9);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
@@ -4355,6 +4354,7 @@ test("overview billing facts and shortcuts follow subscription authority", async
 			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
 			const actions = body.getByRole("button");
 			await expect(actions).toHaveCount(scenario.action ? 1 : 0);
+			await expect(body.locator("dl [data-slot=button]")).toHaveCount(0);
 			if (scenario.action) {
 				await expect(actions).toHaveText(scenario.action);
 				await expect(
@@ -4366,12 +4366,14 @@ test("overview billing facts and shortcuts follow subscription authority", async
 			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
 			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
 			await captureAgentOverview(page, testInfo, `hermes-final-clean-${scenario.name}-${width}`);
-			if (scenario.name === "included" || scenario.name === "payment-retry") {
+			if (["included", "payment-retry", "paid"].includes(scenario.name)) {
 				for (const theme of ["dark", "light"]) {
 					await page.locator("html").evaluate((element, dark) => {
 						element.classList.toggle("dark", dark);
 					}, theme === "dark");
 					await compute.evaluate((element) => element.scrollIntoView({ block: "center" }));
+					await expect(compute).toBeInViewport({ ratio: 1 });
+					await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
 					await compute.screenshot({
 						path: testInfo.outputPath(`${scenario.name}-${width}-${theme}-compute.png`),
 					});
