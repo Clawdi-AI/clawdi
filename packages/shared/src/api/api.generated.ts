@@ -2815,6 +2815,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connectors/metadata:batchRead": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Connector Metadata
+         * @description Batch display metadata; connection/auth configuration remains a separate read.
+         */
+        post: operations["read_connector_metadata_v1_connectors_metadata_batchRead_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connectors/available": {
         parameters: {
             query?: never;
@@ -5475,6 +5495,29 @@ export interface components {
             mcp_url: string;
             /** Mcp Token */
             mcp_token: string;
+        };
+        /** ConnectorMetadataBatchRequest */
+        ConnectorMetadataBatchRequest: {
+            /** Names */
+            names: string[];
+        };
+        /** ConnectorMetadataBatchResponse */
+        ConnectorMetadataBatchResponse: {
+            /** Items */
+            items: components["schemas"]["ConnectorMetadataResponse"][];
+            /** Missing */
+            missing: string[];
+        };
+        /** ConnectorMetadataResponse */
+        ConnectorMetadataResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Logo */
+            logo: string;
+            /** Description */
+            description: string;
         };
         /** ConnectorToolParametersResponse */
         ConnectorToolParametersResponse: {
@@ -15242,6 +15285,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorConnectionResponse"][];
+                };
+            };
+        };
+    };
+    read_connector_metadata_v1_connectors_metadata_batchRead_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectorMetadataBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorMetadataBatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
