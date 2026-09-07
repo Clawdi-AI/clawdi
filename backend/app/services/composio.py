@@ -45,6 +45,8 @@ from app.schemas.connector import (
     ConnectorConnectionResponse,
     ConnectorConnectResponse,
     ConnectorCredentialsConnectResponse,
+    ConnectorMetadataBatchResponse,
+    ConnectorMetadataResponse,
     ConnectorToolResponse,
 )
 
@@ -1585,6 +1587,24 @@ async def get_app_by_name(name: str) -> ConnectorAvailableAppResponse | None:
             detail = await _get_toolkit_detail(name)
             return await _annotate_connect_status(client, detail, _serialize_app(detail))
     return None
+
+
+async def get_connector_metadata(names: list[str]) -> ConnectorMetadataBatchResponse:
+    """Read display metadata in one catalog pass; never resolve per-app auth details."""
+    by_name = {toolkit.slug: toolkit for toolkit in await _get_all_toolkits()}
+    return ConnectorMetadataBatchResponse(
+        items=[
+            ConnectorMetadataResponse(
+                name=name,
+                display_name=by_name[name].name,
+                logo=by_name[name].meta.logo,
+                description=by_name[name].meta.description[:200],
+            )
+            for name in names
+            if name in by_name
+        ],
+        missing=[name for name in names if name not in by_name],
+    )
 
 
 async def _get_toolkit_detail(name: str) -> _Toolkit:
