@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from app.models.runtime_observation import (
 )
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, AgentSkillReference, Skill
-from app.routes.skills import _build_skill_detail
+from app.routes.skills import build_skill_detail
 from app.schemas.runtime import (
     PersistedHostedRuntimeSkills,
     PersistedHostedRuntimeSourcedSkillEntry,
@@ -38,8 +38,8 @@ from app.schemas.skill import (
 from app.services.agent_bindings import assert_project_visible_to_user, get_owned_agent_or_404
 from app.services.audit import record_control_plane_audit
 from app.services.project_runtime_skills import (
-    _assert_agent_accepts_project_skills,
     agent_project_skill_sources,
+    assert_agent_accepts_project_skills,
     assert_agent_project_skill_total,
     lock_project_binding_change,
     project_skill_context_binding,
@@ -91,10 +91,11 @@ async def _observed_skills(
     ).all()
     if len(rows) != 1:
         return None, None
-    latest = rows[0]
-    if not isinstance(latest.diagnostics, dict):
+    diagnostics: JsonValue = rows[0][0]
+    captured_at: datetime | None = rows[0][1]
+    if not isinstance(diagnostics, dict):
         return None, None
-    applied = latest.diagnostics.get("applied")
+    applied = diagnostics.get("applied")
     if not isinstance(applied, dict) or (
         applied.get("instanceId") != state.instance_id
         or applied.get("sourceRevision") != revision
@@ -102,7 +103,7 @@ async def _observed_skills(
     ):
         return None, None
     try:
-        observed = HostedRuntimeObservedSkillsV1.model_validate(latest.diagnostics.get("skills"))
+        observed = HostedRuntimeObservedSkillsV1.model_validate(diagnostics.get("skills"))
     except ValidationError:
         return None, None
     if any(
@@ -110,7 +111,7 @@ async def _observed_skills(
         for item in observed.entries
     ):
         return None, None
-    return observed, latest.captured_at
+    return observed, captured_at
 
 
 @router.get("/skills", response_model=AgentSkillDesiredListResponse)
@@ -269,7 +270,7 @@ async def put_agent_skill_reference(
     identities.append(project_skill_runtime_identity(skill.skill_key, skill.name))
     if identities[-1].local_skill_key == "clawdi":
         raise HTTPException(status.HTTP_409_CONFLICT, {"code": "runtime_manifest_managed_skill"})
-    await _assert_agent_accepts_project_skills(
+    await assert_agent_accepts_project_skills(
         db, agent_id=agent_id, project_id=skill.project_id, skill_identities=identities
     )
     assert_agent_project_skill_total(
@@ -354,4 +355,4 @@ async def get_agent_skill_reference(
     if await db.get(AgentSkillReference, (agent_id, skill_id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill reference not found")
     skill = await _source_skill(db, auth, skill_id)
-    return await _build_skill_detail(skill, db)
+    return await build_skill_detail(skill, db)

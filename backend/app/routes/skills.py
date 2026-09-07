@@ -784,7 +784,7 @@ async def _skills_etag_state(
     return revision, visible_revision_fingerprint, metadata_fingerprint, project_meta
 
 
-async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:
+async def build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:
     skill_id = str(skill.id)
     skill_key = skill.skill_key
     name = skill.name
@@ -2047,7 +2047,7 @@ async def get_skill_legacy(
     callers that know which project they want."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
-    return await _build_skill_detail(skill, db)
+    return await build_skill_detail(skill, db)
 
 
 @project_router.get("/{skill_key:path}")
@@ -2152,7 +2152,7 @@ async def _get_project_skill_detail(
         project_id=project_id,
         skill_key=skill_key,
     )
-    return await _build_skill_detail(skill, db)
+    return await build_skill_detail(skill, db)
 
 
 async def _get_project_skill(

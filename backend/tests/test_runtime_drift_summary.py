@@ -104,6 +104,7 @@ async def observe(
     boot="boot-1",
     sequence=1,
     activity=None,
+    skills=None,
     apply_receipt_id="apply-receipt-0001",
     boot_nonce="boot-nonce-000001",
 ):
@@ -131,6 +132,7 @@ async def observe(
             "sequence": sequence,
             "eventId": str(uuid.uuid4()),
             "userActivity": activity,
+            "skills": skills,
         }
     )
     result = await ingest_runtime_observation(
@@ -287,8 +289,25 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "enabledRuntimes": ["openclaw"],
         "error": None,
     }
-    first = await observe(db_session, fresh, old, activity=activity)
-    coalesced = await observe(db_session, fresh, now, sequence=2, activity=activity)
+    skills = {
+        "schemaVersion": 1,
+        "entries": [
+            {
+                "skillKey": "runbook",
+                "runtime": "openclaw",
+                "sourceIdentity": "b" * 64,
+                "digest": "c" * 64,
+                "sourceRevision": REVISION,
+                "generation": 1,
+                "desiredState": "present",
+                "status": "installed",
+                "errorCode": None,
+            }
+        ],
+        "truncated": False,
+    }
+    first = await observe(db_session, fresh, old, activity=activity, skills=skills)
+    coalesced = await observe(db_session, fresh, now, sequence=2, activity=activity, skills=skills)
     assert first.stream_position == coalesced.stream_position
     await observe(db_session, expired, old - timedelta(seconds=1), boot="boot-older")
     await observe(db_session, expired, old, boot="boot-expired")
@@ -348,7 +367,15 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     }
     assert head["health"] == "ok"
     diagnostics = head["diagnostics"]
-    assert set(diagnostics) == {"activeCliVersion", "applied", "agentPlugins", "userActivity"}
+    assert set(diagnostics) == {
+        "activeCliVersion",
+        "applied",
+        "agentPlugins",
+        "skills",
+        "userActivity",
+    }
+    assert diagnostics["skills"] == skills
+    assert observations[3]["head"]["diagnostics"]["skills"] is None
     assert observations[1]["head"]["diagnostics"] == dict.fromkeys(diagnostics)
     assert diagnostics["activeCliVersion"] == "1.2.3"
     assert diagnostics["agentPlugins"] == {"schemaVersion": 1, "installations": []}

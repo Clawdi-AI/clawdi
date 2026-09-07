@@ -377,7 +377,7 @@ async def _assert_project_skill_write_capacity(
         assert_agent_project_skill_total(current_count + (increment if linked is not None else 0))
 
 
-async def _assert_agent_accepts_project_skills(
+async def assert_agent_accepts_project_skills(
     db: AsyncSession,
     *,
     agent_id: UUID,
@@ -455,7 +455,7 @@ async def assert_project_link_compatible(
     project_id: UUID,
 ) -> None:
     """Fail before Link Project would create an ambiguous Skill graph."""
-    await _assert_agent_accepts_project_skills(
+    await assert_agent_accepts_project_skills(
         db,
         agent_id=agent_id,
         project_id=project_id,
@@ -505,7 +505,7 @@ async def assert_project_skill_write_compatible(
             )
             if linked is not None or skill_key in source_keys:
                 proposed_identities += (project_skill_runtime_identity(skill_key, local_skill_key),)
-            await _assert_agent_accepts_project_skills(
+            await assert_agent_accepts_project_skills(
                 db,
                 agent_id=agent_id,
                 project_id=project_id,

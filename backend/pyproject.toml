@@ -168,6 +168,7 @@ strict = [
     "app/routes/__init__.py",
     "app/routes/admin.py",
     "app/routes/agent_project_bindings.py",
+    "app/routes/agent_skills.py",
     "app/routes/ai_providers.py",
     "app/routes/audit.py",
     "app/routes/auth.py",
