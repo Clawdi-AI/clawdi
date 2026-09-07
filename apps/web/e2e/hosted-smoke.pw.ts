@@ -1145,6 +1145,13 @@ test("overview loading geometry retains card structure and section rhythm", asyn
 		try {
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			await expect(page.getByTestId("overview-status-card-skeleton")).toBeVisible();
+			const compute = page.locator('[data-overview-status="compute"]');
+			// Compare geometry after the shared theme stylesheet has applied.
+			await expect(compute).toHaveCSS("border-radius", "14px");
+			await compute.evaluate((element) => element.scrollIntoView({ block: "center" }));
+			await compute.screenshot({
+				path: testInfo.outputPath(`paid-${viewport.width}-cold-compute.png`),
+			});
 			await page.locator("#dashboard-scroll-container").evaluate((element) => {
 				element.scrollTop = 0;
 			});
@@ -1199,14 +1206,24 @@ test("overview loading geometry retains card structure and section rhythm", asyn
 				hosted: true,
 				desktop: viewport.width === 1440,
 			});
+			expect(geometry.computeRows.map(({ row }) => row)).toEqual(
+				loadingGeometry.computeRows.map(({ row }) => row),
+			);
 			await testInfo.attach(`paid-${viewport.width}-loading-geometry`, {
 				body: JSON.stringify({ loading, ready, geometry }, null, 2),
 				contentType: "application/json",
 			});
-			await captureAgentOverview(page, testInfo, `paid-performance-${viewport.width}-dark`);
-			await page.locator('[data-overview-status="compute"]').screenshot({
-				path: testInfo.outputPath(`paid-performance-${viewport.width}-compute.png`),
-			});
+			for (const theme of ["dark", "light"]) {
+				await page.locator("html").evaluate((element, dark) => {
+					element.classList.toggle("dark", dark);
+				}, theme === "dark");
+				const name = `paid-performance-${viewport.width}-${theme}`;
+				await captureAgentOverview(page, testInfo, name);
+				await compute.evaluate((element) => element.scrollIntoView({ block: "center" }));
+				await compute.screenshot({
+					path: testInfo.outputPath(`${name}-compute.png`),
+				});
+			}
 			for (const count of [0, 1]) {
 				Object.assign(sessionsPage, hostedOverviewSessionsPage(count));
 				await page.reload();
@@ -3786,12 +3803,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
-	for (const configuration of ["2 vCPU", "4 GiB", "20 GiB"])
+	for (const configuration of ["2 vCPU", "4 GiB RAM", "20 GiB storage"])
 		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
 	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("CPU", { exact: true })).toBeVisible();
-	await expect(compute.getByText("Memory", { exact: true })).toBeVisible();
-	await expect(compute.getByText("Storage", { exact: true })).toBeVisible();
+	await expect(compute.getByLabel("Compute resources").locator("dt:not(.sr-only)")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
 		"No skills installed",
 	);
@@ -3835,6 +3850,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
 	await expect(overview.locator("[data-overview-module]")).toHaveCount(9);
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
@@ -4312,8 +4328,8 @@ test("overview billing facts and shortcuts follow subscription authority", async
 				? null
 				: { ...runtimeStatus, summary_state: scenario.name === "stopped" ? "stopped" : "running" };
 		deployment.upgrade_available = scenario.name === "included" || scenario.name === "stopped";
-		for (const width of scenario.name === "payment-retry"
-			? [1440, 320]
+		for (const width of scenario.name === "payment-retry" || scenario.name === "included"
+			? [1440, 390, 320]
 			: scenario.name === "paid"
 				? [1440, 390]
 				: [1440]) {
@@ -4338,6 +4354,7 @@ test("overview billing facts and shortcuts follow subscription authority", async
 			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
 			const actions = body.getByRole("button");
 			await expect(actions).toHaveCount(scenario.action ? 1 : 0);
+			await expect(body.locator("dl [data-slot=button]")).toHaveCount(0);
 			if (scenario.action) {
 				await expect(actions).toHaveText(scenario.action);
 				await expect(
@@ -4349,6 +4366,19 @@ test("overview billing facts and shortcuts follow subscription authority", async
 			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
 			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
 			await captureAgentOverview(page, testInfo, `hermes-final-clean-${scenario.name}-${width}`);
+			if (["included", "payment-retry", "paid"].includes(scenario.name)) {
+				for (const theme of ["dark", "light"]) {
+					await page.locator("html").evaluate((element, dark) => {
+						element.classList.toggle("dark", dark);
+					}, theme === "dark");
+					await compute.evaluate((element) => element.scrollIntoView({ block: "center" }));
+					await expect(compute).toBeInViewport({ ratio: 1 });
+					await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
+					await compute.screenshot({
+						path: testInfo.outputPath(`${scenario.name}-${width}-${theme}-compute.png`),
+					});
+				}
+			}
 			if (scenario.name === "paid" && width === 1440) {
 				await page.locator("html").evaluate((element) => element.classList.add("dark"));
 				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
