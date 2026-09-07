@@ -267,6 +267,8 @@ jobs:
         # version then can't find.
         working-directory: apps/web
         run: bunx playwright install --with-deps chromium
+      - name: Auth route lifecycle contracts
+        run: bun run --cwd apps/web e2e --config=playwright.auth.config.ts
       - name: OSS web e2e
         run: bun run --cwd apps/web e2e
 

@@ -2,6 +2,7 @@
 
 import { useAuth, useClerk, useUser } from "@clerk/tanstack-react-start";
 import { env } from "@/lib/env";
+import { resolveRouteAuth } from "@/lib/route-auth";
 
 const DEV_AUTH_BEARER = env.VITE_DEV_AUTH_TOKEN;
 
@@ -33,12 +34,23 @@ export function useAuthToken() {
 export function useDashboardAuth() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return {
+			isLoaded: true,
 			isSignedIn: true,
 			userId: DEV_USER.id,
+			sessionId: "dev_browser_session",
 			getToken: async () => DEV_AUTH_BEARER,
 		};
 	}
 	return useAuth();
+}
+
+export function useRouteAuth() {
+	const auth = useDashboardAuth();
+	if (env.VITE_DEV_AUTH_BYPASS) return resolveRouteAuth(auth, "ready");
+	const clerk = useClerk();
+	// ClerkProvider propagates status changes. useAuth owns the native SSR
+	// snapshot during SDK bootstrap; script loading is not identity loss.
+	return resolveRouteAuth(auth, clerk.status);
 }
 
 export function useCurrentUser() {

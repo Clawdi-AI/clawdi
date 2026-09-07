@@ -1,18 +1,19 @@
 /// <reference types="vite/client" />
 
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppNotFound } from "@/components/app-not-found";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import RootError from "@/components/root-error";
 import { APP_TITLE } from "@/lib/document-title";
+import type { AppRouterContext } from "@/lib/route-auth";
 import "@/styles/globals.css";
 
 const DESCRIPTION =
 	"Cloud control plane for AI agents - manage sessions, skills, memories, and secrets across the machines you connect.";
 
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<AppRouterContext>()({
 	head: () => ({
 		meta: [
 			{ charSet: "utf-8" },
