@@ -1,7 +1,8 @@
 "use client";
 
 import { getRouteApi } from "@tanstack/react-router";
-import { lazy, Suspense } from "react";
+import { type ComponentType, lazy, Suspense } from "react";
+import { AgentProjectResourceCanonicalizer } from "@/components/dashboard/agent-project-resource-canonicalizer";
 import {
 	ConnectedAgentDetail,
 	ConnectedAgentDetailSkeleton,
@@ -19,11 +20,26 @@ const AgentHome = agentHomeLoader
 	: null;
 
 const overviewRoute = getRouteApi("/_protected/_dashboard/agents/$id/");
+const sectionRoute = getRouteApi("/_protected/_dashboard/agents/$id/$section");
 
-export function AgentOverviewPage() {
+type DetailPageProps = { detail?: ComponentType<Parameters<typeof AgentDetailClient>[0]> };
+
+export function AgentOverviewPage({ detail: Detail = AgentDetailClient }: DetailPageProps) {
 	const { id } = overviewRoute.useParams();
 	const search = overviewRoute.useSearch();
-	return <AgentDetailClient environmentId={id} section="overview" routeSearch={search} />;
+	return <Detail environmentId={id} section="overview" routeSearch={search} />;
+}
+
+export function AgentSectionPage({ detail: Detail = AgentDetailClient }: DetailPageProps) {
+	const { id } = sectionRoute.useParams();
+	const { section } = sectionRoute.useRouteContext();
+	const search = sectionRoute.useSearch();
+	if (section === "skills" || section === "vaults") {
+		return (
+			<AgentProjectResourceCanonicalizer agentId={id} resource={section} routeSearch={search} />
+		);
+	}
+	return <Detail environmentId={id} section={section} routeSearch={search} />;
 }
 
 export function AgentDetailClient({

@@ -1,5 +1,4 @@
-import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import { AgentProjectResourceCanonicalizer } from "@/components/dashboard/agent-project-resource-canonicalizer";
+import { createFileRoute, lazyRouteComponent, notFound, redirect } from "@tanstack/react-router";
 import {
 	agentSectionLabel,
 	agentSectionLink,
@@ -8,7 +7,6 @@ import {
 } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 import { AGENT_PROJECT_RESOURCE_SECTION_IDS } from "@/lib/navigation-model";
-import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -21,6 +19,7 @@ function safeDecodeURIComponent(value: string): string {
 }
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section")({
+	codeSplitGroupings: [],
 	beforeLoad: ({ params }) => {
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		if (!section || section === "overview") throw notFound();
@@ -40,17 +39,10 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		return routeHeadTitle(section && section !== "overview" ? agentSectionLabel(section) : "Agent");
 	},
-	component: AgentSectionRoute,
+	component: IS_HOSTED_BUILD
+		? lazyRouteComponent(() => import("@/hosted/agents/agent-home"), "HostedAgentSectionPage")
+		: lazyRouteComponent(
+				() => import("@/pages/dashboard/agents/agent-detail-client"),
+				"AgentSectionPage",
+			),
 });
-
-function AgentSectionRoute() {
-	const { id } = Route.useParams();
-	const { section } = Route.useRouteContext();
-	const search = Route.useSearch();
-	if (section === "skills" || section === "vaults") {
-		return (
-			<AgentProjectResourceCanonicalizer agentId={id} resource={section} routeSearch={search} />
-		);
-	}
-	return <AgentDetailClient environmentId={id} section={section} routeSearch={search} />;
-}

@@ -88,7 +88,6 @@ import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
 import { connectedAdapterHasModule } from "@/lib/adapter-modules";
-import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -371,6 +370,7 @@ function AgentSectionList({
 	primaryProject,
 	allowWorkspaceSkills = true,
 	extraPrimaryItems = [],
+	loading = false,
 	onNavigate,
 }: {
 	agentId: string;
@@ -381,6 +381,7 @@ function AgentSectionList({
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	allowWorkspaceSkills?: boolean;
 	extraPrimaryItems?: SidebarNavItem[];
+	loading?: boolean;
 	onNavigate?: () => void;
 }) {
 	const { pathname, searchStr } = useLocation({
@@ -414,11 +415,10 @@ function AgentSectionList({
 	const activeContextProjectResource =
 		scopedResourceTarget?.kind === "projects" ||
 		(isFlatProjectResourceRoute && !activePrimaryProjectResource);
-	const normalizedActiveSection = groups.some((group) =>
-		group.items.some((item) => item.id === activeSection),
-	)
-		? activeSection
-		: "overview";
+	const normalizedActiveSection =
+		loading || groups.some((group) => group.items.some((item) => item.id === activeSection))
+			? activeSection
+			: "overview";
 	const primaryProjectItems = primaryProject
 		? (["skills", "vaults"] as const)
 				.filter((section) => allowWorkspaceSkills || section !== "skills")
@@ -474,6 +474,7 @@ function AgentSectionList({
 					/>
 				);
 			})}
+			{loading ? <AgentNavigationLoadingRows /> : null}
 		</>
 	);
 }
@@ -481,6 +482,8 @@ function AgentSectionList({
 function AgentFocusSections({
 	agentId,
 	kind,
+	resolved,
+	loading,
 	runtime,
 	adapterModules,
 	filesAvailable,
@@ -489,8 +492,10 @@ function AgentFocusSections({
 	onNavigate,
 }: {
 	agentId: string;
-	kind: Exclude<AgentChromeKind, "unresolved">;
-	runtime: AgentTile["agentType"];
+	kind: AgentChromeKind;
+	resolved: boolean;
+	loading: boolean;
+	runtime?: AgentTile["agentType"];
 	adapterModules?: SidebarEnvironment["adapter_modules"];
 	filesAvailable?: boolean;
 	activeSection: AgentSectionId;
@@ -498,7 +503,7 @@ function AgentFocusSections({
 	onNavigate?: () => void;
 }) {
 	const { legacyDashboardUrl } = useProductAccess();
-	const legacyDashboardHref = kind === "legacy" ? legacyDashboardUrl : null;
+	const legacyDashboardHref = resolved && kind === "legacy" ? legacyDashboardUrl : null;
 	const connectedVisibleSectionIds = CONNECTED_AGENT_SECTION_IDS.filter(
 		(section) => section !== "sessions" || connectedAdapterHasModule(adapterModules, "sessions"),
 	);
@@ -521,12 +526,15 @@ function AgentFocusSections({
 	return (
 		<AgentSectionList
 			agentId={agentId}
-			variant={kind === "cloud" ? "hosted" : "connected"}
+			variant={kind === "cloud" || (!resolved && !loading) ? "hosted" : "connected"}
+			loading={loading}
 			runtime={runtime}
 			visibleSectionIds={
-				kind === "cloud"
-					? hostedAgentVisibleSectionIds(filesAvailable === true)
-					: connectedVisibleSectionIds
+				!resolved
+					? ["overview"]
+					: kind === "cloud"
+						? hostedAgentVisibleSectionIds(filesAvailable === true)
+						: connectedVisibleSectionIds
 			}
 			activeSection={activeSection}
 			primaryProject={primaryProject}
@@ -537,69 +545,22 @@ function AgentFocusSections({
 	);
 }
 
-function AgentFocusHostedFallbackSections({
-	agentId,
-	activeSection,
-	onNavigate,
-}: {
-	agentId: string;
-	activeSection: AgentSectionId;
-	onNavigate?: () => void;
-}) {
+function AgentNavigationLoadingRows() {
 	return (
-		<AgentSectionList
-			agentId={agentId}
-			variant="hosted"
-			visibleSectionIds={["overview"]}
-			activeSection={activeSection}
-			onNavigate={onNavigate}
-		/>
-	);
-}
-
-function AgentFocusLoadingSections({
-	agentId,
-	activeSection,
-	onNavigate,
-}: {
-	agentId: string;
-	activeSection: AgentSectionId;
-	onNavigate?: () => void;
-}) {
-	const overviewMetadata = AGENT_SECTION_NAVIGATION_ITEMS.overview;
-	const overviewItem: SidebarNavItem = {
-		id: overviewMetadata.id,
-		label: overviewMetadata.label,
-		href: agentSectionHref(agentId, "overview"),
-		icon: overviewMetadata.icon,
-		tint: overviewMetadata.tint,
-		tooltip: overviewMetadata.tooltip,
-		active: activeSection === "overview",
-	};
-
-	return (
-		<>
-			<SidebarNavSection
-				label={null}
-				items={[overviewItem]}
-				ariaLabel="Primary navigation"
-				onNavigate={onNavigate}
-			/>
-			<SidebarGroup role="group" className="pt-0" aria-label="Navigation loading">
-				<SidebarGroupContent>
-					<SidebarMenu>
-						{["70%", "58%", "64%"].map((width) => (
-							<SidebarMenuItem key={width}>
-								<div className="flex h-8 items-center gap-2 rounded-md px-2">
-									<Skeleton className="size-5 rounded-md" />
-									<Skeleton className="h-4 flex-1" style={{ maxWidth: width }} />
-								</div>
-							</SidebarMenuItem>
-						))}
-					</SidebarMenu>
-				</SidebarGroupContent>
-			</SidebarGroup>
-		</>
+		<SidebarGroup role="group" className="pt-0" aria-label="Navigation loading">
+			<SidebarGroupContent>
+				<SidebarMenu>
+					{["70%", "58%", "64%"].map((width) => (
+						<SidebarMenuItem key={width}>
+							<div className="flex h-8 items-center gap-2 rounded-md px-2">
+								<Skeleton className="size-5 rounded-md" />
+								<Skeleton className="h-4 flex-1" style={{ maxWidth: width }} />
+							</div>
+						</SidebarMenuItem>
+					))}
+				</SidebarMenu>
+			</SidebarGroupContent>
+		</SidebarGroup>
 	);
 }
 
@@ -624,49 +585,25 @@ function SidebarMainNavigation({
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
 }) {
-	if (activeAgentId && activeAgentTile && activeAgentKind !== "unresolved") {
+	if (activeAgentId) {
+		const resolved = Boolean(activeAgentTile) && activeAgentKind !== "unresolved";
+		const loading =
+			!resolved && (!agentsLoaded || activeAgentKind === "unresolved" || !showCloudFeatures);
 		return (
 			<AgentFocusSections
 				agentId={activeAgentId}
 				kind={activeAgentKind}
-				runtime={activeAgentTile.agentType}
-				adapterModules={activeAgentTile.env?.adapter_modules}
-				filesAvailable={activeAgentTile.filesAvailable}
+				resolved={resolved}
+				loading={loading}
+				runtime={activeAgentTile?.agentType}
+				adapterModules={activeAgentTile?.env?.adapter_modules}
+				filesAvailable={activeAgentTile?.filesAvailable}
 				activeSection={activeSection}
-				primaryProject={primaryProject}
+				primaryProject={resolved ? primaryProject : null}
 				onNavigate={onNavigate}
 			/>
 		);
 	}
-
-	if (activeAgentId) {
-		if (!agentsLoaded || activeAgentKind === "unresolved") {
-			return (
-				<AgentFocusLoadingSections
-					agentId={activeAgentId}
-					activeSection={activeSection}
-					onNavigate={onNavigate}
-				/>
-			);
-		}
-		if (showCloudFeatures && agentsLoaded) {
-			return (
-				<AgentFocusHostedFallbackSections
-					agentId={activeAgentId}
-					activeSection={activeSection}
-					onNavigate={onNavigate}
-				/>
-			);
-		}
-		return (
-			<AgentFocusLoadingSections
-				agentId={activeAgentId}
-				activeSection={activeSection}
-				onNavigate={onNavigate}
-			/>
-		);
-	}
-
 	return (
 		<ConsoleNavigationSections
 			pathname={pathname}
@@ -906,7 +843,6 @@ function SortableAgentRailItem({
 	const preloadAgent = () => {
 		if (!agent.href) return;
 		void router.preloadRoute({ to: agent.href }).catch(() => undefined);
-		preloadHostedAgentHome();
 	};
 
 	// Touch preloading uses capture to coexist with dnd-kit's bubble-phase touch listener below.

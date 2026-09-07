@@ -650,7 +650,9 @@ export function HostedAgentDetail({
 						}
 					/>
 				)}
-				{isLiveToolTab || activeTab === "settings" ? null : (
+				{isLiveToolTab ||
+				activeTab === "settings" ||
+				(activeTab === "overview" && !showInitialDeploymentPage) ? null : (
 					<ComputeDunningBanner deployment={deployment} />
 				)}
 				{!deploymentStatus.known && activeTab !== "overview" ? (
@@ -1392,7 +1394,7 @@ function OverviewTab({
 		},
 		connectors: connectorsModule,
 	};
-	return (
+	const overview = (
 		<div className="flex flex-col gap-8">
 			<AgentOverviewTools>
 				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
@@ -1495,6 +1497,12 @@ function OverviewTab({
 				</AgentOverviewStatusCard>
 			</AgentOverviewActivity>
 			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
+		</div>
+	);
+	return (
+		<div className="flex flex-col gap-6">
+			<ComputeDunningBanner deployment={deployment} showPrimaryAction={compute.action === null} />
+			{overview}
 		</div>
 	);
 }
